@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { supabase } from '../../../supabaseClient.ts';
 import { InwardGatePass, PieceBreakdownItem, PurchaseInvoice } from '../purchase.types.ts';
 import { ItemMaster, BrandMaster, LabelGrade, ShopMaster, CategoryMaster, SizeMaster } from '../../setup/setup.types.ts';
 import { PurchaseEngine } from '../purchase.engine.ts';
@@ -193,6 +194,89 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     return allBales.find(b => b.id === selectedBaleId) || initialBale || allBales[0] || null;
   }, [allBales, selectedBaleId, initialBale]);
 
+  // Session pieces state synced with Supabase public.bale_sorted_pieces
+  const [pieces, setPieces] = useState<any[]>(() => (activeBale?.pieces as any[]) || []);
+  const [isTerminalFinalized, setIsTerminalFinalized] = useState<boolean>(false);
+
+  // Load pieces from Supabase public.bale_sorted_pieces whenever activeBale changes
+  useEffect(() => {
+    if (!activeBale?.id) return;
+
+    let isMounted = true;
+    const fetchSessionData = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('bale_sorted_pieces')
+          .select('*')
+          .eq('bale_id', activeBale.id)
+          .order('created_at', { ascending: true });
+
+        if (!error && data && data.length > 0 && isMounted) {
+          const mapped = data.map((d: any) => ({
+            ...d,
+            barcode: d.piece_code || d.barcode,
+            piece_code: d.piece_code || d.barcode,
+            itemName: d.category || d.item_name || 'Vintage Garment',
+            category: d.category || d.item_name || 'Vintage Garment',
+            sizeScanned: d.size || d.size_scanned || 'L',
+            size: d.size || d.size_scanned || 'L',
+            brandName: d.brand_title || d.brand_name || 'Vintage',
+            brand_title: d.brand_title || d.brand_name || 'Vintage',
+            weightGrams: Number(d.weight_grams) || Number(d.weightGrams) || 0,
+            weight_grams: Number(d.weight_grams) || Number(d.weightGrams) || 0,
+            weightKg: (Number(d.weight_grams) || 0) / 1000,
+            costPrice: Number(d.cost_price) || 0,
+            cost_price: Number(d.cost_price) || 0,
+            calculatedCostPrice: Number(d.cost_price) || 0,
+            retailPriceAed: Number(d.selling_price) || 0,
+            selling_price: Number(d.selling_price) || 0,
+            estimatedPrice: Number(d.selling_price) || 0,
+            labelGrade: d.quality_grade || d.label_grade || 'Grade A',
+            quality_grade: d.quality_grade || d.label_grade || 'Grade A',
+            frontImageUrl: d.front_image || d.front_image_url,
+            front_image: d.front_image || d.front_image_url,
+            backImageUrl: d.back_image || d.back_image_url,
+            back_image: d.back_image || d.back_image_url,
+            tagImageUrl: d.tag_image || d.tag_image_url,
+            tag_image: d.tag_image || d.tag_image_url
+          }));
+          setPieces(mapped);
+        } else if (activeBale.pieces && activeBale.pieces.length > 0 && isMounted) {
+          setPieces(activeBale.pieces);
+        } else if (isMounted) {
+          setPieces([]);
+        }
+      } catch {
+        if (isMounted && activeBale.pieces) setPieces(activeBale.pieces);
+      }
+
+      // Check session status from public.bale_sessions
+      try {
+        const { data: sessionData } = await supabase
+          .from('bale_sessions')
+          .select('*')
+          .eq('bale_id', activeBale.id)
+          .maybeSingle();
+
+        if (isMounted && sessionData) {
+          setIsTerminalFinalized(sessionData.status === 'COMPLETED');
+        } else if (isMounted) {
+          setIsTerminalFinalized(activeBale.status === 'COMPLETED' || activeBale.sortingStatus === 'FULLY_SORTED');
+        }
+      } catch {
+        if (isMounted) {
+          setIsTerminalFinalized(activeBale.status === 'COMPLETED' || activeBale.sortingStatus === 'FULLY_SORTED');
+        }
+      }
+    };
+
+    fetchSessionData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeBale?.id]);
+
   // Studio 3-Angle Photos (Front Look, Back Look, Tag OCR)
   const [showTagScanner, setShowTagScanner] = useState(false);
   const [showStudioCamera, setShowStudioCamera] = useState(false);
@@ -273,27 +357,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     return suggestedSellingPrice;
   }, [sellingPriceOverride, suggestedSellingPrice]);
 
-  // Real-Time HUD Statistics
+  // Real-Time HUD Statistics (Live Gram Depletion & Session Metrics)
   const hudStats = useMemo(() => {
-    if (!activeBale) {
-      return {
-        totalGrams: 50000,
-        sortedGrams: 0,
-        remainingGrams: 50000,
-        piecesCount: 0,
-        progressPercent: 0,
-        isCompleted: false
-      };
-    }
-
-    const totalKg = Number(activeBale.totalBaleWeight) || 0;
-    const totalGrams = Math.round(totalKg * 1000);
-    const sortedKg = Number(activeBale.brokenDownWeight) || 0;
-    const sortedGrams = Math.round(sortedKg * 1000);
+    const totalKg = Number(activeBale?.totalBaleWeight) || 50;
+    const totalGrams = Math.round(totalKg * 1000) || 50000;
+    const sortedGrams = pieces.reduce((sum, p) => sum + (Number(p.weight_grams ?? p.weightGrams) || 0), 0);
     const remainingGrams = Math.max(0, totalGrams - sortedGrams);
-    const piecesCount = activeBale.pieces?.length || activeBale.pieceCount || 0;
+    const piecesCount = pieces.length;
     const progressPercent = totalGrams > 0 ? Math.min(100, Math.round((sortedGrams / totalGrams) * 100)) : 0;
-    const isCompleted = progressPercent === 100 || activeBale.sortingStatus === 'FULLY_SORTED';
+    const isCompleted = isTerminalFinalized || progressPercent >= 100 || activeBale?.status === 'COMPLETED' || activeBale?.sortingStatus === 'FULLY_SORTED';
 
     return {
       totalGrams,
@@ -303,7 +375,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       progressPercent,
       isCompleted
     };
-  }, [activeBale]);
+  }, [activeBale, pieces, isTerminalFinalized]);
 
   // Separate active/open bales from completed/locked bales
   const { activeBalesList, completedBalesList } = useMemo(() => {
@@ -319,13 +391,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     return { activeBalesList: active, completedBalesList: completed };
   }, [allBales]);
 
-  // Auto-generated Next Piece Barcode Preview
+  // Auto-generated Next Piece Barcode Preview (${activeBaleId || 'BAL-01'}-P0001)
   const nextPieceBarcode = useMemo(() => {
-    if (!activeBale) return 'BAL-01-P001';
-    const nextIdx = (activeBale.pieces?.length || 0) + 1;
-    const code = activeBale.baleCode || activeBale.gatePassNo;
-    return PurchaseEngine.generatePieceBarcode(code, nextIdx);
-  }, [activeBale]);
+    const baseCode = activeBale?.baleCode || activeBale?.gatePassNo || activeBale?.id || 'BAL-01';
+    const nextIdx = pieces.length + 1;
+    return `${baseCode}-P${String(nextIdx).padStart(4, '0')}`;
+  }, [activeBale, pieces.length]);
 
   // Apply OCR extracted tag data
   const handleApplyExtractedTag = (tagData: ExtractedTagData) => {
@@ -411,19 +482,39 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
     if (numericGramWeight <= 0) {
       setFeedbackToast({ text: 'Please enter a valid gram weight (> 0g)', type: 'error' });
-      if (gramInputRef.current) gramInputRef.current.focus();
+      const el = document.getElementById('weight-input-field') as HTMLInputElement | null;
+      if (el) el.focus();
+      else if (gramInputRef.current) gramInputRef.current.focus();
       return;
     }
 
     setIsSubmitting(true);
     luxuryAudio.playMechanicalClick();
 
-    const nextIdx = (activeBale.pieces?.length || 0) + 1;
+    const nextIdx = pieces.length + 1;
     const barcode = nextPieceBarcode;
     const weightKg = Number((numericGramWeight / 1000).toFixed(3));
+    const pieceId = `pc-${Date.now()}-${nextIdx}`;
+
+    // Payload for public.bale_sorted_pieces
+    const newPieceDb = {
+      id: pieceId,
+      bale_id: activeBale.id,
+      piece_code: barcode,
+      category: selectedCategory,
+      size: sizeScanned,
+      brand_title: brandTitle,
+      weight_grams: numericGramWeight,
+      cost_price: autoPieceCostAed,
+      selling_price: effectiveSellingPrice,
+      quality_grade: selectedGrade,
+      front_image: frontImageUrl || null,
+      back_image: backImageUrl || null,
+      tag_image: tagImageUrl || null
+    };
 
     const newPiecePayload: PieceBreakdownItem = {
-      id: `pc-${Date.now()}-${nextIdx}`,
+      id: pieceId,
       gatePassId: activeBale.id,
       baleCode: activeBale.baleCode || activeBale.gatePassNo,
       barcode,
@@ -450,8 +541,33 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       createdAt: new Date().toISOString()
     };
 
-    // Calculate local updated gate pass
-    const currentPieces = [...(activeBale.pieces || []), newPiecePayload];
+    // 1. Optimistically update local pieces state
+    const currentPieces = [...pieces, { ...newPiecePayload, ...newPieceDb }];
+    setPieces(currentPieces);
+
+    // 2. Insert into Supabase public.bale_sorted_pieces
+    try {
+      const { error: insertErr } = await supabase
+        .from('bale_sorted_pieces')
+        .insert([newPieceDb]);
+
+      if (insertErr) {
+        console.error('Failed to insert sorted piece into bale_sorted_pieces:', insertErr);
+        // Revert optimistic update
+        setPieces(prev => prev.filter(p => p.id !== pieceId));
+        alert(`Failed to save piece into database: ${insertErr.message || JSON.stringify(insertErr)}`);
+        setIsSubmitting(false);
+        return;
+      }
+    } catch (err: any) {
+      console.error('Exception inserting piece into bale_sorted_pieces:', err);
+      setPieces(prev => prev.filter(p => p.id !== pieceId));
+      alert(`Error saving piece: ${err?.message || 'Database error'}`);
+      setIsSubmitting(false);
+      return;
+    }
+
+    // Calculate local updated gate pass for parent state
     const depletion = PurchaseEngine.calculateBaleDepletion(activeBale.totalBaleWeight, currentPieces);
     const updatedGatePass: InwardGatePass = {
       ...activeBale,
@@ -462,7 +578,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       sortingStatus: depletion.sortingStatus
     };
 
-    // Attempt server sync in background, but immediately update UI
+    // Attempt server sync in background
     try {
       fetch(`/api/purchase/gate-passes/${activeBale.id}/pieces`, {
         method: 'POST',
@@ -522,20 +638,46 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setIsSubmitting(false);
 
     setTimeout(() => {
-      if (gramInputRef.current) {
+      const el = document.getElementById('weight-input-field') as HTMLInputElement | null;
+      if (el) {
+        el.focus();
+        el.select();
+      } else if (gramInputRef.current) {
         gramInputRef.current.focus();
         gramInputRef.current.select();
       }
     }, 50);
   };
 
-  // Delete piece handler
-  const handleDeletePiece = (pieceId: string) => {
+  // Delete piece handler (sync with public.bale_sorted_pieces)
+  const handleDeletePiece = async (pieceId: string) => {
     if (!activeBale) return;
     luxuryAudio.playMechanicalClick();
     if (!confirm('Are you sure you want to remove this piece from the session?')) return;
 
-    const remaining = (activeBale.pieces || []).filter(p => p.id !== pieceId);
+    const removedItem = pieces.find(p => p.id === pieceId);
+    // Optimistic removal
+    setPieces(prev => prev.filter(p => p.id !== pieceId));
+
+    try {
+      const { error } = await supabase
+        .from('bale_sorted_pieces')
+        .delete()
+        .eq('id', pieceId);
+
+      if (error) {
+        console.error('Failed to delete piece from Supabase:', error);
+        if (removedItem) {
+          setPieces(prev => [...prev, removedItem]);
+        }
+        alert(`Failed to delete piece: ${error.message}`);
+        return;
+      }
+    } catch (err) {
+      console.error(err);
+    }
+
+    const remaining = pieces.filter(p => p.id !== pieceId);
     const depletion = PurchaseEngine.calculateBaleDepletion(activeBale.totalBaleWeight, remaining);
     const updatedGatePass: InwardGatePass = {
       ...activeBale,
@@ -556,25 +698,83 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setFeedbackToast({ text: 'Piece deleted; weights updated.', type: 'info' });
   };
 
-  // Save as in-progress
-  const handleSaveInProgress = () => {
+  // Save as in-progress (upsert into public.bale_sessions)
+  const handleSaveInProgress = async () => {
     if (!activeBale) return;
     luxuryAudio.playMechanicalClick();
+    setIsSubmitting(true);
+
+    try {
+      const sessionPayload = {
+        id: activeBale.id,
+        bale_id: activeBale.id,
+        bale_code: activeBale.baleCode || activeBale.gatePassNo,
+        total_grams: hudStats.totalGrams,
+        sorted_grams: hudStats.sortedGrams,
+        remaining_grams: hudStats.remainingGrams,
+        pieces_count: hudStats.piecesCount,
+        progress_percent: hudStats.progressPercent,
+        status: 'IN_PROGRESS',
+        updated_at: new Date().toISOString()
+      };
+
+      const { error } = await supabase
+        .from('bale_sessions')
+        .upsert(sessionPayload, { onConflict: 'id' });
+
+      if (error) {
+        console.error('Error saving session to bale_sessions:', error);
+      }
+    } catch (err) {
+      console.warn('Session save error:', err);
+    }
+
     onSavePartial(activeBale.id);
+    setIsSubmitting(false);
     setFeedbackToast({ text: `Bale ${activeBale.baleCode || activeBale.gatePassNo} saved as In-Progress.`, type: 'success' });
     setTimeout(onClose, 400);
   };
 
-  // Finalize & Post Bale
-  const handleFinalizeAndPost = () => {
+  // Finalize & Post Bale (upsert COMPLETED into public.bale_sessions and lock)
+  const handleFinalizeAndPost = async () => {
     if (!activeBale) return;
     luxuryAudio.playMechanicalClick();
     if (!confirm(`Finalize and lock Bale ${activeBale.baleCode || activeBale.gatePassNo}? All ${hudStats.piecesCount} pieces will join active Finished Goods inventory.`)) {
       return;
     }
+    setIsSubmitting(true);
+
+    try {
+      const sessionPayload = {
+        id: activeBale.id,
+        bale_id: activeBale.id,
+        bale_code: activeBale.baleCode || activeBale.gatePassNo,
+        total_grams: hudStats.totalGrams,
+        sorted_grams: hudStats.sortedGrams,
+        remaining_grams: hudStats.remainingGrams,
+        pieces_count: hudStats.piecesCount,
+        progress_percent: hudStats.progressPercent,
+        status: 'COMPLETED',
+        updated_at: new Date().toISOString()
+      };
+
+      const { error } = await supabase
+        .from('bale_sessions')
+        .upsert(sessionPayload, { onConflict: 'id' });
+
+      if (error) {
+        console.error('Error finalizing session in bale_sessions:', error);
+      }
+    } catch (err) {
+      console.warn('Finalize session error:', err);
+    }
+
+    setIsTerminalFinalized(true);
+    setIsSubmitting(false);
     if (onPostBale) {
       onPostBale(activeBale.id);
     }
+    setFeedbackToast({ text: `Bale ${activeBale.baleCode || activeBale.gatePassNo} finalized & locked!`, type: 'success' });
     setTimeout(onClose, 400);
   };
 
@@ -1207,6 +1407,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   </label>
                   <div className="relative">
                     <input
+                      id="weight-input-field"
                       ref={gramInputRef}
                       type="number"
                       step="1"
@@ -1214,6 +1415,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       placeholder="e.g. 380"
                       value={gramWeight}
                       onChange={e => setGramWeight(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddPieceAndNext();
+                        }
+                      }}
                       disabled={hudStats.isCompleted}
                       className="w-full bg-slate-900 border-2 border-amber-500/70 focus:border-amber-400 rounded-lg px-3 py-2 text-sm font-black font-mono text-amber-300 focus:outline-hidden text-right pr-8 shadow-inner disabled:opacity-50"
                       required
@@ -1420,12 +1627,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             <h3 className="font-bold text-xs uppercase tracking-wider text-slate-300 flex items-center gap-2">
               <span>Current Session Pieces Log</span>
               <span className="bg-slate-800 text-slate-300 text-[11px] px-2 py-0.5 rounded-full font-mono">
-                {activeBale?.pieces?.length || 0} items sorted
+                {pieces.length} items sorted
               </span>
             </h3>
 
             <span className="text-xs text-slate-400">
-              Total Breakdown: <strong className="text-white font-mono">{activeBale?.brokenDownWeight || 0} KG</strong> of <strong className="text-white font-mono">{activeBale?.totalBaleWeight || 0} KG</strong>
+              Total Breakdown: <strong className="text-white font-mono">{(hudStats.sortedGrams / 1000).toFixed(2)} KG</strong> of <strong className="text-white font-mono">{(hudStats.totalGrams / 1000).toFixed(2)} KG</strong>
             </span>
           </div>
 
@@ -1448,7 +1655,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-sans">
-                  {(!activeBale?.pieces || activeBale.pieces.length === 0) ? (
+                  {(!pieces || pieces.length === 0) ? (
                     <tr>
                       <td colSpan={11} className="py-12 text-center text-slate-500">
                         <Tag className="w-8 h-8 text-slate-700 mx-auto mb-2" />
@@ -1459,35 +1666,43 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       </td>
                     </tr>
                   ) : (
-                    activeBale.pieces.slice().reverse().map((piece, idx) => {
-                      const pieceNum = (activeBale.pieces?.length || 0) - idx;
-                      const g = piece.weightGrams || Math.round((piece.weightKg || 0) * 1000);
-                      const cost = piece.calculatedCostPrice || piece.costPrice || 0;
-                      const price = piece.estimatedPrice || piece.retailPriceAed || 0;
+                    pieces.slice().reverse().map((piece, idx) => {
+                      const pieceNum = pieces.length - idx;
+                      const barcode = piece.piece_code || piece.barcode;
+                      const category = piece.category || piece.itemName || 'Vintage Garment';
+                      const size = piece.size || piece.sizeScanned || 'L';
+                      const brandTitle = piece.brand_title || piece.brandName || '';
+                      const g = piece.weight_grams ?? piece.weightGrams ?? Math.round((piece.weightKg || 0) * 1000);
+                      const cost = piece.cost_price ?? piece.calculatedCostPrice ?? 0;
+                      const price = piece.selling_price ?? piece.retailPriceAed ?? piece.estimatedPrice ?? 0;
+                      const frontImg = piece.front_image || piece.frontImageUrl;
+                      const backImg = piece.back_image || piece.backImageUrl;
+                      const tagImg = piece.tag_image || piece.tagImageUrl;
+                      const qualityGrade = piece.quality_grade || piece.labelGrade;
 
                       return (
                         <tr key={piece.id || idx} className="hover:bg-slate-900/80 transition-colors">
                           <td className="py-2.5 px-3 font-mono text-slate-500 text-[11px]">{pieceNum}</td>
-                          <td className="py-2.5 px-3 font-mono font-bold text-indigo-400 text-[11px]">{piece.barcode}</td>
-                          <td className="py-2.5 px-3 text-slate-300">{piece.itemName}</td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-indigo-400 text-[11px]">{barcode}</td>
+                          <td className="py-2.5 px-3 text-slate-300">{category}</td>
                           <td className="py-2.5 px-3 text-center">
                             <span className="px-2 py-0.5 rounded bg-slate-800 text-amber-300 font-mono font-bold border border-slate-700 text-[11px] shadow-xs">
-                              {piece.sizeScanned || 'L'}
+                              {size}
                             </span>
                           </td>
-                          <td className="py-2.5 px-3 font-medium text-white">{piece.brandName} {piece.style ? `• ${piece.style}` : ''}</td>
+                          <td className="py-2.5 px-3 font-medium text-white">{brandTitle} {piece.style ? `• ${piece.style}` : ''}</td>
                           <td className="py-2.5 px-3 text-center">
                             <div className="flex items-center justify-center gap-1">
-                              {piece.frontImageUrl && (
-                                <img src={piece.frontImageUrl} alt="Front" title="Front Look" className="w-6 h-6 object-cover rounded border border-slate-700" />
+                              {frontImg && (
+                                <img src={frontImg} alt="Front" title="Front Look" className="w-6 h-6 object-cover rounded border border-slate-700" />
                               )}
-                              {piece.backImageUrl && (
-                                <img src={piece.backImageUrl} alt="Back" title="Back Look" className="w-6 h-6 object-cover rounded border border-slate-700" />
+                              {backImg && (
+                                <img src={backImg} alt="Back" title="Back Look" className="w-6 h-6 object-cover rounded border border-slate-700" />
                               )}
-                              {piece.tagImageUrl && (
-                                <img src={piece.tagImageUrl} alt="Tag" title="Tag OCR" className="w-6 h-6 object-cover rounded border border-amber-600" />
+                              {tagImg && (
+                                <img src={tagImg} alt="Tag" title="Tag OCR" className="w-6 h-6 object-cover rounded border border-amber-600" />
                               )}
-                              {!piece.frontImageUrl && !piece.backImageUrl && !piece.tagImageUrl && (
+                              {!frontImg && !backImg && !tagImg && (
                                 <span className="text-[10px] text-slate-600 font-mono">-</span>
                               )}
                             </div>
@@ -1501,18 +1716,18 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                               onClick={() => {
                                 luxuryAudio.playMechanicalClick();
                                 onPrintSticker({
-                                  itemCode: piece.barcode,
-                                  description: `${piece.itemName} (${piece.sizeScanned || 'L'})`,
-                                  category: piece.itemName,
-                                  size: piece.sizeScanned || 'L',
-                                  brand: piece.brandName,
-                                  grade: piece.labelGrade,
+                                  itemCode: barcode,
+                                  description: `${category} (${size})`,
+                                  category,
+                                  size,
+                                  brand: brandTitle,
+                                  grade: qualityGrade,
                                   retailPriceAed: price,
-                                  weightKg: piece.weightKg,
-                                  batchNo: activeBale.baleCode || activeBale.gatePassNo,
+                                  weightKg: Number(g / 1000),
+                                  batchNo: activeBale?.baleCode || activeBale?.gatePassNo || 'BAL-01',
                                   date: new Date().toISOString().slice(0, 10),
-                                  origin: piece.countryOfOrigin,
-                                  shopLocation: piece.shopLocation
+                                  origin: piece.countryOfOrigin || piece.country_of_origin,
+                                  shopLocation: piece.shopLocation || piece.shop_location
                                 });
                               }}
                               className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-amber-400 rounded transition-colors cursor-pointer"

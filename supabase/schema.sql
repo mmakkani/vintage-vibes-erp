@@ -149,6 +149,38 @@ CREATE TABLE IF NOT EXISTS inward_gate_passes (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 8B. BALE SESSIONS & HIGH-SPEED SORTED PIECES
+CREATE TABLE IF NOT EXISTS public.bale_sessions (
+    id VARCHAR(64) PRIMARY KEY,
+    bale_id VARCHAR(64),
+    bale_code VARCHAR(64),
+    total_grams NUMERIC(12, 2) DEFAULT 50000.00,
+    sorted_grams NUMERIC(12, 2) DEFAULT 0.00,
+    remaining_grams NUMERIC(12, 2) DEFAULT 50000.00,
+    pieces_count INTEGER DEFAULT 0,
+    progress_percent NUMERIC(5, 2) DEFAULT 0.00,
+    status VARCHAR(32) DEFAULT 'IN_PROGRESS',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.bale_sorted_pieces (
+    id VARCHAR(64) PRIMARY KEY,
+    bale_id VARCHAR(64),
+    piece_code VARCHAR(64) NOT NULL,
+    category VARCHAR(128),
+    size VARCHAR(32),
+    brand_title VARCHAR(128),
+    weight_grams NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    cost_price NUMERIC(14, 2) DEFAULT 0.00,
+    selling_price NUMERIC(14, 2) DEFAULT 0.00,
+    quality_grade VARCHAR(64),
+    front_image TEXT,
+    back_image TEXT,
+    tag_image TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 9. INVENTORY PIECES (INDIVIDUAL GARMENTS WITH SUPABASE STORAGE MEDIA)
 CREATE TABLE IF NOT EXISTS inventory_pieces (
     id VARCHAR(64) PRIMARY KEY,
