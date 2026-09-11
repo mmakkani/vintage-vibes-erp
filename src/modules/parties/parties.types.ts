@@ -35,5 +35,7 @@ export interface Party {
   currency: CurrencyCode;
   isActive: boolean;
   accountMap: PartyAccountMap;
+  coaAccountId?: string;
+  coa_account_id?: string;
   createdAt: string;
 }

@@ -13,6 +13,8 @@ export interface COAAccount {
   parentCode?: string;
   parentId?: string;
   parent_id?: string;
+  partyId?: string;
+  party_id?: string;
   currency: CurrencyCode | string;
   currentBalance: number;
   current_balance?: number;

@@ -11,12 +11,12 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['vintage_logo.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
+        includeAssets: ['vintage_logo.svg', 'apple-touch-icon.png', 'logo192.png', 'logo512.png', 'pwa-192x192.png', 'pwa-512x512.png', 'manifest.json'],
         manifest: {
           id: '/',
-          name: 'Vintage Vibe ERP',
-          short_name: 'VintageVibe',
-          description: 'Enterprise Apparel ERP for garment bale processing, dual-entry accounting, and sales workflows.',
+          name: 'Vintage Vibes',
+          short_name: 'Vintage Vibes',
+          description: 'Enterprise Apparel ERP and Luxury Storefront for garment processing and sales workflows.',
           theme_color: '#0f172a',
           background_color: '#FAF4E6',
           display: 'standalone',
@@ -24,8 +24,20 @@ export default defineConfig(() => {
           scope: '/',
           icons: [
             {
+              src: '/logo192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
               src: '/pwa-192x192.png',
               sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
+              src: '/logo512.png',
+              sizes: '512x512',
               type: 'image/png',
               purpose: 'any',
             },

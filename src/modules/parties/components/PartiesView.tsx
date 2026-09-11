@@ -266,8 +266,13 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 </div>
 
                 {/* Provisioned COA Mapping preview */}
-                <div className="mt-1.5 pt-1.5 border-t border-slate-100 text-[10px] text-slate-400 font-mono flex items-center justify-between">
-                  <span>Linked COA: {party.accountMap.receivableAccountId || party.accountMap.payableAccountId || 'Direct mapped'}</span>
+                <div className="mt-1.5 pt-1.5 border-t border-slate-100 text-[10px] text-slate-500 font-mono flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <span className="text-emerald-600 font-bold">✓ COA:</span>
+                    <span className="font-bold text-slate-800">
+                      {party.accountMap?.payableAccountId || party.accountMap?.receivableAccountId || party.coaAccountId || (party.type === 'SUPPLIER' ? `2110-${party.code.replace(/[^A-Za-z0-9]/g, '')}` : `1130-${party.code.replace(/[^A-Za-z0-9]/g, '')}`)}
+                    </span>
+                  </span>
                   <span>Limit: AED {party.creditLimit.toLocaleString()}</span>
                 </div>
               </div>
@@ -299,6 +304,30 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 >
                   <CreditCard className="w-3.5 h-3.5" />
                   <span>Record Settlement</span>
+                </button>
+              </div>
+
+              {/* Linked Chart of Accounts Auto-Link Card */}
+              <div className="mx-3 p-2 bg-amber-50/80 rounded border border-amber-200/80 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300 uppercase">
+                    Auto-Linked COA Khata
+                  </span>
+                  <span className="font-mono font-bold text-slate-800 text-[11px]">
+                    {selectedParty.accountMap?.payableAccountId || selectedParty.accountMap?.receivableAccountId || selectedParty.coaAccountId || (selectedParty.type === 'SUPPLIER' ? `2110-${selectedParty.code.replace(/[^A-Za-z0-9]/g, '')}` : `1130-${selectedParty.code.replace(/[^A-Za-z0-9]/g, '')}`)} - {selectedParty.name} ({selectedParty.type === 'SUPPLIER' ? 'Supplier' : 'Customer'})
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('tab', 'finance');
+                    url.searchParams.set('financeSubTab', 'coa');
+                    window.location.href = url.toString();
+                  }}
+                  className="text-[10px] font-bold text-amber-900 bg-white border border-amber-300 px-2 py-0.5 rounded hover:bg-amber-100 transition-colors cursor-pointer"
+                >
+                  View in COA (5-Pillars) →
                 </button>
               </div>
 

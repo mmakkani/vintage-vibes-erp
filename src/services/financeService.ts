@@ -6,7 +6,7 @@ export class FinanceService {
   public static async getCoaAccounts(): Promise<COAAccount[]> {
     const { data, error } = await supabase
       .from('coa_accounts')
-      .select('id, code, name, type, sub_type, currency, current_balance, is_active, parent_id')
+      .select('id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, party_id')
       .order('code', { ascending: true });
 
     if (error) {
@@ -29,6 +29,8 @@ export class FinanceService {
       is_active: row.is_active !== false,
       parentId: row.parent_id,
       parent_id: row.parent_id,
+      partyId: row.party_id,
+      party_id: row.party_id,
       tierLevel: row.tier_level || (row.code?.includes('-') ? (row.code.split('-').length > 2 ? 3 : 2) : 1),
       parentCode: row.parent_code || '',
       isSystem: Boolean(row.is_system),
@@ -47,7 +49,8 @@ export class FinanceService {
       currency: acc.currency || 'AED',
       current_balance: Number(acc.current_balance ?? acc.currentBalance ?? 0),
       is_active: acc.is_active !== false && acc.isActive !== false,
-      parent_id: acc.parent_id || acc.parentId || null
+      parent_id: acc.parent_id || acc.parentId || null,
+      party_id: acc.party_id || acc.partyId || null
     };
 
     const { data, error } = await supabase

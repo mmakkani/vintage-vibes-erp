@@ -906,7 +906,7 @@ export default async function handler(req: any, res: any) {
           }
           const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
           await client.connect();
-          const coaRes = await client.query('SELECT id, code, name, type, sub_type, currency, current_balance, is_active, parent_id FROM coa_accounts ORDER BY code ASC');
+          const coaRes = await client.query('SELECT id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, party_id FROM coa_accounts ORDER BY code ASC');
           await client.end();
           return res.status(200).json(coaRes.rows.map((r: any) => ({
             id: r.id,
@@ -922,10 +922,112 @@ export default async function handler(req: any, res: any) {
             isActive: r.is_active !== false,
             is_active: r.is_active !== false,
             parentId: r.parent_id,
-            parent_id: r.parent_id
+            parent_id: r.parent_id,
+            partyId: r.party_id,
+            party_id: r.party_id
           })));
         } catch (e: any) {
           console.warn('Error querying coa_accounts in serverless gateway:', e?.message);
+        }
+      }
+      return res.status(200).json([]);
+    }
+
+    // Parties (Suppliers & Clients) Endpoint
+    if (pathname.includes('/parties')) {
+      let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+      if (dbUrl && !dbUrl.includes('your_') && !dbUrl.includes('placeholder')) {
+        try {
+          const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+          if (match) {
+            let [_, user, rawPwd, host, port, rest] = match;
+            if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
+            dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+          }
+          const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+          await client.connect();
+
+          if (method === 'POST') {
+            const p = body || {};
+            const id = p.id || `pty-${Date.now()}`;
+            const code = p.code || `P-${Date.now().toString().slice(-4)}`;
+            const isSupplier = p.type === 'SUPPLIER';
+            const isClient = p.type === 'CLIENT' || p.type === 'CUSTOMER';
+            const cleanCode = code.replace(/[^A-Za-z0-9]/g, '');
+            const coaCode = isSupplier ? `2110-${cleanCode}` : (isClient ? `1130-${cleanCode}` : `2120-${cleanCode}`);
+            const coaId = `acc-${id}`;
+            const parentId = isSupplier ? 'acc-2110' : (isClient ? 'acc-1130' : 'acc-2120');
+            const parentCode = isSupplier ? '2110-00' : (isClient ? '1130-00' : '2120-00');
+            const coaType = isSupplier ? 'LIABILITY' : (isClient ? 'ASSET' : 'LIABILITY');
+            const subType = isSupplier ? 'Accounts Payable - Trade' : (isClient ? 'Accounts Receivable - Trade' : 'Accounts Payable - Agent');
+            const coaName = `${p.name} (${isSupplier ? 'Supplier' : (isClient ? 'Customer' : 'Agent')})`;
+
+            const accountMap = {
+              payableAccountId: isSupplier ? coaCode : '2110-00',
+              receivableAccountId: isClient ? coaCode : '1130-00',
+              clearingAccountId: '1310-00',
+              revenueAccountId: '4110-00'
+            };
+
+            // 1. Insert into parties
+            await client.query(`
+              INSERT INTO parties (id, code, name, type, contact_person, phone, email, address, trn_no, credit_limit, current_balance, currency, is_active, account_map, coa_account_id)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+              ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                current_balance = EXCLUDED.current_balance,
+                coa_account_id = EXCLUDED.coa_account_id,
+                account_map = EXCLUDED.account_map
+            `, [
+              id, code, p.name, p.type || 'CLIENT', p.contactPerson || p.contact_person || '',
+              p.phone || '', p.email || '', p.address || '', p.trnNo || p.trn_no || '',
+              Number(p.creditLimit || p.credit_limit || 0), Number(p.currentBalance || p.current_balance || 0),
+              p.currency || 'AED', p.isActive !== false, JSON.stringify(accountMap), coaId
+            ]);
+
+            // 2. Auto-create COA sub-account
+            await client.query(`
+              INSERT INTO coa_accounts (id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, party_id, tier_level, parent_code)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 3, $11)
+              ON CONFLICT (code) DO UPDATE SET
+                name = EXCLUDED.name,
+                type = EXCLUDED.type,
+                sub_type = EXCLUDED.sub_type,
+                party_id = EXCLUDED.party_id,
+                parent_id = EXCLUDED.parent_id,
+                parent_code = EXCLUDED.parent_code
+            `, [
+              coaId, coaCode, coaName, coaType, subType,
+              p.currency || 'AED', Number(p.currentBalance || p.current_balance || 0),
+              p.isActive !== false, parentId, id, parentCode
+            ]);
+
+            await client.end();
+            return res.status(200).json({ success: true, id, code, coaAccountId: coaId });
+          }
+
+          const partiesRes = await client.query('SELECT * FROM parties ORDER BY name ASC');
+          await client.end();
+          return res.status(200).json(partiesRes.rows.map((r: any) => ({
+            id: r.id,
+            code: r.code,
+            name: r.name,
+            type: r.type,
+            contactPerson: r.contact_person,
+            phone: r.phone,
+            email: r.email,
+            address: r.address,
+            trnNo: r.trn_no,
+            creditLimit: Number(r.credit_limit || 0),
+            currentBalance: Number(r.current_balance || 0),
+            currency: r.currency || 'AED',
+            isActive: r.is_active !== false,
+            accountMap: r.account_map || {},
+            coaAccountId: r.coa_account_id,
+            createdAt: r.created_at
+          })));
+        } catch (e: any) {
+          console.warn('Error querying parties in serverless gateway:', e?.message);
         }
       }
       return res.status(200).json([]);

@@ -35,6 +35,7 @@ import { isTabAccessible, getAccessibleTabs } from './modules/auth/utils/permiss
 import { MarketingAutomationView } from './modules/marketing/components/MarketingAutomationView.tsx';
 import { LiveOBSOverlayView } from './modules/marketing/components/LiveOBSOverlayView.tsx';
 import { CompanyProfileService, SetupService, AuthService } from './services/index.ts';
+import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
 
 const VALID_TABS: ActiveTab[] = [
   'dashboard',
@@ -333,146 +334,147 @@ export default function App() {
     });
   };
 
-  // 1. If in dedicated streamer mobile host mode (/live-host/:boothId), render isolated mobile app
-  if (liveHostState.isHostMode) {
-    return (
-      <SyncProvider onGlobalRefresh={refreshGlobalData}>
-        <MobileLiveHostView
-          initialBoothId={liveHostState.boothId}
-          onExitToERP={() => {
-            window.history.pushState({}, '', '/');
-            setLiveHostState({ isHostMode: false, boothId: 'booth-01' });
-          }}
-        />
-      </SyncProvider>
-    );
-  }
+  const renderViewContent = () => {
+    // 1. If in dedicated streamer mobile host mode (/live-host/:boothId), render isolated mobile app
+    if (liveHostState.isHostMode) {
+      return (
+        <SyncProvider onGlobalRefresh={refreshGlobalData}>
+          <MobileLiveHostView
+            initialBoothId={liveHostState.boothId}
+            onExitToERP={() => {
+              window.history.pushState({}, '', '/');
+              setLiveHostState({ isHostMode: false, boothId: 'booth-01' });
+            }}
+          />
+        </SyncProvider>
+      );
+    }
 
-  // 2. STAFF DEDICATED MOBILE APP VIEW (APK SHELL)
-  if (currentView === 'staff-mobile') {
-    return (
-      <ErrorBoundary sectionName="Vintage Vibes Staff Mobile OS">
-        <StaffMobileAppView
-          companyProfile={companyProfile}
-          onExitToStore={() => {
-            localStorage.setItem('vintage_app_view_mode', 'storefront');
-            setCurrentView('storefront');
-          }}
-          onExitToDesktopERP={() => {
-            localStorage.setItem('vintage_app_view_mode', 'erp');
-            setCurrentView('erp');
-          }}
-        />
-      </ErrorBoundary>
-    );
-  }
-
-  // Standalone Full-Screen Pop-up POS Register Window
-  if (currentView === 'pos-standalone') {
-    return (
-      <SyncProvider onGlobalRefresh={refreshGlobalData}>
-        <ErrorBoundary sectionName="Counter Sale Standalone POS Register">
-          <div className="min-h-screen bg-slate-950 text-white flex flex-col p-2 sm:p-4">
-            {/* Minimal Top Cashier Bar */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 mb-2.5 flex items-center justify-between shadow-lg">
-              <div className="flex items-center gap-3">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></span>
-                <span className="text-xs sm:text-sm font-black tracking-widest text-amber-400 uppercase">
-                  VINTAGE VIBES • FULLSCREEN CASH REGISTER TERMINAL
-                </span>
-                <span className="hidden sm:inline-block text-[10px] bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded-full border border-emerald-500/30">
-                  ● POS HARDWARE CONNECTED
-                </span>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-slate-400 font-mono">
-                  Cashier: <strong className="text-white">{currentUser?.name || 'Counter Lead'}</strong>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => window.close()}
-                  className="px-3 py-1 bg-red-600/90 hover:bg-red-600 text-white rounded text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                >
-                  ✕ Close Window
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-auto">
-              <CounterSalePOSTerminal
-                companyProfile={companyProfile}
-                operatorName={currentUser?.name || 'Cashier Lead'}
-                onRefreshAll={refreshGlobalData}
-                onSaleCompleted={refreshGlobalData}
-              />
-            </div>
-          </div>
-        </ErrorBoundary>
-      </SyncProvider>
-    );
-  }
-
-  // Standalone OBS Studio Browser Source Live Stream Overlay (Transparent Canvas)
-  if (currentView === 'live-overlay' || window.location.pathname === '/live-overlay') {
-    return (
-      <ErrorBoundary sectionName="OBS Studio Broadcast Live Overlay">
-        <LiveOBSOverlayView />
-      </ErrorBoundary>
-    );
-  }
-
-  // 3. FIRST PAGE (DEFAULT HOME): Luxury E-Commerce Public Boutique Storefront
-  if (currentView === 'storefront') {
-    return (
-      <ErrorBoundary sectionName="Vintage Vibes Luxury Storefront">
-        <StorefrontView
-          companyProfile={companyProfile}
-          onOpenERPLogin={() => {
-            if (isAuthenticated) {
+    // 2. STAFF DEDICATED MOBILE APP VIEW (APK SHELL)
+    if (currentView === 'staff-mobile') {
+      return (
+        <ErrorBoundary sectionName="Vintage Vibes Staff Mobile OS">
+          <StaffMobileAppView
+            companyProfile={companyProfile}
+            onExitToStore={() => {
+              localStorage.setItem('vintage_app_view_mode', 'storefront');
+              setCurrentView('storefront');
+            }}
+            onExitToDesktopERP={() => {
               localStorage.setItem('vintage_app_view_mode', 'erp');
               setCurrentView('erp');
-            } else {
-              setCurrentView('login');
-            }
-          }}
-          onOpenStaffMobileApp={() => {
-            localStorage.setItem('vintage_app_view_mode', 'staff-mobile');
-            setCurrentView('staff-mobile');
-          }}
-          onInventoryMutated={refreshGlobalData}
-        />
-      </ErrorBoundary>
-    );
-  }
+            }}
+          />
+        </ErrorBoundary>
+      );
+    }
 
-  // 3. ERP Staff Login Screen
-  if (currentView === 'login' || !isAuthenticated) {
-    return (
-      <ErrorBoundary sectionName="Vintage Vibes Operator Sign-In">
-        <LoginScreen
-          onLoginSuccess={user => {
-            setCurrentUser(user);
-            setIsAuthenticated(true);
-            setSessionTimeoutMsg(null);
-            localStorage.setItem('vintage_app_view_mode', 'erp');
-            setCurrentView('erp');
-            if (!isTabAccessible(activeTab, user)) {
-              const allowed = getAccessibleTabs(user);
-              if (allowed.length > 0) {
-                setActiveTab(allowed[0]);
+    // Standalone Full-Screen Pop-up POS Register Window
+    if (currentView === 'pos-standalone') {
+      return (
+        <SyncProvider onGlobalRefresh={refreshGlobalData}>
+          <ErrorBoundary sectionName="Counter Sale Standalone POS Register">
+            <div className="min-h-screen bg-slate-950 text-white flex flex-col p-2 sm:p-4">
+              {/* Minimal Top Cashier Bar */}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 mb-2.5 flex items-center justify-between shadow-lg">
+                <div className="flex items-center gap-3">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></span>
+                  <span className="text-xs sm:text-sm font-black tracking-widest text-amber-400 uppercase">
+                    VINTAGE VIBES • FULLSCREEN CASH REGISTER TERMINAL
+                  </span>
+                  <span className="hidden sm:inline-block text-[10px] bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded-full border border-emerald-500/30">
+                    ● POS HARDWARE CONNECTED
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-400 font-mono">
+                    Cashier: <strong className="text-white">{currentUser?.name || 'Counter Lead'}</strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => window.close()}
+                    className="px-3 py-1 bg-red-600/90 hover:bg-red-600 text-white rounded text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                  >
+                    ✕ Close Window
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-auto">
+                <CounterSalePOSTerminal
+                  companyProfile={companyProfile}
+                  operatorName={currentUser?.name || 'Cashier Lead'}
+                  onRefreshAll={refreshGlobalData}
+                  onSaleCompleted={refreshGlobalData}
+                />
+              </div>
+            </div>
+          </ErrorBoundary>
+        </SyncProvider>
+      );
+    }
+
+    // Standalone OBS Studio Browser Source Live Stream Overlay (Transparent Canvas)
+    if (currentView === 'live-overlay' || window.location.pathname === '/live-overlay') {
+      return (
+        <ErrorBoundary sectionName="OBS Studio Broadcast Live Overlay">
+          <LiveOBSOverlayView />
+        </ErrorBoundary>
+      );
+    }
+
+    // 3. FIRST PAGE (DEFAULT HOME): Luxury E-Commerce Public Boutique Storefront
+    if (currentView === 'storefront') {
+      return (
+        <ErrorBoundary sectionName="Vintage Vibes Luxury Storefront">
+          <StorefrontView
+            companyProfile={companyProfile}
+            onOpenERPLogin={() => {
+              if (isAuthenticated) {
+                localStorage.setItem('vintage_app_view_mode', 'erp');
+                setCurrentView('erp');
+              } else {
+                setCurrentView('login');
               }
-            }
-          }}
-          allUsers={allUsers}
-          initialMessage={typeof sessionTimeoutMsg === 'string' ? sessionTimeoutMsg : null}
-          onBackToStorefront={() => setCurrentView('storefront')}
-        />
-      </ErrorBoundary>
-    );
-  }
+            }}
+            onOpenStaffMobileApp={() => {
+              localStorage.setItem('vintage_app_view_mode', 'staff-mobile');
+              setCurrentView('staff-mobile');
+            }}
+            onInventoryMutated={refreshGlobalData}
+          />
+        </ErrorBoundary>
+      );
+    }
 
-  return (
-    <SyncProvider onGlobalRefresh={refreshGlobalData}>
+    // 3. ERP Staff Login Screen
+    if (currentView === 'login' || !isAuthenticated) {
+      return (
+        <ErrorBoundary sectionName="Vintage Vibes Operator Sign-In">
+          <LoginScreen
+            onLoginSuccess={user => {
+              setCurrentUser(user);
+              setIsAuthenticated(true);
+              setSessionTimeoutMsg(null);
+              localStorage.setItem('vintage_app_view_mode', 'erp');
+              setCurrentView('erp');
+              if (!isTabAccessible(activeTab, user)) {
+                const allowed = getAccessibleTabs(user);
+                if (allowed.length > 0) {
+                  setActiveTab(allowed[0]);
+                }
+              }
+            }}
+            allUsers={allUsers}
+            initialMessage={typeof sessionTimeoutMsg === 'string' ? sessionTimeoutMsg : null}
+            onBackToStorefront={() => setCurrentView('storefront')}
+          />
+        </ErrorBoundary>
+      );
+    }
+
+    return (
+      <SyncProvider onGlobalRefresh={refreshGlobalData}>
       <div className="min-h-screen flex flex-col bg-[#FAF4E6] text-slate-800 font-sans antialiased selection:bg-amber-200 selection:text-amber-950">
         
         {/* 3D Brand Header with Animated Logo & Live Multi-User Sync Status */}
@@ -647,5 +649,13 @@ export default function App() {
         <GoldenCursorDust />
       </div>
     </SyncProvider>
+    );
+  };
+
+  return (
+    <>
+      {renderViewContent()}
+      {currentView !== 'live-overlay' && <IOSInstallBanner />}
+    </>
   );
 }

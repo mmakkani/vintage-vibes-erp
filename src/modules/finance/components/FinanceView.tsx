@@ -51,9 +51,14 @@ const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, onViewLe
   const name = acc.name || '';
   const type = (acc.type || acc.classification || 'ASSET').toString().toUpperCase();
   const currentBalance = typeof acc.current_balance === 'number' ? acc.current_balance : (Number(acc.currentBalance) || 0);
-  const tierLevel = acc.tierLevel || acc.tier_level || (code.includes('-') ? (code.split('-').length > 2 ? 3 : 2) : 1);
+  const tierLevel = acc.tierLevel || acc.tier_level || (code.includes('-') ? (code.split('-').length > 2 || (!code.endsWith('-00') && (code.startsWith('2110-') || code.startsWith('1130-') || code.startsWith('2120-'))) ? 3 : 2) : 1);
   const isDebit = type === 'ASSET' || type === 'EXPENSE';
   const isActive = acc.is_active !== false && acc.isActive !== false;
+  const isPartyAccount = Boolean(
+    acc.party_id ||
+    acc.partyId ||
+    (!code.endsWith('-00') && (code.startsWith('2110-') || code.startsWith('1130-') || code.startsWith('2120-')))
+  );
 
   return (
     <tr className="hover:bg-amber-50/30 transition-colors">
@@ -64,9 +69,14 @@ const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, onViewLe
         </span>
       </td>
       <td className="px-3.5 py-2.5 font-sans font-medium text-slate-900">
-        <span style={{ paddingLeft: `${(tierLevel - 1) * 16}px` }}>
+        <span style={{ paddingLeft: `${(tierLevel - 1) * 16}px` }} className="inline-flex items-center gap-1.5 flex-wrap">
           {tierLevel > 1 && '↳ '}
-          {name}
+          <span>{name}</span>
+          {isPartyAccount && (
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
+              🏷️ {type === 'LIABILITY' ? 'Auto-Linked Supplier Khata' : 'Auto-Linked Client Khata'}
+            </span>
+          )}
         </span>
       </td>
       <td className="px-3.5 py-2.5">
@@ -456,10 +466,15 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     const tier1 = matches.filter(a => (a.tierLevel === 1 || a.tier_level === 1 || !(a.code || '').includes('-')));
     for (const t1 of tier1) {
       sorted.push(t1);
-      const tier2 = matches.filter(a => (a.tierLevel === 2 || a.tier_level === 2) && (a.parentCode === t1.code || a.parent_id === t1.id || (a.type || a.classification) === (t1.type || t1.classification)));
+      const tier2 = matches.filter(a => (a.tierLevel === 2 || a.tier_level === 2 || (a.code.endsWith('-00') && a.code !== t1.code)) && (a.parentCode === t1.code || a.parent_id === t1.id || (a.type || a.classification) === (t1.type || t1.classification)));
       for (const t2 of tier2) {
         if (!sorted.includes(t2)) sorted.push(t2);
-        const tier3 = matches.filter(a => (a.tierLevel === 3 || a.tier_level === 3) && (a.parentCode === t2.code || a.parentCode === t1.code || a.parent_id === t2.id || (a.type || a.classification) === (t1.type || t1.classification)));
+        const prefix = t2.code.split('-')[0];
+        const tier3 = matches.filter(a => 
+          a.id !== t2.id &&
+          (a.tierLevel === 3 || a.tier_level === 3 || Boolean(a.party_id || a.partyId) || !a.code.endsWith('-00')) && 
+          (a.parentCode === t2.code || a.parent_id === t2.id || a.code.startsWith(`${prefix}-`))
+        );
         for (const t3 of tier3) {
           if (!sorted.includes(t3)) sorted.push(t3);
         }
