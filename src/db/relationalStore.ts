@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { DocumentStatus, ModuleType, ActionType, AccountClassification } from '../types/common.types.ts';
 import { User, UserPermission } from '../modules/auth/auth.types.ts';
 import { AuthEngine } from '../modules/auth/auth.engine.ts';
@@ -60,7 +61,9 @@ class RelationalStore {
   private auditLogs: AuditLogEntry[] = [];
   private liveMulticastConfig: LiveStreamMulticastConfig;
   private liveBoothConfigs: LiveBoothStreamConfig[] = [];
-  private dataFilePath = path.join(process.cwd(), '.data', 'erp_database.json');
+  private dataFilePath = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
+    ? path.join(os.tmpdir(), 'erp_database.json')
+    : path.join(process.cwd(), '.data', 'erp_database.json');
 
   constructor() {
     this.companyProfile = {

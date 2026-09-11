@@ -121,12 +121,19 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: currentUserId, userName: currentUserName })
       });
-      const data = await res.json().catch(() => null);
-      if (res.ok && data) {
-        setSession(data);
-      } else {
-        setVerificationError(data?.error || `Failed to generate QR (HTTP ${res.status})`);
+      let errorMsg = '';
+      try {
+        const data = await res.json();
+        if (res.ok && data) {
+          setSession(data);
+          return;
+        }
+        errorMsg = data?.error || `Failed to generate QR (HTTP ${res.status})`;
+      } catch {
+        const text = await res.text().catch(() => '');
+        errorMsg = text ? `Server error (HTTP ${res.status}): ${text.slice(0, 150)}` : `Failed to generate QR (HTTP ${res.status})`;
       }
+      setVerificationError(errorMsg);
     } catch (err: any) {
       setVerificationError(`Network error while generating QR: ${err?.message || 'Check connection'}`);
     } finally {
@@ -158,33 +165,39 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
         })
       });
 
-      const data = await res.json().catch(() => null);
+      let errorMsg = '';
+      try {
+        const data = await res.json();
+        if (res.ok && data) {
+          setSession(data);
+          setHasRequestedCode(true);
+          if (data.pairingCode) {
+            setPairingCodeInput(data.pairingCode);
+          }
+          setVerificationSuccess('Authentic 8-digit verification code generated! Confirm below to connect.');
 
-      if (res.ok && data) {
-        setSession(data);
-        setHasRequestedCode(true);
-        if (data.pairingCode) {
-          setPairingCodeInput(data.pairingCode);
+          // Quick poll to catch background socket response if worker is active
+          let tries = 0;
+          const quickPoll = setInterval(async () => {
+            tries++;
+            try {
+              const r = await fetch(`/api/marketing/whatsapp/session?userId=${encodeURIComponent(currentUserId)}&userName=${encodeURIComponent(currentUserName)}`);
+              if (r.ok) {
+                const d = await r.json();
+                setSession(d);
+                if (d.pairingCode) setPairingCodeInput(d.pairingCode);
+                if (d.isConnected || tries > 8) clearInterval(quickPoll);
+              }
+            } catch {}
+          }, 1000);
+          return;
         }
-        setVerificationSuccess('Authentic 8-digit verification code generated! Confirm below to connect.');
-
-        // Quick poll to catch background socket response if worker is active
-        let tries = 0;
-        const quickPoll = setInterval(async () => {
-          tries++;
-          try {
-            const r = await fetch(`/api/marketing/whatsapp/session?userId=${encodeURIComponent(currentUserId)}&userName=${encodeURIComponent(currentUserName)}`);
-            if (r.ok) {
-              const d = await r.json();
-              setSession(d);
-              if (d.pairingCode) setPairingCodeInput(d.pairingCode);
-              if (d.isConnected || tries > 8) clearInterval(quickPoll);
-            }
-          } catch {}
-        }, 1000);
-      } else {
-        setVerificationError(data?.error || `Request failed with HTTP status ${res.status}.`);
+        errorMsg = data?.error || `Request failed with HTTP status ${res.status}.`;
+      } catch {
+        const text = await res.text().catch(() => '');
+        errorMsg = text ? `Server error (HTTP ${res.status}): ${text.slice(0, 150)}` : `Request failed with HTTP status ${res.status}.`;
       }
+      setVerificationError(errorMsg);
     } catch (err: any) {
       setVerificationError(`Connection diagnostic: ${err?.message || 'Server connection timed out'}. Tip: You can switch to Tab 3 (Meta Cloud API) for 100% serverless delivery.`);
     } finally {

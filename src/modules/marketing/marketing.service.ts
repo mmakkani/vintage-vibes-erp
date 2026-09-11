@@ -26,7 +26,9 @@ import {
 import { WhatsAppGatewayConfig } from '../setup/setup.types.ts';
 
 class MarketingService {
-  private dataFilePath = path.join(process.cwd(), '.data', 'marketing_config.json');
+  private dataFilePath = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
+    ? path.join(os.tmpdir(), 'marketing_config.json')
+    : path.join(process.cwd(), '.data', 'marketing_config.json');
 
   // Configuration
   private keywordRules: AutoClaimKeywordRule[] = [

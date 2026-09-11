@@ -2,6 +2,7 @@
 // Decoupled from core ERP database operations
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { eventHub } from './events.ts';
 
 export interface RTMPDestination {
@@ -79,7 +80,9 @@ export interface BoothSession {
 
 class StreamController {
   private booths: Map<string, BoothSession> = new Map();
-  private dataFilePath = path.join(process.cwd(), '.data', 'booth_settings.json');
+  private dataFilePath = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
+    ? path.join(os.tmpdir(), 'booth_settings.json')
+    : path.join(process.cwd(), '.data', 'booth_settings.json');
 
   constructor() {
     this.initDefaultBooths();

@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { EventEmitter } from 'events';
 import pino from 'pino';
 import QRCode from 'qrcode';
@@ -13,6 +14,7 @@ import makeWASocket, {
 
 // Self-healing patch to ensure WhatsApp Channel newsletter media upload utilizes /m1/ CDN routing
 function ensureBaileysNewsletterPatched() {
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) return;
   try {
     const baileysDir = path.join(process.cwd(), 'node_modules', '@whiskeysockets', 'baileys');
     if (!fs.existsSync(baileysDir)) return;
@@ -95,9 +97,14 @@ class BaileysManager extends EventEmitter {
   constructor() {
     super();
     this.setMaxListeners(50);
-    this.authBaseDir = path.join(process.cwd(), 'baileys_auth');
-    if (!fs.existsSync(this.authBaseDir)) {
-      fs.mkdirSync(this.authBaseDir, { recursive: true });
+    const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+    this.authBaseDir = isServerless ? path.join(os.tmpdir(), 'baileys_auth') : path.join(process.cwd(), 'baileys_auth');
+    try {
+      if (!fs.existsSync(this.authBaseDir)) {
+        fs.mkdirSync(this.authBaseDir, { recursive: true });
+      }
+    } catch (e: any) {
+      console.warn('[Baileys] authBaseDir mkdir notice:', e?.message);
     }
 
     // Auto-connect socket on startup if auth credentials exist on disk
@@ -131,8 +138,12 @@ class BaileysManager extends EventEmitter {
     }
 
     const sessionDir = path.join(this.authBaseDir, `session_${userId}`);
-    if (!fs.existsSync(sessionDir)) {
-      fs.mkdirSync(sessionDir, { recursive: true });
+    try {
+      if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir, { recursive: true });
+      }
+    } catch (e: any) {
+      console.warn('[Baileys] sessionDir mkdir notice:', e?.message);
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
