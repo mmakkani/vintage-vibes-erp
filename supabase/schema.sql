@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS coa_accounts (
     current_balance NUMERIC(16, 2) DEFAULT 0.00,
     is_active BOOLEAN DEFAULT TRUE,
     parent_id VARCHAR(64),
+    parent_code VARCHAR(32),
+    party_id VARCHAR(64),
+    tier_level INTEGER DEFAULT 3,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -62,6 +65,7 @@ CREATE TABLE IF NOT EXISTS parties (
     currency VARCHAR(8) DEFAULT 'AED',
     is_active BOOLEAN DEFAULT TRUE,
     account_map JSONB DEFAULT '{}'::jsonb,
+    coa_account_id VARCHAR(64) REFERENCES coa_accounts(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -200,6 +204,8 @@ CREATE TABLE IF NOT EXISTS ledgers (
     account_id VARCHAR(64) REFERENCES coa_accounts(id) ON DELETE CASCADE,
     account_code VARCHAR(32),
     account_name VARCHAR(128),
+    party_id VARCHAR(64) REFERENCES parties(id) ON DELETE SET NULL,
+    party_name VARCHAR(128),
     date DATE NOT NULL DEFAULT CURRENT_DATE,
     debit NUMERIC(16, 2) DEFAULT 0.00,
     credit NUMERIC(16, 2) DEFAULT 0.00,
