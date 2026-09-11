@@ -1067,6 +1067,51 @@ export default async function handler(req: any, res: any) {
       });
     }
 
+    // Server-Sent Events (SSE) safe stub to avoid text/html MIME type errors
+    if (pathname.includes('/events/subscribe')) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      return res.status(200).send(': connected\n\n');
+    }
+
+    // Purchase Invoices
+    if (pathname.includes('/purchase/invoices')) {
+      if (method === 'GET') {
+        const { data, error } = await supabaseAdmin
+          .from('purchase_invoices')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (error) {
+          return res.status(500).json({ success: false, error: error.message });
+        }
+        return res.status(200).json(data || []);
+      }
+      if (method === 'POST') {
+        const invPayload = body;
+        const { data, error } = await supabaseAdmin
+          .from('purchase_invoices')
+          .insert([invPayload])
+          .select();
+        if (error) {
+          return res.status(500).json({ success: false, error: error.message, code: error.code, details: error.details });
+        }
+        return res.status(200).json({ success: true, invoice: data?.[0] || invPayload });
+      }
+      if (method === 'PUT') {
+        const invId = pathname.split('/').pop();
+        const { data, error } = await supabaseAdmin
+          .from('purchase_invoices')
+          .update(body)
+          .eq('id', invId)
+          .select();
+        if (error) {
+          return res.status(500).json({ success: false, error: error.message, code: error.code, details: error.details });
+        }
+        return res.status(200).json({ success: true, invoice: data?.[0] || body });
+      }
+    }
+
     // Lists for dropdowns
     if (pathname.includes('/purchase/pieces') || pathname.includes('/purchase/gate-passes') || pathname.includes('/parties')) {
       return res.status(200).json([]);

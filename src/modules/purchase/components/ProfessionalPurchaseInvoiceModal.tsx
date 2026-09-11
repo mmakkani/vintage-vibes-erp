@@ -569,23 +569,116 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
     };
 
     try {
-      const url = editingInvoice ? `/api/purchase/invoices/${editingInvoice.id}` : '/api/purchase/invoices';
-      const method = editingInvoice ? 'PUT' : 'POST';
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
+      let invoicePayload: any = {
+        invoiceNo,
+        supplierId,
+        date: invoiceDate,
+        status: editingInvoice ? (editingInvoice.status || submitStatus) : submitStatus,
+        currency,
+        exchangeRate,
+        subTotal: itemsSubTotal,
+        vatAmount,
+        totalAmount: grandTotal,
+        notes: notes ? `${notes} | Terms: ${paymentTerms.replace(/_/g, ' ')}` : `Terms: ${paymentTerms.replace(/_/g, ' ')}`
+      };
 
-      if (!res.ok || (!data.id && !data.invoice)) {
-        throw new Error(data.error || 'Failed to save purchase invoice');
+      let { data, error } = await (editingInvoice
+        ? supabase.from('purchase_invoices').update(invoicePayload).eq('id', editingInvoice.id).select()
+        : supabase.from('purchase_invoices').insert([invoicePayload]).select()
+      );
+
+      // If schema uses snake_case column names instead of camelCase, auto-retry with snake_case
+      if (error && (error.message?.includes('column') || error.code === 'PGRST204')) {
+        const snakePayload: any = {
+          invoice_no: invoiceNo,
+          supplier_id: supplierId,
+          invoice_date: invoiceDate,
+          status: editingInvoice ? (editingInvoice.status || submitStatus) : submitStatus,
+          currency,
+          exchange_rate: exchangeRate,
+          subtotal: itemsSubTotal,
+          tax_amount: vatAmount,
+          total_amount: grandTotal,
+          total_weight_kg: totalGrossWeightKg,
+          notes: notes ? `${notes} | Terms: ${paymentTerms.replace(/_/g, ' ')}` : `Terms: ${paymentTerms.replace(/_/g, ' ')}`
+        };
+        const retryResult = await (editingInvoice
+          ? supabase.from('purchase_invoices').update(snakePayload).eq('id', editingInvoice.id).select()
+          : supabase.from('purchase_invoices').insert([snakePayload]).select()
+        );
+        if (!retryResult.error) {
+          data = retryResult.data;
+          error = null;
+        } else {
+          error = retryResult.error;
+        }
       }
 
+      if (error) {
+        console.error("SUPABASE ERROR:", error);
+        alert("DATABASE REJECTION:\nCode: " + error.code + "\nMessage: " + error.message + "\nDetails: " + (error.details || error.hint || 'None'));
+        setErrorMsg(`Database Rejection: ${error.message} (${error.code})`);
+        setIsSubmitting(false);
+        return;
+      }
+
+      const savedRow = data?.[0];
+      const savedInvoice: PurchaseInvoice = {
+        id: savedRow?.id || editingInvoice?.id || `pi-${Date.now()}`,
+        invoiceNo: savedRow?.invoiceNo || savedRow?.invoice_no || invoiceNo,
+        supplierId: savedRow?.supplierId || savedRow?.supplier_id || supplierId,
+        supplierName: selectedSupplier?.name || '',
+        supplierTrn: selectedSupplier?.trnNo || '',
+        date: invoiceDate,
+        dueDate,
+        status: editingInvoice ? (editingInvoice.status || submitStatus) : submitStatus,
+        currency,
+        exchangeRate,
+        subTotal: itemsSubTotal,
+        applyVat,
+        freightAmount,
+        customsDutyAmount,
+        terminalHandlingAmount,
+        vatRatePercent: applyVat ? vatRatePercent : 0,
+        vatAmount,
+        totalAmount: grandTotal,
+        grandTotalAed,
+        notes: notes ? `${notes} | Terms: ${paymentTerms.replace(/_/g, ' ')}` : `Terms: ${paymentTerms.replace(/_/g, ' ')}`,
+        containerNo,
+        blAirwayBillNo,
+        portOfEntry,
+        vesselName,
+        totalBalesCount,
+        totalGrossWeightKg,
+        items: lines.map(l => ({
+          id: l.id,
+          itemId: l.itemId,
+          itemCode: l.itemCode,
+          itemName: l.itemName,
+          packagingUom: l.packagingUom,
+          packageCount: Number(l.packageCount),
+          weightUom: 'KG',
+          totalWeight: Number(l.totalWeight),
+          ratePerWeight: Number(l.ratePerWeight),
+          lineTotal: Number(l.lineTotal)
+        })) as PurchaseInvoiceItem[]
+      };
+
+      // Non-blocking sync to server API route if available
+      try {
+        fetch(editingInvoice ? `/api/purchase/invoices/${editingInvoice.id}` : '/api/purchase/invoices', {
+          method: editingInvoice ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(savedInvoice)
+        }).catch(() => {});
+      } catch (_) {}
+
       clearDraft();
-      onSuccess(data.invoice || data, autoConvertToInward);
+      onSuccess(savedInvoice, autoConvertToInward);
       onClose();
     } catch (err: any) {
+      console.error("Purchase invoice save unexpected error:", err);
+      alert("UNEXPECTED ERROR:\n" + (err?.message || err));
       setErrorMsg(err.message || 'Error saving purchase invoice');
     } finally {
       setIsSubmitting(false);

@@ -19,9 +19,8 @@ function resolveEnv(envKey: string, viteKey: string, fallback: string = ''): str
 const supabaseUrl = resolveEnv('SUPABASE_URL', 'VITE_SUPABASE_URL', 'https://wjjelqsrivnyiybarfmo.supabase.co');
 const supabaseKey = resolveEnv('SUPABASE_SERVICE_ROLE_KEY', 'VITE_SUPABASE_ANON_KEY', '') || resolveEnv('SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY', '');
 
-export const supabase: SupabaseClient | null = (supabaseUrl && supabaseKey) 
-  ? createClient(supabaseUrl, supabaseKey) 
-  : null;
+import { supabase as singletonClient } from '../supabaseClient.ts';
+export const supabase: SupabaseClient | null = singletonClient;
 
 export const SUPABASE_MEDIA_BUCKET = resolveEnv('SUPABASE_STORAGE_BUCKET', 'VITE_SUPABASE_STORAGE_BUCKET', 'vintage-vibes-media');
 

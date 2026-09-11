@@ -16,6 +16,12 @@ function resolveEnv(envKey: string, viteKey: string, fallback: string = ''): str
   return fallback;
 }
 
+declare global {
+  interface Window {
+    __supabaseInstance?: SupabaseClient;
+  }
+}
+
 const supabaseUrl = resolveEnv(
   'SUPABASE_URL',
   'VITE_SUPABASE_URL',
@@ -32,9 +38,20 @@ const supabaseKey = resolveEnv(
   ''
 );
 
-export const supabase: SupabaseClient = createClient(
-  supabaseUrl,
-  supabaseKey || 'anon-key-placeholder'
-);
+export const supabase: SupabaseClient = (() => {
+  if (typeof window !== 'undefined') {
+    if (!window.__supabaseInstance) {
+      window.__supabaseInstance = createClient(supabaseUrl, supabaseKey || 'anon-key-placeholder');
+    }
+    return window.__supabaseInstance;
+  }
+  // SSR / Node environment fallback
+  // @ts-ignore
+  const g = globalThis as any;
+  if (!g.__supabaseInstance) {
+    g.__supabaseInstance = createClient(supabaseUrl, supabaseKey || 'anon-key-placeholder');
+  }
+  return g.__supabaseInstance;
+})();
 
 export default supabase;

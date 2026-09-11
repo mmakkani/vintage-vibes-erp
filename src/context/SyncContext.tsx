@@ -91,65 +91,52 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     triggerGlobalSync(module);
   }, [triggerGlobalSync]);
 
-  // Setup Server-Sent Events (SSE) stream for instant multi-user synchronization
+  // Clean multi-tab synchronization via BroadcastChannel (avoids broken EventSource MIME type 'text/html' spam)
   useEffect(() => {
     let unmounted = false;
 
-    const connectSSE = () => {
-      if (unmounted) return;
-
+    // Safely close any lingering EventSource instances
+    if (sseRef.current) {
       try {
-        if (sseRef.current) {
-          sseRef.current.close();
-        }
+        sseRef.current.close();
+      } catch {}
+      sseRef.current = null;
+    }
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
 
-        const source = new EventSource('/api/events/subscribe');
-        sseRef.current = source;
-
-        source.onopen = () => {
+    let broadcastChannel: BroadcastChannel | null = null;
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        broadcastChannel = new BroadcastChannel('vintage_vibes_erp_sync');
+        broadcastChannel.onmessage = (event) => {
           if (unmounted) return;
-          setIsLiveConnected(true);
-        };
-
-        source.onmessage = (event) => {
-          if (unmounted) return;
-          try {
-            const data: SyncEventPayload = JSON.parse(event.data);
-            if (data.type === 'CONNECTED') {
-              setIsLiveConnected(true);
-              if (data.activeClientsCount !== undefined) {
-                setActiveClientsCount(data.activeClientsCount);
-              }
-            } else if (data.type === 'ENTITY_MUTATED' || data.type === 'SYNC_TRIGGER') {
-              // Immediately trigger local state synchronization across all modules
-              triggerGlobalSync(data.module);
-            }
-          } catch (e) {
-            // Ignore heartbeat pings or unformatted comments
+          const data = event.data;
+          if (data && (data.type === 'ENTITY_MUTATED' || data.type === 'SYNC_TRIGGER')) {
+            triggerGlobalSync(data.module);
           }
         };
+        setIsLiveConnected(true);
+      }
+    } catch {
+      // Fallback silently if BroadcastChannel restricted
+    }
 
-        source.onerror = () => {
-          if (unmounted) return;
-          setIsLiveConnected(false);
-          source.close();
-          // Auto-reconnect with 4s backoff
-          if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-          reconnectTimeoutRef.current = setTimeout(connectSSE, 4000);
-        };
-      } catch (err) {
-        setIsLiveConnected(false);
-        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = setTimeout(connectSSE, 5000);
+    // Inter-tab sync fallback via localStorage storage events
+    const handleStorage = (e: StorageEvent) => {
+      if (unmounted) return;
+      if (e.key === 'vintage_sync_ping') {
+        triggerGlobalSync();
       }
     };
+    window.addEventListener('storage', handleStorage);
 
-    connectSSE();
-
-    // Fallback polling every 20 seconds to guarantee consistency across dormant tabs
+    // Fallback polling every 30 seconds to guarantee consistency across dormant tabs
     const fallbackInterval = setInterval(() => {
       triggerGlobalSync();
-    }, 20000);
+    }, 30000);
 
     // Sync on tab visibility focus
     const handleVisibilityChange = () => {
@@ -161,9 +148,19 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
 
     return () => {
       unmounted = true;
-      if (sseRef.current) sseRef.current.close();
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (broadcastChannel) {
+        try { broadcastChannel.close(); } catch {}
+      }
+      if (sseRef.current) {
+        try { sseRef.current.close(); } catch {}
+        sseRef.current = null;
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
       clearInterval(fallbackInterval);
+      window.removeEventListener('storage', handleStorage);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [triggerGlobalSync]);
