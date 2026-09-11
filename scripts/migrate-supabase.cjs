@@ -4,12 +4,24 @@ const path = require('path');
 require('dotenv').config();
 
 async function runMigration() {
-  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
   if (!dbUrl || dbUrl.includes('your_') || dbUrl.includes('[یہاں') || dbUrl.includes('placeholder')) {
     console.log('[Supabase Migration] No live connection string configured yet.');
     console.log('[Supabase Migration] Set DATABASE_URL in .env to execute live cloud migrations automatically.');
     return;
   }
+
+  // Auto-clean common password format issues (brackets, unescaped @)
+  try {
+    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+    if (match) {
+      let [_, user, rawPwd, host, port, rest] = match;
+      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) {
+        rawPwd = rawPwd.slice(1, -1);
+      }
+      dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+    }
+  } catch (e) {}
 
   console.log('[Supabase Migration] Connecting to live Supabase PostgreSQL database...');
   const client = new Client({
