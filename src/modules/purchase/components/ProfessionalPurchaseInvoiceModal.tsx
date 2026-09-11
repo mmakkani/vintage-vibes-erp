@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { supabase } from '../../../supabaseClient.ts';
 import { Party } from '../../parties/parties.types.ts';
 import { ItemMaster } from '../../setup/setup.types.ts';
 import { PurchaseInvoice, PurchaseInvoiceItem } from '../purchase.types.ts';
@@ -57,6 +58,75 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
   onSuccess
 }) => {
   const suppliers = parties.filter(p => p.type === 'SUPPLIER');
+
+  // Dynamic Bale Presets fetched from public.bale_presets (Factory Settings Master Catalog)
+  const [balePresets, setBalePresets] = useState<any[]>([]);
+
+  useEffect(() => {
+    const loadBalePresets = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('bale_presets')
+          .select('*')
+          .order('name', { ascending: true });
+        if (!error && data) {
+          setBalePresets(data);
+        }
+      } catch (err) {
+        console.error('Error loading bale presets in ProfessionalPurchaseInvoiceModal:', err);
+      }
+    };
+    if (isOpen) {
+      loadBalePresets();
+    }
+  }, [isOpen]);
+
+  // Combined master catalog: Bale Presets (priority) + Item Master
+  const allAvailableItems = useMemo(() => {
+    const list: Array<{
+      id: string;
+      code: string;
+      name: string;
+      category?: string;
+      uom?: PackagingUOM;
+      stdWeight?: number;
+      baseRate?: number;
+    }> = [];
+
+    // 1. First priority: Presets registered in Factory Settings (`bale_presets`)
+    if (Array.isArray(balePresets)) {
+      balePresets.forEach(p => {
+        list.push({
+          id: p.id || p.item_code,
+          code: p.item_code || p.code || 'BALE-PRESET',
+          name: p.name,
+          category: p.category,
+          uom: (p.uom as PackagingUOM) || 'BALES',
+          stdWeight: Number(p.std_weight) || 45,
+          baseRate: Number(p.base_rate) || 0
+        });
+      });
+    }
+
+    // 2. Second priority: Items from Item Master (`item_masters`)
+    if (Array.isArray(items)) {
+      items.forEach(it => {
+        if (!list.some(existing => existing.id === it.id || existing.code === it.code)) {
+          list.push({
+            id: it.id,
+            code: it.code || 'ITM',
+            name: it.name,
+            category: it.category,
+            uom: (it.uom as PackagingUOM) || 'BALES',
+            stdWeight: Number(it.weightKg) || 45,
+            baseRate: Number(it.basePrice) || 0
+          });
+        }
+      });
+    }
+
+    return list;
+  }, [balePresets, items]);
 
   // Scanner modal state
   const [showScannerModal, setShowScannerModal] = useState(false);
@@ -182,22 +252,53 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
 
   // Clean empty initial line item ready for user input
   const [lines, setLines] = useState<InvoiceLineDraft[]>(() => {
-    const firstItem = items[0];
+    const firstItem = allAvailableItems[0] || items[0];
     return [
       {
         id: 'line-1',
         itemId: firstItem?.id || '',
         itemCode: firstItem?.code || '',
         itemName: firstItem?.name || '',
-        packagingUom: 'BALES',
+        packagingUom: firstItem?.uom || 'BALES',
         packageCount: 1,
-        totalWeight: 0,
+        totalWeight: firstItem?.stdWeight || 0,
         rateType: 'PER_KG',
-        ratePerWeight: 0,
-        lineTotal: 0
+        ratePerWeight: firstItem?.baseRate || 0,
+        lineTotal: Number(((firstItem?.stdWeight || 0) * (firstItem?.baseRate || 0)).toFixed(2))
       }
     ];
   });
+
+  // Automatically populate initial line when bale presets load
+  useEffect(() => {
+    if (allAvailableItems.length > 0 && lines.length > 0) {
+      setLines(prev => {
+        let hasChanges = false;
+        const updated = prev.map(l => {
+          if (!l.itemId || !allAvailableItems.some(it => it.id === l.itemId)) {
+            hasChanges = true;
+            const match = allAvailableItems.find(it => it.code === l.itemCode || it.name === l.itemName) || allAvailableItems[0];
+            const stdW = match.stdWeight || 45;
+            const count = Number(l.packageCount) || 1;
+            const rate = l.ratePerWeight || match.baseRate || 0;
+            const weight = l.totalWeight || (count * stdW);
+            return {
+              ...l,
+              itemId: match.id,
+              itemCode: match.code,
+              itemName: match.name,
+              packagingUom: match.uom || l.packagingUom || 'BALES',
+              totalWeight: weight,
+              ratePerWeight: rate,
+              lineTotal: l.lineTotal || Number((weight * rate).toFixed(2))
+            };
+          }
+          return l;
+        });
+        return hasChanges ? updated : prev;
+      });
+    }
+  }, [allAvailableItems]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -293,10 +394,18 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       const line = { ...updated[index], [field]: value };
 
       if (field === 'itemId') {
-        const matchedItem = items.find(i => i.id === value);
+        const matchedItem = allAvailableItems.find(i => i.id === value || i.code === value);
         if (matchedItem) {
+          line.itemId = matchedItem.id;
           line.itemCode = matchedItem.code;
           line.itemName = matchedItem.name;
+          if (matchedItem.uom) line.packagingUom = matchedItem.uom;
+          const stdW = matchedItem.stdWeight || 45;
+          const count = Number(line.packageCount) || 1;
+          line.totalWeight = count * stdW;
+          if (matchedItem.baseRate !== undefined) {
+            line.ratePerWeight = matchedItem.baseRate;
+          }
         }
       }
 
@@ -317,24 +426,30 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
   };
 
   const handleAddLine = () => {
-    const defaultItem = items[lines.length % (items.length || 1)] || {
+    const defaultItem = allAvailableItems[lines.length % (allAvailableItems.length || 1)] || {
       id: `itm-${Date.now()}`,
-      code: 'ITM-CUSTOM',
-      name: 'Sorted Vintage Apparel Bales'
+      code: 'BALE-CUSTOM',
+      name: 'Sorted Vintage Apparel Bales',
+      uom: 'BALES' as PackagingUOM,
+      stdWeight: 45,
+      baseRate: 0
     };
+    const count = 1;
+    const stdW = defaultItem.stdWeight || 45;
+    const rate = defaultItem.baseRate || 0;
     const newLine: InvoiceLineDraft = {
-      id: `line-${Date.now()}`,
+      id: `line-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       itemId: defaultItem.id,
       itemCode: defaultItem.code,
       itemName: defaultItem.name,
-      packagingUom: 'BALES',
-      packageCount: 1,
-      totalWeight: 0,
+      packagingUom: defaultItem.uom || 'BALES',
+      packageCount: count,
+      totalWeight: count * stdW,
       rateType: 'PER_KG',
-      ratePerWeight: 0,
-      lineTotal: 0
+      ratePerWeight: rate,
+      lineTotal: Number((count * stdW * rate).toFixed(2))
     };
-    setLines([...lines, newLine]);
+    setLines(prev => [...prev, newLine]);
   };
 
   const handleRemoveLine = (index: number) => {
@@ -722,13 +837,17 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
                           <select
                             value={line.itemId}
                             onChange={e => handleLineChange(idx, 'itemId', e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs text-slate-900 font-medium"
+                            className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                           >
-                            {items.map(it => (
-                              <option key={it.id} value={it.id}>
-                                {it.name} ({it.code})
-                              </option>
-                            ))}
+                            {allAvailableItems.length === 0 ? (
+                              <option value="">-- No Catalog Items / Presets Found --</option>
+                            ) : (
+                              allAvailableItems.map(it => (
+                                <option key={it.id} value={it.id}>
+                                  {it.name} ({it.code}){it.category ? ` • [${it.category}]` : ''}
+                                </option>
+                              ))
+                            )}
                           </select>
                         </td>
                         <td className="px-3 py-2">

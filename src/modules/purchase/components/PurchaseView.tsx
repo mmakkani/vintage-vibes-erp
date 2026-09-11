@@ -126,7 +126,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
   const fetchPurchaseData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [balesRes, invRes, piecesRes, partiesRes, itemsRes, brandsRes, labelsRes, shopsRes, catRes, sizeRes] = await Promise.all([
+      const [balesRes, invRes, piecesRes, partiesRes, itemsRes, brandsRes, labelsRes, shopsRes, catRes, sizeRes, presetsRes] = await Promise.all([
         PurchaseService.getInwardGatePasses().catch(() => []),
         PurchaseService.getPurchaseInvoices().catch(() => []),
         PurchaseService.getInventoryPieces().catch(() => []),
@@ -136,7 +136,8 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         SetupService.getLabelGrades().catch(() => []),
         SetupService.getShops().catch(() => []),
         SetupService.getCategories().catch(() => []),
-        SetupService.getSizes().catch(() => [])
+        SetupService.getSizes().catch(() => []),
+        PurchaseService.getBalePresets().catch(() => [])
       ]);
 
       let hasLiveResponse = false;
@@ -161,9 +162,15 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         saveCached(CACHE_KEYS.PARTIES, partiesRes);
         hasLiveResponse = true;
       }
-      if (Array.isArray(itemsRes)) {
-        setItems(itemsRes);
-        saveCached(CACHE_KEYS.ITEMS, itemsRes);
+      if (Array.isArray(presetsRes) || Array.isArray(itemsRes)) {
+        const presetsList = Array.isArray(presetsRes) ? presetsRes : [];
+        const itemsList = Array.isArray(itemsRes) ? itemsRes : [];
+        const mergedItems = [
+          ...presetsList,
+          ...itemsList.filter((it: any) => !presetsList.some((p: any) => p.id === it.id || p.code === it.code || (p.name && it.name && p.name.toLowerCase() === it.name.toLowerCase())))
+        ];
+        setItems(mergedItems);
+        saveCached(CACHE_KEYS.ITEMS, mergedItems);
         hasLiveResponse = true;
       }
       if (Array.isArray(brandsRes)) {
@@ -430,7 +437,10 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
           parties={parties}
           items={items}
           onRefreshParties={fetchPurchaseData}
-          onRefreshItems={onRefreshAll}
+          onRefreshItems={() => {
+            fetchPurchaseData();
+            onRefreshAll();
+          }}
         />
       )}
 

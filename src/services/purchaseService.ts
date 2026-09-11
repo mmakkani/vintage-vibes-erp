@@ -292,4 +292,37 @@ export class PurchaseService {
       throw new Error(error.message || 'Failed to delete inventory piece');
     }
   }
+
+  // --- Bale Presets Catalog ---
+  public static async getBalePresets(): Promise<any[]> {
+    try {
+      const { data, error } = await supabase
+        .from('bale_presets')
+        .select('*')
+        .order('name', { ascending: true });
+
+      if (error) {
+        console.warn('Supabase error reading bale_presets:', error);
+        return [];
+      }
+
+      return (data || []).map((r: any) => ({
+        id: r.id,
+        code: r.item_code || r.code || `BALE-${r.id}`,
+        name: r.name,
+        category: r.category || 'Apparel',
+        uom: r.uom || 'BALES',
+        targetUom: r.uom || 'BALES',
+        stdWeight: Number(r.std_weight ?? 45),
+        weightKg: Number(r.std_weight ?? 45),
+        basePrice: Number(r.base_rate ?? 0),
+        baseRate: Number(r.base_rate ?? 0),
+        status: 'POSTED',
+        isActive: true
+      }));
+    } catch (e) {
+      console.warn('Failed to fetch bale presets:', e);
+      return [];
+    }
+  }
 }
