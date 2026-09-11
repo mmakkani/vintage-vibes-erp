@@ -43,6 +43,17 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   }
 };
 
+export function cleanWhatsAppNumber(input?: string): string {
+  if (!input) return '';
+  let cleaned = input.trim().replace(/[\s\-\(\)]/g, '');
+  if (cleaned.startsWith('+')) {
+    cleaned = cleaned.substring(1);
+  }
+  // Strip leading zeroes (e.g., 00971... -> 971...)
+  cleaned = cleaned.replace(/^0+/, '');
+  return cleaned ? `+${cleaned}` : '';
+}
+
 export class CompanyProfileService {
   public static async getCompanyProfile(): Promise<CompanyProfile> {
     const { data, error } = await supabase
@@ -59,6 +70,8 @@ export class CompanyProfileService {
     if (!data) {
       return DEFAULT_COMPANY_PROFILE;
     }
+
+    const waOrdersNumber = data.whatsapp_orders_number || data.whatsapp_order_number || data.whatsappOrderNumber || DEFAULT_COMPANY_PROFILE.whatsappOrderNumber || '';
 
     // Map database snake_case or raw profile_data to camelCase
     const prof: CompanyProfile = {
@@ -85,7 +98,9 @@ export class CompanyProfileService {
       enableAppleGooglePay: data.enable_apple_google_pay !== false && data.enableAppleGooglePay !== false,
       freeShippingThresholdAed: Number(data.free_shipping_threshold_aed ?? data.freeShippingThresholdAed ?? 350),
       standardShippingFeeAed: Number(data.standard_shipping_fee_aed ?? data.standardShippingFeeAed ?? 25),
-      whatsappOrderNumber: data.whatsapp_order_number || data.whatsappOrderNumber || '',
+      whatsappOrderNumber: waOrdersNumber,
+      whatsapp_orders_number: waOrdersNumber,
+      whatsappOrdersNumber: waOrdersNumber,
       posTerminalConfig: data.pos_terminal_config || data.posTerminalConfig,
       paymentGateway: data.payment_gateway || data.paymentGateway || DEFAULT_COMPANY_PROFILE.paymentGateway,
       tiktokLiveSocket: data.tiktok_live_socket || data.tiktokLiveSocket,
@@ -97,6 +112,9 @@ export class CompanyProfileService {
   }
 
   public static async updateCompanyProfile(profile: Partial<CompanyProfile>): Promise<CompanyProfile> {
+    const rawWa = profile.whatsapp_orders_number || profile.whatsappOrdersNumber || profile.whatsappOrderNumber || '';
+    const cleanedWa = cleanWhatsAppNumber(rawWa);
+
     const payload = {
       id: 'default-company',
       company_name: profile.companyName,
@@ -121,12 +139,17 @@ export class CompanyProfileService {
       enable_apple_google_pay: profile.enableAppleGooglePay !== false,
       free_shipping_threshold_aed: profile.freeShippingThresholdAed ?? 350,
       standard_shipping_fee_aed: profile.standardShippingFeeAed ?? 25,
-      whatsapp_order_number: profile.whatsappOrderNumber,
+      whatsapp_order_number: cleanedWa,
+      whatsapp_orders_number: cleanedWa,
       pos_terminal_config: profile.posTerminalConfig,
       payment_gateway: profile.paymentGateway,
       tiktok_live_socket: profile.tiktokLiveSocket,
       pos_bridge: profile.posBridge,
-      profile_data: profile,
+      profile_data: {
+        ...profile,
+        whatsapp_orders_number: cleanedWa,
+        whatsappOrderNumber: cleanedWa
+      },
       updated_at: new Date().toISOString()
     };
 

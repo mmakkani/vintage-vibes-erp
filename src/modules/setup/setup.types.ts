@@ -84,6 +84,8 @@ export interface CompanyProfile {
   freeShippingThresholdAed?: number; // Free shipping threshold in AED (e.g. 350)
   standardShippingFeeAed?: number; // Standard courier fee in AED (e.g. 25)
   whatsappOrderNumber?: string; // Direct WhatsApp order confirmation number
+  whatsapp_orders_number?: string; // Database binding for WhatsApp orders number
+  whatsappOrdersNumber?: string;
   posTerminalConfig?: POSTerminalConfig; // Physical Smart POS Card Machine link configuration
   paymentGateway?: PaymentGatewayConfig;
   tiktokLiveSocket?: TikTokLiveSocketConfig;

@@ -1209,6 +1209,65 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             </div>
           </div>
 
+          {/* ARCHITECT / CREATOR SIGNATURE CARD (Fixed & Non-Editable Luxury Gold / Dark Glassmorphism) */}
+          <div className="my-8 pt-8 border-t border-amber-400/60">
+            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-black p-6 sm:p-8 border border-amber-500/40 shadow-2xl max-w-2xl mx-auto text-center backdrop-blur-md group hover:border-amber-400/80 transition-all duration-300">
+              {/* Ambient gold glow */}
+              <div className="absolute -top-24 -left-24 w-48 h-48 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-amber-400/10 rounded-full blur-3xl pointer-events-none" />
+
+              <div className="relative z-10 flex flex-col items-center gap-4">
+                {/* Brand Title */}
+                <div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-400/30 text-[10px] uppercase font-bold tracking-[0.25em] text-amber-300 mb-2">
+                    <Sparkles className="w-3 h-3 text-amber-400" />
+                    <span>System Architecture & Engineering</span>
+                  </div>
+                  <h4 className="text-xl sm:text-2xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-amber-100 font-serif">
+                    Powered by Murtaza Makkani
+                  </h4>
+                  <p className="text-xs sm:text-sm text-slate-300 font-medium tracking-wide mt-1">
+                    Next-Gen Cloud Systems & Digital Infrastructure
+                  </p>
+                </div>
+
+                {/* Live Dynamic QR Code Section */}
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-5 my-2 p-4 rounded-xl bg-white/5 border border-amber-400/20 backdrop-blur-xs w-full max-w-lg">
+                  <div className="p-2 bg-white rounded-xl shadow-lg border border-amber-300 shrink-0">
+                    <img
+                      src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=https://wa.me/923022190822"
+                      alt="Scan to WhatsApp Murtaza Makkani"
+                      className="w-28 h-28 sm:w-32 sm:h-32 object-contain block"
+                      loading="lazy"
+                    />
+                  </div>
+                  <div className="text-center sm:text-left space-y-2">
+                    <div className="text-[11px] uppercase tracking-widest text-amber-400 font-bold">
+                      Scan to WhatsApp
+                    </div>
+                    <div className="text-base sm:text-lg font-mono font-bold text-white tracking-wider">
+                      +92 302 2190822
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-snug">
+                      Scan with your phone camera or WhatsApp scanner to start a direct encrypted chat with the system architect.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Direct Action Button */}
+                <a
+                  href="https://wa.me/923022190822?text=Hello%20Murtaza,%20I%20am%20interested%20in%20your%20custom%20ERP%20and%20cloud%20solutions"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2.5 px-6 py-3 rounded-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 font-bold text-xs sm:text-sm tracking-wide uppercase shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer border border-amber-300"
+                >
+                  <MessageCircle className="w-4 h-4 fill-slate-950" />
+                  <span>Direct Chat with System Architect</span>
+                </a>
+              </div>
+            </div>
+          </div>
+
           {/* Bottom Copyright */}
           <div className="pt-6 border-t border-amber-300 text-center text-slate-600 text-[11px] space-y-1">
             <p>Copyright © Vintage Vibes General Trading LLC SPC. All Rights Reserved</p>
@@ -1236,17 +1295,22 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         </button>
       )}
 
-      <a
-        href="https://web.whatsapp.com/send?phone=971554186086&text=Hello%20Vintage%20Vibes!%20I%20am%20interested%20in%20your%20vintage%20collection."
-        target="_blank"
-        rel="noreferrer"
-        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-[#25D366] hover:bg-[#20bd5a] text-white px-4 py-3 rounded-full shadow-2xl transition-all transform hover:scale-105 active:scale-95 group cursor-pointer"
-        aria-label="WhatsApp Us"
-      >
-        <MessageCircle className="w-6 h-6 fill-current" />
-        <span className="font-bold text-xs pr-1 hidden sm:inline">WhatsApp us</span>
-        <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
-      </a>
+      {(() => {
+        const cleanOwnerNumber = (companyProfile?.whatsapp_orders_number || (companyProfile as any)?.whatsappOrderNumber || '971554186086').replace(/[^0-9]/g, '');
+        return (
+          <a
+            href={`https://wa.me/${cleanOwnerNumber}?text=Hello%20Vintage%20Vibes,%20I%20have%20an%20inquiry%20regarding%20an%20item`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-[#25D366] hover:bg-[#20bd5a] text-white px-4 py-3 rounded-full shadow-2xl transition-all transform hover:scale-105 active:scale-95 group cursor-pointer"
+            aria-label="WhatsApp Us"
+          >
+            <MessageCircle className="w-6 h-6 fill-current" />
+            <span className="font-bold text-xs pr-1 hidden sm:inline">WhatsApp us</span>
+            <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+          </a>
+        );
+      })()}
 
       {/* 14. MULTI-ITEM CART DRAWER */}
       <CartDrawer

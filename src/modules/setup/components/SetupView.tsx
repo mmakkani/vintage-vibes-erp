@@ -1155,6 +1155,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                 <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Company Display Name:</label>
                 <input
                   type="text"
+                  placeholder="[ENTER FULL LEGAL COMPANY NAME (AS SHOWN ON TRADE LICENSE)]"
                   value={companyProfile.companyName}
                   onChange={e => setCompanyProfile({ ...companyProfile, companyName: e.target.value })}
                   className="w-full border border-slate-300 rounded p-1.5 font-bold text-slate-900 focus:border-blue-500 text-xs"
@@ -1166,6 +1167,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                 <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">TRN Tax Registration Number:</label>
                 <input
                   type="text"
+                  placeholder="[ENTER 15-DIGIT TRN (E.G., 100482910300003)]"
                   value={companyProfile.trnTaxNo}
                   onChange={e => setCompanyProfile({ ...companyProfile, trnTaxNo: e.target.value })}
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:border-blue-500 text-xs"
@@ -1178,6 +1180,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Address Line 1:</label>
               <input
                 type="text"
+                placeholder="[ENTER BUILDING, STREET & DISTRICT]"
                 value={companyProfile.addressLine1}
                 onChange={e => setCompanyProfile({ ...companyProfile, addressLine1: e.target.value })}
                 className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-blue-500 text-xs"
@@ -1189,6 +1192,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Address Line 2 (City / Country):</label>
               <input
                 type="text"
+                placeholder="[ENTER EMIRATE / CITY & COUNTRY (E.G., ABU DHABI, UAE)]"
                 value={companyProfile.addressLine2}
                 onChange={e => setCompanyProfile({ ...companyProfile, addressLine2: e.target.value })}
                 className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-blue-500 text-xs"
@@ -1201,6 +1205,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                 <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Corporate Phone:</label>
                 <input
                   type="text"
+                  placeholder="[ENTER OFFICIAL CORPORATE PHONE WITH COUNTRY CODE (E.G., +971...)]"
                   value={companyProfile.phone}
                   onChange={e => setCompanyProfile({ ...companyProfile, phone: e.target.value })}
                   className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-blue-500 text-xs"
@@ -1212,6 +1217,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                 <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Corporate Email:</label>
                 <input
                   type="email"
+                  placeholder="[ENTER OFFICIAL INQUIRY EMAIL (E.G., INFO@...)]"
                   value={companyProfile.email}
                   onChange={e => setCompanyProfile({ ...companyProfile, email: e.target.value })}
                   className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-blue-500 text-xs"
@@ -1224,6 +1230,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Logo SVG / Image URL:</label>
               <input
                 type="text"
+                placeholder="[ENTER DIRECT LOGO URL OR UPLOAD IMAGE FILE]"
                 value={companyProfile.logoUrl}
                 onChange={e => setCompanyProfile({ ...companyProfile, logoUrl: e.target.value })}
                 className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-700 focus:border-blue-500 text-xs"
@@ -1246,7 +1253,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Bank Name / Branch:</label>
                   <input
                     type="text"
-                    placeholder="e.g. Emirates NBD - Dubai Downtown Branch"
+                    placeholder="[ENTER BANK NAME & SPECIFIC BRANCH]"
                     value={companyProfile.bankName || ''}
                     onChange={e => setCompanyProfile({ ...companyProfile, bankName: e.target.value })}
                     className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-amber-500 text-xs bg-white"
@@ -1257,7 +1264,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Account Title / Beneficiary:</label>
                   <input
                     type="text"
-                    placeholder="e.g. Vintage Vibes General Trading LLC SPC"
+                    placeholder="[ENTER REGISTERED ACCOUNT TITLE AS PER BANK RECORDS]"
                     value={companyProfile.bankAccountTitle || ''}
                     onChange={e => setCompanyProfile({ ...companyProfile, bankAccountTitle: e.target.value })}
                     className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-amber-500 text-xs bg-white"
@@ -1268,7 +1275,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Bank IBAN Number:</label>
                   <input
                     type="text"
-                    placeholder="e.g. AE24 0331 2345 6789 0123 456"
+                    placeholder="[ENTER FULL 23-CHARACTER IBAN (E.G., AE...)]"
                     value={companyProfile.bankIban || ''}
                     onChange={e => setCompanyProfile({ ...companyProfile, bankIban: e.target.value })}
                     className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-800 focus:border-amber-500 text-xs bg-white"
@@ -1282,7 +1289,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Free Delivery Over (AED):</label>
                   <input
                     type="number"
-                    placeholder="350"
+                    placeholder="[ENTER MINIMUM CART TOTAL FOR FREE DELIVERY (E.G., 300)]"
                     value={companyProfile.freeShippingThresholdAed ?? 350}
                     onChange={e => setCompanyProfile({ ...companyProfile, freeShippingThresholdAed: Number(e.target.value) || 0 })}
                     className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-amber-500 text-xs bg-white"
@@ -1293,7 +1300,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Standard Courier Fee (AED):</label>
                   <input
                     type="number"
-                    placeholder="25"
+                    placeholder="[ENTER STANDARD SHIPPING CHARGE (E.G., 25)]"
                     value={companyProfile.standardShippingFeeAed ?? 25}
                     onChange={e => setCompanyProfile({ ...companyProfile, standardShippingFeeAed: Number(e.target.value) || 0 })}
                     className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-amber-500 text-xs bg-white"
@@ -1304,9 +1311,17 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">WhatsApp Orders Number:</label>
                   <input
                     type="text"
-                    placeholder="+971554186086"
-                    value={companyProfile.whatsappOrderNumber || ''}
-                    onChange={e => setCompanyProfile({ ...companyProfile, whatsappOrderNumber: e.target.value })}
+                    placeholder="[ENTER OFFICIAL WHATSAPP NUMBER FOR STORE ORDERS (E.G., +971554186086)]"
+                    value={companyProfile.whatsapp_orders_number || companyProfile.whatsappOrdersNumber || companyProfile.whatsappOrderNumber || ''}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setCompanyProfile({ 
+                        ...companyProfile, 
+                        whatsappOrderNumber: val,
+                        whatsapp_orders_number: val,
+                        whatsappOrdersNumber: val
+                      });
+                    }}
                     className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-800 focus:border-amber-500 text-xs bg-white"
                   />
                 </div>
