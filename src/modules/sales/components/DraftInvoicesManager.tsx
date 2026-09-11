@@ -476,10 +476,10 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
             ) : (
               filteredDrafts.map(inv => {
                 const isSelected = selectedInvoice?.id === inv.id;
-                const totalGrams = inv.items.reduce(
-                  (s, it) => s + (it.weightGrams || Math.round((it.weightKg || 0.45) * 1000)),
+                const totalGrams = Array.isArray(inv?.items) ? inv.items.reduce(
+                  (s, it) => s + (it?.weightGrams || Math.round((it?.weightKg || 0.45) * 1000)),
                   0
-                );
+                ) : 0;
 
                 return (
                   <div
@@ -887,9 +887,10 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                   <span className="text-slate-400">Total Calculated COGS (Stock Cost):</span>
                   <span className="font-mono text-rose-400 font-semibold">
                     AED{' '}
-                    {selectedInvoice.items
-                      .reduce((s, it) => s + (it.calculatedCostPrice || 25), 0)
-                      .toFixed(2)}
+                    {(Array.isArray(selectedInvoice?.items)
+                      ? selectedInvoice.items.reduce((s, it) => s + (Number(it?.calculatedCostPrice) || 25), 0)
+                      : 0
+                    ).toFixed(2)}
                   </span>
                 </div>
 

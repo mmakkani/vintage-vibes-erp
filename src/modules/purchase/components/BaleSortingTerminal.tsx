@@ -135,8 +135,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   }, [categories, sizes, labels]);
 
   const availableCategories = useMemo(() => {
-    if (categoriesList && categoriesList.length > 0) {
-      const active = categoriesList.filter(c => c.status !== 'UNPOSTED').map(c => c.name);
+    if (Array.isArray(categoriesList) && categoriesList.length > 0) {
+      const active = categoriesList
+        .filter(c => typeof c === 'object' && c !== null ? c.status !== 'UNPOSTED' : true)
+        .map(c => typeof c === 'object' && c !== null ? (c.name || c.code || '') : String(c || ''))
+        .filter(Boolean);
       if (active.length > 0) return active;
     }
     return DEFAULT_CATEGORIES;
@@ -1274,9 +1277,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                     disabled={hudStats.isCompleted}
                     className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-400 rounded-lg px-2.5 py-2 text-xs text-slate-200 focus:outline-hidden cursor-pointer disabled:opacity-50 font-medium"
                   >
-                    {availableCategories.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
+                    {availableCategories.map(cat => {
+                      const catStr = typeof cat === 'object' && cat !== null ? ((cat as any).name || (cat as any).code || '') : String(cat || '');
+                      return (
+                        <option key={catStr} value={catStr}>{catStr}</option>
+                      );
+                    })}
                   </select>
                 </div>
 
@@ -1620,9 +1626,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                     onChange={e => setRegCategory(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-indigo-400"
                   >
-                    {DEFAULT_CATEGORIES.map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
+                    {DEFAULT_CATEGORIES.map(c => {
+                      const cStr = typeof c === 'object' && c !== null ? ((c as any).name || (c as any).code || '') : String(c || '');
+                      return (
+                        <option key={cStr} value={cStr}>{cStr}</option>
+                      );
+                    })}
                   </select>
                 </div>
 

@@ -56,20 +56,23 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
     let postedCount = 0;
     let draftCount = 0;
 
-    invoices.forEach(inv => {
-      if (inv.status === 'POSTED') postedCount++;
-      if (inv.status === 'DRAFT') draftCount++;
+    const safeInvoices = Array.isArray(invoices) ? invoices : [];
+    safeInvoices.forEach(inv => {
+      if (inv?.status === 'POSTED') postedCount++;
+      if (inv?.status === 'DRAFT') draftCount++;
 
-      const saleAmount = inv.totalAmount || inv.subTotal || 0;
+      const saleAmount = Number(inv?.totalAmount || inv?.subTotal || 0);
       totalGrossSales += saleAmount;
 
-      const cogs = inv.items.reduce((s, it) => s + (it.calculatedCostPrice || 25), 0);
+      const cogs = Array.isArray(inv?.items)
+        ? inv.items.reduce((s, it) => s + (Number(it?.calculatedCostPrice) || 25), 0)
+        : 0;
       totalCogs += cogs;
 
-      if (inv.shippingBearer === 'CUSTOMER') {
-        totalShippingCollected += (inv.shippingFeeAed || inv.shippingCharge || 0);
+      if (inv?.shippingBearer === 'CUSTOMER') {
+        totalShippingCollected += Number(inv?.shippingFeeAed || inv?.shippingCharge || 0);
       }
-      totalPiecesCount += inv.items.length;
+      totalPiecesCount += Array.isArray(inv?.items) ? inv.items.length : 0;
     });
 
     const grossProfit = totalGrossSales - totalCogs;
@@ -143,10 +146,10 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
     ];
 
     const rows = filteredInvoices.map(inv => {
-      const cogs = inv.items.reduce((s, it) => s + (it.calculatedCostPrice || 25), 0);
-      const grossProfit = (inv.subTotal || inv.totalAmount) - cogs;
-      const margin = (inv.subTotal || inv.totalAmount) > 0 ? Math.round((grossProfit / (inv.subTotal || inv.totalAmount)) * 100) : 0;
-      const barcodes = inv.items.map(it => it.barcode).join('; ');
+      const cogs = Array.isArray(inv?.items) ? inv.items.reduce((s, it) => s + (Number(it?.calculatedCostPrice) || 25), 0) : 0;
+      const grossProfit = Number(inv?.subTotal || inv?.totalAmount || 0) - cogs;
+      const margin = (Number(inv?.subTotal || inv?.totalAmount || 0)) > 0 ? Math.round((grossProfit / Number(inv.subTotal || inv.totalAmount)) * 100) : 0;
+      const barcodes = Array.isArray(inv?.items) ? inv.items.map(it => it.barcode).join('; ') : '';
 
       return [
         inv.invoiceNo,
@@ -387,8 +390,8 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                 </tr>
               ) : (
                 filteredInvoices.map(inv => {
-                  const cogs = inv.items.reduce((s, it) => s + (it.calculatedCostPrice || 25), 0);
-                  const saleAmount = inv.subTotal || inv.totalAmount || 0;
+                  const cogs = Array.isArray(inv?.items) ? inv.items.reduce((s, it) => s + (Number(it?.calculatedCostPrice) || 25), 0) : 0;
+                  const saleAmount = Number(inv?.subTotal || inv?.totalAmount || 0);
                   const profit = saleAmount - cogs;
                   const marginPct = saleAmount > 0 ? Math.round((profit / saleAmount) * 100) : 0;
                   const isExpanded = expandedInvoiceId === inv.id;

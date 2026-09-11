@@ -13,23 +13,34 @@ export class SalesService {
       throw new Error(error.message || 'Database error occurred reading sales invoices');
     }
 
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      invoiceNo: row.invoice_no || row.invoiceNo,
-      clientId: row.client_id || row.clientId,
-      customerName: row.customer_name || row.customerName || 'Walk-in Guest',
-      customerPhone: row.customer_phone || row.customerPhone || '',
-      invoiceDate: row.invoice_date || row.invoiceDate,
-      channel: row.channel || 'POS_COUNTER',
-      paymentMethod: row.payment_method || row.paymentMethod || 'CASH',
-      subtotal: Number(row.subtotal || 0),
-      discountAmount: Number(row.discount_amount ?? row.discountAmount ?? 0),
-      taxAmount: Number(row.tax_amount ?? row.taxAmount ?? 0),
-      totalAmount: Number(row.total_amount ?? row.totalAmount ?? 0),
-      status: row.status || 'PAID',
-      items: Array.isArray(row.items) ? row.items : [],
-      createdAt: row.created_at
-    }));
+    return (data || []).map((row: any) => {
+      let parsedItems: any[] = [];
+      if (Array.isArray(row.items)) {
+        parsedItems = row.items;
+      } else if (typeof row.items === 'string') {
+        try {
+          const parsed = JSON.parse(row.items);
+          if (Array.isArray(parsed)) parsedItems = parsed;
+        } catch {}
+      }
+      return {
+        id: row.id,
+        invoiceNo: row.invoice_no || row.invoiceNo || `SINV-${row.id || Date.now()}`,
+        clientId: row.client_id || row.clientId,
+        customerName: row.customer_name || row.customerName || 'Walk-in Guest',
+        customerPhone: row.customer_phone || row.customerPhone || '',
+        invoiceDate: row.invoice_date || row.invoiceDate || new Date().toISOString().slice(0, 10),
+        channel: row.channel || 'POS_COUNTER',
+        paymentMethod: row.payment_method || row.paymentMethod || 'CASH',
+        subtotal: Number(row.subtotal || row.sub_total || row.total_amount || 0),
+        discountAmount: Number(row.discount_amount ?? row.discountAmount ?? 0),
+        taxAmount: Number(row.tax_amount ?? row.taxAmount ?? 0),
+        totalAmount: Number(row.total_amount ?? row.totalAmount ?? 0),
+        status: row.status || 'PAID',
+        items: parsedItems,
+        createdAt: row.created_at
+      };
+    });
   }
 
   public static async createSalesInvoice(inv: Partial<SalesInvoice>): Promise<SalesInvoice> {

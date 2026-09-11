@@ -256,10 +256,11 @@ export const ParcelReturnProcessing: React.FC<ParcelReturnProcessingProps> = ({ 
   };
 
   // KPI Summary calculations
-  const totalReturnsCount = recentReturns.length;
-  const totalPiecesRestored = recentReturns.reduce((acc, r) => acc + (r.returnedItems?.length || 0), 0);
-  const totalCOGSReclaimed = recentReturns.reduce((acc, r) => acc + (r.totalCOGSReversed || 0), 0);
-  const totalCourierExp = recentReturns.reduce((acc, r) => acc + (r.courierReturnCharge || 0), 0);
+  const safeRecentReturns = Array.isArray(recentReturns) ? recentReturns : [];
+  const totalReturnsCount = safeRecentReturns.length;
+  const totalPiecesRestored = safeRecentReturns.reduce((acc, r) => acc + (Array.isArray(r?.returnedItems) ? r.returnedItems.length : 0), 0);
+  const totalCOGSReclaimed = safeRecentReturns.reduce((acc, r) => acc + (Number(r?.totalCOGSReversed) || 0), 0);
+  const totalCourierExp = safeRecentReturns.reduce((acc, r) => acc + (Number(r?.courierReturnCharge) || 0), 0);
 
   return (
     <div id="parcel-returns-container" className="space-y-4">

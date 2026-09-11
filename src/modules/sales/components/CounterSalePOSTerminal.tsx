@@ -236,7 +236,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
   // Calculate totals
   const subTotal = useMemo(() => {
-    return Number(cart.reduce((sum, item) => sum + item.sellingPrice, 0).toFixed(2));
+    const safeCart = Array.isArray(cart) ? cart : [];
+    return Number(safeCart.reduce((sum, item) => sum + (Number(item?.sellingPrice) || 0), 0).toFixed(2));
   }, [cart]);
 
   const discountedSubtotal = useMemo(() => {
@@ -258,7 +259,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
   const handleToggleGiftItem = (index: number) => {
     luxuryAudio.playMechanicalClick();
-    setCart(prev => prev.map((item, idx) => {
+    setCart(prev => (Array.isArray(prev) ? prev : []).map((item, idx) => {
       if (idx !== index) return item;
       const isCurrentlyGift = !!item.isGift;
       if (isCurrentlyGift) {
@@ -279,7 +280,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   };
 
   const totalCogs = useMemo(() => {
-    return Number(cart.reduce((sum, item) => sum + item.cogsCost, 0).toFixed(2));
+    const safeCart = Array.isArray(cart) ? cart : [];
+    return Number(safeCart.reduce((sum, item) => sum + (Number(item?.cogsCost) || 0), 0).toFixed(2));
   }, [cart]);
 
   const grossProfit = useMemo(() => {
@@ -292,8 +294,9 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   }, [grossProfit, discountedSubtotal]);
 
   const totalWeightGrams = useMemo(() => {
-    return cart.reduce((sum, item) => {
-      const g = item.piece.weightGrams || Math.round((item.piece.weightKg || 0.45) * 1000);
+    const safeCart = Array.isArray(cart) ? cart : [];
+    return safeCart.reduce((sum, item) => {
+      const g = item?.piece?.weightGrams || Math.round((Number(item?.piece?.weightKg) || 0.45) * 1000);
       return sum + g;
     }, 0);
   }, [cart]);
@@ -463,7 +466,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     setIsScanning(true);
     try {
       const invoiceNum = `POS-${Date.now().toString().slice(-6)}`;
-      const subtotalAmt = cart.reduce((sum, c) => sum + (c.sellingPrice - c.discount), 0);
+      const safeCart = Array.isArray(cart) ? cart : [];
+      const subtotalAmt = safeCart.reduce((sum, c) => sum + ((Number(c?.sellingPrice) || 0) - (Number(c?.discount) || 0)), 0);
       const vatAmt = Number((subtotalAmt * 0.05).toFixed(2));
       const totalAmt = Number((subtotalAmt + vatAmt + giftBoxFee).toFixed(2));
 
@@ -537,8 +541,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           }))
         },
         voucher: { voucherNo: `VCH-${Date.now().toString().slice(-6)}` },
-        cogsSummary: { totalCogs: cart.reduce((sum, c) => sum + (c.cogsCost || 0), 0) },
-        pieces: cart.map(c => c.piece)
+        cogsSummary: { totalCogs: safeCart.reduce((sum, c) => sum + (Number(c?.cogsCost) || 0), 0) },
+        pieces: safeCart.map(c => c.piece)
       });
 
       // Clear basket for next transaction

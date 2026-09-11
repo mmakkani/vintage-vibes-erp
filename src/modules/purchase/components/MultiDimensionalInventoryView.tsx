@@ -629,9 +629,9 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                   const marginPct = cg.retailAed > 0 ? Math.round((profit / cg.retailAed) * 100) : 0;
 
                   return (
-                    <tr key={cg.category} className="hover:bg-slate-50/80 transition-colors">
+                    <tr key={typeof cg.category === 'object' && cg.category !== null ? (cg.category as any).name : String(cg.category || '')} className="hover:bg-slate-50/80 transition-colors">
                       <td className="px-4 py-3 font-semibold text-slate-900">
-                        {cg.category}
+                        {typeof cg.category === 'object' && cg.category !== null ? (cg.category as any).name : String(cg.category || '')}
                       </td>
                       <td className="px-4 py-3 text-center font-mono font-bold text-indigo-600">
                         {cg.count} pcs
@@ -683,7 +683,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-bold font-mono text-indigo-700">{bg.baleCode}</span>
                         <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700">
-                          {bg.category}
+                          {typeof bg.category === 'object' && bg.category !== null ? (bg.category as any).name : String(bg.category || '')}
                         </span>
                       </div>
                       <p className="text-xs text-slate-500 mt-0.5">

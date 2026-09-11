@@ -382,9 +382,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         const res = await fetch(`/api/live-stream/pool?boothId=${selectedBoothId}`);
         if (res.ok) {
           const data = await res.json();
-          setBuyerPools(data);
-          if (data.length > 0 && !selectedHubBuyer) {
-            setSelectedHubBuyer(data[0]);
+          const list = Array.isArray(data) ? data : (data && Array.isArray(data.pools) ? data.pools : (data && Array.isArray(data.data) ? data.data : []));
+          setBuyerPools(list);
+          if (list.length > 0 && !selectedHubBuyer) {
+            setSelectedHubBuyer(list[0]);
           }
           return;
         }
@@ -730,8 +731,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     );
   };
 
-  const totalClaimedItems = useMemo(() => buyerPools.reduce((s, p) => s + p.itemsCount, 0), [buyerPools]);
-  const totalSessionGrossAed = useMemo(() => buyerPools.reduce((s, p) => s + p.grandTotalAed, 0), [buyerPools]);
+  const totalClaimedItems = useMemo(() => Array.isArray(buyerPools) ? buyerPools.reduce((s, p) => s + (p?.itemsCount || 0), 0) : 0, [buyerPools]);
+  const totalSessionGrossAed = useMemo(() => Array.isArray(buyerPools) ? buyerPools.reduce((s, p) => s + (p?.grandTotalAed || 0), 0) : 0, [buyerPools]);
 
   return (
     <div className="space-y-4">

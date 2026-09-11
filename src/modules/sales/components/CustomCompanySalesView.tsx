@@ -194,11 +194,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   // Metrics for Log Dashboard
   const logMetrics = useMemo(() => {
-    const totalSales = b2bInvoices.reduce((sum, i) => sum + (Number(i.totalAmount || i.grandTotalAED || 0)), 0);
-    const totalVat = b2bInvoices.reduce((sum, i) => sum + (Number(i.vatAmount || 0)), 0);
-    const totalBales = b2bInvoices.reduce((sum, i) => sum + (i.items?.filter(it => it.isRawBale).length || 0), 0);
-    const totalPieces = b2bInvoices.reduce((sum, i) => sum + (i.items?.filter(it => !it.isRawBale).length || 0), 0);
-    const totalCreditDue = b2bInvoices.filter(i => i.status === 'POSTED').reduce((sum, i) => sum + (Number(i.creditAmountDue || 0)), 0);
+    const safeB2b = Array.isArray(b2bInvoices) ? b2bInvoices : [];
+    const totalSales = safeB2b.reduce((sum, i) => sum + (Number(i?.totalAmount || i?.grandTotalAED || 0)), 0);
+    const totalVat = safeB2b.reduce((sum, i) => sum + (Number(i?.vatAmount || 0)), 0);
+    const totalBales = safeB2b.reduce((sum, i) => sum + (Array.isArray(i?.items) ? i.items.filter(it => it?.isRawBale).length : 0), 0);
+    const totalPieces = safeB2b.reduce((sum, i) => sum + (Array.isArray(i?.items) ? i.items.filter(it => !it?.isRawBale).length : 0), 0);
+    const totalCreditDue = safeB2b.filter(i => i?.status === 'POSTED').reduce((sum, i) => sum + (Number(i?.creditAmountDue || 0)), 0);
 
     return {
       totalSales: Number(totalSales.toFixed(2)),
@@ -206,34 +207,38 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       totalBales,
       totalPieces,
       totalCreditDue: Number(totalCreditDue.toFixed(2)),
-      count: b2bInvoices.length
+      count: safeB2b.length
     };
   }, [b2bInvoices]);
 
   // Selected customer object for active editor
   const selectedCustomer = useMemo(() => {
-    return customerClients.find(c => c.id === selectedCustomerId) || null;
+    return (Array.isArray(customerClients) ? customerClients : []).find(c => c?.id === selectedCustomerId) || null;
   }, [customerClients, selectedCustomerId]);
 
   // Totals calculations for active editor
   const itemsSubtotal = useMemo(() => {
-    return items.reduce((sum, item) => sum + (Number(item.finalAmount) || 0), 0);
+    const safeItems = Array.isArray(items) ? items : [];
+    return safeItems.reduce((sum, item) => sum + (Number(item?.finalAmount) || 0), 0);
   }, [items]);
 
   const totalCOGS = useMemo(() => {
-    return items.reduce((sum, item) => {
-      const cogs = Number(item.calculatedCostPrice) || 0;
+    const safeItems = Array.isArray(items) ? items : [];
+    return safeItems.reduce((sum, item) => {
+      const cogs = Number(item?.calculatedCostPrice) || 0;
       return sum + cogs;
     }, 0);
   }, [items]);
 
   const otherChargesTotal = useMemo(() => {
-    return otherCharges.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+    const safeCharges = Array.isArray(otherCharges) ? otherCharges : [];
+    return safeCharges.reduce((sum, c) => sum + (Number(c?.amount) || 0), 0);
   }, [otherCharges]);
 
   const vatAmount = useMemo(() => {
     if (taxType === 'EXPORT_ZERO_RATED') return 0;
-    const vatBase = itemsSubtotal + otherCharges.filter(c => c.vatApplicable).reduce((sum, c) => sum + Number(c.amount || 0), 0);
+    const safeCharges = Array.isArray(otherCharges) ? otherCharges : [];
+    const vatBase = itemsSubtotal + safeCharges.filter(c => c?.vatApplicable).reduce((sum, c) => sum + (Number(c?.amount) || 0), 0);
     return Number((vatBase * 0.05).toFixed(2));
   }, [itemsSubtotal, otherCharges, taxType]);
 
@@ -1968,12 +1973,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                       <div className="text-slate-600">{selectedCustomer?.address}</div>
                     </div>
                     <div className="text-right">
-                      <div><span className="font-bold text-slate-500">Total Bales: </span><span className="font-mono font-bold">{items.filter(i => i.isRawBale).length}</span></div>
-                      <div><span className="font-bold text-slate-500">Total Pieces: </span><span className="font-mono font-bold">{items.filter(i => !i.isRawBale).length}</span></div>
+                      <div><span className="font-bold text-slate-500">Total Bales: </span><span className="font-mono font-bold">{(Array.isArray(items) ? items : []).filter(i => i?.isRawBale).length}</span></div>
+                      <div><span className="font-bold text-slate-500">Total Pieces: </span><span className="font-mono font-bold">{(Array.isArray(items) ? items : []).filter(i => !i?.isRawBale).length}</span></div>
                       <div>
                         <span className="font-bold text-slate-500">Total Net Weight: </span>
                         <span className="font-mono font-bold">
-                          {items.reduce((sum, i) => sum + (i.grossWeightKg || i.weightKg || 0), 0).toFixed(1)} KG
+                          {(Array.isArray(items) ? items : []).reduce((sum, i) => sum + (Number(i?.grossWeightKg || i?.weightKg) || 0), 0).toFixed(1)} KG
                         </span>
                       </div>
                     </div>

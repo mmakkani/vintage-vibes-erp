@@ -51,29 +51,38 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
 
   // Filter for Counter Sale invoices
   const posInvoices = useMemo(() => {
+    if (!Array.isArray(invoices)) return [];
     return invoices.filter(inv => {
+      const invNo = inv?.invoiceNo || '';
       const isPos = 
-        inv.invoiceNo.startsWith('INV-POS-') ||
-        inv.invoiceNo.startsWith('SLS-POS-') ||
-        inv.paymentMethod === 'CARD_POS' ||
-        inv.notes?.includes('Counter Sale') ||
-        inv.boothId === 'COUNTER_POS';
+        invNo.startsWith('INV-POS-') ||
+        invNo.startsWith('SLS-POS-') ||
+        inv?.paymentMethod === 'CARD_POS' ||
+        inv?.notes?.includes('Counter Sale') ||
+        inv?.boothId === 'COUNTER_POS';
       return isPos;
     });
   }, [invoices]);
 
   // Fallback: If no counter invoices exist yet, show all retail invoices for review
   const displayInvoices = useMemo(() => {
-    const sourceList = posInvoices.length > 0 ? posInvoices : invoices;
+    const safeInvoices = Array.isArray(invoices) ? invoices : [];
+    const safePosInvoices = Array.isArray(posInvoices) ? posInvoices : [];
+    const sourceList = safePosInvoices.length > 0 ? safePosInvoices : safeInvoices;
     return sourceList.filter(inv => {
+      const invNo = inv?.invoiceNo || '';
       const matchesSearch = 
-        inv.invoiceNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (inv.customerName && inv.customerName.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (inv.postedBy && inv.postedBy.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        inv.items.some(it => it.barcode.toLowerCase().includes(searchTerm.toLowerCase()) || it.description.toLowerCase().includes(searchTerm.toLowerCase()));
+        !searchTerm ||
+        invNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (inv?.customerName && inv.customerName.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (inv?.postedBy && inv.postedBy.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (Array.isArray(inv?.items) && inv.items.some(it => 
+          (it?.barcode && it.barcode.toLowerCase().includes(searchTerm.toLowerCase())) || 
+          (it?.description && it.description.toLowerCase().includes(searchTerm.toLowerCase()))
+        ));
 
       const matchesPayment = 
-        paymentFilter === 'ALL' || inv.paymentMethod === paymentFilter;
+        paymentFilter === 'ALL' || inv?.paymentMethod === paymentFilter;
 
       return matchesSearch && matchesPayment;
     });
@@ -81,15 +90,19 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
 
   // Summary Metrics
   const metrics = useMemo(() => {
-    const list = posInvoices.length > 0 ? posInvoices : invoices;
-    const totalSales = list.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
-    const totalVat = list.reduce((sum, inv) => sum + (inv.vatAmount || 0), 0);
-    const totalNetRevenue = list.reduce((sum, inv) => sum + (inv.subTotal || 0), 0);
-    const totalPieces = list.reduce((sum, inv) => sum + (inv.items?.length || 0), 0);
-    const totalGrossProfit = list.reduce((sum, inv) => sum + (inv.grossProfitAed || 0), 0);
+    const safeInvoices = Array.isArray(invoices) ? invoices : [];
+    const safePosInvoices = Array.isArray(posInvoices) ? posInvoices : [];
+    const list = safePosInvoices.length > 0 ? safePosInvoices : safeInvoices;
+    const totalSales = list.reduce((sum, inv) => sum + (Number(inv?.totalAmount) || 0), 0);
+    const totalVat = list.reduce((sum, inv) => sum + (Number(inv?.vatAmount) || 0), 0);
+    const totalNetRevenue = list.reduce((sum, inv) => sum + (Number(inv?.subTotal) || 0), 0);
+    const totalPieces = list.reduce((sum, inv) => sum + (Array.isArray(inv?.items) ? inv.items.length : 0), 0);
+    const totalGrossProfit = list.reduce((sum, inv) => sum + (Number(inv?.grossProfitAed) || 0), 0);
     const totalCogs = list.reduce((sum, inv) => {
-      const cogs = inv.items?.reduce((cSum, it) => cSum + (it.calculatedCostPrice || 0), 0) || (inv.subTotal - (inv.grossProfitAed || 0));
-      return sum + Math.max(0, cogs);
+      const cogs = (Array.isArray(inv?.items) && inv.items.length > 0)
+        ? inv.items.reduce((cSum, it) => cSum + (Number(it?.calculatedCostPrice) || 0), 0)
+        : ((Number(inv?.subTotal) || 0) - (Number(inv?.grossProfitAed) || 0));
+      return sum + Math.max(0, cogs || 0);
     }, 0);
     const marginPercent = totalNetRevenue > 0 ? Number(((totalGrossProfit / totalNetRevenue) * 100).toFixed(1)) : 0;
 
@@ -124,11 +137,11 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
     try {
       openThermalLabelPrintWindow({
         itemCode: inv.invoiceNo,
-        description: `RETAIL POS: ${inv.items.length} garments (${inv.paymentMethod})`,
+        description: `RETAIL POS: ${Array.isArray(inv?.items) ? inv.items.length : 0} garments (${inv?.paymentMethod || 'CASH'})`,
         brand: 'VINTAGE VIBES DUBAI',
-        grade: `UAE VAT 5%: AED ${inv.vatAmount}`,
-        retailPriceAed: inv.totalAmount,
-        weightKg: Number((inv.items.reduce((acc, it) => acc + (it.weightKg || 0.4), 0)).toFixed(2)),
+        grade: `UAE VAT 5%: AED ${inv?.vatAmount || 0}`,
+        retailPriceAed: inv?.totalAmount || 0,
+        weightKg: Number((Array.isArray(inv?.items) ? inv.items.reduce((acc, it) => acc + (it?.weightKg || 0.4), 0) : 0).toFixed(2)),
         batchNo: `AUTH: ${inv.paymentMethod}`,
         date: inv.date
       });
@@ -359,10 +372,12 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
                 </tr>
               ) : (
                 displayInvoices.map((inv) => {
-                  const itemsCount = inv.items?.length || 0;
-                  const cogs = inv.items?.reduce((cSum, it) => cSum + (it.calculatedCostPrice || 0), 0) || (inv.subTotal - (inv.grossProfitAed || 0));
-                  const profit = inv.grossProfitAed ?? Math.max(0, inv.subTotal - cogs);
-                  const margin = inv.subTotal > 0 ? ((profit / inv.subTotal) * 100).toFixed(0) : '0';
+                  const itemsCount = Array.isArray(inv?.items) ? inv.items.length : 0;
+                  const cogs = (Array.isArray(inv?.items) && inv.items.length > 0)
+                    ? inv.items.reduce((cSum, it) => cSum + (Number(it?.calculatedCostPrice) || 0), 0)
+                    : ((Number(inv?.subTotal) || 0) - (Number(inv?.grossProfitAed) || 0));
+                  const profit = inv?.grossProfitAed ?? Math.max(0, (Number(inv?.subTotal) || 0) - cogs);
+                  const margin = (Number(inv?.subTotal) || 0) > 0 ? ((profit / Number(inv.subTotal)) * 100).toFixed(0) : '0';
 
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
