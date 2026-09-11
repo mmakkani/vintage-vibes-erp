@@ -113,6 +113,16 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
   const [shops, setShops] = useState<ShopMaster[]>(() => loadCached(CACHE_KEYS.SHOPS, []));
   const [categories, setCategories] = useState<CategoryMaster[]>(() => loadCached(CACHE_KEYS.CATEGORIES, []));
   const [sizes, setSizes] = useState<SizeMaster[]>(() => loadCached(CACHE_KEYS.SIZES, []));
+  const [balePresets, setBalePresets] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('vintage_bale_presets_cache');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
 
   const [activeSortingBaleId, setActiveSortingBaleId] = useState<string | null>(null);
   const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
@@ -161,6 +171,9 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         setParties(partiesRes);
         saveCached(CACHE_KEYS.PARTIES, partiesRes);
         hasLiveResponse = true;
+      }
+      if (Array.isArray(presetsRes) && presetsRes.length > 0) {
+        setBalePresets(presetsRes);
       }
       if (Array.isArray(presetsRes) || Array.isArray(itemsRes)) {
         const presetsList = Array.isArray(presetsRes) ? presetsRes : [];
@@ -418,6 +431,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
           invoices={invoices}
           parties={parties}
           items={items}
+          balePresets={balePresets}
           bales={bales}
           onRefresh={fetchPurchaseData}
           onInvoiceCreated={inv => {

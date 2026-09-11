@@ -26,7 +26,8 @@ import { openBatchBaleThermalTagsPrintWindow } from '../../../utils/thermalPrint
 interface CommercialInvoicesTabProps {
   invoices: PurchaseInvoice[];
   parties: Party[];
-  items: ItemMaster[];
+  items?: ItemMaster[];
+  balePresets?: any[];
   bales?: InwardGatePass[];
   onRefresh: () => void;
   onInvoiceCreated: (inv: PurchaseInvoice) => void;
@@ -36,6 +37,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   invoices,
   parties,
   items,
+  balePresets,
   bales = [],
   onRefresh,
   onInvoiceCreated
@@ -480,6 +482,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
           }}
           parties={parties}
           items={items}
+          balePresets={balePresets}
           editingInvoice={editingInvoice}
           onSuccess={newInv => {
             setShowCreateModal(false);

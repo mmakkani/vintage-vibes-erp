@@ -303,10 +303,14 @@ export class PurchaseService {
 
       if (error) {
         console.warn('Supabase error reading bale_presets:', error);
+        try {
+          const cached = localStorage.getItem('vintage_bale_presets_cache');
+          if (cached) return JSON.parse(cached);
+        } catch {}
         return [];
       }
 
-      return (data || []).map((r: any) => ({
+      const mapped = (data || []).map((r: any) => ({
         id: r.id,
         code: r.item_code || r.code || `BALE-${r.id}`,
         name: r.name,
@@ -320,8 +324,18 @@ export class PurchaseService {
         status: 'POSTED',
         isActive: true
       }));
+
+      try {
+        localStorage.setItem('vintage_bale_presets_cache', JSON.stringify(mapped));
+      } catch {}
+
+      return mapped;
     } catch (e) {
       console.warn('Failed to fetch bale presets:', e);
+      try {
+        const cached = localStorage.getItem('vintage_bale_presets_cache');
+        if (cached) return JSON.parse(cached);
+      } catch {}
       return [];
     }
   }
