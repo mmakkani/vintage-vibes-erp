@@ -1,7 +1,9 @@
-﻿/**
+/**
  * Master Admin PIN Security & Lockout Engine
  * Manages Master Admin PIN verification, 3-attempt cooldown lockout, and audit trail logging.
  */
+
+import { AuditService } from '../services/auditService.ts';
 
 const PIN_STORAGE_KEY = 'vintage_erp_master_pin';
 const LOCKOUT_STORAGE_KEY = 'vintage_erp_pin_lockout';
@@ -155,17 +157,13 @@ export class SecurityMasterPin {
     try {
       const now = new Date();
       const dateStr = now.toISOString().replace('T', ' ').slice(0, 19);
-      fetch('/api/audit/log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          module: 'AUTH',
-          action: 'POST',
-          documentRef: 'SECURITY-LOCKOUT-PIN',
-          status: 'POSTED',
-          userName: `@${adminUsername}`,
-          details: `SECURITY ALERT: ${attemptsCount} consecutive failed Master Admin PIN attempts detected on [${dateStr}]. Access blocked for 60s cooldown.`
-        })
+      AuditService.addAuditLog({
+        module: 'AUTH',
+        action: 'POST',
+        documentRef: 'SECURITY-LOCKOUT-PIN',
+        status: 'POSTED',
+        actor: `@${adminUsername}`,
+        details: `SECURITY ALERT: ${attemptsCount} consecutive failed Master Admin PIN attempts detected on [${dateStr}]. Access blocked for 60s cooldown.`
       }).catch(() => {});
     } catch {}
   }

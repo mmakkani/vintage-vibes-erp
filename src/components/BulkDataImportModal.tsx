@@ -10,6 +10,7 @@ import {
   ArrowRight,
   Loader2
 } from 'lucide-react';
+import { supabase } from '../supabaseClient';
 
 interface BulkDataImportModalProps {
   isOpen: boolean;
@@ -143,31 +144,51 @@ Boutique 971 Vintage Jumeirah,2026-09-05,2900,Walk-in wholesale assortment`;
     setSubmitting(true);
     try {
       if (importMode === 'INVENTORY') {
-        const res = await fetch('/api/setup/bulk-import-inventory', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pieces: parsedRows })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          onSuccess(`Successfully imported ${data.count} inventory pieces into the warehouse inventory room!`);
-          onClose();
-        } else {
-          setParseErrors([data.error || 'Failed to import inventory']);
-        }
+        const payload = parsedRows.map((r, i) => ({
+          id: `pc-bulk-${Date.now()}-${i}`,
+          barcode: r.barcode || `VV-IMP-${Date.now().toString().slice(-4)}-${i}`,
+          item_name: r.itemName || r.item_name || 'Imported Piece',
+          brand_name: r.brandName || r.brand_name || '',
+          brand_tier: r.brandTier || r.brand_tier || 'Grail',
+          label_grade: r.labelGrade || r.label_grade || 'CREAM',
+          shop_location: r.shopLocation || r.shop_location || 'Central Warehouse (Al Quoz)',
+          weight_kg: Number(r.weightKg || r.weight_kg || 0),
+          weight_grams: Number((Number(r.weightKg || r.weight_kg || 0) * 1000).toFixed(0)),
+          estimated_price: Number(r.estimatedPrice || r.estimated_price || 0),
+          retail_price_aed: Number(r.estimatedPrice || r.estimated_price || 0),
+          cost_price: Number(r.costPrice || r.cost_price || 0),
+          size_scanned: r.sizeScanned || r.size_scanned || 'L',
+          country_of_origin: r.countryOfOrigin || r.country_of_origin || '',
+          style: r.style || '',
+          is_sold: false,
+          status: 'AVAILABLE'
+        }));
+
+        const { error } = await supabase.from('inventory_pieces').insert(payload);
+        if (error) throw error;
+
+        onSuccess(`Successfully imported ${payload.length} inventory pieces into the warehouse inventory room!`);
+        onClose();
       } else {
-        const res = await fetch('/api/setup/bulk-import-sales', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ records: parsedRows })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          onSuccess(`Successfully committed ${data.count} sales transactions & invoices!`);
-          onClose();
-        } else {
-          setParseErrors([data.error || 'Failed to import sales entries']);
-        }
+        const payload = parsedRows.map((r, i) => ({
+          id: `si-bulk-${Date.now()}-${i}`,
+          invoice_no: `SINV-IMP-${Date.now().toString().slice(-4)}-${i}`,
+          client_id: r.clientName || 'Direct Customer',
+          invoice_date: r.date || new Date().toISOString().slice(0, 10),
+          currency: 'AED',
+          exchange_rate: 1,
+          subtotal: Number(r.amount || 0),
+          tax_amount: 0,
+          total_amount: Number(r.amount || 0),
+          status: 'POSTED',
+          notes: r.notes || 'Bulk CSV Import'
+        }));
+
+        const { error } = await supabase.from('sales_invoices').insert(payload);
+        if (error) throw error;
+
+        onSuccess(`Successfully committed ${payload.length} sales transactions & invoices!`);
+        onClose();
       }
     } catch (err: any) {
       console.error('Import error:', err);

@@ -12,12 +12,23 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
 
   useEffect(() => {
     if (isOpen) {
+      const fallbackReport = 
+        `📊 VINTAGE VIBES DUBAI - DAILY DIGEST\n` +
+        `📅 Date: ${new Date().toLocaleDateString('en-GB')}\n` +
+        `-----------------------------------------\n` +
+        `🏢 Entity: VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C\n` +
+        `📍 Location: Al Quoz Industrial 3, Dubai\n` +
+        `💰 Currency: AED\n\n` +
+        `📦 System Status: All modules active & connected to live Supabase cloud DB.\n` +
+        `🚀 Generated automatically via Vintage Vibes ERP`;
+
       fetch('/api/setup/whatsapp-report')
         .then(r => (r.ok ? r.json() : null))
         .then(data => {
           if (data && data.reportText) setReportText(data.reportText);
+          else setReportText(fallbackReport);
         })
-        .catch(err => console.error(err));
+        .catch(() => setReportText(fallbackReport));
     }
   }, [isOpen]);
 

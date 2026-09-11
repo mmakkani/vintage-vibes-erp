@@ -62,6 +62,9 @@ import { WhatsAppConfigEngine } from './WhatsAppConfigEngine.tsx';
 import { PaymentGatewayModal } from './PaymentGatewayModal.tsx';
 import { SocialSocketsModal } from './SocialSocketsModal.tsx';
 import { Zap } from 'lucide-react';
+import { CompanyProfileService } from '../../../services/companyProfileService.ts';
+import { SetupService } from '../../../services/setupService.ts';
+import { PurchaseService } from '../../../services/purchaseService.ts';
 
 export type SetupSubTab = 'profile' | 'payment_gateways' | 'live_multicast_sockets' | 'banks' | 'pos_terminal' | 'bale_qr' | 'currency' | 'categories' | 'sizes' | 'items' | 'brands' | 'labels' | 'shops' | 'whatsapp' | 'security';
 
@@ -394,27 +397,16 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
 
   const loadData = async () => {
     try {
-      const fetchJsonSafely = async (url: string) => {
-        const res = await fetch(url);
-        if (!res.ok) return null;
-        const contentType = res.headers.get('content-type');
-        if (contentType && !contentType.includes('application/json')) return null;
-        return await res.json();
-      };
-
-      const [profRes, currRes, itemRes, brandRes, labelRes, shopRes, catRes, sizeRes, waRes, balesRes, liveRes, boothsRes] = await Promise.all([
-        fetchJsonSafely('/api/setup/company-profile'),
-        fetchJsonSafely('/api/setup/currency'),
-        fetchJsonSafely('/api/setup/items'),
-        fetchJsonSafely('/api/setup/brands'),
-        fetchJsonSafely('/api/setup/labels'),
-        fetchJsonSafely('/api/setup/shops'),
-        fetchJsonSafely('/api/setup/categories'),
-        fetchJsonSafely('/api/setup/sizes'),
-        fetchJsonSafely('/api/setup/whatsapp-report'),
-        fetchJsonSafely('/api/purchase/gate-passes'),
-        fetchJsonSafely('/api/setup/live-multicast'),
-        fetchJsonSafely('/api/setup/live-booths')
+      const [profRes, currRes, itemRes, brandRes, labelRes, shopRes, catRes, sizeRes, balesRes] = await Promise.all([
+        CompanyProfileService.getCompanyProfile().catch(e => { console.warn(e); return null; }),
+        SetupService.getCurrencies().catch(e => { console.warn(e); return []; }),
+        SetupService.getItems().catch(e => { console.warn(e); return []; }),
+        SetupService.getBrands().catch(e => { console.warn(e); return []; }),
+        SetupService.getLabelGrades().catch(e => { console.warn(e); return []; }),
+        SetupService.getShops().catch(e => { console.warn(e); return []; }),
+        SetupService.getCategories().catch(e => { console.warn(e); return []; }),
+        SetupService.getSizes().catch(e => { console.warn(e); return []; }),
+        PurchaseService.getGatePasses().catch(e => { console.warn(e); return []; })
       ]);
 
       if (profRes) {
@@ -430,11 +422,6 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       if (Array.isArray(shopRes)) setShops(shopRes);
       if (Array.isArray(catRes)) setCategories(catRes);
       if (Array.isArray(sizeRes)) setSizes(sizeRes);
-      if (waRes && waRes.reportText) setWhatsappReportText(waRes.reportText);
-      if (liveRes) setLiveConfig(liveRes);
-      if (Array.isArray(boothsRes) && boothsRes.length > 0) {
-        setBoothConfigs(boothsRes);
-      }
       if (Array.isArray(balesRes)) {
         setBales(balesRes);
       } else {
@@ -554,16 +541,11 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     if (!companyProfile) return;
 
     try {
-      const res = await fetch('/api/setup/company-profile', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(companyProfile)
-      });
-      const data = await res.json();
+      await CompanyProfileService.updateCompanyProfile(companyProfile);
       showMsg('Company profile updated successfully!');
       onRefreshAll();
-    } catch (err) {
-      showMsg('Failed to update company profile', 'error');
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to update company profile', 'error');
     }
   };
 
@@ -576,20 +558,12 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         ...companyProfile,
         posTerminalConfig: posConfig
       };
-      const res = await fetch('/api/setup/company-profile', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedProfile)
-      });
-      if (res.ok) {
-        setCompanyProfile(updatedProfile);
-        showMsg('POS Card Machine configuration saved & linked to Cashier Sales!');
-        onRefreshAll();
-      } else {
-        showMsg('Failed to save POS terminal settings', 'error');
-      }
-    } catch (err) {
-      showMsg('Error saving POS terminal settings', 'error');
+      await CompanyProfileService.updateCompanyProfile(updatedProfile);
+      setCompanyProfile(updatedProfile);
+      showMsg('POS Card Machine configuration saved & linked to Cashier Sales!');
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving POS terminal settings', 'error');
     } finally {
       setIsSavingPosConfig(false);
     }
@@ -678,22 +652,14 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     };
 
     try {
-      const res = await fetch('/api/setup/company', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedProfile)
-      });
-      if (res.ok) {
-        setCompanyProfile(updatedProfile);
-        setShowBankModal(false);
-        showMsg('✓ Bank Account successfully saved and auto-synced to Chart of Accounts (COA)!');
-        onRefreshAll();
-        loadData();
-      } else {
-        showMsg('Failed to save bank account', 'error');
-      }
-    } catch {
-      showMsg('Error saving bank account', 'error');
+      await CompanyProfileService.updateCompanyProfile(updatedProfile);
+      setCompanyProfile(updatedProfile);
+      setShowBankModal(false);
+      showMsg('✓ Bank Account successfully saved and auto-synced to Chart of Accounts (COA)!');
+      onRefreshAll();
+      loadData();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving bank account', 'error');
     }
   };
 
@@ -712,19 +678,13 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
 
     const updatedProfile = { ...companyProfile, bankAccounts: updatedList };
     try {
-      const res = await fetch('/api/setup/company', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedProfile)
-      });
-      if (res.ok) {
-        setCompanyProfile(updatedProfile);
-        showMsg('Bank account deleted and COA updated.');
-        onRefreshAll();
-        loadData();
-      }
-    } catch {
-      showMsg('Error deleting bank account', 'error');
+      await CompanyProfileService.updateCompanyProfile(updatedProfile);
+      setCompanyProfile(updatedProfile);
+      showMsg('Bank account deleted and COA updated.');
+      onRefreshAll();
+      loadData();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error deleting bank account', 'error');
     }
   };
 
@@ -747,34 +707,24 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       bankQrCodeUrl: target.qrCodeUrl
     };
     try {
-      const res = await fetch('/api/setup/company', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedProfile)
-      });
-      if (res.ok) {
-        setCompanyProfile(updatedProfile);
-        showMsg(`★ ${target.bankName} is now set as Primary Settlement Bank!`);
-        onRefreshAll();
-        loadData();
-      }
-    } catch {}
+      await CompanyProfileService.updateCompanyProfile(updatedProfile);
+      setCompanyProfile(updatedProfile);
+      showMsg(`★ ${target.bankName} is now set as Primary Settlement Bank!`);
+      onRefreshAll();
+      loadData();
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to update primary bank', 'error');
+    }
   };
 
   const handleUpdateFxRate = async (code: string, newRate: number) => {
     try {
-      const res = await fetch('/api/setup/currency', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, exchangeRate: newRate })
-      });
-      if (res.ok) {
-        showMsg(`Exchange rate for ${code} saved to ${newRate} (1 AED = ${newRate} ${code})`);
-        loadData();
-        onRefreshAll();
-      }
-    } catch (err) {
-      showMsg('FX update error', 'error');
+      await SetupService.updateCurrencyRate(code, newRate);
+      showMsg(`Exchange rate for ${code} saved to ${newRate} (1 AED = ${newRate} ${code})`);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'FX update error', 'error');
     }
   };
 
@@ -787,31 +737,22 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
 
     setIsSavingCurr(true);
     try {
-      const res = await fetch('/api/setup/currencies', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: newCurrCode.trim().toUpperCase(),
-          name: newCurrName.trim(),
-          symbol: newCurrSymbol.trim() || newCurrCode.trim(),
-          exchangeRate: Number(newCurrRate) || 1.0,
-          isBase: newCurrIsBase
-        })
+      await SetupService.addCurrency({
+        code: newCurrCode.trim().toUpperCase(),
+        name: newCurrName.trim(),
+        symbol: newCurrSymbol.trim() || newCurrCode.trim(),
+        exchangeRate: Number(newCurrRate) || 1.0,
+        isBase: newCurrIsBase
       });
-
-      if (res.ok) {
-        showMsg(`Currency ${newCurrCode.toUpperCase()} added successfully!`);
-        setShowAddCurrencyModal(false);
-        setNewCurrCode('');
-        setNewCurrName('');
-        setNewCurrSymbol('');
-        setNewCurrRate('1.0');
-        setNewCurrIsBase(false);
-        loadData();
-        onRefreshAll();
-      } else {
-        showMsg('Failed to create currency', 'error');
-      }
+      showMsg(`Currency ${newCurrCode.toUpperCase()} added successfully!`);
+      setShowAddCurrencyModal(false);
+      setNewCurrCode('');
+      setNewCurrName('');
+      setNewCurrSymbol('');
+      setNewCurrRate('1.0');
+      setNewCurrIsBase(false);
+      loadData();
+      onRefreshAll();
     } catch (err: any) {
       showMsg(err.message || 'Error saving currency', 'error');
     } finally {
@@ -823,17 +764,12 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     if (!confirm(`Are you sure you want to remove currency ${code}?`)) return;
 
     try {
-      const res = await fetch(`/api/setup/currencies/${code}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showMsg(`Currency ${code} deleted.`);
-        loadData();
-        onRefreshAll();
-      } else {
-        showMsg(`Cannot delete base or active currency ${code}`, 'error');
-      }
-    } catch (err) {
-      showMsg('Failed to delete currency', 'error');
+      await SetupService.deleteCurrency(code);
+      showMsg(`Currency ${code} deleted.`);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to delete currency', 'error');
     }
   };
 
@@ -851,38 +787,30 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   const handleSaveItem = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const url = editingItem ? `/api/setup/items/${editingItem.id}` : '/api/setup/items';
-      const method = editingItem ? 'PUT' : 'POST';
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...itemForm, isActive: true, status: 'POSTED' })
-      });
-      if (res.ok) {
-        showMsg(editingItem ? 'Item master updated successfully!' : 'Item master created successfully!');
-        setShowItemModal(false);
-        loadData();
-        onRefreshAll();
+      if (editingItem) {
+        await SetupService.updateItem(editingItem.id, itemForm);
+        showMsg('Item master updated successfully!');
       } else {
-        showMsg('Failed to save item master', 'error');
+        await SetupService.addItem(itemForm);
+        showMsg('Item master created successfully!');
       }
-    } catch (err) {
-      showMsg('Error saving item master', 'error');
+      setShowItemModal(false);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving item master', 'error');
     }
   };
+
   const handleDeleteItem = async (id: string) => {
     if (!confirm('Are you sure you want to delete this Item Master?')) return;
     try {
-      const res = await fetch(`/api/setup/items/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        showMsg('Item master deleted.');
-        loadData();
-        onRefreshAll();
-      } else {
-        showMsg('Failed to delete item master', 'error');
-      }
-    } catch (err) {
-      showMsg('Error deleting item master', 'error');
+      await SetupService.deleteItem(id);
+      showMsg('Item master deleted.');
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error deleting item master', 'error');
     }
   };
 
@@ -900,38 +828,29 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   const handleSaveBrand = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const url = editingBrand ? `/api/setup/brands/${editingBrand.id}` : '/api/setup/brands';
-      const method = editingBrand ? 'PUT' : 'POST';
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...brandForm, status: 'POSTED' })
-      });
-      if (res.ok) {
-        showMsg(editingBrand ? 'Brand tier updated successfully!' : 'Brand tier created successfully!');
-        setShowBrandModal(false);
-        loadData();
-        onRefreshAll();
+      if (editingBrand) {
+        await SetupService.updateBrand(editingBrand.id, brandForm);
+        showMsg('Brand tier updated successfully!');
       } else {
-        showMsg('Failed to save brand tier', 'error');
+        await SetupService.addBrand(brandForm);
+        showMsg('Brand tier created successfully!');
       }
-    } catch (err) {
-      showMsg('Error saving brand tier', 'error');
+      setShowBrandModal(false);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving brand tier', 'error');
     }
   };
   const handleDeleteBrand = async (id: string) => {
     if (!confirm('Are you sure you want to delete this Brand Tier?')) return;
     try {
-      const res = await fetch(`/api/setup/brands/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        showMsg('Brand tier deleted.');
-        loadData();
-        onRefreshAll();
-      } else {
-        showMsg('Failed to delete brand tier', 'error');
-      }
-    } catch (err) {
-      showMsg('Error deleting brand tier', 'error');
+      await SetupService.deleteBrand(id);
+      showMsg('Brand tier deleted.');
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error deleting brand tier', 'error');
     }
   };
 
@@ -965,54 +884,43 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   const handleSaveLabel = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const url = editingLabel ? `/api/setup/labels/${editingLabel.id}` : '/api/setup/labels';
-      const method = editingLabel ? 'PUT' : 'POST';
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...labelForm, status: 'POSTED', isActive: true })
-      });
-      if (res.ok) {
-        showMsg(editingLabel ? 'Quality grade updated successfully!' : 'Quality grade created successfully!');
-        setShowLabelModal(false);
-        loadData();
-        onRefreshAll();
+      if (editingLabel) {
+        await SetupService.updateLabelGrade(editingLabel.id, labelForm);
+        showMsg('Quality grade updated successfully!');
       } else {
-        showMsg('Failed to save quality grade', 'error');
+        await SetupService.addLabelGrade(labelForm);
+        showMsg('Quality grade created successfully!');
       }
-    } catch (err) {
-      showMsg('Error saving quality grade', 'error');
+      setShowLabelModal(false);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving quality grade', 'error');
     }
   };
 
   const handleDeleteLabel = async (id: string) => {
     if (!confirm('Are you sure you want to delete this Quality Grade?')) return;
     try {
-      const res = await fetch(`/api/setup/labels/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        showMsg('Quality grade deleted.');
-        loadData();
-        onRefreshAll();
-      } else {
-        showMsg('Failed to delete quality grade', 'error');
-      }
-    } catch (err) {
-      showMsg('Error deleting quality grade', 'error');
+      await SetupService.deleteLabelGrade(id);
+      showMsg('Quality grade deleted.');
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error deleting quality grade', 'error');
     }
   };
 
   const handleTogglePostLabel = async (lbl: LabelGrade) => {
     const isPosted = lbl.status !== 'UNPOSTED';
-    const action = isPosted ? 'unpost' : 'post';
+    const newStatus = isPosted ? 'UNPOSTED' : 'POSTED';
     try {
-      const res = await fetch(`/api/setup/labels/${lbl.id}/${action}`, { method: 'POST' });
-      if (res.ok) {
-        showMsg(`Quality grade ${isPosted ? 'unposted to Draft' : 'posted to Active'}!`);
-        loadData();
-        onRefreshAll();
-      }
-    } catch {
-      showMsg(`Error ${action}ing quality grade`, 'error');
+      await SetupService.updateLabelGrade(lbl.id, { status: newStatus as any });
+      showMsg(`Quality grade ${isPosted ? 'unposted to Draft' : 'posted to Active'}!`);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error updating quality grade', 'error');
     }
   };
 
@@ -1049,54 +957,43 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       return;
     }
     try {
-      const url = editingCategory ? `/api/setup/categories/${editingCategory.id}` : '/api/setup/categories';
-      const method = editingCategory ? 'PUT' : 'POST';
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...categoryForm, status: 'POSTED', isActive: true })
-      });
-      if (res.ok) {
-        showMsg(editingCategory ? 'Category updated successfully!' : 'Category created successfully!');
-        setShowCategoryModal(false);
-        loadData();
-        onRefreshAll();
+      if (editingCategory) {
+        await SetupService.updateCategory(editingCategory.id, categoryForm);
+        showMsg('Category updated successfully!');
       } else {
-        showMsg('Failed to save category', 'error');
+        await SetupService.addCategory(categoryForm);
+        showMsg('Category created successfully!');
       }
-    } catch {
-      showMsg('Error saving category', 'error');
+      setShowCategoryModal(false);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving category', 'error');
     }
   };
 
   const handleDeleteCategory = async (id: string) => {
     if (!confirm('Are you sure you want to delete this Category?')) return;
     try {
-      const res = await fetch(`/api/setup/categories/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        showMsg('Category deleted successfully.');
-        loadData();
-        onRefreshAll();
-      } else {
-        showMsg('Failed to delete category', 'error');
-      }
-    } catch {
-      showMsg('Error deleting category', 'error');
+      await SetupService.deleteCategory(id);
+      showMsg('Category deleted successfully.');
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error deleting category', 'error');
     }
   };
 
   const handleTogglePostCategory = async (cat: CategoryMaster) => {
     const isPosted = cat.status !== 'UNPOSTED';
-    const action = isPosted ? 'unpost' : 'post';
+    const newStatus = isPosted ? 'UNPOSTED' : 'POSTED';
     try {
-      const res = await fetch(`/api/setup/categories/${cat.id}/${action}`, { method: 'POST' });
-      if (res.ok) {
-        showMsg(`Category ${isPosted ? 'unposted to Draft' : 'posted to Active'}!`);
-        loadData();
-        onRefreshAll();
-      }
-    } catch {
-      showMsg(`Error ${action}ing category`, 'error');
+      await SetupService.updateCategory(cat.id, { status: newStatus as any });
+      showMsg(`Category ${isPosted ? 'unposted to Draft' : 'posted to Active'}!`);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error updating category', 'error');
     }
   };
 
@@ -1131,54 +1028,43 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       return;
     }
     try {
-      const url = editingSize ? `/api/setup/sizes/${editingSize.id}` : '/api/setup/sizes';
-      const method = editingSize ? 'PUT' : 'POST';
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...sizeForm, status: 'POSTED', isActive: true })
-      });
-      if (res.ok) {
-        showMsg(editingSize ? 'Size updated successfully!' : 'Size created successfully!');
-        setShowSizeModal(false);
-        loadData();
-        onRefreshAll();
+      if (editingSize) {
+        await SetupService.updateSize(editingSize.id, sizeForm);
+        showMsg('Size updated successfully!');
       } else {
-        showMsg('Failed to save size', 'error');
+        await SetupService.addSize(sizeForm);
+        showMsg('Size created successfully!');
       }
-    } catch {
-      showMsg('Error saving size', 'error');
+      setShowSizeModal(false);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving size', 'error');
     }
   };
 
   const handleDeleteSize = async (id: string) => {
     if (!confirm('Are you sure you want to delete this Size?')) return;
     try {
-      const res = await fetch(`/api/setup/sizes/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        showMsg('Size deleted successfully.');
-        loadData();
-        onRefreshAll();
-      } else {
-        showMsg('Failed to delete size', 'error');
-      }
-    } catch {
-      showMsg('Error deleting size', 'error');
+      await SetupService.deleteSize(id);
+      showMsg('Size deleted successfully.');
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error deleting size', 'error');
     }
   };
 
   const handleTogglePostSize = async (sz: SizeMaster) => {
     const isPosted = sz.status !== 'UNPOSTED';
-    const action = isPosted ? 'unpost' : 'post';
+    const newStatus = isPosted ? 'UNPOSTED' : 'POSTED';
     try {
-      const res = await fetch(`/api/setup/sizes/${sz.id}/${action}`, { method: 'POST' });
-      if (res.ok) {
-        showMsg(`Size ${isPosted ? 'unposted to Draft' : 'posted to Active'}!`);
-        loadData();
-        onRefreshAll();
-      }
-    } catch {
-      showMsg(`Error ${action}ing size`, 'error');
+      await SetupService.updateSize(sz.id, { status: newStatus as any });
+      showMsg(`Size ${isPosted ? 'unposted to Draft' : 'posted to Active'}!`);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error updating size', 'error');
     }
   };
 
@@ -1216,11 +1102,6 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               type="button"
               onClick={() => {
                 setSubTab(tab.id as any);
-                if (tab.id === 'payment_gateways') {
-                  setShowPaymentGatewayModal(true);
-                } else if (tab.id === 'live_multicast_sockets') {
-                  setShowSocialSocketsModal(true);
-                }
               }}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all cursor-pointer ${
                 subTab === tab.id
@@ -1532,12 +1413,8 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         <PaymentGatewaySetupCard
           companyProfile={companyProfile}
           onSaveProfile={async (updated) => {
+            await CompanyProfileService.updateCompanyProfile(updated);
             setCompanyProfile(updated);
-            await fetch('/api/setup/company', {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(updated)
-            });
             onRefreshAll();
           }}
           showMsg={showMsg}
@@ -1928,12 +1805,8 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         <UnifiedLiveBroadcastHub
           companyProfile={companyProfile}
           onSaveProfile={async (updated) => {
+            await CompanyProfileService.updateCompanyProfile(updated);
             setCompanyProfile(updated);
-            await fetch('/api/setup/company', {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(updated)
-            });
             onRefreshAll();
           }}
           showMsg={showMsg}
@@ -3729,12 +3602,8 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         onClose={() => setShowPaymentGatewayModal(false)}
         companyProfile={companyProfile}
         onSaveProfile={async (updated) => {
+          await CompanyProfileService.updateCompanyProfile(updated);
           setCompanyProfile(updated);
-          await fetch('/api/setup/company', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updated)
-          });
           onRefreshAll();
         }}
         showMsg={showMsg}
@@ -3745,12 +3614,8 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         onClose={() => setShowSocialSocketsModal(false)}
         companyProfile={companyProfile}
         onSaveProfile={async (updated) => {
+          await CompanyProfileService.updateCompanyProfile(updated);
           setCompanyProfile(updated);
-          await fetch('/api/setup/company', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updated)
-          });
           onRefreshAll();
         }}
         showMsg={showMsg}

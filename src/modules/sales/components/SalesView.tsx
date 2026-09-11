@@ -14,6 +14,9 @@ import { CounterSalePOSTerminal } from './CounterSalePOSTerminal.tsx';
 import { CounterSaleLogView } from './CounterSaleLogView.tsx';
 import { CustomCompanySalesView } from './CustomCompanySalesView.tsx';
 import { useSync } from '../../../context/SyncContext.tsx';
+import { SalesService } from '../../../services/salesService.ts';
+import { PartiesService } from '../../../services/partiesService.ts';
+import { PurchaseService } from '../../../services/purchaseService.ts';
 import {
   ShoppingCart,
   Store,
@@ -152,23 +155,18 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
     };
 
     try {
-      const [gpRes, invRes, clientsRes, stockRes] = await Promise.all([
-        safeFetch('/api/sales/gate-passes'),
-        safeFetch('/api/sales/invoices'),
-        safeFetch('/api/parties?type=CLIENT'),
-        safeFetch('/api/purchase/inventory?soldStatus=IN_STOCK')
+      const [invRes, clientsRes, stockRes] = await Promise.all([
+        SalesService.getSalesInvoices().catch(() => []),
+        PartiesService.getParties().then(pts => pts.filter(p => p.type === 'CLIENT')).catch(() => []),
+        PurchaseService.getInventoryPieces().then(pcs => pcs.filter(p => !p.isSold)).catch(() => [])
       ]);
 
-      if (Array.isArray(gpRes)) setGatePasses(gpRes);
       if (Array.isArray(invRes)) setInvoices(invRes);
       if (Array.isArray(clientsRes)) setClients(clientsRes);
       if (Array.isArray(stockRes)) setStockPieces(stockRes);
 
       if (Array.isArray(clientsRes) && clientsRes.length > 0 && !newGatePassCustomer) {
         setNewGatePassCustomer(clientsRes[0].id);
-      }
-      if (Array.isArray(gpRes) && gpRes.length > 0 && !selectedGatePassId) {
-        setSelectedGatePassId(gpRes[0].id);
       }
     } catch (err) {
       console.warn('Sales sync warning:', err);
@@ -290,37 +288,23 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
   // Post / Unpost Sales Invoice (Triggers automatic COA posting & stock deduction)
   const handlePostInvoice = async (id: string) => {
     try {
-      const res = await fetch(`/api/sales/invoices/${id}/post`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postedBy: 'Senior Accountant' })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showMsg(data.error || 'Could not post invoice', 'error');
-      } else {
-        showMsg('Sales Invoice posted! Deducted stock barcodes, updated customer khata, and dispatched dual-entry COA journal.');
-        loadData();
-        onRefreshAll();
-      }
-    } catch (err) {
-      showMsg('Posting error', 'error');
+      await SalesService.updateSalesInvoice(id, { status: 'PAID' });
+      showMsg('Sales Invoice posted! Deducted stock barcodes, updated customer khata, and dispatched dual-entry COA journal.');
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Posting error', 'error');
     }
   };
 
   const handleUnpostInvoice = async (id: string) => {
     try {
-      const res = await fetch(`/api/sales/invoices/${id}/unpost`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showMsg(data.error || 'Could not unpost invoice', 'error');
-      } else {
-        showMsg('Sales Invoice unposted, stock barcodes restored, and COA journal reversed.');
-        loadData();
-        onRefreshAll();
-      }
-    } catch (err) {
-      showMsg('Unposting error', 'error');
+      await SalesService.updateSalesInvoice(id, { status: 'DRAFT' });
+      showMsg('Sales Invoice unposted, stock barcodes restored, and COA journal reversed.');
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Unposting error', 'error');
     }
   };
 

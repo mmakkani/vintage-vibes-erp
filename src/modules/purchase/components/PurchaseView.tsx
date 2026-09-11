@@ -17,6 +17,9 @@ import {
   RefreshCw,
   AlertCircle
 } from 'lucide-react';
+import { PurchaseService } from '../../../services/purchaseService.ts';
+import { PartiesService } from '../../../services/partiesService.ts';
+import { SetupService } from '../../../services/setupService.ts';
 
 interface PurchaseViewProps {
   onRefreshAll: () => void;
@@ -124,16 +127,16 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
     setIsLoading(true);
     try {
       const [balesRes, invRes, piecesRes, partiesRes, itemsRes, brandsRes, labelsRes, shopsRes, catRes, sizeRes] = await Promise.all([
-        fetchJsonSafely<InwardGatePass[]>('/api/purchase/gate-passes').then(async res => res || (await fetchJsonSafely<InwardGatePass[]>('/api/bales'))),
-        fetchJsonSafely<PurchaseInvoice[]>('/api/purchase/invoices'),
-        fetchJsonSafely<PieceBreakdownItem[]>('/api/purchase/inventory'),
-        fetchJsonSafely<Party[]>('/api/parties'),
-        fetchJsonSafely<ItemMaster[]>('/api/setup/items').then(async res => res || (await fetchJsonSafely<ItemMaster[]>('/api/setup/item-master'))),
-        fetchJsonSafely<BrandMaster[]>('/api/setup/brands').then(async res => res || (await fetchJsonSafely<BrandMaster[]>('/api/setup/brand-master'))),
-        fetchJsonSafely<LabelGrade[]>('/api/setup/labels').then(async res => res || (await fetchJsonSafely<LabelGrade[]>('/api/setup/label-grade'))),
-        fetchJsonSafely<ShopMaster[]>('/api/setup/shops').then(async res => res || (await fetchJsonSafely<ShopMaster[]>('/api/setup/shop-master'))),
-        fetchJsonSafely<CategoryMaster[]>('/api/setup/categories'),
-        fetchJsonSafely<SizeMaster[]>('/api/setup/sizes')
+        PurchaseService.getInwardGatePasses().catch(() => []),
+        PurchaseService.getPurchaseInvoices().catch(() => []),
+        PurchaseService.getInventoryPieces().catch(() => []),
+        PartiesService.getParties().catch(() => []),
+        SetupService.getItems().catch(() => []),
+        SetupService.getBrands().catch(() => []),
+        SetupService.getLabelGrades().catch(() => []),
+        SetupService.getShops().catch(() => []),
+        SetupService.getCategories().catch(() => []),
+        SetupService.getSizes().catch(() => [])
       ]);
 
       let hasLiveResponse = false;
@@ -258,22 +261,15 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
   // Handle save partial
   const handleSavePartial = async (baleId: string) => {
     try {
-      const res = await fetch(`/api/purchase/gate-passes/${baleId}/save-partial`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ savedBy: 'Sorting Supervisor' })
+      await PurchaseService.updateInwardGatePass(baleId, { status: 'PARTIAL' });
+      setBales(prev => {
+        const next = prev.map(b => b.id === baleId ? { ...b, status: 'PARTIAL' } : b);
+        saveCached(CACHE_KEYS.BALES, next);
+        return next;
       });
-      const data = await res.json();
-      if (data.success) {
-        setBales(prev => {
-          const next = prev.map(b => b.id === baleId ? data.gatePass : b);
-          saveCached(CACHE_KEYS.BALES, next);
-          return next;
-        });
-        fetchPurchaseData();
-        onRefreshAll();
-      }
-    } catch (e) {
+      fetchPurchaseData();
+      onRefreshAll();
+    } catch (e: any) {
       console.warn('Save partial note:', e);
     }
   };
@@ -281,21 +277,13 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
   // Handle post bale & lock to inventory
   const handlePostBale = async (baleId: string) => {
     try {
-      const res = await fetch(`/api/purchase/gate-passes/${baleId}/post`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postedBy: 'Sortery Lead' })
-      });
-      const data = await res.json();
-      if (data.success) {
-        fetchPurchaseData();
-        onRefreshAll();
-        alert('Bale successfully finalized & pieces transferred to Finished Goods inventory!');
-      } else {
-        alert(data.error || 'Failed to post bale.');
-      }
-    } catch (e) {
+      await PurchaseService.updateInwardGatePass(baleId, { status: 'POSTED' });
+      fetchPurchaseData();
+      onRefreshAll();
+      alert('Bale successfully finalized & pieces transferred to Finished Goods inventory!');
+    } catch (e: any) {
       console.warn('Post bale error:', e);
+      alert(e?.message || 'Failed to post bale.');
     }
   };
 

@@ -34,6 +34,7 @@ import { useIdleTimer } from './hooks/useIdleTimer.ts';
 import { isTabAccessible, getAccessibleTabs } from './modules/auth/utils/permissionUtils.ts';
 import { MarketingAutomationView } from './modules/marketing/components/MarketingAutomationView.tsx';
 import { LiveOBSOverlayView } from './modules/marketing/components/LiveOBSOverlayView.tsx';
+import { CompanyProfileService, SetupService, AuthService } from './services/index.ts';
 
 const VALID_TABS: ActiveTab[] = [
   'dashboard',
@@ -232,43 +233,33 @@ export default function App() {
 
   const [allUsers, setAllUsers] = useState<User[]>([]);
 
-  // Global refresh handler to re-sync profile, currencies, etc.
+  // Global refresh handler to re-sync profile, currencies, and users directly from Supabase
   const refreshGlobalData = async () => {
     try {
-      const fetchJsonSafely = async (url: string, retries = 2) => {
-        for (let i = 0; i <= retries; i++) {
-          try {
-            const res = await fetch(url);
-            if (!res.ok) return null;
-            const contentType = res.headers.get('content-type');
-            if (contentType && !contentType.includes('application/json')) {
-              return null;
-            }
-            return await res.json();
-          } catch (e) {
-            if (i < retries) {
-              await new Promise(r => setTimeout(r, 500 * (i + 1)));
-            }
-          }
-        }
-        return null;
-      };
-
-      const [profRes, currRes, usersRes] = await Promise.all([
-        fetchJsonSafely('/api/setup/company-profile'),
-        fetchJsonSafely('/api/setup/currency'),
-        fetchJsonSafely('/api/auth/users')
+      const [profile, currs, users] = await Promise.all([
+        CompanyProfileService.getCompanyProfile().catch(e => {
+          console.warn('[GlobalSync] Profile fallback:', e?.message);
+          return null;
+        }),
+        SetupService.getCurrencies().catch(e => {
+          console.warn('[GlobalSync] Currencies fallback:', e?.message);
+          return [];
+        }),
+        AuthService.getUsers().catch(e => {
+          console.warn('[GlobalSync] Users fallback:', e?.message);
+          return [];
+        })
       ]);
-      if (profRes && profRes.companyName) setCompanyProfile(profRes);
-      if (Array.isArray(currRes)) setCurrencies(currRes);
-      if (Array.isArray(usersRes)) {
-        setAllUsers(usersRes);
-        // keep current user updated
-        const found = usersRes.find(u => u.id === currentUser.id);
+
+      if (profile && profile.companyName) setCompanyProfile(profile);
+      if (Array.isArray(currs) && currs.length > 0) setCurrencies(currs);
+      if (Array.isArray(users) && users.length > 0) {
+        setAllUsers(users);
+        const found = users.find(u => u.id === currentUser.id);
         if (found) setCurrentUser(found);
       }
-    } catch (err) {
-      console.warn('Global data sync warning (using default state):', err);
+    } catch (err: any) {
+      console.warn('Global data sync notice (using resilient client state):', err?.message);
     }
   };
 

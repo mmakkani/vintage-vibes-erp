@@ -13,6 +13,8 @@ import {
   FileCheck,
   CreditCard
 } from 'lucide-react';
+import { PartiesService } from '../../../services/partiesService.ts';
+import { FinanceService } from '../../../services/financeService.ts';
 
 interface PartiesViewProps {
   onRefreshAll: () => void;
@@ -62,8 +64,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
   const loadParties = async () => {
     try {
-      const res = await fetch('/api/parties');
-      const data = await res.json();
+      const data = await PartiesService.getParties();
       setParties(data);
       if (data.length > 0 && !selectedParty) {
         selectParty(data[0]);
@@ -71,17 +72,16 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         const updated = data.find((p: Party) => p.id === selectedParty.id);
         if (updated) setSelectedParty(updated);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     }
   };
 
   const loadCoaAccounts = async () => {
     try {
-      const res = await fetch('/api/finance/coa');
-      const data = await res.json();
+      const data = await FinanceService.getCoaAccounts();
       if (Array.isArray(data)) setCoaAccounts(data);
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Failed to load COA for party provisioning:', err);
     }
   };
@@ -89,10 +89,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   const selectParty = async (party: Party) => {
     setSelectedParty(party);
     try {
-      const res = await fetch(`/api/parties/${party.id}/khata`);
-      const logs = await res.json();
+      const logs = await PartiesService.getKhataLogs(party.id);
       setKhataLogs(logs);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     }
   };
@@ -110,18 +109,13 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   const handleCreateParty = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('/api/parties', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(partyForm)
-      });
-      const data = await res.json();
+      const newParty = await PartiesService.addParty(partyForm);
       setShowNewPartyModal(false);
-      showMsg(`Added ${data.name} (${data.code}) and auto-provisioned COA sub-accounts!`);
+      showMsg(`Added ${newParty.name} (${newParty.code}) and auto-provisioned COA sub-accounts!`);
       loadParties();
       onRefreshAll();
-    } catch (err) {
-      showMsg('Failed to add party', 'error');
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to add party', 'error');
     }
   };
 
@@ -130,23 +124,32 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     if (!selectedParty) return;
 
     try {
-      const res = await fetch(`/api/parties/${selectedParty.id}/transaction`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(txForm)
+      const isReceipt = txForm.type === 'RECEIPT';
+      const debit = isReceipt ? 0 : Number(txForm.amount);
+      const credit = isReceipt ? Number(txForm.amount) : 0;
+      const newBal = (selectedParty.currentBalance || 0) + debit - credit;
+
+      await PartiesService.addKhataLog({
+        partyId: selectedParty.id,
+        date: new Date().toISOString().slice(0, 10),
+        reference: txForm.docRef,
+        debit,
+        credit,
+        runningBalance: newBal,
+        notes: txForm.description
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showMsg(data.error || 'Failed to record transaction', 'error');
-      } else {
-        showMsg(`Recorded ${txForm.type} of AED ${txForm.amount}! Updated Khata statement.`);
-        setShowTransactionModal(false);
-        loadParties();
-        selectParty(selectedParty);
-        onRefreshAll();
-      }
-    } catch (err) {
-      showMsg('Transaction error', 'error');
+
+      await PartiesService.updateParty(selectedParty.id, {
+        currentBalance: newBal
+      });
+
+      showMsg(`Recorded ${txForm.type} of AED ${txForm.amount}! Updated Khata statement.`);
+      setShowTransactionModal(false);
+      loadParties();
+      selectParty({ ...selectedParty, currentBalance: newBal });
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Transaction error', 'error');
     }
   };
 

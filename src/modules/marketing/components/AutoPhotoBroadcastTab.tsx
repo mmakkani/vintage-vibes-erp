@@ -40,6 +40,8 @@ import { Party } from '../../parties/parties.types.ts';
 import { AutoBroadcastCampaign, WhatsAppDeviceSession, WhatsAppChannelItem } from '../marketing.types.ts';
 import { WhatsAppDeviceModal } from './WhatsAppDeviceModal.tsx';
 import { SocialLiveConnectModal } from './SocialLiveConnectModal.tsx';
+import { PurchaseService } from '../../../services/purchaseService.ts';
+import { PartiesService } from '../../../services/partiesService.ts';
 
 export const AutoPhotoBroadcastTab: React.FC = () => {
   // Wizard Setup State
@@ -114,18 +116,45 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
 
   const fetchInitialData = async () => {
     try {
-      const [piecesRes, balesRes, campRes, deviceRes, partiesRes, configRes, groupsRes, channelsRes] = await Promise.all([
-        fetch('/api/purchase/pieces'),
-        fetch('/api/purchase/gate-passes'),
-        fetch('/api/marketing/broadcast-campaign/status'),
-        fetch('/api/marketing/whatsapp/session?userId=usr-admin-1&userName=Dubai%20HQ%20Operator'),
-        fetch('/api/parties'),
-        fetch('/api/marketing/whatsapp/config'),
-        fetch('/api/marketing/whatsapp/groups?userId=usr-admin-1'),
-        fetch('/api/marketing/whatsapp/channels')
+      // 1. Direct Supabase calls for database entities
+      try {
+        const [piecesData, balesData, partiesData] = await Promise.all([
+          PurchaseService.getInventoryPieces(),
+          PurchaseService.getGatePasses(),
+          PartiesService.getParties()
+        ]);
+
+        if (partiesData) {
+          const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT');
+          setCustomers(clientList);
+          setSelectedCustomerIds(clientList.map((c: Party) => c.id));
+        }
+
+        if (piecesData) {
+          const inStock = (piecesData || []).filter((p: PieceBreakdownItem) => !p.isSold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE'));
+          setPieces(inStock);
+          if (inStock.length > 0 && selectedPieceSkus.length === 0) {
+            setSelectedPieceSkus(inStock.slice(0, 6).map((p: PieceBreakdownItem) => p.barcode));
+          }
+        }
+
+        if (balesData) {
+          setBales(balesData);
+        }
+      } catch (dbErr) {
+        console.warn('Database entities load error in AutoPhotoBroadcastTab:', dbErr);
+      }
+
+      // 2. Serverless routes for WhatsApp sessions, channels, and campaigns
+      const [campRes, deviceRes, configRes, groupsRes, channelsRes] = await Promise.all([
+        fetch('/api/marketing/broadcast-campaign/status').catch(() => null),
+        fetch('/api/marketing/whatsapp/session?userId=usr-admin-1&userName=Dubai%20HQ%20Operator').catch(() => null),
+        fetch('/api/marketing/whatsapp/config').catch(() => null),
+        fetch('/api/marketing/whatsapp/groups?userId=usr-admin-1').catch(() => null),
+        fetch('/api/marketing/whatsapp/channels').catch(() => null)
       ]);
 
-      if (channelsRes.ok) {
+      if (channelsRes && channelsRes.ok) {
         const cData = await channelsRes.json();
         const chList: WhatsAppChannelItem[] = cData.channels || [];
         setChannels(chList);
@@ -143,7 +172,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         }
       }
 
-      if (configRes.ok) {
+      if (configRes && configRes.ok) {
         const cfg = await configRes.json();
         if (cfg.connectionMode) {
           setDeliveryEngineMode(cfg.connectionMode);
@@ -165,39 +194,17 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         }
       }
 
-      if (groupsRes.ok) {
+      if (groupsRes && groupsRes.ok) {
         const gData = await groupsRes.json();
         setRealGroups(gData.groups || []);
       }
 
-      if (partiesRes.ok) {
-        const partiesData = await partiesRes.json();
-        const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT');
-        setCustomers(clientList);
-        // Default select all active customer phones
-        setSelectedCustomerIds(clientList.map((c: Party) => c.id));
-      }
-
-      if (deviceRes.ok) {
+      if (deviceRes && deviceRes.ok) {
         const d = await deviceRes.json();
         setLinkedDevice(d);
       }
 
-      if (piecesRes.ok) {
-        const pData = await piecesRes.json();
-        const inStock = (pData || []).filter((p: PieceBreakdownItem) => !p.isSold && p.status === 'IN_STOCK');
-        setPieces(inStock);
-        if (inStock.length > 0 && selectedPieceSkus.length === 0) {
-          // Pre-select first 6 pieces for convenience
-          setSelectedPieceSkus(inStock.slice(0, 6).map((p: PieceBreakdownItem) => p.barcode));
-        }
-      }
-
-      if (balesRes.ok) {
-        setBales(await balesRes.json());
-      }
-
-      if (campRes.ok) {
+      if (campRes && campRes.ok) {
         const cData = await campRes.json();
         setActiveCampaign(cData.current);
         setCampaignHistory(cData.history || []);
@@ -459,14 +466,11 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       });
       const data = await res.json();
       if (res.ok) {
-        alert(`✅ WhatsApp Phone Sync Complete!\n\nImported/Updated: ${data.syncedCount} authentic contacts directly from your connected WhatsApp account.`);
-        const partiesRes = await fetch('/api/parties');
-        if (partiesRes.ok) {
-          const partiesData = await partiesRes.json();
-          const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT');
-          setCustomers(clientList);
-          setSelectedCustomerIds(clientList.map((c: Party) => c.id));
-        }
+        alert(`✅ WhatsApp Phone Sync Complete!\n\nImported/Updated: ${data.count || data.syncedCount || 0} authentic contacts directly from your connected WhatsApp account.`);
+        const partiesData = await PartiesService.getParties();
+        const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT');
+        setCustomers(clientList);
+        setSelectedCustomerIds(clientList.map((c: Party) => c.id));
       } else {
         alert(`Sync failed: ${data.error || 'Unknown error'}`);
       }
@@ -487,14 +491,11 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       });
       const data = await res.json();
       if (res.ok) {
-        alert(`✅ Demo Contacts Purged!\n\nWiped ${data.wipedCount} demo seed contacts. Total authentic customer contacts remaining: ${data.remainingCount}.`);
-        const partiesRes = await fetch('/api/parties');
-        if (partiesRes.ok) {
-          const partiesData = await partiesRes.json();
-          const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT');
-          setCustomers(clientList);
-          setSelectedCustomerIds(clientList.map((c: Party) => c.id));
-        }
+        alert(`✅ Demo Contacts Purged!\n\nWiped contacts successfully.`);
+        const partiesData = await PartiesService.getParties();
+        const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT');
+        setCustomers(clientList);
+        setSelectedCustomerIds(clientList.map((c: Party) => c.id));
       }
     } catch (err: any) {
       alert(`Error wiping demo contacts: ${err.message}`);
@@ -510,26 +511,21 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       return;
     }
     try {
-      const res = await fetch('/api/marketing/whatsapp/directory/add-customer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newContactName.trim() || `Customer (${newContactPhone.trim()})`,
-          phone: newContactPhone.trim()
-        })
+      const newCust = await PartiesService.addParty({
+        name: newContactName.trim() || `Customer (${newContactPhone.trim()})`,
+        phone: newContactPhone.trim(),
+        type: 'CLIENT'
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.customer) {
-          setCustomers(prev => [data.customer, ...prev]);
-          setSelectedCustomerIds(prev => [data.customer.id, ...prev]);
-          setNewContactName('');
-          setNewContactPhone('');
-          setIsAddingContact(false);
-        }
+      if (newCust) {
+        setCustomers(prev => [newCust, ...prev]);
+        setSelectedCustomerIds(prev => [newCust.id, ...prev]);
+        setNewContactName('');
+        setNewContactPhone('');
+        setIsAddingContact(false);
       }
-    } catch (err) {
-      console.warn('Error adding contact:', err);
+    } catch (err: any) {
+      console.warn('Error adding contact to Supabase:', err);
+      alert(`Error adding contact: ${err.message || err}`);
     }
   };
 
@@ -541,23 +537,19 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       return;
     }
     try {
-      const res = await fetch('/api/marketing/whatsapp/directory/add-customer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: `My Linked Phone (${myPhone})`,
-          phone: myPhone
-        })
+      const myCust = await PartiesService.addParty({
+        name: `My Linked Phone (${myPhone})`,
+        phone: myPhone,
+        type: 'CLIENT'
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.customer) {
-          setCustomers(prev => [data.customer, ...prev.filter(c => c.phone !== myPhone)]);
-          setSelectedCustomerIds(prev => [...new Set([data.customer.id, ...prev])]);
-        }
+      if (myCust) {
+        setCustomers(prev => [myCust, ...prev.filter(c => c.phone !== myPhone)]);
+        setSelectedCustomerIds(prev => [...new Set([myCust.id, ...prev])]);
+        alert(`Linked phone ${myPhone} added successfully!`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Error adding linked phone:', err);
+      alert(`Error adding linked phone: ${err.message || err}`);
     }
   };
 

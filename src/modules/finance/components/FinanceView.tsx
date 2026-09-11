@@ -11,6 +11,8 @@ import { CourierCODReconciliation } from './CourierCODReconciliation.tsx';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { VoucherInputSchema, validateWithZod } from '../../../validation/schemas.ts';
 import { safeFetchJson } from '../../../utils/fetchUtils.ts';
+import { FinanceService } from '../../../services/financeService.ts';
+import { PartiesService } from '../../../services/partiesService.ts';
 import {
   Landmark,
   FileSpreadsheet,
@@ -251,32 +253,24 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
     setIsSavingAccount(true);
     try {
-      const res = await fetch('/api/finance/coa', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: newAccCode.trim(),
-          name: newAccName.trim(),
-          classification: newAccClassification,
-          tierLevel: newAccTierLevel,
-          parentCode: newAccParentCode.trim() || undefined,
-          currency: newAccCurrency,
-          currentBalance: Number(newAccOpeningBalance) || 0,
-          isSystem: false,
-          isActive: true
-        })
+      await FinanceService.addCoaAccount({
+        code: newAccCode.trim(),
+        name: newAccName.trim(),
+        classification: newAccClassification,
+        tierLevel: newAccTierLevel,
+        parentCode: newAccParentCode.trim() || undefined,
+        currency: newAccCurrency,
+        currentBalance: Number(newAccOpeningBalance) || 0,
+        isSystem: false,
+        isActive: true
       });
 
-      if (res.ok) {
-        showMsg(`Account ${newAccCode} - ${newAccName} created successfully!`);
-        setShowAddAccountModal(false);
-        setNewAccName('');
-        setNewAccOpeningBalance('0');
-        loadData();
-        onRefreshAll();
-      } else {
-        showMsg('Failed to add COA account', 'error');
-      }
+      showMsg(`Account ${newAccCode} - ${newAccName} created successfully!`);
+      setShowAddAccountModal(false);
+      setNewAccName('');
+      setNewAccOpeningBalance('0');
+      loadData();
+      onRefreshAll();
     } catch (err: any) {
       showMsg(err.message || 'Error saving account', 'error');
     } finally {
@@ -369,40 +363,20 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
     setIsSavingVoucher(true);
     try {
-      const res = await fetch('/api/finance/vouchers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...payload,
-          lines: voucherLines.map((l, i) => ({
-            id: `vl-${i + 1}`,
-            accountId: l.accountId,
-            accountCode: l.accountCode,
-            accountName: l.accountName,
-            debitAmount: Number(l.debitAmount) || 0,
-            creditAmount: Number(l.creditAmount) || 0,
-            memo: l.memo || voucherNarration
-          }))
-        })
+      const voucher = await FinanceService.addVoucher({
+        ...payload,
+        status: 'DRAFT'
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showMsg(data.error || 'Failed to create voucher', 'error');
-        setIsSavingVoucher(false);
-        releaseLock('finance-create-voucher');
-        return;
-      }
-
-      showMsg(`Voucher ${data.voucher.voucherNo} created as Draft successfully!`);
+      showMsg(`Voucher ${voucher.voucherNo} created as Draft successfully!`);
       setShowNewVoucherModal(false);
       releaseLock('finance-create-voucher');
-      notifyMutation('FINANCE', 'VOUCHER', 'CREATE', data.voucher?.voucherNo);
+      notifyMutation('FINANCE', 'VOUCHER', 'CREATE', voucher.voucherNo);
       loadData();
       onRefreshAll();
     } catch (err: any) {
       releaseLock('finance-create-voucher');
-      showMsg(err.message || 'Error communicating with server', 'error');
+      showMsg(err.message || 'Error creating voucher', 'error');
     } finally {
       setIsSavingVoucher(false);
     }
@@ -413,22 +387,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     if (!acquireLock(lockKey)) return;
 
     try {
-      const res = await fetch(`/api/finance/vouchers/${voucherId}/post`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postedBy: 'Senior Financial Controller' })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showMsg('Voucher approved and posted to General Ledger!');
-        notifyMutation('FINANCE', 'VOUCHER', 'POST', voucherId);
-        loadData();
-        onRefreshAll();
-      } else {
-        showMsg(data.error || 'Failed to post voucher', 'error');
-      }
-    } catch (err) {
-      showMsg('Failed to post voucher', 'error');
+      await FinanceService.updateVoucherStatus(voucherId, 'POSTED');
+      showMsg('Voucher approved and posted to General Ledger!');
+      notifyMutation('FINANCE', 'VOUCHER', 'POST', voucherId);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to post voucher', 'error');
     } finally {
       releaseLock(lockKey);
     }
@@ -439,18 +404,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     if (!acquireLock(lockKey)) return;
 
     try {
-      const res = await fetch(`/api/finance/vouchers/${voucherId}/unpost`, { method: 'POST' });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showMsg('Voucher unposted and General Ledger postings reversed!');
-        notifyMutation('FINANCE', 'VOUCHER', 'UNPOST', voucherId);
-        loadData();
-        onRefreshAll();
-      } else {
-        showMsg(data.error || 'Failed to unpost voucher', 'error');
-      }
-    } catch (err) {
-      showMsg('Failed to unpost voucher', 'error');
+      await FinanceService.updateVoucherStatus(voucherId, 'DRAFT');
+      showMsg('Voucher unposted and General Ledger postings reversed!');
+      notifyMutation('FINANCE', 'VOUCHER', 'UNPOST', voucherId);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to unpost voucher', 'error');
     } finally {
       releaseLock(lockKey);
     }

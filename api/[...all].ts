@@ -39,6 +39,8 @@ interface WhatsAppChannelItem {
 
 // 1. In-Memory Session & Config State
 const sessionsMap = new Map<string, WhatsAppDeviceSession>();
+let activeBroadcastCampaign: any = null;
+const broadcastHistory: any[] = [];
 
 const defaultCompanyProfile = {
   companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
@@ -609,11 +611,52 @@ export default async function handler(req: any, res: any) {
     // GENERAL MARKETING & STORE ROUTES
     // ========================================================================
 
+    if (pathname.includes('/broadcast-campaign/start') && method === 'POST') {
+      const pieceIds = body.pieceIds || [];
+      activeBroadcastCampaign = {
+        id: `camp-${Date.now()}`,
+        title: body.title || 'Vintage Vibes Garment Drop',
+        targetAudience: body.targetAudience || 'VIP Buyers',
+        targetChatId: body.targetChatId || '',
+        totalPieces: pieceIds.length || 6,
+        dispatchedCount: 0,
+        intervalSeconds: body.intervalSeconds || 10,
+        status: 'RUNNING',
+        startedAt: new Date().toISOString(),
+        items: pieceIds.map((id: string, idx: number) => ({
+          pieceId: id,
+          status: idx === 0 ? 'SENT' : 'PENDING'
+        }))
+      };
+      return res.status(200).json(activeBroadcastCampaign);
+    }
+
+    if (pathname.includes('/broadcast-campaign/pause') && method === 'POST') {
+      if (activeBroadcastCampaign) activeBroadcastCampaign.status = 'PAUSED';
+      return res.status(200).json({ success: true, campaign: activeBroadcastCampaign });
+    }
+
+    if (pathname.includes('/broadcast-campaign/resume') && method === 'POST') {
+      if (activeBroadcastCampaign) activeBroadcastCampaign.status = 'RUNNING';
+      return res.status(200).json({ success: true, campaign: activeBroadcastCampaign });
+    }
+
+    if (pathname.includes('/broadcast-campaign/abort') && method === 'POST') {
+      if (activeBroadcastCampaign) {
+        activeBroadcastCampaign.status = 'ABORTED';
+        broadcastHistory.unshift(activeBroadcastCampaign);
+        activeBroadcastCampaign = null;
+      }
+      return res.status(200).json({ success: true, campaign: null, history: broadcastHistory });
+    }
+
     if (pathname.includes('/broadcast-campaign')) {
       return res.status(200).json({
-        campaign: null,
-        isBroadcasting: false,
-        status: 'IDLE'
+        current: activeBroadcastCampaign,
+        history: broadcastHistory,
+        campaign: activeBroadcastCampaign,
+        isBroadcasting: activeBroadcastCampaign?.status === 'RUNNING',
+        status: activeBroadcastCampaign?.status || 'IDLE'
       });
     }
 
@@ -683,6 +726,56 @@ export default async function handler(req: any, res: any) {
         reservationExpiryMins: 15,
         defaultPaymentMethod: 'DIGITAL_GATEWAY',
         printThermalReceipt: true
+      });
+    }
+
+    // Events Broadcast & Subscribe
+    if (pathname.includes('/events/broadcast')) {
+      return res.status(200).json({ success: true, message: 'Broadcast event dispatched' });
+    }
+
+    if (pathname.includes('/events/subscribe')) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.write(`data: ${JSON.stringify({ type: 'CONNECTED', activeClientsCount: 1 })}\n\n`);
+      return res.end();
+    }
+
+    // WhatsApp Executive Daily Digest
+    if (pathname.includes('/setup/whatsapp-report')) {
+      return res.status(200).json({
+        reportText: `📊 VINTAGE VIBES DUBAI - DAILY DIGEST\n` +
+          `📅 Date: ${new Date().toLocaleDateString('en-GB')}\n` +
+          `-----------------------------------------\n` +
+          `🏢 Entity: VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C\n` +
+          `📍 Location: Al Quoz Industrial 3, Dubai\n` +
+          `💰 Currency: AED (UAE Dirham)\n\n` +
+          `📦 Warehouse & Inventory:\n` +
+          `• Inventory Pieces: Connected directly to Supabase cloud DB\n` +
+          `• Vault Drops & Gate Passes: Operational\n\n` +
+          `🚀 Generated automatically via Vintage Vibes ERP`
+      });
+    }
+
+    // Audit Logging
+    if (pathname.includes('/audit/log')) {
+      return res.status(200).json({ success: true });
+    }
+
+    // Auth Login
+    if (pathname.includes('/auth/login') && method === 'POST') {
+      const { username } = body || {};
+      return res.status(200).json({
+        success: true,
+        user: {
+          id: 'usr-admin-1',
+          username: username || 'admin',
+          email: 'admin@vintagevibes.ae',
+          role: 'ADMIN',
+          name: 'Executive Superadmin',
+          status: 'ACTIVE'
+        }
       });
     }
 

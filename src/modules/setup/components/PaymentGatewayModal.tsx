@@ -49,7 +49,7 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
   };
 
   const [gatewayConfig, setGatewayConfig] = useState<PaymentGatewayConfig>(() => {
-    return companyProfile.paymentGateway || defaultGateway;
+    return companyProfile?.paymentGateway || defaultGateway;
   });
 
   const [showSecretKey, setShowSecretKey] = useState(false);
@@ -67,10 +67,10 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
   });
 
   useEffect(() => {
-    if (companyProfile.paymentGateway) {
+    if (companyProfile?.paymentGateway) {
       setGatewayConfig(companyProfile.paymentGateway);
     }
-  }, [companyProfile.paymentGateway]);
+  }, [companyProfile?.paymentGateway]);
 
   if (!isOpen) return null;
 
