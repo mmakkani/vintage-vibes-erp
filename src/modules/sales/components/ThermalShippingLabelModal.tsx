@@ -119,11 +119,11 @@ export const ThermalShippingLabelModal: React.FC<ThermalShippingLabelModalProps>
               {/* Shipper */}
               <div className="border-r border-black pr-2">
                 <div className="text-[9px] font-black uppercase text-slate-500 mb-0.5">FROM (SHIPPER):</div>
-                <div className="font-bold text-slate-900">VINTAGE VIBES DUBAI FZ-LLC</div>
-                <div className="text-slate-700">Al Quoz Industrial 3, Unit 14</div>
-                <div className="text-slate-700">Dubai, United Arab Emirates</div>
+                <div className="font-bold text-slate-900">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</div>
+                <div className="text-slate-700">House 14 Street 4 - Al Jimi - Al Nudood</div>
+                <div className="text-slate-700">Al Ain, Abu Dhabi, UAE</div>
                 <div className="text-[10px] text-slate-600 font-bold mt-1">TRN: 100482910300003</div>
-                <div className="text-[10px] text-slate-600">Tel: +971 4 883 9120</div>
+                <div className="text-[10px] text-slate-600">Tel: +971 55 418 6086</div>
               </div>
 
               {/* Consignee */}

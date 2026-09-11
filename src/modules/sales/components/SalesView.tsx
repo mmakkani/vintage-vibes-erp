@@ -855,8 +855,8 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
           <div className="bg-white rounded max-w-lg w-full p-5 shadow-2xl border border-slate-200 text-xs animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 mb-3">
               <div>
-                <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">VINTAGE VIBE FZ-LLC</h3>
-                <p className="text-[10px] text-slate-500">Dubai Wholesale Garments Hub • TRN-100482910300003</p>
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</h3>
+                <p className="text-[10px] text-slate-500">Al Jimi, Al Ain, Abu Dhabi, UAE • TRN-100482910300003</p>
               </div>
               <button
                 onClick={() => setSelectedInvoiceForReceipt(null)}

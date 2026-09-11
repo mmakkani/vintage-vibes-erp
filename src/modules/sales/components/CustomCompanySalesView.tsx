@@ -1836,11 +1836,11 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                   <div className="flex justify-between items-start border-b-2 border-slate-900 pb-3">
                     <div>
                       <h1 className="text-lg font-black text-slate-950 tracking-wide">
-                        VINTAGE VIBE USED CLOTHING TRADING L.L.C
+                        VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C
                       </h1>
-                      <p className="text-[11px] text-slate-600">Warehouse 14, Al Quoz Industrial Area 3, Dubai, UAE</p>
-                      <p className="text-[11px] font-mono font-bold text-slate-800">UAE TRN: 100492819000003</p>
-                      <p className="text-[11px] text-slate-600">Tel: +971 4 345 8899 | Email: wholesale@vintagevibe.ae</p>
+                      <p className="text-[11px] text-slate-600">House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE</p>
+                      <p className="text-[11px] font-mono font-bold text-slate-800">UAE TRN: 100482910300003</p>
+                      <p className="text-[11px] text-slate-600">Tel: +971 55 418 6086 | Email: sales@vintagevibesllcspc.com</p>
                     </div>
                     <div className="text-right">
                       <span className="px-2 py-1 rounded bg-slate-900 text-white text-xs font-black uppercase tracking-wider inline-block mb-1">

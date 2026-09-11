@@ -446,7 +446,7 @@ export const RecurringVouchersView: React.FC<RecurringVouchersViewProps> = ({
                     required
                     value={formTitle}
                     onChange={e => setFormTitle(e.target.value)}
-                    placeholder="e.g. Warehouse 14 Al Quoz Lease Rent"
+                    placeholder="e.g. Al Jimi Warehouse Facility Lease Rent"
                     className="w-full text-xs p-2 rounded-lg border border-slate-300 focus:border-amber-500 font-bold text-slate-900"
                   />
                 </div>

@@ -571,8 +571,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       `UAE VAT 5%: AED ${inv.vatAmount}\n` +
       `*TOTAL PAID: AED ${inv.totalAmount}*\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
-      `TRN: ${activeProfile?.trnTaxNo || '100482910300003'}\n` +
-      `Store: Al Quoz Warehouse 14, Dubai\n` +
+      `TRN: ${activeProfile?.trn_number || activeProfile?.trnTaxNo || '100482910300003'}\n` +
+      `Store: ${activeProfile?.address_line_1 || activeProfile?.addressLine1 || 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, UAE'}\n` +
       `Thank you for shopping vintage authenticated grails!`
     );
     window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
@@ -618,7 +618,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       `★ *14-DAY EXCHANGE POLICY* ★\n` +
       `• Exchange permitted within 14 days with tags attached.\n` +
       `• No cash refund. Prices hidden for recipient.\n` +
-      `Store: Al Quoz Warehouse 14, Dubai\n` +
+      `Store: ${activeProfile?.address_line_1 || activeProfile?.addressLine1 || 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, UAE'}\n` +
       `Enjoy your vintage grail!`
     );
     window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');

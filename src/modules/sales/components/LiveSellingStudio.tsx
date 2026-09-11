@@ -711,7 +711,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       `💳 *PAYMENT INSTRUCTIONS:*\n` +
       `• Bank Transfer: Emirates NBD\n` +
       `  IBAN: AE07 0260 0012 3456 7890 123\n` +
-      `  Beneficiary: Vintage Vibe FZ-LLC\n` +
+      `  Beneficiary: VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C\n` +
       `• Or reply *'COD'* for Cash on Delivery across UAE (Dubai, Abu Dhabi, Sharjah).\n\n` +
       `📍 Please reply with your delivery address or live WhatsApp location pin so our courier dispatch can ship your bale order today!`
     );
@@ -2171,8 +2171,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           category: 'Live Auction Won',
                           brand: st.brandName,
                           retailPriceAed: 120,
-                          companyName: 'Vintage Vibe FZ-LLC (Live Dispatch)',
-                          trn: '100489201948'
+                          companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+                          trn: '100482910300003'
                         });
                       }}
                       className="px-2 py-1 rounded bg-stone-900 hover:bg-stone-800 text-amber-400 font-bold text-[10px] flex items-center gap-1 cursor-pointer"

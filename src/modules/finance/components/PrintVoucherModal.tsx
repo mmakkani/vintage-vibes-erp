@@ -64,10 +64,10 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
                 VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C
               </div>
               <div className="text-[10px] text-slate-600">
-                Commercial License: 1049281 &bull; TRN (VAT): 100492819200003
+                Commercial License: 1049281 &bull; TRN (VAT): 100482910300003
               </div>
               <div className="text-[10px] text-slate-600">
-                Warehouse 14, Al Quoz Industrial Area 3, Dubai, United Arab Emirates
+                House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, United Arab Emirates
               </div>
             </div>
 

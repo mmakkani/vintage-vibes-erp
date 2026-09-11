@@ -3,18 +3,42 @@ import { CompanyProfile } from '../modules/setup/setup.types.ts';
 
 const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
-  addressLine1: 'Plot 42, Industrial Zone 3, Al Quoz',
-  addressLine2: 'Dubai Wholesale Garments Hub, UAE',
+  company_display_name: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+  companyDisplayName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+  addressLine1: 'House 14 Street 4 - Al Jimi - Al Nudood',
+  address_line_1: 'House 14 Street 4 - Al Jimi - Al Nudood',
+  addressLine2: 'Al Ain, Abu Dhabi, United Arab Emirates',
+  address_line_2: 'Al Ain, Abu Dhabi, United Arab Emirates',
+  city: 'Al Ain, Abu Dhabi',
+  country: 'United Arab Emirates',
   trnTaxNo: 'TRN-100482910300003',
+  trn_number: 'TRN-100482910300003',
+  trnNumber: 'TRN-100482910300003',
   defaultCurrency: 'AED',
   logoUrl: '/vintage_logo.svg',
-  phone: '+971 4 883 9120',
-  email: 'contact@vintagevibe.ae',
+  phone: '+971 55 418 6086',
+  corporate_phone: '+971 55 418 6086',
+  corporatePhone: '+971 55 418 6086',
+  email: 'sales@vintagevibesllcspc.com',
+  corporate_email: 'sales@vintagevibesllcspc.com',
+  corporateEmail: 'sales@vintagevibesllcspc.com',
+  social_links: {
+    facebook: 'https://www.facebook.com/vintagevibes.ae/',
+    instagram: 'https://www.instagram.com/vintagevibes.llc/',
+    youtube: 'https://www.youtube.com/@VintageVibesLLCSPC',
+    tiktok: 'https://www.tiktok.com/@vintagevibe5500?_r=1&_t=ZS-92mvtBCTWqn'
+  },
+  socialLinks: {
+    facebook: 'https://www.facebook.com/vintagevibes.ae/',
+    instagram: 'https://www.instagram.com/vintagevibes.llc/',
+    youtube: 'https://www.youtube.com/@VintageVibesLLCSPC',
+    tiktok: 'https://www.tiktok.com/@vintagevibe5500?_r=1&_t=ZS-92mvtBCTWqn'
+  },
   vatRatePercent: 5.0,
   globalStockAlertThreshold: 5,
-  bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBE%20LLC%26bank%3DEMIRATES%20NBD',
+  bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%26bank%3DEMIRATES%20NBD',
   bankIban: 'AE24 0331 2345 6789 0123 456',
-  bankName: 'Emirates NBD - Dubai Business Bay Branch',
+  bankName: 'Emirates NBD',
   bankAccountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
   enableCod: true,
   enableBankTransfer: true,
@@ -23,6 +47,7 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   freeShippingThresholdAed: 350,
   standardShippingFeeAed: 25,
   whatsappOrderNumber: '+971554186086',
+  whatsapp_orders_number: '+971554186086',
   paymentGateway: {
     provider: 'STRIPE_UAE',
     environment: 'SANDBOX',
@@ -72,18 +97,41 @@ export class CompanyProfileService {
     }
 
     const waOrdersNumber = data.whatsapp_orders_number || data.whatsapp_order_number || data.whatsappOrderNumber || DEFAULT_COMPANY_PROFILE.whatsappOrderNumber || '';
+    const companyDisplayName = data.company_display_name || data.companyDisplayName || data.company_name || data.companyName || DEFAULT_COMPANY_PROFILE.companyName;
+    const trnNum = data.trn_number || data.trnNumber || data.trn_tax_no || data.trnTaxNo || DEFAULT_COMPANY_PROFILE.trnTaxNo;
+    const addr1 = data.address_line_1 || data.address_line1 || data.addressLine1 || DEFAULT_COMPANY_PROFILE.addressLine1;
+    const addr2 = data.address_line_2 || data.address_line2 || data.addressLine2 || DEFAULT_COMPANY_PROFILE.addressLine2;
+    const city = data.city || DEFAULT_COMPANY_PROFILE.city || 'Al Ain, Abu Dhabi';
+    const country = data.country || DEFAULT_COMPANY_PROFILE.country || 'United Arab Emirates';
+    const corpPhone = data.corporate_phone || data.corporatePhone || data.phone || DEFAULT_COMPANY_PROFILE.phone;
+    const corpEmail = data.corporate_email || data.corporateEmail || data.email || DEFAULT_COMPANY_PROFILE.email;
+    const socialLinks = data.social_links || data.socialLinks || DEFAULT_COMPANY_PROFILE.social_links;
 
-    // Map database snake_case or raw profile_data to camelCase
+    // Map database snake_case or raw profile_data to camelCase and snake_case
     const prof: CompanyProfile = {
       ...DEFAULT_COMPANY_PROFILE,
-      companyName: data.company_name || data.companyName || DEFAULT_COMPANY_PROFILE.companyName,
-      addressLine1: data.address_line1 || data.addressLine1 || DEFAULT_COMPANY_PROFILE.addressLine1,
-      addressLine2: data.address_line2 || data.addressLine2 || DEFAULT_COMPANY_PROFILE.addressLine2,
-      trnTaxNo: data.trn_tax_no || data.trnTaxNo || DEFAULT_COMPANY_PROFILE.trnTaxNo,
+      companyName: companyDisplayName,
+      company_display_name: companyDisplayName,
+      companyDisplayName: companyDisplayName,
+      addressLine1: addr1,
+      address_line_1: addr1,
+      addressLine2: addr2,
+      address_line_2: addr2,
+      city,
+      country,
+      trnTaxNo: trnNum,
+      trn_number: trnNum,
+      trnNumber: trnNum,
       defaultCurrency: (data.default_currency || data.defaultCurrency || 'AED') as any,
       logoUrl: data.logo_url || data.logoUrl || DEFAULT_COMPANY_PROFILE.logoUrl,
-      phone: data.phone || DEFAULT_COMPANY_PROFILE.phone,
-      email: data.email || DEFAULT_COMPANY_PROFILE.email,
+      phone: corpPhone,
+      corporate_phone: corpPhone,
+      corporatePhone: corpPhone,
+      email: corpEmail,
+      corporate_email: corpEmail,
+      corporateEmail: corpEmail,
+      social_links: socialLinks,
+      socialLinks: socialLinks,
       vatRatePercent: Number(data.vat_rate_percent ?? data.vatRatePercent ?? DEFAULT_COMPANY_PROFILE.vatRatePercent),
       globalStockAlertThreshold: Number(data.global_stock_alert_threshold ?? data.globalStockAlertThreshold ?? 5),
       bankName: data.bank_name || data.bankName || DEFAULT_COMPANY_PROFILE.bankName,
@@ -115,16 +163,35 @@ export class CompanyProfileService {
     const rawWa = profile.whatsapp_orders_number || profile.whatsappOrdersNumber || profile.whatsappOrderNumber || '';
     const cleanedWa = cleanWhatsAppNumber(rawWa);
 
+    const companyDisplayName = profile.company_display_name || profile.companyDisplayName || profile.companyName || DEFAULT_COMPANY_PROFILE.companyName;
+    const trnNum = profile.trn_number || profile.trnNumber || profile.trnTaxNo || DEFAULT_COMPANY_PROFILE.trnTaxNo;
+    const addr1 = profile.address_line_1 || profile.addressLine1 || DEFAULT_COMPANY_PROFILE.addressLine1;
+    const addr2 = profile.address_line_2 || profile.addressLine2 || DEFAULT_COMPANY_PROFILE.addressLine2;
+    const city = profile.city || DEFAULT_COMPANY_PROFILE.city;
+    const country = profile.country || DEFAULT_COMPANY_PROFILE.country;
+    const corpPhone = profile.corporate_phone || profile.corporatePhone || profile.phone || DEFAULT_COMPANY_PROFILE.phone;
+    const corpEmail = profile.corporate_email || profile.corporateEmail || profile.email || DEFAULT_COMPANY_PROFILE.email;
+    const socialLinks = profile.social_links || profile.socialLinks || DEFAULT_COMPANY_PROFILE.social_links;
+
     const payload = {
       id: 'default-company',
-      company_name: profile.companyName,
-      address_line1: profile.addressLine1,
-      address_line2: profile.addressLine2,
-      trn_tax_no: profile.trnTaxNo,
+      company_name: companyDisplayName,
+      company_display_name: companyDisplayName,
+      address_line1: addr1,
+      address_line_1: addr1,
+      address_line2: addr2,
+      address_line_2: addr2,
+      city,
+      country,
+      trn_tax_no: trnNum,
+      trn_number: trnNum,
+      phone: corpPhone,
+      corporate_phone: corpPhone,
+      email: corpEmail,
+      corporate_email: corpEmail,
+      social_links: socialLinks,
       default_currency: profile.defaultCurrency || 'AED',
       logo_url: profile.logoUrl,
-      phone: profile.phone,
-      email: profile.email,
       vat_rate_percent: profile.vatRatePercent ?? 5.0,
       global_stock_alert_threshold: profile.globalStockAlertThreshold ?? 5,
       bank_name: profile.bankName,
@@ -147,6 +214,15 @@ export class CompanyProfileService {
       pos_bridge: profile.posBridge,
       profile_data: {
         ...profile,
+        company_display_name: companyDisplayName,
+        trn_number: trnNum,
+        address_line_1: addr1,
+        address_line_2: addr2,
+        city,
+        country,
+        corporate_phone: corpPhone,
+        corporate_email: corpEmail,
+        social_links: socialLinks,
         whatsapp_orders_number: cleanedWa,
         whatsappOrderNumber: cleanedWa
       },

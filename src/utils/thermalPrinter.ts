@@ -517,11 +517,11 @@ export function openThermalShippingWaybillPrintWindow(data: ThermalShippingWaybi
       <div class="grid-parties">
         <div class="party-col-from">
           <div class="party-title">FROM (SHIPPER):</div>
-          <div style="font-weight:800;">VINTAGE VIBES DUBAI FZ-LLC</div>
-          <div>Al Quoz Industrial 3, Unit 14</div>
-          <div>Dubai, United Arab Emirates</div>
+          <div style="font-weight:800;">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</div>
+          <div>House 14 Street 4 - Al Jimi - Al Nudood</div>
+          <div>Al Ain, Abu Dhabi, United Arab Emirates</div>
           <div style="font-weight:700;margin-top:2px;">TRN: 100482910300003</div>
-          <div>Tel: +971 4 883 9120</div>
+          <div>Tel: +971 55 418 6086</div>
         </div>
         <div>
           <div class="party-title">TO (CONSIGNEE):</div>

@@ -595,7 +595,7 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
                   type="text"
                   value={config.companyName}
                   onChange={e => setConfig({ ...config, companyName: e.target.value })}
-                  placeholder="e.g. VINTAGE VIBES DUBAI FZ-LLC"
+                  placeholder="e.g. VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C"
                   className="w-full px-3 py-1.5 rounded-lg border border-slate-300 font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   required
                 />

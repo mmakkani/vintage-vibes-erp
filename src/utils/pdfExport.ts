@@ -15,9 +15,9 @@ export interface ExportPdfOptions {
 export function exportCurrentViewToPdf(options: ExportPdfOptions) {
   const {
     title,
-    companyName = 'Vintage Vibe FZ-LLC',
+    companyName = 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
     trnTaxNo = 'TRN-100482910300003',
-    address = 'Warehouse 14, Al Quoz Industrial Area 4, Dubai, UAE',
+    address = 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE',
     operatorName = 'Enterprise Operator',
     customElementId
   } = options;

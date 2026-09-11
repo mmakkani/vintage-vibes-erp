@@ -582,17 +582,15 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <CompanyName3D name={companyProfile.companyName || 'VINTAGE VIBES'} size="lg" />
+              <CompanyName3D name={companyProfile.company_display_name || companyProfile.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C'} size="lg" />
               <span className="inline-block px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-gradient-to-r from-amber-200 to-amber-300 border border-amber-400 rounded-md text-amber-950 shadow-2xs">
-                LLC SPC • UAE
+                {(companyProfile.city || 'AL AIN, ABU DHABI').toUpperCase()} • {(companyProfile.country || 'UNITED ARAB EMIRATES').toUpperCase()}
               </span>
             </div>
             <p className="text-[11px] text-slate-700 font-semibold tracking-wide flex items-center gap-1.5 mt-0.5">
-              <span>Al Jimi, Al Ain</span>
+              <span>{companyProfile.address_line_1 || companyProfile.addressLine1 || 'Al Jimi, Al Ain'}</span>
               <span>•</span>
-              <span>Al Quoz Dubai Vault</span>
-              <span>•</span>
-              <span className="text-amber-900 font-bold">+971 55 418 6086</span>
+              <span className="text-amber-900 font-bold">{companyProfile.corporate_phone || companyProfile.phone || '+971 55 418 6086'}</span>
             </p>
           </div>
         </div>
@@ -1077,7 +1075,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             </span>
             <div className="flex items-center gap-4 text-slate-700">
               <a
-                href="https://www.facebook.com/vintagevibes.ae/"
+                href={companyProfile.social_links?.facebook || companyProfile.socialLinks?.facebook || 'https://www.facebook.com/vintagevibes.ae/'}
                 target="_blank"
                 rel="noreferrer"
                 className="hover:text-amber-700 font-bold hover:underline"
@@ -1086,7 +1084,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               </a>
               <span>•</span>
               <a
-                href="https://www.instagram.com/vintagevibes.llc/"
+                href={companyProfile.social_links?.instagram || companyProfile.socialLinks?.instagram || 'https://www.instagram.com/vintagevibes.llc/'}
                 target="_blank"
                 rel="noreferrer"
                 className="hover:text-amber-700 font-bold hover:underline"
@@ -1095,7 +1093,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               </a>
               <span>•</span>
               <a
-                href="https://www.youtube.com/@VintageVibesLLCSPC"
+                href={companyProfile.social_links?.youtube || companyProfile.socialLinks?.youtube || 'https://www.youtube.com/@VintageVibesLLCSPC'}
                 target="_blank"
                 rel="noreferrer"
                 className="hover:text-amber-700 font-bold hover:underline"
@@ -1104,7 +1102,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               </a>
               <span>•</span>
               <a
-                href="https://www.tiktok.com/@vintagevibe5500?_r=1&_t=ZS-92mvtBCTWqn"
+                href={companyProfile.social_links?.tiktok || companyProfile.socialLinks?.tiktok || 'https://www.tiktok.com/@vintagevibe5500?_r=1&_t=ZS-92mvtBCTWqn'}
                 target="_blank"
                 rel="noreferrer"
                 className="hover:text-amber-700 font-bold hover:underline"
@@ -1125,7 +1123,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                   className="w-8 h-8 drop-shadow-xs shrink-0"
                 />
                 <h4 className="font-black text-sm text-slate-900 font-serif">
-                  About Vintage Vibes
+                  About {companyProfile.company_display_name || companyProfile.companyName || 'Vintage Vibes'}
                 </h4>
               </div>
               <p className="text-slate-600 leading-relaxed text-xs">
@@ -1133,7 +1131,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               </p>
               <div className="pt-1">
                 <span className="inline-block px-2.5 py-1 rounded-md bg-amber-200/80 border border-amber-400 text-[10px] font-black text-amber-950">
-                  TRN: {companyProfile.trnTaxNo}
+                  TRN: {companyProfile.trn_number || companyProfile.trnTaxNo}
                 </span>
               </div>
             </div>
@@ -1147,7 +1145,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 <li><button onClick={scrollToVault} className="hover:text-amber-700 cursor-pointer">Shop Vault</button></li>
                 <li><button onClick={scrollToVault} className="hover:text-amber-700 cursor-pointer">About Us</button></li>
                 <li><button onClick={() => onOpenERPLogin()} className="hover:text-amber-700 cursor-pointer font-bold text-amber-900">Staff / ERP Portal</button></li>
-                <li><a href="mailto:sales@vintagevibesllcspc.com" className="hover:text-amber-700">Contact Us</a></li>
+                <li><a href={`mailto:${companyProfile.corporate_email || companyProfile.corporateEmail || companyProfile.email || 'sales@vintagevibesllcspc.com'}`} className="hover:text-amber-700">Contact Us</a></li>
                 <li><a href="https://vintagevibesllcspc.com/blog/" target="_blank" rel="noreferrer" className="hover:text-amber-700">Thrift & Vintage Blog</a></li>
               </ul>
             </div>
@@ -1175,7 +1173,9 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               <div className="space-y-2 text-slate-600">
                 <p className="flex items-center gap-2">
                   <Phone className="w-3.5 h-3.5 text-amber-700" />
-                  <strong className="text-slate-900 font-mono">+971 55 418 6086</strong>
+                  <strong className="text-slate-900 font-mono">
+                    {companyProfile.corporate_phone || companyProfile.corporatePhone || companyProfile.phone || '+971 55 418 6086'}
+                  </strong>
                 </p>
                 <p className="flex items-center gap-2">
                   <Clock className="w-3.5 h-3.5 text-amber-700" />
@@ -1183,20 +1183,31 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 </p>
                 <p className="flex items-center gap-2">
                   <Mail className="w-3.5 h-3.5 text-amber-700" />
-                  <a href="mailto:sales@vintagevibesllcspc.com" className="hover:underline">
-                    sales@vintagevibesllcspc.com
+                  <a href={`mailto:${companyProfile.corporate_email || companyProfile.corporateEmail || companyProfile.email || 'sales@vintagevibesllcspc.com'}`} className="hover:underline">
+                    {companyProfile.corporate_email || companyProfile.corporateEmail || companyProfile.email || 'sales@vintagevibesllcspc.com'}
                   </a>
                 </p>
                 <p className="flex items-start gap-2">
                   <MapPin className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
-                  <span>House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE</span>
+                  <span>
+                    {(companyProfile.address_line_1 || companyProfile.addressLine1 || 'House 14 Street 4 - Al Jimi - Al Nudood') +
+                      (companyProfile.address_line_2 || companyProfile.addressLine2
+                        ? ', ' + (companyProfile.address_line_2 || companyProfile.addressLine2)
+                        : ', Abu Dhabi, UAE')}
+                  </span>
                 </p>
               </div>
 
               {/* Map embed / location widget */}
               <div className="mt-2 pt-2 border-t border-amber-300">
                 <a
-                  href="https://maps.google.com/?q=Vintage+Vibes+LLC+SPC+Al+Ain+UAE"
+                  href={`https://maps.google.com/?q=${encodeURIComponent(
+                    (companyProfile.company_display_name || companyProfile.companyName || 'Vintage Vibes') +
+                    ' ' +
+                    (companyProfile.address_line_1 || companyProfile.addressLine1 || 'House 14 Street 4 - Al Jimi - Al Nudood') +
+                    ' ' +
+                    (companyProfile.address_line_2 || companyProfile.addressLine2 || 'Al Ain UAE')
+                  )}`}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-900 bg-white/90 px-3 py-1.5 rounded-lg border border-amber-400 hover:bg-amber-100 shadow-2xs"

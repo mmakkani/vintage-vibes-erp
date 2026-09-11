@@ -62,13 +62,37 @@ export interface PhysicalPOSTerminalBridgeConfig {
 
 export interface CompanyProfile {
   companyName: string;
+  company_display_name?: string;
+  companyDisplayName?: string;
   addressLine1: string;
+  address_line_1?: string;
   addressLine2: string;
+  address_line_2?: string;
+  city?: string;
+  country?: string;
   trnTaxNo: string;
+  trn_number?: string;
+  trnNumber?: string;
   defaultCurrency: CurrencyCode;
   logoUrl: string;
   phone: string;
+  corporate_phone?: string;
+  corporatePhone?: string;
   email: string;
+  corporate_email?: string;
+  corporateEmail?: string;
+  social_links?: {
+    facebook?: string;
+    instagram?: string;
+    youtube?: string;
+    tiktok?: string;
+  };
+  socialLinks?: {
+    facebook?: string;
+    instagram?: string;
+    youtube?: string;
+    tiktok?: string;
+  };
   vatRatePercent: number; // e.g. 5.0% UAE VAT
   globalStockAlertThreshold?: number; // Minimum defined quantity threshold for bale stock warnings
   bankQrCodeUrl?: string; // Base64 or URL for Bank QR code / wallet scan

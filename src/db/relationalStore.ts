@@ -4057,7 +4057,7 @@ class RelationalStore {
         .map((it, i) => `${i + 1}. *${it.brandName}* ${it.itemName} [${it.sizeScanned || 'M'}] - AED ${(it.lockedPrice || it.estimatedPrice || it.retailPriceAed || 120).toFixed(2)} (SKU: ${it.barcode})`)
         .join('\n');
 
-      const whatsAppMessage = `🏷️ *VINTAGE VIBE FZ-LLC • LIVE AUCTION ORDER ADVICE*\n\n` +
+      const whatsAppMessage = `🏷️ *VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C • LIVE AUCTION ORDER ADVICE*\n\n` +
         `Hello ${params.buyerHandle}!\n` +
         `Thank you for participating in our Live Drop!\n\n` +
         `📄 *Invoice No:* ${invoice.invoiceNo}\n` +
@@ -4069,7 +4069,7 @@ class RelationalStore {
         `🚚 *Express UAE Courier:* ${pool.shippingAed === 0 ? 'FREE (Orders > AED 500)' : `AED ${pool.shippingAed.toFixed(2)}`}\n` +
         `💰 *GRAND TOTAL:* AED ${pool.grandTotalAed.toFixed(2)}\n\n` +
         `💳 *Payment Method:* ${params.paymentMethod}\n` +
-        `📍 *Dispatch Hub:* Vintage Vibe Warehouse 4B, Al Quoz Industrial Area 3, Dubai, UAE.\n\n` +
+        `📍 *Dispatch Hub:* Vintage Vibes Main Facility, Al Jimi, Al Ain, Abu Dhabi, UAE.\n\n` +
         `Your parcel is pre-labeled with thermal barcode stickers and will dispatch via overnight courier!`;
 
       // Thermal barcode packing stickers

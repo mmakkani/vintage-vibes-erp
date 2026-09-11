@@ -196,16 +196,38 @@ export default function App() {
   });
 
   // Global state
-  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>({
-    companyName: 'Vintage Vibe FZ-LLC',
-    addressLine1: 'Warehouse 14, Al Quoz Industrial Area 4',
-    addressLine2: 'P.O. Box 410882, Dubai, United Arab Emirates',
-    trnTaxNo: 'TRN-100482910300003',
-    phone: '+971 4 348 9912',
-    email: 'operations@vintagevibe.ae',
-    defaultCurrency: 'AED',
-    vatRatePercent: 5.0,
-    logoUrl: '/vintage_logo.svg'
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(() => {
+    try {
+      const cached = localStorage.getItem('vintage_cached_company_profile');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return {
+      companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+      company_display_name: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+      addressLine1: 'House 14 Street 4 - Al Jimi - Al Nudood',
+      address_line_1: 'House 14 Street 4 - Al Jimi - Al Nudood',
+      addressLine2: 'Al Ain, Abu Dhabi, United Arab Emirates',
+      address_line_2: 'Al Ain, Abu Dhabi, United Arab Emirates',
+      city: 'Al Ain, Abu Dhabi',
+      country: 'United Arab Emirates',
+      trnTaxNo: 'TRN-100482910300003',
+      trn_number: 'TRN-100482910300003',
+      phone: '+971 55 418 6086',
+      corporate_phone: '+971 55 418 6086',
+      email: 'sales@vintagevibesllcspc.com',
+      corporate_email: 'sales@vintagevibesllcspc.com',
+      whatsappOrderNumber: '+971554186086',
+      whatsapp_orders_number: '+971554186086',
+      defaultCurrency: 'AED',
+      vatRatePercent: 5.0,
+      logoUrl: '/vintage_logo.svg',
+      social_links: {
+        facebook: 'https://www.facebook.com/vintagevibes.ae/',
+        instagram: 'https://www.instagram.com/vintagevibes.llc/',
+        youtube: 'https://www.youtube.com/@VintageVibesLLCSPC',
+        tiktok: 'https://www.tiktok.com/@vintagevibe5500?_r=1&_t=ZS-92mvtBCTWqn'
+      }
+    };
   });
 
   const [currencies, setCurrencies] = useState<CurrencyItem[]>([
@@ -251,7 +273,12 @@ export default function App() {
         })
       ]);
 
-      if (profile && profile.companyName) setCompanyProfile(profile);
+      if (profile && (profile.companyName || profile.company_display_name)) {
+        setCompanyProfile(profile);
+        try {
+          localStorage.setItem('vintage_cached_company_profile', JSON.stringify(profile));
+        } catch {}
+      }
       if (Array.isArray(currs) && currs.length > 0) setCurrencies(currs);
       if (Array.isArray(users) && users.length > 0) {
         setAllUsers(users);

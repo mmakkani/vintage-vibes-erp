@@ -57,19 +57,19 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center gap-4">
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
-                <CompanyName3D name={companyProfile.companyName} size="lg" />
+                <CompanyName3D name={companyProfile.company_display_name || companyProfile.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C'} size="lg" />
                 <span className="inline-block px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider bg-gradient-to-r from-amber-200 to-amber-300 border border-amber-400 rounded-md text-amber-950 shadow-2xs">
-                  DUBAI UAE • FREE ZONE
+                  {(companyProfile.city || 'AL AIN, ABU DHABI').toUpperCase()} • {(companyProfile.country || 'UNITED ARAB EMIRATES').toUpperCase()}
                 </span>
               </div>
               <p
                 id="address-sub-header"
                 className="text-[11px] sm:text-xs text-slate-700 tracking-wider font-semibold flex items-center gap-1.5 flex-wrap mt-0.5"
               >
-                <span className="text-amber-950 font-bold">{companyProfile.addressLine1}</span>
+                <span className="text-amber-950 font-bold">{companyProfile.address_line_1 || companyProfile.addressLine1 || 'AL AIN, ABU DHABI'}</span>
                 <span className="text-amber-600 font-bold">•</span>
                 <span className="font-mono bg-amber-100/90 border border-amber-300 px-2 py-0.5 rounded text-amber-950 font-bold tracking-tight shadow-2xs">
-                  TRN: {companyProfile.trnTaxNo}
+                  TRN: {companyProfile.trn_number || companyProfile.trnTaxNo}
                 </span>
               </p>
             </div>

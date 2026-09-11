@@ -1,4 +1,4 @@
-﻿export type ThermalPresetId = '2x1' | '2.25x1.25' | '3x2' | '4x2' | '4x4' | '4x6' | 'custom';
+export type ThermalPresetId = '2x1' | '2.25x1.25' | '3x2' | '4x2' | '4x4' | '4x6' | 'custom';
 
 export interface ThermalPreset {
   id: ThermalPresetId;
@@ -268,9 +268,9 @@ export interface ThermalEngineConfig {
 }
 
 export const DEFAULT_THERMAL_ENGINE_CONFIG: ThermalEngineConfig = {
-  companyName: 'VINTAGE VIBES DUBAI FZ-LLC',
+  companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
   logoUrl: '',
-  phone: '+971 4 883 9120',
+  phone: '+971 55 418 6086',
   trn: '100482910300003',
 
   invoiceNo: 'INV-2026-8891',

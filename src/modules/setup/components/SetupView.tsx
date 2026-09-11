@@ -1237,6 +1237,79 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               />
             </div>
 
+            {/* Social Media & Multicast Links */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2.5">
+              <span className="text-slate-800 font-bold text-xs uppercase tracking-wider block">
+                🌐 Social Media & Multicast Channels (Storefront Footer & Live Hub)
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Facebook URL:</label>
+                  <input
+                    type="url"
+                    placeholder="https://www.facebook.com/vintagevibes.ae/"
+                    value={companyProfile.social_links?.facebook || ''}
+                    onChange={e => setCompanyProfile({
+                      ...companyProfile,
+                      social_links: {
+                        ...(companyProfile.social_links || {}),
+                        facebook: e.target.value
+                      }
+                    })}
+                    className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-800 focus:border-blue-500 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Instagram URL:</label>
+                  <input
+                    type="url"
+                    placeholder="https://www.instagram.com/vintagevibes.llc/"
+                    value={companyProfile.social_links?.instagram || ''}
+                    onChange={e => setCompanyProfile({
+                      ...companyProfile,
+                      social_links: {
+                        ...(companyProfile.social_links || {}),
+                        instagram: e.target.value
+                      }
+                    })}
+                    className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-800 focus:border-blue-500 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">YouTube URL:</label>
+                  <input
+                    type="url"
+                    placeholder="https://www.youtube.com/@VintageVibesLLCSPC"
+                    value={companyProfile.social_links?.youtube || ''}
+                    onChange={e => setCompanyProfile({
+                      ...companyProfile,
+                      social_links: {
+                        ...(companyProfile.social_links || {}),
+                        youtube: e.target.value
+                      }
+                    })}
+                    className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-800 focus:border-blue-500 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">TikTok URL:</label>
+                  <input
+                    type="url"
+                    placeholder="https://www.tiktok.com/@vintagevibe5500..."
+                    value={companyProfile.social_links?.tiktok || ''}
+                    onChange={e => setCompanyProfile({
+                      ...companyProfile,
+                      social_links: {
+                        ...(companyProfile.social_links || {}),
+                        tiktok: e.target.value
+                      }
+                    })}
+                    className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-800 focus:border-blue-500 text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* E-Commerce Global Bank QR Code & Payment Setup */}
             <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-lg space-y-2.5">
               <div className="flex items-center gap-2">

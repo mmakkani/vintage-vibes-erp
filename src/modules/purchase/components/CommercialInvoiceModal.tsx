@@ -173,8 +173,8 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
                   </div>
                 </div>
                 <p className="text-[10px] text-slate-600 pt-1">
-                  P.O. Box 92810, Warehouse 14, Al Quoz Industrial Area 3, Dubai, United Arab Emirates<br />
-                  Tel: +971 4 338 9201 &bull; Email: trade@vintagevibe.ae &bull; Tax TRN: <strong>100492819200003</strong>
+                  House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, United Arab Emirates<br />
+                  Tel: +971 55 418 6086 &bull; Email: sales@vintagevibesllcspc.com &bull; Tax TRN: <strong>100482910300003</strong>
                 </p>
               </div>
 
