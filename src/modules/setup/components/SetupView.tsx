@@ -70,18 +70,20 @@ export type SetupSubTab = 'profile' | 'payment_gateways' | 'live_multicast_socke
 
 const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
-  addressLine1: 'Plot 42, Industrial Zone 3, Al Quoz',
-  addressLine2: 'Dubai Wholesale Garments Hub, UAE',
+  addressLine1: 'House 14 Street 4 - Al Jimi - Al Nudood',
+  addressLine2: 'Al Ain, Abu Dhabi, United Arab Emirates',
+  city: 'Al Ain, Abu Dhabi',
+  country: 'United Arab Emirates',
   trnTaxNo: 'TRN-100482910300003',
   defaultCurrency: 'AED',
   logoUrl: '/vintage_logo.svg',
-  phone: '+971 4 883 9120',
-  email: 'contact@vintagevibe.ae',
+  phone: '+971 55 418 6086',
+  email: 'sales@vintagevibesllcspc.com',
   vatRatePercent: 5.0,
   globalStockAlertThreshold: 5,
-  bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBE%20LLC%26bank%3DEMIRATES%20NBD',
+  bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%26bank%3DEMIRATES%20NBD',
   bankIban: 'AE24 0331 2345 6789 0123 456',
-  bankName: 'Emirates NBD - Dubai Business Bay Branch',
+  bankName: 'Emirates NBD',
   bankAccountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
   enableCod: true,
   enableBankTransfer: true,
@@ -89,7 +91,7 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   enableAppleGooglePay: true,
   freeShippingThresholdAed: 350,
   standardShippingFeeAed: 25,
-  whatsappOrderNumber: '',
+  whatsappOrderNumber: '+971554186086',
   paymentGateway: {
     provider: 'STRIPE_UAE',
     environment: 'SANDBOX',
@@ -1228,13 +1230,43 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
 
             <div>
               <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Logo SVG / Image URL:</label>
-              <input
-                type="text"
-                placeholder="[ENTER DIRECT LOGO URL OR UPLOAD IMAGE FILE]"
-                value={companyProfile.logoUrl}
-                onChange={e => setCompanyProfile({ ...companyProfile, logoUrl: e.target.value })}
-                className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-700 focus:border-blue-500 text-xs"
-              />
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  placeholder="[ENTER DIRECT LOGO URL OR UPLOAD IMAGE FILE]"
+                  value={companyProfile.logoUrl || ''}
+                  onChange={e => setCompanyProfile({ ...companyProfile, logoUrl: e.target.value })}
+                  className="flex-1 border border-slate-300 rounded p-1.5 font-mono text-slate-700 focus:border-blue-500 text-xs"
+                />
+                <label className="px-2.5 py-1.5 bg-[#0056b3] hover:bg-[#004494] text-white rounded text-xs font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1">
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  <span>Upload Logo</span>
+                  <input
+                    type="file"
+                    accept="image/*,.svg"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        try {
+                          showMsg('Uploading logo to company_assets/logos...');
+                          const url = await CompanyProfileService.uploadAsset(file, 'company_assets', 'logos');
+                          setCompanyProfile(prev => ({ ...prev, logoUrl: url }));
+                          showMsg('Logo uploaded successfully!');
+                        } catch (err: any) {
+                          showMsg(err?.message || 'Failed to upload logo', 'error');
+                        }
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+              {companyProfile.logoUrl && (
+                <div className="mt-2 flex items-center gap-3 bg-white p-2 border border-slate-200 rounded">
+                  <img src={companyProfile.logoUrl} alt="Logo Preview" className="w-14 h-14 object-contain border border-slate-300 rounded" />
+                  <span className="text-[11px] text-slate-500">Live Logo Preview</span>
+                </div>
+              )}
             </div>
 
             {/* Social Media & Multicast Links */}
@@ -1454,20 +1486,24 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                     onChange={e => setCompanyProfile({ ...companyProfile, bankQrCodeUrl: e.target.value })}
                     className="flex-1 border border-slate-300 rounded p-1.5 font-mono text-slate-800 focus:border-amber-500 text-xs bg-white"
                   />
-                  <label className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-bold cursor-pointer transition-colors shrink-0">
-                    Upload QR
+                  <label className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1">
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Upload QR</span>
                     <input
                       type="file"
                       accept="image/*"
                       className="hidden"
-                      onChange={e => {
+                      onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          const reader = new FileReader();
-                          reader.onload = () => {
-                            setCompanyProfile({ ...companyProfile, bankQrCodeUrl: reader.result as string });
-                          };
-                          reader.readAsDataURL(file);
+                          try {
+                            showMsg('Uploading bank QR code to company_assets/bank_qr...');
+                            const url = await CompanyProfileService.uploadAsset(file, 'company_assets', 'bank_qr');
+                            setCompanyProfile(prev => ({ ...prev, bankQrCodeUrl: url }));
+                            showMsg('Bank QR Code uploaded successfully!');
+                          } catch (err: any) {
+                            showMsg(err?.message || 'Failed to upload QR code', 'error');
+                          }
                         }
                       }}
                     />

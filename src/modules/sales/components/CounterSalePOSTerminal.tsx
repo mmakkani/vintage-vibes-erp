@@ -38,6 +38,7 @@ import { Party } from '../../parties/parties.types.ts';
 import { CompanyProfile } from '../../setup/setup.types.ts';
 import { POSTerminalConfig } from '../../setup/hardware.types.ts';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
+import { SalesService } from '../../../services/salesService.ts';
 import { openThermalLabelPrintWindow, openGiftReceiptPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { useBarcodeScanner } from '../../../hooks/useBarcodeScanner.ts';
 
@@ -461,58 +462,83 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   const handleConfirmFinalCheckout = async () => {
     setIsScanning(true);
     try {
-      const payload = {
+      const invoiceNum = `POS-${Date.now().toString().slice(-6)}`;
+      const subtotalAmt = cart.reduce((sum, c) => sum + (c.sellingPrice - c.discount), 0);
+      const vatAmt = Number((subtotalAmt * 0.05).toFixed(2));
+      const totalAmt = Number((subtotalAmt + vatAmt + giftBoxFee).toFixed(2));
+
+      // 1. Direct insert to public.pos_sales and auto stock decrement
+      const posRecord = await SalesService.createPosSale({
+        invoice_number: invoiceNum,
+        customer_name: selectedCustomer?.name || 'Walk-In Customer',
+        customer_phone: selectedCustomer?.phone || '',
         items: cart.map(c => ({
           barcode: c.piece.barcode,
+          pieceId: c.piece.id,
+          itemName: c.piece.itemName,
+          brandName: c.piece.brandName,
           unitPrice: c.sellingPrice,
-          discount: c.discount
+          discount: c.discount,
+          finalAmount: c.sellingPrice - c.discount
         })),
-        paymentMethod: paymentMode,
-        splitBreakdown: paymentMode === 'SPLIT' ? {
-          cashAmount: Number(splitCash) || 0,
-          cardAmount: Number(splitCard) || 0,
-          qrAmount: Number(splitQr) || 0
-        } : undefined,
-        cashTendered: paymentMode === 'CASH' ? Number(cashTendered) : undefined,
-        changeDue: paymentMode === 'CASH' ? changeDue : undefined,
-        posMachineDetails: paymentMode === 'CARD_POS' || paymentMode === 'SPLIT' ? {
-          terminalName: posConfig.terminalName,
-          terminalId: posConfig.terminalId,
-          authCode: posAuthCode || 'AUTH-MANUAL-APPROVE',
-          cardBrand: posCardBrand,
-          rrn: `RRN-${Date.now().toString().slice(-8)}`
-        } : undefined,
-        customerId: selectedCustomer?.id,
-        customerName: selectedCustomer?.name || 'Walk-In Customer',
-        customerPhone: selectedCustomer?.phone,
-        operatorName,
-        discountTotal,
-        giftBoxFee,
-        notes: isGiftOrder
-          ? (giftMessage ? `GIFT ORDER: "${giftMessage}"` : 'GIFT ORDER')
-          : undefined
-      };
-
-      const res = await fetch('/api/sales/counter-sale/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        subtotal: subtotalAmt,
+        tax_amount: vatAmt,
+        discount_amount: discountTotal,
+        grand_total: totalAmt,
+        payment_type: paymentMode,
+        payment_status: 'PAID'
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.error || 'Counter Sale checkout failed.');
-        setIsScanning(false);
-        return;
-      }
+      // 2. Also record in sales_invoices for general sales ledger
+      await SalesService.createSalesInvoice({
+        invoiceNo: invoiceNum,
+        clientId: selectedCustomer?.id,
+        customerName: selectedCustomer?.name || 'Walk-In Customer',
+        customerPhone: selectedCustomer?.phone || '',
+        channel: 'POS_COUNTER',
+        paymentMethod: paymentMode as any,
+        subtotal: subtotalAmt,
+        discountAmount: discountTotal,
+        taxAmount: vatAmt,
+        totalAmount: totalAmt,
+        status: 'PAID',
+        items: cart.map(c => ({
+          barcode: c.piece.barcode,
+          pieceId: c.piece.id,
+          description: `${c.piece.brandName} ${c.piece.itemName}`,
+          unitPrice: c.sellingPrice,
+          discount: c.discount,
+          finalAmount: c.sellingPrice - c.discount,
+          weightKg: c.piece.weightKg || 0.45
+        }))
+      }).catch(e => console.warn('sales_invoices sync note:', e));
 
       luxuryAudio.playCashChime();
       setShowPaymentModal(false);
       setCheckoutSuccessData({
-        invoice: data.invoice,
-        voucher: data.voucher,
-        cogsSummary: data.cogsSummary,
-        pieces: data.piecesSold || cart.map(c => c.piece)
+        invoice: {
+          id: posRecord.id || invoiceNum,
+          invoiceNo: invoiceNum,
+          date: new Date().toISOString(),
+          customerName: selectedCustomer?.name || 'Walk-In Customer',
+          customerPhone: selectedCustomer?.phone || '',
+          subTotal: subtotalAmt,
+          discountAmount: discountTotal,
+          vatAmount: vatAmt,
+          totalAmount: totalAmt,
+          paymentMethod: paymentMode,
+          items: cart.map(c => ({
+            barcode: c.piece.barcode,
+            description: `${c.piece.brandName} ${c.piece.itemName}`,
+            unitPrice: c.sellingPrice,
+            discount: c.discount,
+            finalAmount: c.sellingPrice - c.discount,
+            weightKg: c.piece.weightKg || 0.45
+          }))
+        },
+        voucher: { voucherNo: `VCH-${Date.now().toString().slice(-6)}` },
+        cogsSummary: { totalCogs: cart.reduce((sum, c) => sum + (c.cogsCost || 0), 0) },
+        pieces: cart.map(c => c.piece)
       });
 
       // Clear basket for next transaction

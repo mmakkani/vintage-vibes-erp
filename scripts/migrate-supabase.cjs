@@ -47,7 +47,7 @@ async function runMigration() {
       await client.query(`
         INSERT INTO users (id, username, password_hash, name, email, role, is_active)
         VALUES 
-          ('usr-admin', 'admin', 'admin123', 'Elena Rostova (Principal Admin)', 'admin@vintagevibe.ae', 'ADMIN', true),
+          ('usr-admin', 'admin', 'admin123', 'Muhammad', 'admin@vintagevibe.ae', 'ADMIN', true),
           ('usr-acct', 'accountant', 'acct123', 'Farhan Zaidi (Senior Accountant)', 'accountant@vintagevibe.ae', 'ACCOUNTANT', true)
         ON CONFLICT (username) DO NOTHING;
       `);

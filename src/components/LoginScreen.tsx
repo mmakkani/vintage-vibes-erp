@@ -68,9 +68,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         try {
           const term = cleanUsername.toLowerCase();
           const { data: supaUsers, error: supaErr } = await supabase
-            .from('users')
+            .from('operators')
             .select('*')
-            .or(`username.ilike.${term},email.ilike.${term}`)
+            .ilike('username', term)
             .limit(1);
 
           if (!supaErr && supaUsers && supaUsers.length > 0) {
@@ -88,11 +88,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             const supaUser: UserType = {
               id: row.id,
               username: row.username,
-              name: row.name,
-              email: row.email,
-              role: row.role || 'ADMIN',
-              isActive: row.is_active,
-              permissions: AuthEngine.generateDefaultPermissions(row.id, row.role || 'ADMIN'),
+              name: row.display_name || row.username || 'Muhammad',
+              email: `${row.username}@vintagevibe.ae`,
+              role: (row.role || 'ADMIN').toUpperCase() as any,
+              isActive: row.is_active !== false,
+              permissions: row.permissions || AuthEngine.generateDefaultPermissions(row.id, (row.role || 'ADMIN').toUpperCase() as any),
               createdAt: row.created_at || new Date().toISOString()
             };
             localStorage.setItem('vintage_vibes_auth_user', JSON.stringify(supaUser));
@@ -107,12 +107,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
       // 3. Built-in Local Operator Store Fallback (Offline / Zero-latency fallback)
       const term = cleanUsername.toLowerCase();
-      if (term === 'admin' && (cleanPassword === 'admin123' || !cleanPassword)) {
+      if ((term === 'admin' || term === 'mohd') && (cleanPassword === 'admin123' || !cleanPassword)) {
         const adminUser: UserType = {
           id: 'usr-admin',
-          username: 'admin',
-          name: 'Elena Rostova (Principal Admin)',
-          email: 'admin@vintagevibe.ae',
+          username: term,
+          name: 'Muhammad',
+          email: `${term}@vintagevibe.ae`,
           role: 'ADMIN',
           isActive: true,
           permissions: AuthEngine.generateDefaultPermissions('usr-admin', 'ADMIN'),

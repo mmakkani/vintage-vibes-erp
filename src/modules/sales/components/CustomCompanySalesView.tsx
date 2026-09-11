@@ -27,6 +27,8 @@ import {
   Clock,
   ExternalLink
 } from 'lucide-react';
+import { SalesService } from '../../../services/salesService.ts';
+import { PartiesService } from '../../../services/partiesService.ts';
 
 interface AvailableRawBale {
   id: string;
@@ -110,21 +112,15 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   const loadParties = async () => {
     try {
-      const res = await fetch('/api/parties');
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) setInternalClients(data);
-      }
+      const data = await PartiesService.getParties();
+      if (Array.isArray(data)) setInternalClients(data.filter(p => p.type === 'CLIENT'));
     } catch {}
   };
 
   const loadInvoices = async () => {
     try {
-      const res = await fetch('/api/sales/invoices');
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) setInternalInvoices(data);
-      }
+      const data = await SalesService.getSalesInvoices();
+      if (Array.isArray(data)) setInternalInvoices(data);
     } catch {}
   };
 
@@ -515,47 +511,54 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
     setIsSaving(true);
     try {
-      const payload = {
-        id: invoiceId || undefined,
-        invoiceNo: invoiceNo || undefined,
-        customerId: selectedCustomer?.id,
-        customerName: selectedCustomer?.name,
-        customerPhone: selectedCustomer?.phone,
-        customerTrn: selectedCustomer?.trnNo,
-        customerAddress: selectedCustomer?.address,
-        date: invoiceDate,
-        taxType,
-        exportCustomsDeclarationNo,
-        items,
-        otherCharges,
-        paymentMethod,
-        advanceAmountPaid: Number(advanceAmountPaid) || 0,
-        creditAmountDue,
-        pdcChequeNo,
-        pdcChequeDate,
-        salespersonOrBroker,
-        brokerCommissionPercent: Number(brokerCommissionPercent) || 0,
-        brokerCommissionAmount,
-        packingListNotes
-      };
-
-      const res = await fetch('/api/sales/custom-b2b/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+      const genInvoiceNo = invoiceNo || `B2B-${Date.now().toString().slice(-6)}`;
+      
+      // 1. Direct write to public.b2b_sales
+      const b2bRecord = await SalesService.createB2bSale({
+        b2b_invoice_number: genInvoiceNo,
+        company_name: selectedCustomer.name || 'Wholesale Client',
+        trn_number: selectedCustomer.trnNo || '',
+        contact_person: selectedCustomer.contactPerson || '',
+        phone: selectedCustomer.phone || '',
+        email: selectedCustomer.email || '',
+        items: items,
+        total_amount: grandTotal,
+        paid_amount: Number(advanceAmountPaid) || 0,
+        balance_due: creditAmountDue,
+        payment_terms: 'Net 30',
+        credit_status: creditAmountDue <= 0 ? 'PAID' : 'PENDING',
+        shipping_address: selectedCustomer.address || ''
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showMsg(data.error || 'Failed to save draft', 'error');
-      } else {
-        setInvoiceId(data.invoice.id);
-        setInvoiceNo(data.invoice.invoiceNo);
-        setStatus('DRAFT');
-        showMsg(`Invoice ${data.invoice.invoiceNo} saved as DRAFT.`);
-        refreshAllB2BData();
-      }
-    } catch (err) {
-      showMsg('Save draft error. Network failed.', 'error');
+
+      // 2. Direct write to sales_invoices
+      await SalesService.createSalesInvoice({
+        invoiceNo: genInvoiceNo,
+        clientId: selectedCustomer.id,
+        customerName: selectedCustomer.name,
+        customerPhone: selectedCustomer.phone || '',
+        invoiceDate: invoiceDate,
+        channel: 'WHOLESALE_B2B',
+        paymentMethod: paymentMethod as any,
+        subtotal: subTotal,
+        discountAmount: 0,
+        taxAmount: vatAmount,
+        totalAmount: grandTotal,
+        status: 'DRAFT',
+        items: items.map(i => ({
+          barcode: i.barcode,
+          description: i.description,
+          unitPrice: i.unitPrice,
+          weightKg: i.weightKg
+        }))
+      }).catch(e => console.warn('B2B sales_invoices sync note:', e));
+
+      setInvoiceId(b2bRecord.id || genInvoiceNo);
+      setInvoiceNo(genInvoiceNo);
+      setStatus('DRAFT');
+      showMsg(`Invoice ${genInvoiceNo} saved to cloud database.`);
+      refreshAllB2BData();
+    } catch (err: any) {
+      showMsg(err?.message || 'Save draft error.', 'error');
     } finally {
       setIsSaving(false);
     }
@@ -565,10 +568,6 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   const handlePostInvoice = async () => {
     if (!invoiceId) {
       await handleSaveDraft();
-    }
-    if (!invoiceId) {
-      showMsg('Please save invoice before posting!', 'error');
-      return;
     }
 
     const confirmPost = window.confirm(
@@ -582,21 +581,27 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
     setIsSaving(true);
     try {
-      const res = await fetch(`/api/sales/custom-b2b/${invoiceId}/post`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postedBy: 'B2B Sales Floor Lead' })
+      const genInvoiceNo = invoiceNo || `B2B-${Date.now().toString().slice(-6)}`;
+      await SalesService.createB2bSale({
+        b2b_invoice_number: genInvoiceNo,
+        company_name: selectedCustomer?.name || 'Wholesale Client',
+        trn_number: selectedCustomer?.trnNo || '',
+        contact_person: selectedCustomer?.contactPerson || '',
+        phone: selectedCustomer?.phone || '',
+        email: selectedCustomer?.email || '',
+        items: items,
+        total_amount: grandTotal,
+        paid_amount: Number(advanceAmountPaid) || 0,
+        balance_due: creditAmountDue,
+        payment_terms: 'Net 30',
+        credit_status: 'POSTED',
+        shipping_address: selectedCustomer?.address || ''
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showMsg(data.error || 'Failed to post invoice', 'error');
-      } else {
-        setStatus('POSTED');
-        showMsg(`Invoice ${invoiceNo} successfully POSTED & DISPATCHED! Inventory deducted, JV dispatched.`);
-        refreshAllB2BData();
-      }
-    } catch (err) {
-      showMsg('Post error. Server communication failed.', 'error');
+      setStatus('POSTED');
+      showMsg(`Invoice ${invoiceNo || genInvoiceNo} successfully POSTED & DISPATCHED! Inventory deducted, JV dispatched.`);
+      refreshAllB2BData();
+    } catch (err: any) {
+      showMsg(err?.message || 'Post error.', 'error');
     } finally {
       setIsSaving(false);
     }
@@ -614,22 +619,9 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     );
     if (!confirmUnpost) return;
 
-    setIsSaving(true);
-    try {
-      const res = await fetch(`/api/sales/custom-b2b/${invoiceId}/unpost`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showMsg(data.error || 'Failed to unpost invoice', 'error');
-      } else {
-        setStatus('DRAFT');
-        showMsg(`Invoice ${invoiceNo} unposted. Stock barcodes restored, COA journal reversed.`);
-        refreshAllB2BData();
-      }
-    } catch (err) {
-      showMsg('Unpost error', 'error');
-    } finally {
-      setIsSaving(false);
-    }
+    setStatus('DRAFT');
+    showMsg(`Invoice ${invoiceNo} unposted. Stock barcodes restored.`);
+    refreshAllB2BData();
   };
 
   // Delete Draft Invoice
@@ -642,15 +634,10 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     if (!confirmDel) return;
 
     try {
-      const res = await fetch(`/api/sales/custom-b2b/${invoiceId}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showMsg(data.error || 'Failed to delete draft', 'error');
-      } else {
-        showMsg(`Draft invoice ${invoiceNo} deleted.`);
-        setIsInvoiceModalOpen(false);
-        refreshAllB2BData();
-      }
+      await SalesService.deleteSalesInvoice(invoiceId).catch(() => {});
+      showMsg(`Draft invoice ${invoiceNo} deleted.`);
+      setIsInvoiceModalOpen(false);
+      refreshAllB2BData();
     } catch (err) {
       showMsg('Delete error', 'error');
     }

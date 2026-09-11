@@ -519,7 +519,7 @@ export function openAuthorityMatrixPopup(options: AuthorityPopupOptions): Window
     const userId = ${JSON.stringify(user.id)};
     const userRole = ${JSON.stringify(user.role)};
     const userHandle = ${JSON.stringify(user.username || user.email)};
-    const adminName = ${JSON.stringify(adminUser.name || 'Elena Rostova')};
+    const adminName = ${JSON.stringify(adminUser.name || 'Muhammad')};
     const adminHandle = ${JSON.stringify(adminUser.username || 'admin')};
     let activeMasterPin = ${JSON.stringify(currentMasterPin)};
 

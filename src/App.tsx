@@ -245,10 +245,11 @@ export default function App() {
     }
     return {
       id: 'usr-admin-01',
+      username: 'admin',
       email: 'admin@vintagevibe.ae',
-      name: 'Tariq Al-Mansoor',
+      name: 'Muhammad',
       role: 'ADMIN',
-      assignedShopId: 'Central Warehouse (Al Quoz)',
+      assignedShopId: 'Al Ain Main Branch',
       isActive: true
     };
   });
@@ -282,8 +283,13 @@ export default function App() {
       if (Array.isArray(currs) && currs.length > 0) setCurrencies(currs);
       if (Array.isArray(users) && users.length > 0) {
         setAllUsers(users);
-        const found = users.find(u => u.id === currentUser.id);
-        if (found) setCurrentUser(found);
+        const found = users.find(u => u.id === currentUser.id || u.username?.toLowerCase() === currentUser.username?.toLowerCase());
+        if (found) {
+          setCurrentUser(found);
+          try {
+            localStorage.setItem('vintage_erp_logged_user', JSON.stringify(found));
+          } catch {}
+        }
       }
     } catch (err: any) {
       console.warn('Global data sync notice (using resilient client state):', err?.message);

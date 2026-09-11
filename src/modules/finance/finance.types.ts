@@ -4,13 +4,23 @@ export interface COAAccount {
   id: string;
   code: string; // e.g. "1000-01-001"
   name: string;
+  type?: string; // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
   classification: AccountClassification;
-  tierLevel: number; // 1 to 5
+  subType?: string;
+  sub_type?: string;
+  tierLevel?: number; // 1 to 5
+  tier_level?: number;
   parentCode?: string;
-  currency: CurrencyCode;
+  parentId?: string;
+  parent_id?: string;
+  currency: CurrencyCode | string;
   currentBalance: number;
-  isSystem: boolean;
+  current_balance?: number;
+  isSystem?: boolean;
   isActive: boolean;
+  is_active?: boolean;
+  createdAt?: string;
+  created_at?: string;
 }
 
 export interface VoucherLine {

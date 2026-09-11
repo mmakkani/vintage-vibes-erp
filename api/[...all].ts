@@ -893,6 +893,44 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: true });
     }
 
+    // Chart of Accounts (COA)
+    if (pathname.includes('/finance/coa')) {
+      let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+      if (dbUrl && !dbUrl.includes('placeholder')) {
+        try {
+          const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+          if (match) {
+            let [_, user, rawPwd, host, port, rest] = match;
+            if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
+            dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+          }
+          const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+          await client.connect();
+          const coaRes = await client.query('SELECT id, code, name, type, sub_type, currency, current_balance, is_active, parent_id FROM coa_accounts ORDER BY code ASC');
+          await client.end();
+          return res.status(200).json(coaRes.rows.map((r: any) => ({
+            id: r.id,
+            code: r.code,
+            name: r.name,
+            type: (r.type || 'ASSET').toUpperCase(),
+            classification: (r.type || 'ASSET').toUpperCase(),
+            subType: r.sub_type || '',
+            sub_type: r.sub_type || '',
+            currency: r.currency || 'AED',
+            currentBalance: Number(r.current_balance || 0),
+            current_balance: Number(r.current_balance || 0),
+            isActive: r.is_active !== false,
+            is_active: r.is_active !== false,
+            parentId: r.parent_id,
+            parent_id: r.parent_id
+          })));
+        } catch (e: any) {
+          console.warn('Error querying coa_accounts in serverless gateway:', e?.message);
+        }
+      }
+      return res.status(200).json([]);
+    }
+
     // Company Profile
     if (pathname.includes('/company-profile') || pathname.includes('/setup/company')) {
       if (method === 'PUT' || method === 'POST') {

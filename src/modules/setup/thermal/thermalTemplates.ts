@@ -362,7 +362,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
           </div>
 
           <div style="font-size:6.5px; font-family:monospace; text-align:center; border-top:1px solid #000; padding-top:1mm; margin-top:1.5mm;">
-            VERIFIED INDUSTRIAL ASSET &bull; DUBAI FREE ZONE &bull; TEL ${phone}
+            VERIFIED INDUSTRIAL ASSET &bull; UAE TAX REGISTERED &bull; TEL ${phone}
           </div>
         </div>
       `;

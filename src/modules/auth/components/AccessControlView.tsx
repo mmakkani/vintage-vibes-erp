@@ -40,7 +40,7 @@ export const AccessControlView: React.FC<AccessControlViewProps> = ({ onRefreshA
     return {
       id: 'usr-admin',
       username: 'admin',
-      name: 'Elena Rostova (Principal Admin)',
+      name: 'Muhammad',
       role: 'ADMIN',
       email: 'admin@vintagevibe.ae',
       isActive: true,

@@ -115,4 +115,299 @@ export class SalesService {
       throw new Error(error.message || 'Failed to delete sales invoice');
     }
   }
+
+  // ==========================================
+  // 1. POS SALES (public.pos_sales) & Stock Decrement
+  // ==========================================
+  public static async getPosSales(): Promise<any[]> {
+    const { data, error } = await supabase
+      .from('pos_sales')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching pos_sales:', error);
+      return [];
+    }
+    return data || [];
+  }
+
+  public static async createPosSale(sale: {
+    invoice_number?: string;
+    cashier_id?: string;
+    customer_name?: string;
+    customer_phone?: string;
+    items: any[];
+    subtotal: number;
+    tax_amount?: number;
+    discount_amount?: number;
+    grand_total: number;
+    payment_type?: string;
+    payment_status?: string;
+  }): Promise<any> {
+    const invoiceNumber = sale.invoice_number || `POS-${Date.now().toString().slice(-6)}`;
+    const payload = {
+      invoice_number: invoiceNumber,
+      cashier_id: sale.cashier_id || null,
+      customer_name: sale.customer_name || 'Walk-in Customer',
+      customer_phone: sale.customer_phone || '',
+      items: sale.items || [],
+      subtotal: sale.subtotal || 0,
+      tax_amount: sale.tax_amount || 0,
+      discount_amount: sale.discount_amount || 0,
+      grand_total: sale.grand_total,
+      payment_type: sale.payment_type || 'CASH',
+      payment_status: sale.payment_status || 'PAID',
+      created_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('pos_sales')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating pos_sale:', error);
+      throw new Error(error.message);
+    }
+
+    // Decrement stock in inventory_items and mark inventory_pieces sold
+    if (Array.isArray(sale.items)) {
+      for (const item of sale.items) {
+        const qty = Number(item.quantity || 1);
+        // If inventory item id exists
+        if (item.inventory_item_id || item.itemId) {
+          const targetId = item.inventory_item_id || item.itemId;
+          try {
+            const { data: itemData } = await supabase
+              .from('inventory_items')
+              .select('stock_quantity')
+              .eq('id', targetId)
+              .maybeSingle();
+
+            if (itemData) {
+              const newQty = Math.max(0, (itemData.stock_quantity || 0) - qty);
+              await supabase
+                .from('inventory_items')
+                .update({ stock_quantity: newQty })
+                .eq('id', targetId);
+            }
+          } catch (e) {
+            console.warn('Could not decrement inventory_items stock:', e);
+          }
+        }
+
+        // If piece barcode/id exists
+        const pieceId = item.pieceId || item.barcode;
+        if (pieceId) {
+          try {
+            await supabase
+              .from('inventory_pieces')
+              .update({ is_sold: true, status: 'SOLD' })
+              .or(`id.eq.${pieceId},barcode.eq.${pieceId}`);
+          } catch (e) {
+            console.warn('Could not mark piece sold:', e);
+          }
+        }
+      }
+    }
+
+    return data;
+  }
+
+  // ==========================================
+  // 2. B2B SALES (public.b2b_sales) & Ledgers
+  // ==========================================
+  public static async getB2bSales(): Promise<any[]> {
+    const { data, error } = await supabase
+      .from('b2b_sales')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching b2b_sales:', error);
+      return [];
+    }
+    return data || [];
+  }
+
+  public static async createB2bSale(b2b: {
+    b2b_invoice_number?: string;
+    company_name: string;
+    trn_number?: string;
+    contact_person?: string;
+    phone?: string;
+    email?: string;
+    items: any[];
+    total_amount: number;
+    paid_amount?: number;
+    balance_due?: number;
+    payment_terms?: string;
+    credit_status?: string;
+    shipping_address?: string;
+  }): Promise<any> {
+    const invoiceNum = b2b.b2b_invoice_number || `B2B-${Date.now().toString().slice(-6)}`;
+    const total = Number(b2b.total_amount || 0);
+    const paid = Number(b2b.paid_amount || 0);
+    const balance = b2b.balance_due !== undefined ? Number(b2b.balance_due) : (total - paid);
+
+    const payload = {
+      b2b_invoice_number: invoiceNum,
+      company_name: b2b.company_name,
+      trn_number: b2b.trn_number || '',
+      contact_person: b2b.contact_person || '',
+      phone: b2b.phone || '',
+      email: b2b.email || '',
+      items: b2b.items || [],
+      total_amount: total,
+      paid_amount: paid,
+      balance_due: balance,
+      payment_terms: b2b.payment_terms || 'Net 30',
+      credit_status: b2b.credit_status || (balance <= 0 ? 'PAID' : 'PENDING'),
+      shipping_address: b2b.shipping_address || '',
+      created_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('b2b_sales')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating b2b_sale:', error);
+      throw new Error(error.message);
+    }
+
+    // Auto-record in ledgers if accounts receivable exists
+    try {
+      await supabase.from('ledgers').insert({
+        date: new Date().toISOString().slice(0, 10),
+        account_code: '1200-00',
+        account_name: `Accounts Receivable - ${b2b.company_name}`,
+        debit: total,
+        credit: 0,
+        narration: `B2B Invoice ${invoiceNum} generated for ${b2b.company_name}`
+      });
+    } catch (e) {
+      console.warn('Auto-ledger entry note for B2B:', e);
+    }
+
+    return data;
+  }
+
+  // ==========================================
+  // 3. E-COMMERCE ORDERS (public.orders)
+  // ==========================================
+  public static async getOrders(): Promise<any[]> {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching orders:', error);
+      return [];
+    }
+    return data || [];
+  }
+
+  public static async createOnlineOrder(order: {
+    order_number?: string;
+    customer_name: string;
+    customer_phone: string;
+    customer_address?: string;
+    city?: string;
+    items: any[];
+    total_amount: number;
+    delivery_fee?: number;
+    payment_method?: string;
+    payment_status?: string;
+    order_status?: string;
+    source?: string;
+  }): Promise<any> {
+    const orderNum = order.order_number || `ORD-${Date.now().toString().slice(-6)}`;
+    const payload = {
+      order_number: orderNum,
+      customer_name: order.customer_name,
+      customer_phone: order.customer_phone,
+      customer_address: order.customer_address || '',
+      city: order.city || 'Dubai',
+      items: order.items || [],
+      total_amount: Number(order.total_amount || 0),
+      delivery_fee: Number(order.delivery_fee || 0),
+      payment_method: order.payment_method || 'COD',
+      payment_status: order.payment_status || 'PENDING',
+      order_status: order.order_status || 'CONFIRMED',
+      source: order.source || 'ONLINE_STORE',
+      created_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('orders')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating order:', error);
+      throw new Error(error.message);
+    }
+    return data;
+  }
+
+  // ==========================================
+  // 4. LIVE STREAM SALES (public.live_stream_sales)
+  // ==========================================
+  public static async getLiveStreamSales(): Promise<any[]> {
+    const { data, error } = await supabase
+      .from('live_stream_sales')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching live_stream_sales:', error);
+      return [];
+    }
+    return data || [];
+  }
+
+  public static async createLiveStreamSale(sale: {
+    session_id?: string;
+    platform?: string;
+    customer_handle: string;
+    customer_phone?: string;
+    item_code: string;
+    item_description?: string;
+    claimed_price: number;
+    claim_status?: string;
+    converted_to_order_id?: string;
+  }): Promise<any> {
+    const payload = {
+      session_id: sale.session_id || 'LIVE-STREAM',
+      platform: sale.platform || 'TIKTOK',
+      customer_handle: sale.customer_handle,
+      customer_phone: sale.customer_phone || '',
+      item_code: sale.item_code,
+      item_description: sale.item_description || '',
+      claimed_price: Number(sale.claimed_price || 0),
+      claim_status: sale.claim_status || 'CLAIMED',
+      converted_to_order_id: sale.converted_to_order_id || null,
+      created_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('live_stream_sales')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating live_stream_sale:', error);
+      throw new Error(error.message);
+    }
+    return data;
+  }
 }
+

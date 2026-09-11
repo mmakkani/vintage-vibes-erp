@@ -80,6 +80,28 @@ export function cleanWhatsAppNumber(input?: string): string {
 }
 
 export class CompanyProfileService {
+  public static async uploadAsset(file: File | Blob, bucket: string = 'company_assets', folder: string = 'logos'): Promise<string> {
+    const fileExt = (file instanceof File && file.name) ? (file.name.split('.').pop() || 'png') : 'png';
+    const fileName = `${folder}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+    const { error: uploadError } = await supabase.storage
+      .from(bucket)
+      .upload(fileName, file, {
+        upsert: true,
+        contentType: (file instanceof File ? file.type : undefined) || 'image/png'
+      });
+
+    if (uploadError) {
+      console.error(`Storage upload error (${bucket}/${fileName}):`, uploadError);
+      throw new Error(uploadError.message || 'File upload failed');
+    }
+
+    const { data } = supabase.storage
+      .from(bucket)
+      .getPublicUrl(fileName);
+
+    return data.publicUrl;
+  }
+
   public static async getCompanyProfile(): Promise<CompanyProfile> {
     const { data, error } = await supabase
       .from('company_profile')
@@ -199,6 +221,7 @@ export class CompanyProfileService {
       bank_iban: profile.bankIban,
       bank_account_number: profile.bankAccountNumber,
       bank_qr_code_url: profile.bankQrCodeUrl,
+      bank_qr_url: profile.bankQrCodeUrl,
       bank_accounts: profile.bankAccounts || [],
       enable_cod: profile.enableCod !== false,
       enable_bank_transfer: profile.enableBankTransfer !== false,

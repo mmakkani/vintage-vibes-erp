@@ -43,6 +43,8 @@ import { CompanyName3D } from '../../components/CompanyName3D.tsx';
 import { DubaiLiveSoukTicker } from '../../components/DubaiLiveSoukTicker.tsx';
 import { WinterMaaziStoryHero } from './WinterMaaziStoryHero.tsx';
 import { luxuryAudio } from '../../utils/luxuryAudio.ts';
+import { SalesService } from '../../services/salesService.ts';
+import { supabase } from '../../supabaseClient.ts';
 
 interface StorefrontViewProps {
   companyProfile: CompanyProfile;
@@ -411,31 +413,37 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         0
       );
 
-      const payload = {
-        customerName: customerInfo?.name || 'Online Boutique Collector',
-        customerPhone: customerInfo?.phone || '+971 50 000 0000',
-        channel: 'E-Commerce Online Storefront',
-        paymentMethod,
-        discountAmount: 0,
+      const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
+      const deliveryFee = totalAmount >= (companyProfile.freeShippingThresholdAed ?? 350) ? 0 : (companyProfile.standardShippingFeeAed ?? 25);
+
+      // 1. Record into public.orders
+      await SalesService.createOnlineOrder({
+        order_number: orderNumber,
+        customer_name: customerInfo?.name || 'Online Boutique Collector',
+        customer_phone: customerInfo?.phone || '+971 50 000 0000',
+        customer_address: customerInfo?.shippingAddress || '',
+        city: customerInfo?.city || 'Dubai',
         items: piecesToBuy.map(piece => ({
           pieceId: piece.id,
           barcode: piece.barcode,
           description: `${piece.brandName} ${piece.itemName} (${piece.sizeScanned || 'L'}) - Ref ${paymentRef || paymentMethod}`,
           weightKg: piece.weightKg || 0.4,
-          unitPrice: piece.estimatedPrice || piece.retailPriceAed || 295,
-          discount: 0,
-          finalAmount: piece.estimatedPrice || piece.retailPriceAed || 295
-        }))
-      };
-
-      const res = await fetch('/api/sales/live-checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+          unitPrice: piece.estimatedPrice || piece.retailPriceAed || 295
+        })),
+        total_amount: totalAmount,
+        delivery_fee: deliveryFee,
+        payment_method: paymentMethod,
+        payment_status: paymentMethod === 'COD' ? 'PENDING' : 'PAID',
+        order_status: 'CONFIRMED',
+        source: 'STOREFRONT'
       });
 
-      if (!res.ok) {
-        console.warn('Backend sync failed, storing offline order');
+      // 2. Mark pieces as sold in Supabase inventory_pieces
+      for (const piece of piecesToBuy) {
+        await supabase
+          .from('inventory_pieces')
+          .update({ is_sold: true, status: 'SOLD' })
+          .or(`id.eq.${piece.id},barcode.eq.${piece.barcode}`);
       }
 
       // Remove pieces from local active list after vanishing animation completes

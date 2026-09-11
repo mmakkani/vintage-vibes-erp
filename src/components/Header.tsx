@@ -169,8 +169,8 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Shield className="w-3.5 h-3.5 text-white" />
             <div className="text-left leading-tight">
-              <div className="font-black text-white">{currentUser.name.split(' ')[0]}</div>
-              <div className="text-[9px] text-amber-100 font-mono tracking-tight font-bold">{currentUser.role}</div>
+              <div className="font-black text-white">{(currentUser.name || currentUser.username || 'ADMIN').toUpperCase()}</div>
+              <div className="text-[9px] text-amber-100 font-mono tracking-tight font-bold">{(currentUser.role || 'ADMIN').toUpperCase()}</div>
             </div>
             <RefreshCw className="w-3 h-3 text-amber-200 ml-0.5" />
           </button>
@@ -179,8 +179,8 @@ export const Header: React.FC<HeaderProps> = ({
           {showUserDropdown && (
             <div className="absolute right-0 mt-2 w-64 bg-[#FAF4E6] text-slate-900 rounded-xl shadow-2xl border border-amber-400 py-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
               <div className="px-3 py-1.5 border-b border-amber-200 text-[10px] font-bold text-amber-900 uppercase tracking-widest flex items-center justify-between bg-amber-100/50">
-                <span>Switch Operator Role</span>
-                <span className="text-[9px] text-amber-700">RBAC Secure</span>
+                <span>Switch Operator Account</span>
+                <span className="text-[9px] text-amber-700">RBAC Supabase</span>
               </div>
               {allUsers.map(user => (
                 <button
@@ -195,8 +195,8 @@ export const Header: React.FC<HeaderProps> = ({
                   }`}
                 >
                   <div>
-                    <div className="font-bold text-slate-900">{user.name}</div>
-                    <div className="text-[10px] text-slate-600">{user.email}</div>
+                    <div className="font-bold text-slate-900">{user.name || user.username}</div>
+                    <div className="text-[10px] text-slate-600">@{user.username || user.email}</div>
                   </div>
                   <span className="text-[10px] px-2 py-0.5 rounded bg-white text-amber-900 font-mono font-bold uppercase border border-amber-300">
                     {user.role}

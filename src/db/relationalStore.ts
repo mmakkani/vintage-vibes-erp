@@ -447,9 +447,9 @@ class RelationalStore {
       username: 'admin',
       password: 'admin123',
       email: 'admin@vintagevibe.ae',
-      name: 'Elena Rostova (Principal Admin)',
+      name: 'Muhammad',
       role: 'ADMIN',
-      assignedShopId: 'Central Warehouse (Al Quoz)',
+      assignedShopId: 'Al Ain Main Branch',
       isActive: true,
       permissions: AuthEngine.generateDefaultPermissions('usr-admin', 'ADMIN'),
       createdAt: '2026-01-10T08:00:00Z'
@@ -604,7 +604,7 @@ class RelationalStore {
     return { success: true, user };
   }
 
-  public updateUserPermissions(userId: string, permissions: UserPermission[], operatorName: string = 'Elena Rostova', operatorHandle?: string): User | undefined {
+  public updateUserPermissions(userId: string, permissions: UserPermission[], operatorName: string = 'Muhammad', operatorHandle?: string): User | undefined {
     const user = this.users.find(u => u.id === userId);
     if (!user) return undefined;
     user.permissions = permissions;

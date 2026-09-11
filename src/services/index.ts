@@ -6,3 +6,5 @@ export * from './salesService.ts';
 export * from './financeService.ts';
 export * from './authService.ts';
 export * from './auditService.ts';
+export * from './marketingService.ts';
+export * from './liveStreamService.ts';

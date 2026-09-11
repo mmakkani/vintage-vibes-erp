@@ -27,6 +27,7 @@ import {
   Globe
 } from 'lucide-react';
 import { useSync } from '../../../context/SyncContext.tsx';
+import { LiveStreamService } from '../../../services/liveStreamService.ts';
 
 interface UnifiedLiveBroadcastHubProps {
   companyProfile: CompanyProfile;
@@ -233,22 +234,33 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
   const [isTestingPing, setIsTestingPing] = useState(false);
   const [newKeyword, setNewKeyword] = useState('');
 
-  // Fetch saved booth settings from backend
+  // Fetch saved booth settings from Supabase
   const loadBooths = async () => {
     try {
-      const res = await fetch('/api/setup/live-booths');
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          // Merge defaults with backend saved data
-          const merged = defaultBooths.map(def => {
-            const found = data.find((d: any) => d.boothId === def.boothId);
-            return found ? { ...def, ...found } : def;
-          });
-          setBooths(merged);
-        }
+      const data = await LiveStreamService.getBooths();
+      if (Array.isArray(data) && data.length > 0) {
+        // Merge defaults with live Supabase data
+        const merged = defaultBooths.map(def => {
+          const num = def.boothId.replace('booth-', '');
+          const dbId = `booth_${num.padStart(2, '0')}`;
+          const found = data.find(d => d.id === dbId || d.id === def.boothId);
+          if (found) {
+            return {
+              ...def,
+              boothName: found.booth_name || def.boothName,
+              hostName: found.host_operator_name || def.hostName,
+              masterIngestRtmpUrl: found.rtmp_ingest_url || def.masterIngestRtmpUrl,
+              masterStreamKey: found.stream_key || def.masterStreamKey,
+              enabled: Boolean(found.is_broadcasting)
+            };
+          }
+          return def;
+        });
+        setBooths(merged);
       }
-    } catch {}
+    } catch (e) {
+      console.warn('Live booths load note:', e);
+    }
   };
 
   useEffect(() => {
@@ -290,37 +302,60 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     updateModalBooth({ claimKeywords: current.filter(k => k !== kw) });
   };
 
-  // Save active booth configuration
+  // Save active booth configuration directly to Supabase
   const handleSaveModalBooth = async () => {
     if (!activeModalBooth) return;
     setIsSaving(true);
     try {
-      // 1. Update backend setup endpoint
-      await fetch(`/api/setup/live-booths/${activeModalBooth.boothId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(activeModalBooth)
+      const num = activeModalBooth.boothId.replace('booth-', '');
+      const dbBoothId = `booth_${num.padStart(2, '0')}`;
+
+      // 1. Update live_booths table
+      await LiveStreamService.updateBooth(dbBoothId, {
+        booth_name: activeModalBooth.boothName,
+        host_operator_name: activeModalBooth.hostName,
+        rtmp_ingest_url: activeModalBooth.masterIngestRtmpUrl,
+        stream_key: activeModalBooth.masterStreamKey,
+        camera_source: activeModalBooth.provider || 'Webcam / OBS'
       });
 
-      // 2. Update StreamController settings
-      await fetch(`/api/live-stream/booths/${activeModalBooth.boothId}/settings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tiktokHandle: activeModalBooth.tiktokAccountHandle,
-          hostName: activeModalBooth.hostName,
-          hostHandle: activeModalBooth.hostHandle,
-          categoryFocus: activeModalBooth.category,
-          reservationTimeoutMinutes: activeModalBooth.reservationTimeoutMinutes || 15
-        })
-      });
+      // 2. Persist streaming keys to streaming_api_keys table
+      if (activeModalBooth.tiktokStreamKey) {
+        await LiveStreamService.saveStreamingApiKey('tiktok', {
+          server_url: activeModalBooth.tiktokRtmpUrl,
+          stream_key: activeModalBooth.tiktokStreamKey,
+          is_connected: true
+        });
+      }
+      if (activeModalBooth.instagramStreamKey) {
+        await LiveStreamService.saveStreamingApiKey('instagram', {
+          server_url: activeModalBooth.instagramRtmpUrl,
+          stream_key: activeModalBooth.instagramStreamKey,
+          is_connected: true
+        });
+      }
+      if (activeModalBooth.facebookStreamKey) {
+        await LiveStreamService.saveStreamingApiKey('facebook', {
+          server_url: activeModalBooth.facebookRtmpUrl,
+          stream_key: activeModalBooth.facebookStreamKey,
+          is_connected: true
+        });
+      }
+      if (activeModalBooth.youTubeStreamKey) {
+        await LiveStreamService.saveStreamingApiKey('youtube', {
+          server_url: activeModalBooth.youTubeRtmpUrl,
+          stream_key: activeModalBooth.youTubeStreamKey,
+          is_connected: true
+        });
+      }
 
       // 3. Update local state
       setBooths(prev => prev.map(b => (b.boothId === activeModalBooth.boothId ? activeModalBooth : b)));
-      showMsg(`✓ Settings and social accounts for ${activeModalBooth.boothName} saved successfully!`);
+      showMsg(`✓ Settings and social accounts for ${activeModalBooth.boothName} saved to cloud!`);
       handleCloseModal();
-    } catch {
-      showMsg('Failed to save booth settings', 'error');
+    } catch (e: any) {
+      console.error('Error saving booth settings:', e);
+      showMsg(e?.message || 'Failed to save booth settings', 'error');
     } finally {
       setIsSaving(false);
     }

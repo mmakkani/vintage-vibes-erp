@@ -22,10 +22,12 @@ import {
 } from 'lucide-react';
 import { LiveStreamSessionStatus } from '../marketing.types.ts';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
+import { LiveStreamService, LiveBooth } from '../../../services/liveStreamService.ts';
+import { PurchaseService } from '../../../services/purchaseService.ts';
 
 export const LiveBroadcastDeskTab: React.FC = () => {
   const [session, setSession] = useState<LiveStreamSessionStatus | null>(null);
-  const [selectedBooth, setSelectedBooth] = useState('booth-01');
+  const [selectedBooth, setSelectedBooth] = useState('booth_01');
   const [scannerInput, setScannerInput] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [scanMessage, setScanMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -34,34 +36,43 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   const [obsTheme, setObsTheme] = useState<'gold' | 'neon' | 'noir'>('gold');
   const [obsTransparentBg, setObsTransparentBg] = useState(true);
   const [availablePieces, setAvailablePieces] = useState<PieceBreakdownItem[]>([]);
+  const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
   const scannerInputRef = useRef<HTMLInputElement>(null);
 
   const fetchSessionStatus = async () => {
     try {
-      const [sessRes, piecesRes] = await Promise.all([
-        fetch('/api/marketing/live-session'),
-        fetch('/api/purchase/pieces')
+      const [liveBooths, allPieces] = await Promise.all([
+        LiveStreamService.getBooths(),
+        PurchaseService.getPieces()
       ]);
-      if (sessRes.ok) {
-        const data = await sessRes.json();
-        setSession(data);
-        if (data.activeBoothId) setSelectedBooth(data.activeBoothId);
-      }
-      if (piecesRes.ok) {
-        const pData = await piecesRes.json();
-        const inStock = (pData || []).filter((p: PieceBreakdownItem) => !p.isSold && p.status === 'IN_STOCK');
-        setAvailablePieces(inStock);
-      }
+      const currentBooth = liveBooths.find(b => b.id === selectedBooth) || liveBooths[0];
+      const inStock = (allPieces || []).filter((p: PieceBreakdownItem) => !p.isSold && p.status === 'IN_STOCK');
+      setAvailablePieces(inStock);
+
+      const activeOnAir = inStock.find((p: PieceBreakdownItem) => p.barcode === currentBooth?.active_product_sku || p.id === currentBooth?.active_product_sku) || null;
+
+      setSession({
+        isBroadcasting: Boolean(currentBooth?.is_broadcasting),
+        startedAt: currentBooth?.is_broadcasting ? (sessionStartTime || Date.now() - 300000) : null,
+        uptimeSeconds: currentBooth?.is_broadcasting ? Math.floor((Date.now() - (sessionStartTime || Date.now() - 300000)) / 1000) : 0,
+        activeBoothId: currentBooth?.id || selectedBooth,
+        activeBoothName: currentBooth?.booth_name || 'Live Booth 01',
+        activeOnAirPiece: activeOnAir,
+        scannerFeed: [],
+        totalClaimsInSession: currentBooth?.viewer_count || 0,
+        totalRevenueAedInSession: Number(currentBooth?.current_deal_price || 0),
+        obsOverlayUrl: `${window.location.origin}/live-overlay?booth=${selectedBooth}`
+      });
     } catch (err) {
-      console.warn('Error fetching live session status:', err);
+      console.warn('Error fetching live session status from Supabase:', err);
     }
   };
 
   useEffect(() => {
     fetchSessionStatus();
-    const interval = setInterval(fetchSessionStatus, 3000);
+    const interval = setInterval(fetchSessionStatus, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedBooth]);
 
   // Format uptime
   const formatUptime = (totalSeconds: number) => {
@@ -71,19 +82,15 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
 
-  // Toggle Stream On / Off
+  // Toggle Stream On / Off directly in Supabase
   const handleToggleStream = async (start: boolean) => {
     setIsTogglingStream(true);
     try {
-      const res = await fetch('/api/marketing/live-session/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ start, boothId: selectedBooth })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setSession(data);
-      }
+      if (start) setSessionStartTime(Date.now());
+      else setSessionStartTime(null);
+      await LiveStreamService.updateBooth(selectedBooth, { is_broadcasting: start });
+      await LiveStreamService.updateMulticastSettings({ is_live: start });
+      await fetchSessionStatus();
     } catch (err) {
       console.warn('Error toggling live stream:', err);
     } finally {
@@ -91,7 +98,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     }
   };
 
-  // Handle Scan Barcode
+  // Handle Scan Barcode directly with Supabase inventory
   const handleScanBarcode = async (codeToScan?: string) => {
     const code = (codeToScan || scannerInput).trim().toUpperCase();
     if (!code) return;
@@ -100,19 +107,18 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     setScanMessage(null);
 
     try {
-      const res = await fetch('/api/marketing/live-session/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ barcode: code, scannedBy: 'Live Desk Lead' })
-      });
-      const data = await res.json();
-
-      if (res.ok && data.success) {
-        setScanMessage({ type: 'success', text: `Loaded piece: ${data.piece?.itemName || code}` });
+      const allPieces = await PurchaseService.getPieces();
+      const matched = allPieces.find((p: PieceBreakdownItem) => p.barcode === code || p.id === code);
+      if (matched) {
+        await LiveStreamService.updateBooth(selectedBooth, {
+          active_product_sku: matched.barcode || matched.id,
+          current_deal_price: Number(matched.retailPriceAed || matched.costPrice || 0)
+        });
+        setScanMessage({ type: 'success', text: `Loaded piece: ${matched.itemName || code} (AED ${matched.retailPriceAed || 0})` });
         setScannerInput('');
-        fetchSessionStatus();
+        await fetchSessionStatus();
       } else {
-        setScanMessage({ type: 'error', text: data.error || `Barcode '${code}' not found` });
+        setScanMessage({ type: 'error', text: `Barcode '${code}' not found in inventory pieces` });
       }
     } catch (err: any) {
       setScanMessage({ type: 'error', text: err?.message || 'Scanner request failed' });
@@ -217,11 +223,11 @@ export const LiveBroadcastDeskTab: React.FC = () => {
               onChange={e => setSelectedBooth(e.target.value)}
               className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-amber-400"
             >
-              <option value="booth-01">Booth 01 - Main Stage (90s Denim & Tees)</option>
-              <option value="booth-02">Booth 02 - Rare Grails (Carhartt Vault)</option>
-              <option value="booth-03">Booth 03 - Designer Vault (Silk & Trench)</option>
-              <option value="booth-05">Booth 05 - Y2K Pop (Cargos & Baby Tees)</option>
-              <option value="booth-07">Booth 07 - Retro Sports (Athletic Archive)</option>
+              <option value="booth_01">Booth 01 - Main Stage (90s Denim & Tees)</option>
+              <option value="booth_02">Booth 02 - Rare Grails (Vintage Rare)</option>
+              <option value="booth_03">Booth 03 - Wholesale B2B Bales</option>
+              <option value="booth_04">Booth 04 - Flash Auction</option>
+              <option value="booth_05">Booth 05 - VIP Clearance</option>
             </select>
           </div>
 

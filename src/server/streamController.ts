@@ -234,8 +234,8 @@ class StreamController {
       {
         num: 7,
         name: 'Booth 07 - Retro Sports',
-        host: 'Elena Rostova',
-        handle: '@elena_sport',
+        host: 'Muhammad',
+        handle: '@muhammad_vintage',
         tt: '@vintage_sport_b7',
         category: 'Retro Football & Basketball',
         broadcasting: true,
