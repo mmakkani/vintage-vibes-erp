@@ -102,6 +102,24 @@ CREATE TABLE IF NOT EXISTS brand_masters (
     tier VARCHAR(32) DEFAULT 'Grail'
 );
 
+-- 6B. BALE CATEGORIES & BALE PRESETS
+CREATE TABLE IF NOT EXISTS public.bale_categories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(128) UNIQUE NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.bale_presets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    item_code VARCHAR(64) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    category VARCHAR(128) NOT NULL,
+    uom VARCHAR(32) DEFAULT 'Bales',
+    std_weight NUMERIC(10, 2) DEFAULT 45.00,
+    base_rate NUMERIC(10, 2) DEFAULT 0.00,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 7. PURCHASE INVOICES (BALES / CONSIGNMENTS)
 CREATE TABLE IF NOT EXISTS purchase_invoices (
     id VARCHAR(64) PRIMARY KEY,

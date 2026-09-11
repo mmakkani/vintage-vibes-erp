@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Party } from '../../parties/parties.types.ts';
 import { ItemMaster } from '../../setup/setup.types.ts';
 import { PackagingUOM } from '../../../types/common.types.ts';
+import { supabase } from '../../../supabaseClient.ts';
 import {
   Building2,
   FileText,
@@ -20,6 +21,23 @@ import {
   Scale
 } from 'lucide-react';
 
+export interface BaleCategory {
+  id: string;
+  name: string;
+  created_at?: string;
+}
+
+export interface BalePreset {
+  id: string;
+  item_code: string;
+  name: string;
+  category: string;
+  uom: string;
+  std_weight: number;
+  base_rate: number;
+  created_at?: string;
+}
+
 interface PurchaseSettingsViewProps {
   parties: Party[];
   items?: ItemMaster[];
@@ -33,17 +51,13 @@ export const PurchaseSettingsView: React.FC<PurchaseSettingsViewProps> = ({
   onRefreshParties,
   onRefreshItems
 }) => {
-  // Preset Bale Categories
-  const [baleCategories, setBaleCategories] = useState<string[]>([
-    '90s Vintage Denim & American Workwear',
-    'Vintage Band Tees & Graphic Hoodies',
-    'Italian Wool Overcoats & Blazers',
-    'Outdoor Fleece & Retro Sportswear (Nike/Adidas)',
-    'Carhartt & Workwear Duck Canvas',
-    'Mix Vintage Silk Blouses & Hawaiian Shirts',
-    'Vintage Cargo Pants & Tactical Utility'
-  ]);
+  // Preset Bale Categories (bound to public.bale_categories)
+  const [baleCategories, setBaleCategories] = useState<BaleCategory[]>([]);
   const [newCategoryInput, setNewCategoryInput] = useState('');
+
+  // Bale Presets Catalog (bound to public.bale_presets)
+  const [balePresets, setBalePresets] = useState<BalePreset[]>([]);
+  const [isLoadingPresets, setIsLoadingPresets] = useState(false);
 
   // Commercial Invoice Template Customizer
   const [ciHeader, setCiHeader] = useState('VINTAGE VIBE TRADING LLC - COMMERCIAL IMPORT CLEARANCE');
@@ -77,18 +91,71 @@ export const PurchaseSettingsView: React.FC<PurchaseSettingsViewProps> = ({
 
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
 
-  const handleAddCategory = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCategoryInput.trim()) return;
-    if (baleCategories.includes(newCategoryInput.trim())) return;
-    setBaleCategories([...baleCategories, newCategoryInput.trim()]);
-    setNewCategoryInput('');
-    triggerNotice('Bale category preset added.');
+  // 1. Load Categories from Supabase
+  const refreshCategories = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('bale_categories')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (!error && data) {
+        setBaleCategories(data);
+        if (data.length > 0 && !newItemCategory) {
+          setNewItemCategory(data[0].name);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading bale categories:', err);
+    }
   };
 
-  const handleRemoveCategory = (cat: string) => {
-    setBaleCategories(baleCategories.filter(c => c !== cat));
+  // 2. Load Presets from Supabase
+  const loadBalePresets = async () => {
+    setIsLoadingPresets(true);
+    try {
+      const { data, error } = await supabase
+        .from('bale_presets')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        setBalePresets(data);
+      }
+    } catch (err) {
+      console.error('Error loading bale presets:', err);
+    } finally {
+      setIsLoadingPresets(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshCategories();
+    loadBalePresets();
+  }, []);
+
+  const handleAddCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const newCat = newCategoryInput.trim();
+    if (!newCat) return;
+    const { error } = await supabase.from('bale_categories').insert([{ name: newCat }]);
+    if (error) {
+      console.error('Bale category insert error:', error);
+      alert(error.message);
+      return;
+    }
+    setNewCategoryInput('');
+    triggerNotice('Bale category preset added.');
+    refreshCategories();
+  };
+
+  const handleRemoveCategory = async (catName: string) => {
+    const { error } = await supabase.from('bale_categories').delete().eq('name', catName);
+    if (error) {
+      console.error('Bale category delete error:', error);
+      alert(error.message);
+      return;
+    }
     triggerNotice('Bale category removed.');
+    refreshCategories();
   };
 
   const handleSaveInvoiceTemplate = (e: React.FormEvent) => {
@@ -153,32 +220,57 @@ export const PurchaseSettingsView: React.FC<PurchaseSettingsViewProps> = ({
     if (!newItemName.trim()) return;
     setIsSavingItem(true);
     try {
-      const generatedCode = newItemCode.trim() || `BAL-${Math.floor(100 + Math.random() * 900)}`;
-      const res = await fetch('/api/setup/items', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: generatedCode,
-          name: newItemName.trim(),
-          category: newItemCategory.trim(),
-          packagingUom: newItemPackagingUom,
-          weightKg: Number(newItemWeightKg) || 45,
-          basePrice: Number(newItemRateAed) || 0,
-          targetUom: 'KG',
-          isActive: true
-        })
-      });
-      if (res.ok) {
-        setShowItemModal(false);
-        setNewItemName('');
-        setNewItemCode('');
-        triggerNotice('New Bale / Item registered in catalog & linked to Commercial Invoices!');
-        if (onRefreshItems) onRefreshItems();
-      } else {
-        triggerNotice('Failed to register item in catalog.');
+      const generatedOrEnteredCode = newItemCode.trim() || ('BALE-' + Math.floor(1000 + Math.random() * 9000));
+      const payload = {
+        item_code: generatedOrEnteredCode,
+        name: newItemName.trim(),
+        category: newItemCategory.trim() || 'General Apparel',
+        uom: newItemPackagingUom || 'Bales',
+        std_weight: Number(newItemWeightKg) || 45,
+        base_rate: Number(newItemRateAed) || 0
+      };
+
+      const { data, error } = await supabase.from('bale_presets').insert([payload]).select();
+      if (error) {
+        console.error("Bale preset insert error:", error);
+        alert(error.message);
+        return;
       }
-    } catch {
-      triggerNotice('Error connecting to items service.');
+
+      // Sync with items setup API if available (non-blocking)
+      try {
+        await fetch('/api/setup/items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: payload.item_code,
+            name: payload.name,
+            category: payload.category,
+            packagingUom: payload.uom,
+            weightKg: payload.std_weight,
+            basePrice: payload.base_rate,
+            targetUom: 'KG',
+            isActive: true
+          })
+        });
+      } catch (_) {}
+
+      // Close modal, show success toast, and immediately update local table state
+      setShowItemModal(false);
+      setNewItemName('');
+      setNewItemCode('');
+      triggerNotice('New Bale / Item registered in catalog & linked to Commercial Invoices!');
+
+      if (data && data[0]) {
+        setBalePresets(prev => [data[0], ...prev.filter(p => p.id !== data[0].id)]);
+      } else {
+        loadBalePresets();
+      }
+
+      if (onRefreshItems) onRefreshItems();
+    } catch (err: any) {
+      console.error("Bale preset insert error:", err);
+      alert(err?.message || 'Error creating bale preset');
     } finally {
       setIsSavingItem(false);
     }
@@ -187,10 +279,14 @@ export const PurchaseSettingsView: React.FC<PurchaseSettingsViewProps> = ({
   const handleDeleteItem = async (itemId: string) => {
     if (!confirm('Are you sure you want to delete this bale/item from the master catalog?')) return;
     try {
-      const res = await fetch(`/api/setup/items/${itemId}`, { method: 'DELETE' });
-      if (res.ok) {
+      const { error } = await supabase.from('bale_presets').delete().eq('id', itemId);
+      if (!error) {
+        setBalePresets(prev => prev.filter(p => p.id !== itemId));
         triggerNotice('Bale item removed from master catalog.');
         if (onRefreshItems) onRefreshItems();
+      } else {
+        console.error("Delete bale preset error:", error);
+        alert(error.message);
       }
     } catch {
       triggerNotice('Error deleting item.');
@@ -481,44 +577,44 @@ export const PurchaseSettingsView: React.FC<PurchaseSettingsViewProps> = ({
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 uppercase font-bold text-[10px] tracking-wider">
                 <th className="px-3 py-2.5">Item Code</th>
-                <th className="px-3 py-2.5">Bale / Item Name</th>
-                <th className="px-3 py-2.5">Category</th>
-                <th className="px-3 py-2.5 text-center">Packaging UOM</th>
-                <th className="px-3 py-2.5 text-right">Std Weight (KG)</th>
-                <th className="px-3 py-2.5 text-right">Base Rate (AED/KG)</th>
+                <th className="px-3 py-2.5">BALE / ITEM NAME</th>
+                <th className="px-3 py-2.5">CATEGORY</th>
+                <th className="px-3 py-2.5 text-center">PACKAGING UOM</th>
+                <th className="px-3 py-2.5 text-right">STD WEIGHT (KG)</th>
+                <th className="px-3 py-2.5 text-right">BASE RATE (AED/KG)</th>
                 <th className="px-3 py-2.5 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium">
-              {items.length === 0 ? (
+              {balePresets.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-3 py-6 text-center text-slate-400 text-xs font-normal">
-                    No items registered yet in master catalog. Click "Add Bale / Item Preset" to create your first bulk bale preset.
+                    {isLoadingPresets ? 'Loading master presets from database...' : 'No items registered yet in master catalog. Click "Add Bale / Item Preset" to create your first bulk bale preset.'}
                   </td>
                 </tr>
               ) : (
-                items.map(it => (
-                  <tr key={it.id} className="hover:bg-slate-50/60">
-                    <td className="px-3 py-2 font-mono font-bold text-indigo-700">{it.code}</td>
-                    <td className="px-3 py-2 font-bold text-slate-900">{it.name}</td>
+                balePresets.map(row => (
+                  <tr key={row.id || row.item_code} className="hover:bg-slate-50/60">
+                    <td className="px-3 py-2 font-mono font-bold text-indigo-700">{row.item_code}</td>
+                    <td className="px-3 py-2 font-bold text-slate-900">{row.name}</td>
                     <td className="px-3 py-2">
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">
-                        {it.category || 'Apparel'}
+                        {row.category || 'Apparel'}
                       </span>
                     </td>
                     <td className="px-3 py-2 text-center font-mono text-slate-600">
-                      {(it as any).packagingUom || 'BALES'}
+                      {row.uom || 'Bales'}
                     </td>
                     <td className="px-3 py-2 text-right font-mono font-bold text-slate-800">
-                      {it.weightKg ? `${it.weightKg} KG` : '45.0 KG'}
+                      {row.std_weight ? `${row.std_weight} KG` : '45.0 KG'}
                     </td>
                     <td className="px-3 py-2 text-right font-mono text-emerald-700 font-bold">
-                      AED {Number(it.basePrice || 0).toFixed(2)}
+                      AED {Number(row.base_rate || 0).toFixed(2)}
                     </td>
                     <td className="px-3 py-2 text-right">
                       <button
                         type="button"
-                        onClick={() => handleDeleteItem(it.id)}
+                        onClick={() => handleDeleteItem(row.id)}
                         className="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded transition-colors cursor-pointer"
                         title="Delete from Catalog"
                       >
@@ -569,13 +665,25 @@ export const PurchaseSettingsView: React.FC<PurchaseSettingsViewProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Category</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Vintage Denim"
-                    value={newItemCategory}
-                    onChange={e => setNewItemCategory(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                  />
+                  {baleCategories.length > 0 ? (
+                    <select
+                      value={newItemCategory}
+                      onChange={e => setNewItemCategory(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    >
+                      {baleCategories.map(c => (
+                        <option key={c.id || c.name} value={c.name}>{c.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      placeholder="e.g. Vintage Denim"
+                      value={newItemCategory}
+                      onChange={e => setNewItemCategory(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  )}
                 </div>
 
                 <div>
@@ -755,3 +863,7 @@ export const PurchaseSettingsView: React.FC<PurchaseSettingsViewProps> = ({
     </div>
   );
 };
+
+export const FactorySettings = PurchaseSettingsView;
+export const PurchaseSettings = PurchaseSettingsView;
+export default PurchaseSettingsView;
