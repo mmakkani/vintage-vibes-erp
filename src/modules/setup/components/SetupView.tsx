@@ -59,9 +59,53 @@ import { ThermalBarcodeConfigEngine } from './ThermalBarcodeConfigEngine.tsx';
 import { PaymentGatewaySetupCard } from './PaymentGatewaySetupCard.tsx';
 import { UnifiedLiveBroadcastHub } from './UnifiedLiveBroadcastHub.tsx';
 import { WhatsAppConfigEngine } from './WhatsAppConfigEngine.tsx';
+import { PaymentGatewayModal } from './PaymentGatewayModal.tsx';
+import { SocialSocketsModal } from './SocialSocketsModal.tsx';
 import { Zap } from 'lucide-react';
 
 export type SetupSubTab = 'profile' | 'payment_gateways' | 'live_multicast_sockets' | 'banks' | 'pos_terminal' | 'bale_qr' | 'currency' | 'categories' | 'sizes' | 'items' | 'brands' | 'labels' | 'shops' | 'whatsapp' | 'security';
+
+const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
+  companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+  addressLine1: 'Plot 42, Industrial Zone 3, Al Quoz',
+  addressLine2: 'Dubai Wholesale Garments Hub, UAE',
+  trnTaxNo: 'TRN-100482910300003',
+  defaultCurrency: 'AED',
+  logoUrl: '/vintage_logo.svg',
+  phone: '+971 4 883 9120',
+  email: 'contact@vintagevibe.ae',
+  vatRatePercent: 5.0,
+  globalStockAlertThreshold: 5,
+  bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBE%20LLC%26bank%3DEMIRATES%20NBD',
+  bankIban: 'AE24 0331 2345 6789 0123 456',
+  bankName: 'Emirates NBD - Dubai Business Bay Branch',
+  bankAccountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+  enableCod: true,
+  enableBankTransfer: true,
+  enableCardPay: true,
+  enableAppleGooglePay: true,
+  freeShippingThresholdAed: 350,
+  standardShippingFeeAed: 25,
+  whatsappOrderNumber: '',
+  paymentGateway: {
+    provider: 'STRIPE_UAE',
+    environment: 'SANDBOX',
+    isEnabled: true,
+    publishableKey: '',
+    secretKey: '',
+    webhookSecret: '',
+    merchantAccountId: '',
+    applePayMerchantId: 'merchant.com.vintagevibes.ae',
+    applePayDomainVerified: true,
+    googlePayMerchantId: '',
+    allowApplePay: true,
+    allowGooglePay: true,
+    allowCreditDebitCards: true,
+    currency: 'AED',
+    settlementCoaAccountId: '1120-00',
+    gatewayFeePercent: 2.9
+  }
+};
 
 interface SetupViewProps {
   onRefreshAll: () => void;
@@ -96,6 +140,10 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     } catch {}
   };
 
+  // Dedicated Modal Dialogs for Top Setup Bar Actions
+  const [showPaymentGatewayModal, setShowPaymentGatewayModal] = useState(false);
+  const [showSocialSocketsModal, setShowSocialSocketsModal] = useState(false);
+
   // Smart POS Terminal Configuration State
   const [posConfig, setPosConfig] = useState<POSTerminalConfig>({
     terminalModel: 'PAX_A920',
@@ -115,7 +163,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   const [newPinInput, setNewPinInput] = useState('');
   const [confirmPinInput, setConfirmPinInput] = useState('');
 
-  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(DEFAULT_COMPANY_PROFILE);
   const [currencies, setCurrencies] = useState<CurrencyItem[]>([]);
   const [items, setItems] = useState<ItemMaster[]>([]);
   const [brands, setBrands] = useState<BrandMaster[]>([]);
@@ -1164,10 +1212,19 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
           ].map(tab => (
             <button
               key={tab.id}
-              onClick={() => setSubTab(tab.id as any)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all ${
+              id={`tab-setup-${tab.id}`}
+              type="button"
+              onClick={() => {
+                setSubTab(tab.id as any);
+                if (tab.id === 'payment_gateways') {
+                  setShowPaymentGatewayModal(true);
+                } else if (tab.id === 'live_multicast_sockets') {
+                  setShowSocialSocketsModal(true);
+                }
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all cursor-pointer ${
                 subTab === tab.id
-                  ? 'bg-[#0056b3] text-white shadow-xs'
+                  ? 'bg-[#0056b3] text-white shadow-xs ring-2 ring-blue-300'
                   : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
               }`}
             >
@@ -3665,6 +3722,39 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
           </div>
         </div>
       )}
+
+      {/* DEDICATED MODALS FOR PAYMENT GATEWAY & LIVE MULTICAST SOCIAL SOCKETS */}
+      <PaymentGatewayModal
+        isOpen={showPaymentGatewayModal}
+        onClose={() => setShowPaymentGatewayModal(false)}
+        companyProfile={companyProfile}
+        onSaveProfile={async (updated) => {
+          setCompanyProfile(updated);
+          await fetch('/api/setup/company', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updated)
+          });
+          onRefreshAll();
+        }}
+        showMsg={showMsg}
+      />
+
+      <SocialSocketsModal
+        isOpen={showSocialSocketsModal}
+        onClose={() => setShowSocialSocketsModal(false)}
+        companyProfile={companyProfile}
+        onSaveProfile={async (updated) => {
+          setCompanyProfile(updated);
+          await fetch('/api/setup/company', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updated)
+          });
+          onRefreshAll();
+        }}
+        showMsg={showMsg}
+      />
     </div>
   );
 };
