@@ -442,6 +442,14 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
             });
             onRefreshAll();
           }}
+          onDeleteInvoice={deletedId => {
+            setInvoices(prev => {
+              const next = prev.filter(i => String(i.id) !== String(deletedId));
+              saveCached(CACHE_KEYS.INVOICES, next);
+              return next;
+            });
+            onRefreshAll();
+          }}
         />
       )}
 

@@ -44,12 +44,12 @@ export class SalesService {
   }
 
   public static async createSalesInvoice(inv: Partial<SalesInvoice>): Promise<SalesInvoice> {
-    const id = inv.id || `inv-${Date.now()}`;
+    const id = String(inv.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `inv-${Date.now()}`));
     const invoiceNo = inv.invoiceNo || `SINV-${Date.now().toString().slice(-6)}`;
     const payload = {
       id,
       invoice_no: invoiceNo,
-      client_id: inv.clientId,
+      client_id: inv.clientId ? String(inv.clientId) : null,
       customer_name: inv.customerName || 'Walk-in Buyer',
       customer_phone: inv.customerPhone || '',
       invoice_date: inv.invoiceDate || new Date().toISOString().slice(0, 10),

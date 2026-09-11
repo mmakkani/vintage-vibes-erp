@@ -14,21 +14,46 @@ export class PurchaseService {
       throw new Error(error.message || 'Database error occurred reading purchase invoices');
     }
 
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      invoiceNo: row.invoice_no || row.invoiceNo,
-      supplierId: row.supplier_id || row.supplierId,
-      invoiceDate: row.invoice_date || row.invoiceDate,
-      currency: row.currency || 'AED',
-      exchangeRate: Number(row.exchange_rate ?? row.exchangeRate ?? 1),
-      subtotal: Number(row.subtotal || 0),
-      taxAmount: Number(row.tax_amount ?? row.taxAmount ?? 0),
-      totalAmount: Number(row.total_amount ?? row.totalAmount ?? 0),
-      totalWeightKg: Number(row.total_weight_kg ?? row.totalWeightKg ?? 0),
-      status: row.status || 'RECEIVED',
-      notes: row.notes || '',
-      createdAt: row.created_at
-    }));
+    return (data || []).map((row: any) => {
+      const rawDate = row.issue_date || row.invoice_date || row.created_at;
+      let cleanDate = '';
+      if (rawDate) {
+        try {
+          const d = new Date(rawDate);
+          cleanDate = !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : String(rawDate).slice(0, 10);
+        } catch {
+          cleanDate = String(rawDate).slice(0, 10);
+        }
+      }
+
+      return {
+        id: row.id,
+        invoiceNo: row.invoice_no || row.invoiceNo,
+        supplierId: row.supplier_id || row.supplierId,
+        supplier_id: row.supplier_id || row.supplierId,
+        supplierName: row.supplier_name || row.party_name || row.supplier || row.supplierName || '',
+        supplier_name: row.supplier_name || row.party_name || row.supplier || row.supplierName || '',
+        supplierTrn: row.supplier_trn || row.trn || '',
+        date: cleanDate,
+        invoiceDate: row.invoice_date || row.invoiceDate || cleanDate,
+        issue_date: row.issue_date || row.invoice_date,
+        currency: row.currency || 'AED',
+        exchangeRate: Number(row.exchange_rate ?? row.exchangeRate ?? 1),
+        subtotal: Number(row.subtotal || 0),
+        subTotal: Number(row.subtotal || 0),
+        taxAmount: Number(row.tax_amount ?? row.vat_amount ?? row.taxAmount ?? 0),
+        vatAmount: Number(row.vat_amount ?? row.tax_amount ?? row.vatAmount ?? 0),
+        totalAmount: Number(row.total_amount ?? row.total_payable ?? row.totalAmount ?? 0),
+        totalWeightKg: Number(row.total_weight_kg ?? row.totalWeightKg ?? 0),
+        status: row.status || 'RECEIVED',
+        notes: row.notes || '',
+        containerNo: row.container_no || row.containerNo || '',
+        blAirwayBillNo: row.bl_no || row.bl_airway_bill_no || row.blAirwayBillNo || '',
+        convertedToInward: Boolean(row.converted_to_inward || row.convertedToInward),
+        createdAt: row.created_at,
+        created_at: row.created_at
+      } as PurchaseInvoice;
+    });
   }
 
   public static async addPurchaseInvoice(inv: Partial<PurchaseInvoice>): Promise<PurchaseInvoice> {
@@ -36,14 +61,18 @@ export class PurchaseService {
     const payload = {
       id,
       invoice_no: inv.invoiceNo || `PINV-${Date.now().toString().slice(-6)}`,
-      supplier_id: inv.supplierId,
-      invoice_date: inv.invoiceDate || new Date().toISOString().slice(0, 10),
+      supplier_id: inv.supplierId || (inv as any).supplier_id,
+      supplier_name: inv.supplierName || (inv as any).supplier_name || '',
+      party_name: inv.supplierName || (inv as any).supplier_name || '',
+      invoice_date: inv.invoiceDate || inv.date || new Date().toISOString().slice(0, 10),
       currency: inv.currency || 'AED',
       exchange_rate: Number(inv.exchangeRate || 1),
-      subtotal: Number(inv.subtotal || 0),
-      tax_amount: Number(inv.taxAmount || 0),
+      subtotal: Number(inv.subtotal || (inv as any).subTotal || 0),
+      tax_amount: Number(inv.taxAmount || inv.vatAmount || 0),
       total_amount: Number(inv.totalAmount || 0),
-      total_weight_kg: Number(inv.totalWeightKg || 0),
+      total_weight_kg: Number(inv.totalWeightKg || (inv as any).totalGrossWeightKg || 0),
+      container_no: inv.containerNo || '',
+      bl_no: inv.blAirwayBillNo || '',
       status: inv.status || 'RECEIVED',
       notes: inv.notes || ''
     };
@@ -63,16 +92,46 @@ export class PurchaseService {
       id: data.id,
       invoiceNo: data.invoice_no,
       supplierId: data.supplier_id,
+      supplierName: data.supplier_name || inv.supplierName || '',
+      date: data.invoice_date,
       invoiceDate: data.invoice_date,
       currency: data.currency,
       exchangeRate: Number(data.exchange_rate),
       subtotal: Number(data.subtotal),
+      subTotal: Number(data.subtotal),
       taxAmount: Number(data.tax_amount),
+      vatAmount: Number(data.tax_amount),
       totalAmount: Number(data.total_amount),
       totalWeightKg: Number(data.total_weight_kg),
       status: data.status,
-      notes: data.notes
-    };
+      notes: data.notes,
+      convertedToInward: false
+    } as PurchaseInvoice;
+  }
+
+  public static async deletePurchaseInvoice(invoiceId: string): Promise<void> {
+    // 1. Delete associated manifest line items first
+    const { error: itemsError } = await supabase
+      .from('purchase_invoice_items')
+      .delete()
+      .eq('invoice_id', String(invoiceId));
+    if (itemsError) console.warn("Items delete warning:", itemsError);
+
+    // 2. Delete associated unopened inward gate pass bales
+    await supabase
+      .from('inward_gate_passes')
+      .delete()
+      .eq('purchase_invoice_id', String(invoiceId));
+
+    // 3. Delete the invoice record
+    const { error: invoiceError } = await supabase
+      .from('purchase_invoices')
+      .delete()
+      .eq('id', String(invoiceId));
+    if (invoiceError) {
+      console.error("Failed to delete invoice:", invoiceError);
+      throw new Error(invoiceError.message || 'Failed to delete invoice');
+    }
   }
 
   // --- Inward Gate Passes (Bales / Consignments) ---

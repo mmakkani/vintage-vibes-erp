@@ -137,6 +137,20 @@ CREATE TABLE IF NOT EXISTS purchase_invoices (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS public.purchase_invoice_items (
+    id VARCHAR(64) PRIMARY KEY,
+    invoice_id VARCHAR(64) REFERENCES purchase_invoices(id) ON DELETE CASCADE,
+    item_id VARCHAR(64),
+    item_code VARCHAR(64),
+    item_name VARCHAR(255),
+    package_count NUMERIC(10, 2) DEFAULT 1,
+    packaging_uom VARCHAR(32) DEFAULT 'Bales',
+    total_weight NUMERIC(12, 3) DEFAULT 0.000,
+    rate_per_weight NUMERIC(14, 2) DEFAULT 0.00,
+    line_total NUMERIC(16, 2) DEFAULT 0.00,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 8. INWARD GATE PASSES (IGP)
 CREATE TABLE IF NOT EXISTS inward_gate_passes (
     id VARCHAR(64) PRIMARY KEY,
@@ -248,6 +262,36 @@ CREATE TABLE IF NOT EXISTS vouchers (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Unified aliases/tables for financial vouchers, entries, and general ledger
+CREATE TABLE IF NOT EXISTS public.financial_vouchers (
+    id VARCHAR(64) PRIMARY KEY,
+    voucher_no VARCHAR(64) UNIQUE NOT NULL,
+    date DATE NOT NULL DEFAULT CURRENT_DATE,
+    type VARCHAR(32) NOT NULL,
+    reference VARCHAR(128),
+    narration TEXT,
+    total_debit NUMERIC(16, 2) DEFAULT 0.00,
+    total_credit NUMERIC(16, 2) DEFAULT 0.00,
+    status VARCHAR(32) DEFAULT 'POSTED',
+    created_by VARCHAR(64),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.voucher_entries (
+    id VARCHAR(64) PRIMARY KEY,
+    voucher_id VARCHAR(64) NOT NULL,
+    account_id VARCHAR(64),
+    account_code VARCHAR(32),
+    account_name VARCHAR(128),
+    party_id VARCHAR(64),
+    party_name VARCHAR(128),
+    debit NUMERIC(16, 2) DEFAULT 0.00,
+    credit NUMERIC(16, 2) DEFAULT 0.00,
+    memo TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS ledgers (
     id VARCHAR(64) PRIMARY KEY,
     voucher_id VARCHAR(64) REFERENCES vouchers(id) ON DELETE CASCADE,
@@ -255,6 +299,22 @@ CREATE TABLE IF NOT EXISTS ledgers (
     account_code VARCHAR(32),
     account_name VARCHAR(128),
     party_id VARCHAR(64) REFERENCES parties(id) ON DELETE SET NULL,
+    party_name VARCHAR(128),
+    date DATE NOT NULL DEFAULT CURRENT_DATE,
+    debit NUMERIC(16, 2) DEFAULT 0.00,
+    credit NUMERIC(16, 2) DEFAULT 0.00,
+    balance NUMERIC(16, 2) DEFAULT 0.00,
+    narration TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.general_ledger (
+    id VARCHAR(64) PRIMARY KEY,
+    voucher_id VARCHAR(64) NOT NULL,
+    account_id VARCHAR(64),
+    account_code VARCHAR(32),
+    account_name VARCHAR(128),
+    party_id VARCHAR(64),
     party_name VARCHAR(128),
     date DATE NOT NULL DEFAULT CURRENT_DATE,
     debit NUMERIC(16, 2) DEFAULT 0.00,

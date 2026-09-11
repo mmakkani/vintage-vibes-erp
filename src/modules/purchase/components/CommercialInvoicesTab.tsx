@@ -22,6 +22,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { openBatchBaleThermalTagsPrintWindow } from '../../../utils/thermalPrinter.ts';
+import { supabase } from '../../../supabaseClient.ts';
 
 interface CommercialInvoicesTabProps {
   invoices: PurchaseInvoice[];
@@ -31,6 +32,7 @@ interface CommercialInvoicesTabProps {
   bales?: InwardGatePass[];
   onRefresh: () => void;
   onInvoiceCreated: (inv: PurchaseInvoice) => void;
+  onDeleteInvoice?: (id: string) => void;
 }
 
 export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
@@ -40,12 +42,15 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   balePresets,
   bales = [],
   onRefresh,
-  onInvoiceCreated
+  onInvoiceCreated,
+  onDeleteInvoice
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<PurchaseInvoice | null>(null);
   const [viewInvoice, setViewInvoice] = useState<PurchaseInvoice | null>(null);
+  const [invoicesList, setInvoicesList] = useState<PurchaseInvoice[]>(invoices);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [lockedModalInfo, setLockedModalInfo] = useState<{
     invoiceNo: string;
     actionType: 'EDIT' | 'DELETE';
@@ -54,20 +59,88 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
     balesCount: number;
   } | null>(null);
 
+  React.useEffect(() => {
+    setInvoicesList(invoices);
+  }, [invoices]);
+
+  React.useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => setToastMessage(null), 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
+
+  // 1. FIX SUPPLIER & FACTORY DISPLAY
+  const getSupplierDisplayName = (inv: any): string => {
+    // 1. If row.supplier_name exists, use it.
+    const directName = inv.supplier_name || inv.supplierName || inv.party_name || inv.supplier;
+    if (directName && typeof directName === 'string' && directName.trim() !== '') {
+      return directName;
+    }
+
+    // 2. If only row.supplier_id exists, match it against the loaded suppliers/parties list
+    const supplierId = inv.supplier_id || inv.supplierId;
+    if (supplierId) {
+      const supplier = (parties || []).find(
+        s => String(s.id) === String(supplierId) || String(s.code) === String(supplierId)
+      );
+      if (supplier && supplier.name) {
+        return supplier.name;
+      }
+      return supplierId;
+    }
+
+    return 'N/A';
+  };
+
+  const getSupplierTrn = (inv: any): string | null => {
+    if (inv.supplierTrn || inv.supplier_trn) return inv.supplierTrn || inv.supplier_trn;
+    const supplierId = inv.supplier_id || inv.supplierId;
+    if (supplierId) {
+      const supplier = (parties || []).find(
+        s => String(s.id) === String(supplierId) || String(s.code) === String(supplierId)
+      );
+      if (supplier && (supplier.trnNo || (supplier as any).trn_no)) {
+        return supplier.trnNo || (supplier as any).trn_no;
+      }
+    }
+    return null;
+  };
+
+  // 2. FIX DATE DISPLAY (DD/MM/YYYY)
+  const formatInvoiceDate = (inv: any): string => {
+    const rawDate = inv.issue_date || inv.invoice_date || inv.invoiceDate || inv.date || inv.created_at || inv.createdAt;
+    if (!rawDate) return 'N/A';
+    try {
+      const d = new Date(rawDate);
+      if (isNaN(d.getTime())) return String(rawDate).slice(0, 10);
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
+      return `${day}/${month}/${year}`;
+    } catch {
+      return String(rawDate).slice(0, 10);
+    }
+  };
+
   const filteredInvoices = useMemo(() => {
-    return invoices.filter(inv => {
+    return invoicesList.filter(inv => {
+      const sName = getSupplierDisplayName(inv);
+      const dStr = formatInvoiceDate(inv);
+      const q = searchTerm.toLowerCase();
       const match =
-        (inv.invoiceNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (inv.supplierName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (inv.containerNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (inv.blAirwayBillNo || '').toLowerCase().includes(searchTerm.toLowerCase());
+        (inv.invoiceNo || '').toLowerCase().includes(q) ||
+        sName.toLowerCase().includes(q) ||
+        dStr.toLowerCase().includes(q) ||
+        (inv.containerNo || '').toLowerCase().includes(q) ||
+        (inv.blAirwayBillNo || '').toLowerCase().includes(q);
       return match;
     });
-  }, [invoices, searchTerm]);
+  }, [invoicesList, parties, searchTerm]);
 
   const totalProcurementAed = useMemo(() => {
-    return invoices.reduce((sum, i) => sum + (i.totalAmount || 0), 0);
-  }, [invoices]);
+    return invoicesList.reduce((sum, i) => sum + (i.totalAmount || 0), 0);
+  }, [invoicesList]);
 
   const handlePrintBatchTags = (inv: PurchaseInvoice) => {
     const invItems = inv.items || [];
@@ -167,6 +240,61 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
     setShowCreateModal(true);
   };
 
+  // 3. FIX DELETE BUTTON (Cascading Delete Handler)
+  const handleDeleteInvoice = async (invoiceId: string, invoiceNo?: string) => {
+    // a) Confirmation prompt:
+    if (!window.confirm("Are you sure you want to permanently delete this purchase invoice?")) return;
+
+    try {
+      // b) Delete associated manifest line items first:
+      const { error: itemsError } = await supabase
+        .from('purchase_invoice_items')
+        .delete()
+        .eq('invoice_id', String(invoiceId));
+      if (itemsError) console.warn("Items delete warning:", itemsError);
+
+      // Also clean up any unopened inward gate pass bales associated with this invoice:
+      try {
+        await supabase
+          .from('inward_gate_passes')
+          .delete()
+          .or(`purchase_invoice_id.eq.${invoiceId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+      } catch (gateErr) {
+        console.warn("Gate passes delete warning:", gateErr);
+      }
+
+      // c) Delete the invoice record:
+      const { error: invoiceError } = await supabase
+        .from('purchase_invoices')
+        .delete()
+        .eq('id', String(invoiceId));
+
+      if (invoiceError) {
+        console.error("Failed to delete invoice:", invoiceError);
+        alert("Delete failed: " + invoiceError.message);
+        return;
+      }
+
+      // d) Immediately remove the deleted invoice from React state:
+      setInvoicesList(prev => prev.filter(inv => String(inv.id) !== String(invoiceId)));
+      if (onDeleteInvoice) {
+        onDeleteInvoice(String(invoiceId));
+      }
+
+      setToastMessage("Purchase invoice deleted successfully");
+      try {
+        if (typeof (window as any).toast !== 'undefined') {
+          (window as any).toast.success("Purchase invoice deleted successfully");
+        }
+      } catch {}
+
+      onRefresh();
+    } catch (e: any) {
+      console.error("Error deleting invoice:", e);
+      alert(e.message || "Failed to delete purchase invoice");
+    }
+  };
+
   const handleDeleteInvoiceClick = async (inv: PurchaseInvoice) => {
     const related = (bales || []).filter(
       b => b.purchaseInvoiceId === inv.id || b.purchaseInvoiceNo === inv.invoiceNo
@@ -185,23 +313,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       return;
     }
 
-    if (!confirm(`Are you sure you want to delete Commercial Invoice "${inv.invoiceNo}"?\n\nThis will also remove all ${related.length} unopened bales and reverse supplier ledger balance.`)) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/purchase/invoices/${inv.id}`, {
-        method: 'DELETE'
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.error || 'Failed to delete invoice');
-        return;
-      }
-      onRefresh();
-    } catch (e: any) {
-      alert(e.message || 'Network error deleting invoice');
-    }
+    await handleDeleteInvoice(inv.id, inv.invoiceNo);
   };
 
   return (
@@ -293,12 +405,12 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                         {inv.invoiceNo}
                       </td>
                       <td className="px-4 py-3 font-mono text-slate-600">
-                        {inv.date}
+                        {formatInvoiceDate(inv)}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="font-semibold text-slate-900">{inv.supplierName}</div>
-                        {inv.supplierTrn && (
-                          <div className="text-[10px] text-slate-400 font-mono">TRN: {inv.supplierTrn}</div>
+                        <div className="font-semibold text-slate-900">{getSupplierDisplayName(inv)}</div>
+                        {getSupplierTrn(inv) && (
+                          <div className="text-[10px] text-slate-400 font-mono">TRN: {getSupplierTrn(inv)}</div>
                         )}
                       </td>
                       <td className="px-4 py-3 font-mono text-slate-700">
@@ -380,7 +492,11 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
 
                           <button
                             type="button"
-                            onClick={() => setViewInvoice(inv)}
+                            onClick={() => setViewInvoice({
+                              ...inv,
+                              supplierName: getSupplierDisplayName(inv),
+                              date: formatInvoiceDate(inv)
+                            })}
                             className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors"
                             title="View & Print Formal Commercial Invoice"
                           >
@@ -499,6 +615,14 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
           invoice={viewInvoice}
           onClose={() => setViewInvoice(null)}
         />
+      )}
+
+      {/* Floating Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-950 border border-emerald-500/60 text-white px-4 py-3 rounded-xl shadow-2xl text-xs font-bold flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-3">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
       )}
     </div>
   );

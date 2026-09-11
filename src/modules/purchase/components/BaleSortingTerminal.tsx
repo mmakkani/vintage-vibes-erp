@@ -209,7 +209,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           .from('bale_sorted_pieces')
           .select('*')
           .eq('bale_id', activeBale.id)
-          .order('created_at', { ascending: true });
+          .order('created_at', { ascending: false });
 
         if (!error && data && data.length > 0 && isMounted) {
           const mapped = data.map((d: any) => ({
@@ -492,14 +492,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     luxuryAudio.playMechanicalClick();
 
     const nextIdx = pieces.length + 1;
-    const barcode = nextPieceBarcode;
+    const activeBaleId = activeBale.baleCode || activeBale.gatePassNo || activeBale.id || 'BAL-01';
+    const barcode = `${activeBaleId}-P${String(pieces.length + 1).padStart(4, '0')}`;
     const weightKg = Number((numericGramWeight / 1000).toFixed(3));
-    const pieceId = `pc-${Date.now()}-${nextIdx}`;
+    const pieceId = String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : (`pc-${Date.now()}-${nextIdx}`));
 
     // Payload for public.bale_sorted_pieces
     const newPieceDb = {
       id: pieceId,
-      bale_id: activeBale.id,
+      bale_id: String(activeBale.id),
       piece_code: barcode,
       category: selectedCategory,
       size: sizeScanned,
@@ -515,7 +516,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
     const newPiecePayload: PieceBreakdownItem = {
       id: pieceId,
-      gatePassId: activeBale.id,
+      gatePassId: String(activeBale.id),
       baleCode: activeBale.baleCode || activeBale.gatePassNo,
       barcode,
       itemName: selectedCategory,
@@ -541,8 +542,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       createdAt: new Date().toISOString()
     };
 
-    // 1. Optimistically update local pieces state
-    const currentPieces = [...pieces, { ...newPiecePayload, ...newPieceDb }];
+    // 1. Optimistically prepend the piece to the table
+    const currentPieces = [{ ...newPiecePayload, ...newPieceDb }, ...pieces];
     setPieces(currentPieces);
 
     // 2. Insert into Supabase public.bale_sorted_pieces
@@ -631,6 +632,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     });
 
     // Reset fields with smart defaults and refocus weight immediately
+    setGramWeight('');
     setSellingPriceOverride('');
     setFrontImageUrl(undefined);
     setBackImageUrl(undefined);
@@ -646,7 +648,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         gramInputRef.current.focus();
         gramInputRef.current.select();
       }
-    }, 50);
+    }, 10);
   };
 
   // Delete piece handler (sync with public.bale_sorted_pieces)
@@ -1666,7 +1668,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       </td>
                     </tr>
                   ) : (
-                    pieces.slice().reverse().map((piece, idx) => {
+                    pieces.map((piece, idx) => {
                       const pieceNum = pieces.length - idx;
                       const barcode = piece.piece_code || piece.barcode;
                       const category = piece.category || piece.itemName || 'Vintage Garment';

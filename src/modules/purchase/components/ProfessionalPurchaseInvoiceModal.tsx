@@ -569,9 +569,14 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
     };
 
     try {
+      const targetInvoiceId = String(editingInvoice?.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : (`pi-${Date.now()}`)));
+      const cleanSupplierId = String(supplierId || '');
+
       let invoicePayload: any = {
+        id: targetInvoiceId,
         invoiceNo,
-        supplierId,
+        supplierId: cleanSupplierId,
+        supplierName: selectedSupplier?.name || '',
         date: invoiceDate,
         status: editingInvoice ? (editingInvoice.status || submitStatus) : submitStatus,
         currency,
@@ -583,15 +588,20 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       };
 
       let { data, error } = await (editingInvoice
-        ? supabase.from('purchase_invoices').update(invoicePayload).eq('id', editingInvoice.id).select()
+        ? supabase.from('purchase_invoices').update(invoicePayload).eq('id', targetInvoiceId).select()
         : supabase.from('purchase_invoices').insert([invoicePayload]).select()
       );
 
       // If schema uses snake_case column names instead of camelCase, auto-retry with snake_case
       if (error && (error.message?.includes('column') || error.code === 'PGRST204')) {
         const snakePayload: any = {
+          id: targetInvoiceId,
           invoice_no: invoiceNo,
-          supplier_id: supplierId,
+          supplier_id: cleanSupplierId,
+          supplier_name: selectedSupplier?.name || '',
+          party_name: selectedSupplier?.name || '',
+          container_no: containerNo || '',
+          bl_no: blAirwayBillNo || '',
           invoice_date: invoiceDate,
           status: editingInvoice ? (editingInvoice.status || submitStatus) : submitStatus,
           currency,
@@ -603,7 +613,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
           notes: notes ? `${notes} | Terms: ${paymentTerms.replace(/_/g, ' ')}` : `Terms: ${paymentTerms.replace(/_/g, ' ')}`
         };
         const retryResult = await (editingInvoice
-          ? supabase.from('purchase_invoices').update(snakePayload).eq('id', editingInvoice.id).select()
+          ? supabase.from('purchase_invoices').update(snakePayload).eq('id', targetInvoiceId).select()
           : supabase.from('purchase_invoices').insert([snakePayload]).select()
         );
         if (!retryResult.error) {
@@ -622,9 +632,33 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
         return;
       }
 
+      // Safe cascading insert for purchase_invoice_items
+      if (lines && lines.length > 0) {
+        const itemsRows = lines.map((l, idx) => ({
+          id: String(l.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `pii-${targetInvoiceId}-${idx + 1}`)),
+          invoice_id: targetInvoiceId,
+          item_id: l.itemId ? String(l.itemId) : null,
+          item_code: l.itemCode ? String(l.itemCode) : null,
+          item_name: String(l.itemName || ''),
+          package_count: Number(l.packageCount || 1),
+          packaging_uom: String(l.packagingUom || 'Bales'),
+          total_weight: Number(l.totalWeight || 0),
+          rate_per_weight: Number(l.ratePerWeight || 0),
+          line_total: Number(l.lineTotal || 0)
+        }));
+        try {
+          if (editingInvoice) {
+            await supabase.from('purchase_invoice_items').delete().eq('invoice_id', targetInvoiceId);
+          }
+          await supabase.from('purchase_invoice_items').insert(itemsRows);
+        } catch (itemsEx) {
+          console.warn('Notice on purchase_invoice_items insert:', itemsEx);
+        }
+      }
+
       const savedRow = data?.[0];
       const savedInvoice: PurchaseInvoice = {
-        id: savedRow?.id || editingInvoice?.id || `pi-${Date.now()}`,
+        id: savedRow?.id || targetInvoiceId,
         invoiceNo: savedRow?.invoiceNo || savedRow?.invoice_no || invoiceNo,
         supplierId: savedRow?.supplierId || savedRow?.supplier_id || supplierId,
         supplierName: selectedSupplier?.name || '',

@@ -2,8 +2,7 @@ require('dotenv').config();
 const { Client } = require('pg');
 
 const targetTables = [
-  'pos_sales', 'b2b_sales', 'orders', 'live_stream_sales',
-  'bank_accounts', 'streaming_api_keys', 'live_booths'
+  'purchase_invoices', 'purchase_invoice_items'
 ];
 
 async function main() {

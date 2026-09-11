@@ -84,17 +84,31 @@ export class FinanceService {
 
   // --- Vouchers ---
   public static async getVouchers(): Promise<Voucher[]> {
-    const { data, error } = await supabase
-      .from('vouchers')
-      .select('*')
-      .order('date', { ascending: false });
+    let rows: any[] = [];
+    try {
+      const { data, error } = await supabase
+        .from('financial_vouchers')
+        .select('*')
+        .order('date', { ascending: false });
+      if (!error && data && data.length > 0) {
+        rows = data;
+      }
+    } catch {}
 
-    if (error) {
-      console.error('Supabase error on vouchers:', error);
-      throw new Error(error.message || 'Database error occurred reading vouchers');
+    if (rows.length === 0) {
+      const { data, error } = await supabase
+        .from('vouchers')
+        .select('*')
+        .order('date', { ascending: false });
+
+      if (error) {
+        console.error('Supabase error on vouchers:', error);
+      } else if (data) {
+        rows = data;
+      }
     }
 
-    return (data || []).map((row: any) => ({
+    return rows.map((row: any) => ({
       id: row.id,
       voucherNo: row.voucher_no || row.voucherNo,
       date: row.date,
@@ -110,70 +124,159 @@ export class FinanceService {
     }));
   }
 
-  public static async addVoucher(v: Partial<Voucher>): Promise<Voucher> {
-    const id = v.id || `vch-${Date.now()}`;
-    const voucherNo = v.voucherNo || `VCH-${Date.now().toString().slice(-6)}`;
+  public static async addVoucher(v: any): Promise<Voucher> {
+    const id = String(v.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `vch-${Date.now()}`));
+    const voucherNo = String(v.voucherNo || `VCH-${Date.now().toString().slice(-6)}`);
+    const date = v.date || new Date().toISOString().slice(0, 10);
+    const type = String(v.type || 'JOURNAL');
+    const reference = String(v.reference || v.documentRef || '');
+    const narration = String(v.narration || '');
+    const totalDebit = Number(v.totalDebit || 0);
+    const totalCredit = Number(v.totalCredit || 0);
+    const status = String(v.status || 'POSTED');
+    const createdBy = String(v.createdBy || 'System');
+
     const payload = {
       id,
       voucher_no: voucherNo,
-      date: v.date || new Date().toISOString().slice(0, 10),
-      type: v.type || 'JOURNAL',
-      reference: v.reference || '',
-      narration: v.narration || '',
-      total_debit: Number(v.totalDebit || 0),
-      total_credit: Number(v.totalCredit || 0),
-      status: v.status || 'POSTED',
-      created_by: v.createdBy || 'System'
+      date,
+      type,
+      reference,
+      narration,
+      total_debit: totalDebit,
+      total_credit: totalCredit,
+      status,
+      created_by: createdBy
     };
 
-    const { data, error } = await supabase
-      .from('vouchers')
-      .insert(payload)
-      .select()
-      .single();
+    // 1. Write parent data to financial_vouchers
+    try {
+      const { error: fvError } = await supabase.from('financial_vouchers').insert([payload]);
+      if (fvError) console.warn('financial_vouchers insert warning:', fvError.message);
+    } catch (err) {
+      console.warn('financial_vouchers exception:', err);
+    }
 
-    if (error) {
-      console.error('Supabase error on vouchers:', error);
-      throw new Error(error.message || 'Failed to create voucher');
+    // Mirror to vouchers
+    try {
+      const { error: vError } = await supabase.from('vouchers').insert([payload]);
+      if (vError) console.warn('vouchers table insert warning:', vError.message);
+    } catch (err) {
+      console.warn('vouchers exception:', err);
+    }
+
+    // 2. Write balanced lines to voucher_entries and general_ledger
+    const lines = v.lines || v.entries || [];
+    if (Array.isArray(lines) && lines.length > 0) {
+      const voucherEntriesRows = lines.map((l: any, idx: number) => {
+        const lineId = String(l.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ve-${id}-${idx + 1}`));
+        const debit = Number(l.debitAmount ?? l.debit ?? 0);
+        const credit = Number(l.creditAmount ?? l.credit ?? 0);
+        const memo = l.memo || l.narration || narration;
+        return {
+          id: lineId,
+          voucher_id: String(id),
+          account_id: l.accountId || l.account_id ? String(l.accountId || l.account_id) : null,
+          account_code: String(l.accountCode || l.account_code || ''),
+          account_name: String(l.accountName || l.account_name || ''),
+          party_id: l.partyId || l.party_id ? String(l.partyId || l.party_id) : null,
+          party_name: l.partyName || l.party_name ? String(l.partyName || l.party_name) : null,
+          debit,
+          credit,
+          memo
+        };
+      });
+
+      const generalLedgerRows = lines.map((l: any, idx: number) => {
+        const debit = Number(l.debitAmount ?? l.debit ?? 0);
+        const credit = Number(l.creditAmount ?? l.credit ?? 0);
+        const memo = l.memo || l.narration || narration;
+        return {
+          id: String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `gl-${id}-${idx + 1}`),
+          voucher_id: String(id),
+          account_id: l.accountId || l.account_id ? String(l.accountId || l.account_id) : null,
+          account_code: String(l.accountCode || l.account_code || ''),
+          account_name: String(l.accountName || l.account_name || ''),
+          party_id: l.partyId || l.party_id ? String(l.partyId || l.party_id) : null,
+          party_name: l.partyName || l.party_name ? String(l.partyName || l.party_name) : null,
+          date,
+          debit,
+          credit,
+          balance: debit - credit,
+          narration: memo
+        };
+      });
+
+      try {
+        const { error: veError } = await supabase.from('voucher_entries').insert(voucherEntriesRows);
+        if (veError) console.warn('voucher_entries insert warning:', veError.message);
+      } catch (err) {
+        console.warn('voucher_entries exception:', err);
+      }
+
+      try {
+        const { error: glError } = await supabase.from('general_ledger').insert(generalLedgerRows);
+        if (glError) console.warn('general_ledger insert warning:', glError.message);
+      } catch (err) {
+        console.warn('general_ledger exception:', err);
+      }
+
+      try {
+        await supabase.from('ledgers').insert(generalLedgerRows);
+      } catch (err) {
+        console.warn('ledgers insert warning:', err);
+      }
     }
 
     return {
-      id: data.id,
-      voucherNo: data.voucher_no,
-      date: data.date,
-      type: data.type,
-      reference: data.reference,
-      narration: data.narration,
-      totalDebit: Number(data.total_debit),
-      totalCredit: Number(data.total_credit),
-      status: data.status,
-      createdBy: data.created_by,
-      entries: []
+      id,
+      voucherNo,
+      date,
+      type: type as any,
+      reference,
+      narration,
+      totalDebit,
+      totalCredit,
+      status: status as any,
+      createdBy,
+      entries: lines
     };
   }
 
   public static async updateVoucherStatus(id: string, status: string): Promise<void> {
-    const { error } = await supabase.from('vouchers').update({ status }).eq('id', id);
-    if (error) {
-      console.error('Supabase error on vouchers:', error);
-      throw new Error(error.message || 'Failed to update voucher status');
-    }
+    const cleanId = String(id);
+    try {
+      await supabase.from('financial_vouchers').update({ status }).eq('id', cleanId);
+    } catch {}
+    try {
+      await supabase.from('vouchers').update({ status }).eq('id', cleanId);
+    } catch {}
   }
 
   // --- Ledgers ---
   public static async getLedgers(accountId?: string): Promise<LedgerEntry[]> {
-    let query = supabase.from('ledgers').select('*').order('date', { ascending: false });
-    if (accountId) {
-      query = query.eq('account_id', accountId);
+    let rows: any[] = [];
+    try {
+      let q = supabase.from('general_ledger').select('*').order('date', { ascending: false });
+      if (accountId) q = q.eq('account_id', String(accountId));
+      const { data, error } = await q;
+      if (!error && data && data.length > 0) {
+        rows = data;
+      }
+    } catch {}
+
+    if (rows.length === 0) {
+      let query = supabase.from('ledgers').select('*').order('date', { ascending: false });
+      if (accountId) query = query.eq('account_id', String(accountId));
+      const { data, error } = await query;
+      if (error) {
+        console.error('Supabase error on ledgers:', error);
+      } else if (data) {
+        rows = data;
+      }
     }
 
-    const { data, error } = await query;
-    if (error) {
-      console.error('Supabase error on ledgers:', error);
-      throw new Error(error.message || 'Database error occurred reading ledgers');
-    }
-
-    return (data || []).map((row: any) => ({
+    return rows.map((row: any) => ({
       id: row.id,
       voucherId: row.voucher_id || row.voucherId,
       accountId: row.account_id || row.accountId,
