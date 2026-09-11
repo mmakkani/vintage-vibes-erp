@@ -1,20 +1,36 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+function resolveEnv(envKey: string, viteKey: string, fallback: string = ''): string {
+  try {
+    if (typeof process !== 'undefined' && process.env && process.env[envKey]) {
+      return process.env[envKey] as string;
+    }
+  } catch (_) {}
+  try {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[viteKey]) {
+      // @ts-ignore
+      return import.meta.env[viteKey] as string;
+    }
+  } catch (_) {}
+  return fallback;
+}
+
+const supabaseUrl = resolveEnv('SUPABASE_URL', 'VITE_SUPABASE_URL', 'https://wjjelqsrivnyiybarfmo.supabase.co');
+const supabaseKey = resolveEnv('SUPABASE_SERVICE_ROLE_KEY', 'VITE_SUPABASE_ANON_KEY', '') || resolveEnv('SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY', '');
 
 export const supabase: SupabaseClient | null = (supabaseUrl && supabaseKey) 
   ? createClient(supabaseUrl, supabaseKey) 
   : null;
 
-export const SUPABASE_MEDIA_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'vintage-vibes-media';
+export const SUPABASE_MEDIA_BUCKET = resolveEnv('SUPABASE_STORAGE_BUCKET', 'VITE_SUPABASE_STORAGE_BUCKET', 'vintage-vibes-media');
 
 /**
  * Upload binary garment photos or media directly to Supabase Storage bucket
  * Returns the permanent public CDN URL
  */
 export async function uploadMediaToSupabase(
-  fileBuffer: Buffer,
+  fileBuffer: any,
   fileName: string,
   mimeType: string = 'image/jpeg',
   bucketName: string = SUPABASE_MEDIA_BUCKET
