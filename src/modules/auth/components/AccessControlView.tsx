@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User } from '../auth.types.ts';
 import { RoleType } from '../../../types/common.types.ts';
 import {
@@ -20,6 +20,7 @@ import {
 import { MasterAdminPinModal } from '../../../components/MasterAdminPinModal.tsx';
 import { openAuthorityMatrixPopup } from '../utils/authorityPopup.ts';
 import { SecurityMasterPin } from '../../../utils/securityMasterPin.ts';
+import { AuthService } from '../../../services/authService.ts';
 
 interface AccessControlViewProps {
   onRefreshAll: () => void;
@@ -67,13 +68,11 @@ export const AccessControlView: React.FC<AccessControlViewProps> = ({ onRefreshA
 
   const loadAuth = async () => {
     try {
-      const res = await fetch('/api/auth/users');
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setUsers(data);
-      }
-    } catch (err) {
-      console.error('Failed to load users:', err);
+      const data = await AuthService.getOperators();
+      setUsers(data);
+    } catch (err: any) {
+      console.error('Failed to load operators from Supabase:', err);
+      showMsg(err.message || 'Failed to load operators from database', 'error');
     }
   };
 
@@ -125,24 +124,19 @@ export const AccessControlView: React.FC<AccessControlViewProps> = ({ onRefreshA
   };
 
   const handleToggleActiveStatus = async (u: User) => {
-    if (u.id === 'usr-admin' && u.isActive) {
+    if ((u.id === 'usr-admin' || u.username === 'admin') && u.isActive) {
       showMsg('Primary Principal Admin cannot be deactivated', 'error');
       return;
     }
 
     try {
       const newStatus = !u.isActive;
-      const res = await fetch(`/api/auth/users/${u.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isActive: newStatus })
-      });
-      if (res.ok) {
-        showMsg(`Account @${u.username} is now ${newStatus ? 'ACTIVE' : 'SUSPENDED'}`);
-        loadAuth();
-      }
-    } catch {
-      showMsg('Failed to toggle account active status', 'error');
+      await AuthService.updateOperator(u.id, { isActive: newStatus });
+      setUsers(prev => prev.map(item => item.id === u.id ? { ...item, isActive: newStatus } : item));
+      showMsg(`Account @${u.username} is now ${newStatus ? 'ACTIVE' : 'SUSPENDED'}`);
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err.message || 'Failed to toggle account active status', 'error');
     }
   };
 
@@ -156,80 +150,57 @@ export const AccessControlView: React.FC<AccessControlViewProps> = ({ onRefreshA
     setIsSubmitting(true);
     try {
       if (editingUserId) {
-        const res = await fetch(`/api/auth/users/${editingUserId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username: formUsername.trim(),
-            password: formPassword.trim() || undefined,
-            name: formName.trim(),
-            email: formEmail.trim(),
-            role: formRole,
-            assignedShopId: formShop,
-            isActive: formIsActive
-          })
+        const updated = await AuthService.updateOperator(editingUserId, {
+          username: formUsername.trim(),
+          password: formPassword.trim() || undefined,
+          name: formName.trim(),
+          email: formEmail.trim(),
+          role: formRole,
+          assignedShopId: formShop,
+          isActive: formIsActive
         });
 
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          showMsg(data.error || 'Failed to update user', 'error');
-          setIsSubmitting(false);
-          return;
-        }
-        showMsg(`User @${formUsername} updated successfully!`);
+        setUsers(prev => prev.map(u => u.id === editingUserId ? updated : u));
+        showMsg(`Operator @${formUsername} updated successfully!`);
       } else {
-        const res = await fetch('/api/auth/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username: formUsername.trim(),
-            password: formPassword.trim() || 'vintage123',
-            name: formName.trim(),
-            email: formEmail.trim() || `${formUsername.trim()}@vintagevibe.ae`,
-            role: formRole,
-            assignedShopId: formShop,
-            isActive: formIsActive
-          })
+        const created = await AuthService.addOperator({
+          username: formUsername.trim(),
+          password: formPassword.trim() || 'vintage123',
+          name: formName.trim(),
+          email: formEmail.trim() || `${formUsername.trim()}@vintagevibe.ae`,
+          role: formRole,
+          assignedShopId: formShop,
+          isActive: formIsActive
         });
 
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          showMsg(data.error || 'Failed to create user', 'error');
-          setIsSubmitting(false);
-          return;
-        }
-        showMsg(`User @${formUsername} created successfully with login credentials!`);
+        // Update local component state immediately on success so the new user appears without manual refresh
+        setUsers(prev => [created, ...prev]);
+        showMsg(`Operator @${formUsername} created successfully with login credentials!`);
       }
 
       setShowAddModal(false);
       setIsSubmitting(false);
-      loadAuth();
       onRefreshAll();
     } catch (err: any) {
-      showMsg(err.message || 'Error communicating with auth server', 'error');
+      showMsg(err.message || 'Error saving operator', 'error');
       setIsSubmitting(false);
     }
   };
 
   const handleDeleteUser = async (userId: string, uName: string) => {
-    if (userId === 'usr-admin') {
+    if (userId === 'usr-admin' || uName === 'admin') {
       showMsg('Cannot delete primary system administrator', 'error');
       return;
     }
     if (!confirm(`Are you sure you want to permanently delete user account @${uName}?`)) return;
 
     try {
-      const res = await fetch(`/api/auth/users/${userId}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showMsg(`User @${uName} removed from system.`);
-        loadAuth();
-        onRefreshAll();
-      } else {
-        showMsg(data.error || 'Failed to delete user', 'error');
-      }
-    } catch {
-      showMsg('Failed to delete user', 'error');
+      await AuthService.deleteOperator(userId);
+      setUsers(prev => prev.filter(u => u.id !== userId));
+      showMsg(`Operator @${uName} removed from system.`);
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err.message || 'Failed to delete user', 'error');
     }
   };
 

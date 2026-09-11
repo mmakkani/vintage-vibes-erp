@@ -2,6 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { Client } from 'pg';
+import { createClient } from '@supabase/supabase-js';
+
+const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
+const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseAdmin = createClient(supaUrl, supaKey || 'anon-key');
 
 // ============================================================================
 // VINTAGE VIBES ERP - UNIFIED VERCEL SERVERLESS GATEWAY
@@ -777,6 +782,115 @@ export default async function handler(req: any, res: any) {
           status: 'ACTIVE'
         }
       });
+    }
+
+    // Operators & Users Route
+    if (pathname.includes('/auth/users') || pathname.includes('/operators')) {
+      if (pathname.includes('/permissions') && method === 'PUT') {
+        const userId = pathname.split('/').filter(Boolean).slice(-2, -1)[0];
+        const { permissions } = body || {};
+        const { error: pErr } = await supabaseAdmin
+          .from('operators')
+          .update({ permissions })
+          .eq('id', userId);
+        if (pErr) {
+          return res.status(500).json({ success: false, error: pErr.message });
+        }
+        return res.status(200).json({ success: true, message: 'Permissions saved' });
+      }
+
+      if (method === 'GET') {
+        const { data: opData, error: opErr } = await supabaseAdmin
+          .from('operators')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (opErr) {
+          return res.status(500).json({ success: false, error: opErr.message });
+        }
+
+        return res.status(200).json((opData || []).map(r => ({
+          id: r.id,
+          username: r.username,
+          name: r.display_name || r.username,
+          email: r.username.includes('@') ? r.username : `${r.username}@vintagevibe.ae`,
+          role: (r.role || 'operator').toUpperCase() === 'SUPERADMIN' ? 'ADMIN' : (r.role || 'operator').toUpperCase(),
+          isActive: r.is_active !== false,
+          permissions: r.permissions || [],
+          createdAt: r.created_at
+        })));
+      }
+
+      if (method === 'POST') {
+        const { username, password, name, role, isActive } = body || {};
+        const newOp = {
+          username: (username || '').trim(),
+          password_hash: password?.trim() || 'vintage123',
+          display_name: (name || username || '').trim(),
+          role: (role || 'operator').toLowerCase(),
+          is_active: isActive !== false
+        };
+
+        const { data: insData, error: insErr } = await supabaseAdmin
+          .from('operators')
+          .insert([newOp])
+          .select();
+
+        if (insErr) {
+          return res.status(500).json({ success: false, error: insErr.message });
+        }
+
+        const r = insData?.[0] || newOp;
+        return res.status(200).json({
+          success: true,
+          user: {
+            id: r.id,
+            username: r.username,
+            name: r.display_name || r.username,
+            email: `${r.username}@vintagevibe.ae`,
+            role: (r.role || 'operator').toUpperCase(),
+            isActive: r.is_active,
+            permissions: r.permissions || [],
+            createdAt: r.created_at
+          }
+        });
+      }
+
+      if (method === 'PUT') {
+        const userId = pathname.split('/').filter(Boolean).pop();
+        const { username, password, name, role, isActive } = body || {};
+        const updates: any = {};
+        if (username) updates.username = username;
+        if (password) updates.password_hash = password;
+        if (name) updates.display_name = name;
+        if (role) updates.role = role.toLowerCase();
+        if (isActive !== undefined) updates.is_active = isActive;
+
+        const { error: updErr } = await supabaseAdmin
+          .from('operators')
+          .update(updates)
+          .eq('id', userId);
+
+        if (updErr) {
+          return res.status(500).json({ success: false, error: updErr.message });
+        }
+        return res.status(200).json({ success: true, message: 'Operator updated' });
+      }
+
+      if (method === 'DELETE') {
+        const userId = pathname.split('/').filter(Boolean).pop();
+        const { error: delErr } = await supabaseAdmin
+          .from('operators')
+          .delete()
+          .eq('id', userId);
+
+        if (delErr) {
+          return res.status(500).json({ success: false, error: delErr.message });
+        }
+        return res.status(200).json({ success: true, message: 'Operator deleted' });
+      }
+
+      return res.status(200).json({ success: true });
     }
 
     // Company Profile
