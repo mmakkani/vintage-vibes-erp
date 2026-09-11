@@ -1,0 +1,291 @@
+import { CurrencyCode, PackagingUOM, WeightUOM } from '../../types/common.types.ts';
+import { POSTerminalConfig } from './hardware.types.ts';
+
+export interface BankAccountConfig {
+  id: string;
+  bankName: string; // e.g. Emirates NBD, ADCB, Wio Business, Mashreq Bank, Dubai Islamic Bank
+  accountTitle: string; // e.g. Vintage Vibes General Trading LLC SPC
+  iban: string; // e.g. AE24 0331 2345 6789 0123 456
+  accountNumber?: string;
+  branchName?: string;
+  swiftBic?: string;
+  currency: string; // AED, USD, EUR
+  qrCodeUrl?: string; // QR code image URL or data
+  isPrimary: boolean;
+  linkedPosTerminalId?: string; // ID of POS card terminal settled to this bank
+  coaAccountCode?: string; // e.g. 1120-00, 1121-00
+  coaAccountId?: string; // Linked COA Account ID
+  status: 'ACTIVE' | 'INACTIVE';
+}
+
+export interface PaymentGatewayConfig {
+  provider: 'STRIPE_UAE' | 'NETWORK_INTERNATIONAL' | 'CHECKOUT_COM' | 'TELR' | 'CUSTOM';
+  environment: 'SANDBOX' | 'PRODUCTION';
+  isEnabled: boolean;
+  publishableKey?: string;
+  secretKey?: string;
+  webhookSecret?: string;
+  merchantAccountId?: string;
+  applePayMerchantId?: string;
+  applePayDomainVerified?: boolean;
+  googlePayMerchantId?: string;
+  allowApplePay: boolean;
+  allowGooglePay: boolean;
+  allowCreditDebitCards: boolean;
+  currency: 'AED' | 'USD';
+  settlementCoaAccountId?: string;
+  gatewayFeePercent?: number;
+}
+
+export interface TikTokLiveSocketConfig {
+  enabled: boolean;
+  tiktokUsername: string;
+  autoReconnect: boolean;
+  connectionStatus: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'LIVE' | 'OFFLINE' | 'ERROR';
+  lastConnectedAt?: string;
+  errorMessage?: string;
+  claimKeywords: string[];
+  autoLockPieces: boolean;
+  defaultLockDurationSeconds: number;
+}
+
+export interface PhysicalPOSTerminalBridgeConfig {
+  enabled: boolean;
+  terminalBrand: 'SUNMI' | 'PAX_A920' | 'INGENICO' | 'VERIFONE' | 'GENERIC_PED';
+  terminalIp: string;
+  terminalPort: number;
+  terminalId: string;
+  protocol: 'HTTP_JSON' | 'TCP_SOCKET' | 'WEBSOCKET';
+  allowApplePayNfc: boolean;
+  status: 'ONLINE' | 'OFFLINE' | 'PAIRING';
+}
+
+export interface CompanyProfile {
+  companyName: string;
+  addressLine1: string;
+  addressLine2: string;
+  trnTaxNo: string;
+  defaultCurrency: CurrencyCode;
+  logoUrl: string;
+  phone: string;
+  email: string;
+  vatRatePercent: number; // e.g. 5.0% UAE VAT
+  globalStockAlertThreshold?: number; // Minimum defined quantity threshold for bale stock warnings
+  bankQrCodeUrl?: string; // Base64 or URL for Bank QR code / wallet scan
+  bankIban?: string; // e.g. AE240331234567890123456
+  bankName?: string; // e.g. Emirates NBD / ADCB
+  bankAccountTitle?: string; // Beneficiary name e.g. Vintage Vibes LLC SPC
+  bankAccountNumber?: string;
+  bankAccounts?: BankAccountConfig[]; // List of configured bank accounts (auto-synced to COA)
+  enableCod?: boolean; // Cash on delivery
+  enableBankTransfer?: boolean;
+  enableCardPay?: boolean;
+  enableAppleGooglePay?: boolean; // 1-Touch Apple Pay & Google Pay (Biometric / Scan-to-Pay QR)
+  freeShippingThresholdAed?: number; // Free shipping threshold in AED (e.g. 350)
+  standardShippingFeeAed?: number; // Standard courier fee in AED (e.g. 25)
+  whatsappOrderNumber?: string; // Direct WhatsApp order confirmation number
+  posTerminalConfig?: POSTerminalConfig; // Physical Smart POS Card Machine link configuration
+  paymentGateway?: PaymentGatewayConfig;
+  tiktokLiveSocket?: TikTokLiveSocketConfig;
+  posBridge?: PhysicalPOSTerminalBridgeConfig;
+}
+
+export interface CurrencyItem {
+  id: string;
+  code: CurrencyCode;
+  name: string;
+  symbol: string;
+  exchangeRate: number; // relative to base (AED = 1.0)
+  isBase: boolean;
+}
+
+export interface ItemMaster {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  description?: string;
+  basePrice: number;
+  targetUom: WeightUOM;
+  weightKg?: number;
+  uom?: string;
+  coaAccountId?: string;
+  minStockThreshold?: number;
+  status?: 'POSTED' | 'UNPOSTED' | 'DRAFT';
+  isActive: boolean;
+}
+
+export interface LabelGrade {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+  qualityTier?: 'CREAM' | 'GRADE_A' | 'NON_BRAND' | 'GRADE_B' | 'REWORK';
+  priceMultiplier?: number;
+  sortOrder: number;
+  status?: 'POSTED' | 'UNPOSTED' | 'DRAFT';
+  isActive?: boolean;
+}
+
+export interface BrandMaster {
+  id: string;
+  name: string;
+  tier: string;
+  origin?: string;
+  era?: string;
+  status?: 'POSTED' | 'UNPOSTED' | 'DRAFT';
+}
+
+export interface CategoryMaster {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+  qualityTier?: 'CREAM' | 'GRADE_A' | 'NON_BRAND' | 'GRADE_B' | 'MIXED';
+  defaultTargetUom?: WeightUOM;
+  sortOrder?: number;
+  status?: 'POSTED' | 'UNPOSTED' | 'DRAFT';
+  isActive?: boolean;
+}
+
+export interface SizeMaster {
+  id: string;
+  code: string;
+  name: string;
+  category?: string; // e.g. Tops, Bottoms, Outerwear, Free Size, Universal
+  sortOrder?: number;
+  status?: 'POSTED' | 'UNPOSTED' | 'DRAFT';
+  isActive?: boolean;
+}
+
+export interface ShopMaster {
+  id: string;
+  shopNo: string;
+  name: string;
+  location: string;
+  city?: string;
+  type?: string;
+  manager?: string;
+  managerName?: string;
+  rackCount?: number;
+  status?: 'POSTED' | 'UNPOSTED' | 'DRAFT';
+  isActive: boolean;
+}
+
+export interface DailySummaryData {
+  date: string;
+  totalPurchasesAmount: number;
+  totalPurchasedWeightKg: number;
+  totalPiecesBrokenDown: number;
+  totalSalesAmount: number;
+  vatCollectedAmount: number;
+  openReceivablesTotal: number;
+  activeEmployeesWorked: number;
+}
+
+export interface LiveStreamMulticastConfig {
+  provider: 'RESTREAM' | 'LIVEPUSH' | 'DIRECT_CLOUD_RTMP' | 'CUSTOM';
+  enabled: boolean;
+  apiKey?: string;
+  accountEmail?: string;
+  accountPassword?: string;
+  masterIngestRtmpUrl: string;
+  masterStreamKey: string;
+  autoRelayToTikTok: boolean;
+  autoRelayToInstagram: boolean;
+  autoRelayToFacebook: boolean;
+  autoRelayToYouTube: boolean;
+  tikTokStreamKey?: string;
+  instagramStreamKey?: string;
+  facebookStreamKey?: string;
+  youTubeStreamKey?: string;
+  status: 'CONNECTED' | 'STANDBY' | 'DISCONNECTED' | 'ERROR';
+  lastSyncedAt?: string;
+}
+
+export interface LiveBoothStreamConfig {
+  boothId: string;
+  boothName: string;
+  category: string;
+  hostName?: string;
+  hostHandle?: string;
+  provider: 'RESTREAM' | 'LIVEPUSH' | 'DIRECT_CLOUD_RTMP' | 'CUSTOM';
+  enabled: boolean;
+  apiKey?: string;
+  accountEmail?: string;
+  accountPassword?: string;
+  masterIngestRtmpUrl: string;
+  masterStreamKey: string;
+  // Per-Booth Distinct Social Media Accounts & Stream Keys
+  tiktokAccountHandle?: string;
+  tiktokStreamKey?: string;
+  tiktokRtmpUrl?: string;
+  tiktokSocketConnected?: boolean;
+  autoRelayToTikTok: boolean;
+
+  instagramAccountHandle?: string;
+  instagramStreamKey?: string;
+  instagramRtmpUrl?: string;
+  instagramSocketConnected?: boolean;
+  autoRelayToInstagram: boolean;
+
+  facebookAccountHandle?: string;
+  facebookStreamKey?: string;
+  facebookRtmpUrl?: string;
+  facebookSocketConnected?: boolean;
+  autoRelayToFacebook: boolean;
+
+  youTubeAccountHandle?: string;
+  youTubeStreamKey?: string;
+  youTubeRtmpUrl?: string;
+  youTubeSocketConnected?: boolean;
+  autoRelayToYouTube: boolean;
+
+  claimKeywords?: string[];
+  reservationTimeoutMinutes?: number;
+  status: 'CONNECTED' | 'STANDBY' | 'DISCONNECTED' | 'ERROR';
+  lastSyncedAt?: string;
+}
+
+export type WhatsAppConnectionMode = 'BAILEYS_DIRECT_WEB' | 'META_CLOUD_API' | 'GATEWAY_API';
+
+export interface WhatsAppGatewayConfig {
+  connectionMode: WhatsAppConnectionMode;
+  // Option 1: Baileys Direct Web Socket
+  baileysConfig: {
+    enabled: boolean;
+    sessionName: string;
+    autoReconnect: boolean;
+    browserName: string;
+    status: 'READY' | 'PAIRING' | 'CONNECTED' | 'DISCONNECTED';
+  };
+  // Option 2: Meta Cloud API / Third Party Gateway
+  metaCloudConfig: {
+    enabled: boolean;
+    phoneNumberId: string;
+    wabaId: string;
+    accessToken: string;
+    webhookVerifyToken: string;
+    businessNumber: string;
+  };
+  gatewayConfig: {
+    enabled: boolean;
+    provider: 'GREEN_API' | 'ULTRAMSG' | 'CUSTOM_HTTP';
+    instanceId: string;
+    apiToken: string;
+    apiUrl: string;
+  };
+  // Dispatch Throttle & Security
+  safeThrottleSeconds: number; // default 4 seconds
+  autoEvictSoldPieces: boolean;
+  notifyOnClaim: boolean;
+  // Persistent WhatsApp Channel Setup
+  channelConfig?: {
+    channelInviteLink: string;
+    channelJid: string; // e.g. 120363xxxxxx@newsletter
+    channelTitle?: string;
+    verifiedAdmin?: boolean;
+    lastTestedAt?: string;
+  };
+}
+

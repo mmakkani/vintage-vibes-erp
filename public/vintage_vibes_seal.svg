@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500">
+  <defs>
+    <!-- Metallic Gold Gradients -->
+    <radialGradient id="outerBevel" cx="40%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#fff5cc" />
+      <stop offset="25%" stop-color="#dfb15b" />
+      <stop offset="50%" stop-color="#9a6e18" />
+      <stop offset="75%" stop-color="#d4af37" />
+      <stop offset="100%" stop-color="#4a3508" />
+    </radialGradient>
+    <linearGradient id="goldLinear" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fcedb3" />
+      <stop offset="30%" stop-color="#d4af37" />
+      <stop offset="60%" stop-color="#aa7c11" />
+      <stop offset="85%" stop-color="#fdf3cd" />
+      <stop offset="100%" stop-color="#8b6508" />
+    </linearGradient>
+    <linearGradient id="silverLinear" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="40%" stop-color="#d1d5db" />
+      <stop offset="70%" stop-color="#9ca3af" />
+      <stop offset="100%" stop-color="#4b5563" />
+    </linearGradient>
+    <radialGradient id="globeSphere" cx="35%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="45%" stop-color="#e5e7eb" />
+      <stop offset="80%" stop-color="#cbd5e1" />
+      <stop offset="100%" stop-color="#94a3b8" />
+    </radialGradient>
+    <filter id="emboss3d" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="2" dy="3" stdDeviation="2" flood-color="#3b2b06" flood-opacity="0.8" />
+      <feDropShadow dx="-1" dy="-1" stdDeviation="1" flood-color="#fff5d9" flood-opacity="0.9" />
+    </filter>
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Outer Carved Bevel Ring -->
+  <circle cx="250" cy="250" r="242" fill="url(#outerBevel)" stroke="#3d2a07" stroke-width="4" />
+  <circle cx="250" cy="250" r="236" fill="none" stroke="#ffe89e" stroke-width="2" />
+  <circle cx="250" cy="250" r="226" fill="none" stroke="#684a0c" stroke-width="3" />
+
+  <!-- Middle Ivory White Medallion Band -->
+  <circle cx="250" cy="250" r="220" fill="#faf7ee" stroke="#b38927" stroke-width="3" />
+
+  <!-- Text Paths for Circular Typography -->
+  <path id="textArcTop" d="M 58 250 A 192 192 0 1 1 442 250" fill="none" />
+  <path id="textArcBottom" d="M 442 250 A 192 192 0 1 1 58 250" fill="none" />
+
+  <!-- Embossed Curved Text: VINTAGE VIBES -->
+  <text font-family="'Times New Roman', 'Playfair Display', Georgia, serif" font-weight="900" font-size="34" fill="url(#goldLinear)" filter="url(#emboss3d)" letter-spacing="9">
+    <textPath href="#textArcTop" startOffset="50%" text-anchor="middle">
+      VINTAGE VIBES
+    </textPath>
+  </text>
+
+  <!-- Embossed Curved Text: GENERAL TRADING - L.L.C - S.P.C -->
+  <text font-family="'Times New Roman', 'Cinzel', serif" font-weight="800" font-size="18" fill="url(#goldLinear)" filter="url(#emboss3d)" letter-spacing="4">
+    <textPath href="#textArcBottom" startOffset="50%" text-anchor="middle">
+      GENERAL TRADING - L.L.C - S.P.C
+    </textPath>
+  </text>
+
+  <!-- Flanking Stars (3 on left, 3 on right) -->
+  <!-- Left Stars -->
+  <g transform="translate(68, 230) scale(0.7)" fill="url(#goldLinear)" filter="url(#emboss3d)">
+    <polygon points="0,-10 3,-3 10,-3 5,2 7,9 0,5 -7,9 -5,2 -10,-3 -3,-3" />
+  </g>
+  <g transform="translate(62, 252) scale(0.9)" fill="url(#goldLinear)" filter="url(#emboss3d)">
+    <polygon points="0,-10 3,-3 10,-3 5,2 7,9 0,5 -7,9 -5,2 -10,-3 -3,-3" />
+  </g>
+  <g transform="translate(68, 274) scale(0.7)" fill="url(#goldLinear)" filter="url(#emboss3d)">
+    <polygon points="0,-10 3,-3 10,-3 5,2 7,9 0,5 -7,9 -5,2 -10,-3 -3,-3" />
+  </g>
+
+  <!-- Right Stars -->
+  <g transform="translate(432, 230) scale(0.7)" fill="url(#goldLinear)" filter="url(#emboss3d)">
+    <polygon points="0,-10 3,-3 10,-3 5,2 7,9 0,5 -7,9 -5,2 -10,-3 -3,-3" />
+  </g>
+  <g transform="translate(438, 252) scale(0.9)" fill="url(#goldLinear)" filter="url(#emboss3d)">
+    <polygon points="0,-10 3,-3 10,-3 5,2 7,9 0,5 -7,9 -5,2 -10,-3 -3,-3" />
+  </g>
+  <g transform="translate(432, 274) scale(0.7)" fill="url(#goldLinear)" filter="url(#emboss3d)">
+    <polygon points="0,-10 3,-3 10,-3 5,2 7,9 0,5 -7,9 -5,2 -10,-3 -3,-3" />
+  </g>
+
+  <!-- Inner Silver Beaded Ring -->
+  <circle cx="250" cy="250" r="148" fill="url(#silverLinear)" stroke="#4b5563" stroke-width="4" />
+  <circle cx="250" cy="250" r="142" fill="none" stroke="#ffffff" stroke-width="2" />
+  <circle cx="250" cy="250" r="136" fill="#1b2430" stroke="#9ca3af" stroke-width="3" />
+
+  <!-- 3D Silver Wireframe Globe Center -->
+  <g id="globeCenter">
+    <circle cx="250" cy="250" r="132" fill="url(#globeSphere)" />
+    <!-- Meridian ellipses -->
+    <ellipse cx="250" cy="250" rx="132" ry="132" fill="none" stroke="#94a3b8" stroke-width="2.5" />
+    <ellipse cx="250" cy="250" rx="95" ry="132" fill="none" stroke="#64748b" stroke-width="2.5" />
+    <ellipse cx="250" cy="250" rx="50" ry="132" fill="none" stroke="#64748b" stroke-width="2.5" />
+    <line x1="250" y1="118" x2="250" y2="382" stroke="#475569" stroke-width="3.5" />
+    <!-- Latitude lines -->
+    <line x1="118" y1="250" x2="382" y2="250" stroke="#475569" stroke-width="3.5" />
+    <path d="M 148 185 Q 250 215 352 185" fill="none" stroke="#64748b" stroke-width="2.5" />
+    <path d="M 148 315 Q 250 285 352 315" fill="none" stroke="#64748b" stroke-width="2.5" />
+  </g>
+
+  <!-- 3D Gold Circular Ring Framing VV -->
+  <circle cx="250" cy="250" r="95" fill="none" stroke="url(#goldLinear)" stroke-width="12" filter="url(#emboss3d)" />
+  <circle cx="250" cy="250" r="95" fill="none" stroke="#fffae6" stroke-width="2" />
+
+  <!-- 3D Interlocking Double "VV" Gold Monogram -->
+  <g id="vvMonogram" filter="url(#emboss3d)">
+    <!-- Outer/Upper V -->
+    <path d="M 152 216 L 218 216 L 250 318 L 282 216 L 348 216 L 272 352 L 228 352 Z" fill="url(#goldLinear)" stroke="#593f05" stroke-width="2" />
+    <!-- Inner V overlapping -->
+    <path d="M 184 228 L 226 228 L 250 298 L 274 228 L 316 228 L 264 324 L 236 324 Z" fill="url(#goldLinear)" stroke="#ffe58f" stroke-width="1.5" />
+  </g>
+</svg>

@@ -1,0 +1,502 @@
+import React, { useState, useMemo } from 'react';
+import { PurchaseInvoice, InwardGatePass } from '../purchase.types.ts';
+import { Party } from '../../parties/parties.types.ts';
+import { ItemMaster } from '../../setup/setup.types.ts';
+import { ProfessionalPurchaseInvoiceModal } from './ProfessionalPurchaseInvoiceModal.tsx';
+import { CommercialInvoiceModal } from './CommercialInvoiceModal.tsx';
+import {
+  FileText,
+  Plus,
+  Search,
+  CheckCircle2,
+  Lock,
+  Printer,
+  Eye,
+  Ship,
+  Truck,
+  ArrowRight,
+  Sparkles,
+  Tag,
+  Edit,
+  Trash2,
+  AlertCircle
+} from 'lucide-react';
+import { openBatchBaleThermalTagsPrintWindow } from '../../../utils/thermalPrinter.ts';
+
+interface CommercialInvoicesTabProps {
+  invoices: PurchaseInvoice[];
+  parties: Party[];
+  items: ItemMaster[];
+  bales?: InwardGatePass[];
+  onRefresh: () => void;
+  onInvoiceCreated: (inv: PurchaseInvoice) => void;
+}
+
+export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
+  invoices,
+  parties,
+  items,
+  bales = [],
+  onRefresh,
+  onInvoiceCreated
+}) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<PurchaseInvoice | null>(null);
+  const [viewInvoice, setViewInvoice] = useState<PurchaseInvoice | null>(null);
+  const [lockedModalInfo, setLockedModalInfo] = useState<{
+    invoiceNo: string;
+    actionType: 'EDIT' | 'DELETE';
+    sortedPiecesCount: number;
+    sortedWeightKg: number;
+    balesCount: number;
+  } | null>(null);
+
+  const filteredInvoices = useMemo(() => {
+    return invoices.filter(inv => {
+      const match =
+        (inv.invoiceNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (inv.supplierName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (inv.containerNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (inv.blAirwayBillNo || '').toLowerCase().includes(searchTerm.toLowerCase());
+      return match;
+    });
+  }, [invoices, searchTerm]);
+
+  const totalProcurementAed = useMemo(() => {
+    return invoices.reduce((sum, i) => sum + (i.totalAmount || 0), 0);
+  }, [invoices]);
+
+  const handlePrintBatchTags = (inv: PurchaseInvoice) => {
+    const invItems = inv.items || [];
+    const totalBalesCount = inv.totalBalesCount || invItems.reduce((acc, it) => acc + (Number(it.packageCount) || 1), 0) || 1;
+    const balesToPrint: any[] = [];
+    let globalBaleIndex = 1;
+
+    if (invItems.length > 0) {
+      invItems.forEach(line => {
+        const count = Number(line.packageCount) || 1;
+        const weightPerBale = (Number(line.totalWeight) || 0) / count;
+        const lineTotal = Number(line.lineTotal) || 0;
+        const costPerBale = lineTotal / count;
+        const costPerGram = weightPerBale > 0 ? (costPerBale / (weightPerBale * 1000)) : 0;
+
+        for (let i = 1; i <= count; i++) {
+          const paddedIdx = String(globalBaleIndex).padStart(3, '0');
+          balesToPrint.push({
+            baleCode: `BAL-${inv.invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${paddedIdx}`,
+            category: line.itemName,
+            grossWeightKg: Number(weightPerBale.toFixed(2)),
+            totalCostAed: Number(costPerBale.toFixed(2)),
+            costPerGram,
+            purchaseInvoiceNo: inv.invoiceNo,
+            supplierName: inv.supplierName,
+            status: 'Unopened / Ready for Sorting',
+            index: globalBaleIndex,
+            totalCount: totalBalesCount
+          });
+          globalBaleIndex++;
+        }
+      });
+    } else {
+      const wt = Number(inv.totalGrossWeightKg || 45);
+      const cost = Number(inv.totalAmount || 0);
+      balesToPrint.push({
+        baleCode: `BAL-${inv.invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-001`,
+        category: 'Vintage Mix Bales',
+        grossWeightKg: wt,
+        totalCostAed: cost,
+        costPerGram: wt > 0 ? (cost / (wt * 1000)) : 0,
+        purchaseInvoiceNo: inv.invoiceNo,
+        supplierName: inv.supplierName,
+        status: 'Unopened / Ready for Sorting',
+        index: 1,
+        totalCount: 1
+      });
+    }
+
+    openBatchBaleThermalTagsPrintWindow(balesToPrint);
+  };
+
+  const handlePostInvoice = async (invId: string) => {
+    try {
+      const res = await fetch(`/api/purchase/invoices/${invId}/post`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postedBy: 'Procurement Mgr' })
+      });
+      if (res.ok) onRefresh();
+    } catch (e) {
+      console.warn('Error posting invoice:', e);
+    }
+  };
+
+  const handleConvertToInward = async (invId: string) => {
+    try {
+      const res = await fetch(`/api/purchase/invoices/${invId}/convert-inward`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (res.ok) onRefresh();
+    } catch (e) {
+      console.warn('Error converting to inward:', e);
+    }
+  };
+
+  const handleEditInvoiceClick = (inv: PurchaseInvoice) => {
+    const related = (bales || []).filter(
+      b => b.purchaseInvoiceId === inv.id || b.purchaseInvoiceNo === inv.invoiceNo
+    );
+    const sortedCount = related.reduce((acc, b) => acc + (b.pieces?.length || b.pieceCount || 0), 0);
+    const sortedKg = related.reduce((acc, b) => acc + (b.brokenDownWeight || 0), 0);
+
+    if (sortedCount > 0 || sortedKg > 0) {
+      setLockedModalInfo({
+        invoiceNo: inv.invoiceNo,
+        actionType: 'EDIT',
+        sortedPiecesCount: sortedCount,
+        sortedWeightKg: sortedKg,
+        balesCount: related.length
+      });
+      return;
+    }
+
+    setEditingInvoice(inv);
+    setShowCreateModal(true);
+  };
+
+  const handleDeleteInvoiceClick = async (inv: PurchaseInvoice) => {
+    const related = (bales || []).filter(
+      b => b.purchaseInvoiceId === inv.id || b.purchaseInvoiceNo === inv.invoiceNo
+    );
+    const sortedCount = related.reduce((acc, b) => acc + (b.pieces?.length || b.pieceCount || 0), 0);
+    const sortedKg = related.reduce((acc, b) => acc + (b.brokenDownWeight || 0), 0);
+
+    if (sortedCount > 0 || sortedKg > 0) {
+      setLockedModalInfo({
+        invoiceNo: inv.invoiceNo,
+        actionType: 'DELETE',
+        sortedPiecesCount: sortedCount,
+        sortedWeightKg: sortedKg,
+        balesCount: related.length
+      });
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete Commercial Invoice "${inv.invoiceNo}"?\n\nThis will also remove all ${related.length} unopened bales and reverse supplier ledger balance.`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/purchase/invoices/${inv.id}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        alert(data.error || 'Failed to delete invoice');
+        return;
+      }
+      onRefresh();
+    } catch (e: any) {
+      alert(e.message || 'Network error deleting invoice');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900 tracking-tight flex items-center gap-2">
+            <FileText className="w-5 h-5 text-indigo-600" />
+            Factory Commercial Invoices & Port Clearing
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Manage international supplier commercial bills, bills of lading (B/L), containers, and landed customs clearance
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            setEditingInvoice(null);
+            setShowCreateModal(true);
+          }}
+          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shadow-sm flex items-center gap-2 transition-colors cursor-pointer self-start sm:self-auto"
+        >
+          <Plus className="w-4 h-4" />
+          <span>New Commercial Invoice</span>
+        </button>
+      </div>
+
+      {/* Filter Bar */}
+      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="relative w-full sm:w-96">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+          <input
+            type="text"
+            placeholder="Search by Invoice No, Container, Supplier, B/L..."
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+          />
+        </div>
+
+        <div className="text-xs text-slate-500 font-mono">
+          Total Procurement Value: <strong className="text-indigo-700 text-sm">AED {totalProcurementAed.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</strong>
+        </div>
+      </div>
+
+      {/* Invoices Table */}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
+              <tr>
+                <th className="px-4 py-3">Invoice No.</th>
+                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3">Supplier & Factory</th>
+                <th className="px-4 py-3">Shipping Container</th>
+                <th className="px-4 py-3">B/L Reference</th>
+                <th className="px-4 py-3">Total Amount</th>
+                <th className="px-4 py-3">Sorting Status</th>
+                <th className="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 font-medium">
+              {filteredInvoices.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-12 text-center text-slate-400">
+                    No commercial invoices registered. Click "New Commercial Invoice" to record one!
+                  </td>
+                </tr>
+              ) : (
+                filteredInvoices.map(inv => {
+                  const relatedBales = (bales || []).filter(
+                    b => b.purchaseInvoiceId === inv.id || b.purchaseInvoiceNo === inv.invoiceNo
+                  );
+                  const sortedPiecesCount = relatedBales.reduce(
+                    (acc, b) => acc + (b.pieces?.length || b.pieceCount || 0),
+                    0
+                  );
+                  const sortedWeightKg = relatedBales.reduce(
+                    (acc, b) => acc + (b.brokenDownWeight || 0),
+                    0
+                  );
+                  const isSortingStarted = sortedPiecesCount > 0 || sortedWeightKg > 0;
+
+                  return (
+                    <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="px-4 py-3 font-mono font-bold text-indigo-600">
+                        {inv.invoiceNo}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-slate-600">
+                        {inv.date}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="font-semibold text-slate-900">{inv.supplierName}</div>
+                        {inv.supplierTrn && (
+                          <div className="text-[10px] text-slate-400 font-mono">TRN: {inv.supplierTrn}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-slate-700">
+                        {inv.containerNo || 'N/A'}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-slate-700">
+                        {inv.blAirwayBillNo || 'N/A'}
+                      </td>
+                      <td className="px-4 py-3 font-mono font-bold text-slate-900">
+                        {inv.currency || 'AED'} {Number(inv.totalAmount || 0).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                        {inv.applyVat !== false && inv.vatAmount > 0 && (
+                          <span className="block text-[9px] text-emerald-600 font-medium">Incl. 5% VAT</span>
+                        )}
+                        {inv.applyVat === false && (
+                          <span className="block text-[9px] text-slate-400 font-medium">Without VAT</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {isSortingStarted ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200 inline-flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse"></span>
+                            <span>Sorted: {sortedPiecesCount} pcs ({sortedWeightKg.toFixed(1)}kg)</span>
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Unsorted (Editable)
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* Edit Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleEditInvoiceClick(inv)}
+                            className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors border ${
+                              isSortingStarted
+                                ? 'bg-slate-100 text-slate-400 border-slate-200'
+                                : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200'
+                            }`}
+                            title={
+                              isSortingStarted
+                                ? `Locked: Sorting has started (${sortedPiecesCount} pcs). Delete all pieces in Sorting Terminal first to edit.`
+                                : 'Edit Commercial Invoice'
+                            }
+                          >
+                            {isSortingStarted ? <Lock className="w-3 h-3 text-slate-400" /> : <Edit className="w-3 h-3 text-blue-600" />}
+                            <span>{isSortingStarted ? 'Locked' : 'Edit'}</span>
+                          </button>
+
+                          {/* Delete Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteInvoiceClick(inv)}
+                            className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors border ${
+                              isSortingStarted
+                                ? 'bg-slate-100 text-slate-400 border-slate-200'
+                                : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                            }`}
+                            title={
+                              isSortingStarted
+                                ? `Locked: Sorting has started (${sortedPiecesCount} pcs). Delete all pieces in Sorting Terminal first to delete.`
+                                : 'Delete Commercial Invoice'
+                            }
+                          >
+                            {isSortingStarted ? <Lock className="w-3 h-3 text-slate-400" /> : <Trash2 className="w-3 h-3 text-rose-600" />}
+                            <span>Delete</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handlePrintBatchTags(inv)}
+                            className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors border border-amber-300"
+                            title="Print 4x2 Thermal Barcode Labels for every bale/bag in this invoice"
+                          >
+                            <Tag className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Print Bales</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setViewInvoice(inv)}
+                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors"
+                            title="View & Print Formal Commercial Invoice"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>View Doc</span>
+                          </button>
+
+                          {inv.status !== 'POSTED' && (
+                            <button
+                              type="button"
+                              onClick={() => handlePostInvoice(inv.id)}
+                              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors"
+                            >
+                              <Lock className="w-3.5 h-3.5" />
+                              <span>Post</span>
+                            </button>
+                          )}
+
+                          {!inv.convertedToInward && (
+                            <button
+                              type="button"
+                              onClick={() => handleConvertToInward(inv.id)}
+                              className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors"
+                              title="Generate Inward Gate Pass & Bales"
+                            >
+                              <ArrowRight className="w-3.5 h-3.5" />
+                              <span>Inward Pass</span>
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Locked Sorting Protection Modal */}
+      {lockedModalInfo && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-rose-200 space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  Cannot {lockedModalInfo.actionType === 'EDIT' ? 'Edit' : 'Delete'} Invoice {lockedModalInfo.invoiceNo}
+                </h3>
+                <p className="text-xs text-slate-600 mt-1">
+                  Sorting has already started for bales created from this invoice:
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-200 text-xs text-amber-900 space-y-1.5 font-medium">
+              <div className="flex justify-between">
+                <span>Pieces Sorted:</span>
+                <strong className="font-bold text-amber-950 font-mono">{lockedModalInfo.sortedPiecesCount} pieces</strong>
+              </div>
+              <div className="flex justify-between">
+                <span>Weight Broken Down:</span>
+                <strong className="font-bold text-amber-950 font-mono">{lockedModalInfo.sortedWeightKg.toFixed(2)} KG</strong>
+              </div>
+              <div className="flex justify-between">
+                <span>Associated Bales:</span>
+                <strong className="font-bold text-amber-950 font-mono">{lockedModalInfo.balesCount} Bales</strong>
+              </div>
+            </div>
+
+            <div className="text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-200 leading-relaxed">
+              <strong className="text-slate-800 block mb-1">To unlock Edit & Delete:</strong>
+              Please navigate to the <strong>Bale Sorting Operations Hub</strong> and delete all <strong>{lockedModalInfo.sortedPiecesCount}</strong> sorted pieces from these bales. Once all pieces are deleted (0 pieces remaining sorted), editing and deleting this invoice will automatically unlock!
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setLockedModalInfo(null)}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer"
+              >
+                Understood (Close)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create / Edit Commercial Invoice Modal */}
+      {showCreateModal && (
+        <ProfessionalPurchaseInvoiceModal
+          isOpen={showCreateModal}
+          onClose={() => {
+            setShowCreateModal(false);
+            setEditingInvoice(null);
+          }}
+          parties={parties}
+          items={items}
+          editingInvoice={editingInvoice}
+          onSuccess={newInv => {
+            setShowCreateModal(false);
+            setEditingInvoice(null);
+            onInvoiceCreated(newInv);
+            onRefresh();
+          }}
+        />
+      )}
+
+      {/* View Printable Commercial Invoice */}
+      {viewInvoice && (
+        <CommercialInvoiceModal
+          invoice={viewInvoice}
+          onClose={() => setViewInvoice(null)}
+        />
+      )}
+    </div>
+  );
+};

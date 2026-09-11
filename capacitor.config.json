@@ -1,0 +1,15 @@
+{
+  "appId": "com.vintagevibes.staff",
+  "appName": "Vintage Vibes Staff",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "cleartext": true,
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  }
+}

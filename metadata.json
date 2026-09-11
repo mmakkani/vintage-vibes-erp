@@ -1,0 +1,6 @@
+{
+  "name": "Vintage Vibe",
+  "description": "Enterprise-grade ERP for vintage & used clothing bale processing, dual-entry COA finance, pieces breakdown with AI OCR, inventory, and sales workflows.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

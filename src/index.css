@@ -1,0 +1,438 @@
+@import "tailwindcss";
+
+:root {
+  --bg-champagne: #FAF4E6;
+  --bg-metallic-gold: linear-gradient(135deg, #FDF9EE 0%, #F5ECCE 40%, #F9F2DE 75%, #FBF6EA 100%);
+  --bg-metallic-gold-subtle: linear-gradient(180deg, #FFFFFF 0%, #F8F1DC 100%);
+  --bg-metallic-gold-card: linear-gradient(180deg, #FFFFFF 0%, #FBF6EB 100%);
+  --border-gold-accent: #E8D3A2;
+  --border-gold-subtle: #EDE0C4;
+}
+
+body {
+  background: linear-gradient(135deg, #FAF4E6 0%, #F6EFDB 30%, #F3E7C4 65%, #F9F3E2 100%);
+  background-attachment: fixed;
+  color: #1e293b;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+/* Light Golden Metallic Surfaces */
+.bg-gold-metallic {
+  background: linear-gradient(135deg, #FAF4E6 0%, #F6EFDB 30%, #F3E7C4 65%, #F9F3E2 100%);
+}
+
+.bg-gold-card {
+  background: linear-gradient(180deg, #FFFFFF 0%, #FBF7EE 100%);
+  border-color: #E8D3A2;
+}
+
+.bg-gold-subtle {
+  background-color: #FAF4E6;
+}
+
+/* ==========================================================================
+   Tactile 3D Button & Physical Control Styles (Dramatic 3D Extrusion on Hover)
+   "Jesay mouse lay jayen ubhray" - Pop-out physical 3D mechanics
+   ========================================================================== */
+
+/* Universal 3D Elevation for ALL Interactive Buttons */
+button:not(:disabled):not([class*="bg-transparent"]):not([class*="btn-flat"]):not([class*="p-0"]) {
+  position: relative;
+  transition: transform 0.16s cubic-bezier(0.34, 1.4, 0.64, 1), box-shadow 0.16s ease, filter 0.16s ease;
+  transform: translateY(0) scale(1);
+  will-change: transform, box-shadow;
+}
+
+button:not(:disabled):not([class*="bg-transparent"]):not([class*="btn-flat"]):not([class*="p-0"]):hover {
+  transform: translateY(-3.5px) scale(1.025);
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.2), 0 12px 20px rgba(0, 0, 0, 0.18);
+  filter: brightness(1.06);
+}
+
+button:not(:disabled):not([class*="bg-transparent"]):not([class*="btn-flat"]):not([class*="p-0"]):active {
+  transform: translateY(2px) scale(0.975);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.12);
+  filter: brightness(0.96);
+}
+
+/* Dedicated .btn-3d Class Family with Custom Metallic Colors */
+.btn-3d {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 0.625rem;
+  user-select: none;
+  cursor: pointer;
+  transform: translateY(0) scale(1);
+  transition: transform 0.16s cubic-bezier(0.34, 1.4, 0.64, 1), box-shadow 0.16s ease, filter 0.16s ease;
+}
+
+/* Default / Amber 3D Button */
+.btn-3d:not([class*="btn-3d-"]),
+.btn-3d-amber,
+.btn-3d-gold {
+  background: linear-gradient(180deg, #f59e0b 0%, #d97706 70%, #b45309 100%);
+  color: #ffffff;
+  border-top: 1.5px solid rgba(255, 255, 255, 0.45);
+  border-bottom: 3.5px solid #78350f;
+  box-shadow: 0 4px 0 #78350f, 0 6px 14px rgba(180, 83, 9, 0.35);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.btn-3d:not([class*="btn-3d-"]):hover,
+.btn-3d-amber:hover,
+.btn-3d-gold:hover {
+  background: linear-gradient(180deg, #fbbf24 0%, #d97706 70%, #b45309 100%);
+  box-shadow: 0 7.5px 0 #78350f, 0 14px 24px rgba(180, 83, 9, 0.5);
+  transform: translateY(-4px) scale(1.03);
+  filter: brightness(1.08);
+}
+.btn-3d:not([class*="btn-3d-"]):active,
+.btn-3d-amber:active,
+.btn-3d-gold:active {
+  transform: translateY(2.5px) scale(0.975);
+  border-bottom-width: 1.5px;
+  box-shadow: 0 1.5px 0 #78350f, 0 2px 6px rgba(180, 83, 9, 0.25);
+  filter: brightness(0.96);
+}
+
+/* Dark Slate / Obsidian 3D Button */
+.btn-3d-slate {
+  background: linear-gradient(180deg, #334155 0%, #1e293b 70%, #0f172a 100%);
+  color: #f8fafc;
+  border-top: 1.5px solid rgba(255, 255, 255, 0.25);
+  border-bottom: 3.5px solid #020617;
+  box-shadow: 0 4px 0 #020617, 0 6px 14px rgba(15, 23, 42, 0.4);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.btn-3d-slate:hover {
+  background: linear-gradient(180deg, #475569 0%, #1e293b 70%, #0f172a 100%);
+  box-shadow: 0 7.5px 0 #020617, 0 14px 24px rgba(15, 23, 42, 0.55);
+  transform: translateY(-4px) scale(1.03);
+  filter: brightness(1.1);
+}
+.btn-3d-slate:active {
+  transform: translateY(2.5px) scale(0.975);
+  border-bottom-width: 1.5px;
+  box-shadow: 0 1.5px 0 #020617, 0 2px 6px rgba(15, 23, 42, 0.25);
+  filter: brightness(0.94);
+}
+
+/* Emerald / Success 3D Button */
+.btn-3d-emerald {
+  background: linear-gradient(180deg, #10b981 0%, #059669 70%, #047857 100%);
+  color: #ffffff;
+  border-top: 1.5px solid rgba(255, 255, 255, 0.4);
+  border-bottom: 3.5px solid #064e3b;
+  box-shadow: 0 4px 0 #064e3b, 0 6px 14px rgba(5, 150, 105, 0.4);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.btn-3d-emerald:hover {
+  background: linear-gradient(180deg, #34d399 0%, #059669 70%, #047857 100%);
+  box-shadow: 0 7.5px 0 #064e3b, 0 14px 24px rgba(5, 150, 105, 0.55);
+  transform: translateY(-4px) scale(1.03);
+  filter: brightness(1.08);
+}
+.btn-3d-emerald:active {
+  transform: translateY(2.5px) scale(0.975);
+  border-bottom-width: 1.5px;
+  box-shadow: 0 1.5px 0 #064e3b, 0 2px 6px rgba(5, 150, 105, 0.25);
+  filter: brightness(0.96);
+}
+
+/* Crimson / Red 3D Button */
+.btn-3d-red {
+  background: linear-gradient(180deg, #ef4444 0%, #dc2626 70%, #b91c1c 100%);
+  color: #ffffff;
+  border-top: 1.5px solid rgba(255, 255, 255, 0.4);
+  border-bottom: 3.5px solid #7f1d1d;
+  box-shadow: 0 4px 0 #7f1d1d, 0 6px 14px rgba(220, 38, 38, 0.4);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.btn-3d-red:hover {
+  background: linear-gradient(180deg, #f87171 0%, #dc2626 70%, #b91c1c 100%);
+  box-shadow: 0 7.5px 0 #7f1d1d, 0 14px 24px rgba(220, 38, 38, 0.55);
+  transform: translateY(-4px) scale(1.03);
+  filter: brightness(1.08);
+}
+.btn-3d-red:active {
+  transform: translateY(2.5px) scale(0.975);
+  border-bottom-width: 1.5px;
+  box-shadow: 0 1.5px 0 #7f1d1d, 0 2px 6px rgba(220, 38, 38, 0.25);
+  filter: brightness(0.96);
+}
+
+/* Blue / Sky 3D Button */
+.btn-3d-blue,
+.btn-3d-sky {
+  background: linear-gradient(180deg, #0284c7 0%, #0369a1 70%, #075985 100%);
+  color: #ffffff;
+  border-top: 1.5px solid rgba(255, 255, 255, 0.4);
+  border-bottom: 3.5px solid #0c4a6e;
+  box-shadow: 0 4px 0 #0c4a6e, 0 6px 14px rgba(3, 105, 161, 0.4);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.btn-3d-blue:hover,
+.btn-3d-sky:hover {
+  background: linear-gradient(180deg, #38bdf8 0%, #0284c7 70%, #0369a1 100%);
+  box-shadow: 0 7.5px 0 #0c4a6e, 0 14px 24px rgba(3, 105, 161, 0.55);
+  transform: translateY(-4px) scale(1.03);
+  filter: brightness(1.08);
+}
+.btn-3d-blue:active,
+.btn-3d-sky:active {
+  transform: translateY(2.5px) scale(0.975);
+  border-bottom-width: 1.5px;
+  box-shadow: 0 1.5px 0 #0c4a6e, 0 2px 6px rgba(3, 105, 161, 0.25);
+  filter: brightness(0.96);
+}
+
+/* Light / White 3D Tactile Button */
+.btn-3d-light {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 60%, #e2e8f0 100%);
+  color: #1e293b;
+  border-top: 1.5px solid #ffffff;
+  border-bottom: 3.5px solid #94a3b8;
+  box-shadow: 0 4px 0 #94a3b8, 0 6px 12px rgba(0, 0, 0, 0.1);
+}
+.btn-3d-light:hover {
+  background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 60%, #e2e8f0 100%);
+  box-shadow: 0 7.5px 0 #94a3b8, 0 14px 20px rgba(0, 0, 0, 0.15);
+  transform: translateY(-4px) scale(1.03);
+  filter: brightness(1.04);
+}
+.btn-3d-light:active {
+  transform: translateY(2.5px) scale(0.975);
+  border-bottom-width: 1.5px;
+  box-shadow: 0 1.5px 0 #94a3b8, 0 2px 5px rgba(0, 0, 0, 0.08);
+}
+
+/* Circular CSS animation for header logo highlighting */
+@keyframes ringPulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 16px rgba(245, 158, 11, 0.45), 0 0 30px rgba(217, 119, 6, 0.25), inset 0 0 16px rgba(245, 158, 11, 0.2);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 32px rgba(245, 158, 11, 0.85), 0 0 55px rgba(251, 191, 36, 0.5), inset 0 0 24px rgba(245, 158, 11, 0.4);
+    transform: scale(1.025);
+  }
+}
+
+@keyframes orbitSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes orbitSpinReverse {
+  from {
+    transform: rotate(360deg);
+  }
+  to {
+    transform: rotate(0deg);
+  }
+}
+
+.animate-ring-pulse {
+  animation: ringPulseGlow 3.5s ease-in-out infinite;
+}
+
+.animate-orbit-spin {
+  animation: orbitSpin 18s linear infinite;
+}
+
+.animate-orbit-reverse {
+  animation: orbitSpinReverse 24s linear infinite;
+}
+
+/* Glowing scanning animation for AI OCR */
+@keyframes scanLaser {
+  0% {
+    top: 5%;
+    opacity: 0.9;
+  }
+  50% {
+    top: 92%;
+    opacity: 1;
+  }
+  100% {
+    top: 5%;
+    opacity: 0.9;
+  }
+}
+
+.animate-scan-laser {
+  animation: scanLaser 2.2s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   Guilloché Royal Banknote & Currency Security Watermark Pattern
+   ========================================================================== */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.045;
+  background-image: radial-gradient(circle at 50% 50%, #b45309 1.5px, transparent 1.5px),
+    radial-gradient(circle at 0% 0%, #d97706 1px, transparent 1px),
+    radial-gradient(circle at 100% 100%, #d97706 1px, transparent 1px);
+  background-size: 32px 32px, 64px 64px, 64px 64px;
+}
+
+/* ==========================================================================
+   VIP "Maybach Deep Navy Slate & Titanium Gold" Night Mode
+   "Laken black bhi na ho" - Sophisticated Deep Slate / Cockpit Graphite (NOT Pitch Black)
+   ========================================================================== */
+body.theme-obsidian {
+  background: linear-gradient(145deg, #1b263b 0%, #152033 45%, #0f172a 100%) fixed !important;
+  color: #f1f5f9 !important;
+}
+
+body.theme-obsidian::before {
+  opacity: 0.03 !important;
+  background-image: radial-gradient(circle at 50% 50%, #f59e0b 1px, transparent 1px) !important;
+}
+
+/* Header & Navigation Bar in Deep Slate Glass */
+body.theme-obsidian #main-enterprise-header {
+  background: linear-gradient(135deg, rgba(27, 38, 59, 0.95) 0%, rgba(15, 23, 42, 0.97) 100%) !important;
+  border-bottom: 2px solid rgba(217, 119, 6, 0.6) !important;
+  color: #f8fafc !important;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35) !important;
+}
+
+body.theme-obsidian #main-enterprise-header span,
+body.theme-obsidian #main-enterprise-header p,
+body.theme-obsidian #address-sub-header,
+body.theme-obsidian #address-sub-header span {
+  color: #e2e8f0 !important;
+}
+
+body.theme-obsidian #modular-erp-navbar {
+  background: #162235 !important;
+  border-bottom: 1px solid rgba(217, 119, 6, 0.4) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+}
+
+body.theme-obsidian #modular-erp-navbar .bg-slate-50,
+body.theme-obsidian #modular-erp-navbar button:not([class*="from-amber"]) {
+  background: #223247 !important;
+  color: #cbd5e1 !important;
+  border-color: #334661 !important;
+  border-bottom: 2px solid #3b506e !important;
+}
+
+body.theme-obsidian #modular-erp-navbar button:not([class*="from-amber"]):hover {
+  background: #2b3e57 !important;
+  color: #ffffff !important;
+  border-color: #d97706 !important;
+}
+
+body.theme-obsidian #modular-erp-navbar div[class*="bg-amber-100"] {
+  background: rgba(217, 119, 6, 0.2) !important;
+  color: #fef08a !important;
+  border-color: rgba(217, 119, 6, 0.4) !important;
+}
+
+/* Executive Welcome Banner - Luxury Deep Slate Card (No harsh yellow) */
+body.theme-obsidian #main-executive-dashboard > div.relative,
+body.theme-obsidian [id="main-executive-dashboard"] > div:first-child {
+  background: linear-gradient(135deg, #1d293d 0%, #25354e 50%, #1a2538 100%) !important;
+  border: 2px solid rgba(217, 119, 6, 0.45) !important;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3) !important;
+}
+
+body.theme-obsidian #main-executive-dashboard p,
+body.theme-obsidian #main-executive-dashboard span:not([class*="text-amber"]):not([class*="bg-amber"]) {
+  color: #cbd5e1 !important;
+}
+
+/* Cards, Panels, KPI Bars & Tables in Polished Slate */
+body.theme-obsidian .bg-white,
+body.theme-obsidian .bg-gold-card,
+body.theme-obsidian [class*="bg-[#f"] {
+  background: linear-gradient(180deg, #202d42 0%, #182335 100%) !important;
+  border-color: rgba(217, 119, 6, 0.28) !important;
+  color: #f1f5f9 !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25) !important;
+}
+
+body.theme-obsidian .bg-amber-50,
+body.theme-obsidian .bg-amber-100,
+body.theme-obsidian [class*="bg-amber-50"],
+body.theme-obsidian [class*="bg-amber-100"] {
+  background: rgba(217, 119, 6, 0.16) !important;
+  color: #fef08a !important;
+  border-color: rgba(217, 119, 6, 0.35) !important;
+}
+
+body.theme-obsidian .bg-slate-50,
+body.theme-obsidian .bg-slate-100 {
+  background: #1b2638 !important;
+  color: #e2e8f0 !important;
+}
+
+body.theme-obsidian .text-slate-900,
+body.theme-obsidian .text-slate-800,
+body.theme-obsidian .text-slate-700 {
+  color: #f8fafc !important;
+}
+
+body.theme-obsidian .text-slate-500,
+body.theme-obsidian .text-slate-600 {
+  color: #94a3b8 !important;
+}
+
+body.theme-obsidian .border-amber-200,
+body.theme-obsidian .border-amber-300,
+body.theme-obsidian .border-slate-200,
+body.theme-obsidian .border-slate-300 {
+  border-color: rgba(217, 119, 6, 0.3) !important;
+}
+
+/* Inputs, Selects & Tables */
+body.theme-obsidian input:not([type="button"]):not([type="submit"]):not([type="checkbox"]),
+body.theme-obsidian select,
+body.theme-obsidian textarea {
+  background: #172234 !important;
+  color: #ffffff !important;
+  border-color: #334763 !important;
+}
+
+body.theme-obsidian input:focus,
+body.theme-obsidian select:focus {
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25) !important;
+}
+
+body.theme-obsidian table th {
+  background: #192538 !important;
+  color: #fef08a !important;
+  border-color: #29384f !important;
+}
+
+body.theme-obsidian table td {
+  border-color: #243247 !important;
+  color: #e2e8f0 !important;
+}
+
+body.theme-obsidian table tr:hover td {
+  background: rgba(245, 158, 11, 0.08) !important;
+}
+
+/* Global stock alert warning in dark slate */
+body.theme-obsidian #global-stock-alert-panel {
+  background: linear-gradient(135deg, #2d1822 0%, #1f1f2e 100%) !important;
+  border-color: rgba(244, 63, 94, 0.5) !important;
+}

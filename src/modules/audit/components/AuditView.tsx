@@ -1,0 +1,152 @@
+import React, { useState, useEffect } from 'react';
+import { AuditLogEntry } from '../audit.types.ts';
+import { History, Search, ShieldCheck, Filter, Clock, User } from 'lucide-react';
+
+interface AuditViewProps {
+  onRefreshAll: () => void;
+  currentUserRole: string;
+}
+
+export const AuditView: React.FC<AuditViewProps> = () => {
+  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [filterModule, setFilterModule] = useState('ALL');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const loadLogs = async () => {
+    try {
+      const res = await fetch('/api/audit');
+      const data = await res.json();
+      setLogs(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    loadLogs();
+  }, []);
+
+  const filteredLogs = logs.filter(log => {
+    if (filterModule !== 'ALL' && log.module !== filterModule) return false;
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      return (
+        log.documentRef.toLowerCase().includes(term) ||
+        log.userName.toLowerCase().includes(term) ||
+        log.action.toLowerCase().includes(term) ||
+        (log.details && log.details.toLowerCase().includes(term))
+      );
+    }
+    return true;
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-white p-2.5 sm:p-3 rounded border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-1.5">
+            <History className="w-4 h-4 text-[#0056b3]" />
+            <span>Immutable Enterprise Audit Trail</span>
+          </h3>
+          <p className="text-[11px] text-slate-500">
+            Chronological audit verification for every Document Status change (Draft, Posted, Unposted)
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[200px]">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
+            <input
+              type="text"
+              placeholder="Search ref, user, or action..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="w-full pl-7 pr-2.5 py-1 text-xs border border-slate-300 rounded bg-white text-slate-800 placeholder-slate-400 focus:border-blue-500"
+            />
+          </div>
+
+          <select
+            value={filterModule}
+            onChange={e => setFilterModule(e.target.value)}
+            className="border border-slate-300 rounded px-2 py-1 text-xs font-semibold text-slate-700 bg-white focus:border-blue-500"
+          >
+            <option value="ALL">All Modules</option>
+            <option value="PURCHASE">Purchase</option>
+            <option value="INVENTORY">Inventory</option>
+            <option value="SALES">Sales</option>
+            <option value="FINANCE">Finance</option>
+            <option value="HR">HR Payroll</option>
+            <option value="PARTIES">Parties</option>
+            <option value="SETUP">Setup</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="bg-white rounded border border-slate-200 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-[11px] border-collapse">
+            <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
+              <tr>
+                <th className="px-3 py-2">Timestamp</th>
+                <th className="px-3 py-2">Module</th>
+                <th className="px-3 py-2">Document Ref</th>
+                <th className="px-3 py-2">Action</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Performed By</th>
+                <th className="px-3 py-2">Details / Memo</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 font-mono">
+              {filteredLogs.map(log => {
+                const isPost = log.action === 'POST';
+                const isUnpost = log.action === 'UNPOST';
+                const isDelete = log.action === 'DELETE';
+
+                const actionBadgeClass = isPost
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : isUnpost
+                  ? 'bg-amber-100 text-amber-800'
+                  : isDelete
+                  ? 'bg-rose-100 text-rose-800'
+                  : 'bg-blue-100 text-blue-800';
+
+                return (
+                  <tr key={log.id} className="hover:bg-blue-50/40">
+                    <td className="px-3 py-1.5 text-slate-500 whitespace-nowrap text-[10px]">
+                      {new Date(log.timestamp).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-1.5 font-sans font-semibold text-slate-800">{log.module}</td>
+                    <td className="px-3 py-1.5 font-bold text-blue-900">
+                      <div className="flex items-center gap-1.5">
+                        <span>{log.documentRef}</span>
+                        <span className="text-[8px] font-mono font-normal px-1 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-200" title="Cryptographically Sealed Node">
+                          #SEC
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-1.5 font-sans">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${actionBadgeClass}`}>
+                        {log.action}
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5 font-sans">
+                      <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-semibold">
+                        {log.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5 font-sans font-medium text-slate-700">
+                      {log.userName}
+                    </td>
+                    <td className="px-3 py-1.5 font-sans text-slate-600 max-w-sm truncate text-[11px]">
+                      {log.details || '-'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
