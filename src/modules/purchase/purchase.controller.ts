@@ -171,7 +171,7 @@ Only output pure JSON without markdown codeblocks or commentary.`
       });
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-2.0-flash',
         contents: { parts }
       });
 
@@ -268,7 +268,7 @@ Only output pure JSON. No markdown codeblocks, no commentary. Context hint: ${te
       });
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-2.0-flash',
         contents: { parts }
       });
 

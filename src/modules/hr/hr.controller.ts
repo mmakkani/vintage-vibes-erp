@@ -137,7 +137,7 @@ export class HRController {
     const configured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5);
     return {
       configured,
-      model: 'gemini-2.5-flash'
+      model: 'gemini-2.0-flash'
     };
   }
 
@@ -246,10 +246,21 @@ MANDATORY RULES:
 
         parts.push({ text: promptText });
 
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: { parts }
-        });
+        let response: any = null;
+        const candidateModels = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+        let lastModelErr: any = null;
+        for (const m of candidateModels) {
+          try {
+            response = await ai.models.generateContent({
+              model: m,
+              contents: { parts }
+            });
+            if (response?.text) break;
+          } catch (mErr) {
+            lastModelErr = mErr;
+          }
+        }
+        if (!response?.text) throw lastModelErr || new Error('AI Vision OCR extraction failed.');
 
         const text = response.text || '';
         const cleanJson = text.replace(/```json/gi, '').replace(/```/g, '').trim();

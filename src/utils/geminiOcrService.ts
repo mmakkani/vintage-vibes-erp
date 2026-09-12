@@ -116,7 +116,9 @@ export async function validateGeminiApiKey(apiKey: string): Promise<{ valid: boo
   }
 
   const cleanKey = apiKey.trim();
-  const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  // Valid active production Google Gemini models
+  const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
+  let lastError = '';
 
   for (const model of models) {
     try {
@@ -134,25 +136,34 @@ export async function validateGeminiApiKey(apiKey: string): Promise<{ valid: boo
       }
 
       const data = await res.json().catch(() => ({}));
-      if (data?.error?.message?.includes('API key not valid') || data?.error?.status === 'INVALID_ARGUMENT') {
+      const msg = data?.error?.message || '';
+
+      if (msg.includes('API key not valid') || msg.includes('API_KEY_INVALID') || data?.error?.status === 'INVALID_ARGUMENT') {
         return { valid: false, error: 'API Key is not valid. Please check your key from Google AI Studio (aistudio.google.com).' };
       }
-      if (data?.error?.message) {
-        return { valid: false, error: data.error.message };
+
+      // If this specific model is deprecated or not available, continue to next model in list
+      if (msg.includes('not found') || msg.includes('no longer available') || msg.includes('deprecated')) {
+        lastError = msg;
+        continue;
+      }
+
+      if (msg) {
+        lastError = msg;
       }
     } catch (e: any) {
-      // Continue to next model if network/cors
+      lastError = e?.message || 'Network error';
     }
   }
 
-  return { valid: false, error: 'Could not connect to Google Gemini API. Please check your internet connection or API key.' };
+  return { valid: false, error: lastError || 'Could not connect to Google Gemini API. Please check your internet connection or API key.' };
 }
 
 /**
  * Executes direct Gemini Vision API call from browser
  */
 async function callGeminiVisionApi(apiKey: string, parts: any[]): Promise<any> {
-  const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
   let lastError: any = null;
 
   for (const model of models) {

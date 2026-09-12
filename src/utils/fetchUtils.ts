@@ -234,7 +234,7 @@ export async function safeFetchJson<T = any>(
         const storedKey = (typeof localStorage !== 'undefined' ? localStorage.getItem('vintage_gemini_api_key') : '') || '';
         return {
           configured: Boolean(storedKey && storedKey.trim().length > 5),
-          model: 'gemini-2.5-flash'
+          model: 'gemini-2.0-flash'
         } as any;
       }
 
