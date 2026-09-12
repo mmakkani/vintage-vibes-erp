@@ -6,6 +6,7 @@ import { DocumentVault } from './DocumentVault.tsx';
 import { AIOcrScannerModal } from './AIOcrScannerModal.tsx';
 import { RoyalWaxSeal } from '../../../components/RoyalWaxSeal.tsx';
 import { useSync } from '../../../context/SyncContext.tsx';
+import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import {
   Briefcase,
   Plus,
@@ -136,9 +137,21 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         if (typeof reader.result === 'string') {
-          setEmpForm(prev => ({ ...prev, [fieldName]: reader.result }));
+          const raw = reader.result;
+          try {
+            const docType = (fieldName === 'passportImageUrl')
+              ? 'PASSPORT'
+              : (fieldName === 'residencyImageUrl')
+              ? 'RESIDENCY_VISA'
+              : 'EMIRATES_ID';
+            const { croppedImageUrl } = await autoCropAndResizeDocument(raw, { docType });
+            setEmpForm(prev => ({ ...prev, [fieldName]: croppedImageUrl }));
+            showMsg('Photo automatically cropped & resized to card boundaries! (Surroundings removed)');
+          } catch (_) {
+            setEmpForm(prev => ({ ...prev, [fieldName]: raw }));
+          }
         }
       };
       reader.readAsDataURL(file);
@@ -2050,9 +2063,14 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       )}
                     </div>
 
-                    <div className="aspect-video rounded bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center relative">
+                    <div className="aspect-[85.6/53.98] rounded bg-slate-900/5 border border-slate-200 overflow-hidden flex items-center justify-center relative">
                       {empForm.idFrontImageUrl ? (
-                        <img src={empForm.idFrontImageUrl} alt="Front ID" className="w-full h-full object-cover" />
+                        <>
+                          <img src={empForm.idFrontImageUrl} alt="Front ID" className="w-full h-full object-contain p-0.5" />
+                          <div className="absolute top-1 left-1 bg-emerald-600/90 text-white text-[8px] font-bold px-1.5 py-0.5 rounded shadow-xs">
+                            Auto-Cropped ✓
+                          </div>
+                        </>
                       ) : (
                         <div className="text-center p-2 text-slate-400">
                           <Upload className="w-5 h-5 mx-auto mb-1 text-slate-300" />
@@ -2098,9 +2116,14 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       )}
                     </div>
 
-                    <div className="aspect-video rounded bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center relative">
+                    <div className="aspect-[85.6/53.98] rounded bg-slate-900/5 border border-slate-200 overflow-hidden flex items-center justify-center relative">
                       {empForm.idBackImageUrl ? (
-                        <img src={empForm.idBackImageUrl} alt="Back ID" className="w-full h-full object-cover" />
+                        <>
+                          <img src={empForm.idBackImageUrl} alt="Back ID" className="w-full h-full object-contain p-0.5" />
+                          <div className="absolute top-1 left-1 bg-emerald-600/90 text-white text-[8px] font-bold px-1.5 py-0.5 rounded shadow-xs">
+                            Auto-Cropped ✓
+                          </div>
+                        </>
                       ) : (
                         <div className="text-center p-2 text-slate-400">
                           <Upload className="w-5 h-5 mx-auto mb-1 text-slate-300" />
@@ -2195,9 +2218,12 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 {/* Passport Bio Photo Card */}
                 <div className="p-2.5 rounded-lg bg-white border border-slate-200 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-16 h-12 rounded bg-slate-100 border border-slate-300 overflow-hidden flex items-center justify-center shrink-0">
+                    <div className="w-16 h-12 rounded bg-slate-900/5 border border-slate-300 overflow-hidden flex items-center justify-center shrink-0 relative">
                       {empForm.passportImageUrl ? (
-                        <img src={empForm.passportImageUrl} alt="Passport" className="w-full h-full object-cover" />
+                        <>
+                          <img src={empForm.passportImageUrl} alt="Passport" className="w-full h-full object-contain p-0.5" />
+                          <div className="absolute top-0.5 left-0.5 bg-emerald-600 text-white text-[7px] font-bold px-1 rounded">✓</div>
+                        </>
                       ) : (
                         <FileText className="w-5 h-5 text-slate-400" />
                       )}
@@ -2326,9 +2352,12 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 {/* Residency Document Photo Card */}
                 <div className="p-2.5 rounded-lg bg-white border border-slate-200 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-16 h-12 rounded bg-slate-100 border border-slate-300 overflow-hidden flex items-center justify-center shrink-0">
+                    <div className="w-16 h-12 rounded bg-slate-900/5 border border-slate-300 overflow-hidden flex items-center justify-center shrink-0 relative">
                       {empForm.residencyImageUrl ? (
-                        <img src={empForm.residencyImageUrl} alt="Residency" className="w-full h-full object-cover" />
+                        <>
+                          <img src={empForm.residencyImageUrl} alt="Residency" className="w-full h-full object-contain p-0.5" />
+                          <div className="absolute top-0.5 left-0.5 bg-emerald-600 text-white text-[7px] font-bold px-1 rounded">✓</div>
+                        </>
                       ) : (
                         <FileText className="w-5 h-5 text-slate-400" />
                       )}

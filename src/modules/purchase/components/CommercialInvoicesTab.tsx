@@ -234,11 +234,12 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
 
   const handlePostInvoice = async (invId: string) => {
     try {
-      await supabase.from('purchase_invoices').update({ status: 'POSTED' }).eq('id', invId);
-      setToastMessage("Invoice status updated to POSTED");
+      await PurchaseService.postPurchaseInvoice(invId);
+      setToastMessage("Purchase invoice posted to General Ledger & Supplier Khata!");
       onRefresh();
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Error posting invoice:', e);
+      alert("Failed to post invoice: " + (e?.message || 'Error'));
     }
   };
 
@@ -256,7 +257,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   const handleConvertToInward = async (invId: string) => {
     try {
       const createdBales = await PurchaseService.convertToInwardGatePass(invId);
-      alert(`✅ Inward Gate Pass Created!\n\n${createdBales.length} bale(s) generated and ready for sorting in Terminal.\nConsignment value successfully booked to COA Account 1150-00 (Sorting WIP Inventory).`);
+      alert(`✅ Inward Gate Pass Created!\n\n${createdBales.length} bale(s) generated and ready for sorting in Terminal.\nConsignment value successfully booked to COA & Supplier Khata.`);
       onRefresh();
     } catch (e: any) {
       console.warn('Error converting to inward:', e);

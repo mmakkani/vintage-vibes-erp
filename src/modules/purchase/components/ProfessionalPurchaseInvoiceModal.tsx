@@ -684,6 +684,12 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
         } catch (convErr) {
           console.warn('Notice on auto convert to inward:', convErr);
         }
+      } else if (submitStatus === 'POSTED') {
+        try {
+          await PurchaseService.postPurchaseInvoice(targetInvoiceId);
+        } catch (postErr) {
+          console.warn('Notice on auto post invoice:', postErr);
+        }
       }
 
       const savedRow = data?.[0];

@@ -806,3 +806,166 @@ BEGIN
     EXECUTE 'ALTER TABLE public.' || quote_ident(r.tablename) || ' DISABLE ROW LEVEL SECURITY;';
   END LOOP; 
 END $$;
+
+-- ==========================================================
+-- 21. HR & UAE LEGAL IDENTITY RECORD TABLES
+-- ==========================================================
+CREATE TABLE IF NOT EXISTS public.employees (
+    id TEXT PRIMARY KEY,
+    emp_code TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    full_name TEXT,
+    name_arabic TEXT,
+    designation TEXT,
+    department TEXT,
+    phone TEXT,
+    email TEXT,
+    address TEXT,
+    nationality TEXT,
+    gender TEXT DEFAULT 'MALE',
+    dob DATE,
+    joining_date DATE DEFAULT CURRENT_DATE,
+    date_of_joining DATE DEFAULT CURRENT_DATE,
+    status TEXT DEFAULT 'POSTED',
+    is_active BOOLEAN DEFAULT true,
+    salary_type TEXT DEFAULT 'MONTHLY',
+    base_salary NUMERIC(15,2) DEFAULT 0,
+    basic_salary NUMERIC(15,2) DEFAULT 0,
+    housing_allow NUMERIC(15,2) DEFAULT 0,
+    transport_allow NUMERIC(15,2) DEFAULT 0,
+    other_allow NUMERIC(15,2) DEFAULT 0,
+    working_hours_per_day NUMERIC(5,2) DEFAULT 8,
+    piece_rate_per_kg NUMERIC(15,2) DEFAULT 0,
+    overtime_hourly_rate NUMERIC(15,2) DEFAULT 0,
+    bank_account_iban TEXT,
+    emirates_id TEXT,
+    id_card_no TEXT,
+    emirates_id_expiry DATE,
+    passport_no TEXT,
+    passport_country TEXT,
+    passport_issue_date DATE,
+    passport_expiry DATE,
+    residency_card_no TEXT,
+    uid_no TEXT,
+    residency_profession TEXT,
+    residency_sponsor TEXT,
+    residency_issue_date DATE,
+    residency_expiry_date DATE,
+    id_front_image_url TEXT,
+    id_back_image_url TEXT,
+    passport_image_url TEXT,
+    residency_image_url TEXT,
+    photo_url TEXT,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.employee_documents (
+    id TEXT PRIMARY KEY,
+    employee_id TEXT REFERENCES public.employees(id) ON DELETE CASCADE,
+    document_type TEXT NOT NULL,
+    document_no TEXT,
+    document_name TEXT,
+    file_url TEXT NOT NULL,
+    file_type TEXT,
+    file_size INTEGER,
+    issue_date DATE,
+    expiry_date DATE,
+    ocr_data JSONB,
+    is_verified BOOLEAN DEFAULT false,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.employee_attendance (
+    id TEXT PRIMARY KEY,
+    employee_id TEXT REFERENCES public.employees(id) ON DELETE CASCADE,
+    employee_name TEXT,
+    emp_code TEXT,
+    month_year TEXT NOT NULL,
+    days_worked NUMERIC(5,2) DEFAULT 30,
+    overtime_hours NUMERIC(5,2) DEFAULT 0,
+    status TEXT DEFAULT 'DRAFT',
+    locked_at TIMESTAMPTZ,
+    locked_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.hr_attendance_sheets (
+    id TEXT PRIMARY KEY,
+    month_year TEXT UNIQUE NOT NULL,
+    total_employees INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'DRAFT',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.employee_loans (
+    id TEXT PRIMARY KEY,
+    employee_id TEXT REFERENCES public.employees(id) ON DELETE CASCADE,
+    employee_name TEXT,
+    emp_code TEXT,
+    type TEXT DEFAULT 'SALARY_ADVANCE',
+    principal_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+    emi_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+    total_months INTEGER NOT NULL DEFAULT 1,
+    start_month TEXT NOT NULL,
+    remaining_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+    status TEXT DEFAULT 'ACTIVE',
+    disbursement_account TEXT,
+    disbursement_method TEXT DEFAULT 'BANK_TRANSFER',
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.employee_payroll (
+    id TEXT PRIMARY KEY,
+    employee_id TEXT REFERENCES public.employees(id) ON DELETE CASCADE,
+    employee_name TEXT,
+    emp_code TEXT,
+    designation TEXT,
+    month_year TEXT NOT NULL,
+    status TEXT DEFAULT 'DRAFT',
+    base_salary NUMERIC(15,2) DEFAULT 0,
+    allowances NUMERIC(15,2) DEFAULT 0,
+    daily_rate NUMERIC(15,2) DEFAULT 0,
+    hourly_rate NUMERIC(15,2) DEFAULT 0,
+    days_worked NUMERIC(5,2) DEFAULT 30,
+    overtime_hours NUMERIC(5,2) DEFAULT 0,
+    earned_basic NUMERIC(15,2) DEFAULT 0,
+    overtime_pay NUMERIC(15,2) DEFAULT 0,
+    gross_pay NUMERIC(15,2) DEFAULT 0,
+    advance_deduction NUMERIC(15,2) DEFAULT 0,
+    loan_emi_deduction NUMERIC(15,2) DEFAULT 0,
+    total_deductions NUMERIC(15,2) DEFAULT 0,
+    net_pay NUMERIC(15,2) DEFAULT 0,
+    payment_method TEXT DEFAULT 'BANK_TRANSFER',
+    bank_account_id TEXT,
+    bank_account_name TEXT,
+    posted_at TIMESTAMPTZ,
+    posted_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.hr_payroll_sheets (
+    id TEXT PRIMARY KEY,
+    month_year TEXT UNIQUE NOT NULL,
+    total_employees INTEGER DEFAULT 0,
+    total_gross NUMERIC(15,2) DEFAULT 0,
+    total_deductions NUMERIC(15,2) DEFAULT 0,
+    total_net NUMERIC(15,2) DEFAULT 0,
+    status TEXT DEFAULT 'DRAFT',
+    posted_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.hr_ocr_logs (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    employee_id TEXT,
+    document_type TEXT,
+    confidence_score NUMERIC(5,2),
+    extracted_data JSONB,
+    raw_response TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);

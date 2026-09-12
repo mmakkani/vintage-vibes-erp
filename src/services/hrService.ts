@@ -74,6 +74,7 @@ export class HrService {
       base_salary: Number(emp.baseSalary || 0),
       housing_allow: Number(emp.housingAllow || 0),
       transport_allow: Number(emp.transportAllow || 0),
+      other_allow: Number(emp.otherAllow || 0),
       working_hours_per_day: Number(emp.workingHoursPerDay || 8),
       is_active: emp.isActive !== false,
       joining_date: emp.joiningDate || new Date().toISOString().slice(0, 10),
@@ -97,9 +98,12 @@ export class HrService {
       residency_issue_date: emp.residencyIssueDate || null,
       residency_expiry_date: emp.residencyExpiryDate || null,
       residency_sponsor: emp.residencySponsor || '',
-      residencyProfession: emp.residencyProfession || '',
+      residency_profession: emp.residencyProfession || '',
       residency_image_url: emp.residencyImageUrl || '',
-      photo_url: emp.photoUrl || ''
+      photo_url: emp.photoUrl || '',
+      email: emp.email || '',
+      address: emp.address || '',
+      notes: emp.notes || ''
     };
 
     const { data, error } = await supabase
@@ -123,17 +127,45 @@ export class HrService {
   public static async updateEmployee(id: string, updates: Partial<Employee>): Promise<void> {
     const payload: any = {};
     if (updates.name !== undefined) payload.name = updates.name;
+    if (updates.nameArabic !== undefined) payload.name_arabic = updates.nameArabic;
     if (updates.designation !== undefined) payload.designation = updates.designation;
     if (updates.department !== undefined) payload.department = updates.department;
     if (updates.baseSalary !== undefined) payload.base_salary = Number(updates.baseSalary);
     if (updates.housingAllow !== undefined) payload.housing_allow = Number(updates.housingAllow);
     if (updates.transportAllow !== undefined) payload.transport_allow = Number(updates.transportAllow);
+    if (updates.otherAllow !== undefined) payload.other_allow = Number(updates.otherAllow);
     if (updates.workingHoursPerDay !== undefined) payload.working_hours_per_day = Number(updates.workingHoursPerDay);
     if (updates.isActive !== undefined) payload.is_active = updates.isActive;
     if (updates.status !== undefined) payload.status = updates.status;
+    if (updates.joiningDate !== undefined) payload.joining_date = updates.joiningDate;
+    if (updates.dob !== undefined) payload.dob = updates.dob || null;
+    if (updates.gender !== undefined) payload.gender = updates.gender;
+    if (updates.nationality !== undefined) payload.nationality = updates.nationality;
+    if (updates.email !== undefined) payload.email = updates.email;
+    if (updates.address !== undefined) payload.address = updates.address;
+    if (updates.notes !== undefined) payload.notes = updates.notes;
+
+    // Legal Document IDs & Images
     if (updates.emiratesId !== undefined) payload.emirates_id = updates.emiratesId;
+    if (updates.idCardNo !== undefined) payload.id_card_no = updates.idCardNo;
+    if (updates.emiratesIdExpiry !== undefined) payload.emirates_id_expiry = updates.emiratesIdExpiry || null;
     if (updates.passportNo !== undefined) payload.passport_no = updates.passportNo;
+    if (updates.passportCountry !== undefined) payload.passport_country = updates.passportCountry;
+    if (updates.passportIssueDate !== undefined) payload.passport_issue_date = updates.passportIssueDate || null;
+    if (updates.passportExpiry !== undefined) payload.passport_expiry = updates.passportExpiry || null;
+    if (updates.residencyCardNo !== undefined) payload.residency_card_no = updates.residencyCardNo;
+    if (updates.uidNo !== undefined) payload.uid_no = updates.uidNo;
+    if (updates.residencyProfession !== undefined) payload.residency_profession = updates.residencyProfession;
+    if (updates.residencySponsor !== undefined) payload.residency_sponsor = updates.residencySponsor;
+    if (updates.residencyIssueDate !== undefined) payload.residency_issue_date = updates.residencyIssueDate || null;
+    if (updates.residencyExpiryDate !== undefined) payload.residency_expiry_date = updates.residencyExpiryDate || null;
+    if (updates.idFrontImageUrl !== undefined) payload.id_front_image_url = updates.idFrontImageUrl;
+    if (updates.idBackImageUrl !== undefined) payload.id_back_image_url = updates.idBackImageUrl;
+    if (updates.passportImageUrl !== undefined) payload.passport_image_url = updates.passportImageUrl;
+    if (updates.residencyImageUrl !== undefined) payload.residency_image_url = updates.residencyImageUrl;
     if (updates.photoUrl !== undefined) payload.photo_url = updates.photoUrl;
+
+    payload.updated_at = new Date().toISOString();
 
     const { error } = await supabase
       .from('employees')

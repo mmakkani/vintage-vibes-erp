@@ -66,6 +66,7 @@ export interface LedgerEntry {
   runningBalance: number;
   documentRef: string;
   partyId?: string;
+  partyName?: string;
   narration: string;
   debitAmount?: number;
   creditAmount?: number;

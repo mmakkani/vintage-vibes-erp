@@ -225,10 +225,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     try {
       const [coaRes, vchRes, ledRes, repRes, ptyRes] = await Promise.all([
         FinanceService.getCoaAccounts().catch(() => safeFetchJson<COAAccount[]>('/api/finance/coa', undefined, 3, 300)),
-        safeFetchJson<Voucher[]>('/api/finance/vouchers', undefined, 3, 300),
-        safeFetchJson<LedgerEntry[]>('/api/finance/ledgers', undefined, 3, 300),
+        FinanceService.getVouchers().catch(() => safeFetchJson<Voucher[]>('/api/finance/vouchers', undefined, 3, 300)),
+        FinanceService.getLedgers().catch(() => safeFetchJson<LedgerEntry[]>('/api/finance/ledgers', undefined, 3, 300)),
         safeFetchJson<FinancialStatements>('/api/finance/reports', undefined, 3, 300),
-        safeFetchJson<Party[]>('/api/parties', undefined, 3, 300)
+        PartiesService.getParties().catch(() => safeFetchJson<Party[]>('/api/parties', undefined, 3, 300))
       ]);
 
       const coaList = (Array.isArray(coaRes) && coaRes.length > 0) ? coaRes : await safeFetchJson<COAAccount[]>('/api/finance/coa', undefined, 3, 300);
@@ -488,15 +488,35 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
   // Memoized Filtered General Ledger Entries
   const filteredLedgers = useMemo(() => {
-    return ledgers.filter(entry => {
+    const rawFiltered = ledgers.filter(entry => {
       // Target filter: COA account or Party
       if (glSelectedTarget !== 'ALL') {
         if (glSelectedTarget.startsWith('ACC:')) {
           const accId = glSelectedTarget.replace('ACC:', '');
-          if (entry.accountId !== accId) return false;
+          const targetAcc = accounts.find(a => a.id === accId || a.code === accId);
+          const matches = entry.accountId === accId ||
+            (targetAcc && (
+              entry.accountCode === targetAcc.code ||
+              (targetAcc.party_id && (entry.partyId === targetAcc.party_id || (entry as any).party_id === targetAcc.party_id)) ||
+              (targetAcc.partyId && (entry.partyId === targetAcc.partyId || (entry as any).party_id === targetAcc.partyId))
+            ));
+          if (!matches) return false;
         } else if (glSelectedTarget.startsWith('PTY:')) {
           const partyId = glSelectedTarget.replace('PTY:', '');
-          if (entry.partyId !== partyId) return false;
+          const targetParty = parties.find(p => p.id === partyId);
+          const cleanPartyCode = targetParty?.code?.replace(/[^A-Za-z0-9]/g, '');
+          const matches = entry.partyId === partyId || (entry as any).party_id === partyId ||
+            (targetParty && (
+              (targetParty.coa_account_id && entry.accountId === targetParty.coa_account_id) ||
+              entry.accountId === `acc-${partyId}` ||
+              (cleanPartyCode && entry.accountCode?.includes(cleanPartyCode)) ||
+              (targetParty.name && (
+                entry.partyName?.toLowerCase() === targetParty.name.toLowerCase() ||
+                entry.accountName?.toLowerCase().includes(targetParty.name.toLowerCase()) ||
+                entry.narration?.toLowerCase().includes(targetParty.name.toLowerCase())
+              ))
+            ));
+          if (!matches) return false;
         }
       }
 
@@ -520,7 +540,43 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
       return true;
     });
-  }, [ledgers, glSelectedTarget, glDateFrom, glDateTo, glSearchText]);
+
+    // If a specific target (account or party) is selected, calculate the progressive running balance
+    if (glSelectedTarget !== 'ALL') {
+      let isCreditNormal = false;
+      if (glSelectedTarget.startsWith('ACC:')) {
+        const accId = glSelectedTarget.replace('ACC:', '');
+        const targetAcc = accounts.find(a => a.id === accId || a.code === accId);
+        const classification = (targetAcc?.classification || targetAcc?.type || '').toUpperCase();
+        isCreditNormal = classification === 'LIABILITY' || classification === 'EQUITY' || classification === 'REVENUE' || (targetAcc?.code?.startsWith('2') || targetAcc?.code?.startsWith('3') || targetAcc?.code?.startsWith('4'));
+      } else if (glSelectedTarget.startsWith('PTY:')) {
+        const partyId = glSelectedTarget.replace('PTY:', '');
+        const targetParty = parties.find(p => p.id === partyId);
+        isCreditNormal = targetParty?.type === 'SUPPLIER';
+      }
+
+      // Sort ascending by date for accurate running balance calculation, then reverse for chronological display
+      const sortedAsc = [...rawFiltered].sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.id || '').localeCompare(b.id || ''));
+      let running = 0;
+      const computed = sortedAsc.map(entry => {
+        const d = Number(entry.debit || 0);
+        const c = Number(entry.credit || 0);
+        if (isCreditNormal) {
+          running += (c - d);
+        } else {
+          running += (d - c);
+        }
+        return {
+          ...entry,
+          runningBalance: running
+        };
+      });
+
+      return computed.reverse();
+    }
+
+    return rawFiltered;
+  }, [ledgers, accounts, parties, glSelectedTarget, glDateFrom, glDateTo, glSearchText]);
 
   // Memoized GL Totals
   const { totalGlDebits, totalGlCredits } = useMemo(() => {

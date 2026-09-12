@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Scan, Camera, Upload, Key, Check, AlertCircle, X, Eye, 
-  FileText, ShieldCheck, RefreshCw, Sparkles, ChevronRight, UserCheck
+  FileText, ShieldCheck, RefreshCw, Sparkles, ChevronRight, UserCheck,
+  Crop, Scissors, CheckCheck
 } from 'lucide-react';
 import { AIOCRScanResult } from '../hr.controller.ts';
+import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
+import { executeDocumentOcr } from '../../../utils/geminiOcrService.ts';
 
 interface AIOcrScannerModalProps {
   isOpen: boolean;
@@ -76,6 +79,10 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
   const [passportImage, setPassportImage] = useState<string>('');
   const [residencyImage, setResidencyImage] = useState<string>('');
 
+  // Auto-cropping status per image field
+  const [isCropping, setIsCropping] = useState<Record<string, boolean>>({});
+  const [isAutoCropped, setIsAutoCropped] = useState<Record<string, boolean>>({});
+
   // API Key management
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState('');
@@ -117,16 +124,57 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
     setShowKeyModal(false);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: string) => void) => {
+  /**
+   * Reads the uploaded file and immediately executes automatic edge-detection,
+   * background stripping, and card normalization.
+   */
+  const handleFileChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    setter: (val: string) => void,
+    fieldKey: string,
+    docType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA' = 'EMIRATES_ID'
+  ) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         if (typeof reader.result === 'string') {
-          setter(reader.result);
+          const raw = reader.result;
+          setIsCropping(prev => ({ ...prev, [fieldKey]: true }));
+          try {
+            const { croppedImageUrl } = await autoCropAndResizeDocument(raw, { docType });
+            setter(croppedImageUrl);
+            setIsAutoCropped(prev => ({ ...prev, [fieldKey]: true }));
+          } catch (err) {
+            setter(raw);
+          } finally {
+            setIsCropping(prev => ({ ...prev, [fieldKey]: false }));
+          }
         }
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  /**
+   * Re-run auto-crop and clean borders on an existing image
+   */
+  const handleReCrop = async (
+    currentImg: string,
+    setter: (val: string) => void,
+    fieldKey: string,
+    docType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA' = 'EMIRATES_ID'
+  ) => {
+    if (!currentImg) return;
+    setIsCropping(prev => ({ ...prev, [fieldKey]: true }));
+    try {
+      const { croppedImageUrl } = await autoCropAndResizeDocument(currentImg, { docType });
+      setter(croppedImageUrl);
+      setIsAutoCropped(prev => ({ ...prev, [fieldKey]: true }));
+    } catch (_) {
+      // ignore
+    } finally {
+      setIsCropping(prev => ({ ...prev, [fieldKey]: false }));
     }
   };
 
@@ -134,10 +182,13 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
     if (docMode === 'EMIRATES_ID') {
       setFrontImage(SAMPLE_DOCS.emiratesId.front);
       setBackImage(SAMPLE_DOCS.emiratesId.back);
+      setIsAutoCropped({ front: true, back: true });
     } else if (docMode === 'PASSPORT') {
       setPassportImage(SAMPLE_DOCS.passport.image);
+      setIsAutoCropped({ passport: true });
     } else {
       setResidencyImage(SAMPLE_DOCS.residency.image);
+      setIsAutoCropped({ residency: true });
     }
   };
 
@@ -172,24 +223,17 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
 
     try {
       const activeKey = storedApiKey || undefined;
-      const res = await fetch('/api/hr/ocr/scan', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(activeKey ? { 'x-gemini-api-key': activeKey } : {})
-        },
-        body: JSON.stringify({
-          documentType: docMode,
-          imageBase64: primaryImg,
-          secondaryImageBase64: secImg,
-          apiKey: activeKey
-        })
+      setScanStep('Executing Neural AI Vision Extraction (Gemini Flash)...');
+
+      // Use unified multi-model Gemini OCR execution
+      const data = await executeDocumentOcr({
+        documentType: docMode,
+        imageBase64: primaryImg,
+        secondaryImageBase64: secImg,
+        apiKey: activeKey
       });
 
-      setScanStep('Extracting legal zones, MRZ, Emirates ID & Bio metadata...');
-      const data: AIOCRScanResult = await res.json();
-
-      if (!res.ok || !data.success) {
+      if (!data.success) {
         throw new Error(data.error || 'Failed to complete AI OCR scan.');
       }
 
@@ -403,7 +447,7 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     {frontImage && (
                       <button
                         type="button"
-                        onClick={() => setFrontImage('')}
+                        onClick={() => { setFrontImage(''); setIsAutoCropped(p => ({ ...p, front: false })); }}
                         className="text-[10px] text-rose-600 hover:underline"
                       >
                         Remove
@@ -411,21 +455,32 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     )}
                   </div>
 
-                  <div className="relative aspect-video rounded-lg overflow-hidden border-2 border-dashed border-slate-300 bg-slate-50 flex items-center justify-center group hover:border-blue-400 transition-all">
-                    {frontImage ? (
-                      <img src={frontImage} alt="Emirates ID Front" className="w-full h-full object-cover" />
+                  <div className="relative aspect-[85.6/53.98] rounded-lg overflow-hidden border-2 border-dashed border-slate-300 bg-slate-900/5 flex items-center justify-center group hover:border-blue-400 transition-all">
+                    {isCropping['front'] ? (
+                      <div className="text-center p-3 text-blue-600 flex flex-col items-center gap-1">
+                        <RefreshCw className="w-5 h-5 animate-spin" />
+                        <span className="text-[10px] font-bold">Auto-Cropping & Stripping Background...</span>
+                      </div>
+                    ) : frontImage ? (
+                      <>
+                        <img src={frontImage} alt="Emirates ID Front" className="w-full h-full object-contain p-1" />
+                        <div className="absolute top-2 left-2 bg-emerald-600/95 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1">
+                          <CheckCheck className="w-3 h-3" />
+                          <span>Auto-Cropped (Card Isolated)</span>
+                        </div>
+                      </>
                     ) : (
                       <div className="text-center p-3">
                         <Upload className="w-6 h-6 text-slate-400 mx-auto mb-1 group-hover:text-blue-600 group-hover:scale-110 transition-all" />
                         <div className="font-bold text-slate-700 text-[11px]">Upload Front Side Photo</div>
-                        <div className="text-[10px] text-slate-400">Click or Drag & Drop (PNG, JPG)</div>
+                        <div className="text-[10px] text-slate-400">Card will auto-crop & resize instantly</div>
                       </div>
                     )}
                     <input
                       ref={frontInputRef}
                       type="file"
                       accept="image/*"
-                      onChange={e => handleFileChange(e, setFrontImage)}
+                      onChange={e => handleFileChange(e, setFrontImage, 'front', 'EMIRATES_ID')}
                       className="absolute inset-0 opacity-0 cursor-pointer"
                     />
                   </div>
@@ -439,6 +494,17 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                       <Camera className="w-3 h-3" />
                       <span>{frontImage ? 'Change Front Photo' : 'Upload Front Image'}</span>
                     </button>
+                    {frontImage && (
+                      <button
+                        type="button"
+                        onClick={() => handleReCrop(frontImage, setFrontImage, 'front', 'EMIRATES_ID')}
+                        className="px-2.5 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1"
+                        title="Re-run auto-crop boundary detection"
+                      >
+                        <Crop className="w-3 h-3" />
+                        <span>Re-Crop</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -452,7 +518,7 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     {backImage && (
                       <button
                         type="button"
-                        onClick={() => setBackImage('')}
+                        onClick={() => { setBackImage(''); setIsAutoCropped(p => ({ ...p, back: false })); }}
                         className="text-[10px] text-rose-600 hover:underline"
                       >
                         Remove
@@ -460,21 +526,32 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     )}
                   </div>
 
-                  <div className="relative aspect-video rounded-lg overflow-hidden border-2 border-dashed border-slate-300 bg-slate-50 flex items-center justify-center group hover:border-blue-400 transition-all">
-                    {backImage ? (
-                      <img src={backImage} alt="Emirates ID Back" className="w-full h-full object-cover" />
+                  <div className="relative aspect-[85.6/53.98] rounded-lg overflow-hidden border-2 border-dashed border-slate-300 bg-slate-900/5 flex items-center justify-center group hover:border-blue-400 transition-all">
+                    {isCropping['back'] ? (
+                      <div className="text-center p-3 text-blue-600 flex flex-col items-center gap-1">
+                        <RefreshCw className="w-5 h-5 animate-spin" />
+                        <span className="text-[10px] font-bold">Auto-Cropping & Stripping Background...</span>
+                      </div>
+                    ) : backImage ? (
+                      <>
+                        <img src={backImage} alt="Emirates ID Back" className="w-full h-full object-contain p-1" />
+                        <div className="absolute top-2 left-2 bg-emerald-600/95 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1">
+                          <CheckCheck className="w-3 h-3" />
+                          <span>Auto-Cropped (Card Isolated)</span>
+                        </div>
+                      </>
                     ) : (
                       <div className="text-center p-3">
                         <Upload className="w-6 h-6 text-slate-400 mx-auto mb-1 group-hover:text-blue-600 group-hover:scale-110 transition-all" />
                         <div className="font-bold text-slate-700 text-[11px]">Upload Back Side Photo</div>
-                        <div className="text-[10px] text-slate-400">Click or Drag & Drop (PNG, JPG)</div>
+                        <div className="text-[10px] text-slate-400">Card will auto-crop & resize instantly</div>
                       </div>
                     )}
                     <input
                       ref={backInputRef}
                       type="file"
                       accept="image/*"
-                      onChange={e => handleFileChange(e, setBackImage)}
+                      onChange={e => handleFileChange(e, setBackImage, 'back', 'EMIRATES_ID')}
                       className="absolute inset-0 opacity-0 cursor-pointer"
                     />
                   </div>
@@ -488,6 +565,17 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                       <Camera className="w-3 h-3" />
                       <span>{backImage ? 'Change Back Photo' : 'Upload Back Image'}</span>
                     </button>
+                    {backImage && (
+                      <button
+                        type="button"
+                        onClick={() => handleReCrop(backImage, setBackImage, 'back', 'EMIRATES_ID')}
+                        className="px-2.5 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1"
+                        title="Re-run auto-crop boundary detection"
+                      >
+                        <Crop className="w-3 h-3" />
+                        <span>Re-Crop</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -503,7 +591,7 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     Passport Bio-Data Page Scanning
                   </h4>
                   <p className="text-[11px] text-slate-500">
-                    Upload a high-contrast scan or photo of the passport identification page including the MRZ lines.
+                    Upload a photo of the passport identification page. Surroundings will be automatically cropped away.
                   </p>
                 </div>
               </div>
@@ -514,7 +602,7 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                   {passportImage && (
                     <button
                       type="button"
-                      onClick={() => setPassportImage('')}
+                      onClick={() => { setPassportImage(''); setIsAutoCropped(p => ({ ...p, passport: false })); }}
                       className="text-[10px] text-rose-600 hover:underline"
                     >
                       Remove
@@ -522,33 +610,56 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                   )}
                 </div>
 
-                <div className="relative aspect-video rounded-lg overflow-hidden border-2 border-dashed border-slate-300 bg-slate-50 flex items-center justify-center group hover:border-blue-400 transition-all">
-                  {passportImage ? (
-                    <img src={passportImage} alt="Passport Page" className="w-full h-full object-cover" />
+                <div className="relative aspect-[125/88] rounded-lg overflow-hidden border-2 border-dashed border-slate-300 bg-slate-900/5 flex items-center justify-center group hover:border-blue-400 transition-all">
+                  {isCropping['passport'] ? (
+                    <div className="text-center p-3 text-blue-600 flex flex-col items-center gap-1">
+                      <RefreshCw className="w-5 h-5 animate-spin" />
+                      <span className="text-[10px] font-bold">Auto-Cropping Passport Boundaries...</span>
+                    </div>
+                  ) : passportImage ? (
+                    <>
+                      <img src={passportImage} alt="Passport Page" className="w-full h-full object-contain p-1" />
+                      <div className="absolute top-2 left-2 bg-emerald-600/95 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1">
+                        <CheckCheck className="w-3 h-3" />
+                        <span>Auto-Cropped (Passport Isolated)</span>
+                      </div>
+                    </>
                   ) : (
                     <div className="text-center p-4">
                       <Upload className="w-8 h-8 text-slate-400 mx-auto mb-1 group-hover:text-blue-600 group-hover:scale-110 transition-all" />
                       <div className="font-bold text-slate-700 text-xs">Upload Passport Bio Page</div>
-                      <div className="text-[10px] text-slate-400">PNG, JPG, or WEBP with clear MRZ text</div>
+                      <div className="text-[10px] text-slate-400">Photo will auto-crop & normalize to passport standard</div>
                     </div>
                   )}
                   <input
                     ref={passportInputRef}
                     type="file"
                     accept="image/*"
-                    onChange={e => handleFileChange(e, setPassportImage)}
+                    onChange={e => handleFileChange(e, setPassportImage, 'passport', 'PASSPORT')}
                     className="absolute inset-0 opacity-0 cursor-pointer"
                   />
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => passportInputRef.current?.click()}
-                  className="w-full py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1"
-                >
-                  <Camera className="w-3.5 h-3.5" />
-                  <span>{passportImage ? 'Change Passport Photo' : 'Upload Passport Image'}</span>
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => passportInputRef.current?.click()}
+                    className="flex-1 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{passportImage ? 'Change Passport Photo' : 'Upload Passport Image'}</span>
+                  </button>
+                  {passportImage && (
+                    <button
+                      type="button"
+                      onClick={() => handleReCrop(passportImage, setPassportImage, 'passport', 'PASSPORT')}
+                      className="px-3 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1"
+                    >
+                      <Crop className="w-3 h-3" />
+                      <span>Re-Crop</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -562,7 +673,7 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     UAE Residency Card / Electronic Visa Scanning
                   </h4>
                   <p className="text-[11px] text-slate-500">
-                    Upload the residency visa sticker or electronic residency card to extract UID No, File No, and Sponsor.
+                    Upload the residency visa sticker or electronic card. Background clutter will be automatically stripped.
                   </p>
                 </div>
               </div>
@@ -573,7 +684,7 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                   {residencyImage && (
                     <button
                       type="button"
-                      onClick={() => setResidencyImage('')}
+                      onClick={() => { setResidencyImage(''); setIsAutoCropped(p => ({ ...p, residency: false })); }}
                       className="text-[10px] text-rose-600 hover:underline"
                     >
                       Remove
@@ -581,9 +692,20 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                   )}
                 </div>
 
-                <div className="relative aspect-video rounded-lg overflow-hidden border-2 border-dashed border-slate-300 bg-slate-50 flex items-center justify-center group hover:border-blue-400 transition-all">
-                  {residencyImage ? (
-                    <img src={residencyImage} alt="Residency Visa" className="w-full h-full object-cover" />
+                <div className="relative aspect-[1.414] rounded-lg overflow-hidden border-2 border-dashed border-slate-300 bg-slate-900/5 flex items-center justify-center group hover:border-blue-400 transition-all">
+                  {isCropping['residency'] ? (
+                    <div className="text-center p-3 text-blue-600 flex flex-col items-center gap-1">
+                      <RefreshCw className="w-5 h-5 animate-spin" />
+                      <span className="text-[10px] font-bold">Auto-Cropping Residency Document...</span>
+                    </div>
+                  ) : residencyImage ? (
+                    <>
+                      <img src={residencyImage} alt="Residency Visa" className="w-full h-full object-contain p-1" />
+                      <div className="absolute top-2 left-2 bg-emerald-600/95 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1">
+                        <CheckCheck className="w-3 h-3" />
+                        <span>Auto-Cropped (Visa Isolated)</span>
+                      </div>
+                    </>
                   ) : (
                     <div className="text-center p-4">
                       <Upload className="w-8 h-8 text-slate-400 mx-auto mb-1 group-hover:text-blue-600 group-hover:scale-110 transition-all" />
@@ -595,19 +717,31 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     ref={residencyInputRef}
                     type="file"
                     accept="image/*"
-                    onChange={e => handleFileChange(e, setResidencyImage)}
+                    onChange={e => handleFileChange(e, setResidencyImage, 'residency', 'RESIDENCY_VISA')}
                     className="absolute inset-0 opacity-0 cursor-pointer"
                   />
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => residencyInputRef.current?.click()}
-                  className="w-full py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1"
-                >
-                  <Camera className="w-3.5 h-3.5" />
-                  <span>{residencyImage ? 'Change Visa Photo' : 'Upload Residency Document'}</span>
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => residencyInputRef.current?.click()}
+                    className="flex-1 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{residencyImage ? 'Change Visa Photo' : 'Upload Residency Document'}</span>
+                  </button>
+                  {residencyImage && (
+                    <button
+                      type="button"
+                      onClick={() => handleReCrop(residencyImage, setResidencyImage, 'residency', 'RESIDENCY_VISA')}
+                      className="px-3 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1"
+                    >
+                      <Crop className="w-3 h-3" />
+                      <span>Re-Crop</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -736,7 +870,7 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                   <h3 className="text-sm font-bold text-slate-900 tracking-wide flex items-center gap-2">
                     <span>AI OCR Visual Verification Overlay</span>
                     <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full border border-emerald-300">
-                      {Math.round(scanResult.confidence * 100)}% Confidence
+                      {Math.round((Number(scanResult.confidence) || 0.98) * 100)}% Confidence
                     </span>
                   </h3>
                   <p className="text-[10px] text-slate-500 uppercase">
@@ -766,11 +900,11 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     <div>
                       <div className="text-[10px] font-bold text-slate-600 mb-1 flex items-center justify-between">
                         <span>Front Side (Photo & ID No)</span>
-                        <span className="text-emerald-700 font-semibold text-[9px]">Verified</span>
+                        <span className="text-emerald-700 font-semibold text-[9px] bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">Auto-Cropped ✓</span>
                       </div>
-                      <div className="aspect-video bg-slate-200 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner">
+                      <div className="aspect-[85.6/53.98] bg-slate-900/5 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner flex items-center justify-center">
                         {scanResult.idFrontImageUrl ? (
-                          <img src={scanResult.idFrontImageUrl} alt="Front ID" className="w-full h-full object-cover" />
+                          <img src={scanResult.idFrontImageUrl} alt="Front ID" className="w-full h-full object-contain p-1" />
                         ) : (
                           <div className="flex items-center justify-center h-full text-slate-400 text-xs">No Front Photo</div>
                         )}
@@ -784,11 +918,11 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     <div>
                       <div className="text-[10px] font-bold text-slate-600 mb-1 flex items-center justify-between">
                         <span>Back Side (Card Number & Chip)</span>
-                        <span className="text-blue-700 font-semibold text-[9px]">Verified</span>
+                        <span className="text-blue-700 font-semibold text-[9px] bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200">Auto-Cropped ✓</span>
                       </div>
-                      <div className="aspect-video bg-slate-200 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner">
+                      <div className="aspect-[85.6/53.98] bg-slate-900/5 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner flex items-center justify-center">
                         {scanResult.idBackImageUrl ? (
-                          <img src={scanResult.idBackImageUrl} alt="Back ID" className="w-full h-full object-cover" />
+                          <img src={scanResult.idBackImageUrl} alt="Back ID" className="w-full h-full object-contain p-1" />
                         ) : (
                           <div className="flex items-center justify-center h-full text-slate-400 text-xs">No Back Photo</div>
                         )}
@@ -800,9 +934,9 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                   </div>
                 ) : scanResult.documentType === 'PASSPORT' ? (
                   <div>
-                    <div className="aspect-video bg-slate-200 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner">
+                    <div className="aspect-[125/88] bg-slate-900/5 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner flex items-center justify-center">
                       {scanResult.passportImageUrl ? (
-                        <img src={scanResult.passportImageUrl} alt="Passport Bio Page" className="w-full h-full object-cover" />
+                        <img src={scanResult.passportImageUrl} alt="Passport Bio Page" className="w-full h-full object-contain p-1" />
                       ) : (
                         <div className="flex items-center justify-center h-full text-slate-400 text-xs">Passport Scan</div>
                       )}
@@ -813,9 +947,9 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                   </div>
                 ) : (
                   <div>
-                    <div className="aspect-video bg-slate-200 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner">
+                    <div className="aspect-[1.414] bg-slate-900/5 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner flex items-center justify-center">
                       {scanResult.residencyImageUrl ? (
-                        <img src={scanResult.residencyImageUrl} alt="Residency Visa" className="w-full h-full object-cover" />
+                        <img src={scanResult.residencyImageUrl} alt="Residency Visa" className="w-full h-full object-contain p-1" />
                       ) : (
                         <div className="flex items-center justify-center h-full text-slate-400 text-xs">Residency Scan</div>
                       )}

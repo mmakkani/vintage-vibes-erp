@@ -226,6 +226,15 @@ export async function safeFetchJson<T = any>(
         }
       }
 
+      // HR AI OCR Status
+      if (url.includes('/api/hr/ocr/status') || url.includes('/ocr/status')) {
+        const storedKey = (typeof localStorage !== 'undefined' ? localStorage.getItem('vintage_gemini_api_key') : '') || '';
+        return {
+          configured: Boolean(storedKey && storedKey.trim().length > 5),
+          model: 'gemini-2.5-flash'
+        } as any;
+      }
+
       if (url.includes('/whatsapp-report')) {
         const comp = await CompanyProfileService.getCompanyProfile();
         return {
@@ -374,6 +383,13 @@ export async function safeFetchJson<T = any>(
           const loan = await HrService.createLoan(bodyData);
           return { success: true, loan } as any;
         }
+      }
+
+      // HR AI OCR Scan Mutation
+      if (url.includes('/api/hr/ocr/scan') || url.includes('/ocr/scan')) {
+        const { executeDocumentOcr } = await import('./geminiOcrService.ts');
+        const scanRes = await executeDocumentOcr(bodyData);
+        return scanRes as any;
       }
 
       return { success: true } as any;

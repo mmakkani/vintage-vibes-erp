@@ -340,6 +340,8 @@ export class FinanceService {
       accountId: row.account_id || row.accountId || '',
       accountCode: row.account_code || row.accountCode || '',
       accountName: row.account_name || row.accountName || '',
+      partyId: row.party_id || row.partyId || undefined,
+      partyName: row.party_name || row.partyName || undefined,
       date: typeof row.date === 'string' ? row.date.slice(0, 10) : (row.date ? new Date(row.date).toISOString().slice(0, 10) : (row.entry_date || '')),
       debit: Number(row.debit || 0),
       credit: Number(row.credit || 0),

@@ -1,6 +1,7 @@
 import { supabase } from '../supabaseClient.ts';
 import { PurchaseInvoice, InwardGatePass, PieceBreakdownItem } from '../modules/purchase/purchase.types.ts';
 import { FinanceService } from './financeService.ts';
+import { PartiesService } from './partiesService.ts';
 
 export class PurchaseService {
   // --- Purchase Invoices ---
@@ -112,6 +113,216 @@ export class PurchaseService {
     if (error) {
       console.error('Supabase error unposting purchase invoice:', error);
       throw new Error(error.message || 'Failed to unpost purchase invoice');
+    }
+  }
+
+  public static async resolveSupplierCoaAccount(supplierId?: string | null, supplierName?: string, currency: string = 'AED'): Promise<{
+    partyId: string;
+    partyName: string;
+    accountId: string;
+    accountCode: string;
+    accountName: string;
+    party: any;
+  }> {
+    let party: any = null;
+    const cleanSuppId = (supplierId && String(supplierId).trim() !== '' && String(supplierId) !== 'undefined' && String(supplierId) !== 'null') ? String(supplierId).trim() : null;
+
+    if (cleanSuppId) {
+      const { data } = await supabase.from('parties').select('*').eq('id', cleanSuppId).maybeSingle();
+      if (data) party = data;
+    }
+
+    if (!party && supplierName && supplierName.trim()) {
+      const { data } = await supabase.from('parties').select('*').ilike('name', supplierName.trim()).maybeSingle();
+      if (data) party = data;
+    }
+
+    // Auto-create supplier party if not found
+    if (!party) {
+      const pId = cleanSuppId || `pty-${Date.now()}`;
+      const pCode = `P-${Date.now().toString().slice(-4)}`;
+      const cleanCode = pCode.replace(/[^A-Za-z0-9]/g, '');
+      const coaId = `acc-${pId}`;
+      const coaCode = `2110-${cleanCode}`;
+      const name = supplierName?.trim() || 'Trade Supplier';
+
+      try {
+        const { data: newP, error: pErr } = await supabase.from('parties').insert([{
+          id: pId,
+          code: pCode,
+          name,
+          type: 'SUPPLIER',
+          currency: currency || 'AED',
+          current_balance: 0,
+          is_active: true,
+          coa_account_id: coaId,
+          account_map: {
+            payableAccountId: coaCode,
+            clearingAccountId: '1150-00'
+          }
+        }]).select().single();
+
+        if (!pErr && newP) {
+          party = newP;
+        }
+      } catch (err) {
+        console.warn('Auto-create party notice:', err);
+      }
+    }
+
+    const finalPartyId = party?.id || cleanSuppId || `pty-${Date.now()}`;
+    const finalPartyName = party?.name || supplierName?.trim() || 'Trade Supplier';
+    const partyCode = party?.code || `P-${finalPartyId.replace(/[^A-Za-z0-9]/g, '').slice(-4)}`;
+    const cleanCode = partyCode.replace(/[^A-Za-z0-9]/g, '');
+    const accountId = party?.coa_account_id || `acc-${finalPartyId}`;
+    const accountCode = (party?.account_map?.payableAccountId && party.account_map.payableAccountId.startsWith('2110-') && party.account_map.payableAccountId !== '2110-00')
+      ? party.account_map.payableAccountId
+      : `2110-${cleanCode}`;
+    const accountName = `${finalPartyName} (Supplier)`;
+
+    // Ensure COA sub-account exists in coa_accounts
+    try {
+      await supabase.from('coa_accounts').upsert({
+        id: accountId,
+        code: accountCode,
+        name: accountName,
+        type: 'LIABILITY',
+        sub_type: 'Accounts Payable - Trade',
+        currency: party?.currency || currency || 'AED',
+        current_balance: Number(party?.current_balance || 0),
+        is_active: true,
+        parent_id: 'acc-2110',
+        parent_code: '2110-00',
+        party_id: finalPartyId,
+        tier_level: 3
+      }, { onConflict: 'id' });
+    } catch (coaUpsertErr) {
+      console.warn('COA upsert notice:', coaUpsertErr);
+    }
+
+    return {
+      partyId: finalPartyId,
+      partyName: finalPartyName,
+      accountId,
+      accountCode,
+      accountName,
+      party
+    };
+  }
+
+  public static async postPurchaseInvoice(invoiceId: string): Promise<void> {
+    const { data: invRows, error: invError } = await supabase
+      .from('purchase_invoices')
+      .select('*')
+      .eq('id', invoiceId)
+      .limit(1);
+
+    if (invError || !invRows || invRows.length === 0) {
+      throw new Error(`Invoice with ID ${invoiceId} not found`);
+    }
+
+    const invoice = invRows[0];
+    const currency = (invoice.currency || 'AED').toUpperCase();
+    const exchangeRate = Number(invoice.exchange_rate) || (currency === 'USD' ? 3.6725 : 1);
+    const invoiceTotalAmount = Number(invoice.total_amount || 0);
+    const invoiceTotalAed = currency === 'AED' ? invoiceTotalAmount : Number((invoiceTotalAmount * exchangeRate).toFixed(2));
+    const invoiceNo = invoice.invoice_no || `PUR-${Date.now().toString().slice(-6)}`;
+    const supplierName = invoice.supplier_name || invoice.party_name || 'Trade Supplier';
+
+    // 1. Mark status as POSTED
+    await supabase
+      .from('purchase_invoices')
+      .update({ status: 'POSTED' })
+      .eq('id', invoiceId);
+
+    // 2. Check if voucher already created for this invoice
+    const { data: existingVouchers } = await supabase
+      .from('financial_vouchers')
+      .select('id, voucher_no')
+      .or(`reference.eq.PINV-${invoiceNo},reference.eq.INWARD-${invoiceNo},reference.eq.PUR-${invoiceNo}`)
+      .limit(1);
+
+    if (!existingVouchers || existingVouchers.length === 0) {
+      const supplierCoa = await PurchaseService.resolveSupplierCoaAccount(
+        invoice.supplier_id,
+        supplierName,
+        invoice.currency
+      );
+
+      // Post Journal Voucher: Dr 1140-00 (Warehouse Raw Bales Inventory) / Cr Supplier Liability Account
+      await FinanceService.addVoucher({
+        voucherNo: `JV-PUR-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
+        date: invoice.invoice_date || invoice.issue_date || new Date().toISOString().slice(0, 10),
+        type: 'JOURNAL',
+        reference: `PINV-${invoiceNo}`,
+        narration: `Commercial Purchase Invoice Posted: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
+        totalDebit: invoiceTotalAed,
+        totalCredit: invoiceTotalAed,
+        status: 'POSTED',
+        createdBy: 'System (Commercial Invoice)',
+        lines: [
+          {
+            accountCode: '1140-00',
+            accountName: 'Inventory - Raw Bales Warehouse Stock',
+            debitAmount: invoiceTotalAed,
+            creditAmount: 0,
+            memo: `Commercial Purchase Invoice: ${invoiceNo}`
+          },
+          {
+            accountId: supplierCoa.accountId,
+            accountCode: supplierCoa.accountCode,
+            accountName: supplierCoa.accountName,
+            partyId: supplierCoa.partyId,
+            partyName: supplierCoa.partyName,
+            debitAmount: 0,
+            creditAmount: invoiceTotalAed,
+            memo: `Supplier Payable: ${supplierName} for ${invoiceNo}`
+          }
+        ]
+      });
+
+      // Update COA balances: 1140-00
+      const { data: accInv } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1140-00').single();
+      if (accInv) {
+        const newBal = Number(accInv.current_balance || 0) + invoiceTotalAed;
+        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1140-00');
+      }
+
+      // Update COA balances: Parent AP 2110-00
+      const { data: accParentAp } = await supabase.from('coa_accounts').select('current_balance').eq('code', '2110-00').single();
+      if (accParentAp) {
+        const newBal = Number(accParentAp.current_balance || 0) + invoiceTotalAed;
+        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '2110-00');
+      }
+
+      // Update COA balances: Supplier specific account
+      const { data: accSupp } = await supabase.from('coa_accounts').select('current_balance').eq('id', supplierCoa.accountId).single();
+      const prevSuppBal = Number(accSupp?.current_balance ?? supplierCoa.party?.current_balance ?? 0);
+      const newSuppBal = prevSuppBal + invoiceTotalAed;
+      await supabase.from('coa_accounts').update({ current_balance: newSuppBal }).eq('id', supplierCoa.accountId);
+
+      // Update supplier balance in parties table
+      if (supplierCoa.partyId) {
+        const { data: ptyRow } = await supabase.from('parties').select('current_balance').eq('id', supplierCoa.partyId).maybeSingle();
+        const currentPartyBal = Number(ptyRow?.current_balance ?? 0);
+        const updatedPartyBal = currentPartyBal + invoiceTotalAed;
+
+        await supabase.from('parties').update({
+          current_balance: updatedPartyBal,
+          coa_account_id: supplierCoa.accountId
+        }).eq('id', supplierCoa.partyId);
+
+        // Add entry in party_khata_logs
+        await PartiesService.addKhataLog({
+          partyId: supplierCoa.partyId,
+          date: invoice.invoice_date || invoice.issue_date || new Date().toISOString().slice(0, 10),
+          reference: invoiceNo,
+          debit: 0,
+          credit: invoiceTotalAed,
+          runningBalance: updatedPartyBal,
+          notes: `Purchase Commercial Invoice: ${invoiceNo}`
+        });
+      }
     }
   }
 
@@ -373,55 +584,145 @@ export class PurchaseService {
 
     // 4. POST TO COA (WIP INVENTORY & SUPPLIER AP)
     try {
-      await FinanceService.addVoucher({
-        voucherNo: `JV-INW-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
-        date: new Date().toISOString().slice(0, 10),
-        type: 'JOURNAL',
-        reference: `INWARD-${invoiceNo}`,
-        narration: `Inward Consignment Bales Transferred to WIP Inventory: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
-        totalDebit: invoiceTotalAed,
-        totalCredit: invoiceTotalAed,
-        status: 'POSTED',
-        createdBy: 'System (Purchase Inward)',
-        lines: [
-          {
-            accountCode: '1150-00',
-            accountName: 'Inventory - Sorting Work-in-Progress (WIP Bales Under Grading)',
-            debitAmount: invoiceTotalAed,
-            creditAmount: 0,
-            memo: `WIP Raw Bales Inward: ${invoiceNo} (${createdPasses.length} bales)`
-          },
-          {
-            accountCode: '2110-00',
-            accountName: 'Accounts Payable - Trade Suppliers (Bale Exporters)',
-            partyId: invoice.supplier_id || null,
-            partyName: supplierName,
-            debitAmount: 0,
-            creditAmount: invoiceTotalAed,
-            memo: `Supplier Payable: ${supplierName} for ${invoiceNo}`
-          }
-        ]
-      });
+      const supplierCoa = await PurchaseService.resolveSupplierCoaAccount(
+        invoice.supplier_id,
+        supplierName,
+        invoice.currency
+      );
 
-      // Update current_balance on coa_accounts
-      const { data: accWip } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1150-00').single();
-      if (accWip) {
-        const newBal = Number(accWip.current_balance || 0) + invoiceTotalAed;
-        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1150-00');
-      }
-      const { data: accAp } = await supabase.from('coa_accounts').select('current_balance').eq('code', '2110-00').single();
-      if (accAp) {
-        const newBal = Number(accAp.current_balance || 0) + invoiceTotalAed;
-        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '2110-00');
+      // Check if voucher already created for this invoice (e.g. if already posted earlier)
+      const { data: existingVouchers } = await supabase
+        .from('financial_vouchers')
+        .select('id, voucher_no')
+        .or(`reference.eq.INWARD-${invoiceNo},reference.eq.PINV-${invoiceNo},reference.eq.PUR-${invoiceNo}`)
+        .limit(1);
+
+      if (!existingVouchers || existingVouchers.length === 0) {
+        // Post full Journal Entry: Dr 1150-00 (Sorting WIP Inventory) / Cr Supplier Liability Account
+        await FinanceService.addVoucher({
+          voucherNo: `JV-INW-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
+          date: new Date().toISOString().slice(0, 10),
+          type: 'JOURNAL',
+          reference: `INWARD-${invoiceNo}`,
+          narration: `Inward Consignment Bales Transferred to WIP Inventory: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
+          totalDebit: invoiceTotalAed,
+          totalCredit: invoiceTotalAed,
+          status: 'POSTED',
+          createdBy: 'System (Purchase Inward)',
+          lines: [
+            {
+              accountCode: '1150-00',
+              accountName: 'Inventory - Sorting Work-in-Progress (WIP Bales Under Grading)',
+              debitAmount: invoiceTotalAed,
+              creditAmount: 0,
+              memo: `WIP Raw Bales Inward: ${invoiceNo} (${createdPasses.length} bales)`
+            },
+            {
+              accountId: supplierCoa.accountId,
+              accountCode: supplierCoa.accountCode,
+              accountName: supplierCoa.accountName,
+              partyId: supplierCoa.partyId,
+              partyName: supplierCoa.partyName,
+              debitAmount: 0,
+              creditAmount: invoiceTotalAed,
+              memo: `Supplier Payable: ${supplierName} for ${invoiceNo}`
+            }
+          ]
+        });
+
+        // Update COA balances: 1150-00 (WIP Inventory)
+        const { data: accWip } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1150-00').single();
+        if (accWip) {
+          const newBal = Number(accWip.current_balance || 0) + invoiceTotalAed;
+          await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1150-00');
+        }
+
+        // Update COA balances: Parent AP 2110-00
+        const { data: accParentAp } = await supabase.from('coa_accounts').select('current_balance').eq('code', '2110-00').single();
+        if (accParentAp) {
+          const newBal = Number(accParentAp.current_balance || 0) + invoiceTotalAed;
+          await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '2110-00');
+        }
+
+        // Update COA balances: Supplier specific account
+        const { data: accSupp } = await supabase.from('coa_accounts').select('current_balance').eq('id', supplierCoa.accountId).single();
+        const prevSuppBal = Number(accSupp?.current_balance ?? supplierCoa.party?.current_balance ?? 0);
+        const newSuppBal = prevSuppBal + invoiceTotalAed;
+        await supabase.from('coa_accounts').update({ current_balance: newSuppBal }).eq('id', supplierCoa.accountId);
+
+        // Update supplier balance in parties table
+        if (supplierCoa.partyId) {
+          const { data: ptyRow } = await supabase.from('parties').select('current_balance').eq('id', supplierCoa.partyId).maybeSingle();
+          const currentPartyBal = Number(ptyRow?.current_balance ?? 0);
+          const updatedPartyBal = currentPartyBal + invoiceTotalAed;
+
+          await supabase.from('parties').update({
+            current_balance: updatedPartyBal,
+            coa_account_id: supplierCoa.accountId
+          }).eq('id', supplierCoa.partyId);
+
+          // Add entry in party_khata_logs
+          await PartiesService.addKhataLog({
+            partyId: supplierCoa.partyId,
+            date: invoice.invoice_date || invoice.issue_date || new Date().toISOString().slice(0, 10),
+            reference: invoiceNo,
+            debit: 0,
+            credit: invoiceTotalAed,
+            runningBalance: updatedPartyBal,
+            notes: `Purchase Inward Consignment: ${invoiceNo} (${createdPasses.length} bales)`
+          });
+        }
+      } else {
+        // If invoice was already posted (PINV), transfer from Raw Bales Stock (1140-00) to Sorting WIP (1150-00)
+        await FinanceService.addVoucher({
+          voucherNo: `JV-INW-TRF-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
+          date: new Date().toISOString().slice(0, 10),
+          type: 'JOURNAL',
+          reference: `INWARD-${invoiceNo}`,
+          narration: `Consignment Bales Inward Transfer from Warehouse to Sorting WIP: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
+          totalDebit: invoiceTotalAed,
+          totalCredit: invoiceTotalAed,
+          status: 'POSTED',
+          createdBy: 'System (Purchase Inward)',
+          lines: [
+            {
+              accountCode: '1150-00',
+              accountName: 'Inventory - Sorting Work-in-Progress (WIP Bales Under Grading)',
+              debitAmount: invoiceTotalAed,
+              creditAmount: 0,
+              memo: `WIP Raw Bales Inward: ${invoiceNo} (${createdPasses.length} bales)`
+            },
+            {
+              accountCode: '1140-00',
+              accountName: 'Inventory - Raw Bales Warehouse Stock',
+              debitAmount: 0,
+              creditAmount: invoiceTotalAed,
+              memo: `Warehouse Stock Inward to WIP: ${invoiceNo}`
+            }
+          ]
+        });
+
+        // Update COA balances: 1150-00
+        const { data: accWip } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1150-00').single();
+        if (accWip) {
+          const newBal = Number(accWip.current_balance || 0) + invoiceTotalAed;
+          await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1150-00');
+        }
+        // Update COA balances: 1140-00
+        const { data: accInv } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1140-00').single();
+        if (accInv) {
+          const newBal = Math.max(0, Number(accInv.current_balance || 0) - invoiceTotalAed);
+          await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1140-00');
+        }
       }
     } catch (coaErr) {
       console.warn('Notice on COA voucher posting:', coaErr);
     }
 
-    // 5. Update purchase_invoices converted_to_inward
+    // 5. Update purchase_invoices converted_to_inward and status
     await supabase
       .from('purchase_invoices')
-      .update({ converted_to_inward: true })
+      .update({ converted_to_inward: true, status: 'POSTED' })
       .eq('id', invoiceId);
 
     return createdPasses;
