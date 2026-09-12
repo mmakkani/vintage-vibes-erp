@@ -17,15 +17,15 @@ export const QuickAttendanceSummary: React.FC<QuickAttendanceSummaryProps> = ({
   selectedMonth,
   onNavigateTab
 }) => {
-  const activeCount = employees.filter(e => e.isActive).length;
-  const totalDaysWorked = attendance.reduce((acc, curr) => acc + curr.daysWorked, 0);
-  const totalOvertime = attendance.reduce((acc, curr) => acc + curr.overtimeHours, 0);
+  const activeCount = (employees || []).filter(e => e.isActive).length;
+  const totalDaysWorked = (attendance || []).reduce((acc, curr) => acc + (Number(curr?.daysWorked) || 0), 0);
+  const totalOvertime = (attendance || []).reduce((acc, curr) => acc + (Number(curr?.overtimeHours) || 0), 0);
   const avgAttendanceRate = activeCount > 0 ? Math.round((totalDaysWorked / (activeCount * 30)) * 100) : 0;
   
-  const pendingPayrollCount = payrollSlips.filter(p => p.status !== 'POSTED').length;
-  const totalPendingNet = payrollSlips
+  const pendingPayrollCount = (payrollSlips || []).filter(p => p.status !== 'POSTED').length;
+  const totalPendingNet = (payrollSlips || [])
     .filter(p => p.status !== 'POSTED')
-    .reduce((sum, p) => sum + p.netPay, 0);
+    .reduce((sum, p) => sum + (Number(p?.netPay) || 0), 0);
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-white p-3.5 rounded-lg border border-slate-200 shadow-xs">
@@ -62,7 +62,7 @@ export const QuickAttendanceSummary: React.FC<QuickAttendanceSummaryProps> = ({
           <div>
             <div className="text-[10px] uppercase font-bold text-amber-800 tracking-wider">Pending Payroll Validation</div>
             <div className="text-base font-mono font-bold text-slate-900">
-              {pendingPayrollCount} Slips • AED {totalPendingNet.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {pendingPayrollCount} Slips • AED {(Number(totalPendingNet) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </div>
             <div className="text-[10px] text-amber-700 mt-0.5">Requires HR Director approval & GL sync</div>
           </div>

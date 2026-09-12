@@ -13,22 +13,27 @@ export class HREngine {
     advanceDeduction: number = 0,
     loanEmiDeduction: number = 0
   ): Omit<PayrollRecord, 'id' | 'status' | 'postedAt'> {
-    const workingHours = employee.workingHoursPerDay > 0 ? employee.workingHoursPerDay : 8;
+    const workingHours = Number(employee?.workingHoursPerDay) > 0 ? Number(employee.workingHoursPerDay) : 8;
+    const baseSal = Number(employee?.baseSalary) || 0;
+    const housing = Number(employee?.housingAllow) || 0;
+    const transport = Number(employee?.transportAllow) || 0;
+    const daysWorked = Number(attendance?.daysWorked) || 0;
+    const otHours = Number(attendance?.overtimeHours) || 0;
 
     // Daily Rate = Base Salary / 30
-    const dailyRate = Number((employee.baseSalary / 30).toFixed(2));
+    const dailyRate = Number((baseSal / 30).toFixed(2));
 
     // Hourly Rate = Daily Rate / (Working Hours)
     const hourlyRate = Number((dailyRate / workingHours).toFixed(2));
 
     // Days worked pro-rated basic salary
-    const earnedBasic = Number((dailyRate * Math.min(30, attendance.daysWorked)).toFixed(2));
+    const earnedBasic = Number((dailyRate * Math.min(30, daysWorked)).toFixed(2));
 
     // Total fixed allowances
-    const totalAllowances = Number((employee.housingAllow + employee.transportAllow).toFixed(2));
+    const totalAllowances = Number((housing + transport).toFixed(2));
 
     // Overtime pay (1.5x rate)
-    const overtimePay = Number((hourlyRate * attendance.overtimeHours * overtimeMultiplier).toFixed(2));
+    const overtimePay = Number((hourlyRate * otHours * overtimeMultiplier).toFixed(2));
 
     // Gross Pay
     const grossPay = Number((earnedBasic + totalAllowances + overtimePay).toFixed(2));
@@ -42,12 +47,12 @@ export class HREngine {
     const netPay = Math.max(0, Number((grossPay - totalDeductions).toFixed(2)));
 
     return {
-      employeeId: employee.id,
-      employeeName: employee.name,
-      empCode: employee.empCode,
-      designation: employee.designation,
-      monthYear: attendance.monthYear,
-      baseSalary: employee.baseSalary,
+      employeeId: employee?.id || '',
+      employeeName: employee?.name || 'Staff',
+      empCode: employee?.empCode || 'EMP-???',
+      designation: employee?.designation || 'Staff',
+      monthYear: attendance?.monthYear || '',
+      baseSalary: baseSal,
       allowances: totalAllowances,
       dailyRate,
       hourlyRate,
@@ -94,23 +99,25 @@ export class HREngine {
       }
 
       // Calculate auto advance & loan deductions for this employee
-      const empActiveLoans = loans.filter(
-        l => l.employeeId === emp.id && l.status === 'ACTIVE' && l.remainingAmount > 0
+      const empActiveLoans = (loans || []).filter(
+        l => l.employeeId === emp.id && l.status === 'ACTIVE' && (Number(l.remainingAmount) || 0) > 0
       );
 
       let autoAdvance = 0;
       let autoLoanEmi = 0;
 
       for (const loan of empActiveLoans) {
+        const remAmt = Number(loan.remainingAmount) || 0;
+        const emiAmt = Number(loan.emiAmount) || 0;
         if (loan.type === 'SALARY_ADVANCE') {
           // If startMonth matches or is earlier, deduct full remaining or up to principal
           if (loan.startMonth <= monthYear) {
-            autoAdvance += loan.remainingAmount;
+            autoAdvance += remAmt;
           }
         } else if (loan.type === 'INSTALLMENT_LOAN') {
           // If active in this month, deduct monthly installment
           if (loan.startMonth <= monthYear) {
-            const emiToDeduct = Math.min(loan.emiAmount, loan.remainingAmount);
+            const emiToDeduct = Math.min(emiAmt, remAmt);
             autoLoanEmi += emiToDeduct;
           }
         }

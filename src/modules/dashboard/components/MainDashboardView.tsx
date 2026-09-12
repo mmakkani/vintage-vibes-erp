@@ -372,7 +372,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
             <Package className="w-4 h-4 text-amber-600" />
           </div>
           <div className="text-xl font-black font-serif text-slate-900">
-            AED {kpiData.totalInventoryValueAED.toLocaleString()}
+            AED {Number(kpiData?.totalInventoryValueAED || 0).toLocaleString()}
           </div>
           <div className="text-[10px] text-emerald-800 font-medium flex items-center gap-1 mt-1">
             <TrendingUp className="w-3 h-3" />
@@ -391,10 +391,10 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
             <Layers className="w-4 h-4 text-amber-600" />
           </div>
           <div className="text-xl font-black font-serif text-slate-900">
-            {kpiData.totalSortedPcs.toLocaleString()} <span className="text-xs font-sans font-normal text-slate-700">pcs</span>
+            {Number(kpiData?.totalSortedPcs || 0).toLocaleString()} <span className="text-xs font-sans font-normal text-slate-700">pcs</span>
           </div>
           <div className="text-[10px] text-amber-800 font-medium mt-1">
-            {kpiData.totalBalesInStock} Raw Cargo Bales in Vault
+            {kpiData?.totalBalesInStock || 0} Raw Cargo Bales in Vault
           </div>
         </motion.div>
 
@@ -409,7 +409,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
             <DollarSign className="w-4 h-4 text-emerald-600" />
           </div>
           <div className="text-xl font-black font-serif text-emerald-800">
-            AED {kpiData.monthRevenueAED.toLocaleString()}
+            AED {Number(kpiData?.monthRevenueAED || 0).toLocaleString()}
           </div>
           <div className="text-[10px] text-emerald-800 font-medium flex items-center gap-1 mt-1">
             <ArrowUpRight className="w-3 h-3" />
@@ -428,7 +428,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
             <Users className="w-4 h-4 text-blue-600" />
           </div>
           <div className="text-xl font-black font-serif text-blue-800">
-            AED {kpiData.receivablesKhataAED.toLocaleString()}
+            AED {Number(kpiData?.receivablesKhataAED || 0).toLocaleString()}
           </div>
           <div className="text-[10px] text-slate-700 font-medium mt-1">
             Trade Debtors & Client Accounts
@@ -446,7 +446,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
             <Truck className="w-4 h-4 text-rose-600" />
           </div>
           <div className="text-xl font-black font-serif text-rose-800">
-            AED {kpiData.payablesKhataAED.toLocaleString()}
+            AED {Number(kpiData?.payablesKhataAED || 0).toLocaleString()}
           </div>
           <div className="text-[10px] text-slate-700 font-medium mt-1">
             Overseas Suppliers & Freight Dues
@@ -464,7 +464,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
             <ShieldCheck className="w-4 h-4 text-amber-600" />
           </div>
           <div className="text-xl font-black font-serif text-amber-900">
-            AED {kpiData.netWorkingCapitalAED.toLocaleString()}
+            AED {Number(kpiData?.netWorkingCapitalAED || 0).toLocaleString()}
           </div>
           <div className="text-[10px] text-emerald-800 font-medium mt-1">
             Healthy Solvency Ratio (4.4x)
@@ -654,7 +654,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
                   </div>
                   <div className="text-right">
                     <div className="font-mono font-bold text-xs text-amber-900">
-                      AED {ck.balance.toLocaleString()}
+                      AED {Number(ck?.balance || 0).toLocaleString()}
                     </div>
                     <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800">
                       {ck.status}

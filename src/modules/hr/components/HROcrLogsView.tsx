@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { History, Search, Scan, Plus, ShieldCheck, RefreshCw, Sparkles, User, FileText, CheckCircle2, Clock } from 'lucide-react';
 
 interface HROcrLogsViewProps {
@@ -255,7 +255,7 @@ export const HROcrLogsView: React.FC<HROcrLogsViewProps> = ({
                     <td className="px-3 py-2 text-slate-500 whitespace-nowrap text-[10px] font-sans">
                       <div className="flex items-center gap-1 text-slate-600">
                         <Clock className="w-3 h-3 text-slate-400" />
-                        <span>{new Date(log.timestamp).toLocaleString()}</span>
+                        <span>{log?.timestamp && !isNaN(new Date(log.timestamp).getTime()) ? new Date(log.timestamp).toLocaleString() : 'N/A'}</span>
                       </div>
                     </td>
 

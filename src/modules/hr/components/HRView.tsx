@@ -53,6 +53,24 @@ interface HRViewProps {
   currentUserRole: string;
 }
 
+const safeFormatAed = (val: any, decimals: number = 2): string => {
+  const num = Number(val || 0);
+  if (isNaN(num)) return '0.00';
+  return num.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+};
+
+const safeFormatNum = (val: any): string => {
+  const num = Number(val || 0);
+  if (isNaN(num)) return '0';
+  return num.toLocaleString();
+};
+
+const safeFixed = (val: any, decimals: number = 2): string => {
+  const num = Number(val || 0);
+  if (isNaN(num)) return (0).toFixed(decimals);
+  return num.toFixed(decimals);
+};
+
 export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   const { syncVersion, acquireLock, releaseLock, notifyMutation } = useSync();
   const [subTab, setSubTabState] = useState<'payroll' | 'attendance' | 'employees' | 'loans' | 'vault' | 'ocr-logs'>(() => {
@@ -1001,7 +1019,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     showMsg(`AI OCR verified and populated legal identity records for ${data.name || 'employee'}! Scan log registered.`);
   };
 
-  const totalPayrollCost = payrollSlips.reduce((sum, s) => sum + s.netPay, 0);
+  const totalPayrollCost = (payrollSlips || []).reduce((sum, s) => sum + (Number(s?.netPay) || 0), 0);
 
   return (
     <div className="space-y-3">
@@ -1270,7 +1288,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
             <div className="bg-white p-2.5 rounded border border-slate-200 shadow-xs">
               <span className="text-[10px] uppercase font-bold text-slate-500">{selectedMonth} Net Pay</span>
               <div className="text-base font-bold font-mono text-slate-900 mt-0.5">
-                AED {totalPayrollCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                AED {safeFormatAed(totalPayrollCost)}
               </div>
             </div>
             <div className="bg-white p-2.5 rounded border border-slate-200 shadow-xs">
@@ -1363,10 +1381,10 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 <table className="w-full text-left text-[11px] border-collapse">
                   <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                     <tr>
-                      <th className="px-3 py-2.5">Salary Month</th>
+                      <th className="px-3 py-2.5">Month</th>
                       <th className="px-3 py-2.5">Employees</th>
-                      <th className="px-3 py-2.5">Total Gross Pay</th>
-                      <th className="px-3 py-2.5 text-rose-700">Advances & Loans Cut</th>
+                      <th className="px-3 py-2.5">Gross Total</th>
+                      <th className="px-3 py-2.5 text-rose-700">Total Deductions</th>
                       <th className="px-3 py-2.5 font-bold text-emerald-800">Net Payable</th>
                       <th className="px-3 py-2.5">Disbursement & GL</th>
                       <th className="px-3 py-2.5">Status</th>
@@ -1383,13 +1401,13 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                           {sheet.totalEmployees} Staff
                         </td>
                         <td className="px-3 py-2.5 font-mono text-slate-800 font-medium">
-                          AED {sheet.totalGrossPay.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          AED {safeFormatAed(sheet.totalGrossPay)}
                         </td>
                         <td className="px-3 py-2.5 font-mono text-rose-700 font-bold">
-                          {sheet.totalDeductions > 0 ? `-AED ${sheet.totalDeductions.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : 'AED 0.00'}
+                          {(Number(sheet.totalDeductions) || 0) > 0 ? `-AED ${safeFormatAed(sheet.totalDeductions)}` : 'AED 0.00'}
                         </td>
                         <td className="px-3 py-2.5 font-mono font-bold text-emerald-800 text-xs">
-                          AED {sheet.totalNetPay.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          AED {safeFormatAed(sheet.totalNetPay)}
                         </td>
                         <td className="px-3 py-2.5">
                           {sheet.status === 'POSTED' ? (
@@ -2064,13 +2082,13 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
             <div className="bg-white p-2.5 rounded border border-slate-200 shadow-xs">
               <span className="text-[10px] uppercase font-bold text-slate-500">Total Disbursed</span>
               <div className="text-base font-bold font-mono text-blue-900 mt-0.5">
-                AED {employeeLoans.reduce((sum, l) => sum + l.principalAmount, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                AED {safeFormatAed((employeeLoans || []).reduce((sum, l) => sum + (Number(l.principalAmount) || 0), 0))}
               </div>
             </div>
             <div className="bg-white p-2.5 rounded border border-slate-200 shadow-xs">
               <span className="text-[10px] uppercase font-bold text-slate-500">Outstanding Receivables</span>
               <div className="text-base font-bold font-mono text-rose-700 mt-0.5">
-                AED {employeeLoans.filter(l => l.status === 'ACTIVE').reduce((sum, l) => sum + l.remainingAmount, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                AED {safeFormatAed((employeeLoans || []).filter(l => l.status === 'ACTIVE').reduce((sum, l) => sum + (Number(l.remainingAmount) || 0), 0))}
               </div>
             </div>
             <div className="bg-white p-2.5 rounded border border-slate-200 shadow-xs">
@@ -2159,15 +2177,15 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                           )}
                         </td>
                         <td className="px-3 py-2.5 font-mono font-bold text-slate-900">
-                          AED {loan.principalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          AED {safeFormatAed(loan.principalAmount)}
                         </td>
                         <td className="px-3 py-2.5 font-mono font-bold text-emerald-700">
-                          AED {loan.emiAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}/mo
+                          AED {safeFormatAed(loan.emiAmount)}/mo
                         </td>
                         <td className="px-3 py-2.5 font-mono text-slate-600">{loan.totalMonths} Months</td>
                         <td className="px-3 py-2.5 font-mono text-slate-600">{loan.startMonth}</td>
                         <td className="px-3 py-2.5 font-mono font-bold text-rose-700">
-                          AED {loan.remainingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          AED {safeFormatAed(loan.remainingAmount)}
                         </td>
                         <td className="px-3 py-2.5 font-sans">
                           {loan.status === 'PAID' ? (
@@ -2853,7 +2871,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     <span>5. Wages Protection System (WPS) & Compensation (AED)</span>
                   </span>
                   <span className="text-[10px] text-slate-500 font-mono">
-                    Total Package: <strong className="text-slate-900">AED {(empForm.baseSalary + empForm.housingAllow + empForm.transportAllow).toLocaleString()}</strong>
+                    Total Package: <strong className="text-slate-900">AED {safeFormatNum(Number(empForm.baseSalary || 0) + Number(empForm.housingAllow || 0) + Number(empForm.transportAllow || 0))}</strong>
                   </span>
                 </div>
 
@@ -2895,10 +2913,10 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
 
                 <div className="flex flex-wrap items-center gap-2 pt-1 text-[10px]">
                   <span className="px-2 py-1 bg-white border border-slate-200 rounded font-mono text-slate-600">
-                    Daily Rate: AED {(empForm.baseSalary / 30).toFixed(2)}
+                    Daily Rate: AED {safeFixed(Number(empForm.baseSalary || 0) / 30, 2)}
                   </span>
                   <span className="px-2 py-1 bg-white border border-slate-200 rounded font-mono text-slate-600">
-                    Hourly Rate: AED {((empForm.baseSalary / 30) / (empForm.workingHoursPerDay || 8)).toFixed(2)}
+                    Hourly Rate: AED {safeFixed((Number(empForm.baseSalary || 0) / 30) / (Number(empForm.workingHoursPerDay) > 0 ? Number(empForm.workingHoursPerDay) : 8), 2)}
                   </span>
                   <span className="text-slate-400">Calculated strictly as per UAE Labour Law 30-day base calendar.</span>
                 </div>
@@ -2968,38 +2986,38 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
               <div className="space-y-1 py-1 text-slate-700 text-[11px]">
                 <div className="flex justify-between">
                   <span>Standard Monthly Base:</span>
-                  <span>AED {selectedSlip.baseSalary.toFixed(2)}</span>
+                  <span>AED {safeFixed(selectedSlip.baseSalary, 2)}</span>
                 </div>
                 <div className="flex justify-between text-slate-500">
                   <span>Daily Rate (Base / 30):</span>
-                  <span>AED {selectedSlip.dailyRate.toFixed(2)}</span>
+                  <span>AED {safeFixed(selectedSlip.dailyRate, 2)}</span>
                 </div>
                 <div className="flex justify-between text-slate-500">
                   <span>Hourly Rate (Daily / 8):</span>
-                  <span>AED {selectedSlip.hourlyRate.toFixed(2)}</span>
+                  <span>AED {safeFixed(selectedSlip.hourlyRate, 2)}</span>
                 </div>
                 <div className="flex justify-between pt-1 border-t border-slate-100">
-                  <span>Earned Basic ({selectedSlip.daysWorked} days):</span>
-                  <span>AED {selectedSlip.earnedBasic.toFixed(2)}</span>
+                  <span>Earned Basic ({Number(selectedSlip.daysWorked) || 0} days):</span>
+                  <span>AED {safeFixed(selectedSlip.earnedBasic, 2)}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Allowances (Housing & Transport):</span>
-                  <span>+AED {selectedSlip.allowances.toFixed(2)}</span>
+                  <span>+AED {safeFixed(selectedSlip.allowances, 2)}</span>
                 </div>
                 <div className="flex justify-between text-emerald-700">
-                  <span>Overtime Pay ({selectedSlip.overtimeHours} hrs @ 1.5x):</span>
-                  <span>+AED {selectedSlip.overtimePay.toFixed(2)}</span>
+                  <span>Overtime Pay ({Number(selectedSlip.overtimeHours) || 0} hrs @ 1.5x):</span>
+                  <span>+AED {safeFixed(selectedSlip.overtimePay, 2)}</span>
                 </div>
-                {(selectedSlip.advanceDeduction || 0) > 0 && (
+                {(Number(selectedSlip.advanceDeduction) || 0) > 0 && (
                   <div className="flex justify-between text-rose-700 font-bold">
                     <span>Salary Advance Recovery:</span>
-                    <span>-AED {selectedSlip.advanceDeduction.toFixed(2)}</span>
+                    <span>-AED {safeFixed(selectedSlip.advanceDeduction, 2)}</span>
                   </div>
                 )}
-                {(selectedSlip.loanEmiDeduction || 0) > 0 && (
+                {(Number(selectedSlip.loanEmiDeduction) || 0) > 0 && (
                   <div className="flex justify-between text-rose-700 font-bold">
                     <span>Installment Loan (EMI) Recovery:</span>
-                    <span>-AED {selectedSlip.loanEmiDeduction.toFixed(2)}</span>
+                    <span>-AED {safeFixed(selectedSlip.loanEmiDeduction, 2)}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-sm font-bold text-emerald-800 pt-2 border-t-2 border-slate-200 relative">
@@ -3014,7 +3032,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     />
                   </div>
                   <span>NET PAYABLE:</span>
-                  <span>AED {selectedSlip.netPay.toFixed(2)}</span>
+                  <span>AED {safeFixed(selectedSlip.netPay, 2)}</span>
                 </div>
               </div>
             </div>
@@ -3345,7 +3363,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 <div>
                   <span className="text-[10px] uppercase font-bold text-slate-500">Total Net Salaries Payable</span>
                   <div className="text-xl font-bold font-mono text-slate-900">
-                    AED {totalPayrollCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {safeFormatAed(totalPayrollCost)}
                   </div>
                 </div>
                 <div className="text-right">
@@ -3409,7 +3427,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       .filter(a => a.classification === 'ASSET' && (a.code.startsWith('112') || a.name.toLowerCase().includes('bank') || a.code.startsWith('111')))
                       .map(a => (
                         <option key={a.id} value={a.id}>
-                          {a.code} - {a.name} (Balance: AED {Number(a.currentBalance || 0).toLocaleString()})
+                          {a.code} - {a.name} (Balance: AED {safeFormatNum(a.currentBalance)})
                         </option>
                       ))}
                     {coaAccounts.filter(a => a.classification === 'ASSET' && (a.code.startsWith('112') || a.name.toLowerCase().includes('bank'))).length === 0 && (
@@ -3432,13 +3450,13 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 </div>
                 <div className="flex justify-between items-center text-emerald-400">
                   <span>DEBIT : 5310-00 Staff Salaries Expense</span>
-                  <span className="font-bold">+AED {totalPayrollCost.toFixed(2)}</span>
+                  <span className="font-bold">+AED {safeFixed(totalPayrollCost, 2)}</span>
                 </div>
                 <div className="flex justify-between items-center text-rose-400">
                   <span>
                     CREDIT: {paymentMode === 'CASH' ? '1110-00 Cash in Hand' : (coaAccounts.find(a => a.id === selectedBankAccountId)?.name || '1120-00 Bank Account')}
                   </span>
-                  <span className="font-bold">-AED {totalPayrollCost.toFixed(2)}</span>
+                  <span className="font-bold">-AED {safeFixed(totalPayrollCost, 2)}</span>
                 </div>
               </div>
             </div>
@@ -3496,7 +3514,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   <option value="">-- Choose Employee --</option>
                   {employees.filter(e => e.isActive !== false).map(e => (
                     <option key={e.id} value={e.id}>
-                      {e.empCode} - {e.name} ({e.designation} • Base: AED {e.baseSalary.toLocaleString()})
+                      {e.empCode} - {e.name} ({e.designation} • Base: AED {safeFormatNum(e.baseSalary)})
                     </option>
                   ))}
                 </select>
@@ -3577,13 +3595,13 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 <div className="flex justify-between items-center font-bold">
                   <span>Monthly EMI Deduction:</span>
                   <span className="text-sm font-mono text-blue-900">
-                    AED {(loanForm.principalAmount / (loanForm.type === 'SALARY_ADVANCE' ? 1 : loanForm.totalMonths)).toFixed(2)} / month
+                    AED {safeFixed(Number(loanForm.principalAmount || 0) / (loanForm.type === 'SALARY_ADVANCE' ? 1 : Math.max(1, Number(loanForm.totalMonths) || 1)), 2)} / month
                   </span>
                 </div>
                 <div className="text-[11px] text-blue-800">
                   {loanForm.type === 'SALARY_ADVANCE'
-                    ? `Full amount of AED ${loanForm.principalAmount} will be auto-deducted from ${loanForm.startMonth} salary.`
-                    : `AED ${(loanForm.principalAmount / loanForm.totalMonths).toFixed(2)} will be auto-deducted each month across ${loanForm.totalMonths} months starting from ${loanForm.startMonth}.`}
+                    ? `Full amount of AED ${safeFormatNum(loanForm.principalAmount)} will be auto-deducted from ${loanForm.startMonth} salary.`
+                    : `AED ${safeFixed(Number(loanForm.principalAmount || 0) / Math.max(1, Number(loanForm.totalMonths) || 1), 2)} will be auto-deducted each month across ${loanForm.totalMonths} months starting from ${loanForm.startMonth}.`}
                 </div>
               </div>
 
@@ -3697,19 +3715,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
               <div>
                 <span className="text-[10px] uppercase font-bold text-slate-500">Gross Payroll</span>
                 <div className="text-sm font-bold font-mono text-slate-800 mt-0.5">
-                  AED {payrollSlips.reduce((sum, p) => sum + p.grossPay, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  AED {safeFormatAed((payrollSlips || []).reduce((sum, p) => sum + (Number(p?.grossPay) || 0), 0))}
                 </div>
               </div>
               <div>
                 <span className="text-[10px] uppercase font-bold text-slate-500">Total Advance & Loans Cut</span>
                 <div className="text-sm font-bold font-mono text-rose-700 mt-0.5">
-                  -AED {payrollSlips.reduce((sum, p) => sum + (Number(p.totalDeductions) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  -AED {safeFormatAed((payrollSlips || []).reduce((sum, p) => sum + (Number(p?.totalDeductions) || 0), 0))}
                 </div>
               </div>
               <div>
                 <span className="text-[10px] uppercase font-bold text-slate-500">Net Payable Amount</span>
                 <div className="text-sm font-bold font-mono text-emerald-700 mt-0.5">
-                  AED {totalPayrollCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  AED {safeFormatAed(totalPayrollCost)}
                 </div>
               </div>
             </div>
@@ -3741,11 +3759,11 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                           <div>{slip.employeeName}</div>
                           <div className="text-[10px] text-slate-400 font-normal">{slip.designation}</div>
                         </td>
-                        <td className="px-3 py-2 font-mono text-slate-700">AED {slip.baseSalary.toLocaleString()}</td>
+                        <td className="px-3 py-2 font-mono text-slate-700">AED {safeFormatNum(slip.baseSalary)}</td>
                         <td className="px-3 py-2 font-mono text-slate-700">{slip.daysWorked}/30</td>
-                        <td className="px-3 py-2 font-mono text-slate-800">AED {slip.earnedBasic.toFixed(2)}</td>
-                        <td className="px-3 py-2 font-mono text-emerald-700">+AED {slip.overtimePay.toFixed(2)}</td>
-                        <td className="px-3 py-2 font-mono text-slate-700">+AED {slip.allowances.toFixed(2)}</td>
+                        <td className="px-3 py-2 font-mono text-slate-800">AED {safeFixed(slip.earnedBasic, 2)}</td>
+                        <td className="px-3 py-2 font-mono text-emerald-700">+AED {safeFixed(slip.overtimePay, 2)}</td>
+                        <td className="px-3 py-2 font-mono text-slate-700">+AED {safeFixed(slip.allowances, 2)}</td>
 
                         {/* Advance Cut Input */}
                         <td className="px-3 py-2 bg-rose-50/30">
@@ -3783,7 +3801,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
 
                         {/* Net Pay Result */}
                         <td className="px-3 py-2 font-mono font-bold text-emerald-800 bg-emerald-50/30 text-xs">
-                          AED {slip.netPay.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          AED {safeFormatAed(slip.netPay)}
                         </td>
 
                         <td className="px-3 py-2 text-right font-sans">
