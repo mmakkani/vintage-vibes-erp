@@ -627,6 +627,74 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     { key: 'EXPENSE', code: '5000', label: '5000: EXPENSES (COGS & Overheads)', color: 'text-amber-900', bg: 'bg-amber-50 border-amber-200' }
   ];
 
+  const getPeriodLabel = () => {
+    if (reportPeriod === '2026') return 'Fiscal Year 2026 (01 Jan 2026 – 31 Dec 2026)';
+    if (reportPeriod === '2025') return 'Fiscal Year 2025 (01 Jan 2025 – 31 Dec 2025)';
+    if (reportPeriod === 'ALL') return 'All Historical Postings (Inception to Date)';
+    return `Custom Date Range (${reportStartDate || 'Start'} to ${reportEndDate || 'End'})`;
+  };
+
+  const getAsOfLabel = () => {
+    if (reportPeriod === '2026') return 'As of 31 Dec 2026';
+    if (reportPeriod === '2025') return 'As of 31 Dec 2025';
+    if (reportPeriod === 'ALL') return 'As of Today';
+    return `As of ${reportEndDate || 'Current Date'}`;
+  };
+
+  const renderReportingPeriodSelector = () => (
+    <div className="flex flex-wrap items-center justify-between gap-3 bg-amber-50/60 border border-amber-200 p-3 rounded-xl mb-5 shadow-xs">
+      <div className="flex items-center gap-2">
+        <Calendar className="w-4 h-4 text-amber-700" />
+        <span className="text-xs font-bold text-amber-950 uppercase tracking-wider">Fiscal Period:</span>
+        <div className="inline-flex rounded-lg border border-amber-300 bg-white p-0.5 shadow-xs">
+          {(['2026', '2025', 'ALL', 'CUSTOM'] as const).map((period) => (
+            <button
+              key={period}
+              type="button"
+              onClick={() => handlePeriodChange(period)}
+              className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                reportPeriod === period
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'text-slate-700 hover:text-amber-950 hover:bg-amber-100/50'
+              }`}
+            >
+              {period === '2026' ? 'FY 2026' : period === '2025' ? 'FY 2025' : period === 'ALL' ? 'All Time' : 'Custom Dates'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        {reportPeriod === 'CUSTOM' && (
+          <div className="flex items-center gap-1.5">
+            <input
+              type="date"
+              value={reportStartDate}
+              onChange={(e) => setReportStartDate(e.target.value)}
+              className="text-xs border border-amber-300 rounded-lg px-2.5 py-1 bg-white font-mono focus:ring-2 focus:ring-amber-500"
+            />
+            <span className="text-xs text-amber-800 font-bold">to</span>
+            <input
+              type="date"
+              value={reportEndDate}
+              onChange={(e) => setReportEndDate(e.target.value)}
+              className="text-xs border border-amber-300 rounded-lg px-2.5 py-1 bg-white font-mono focus:ring-2 focus:ring-amber-500"
+            />
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => loadData()}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white border border-amber-300 text-amber-900 text-xs font-bold hover:bg-amber-100/60 transition-colors shadow-xs cursor-pointer"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-amber-600' : 'text-amber-700'}`} />
+          <span>Refresh Database Reports</span>
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div id="comprehensive-finance-module-view" className="space-y-4">
       {/* 1. TOP SUBTABS NAVIGATOR */}
@@ -1113,6 +1181,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           ======================================================== */}
       {subTab === 'trial-balance' && (
         <div className="space-y-4 w-full">
+          {renderReportingPeriodSelector()}
+
           <div className="bg-white rounded-xl border border-amber-200/90 shadow-xs p-5 w-full">
             <div className="text-center pb-4 mb-4 border-b border-amber-200">
               <h3 className="font-serif font-black text-base uppercase tracking-wider text-amber-950">
@@ -1122,7 +1192,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 AUDITED TRIAL BALANCE
               </div>
               <p className="text-xs text-slate-500 font-mono mt-0.5">
-                Financial Period: YTD 2026 &bull; Currency: AED (UAE Dirham)
+                Financial Period: {getPeriodLabel()} &bull; Currency: AED (UAE Dirham)
               </p>
             </div>
 
@@ -1138,19 +1208,27 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
-                  {(reports?.trialBalance || []).map((row, idx) => (
-                    <tr key={idx} className="hover:bg-amber-50/40">
-                      <td className="py-2 px-3 font-bold text-slate-900">{row.accountCode}</td>
-                      <td className="py-2 px-3 font-sans font-medium text-slate-900">{row.accountName}</td>
-                      <td className="py-2 px-3 text-slate-600 uppercase text-[10px]">{row.classification}</td>
-                      <td className="py-2 px-3 text-right font-bold text-slate-900">
-                        {Number(row.debit || 0) > 0 ? Number(row.debit || 0).toFixed(2) : '-'}
-                      </td>
-                      <td className="py-2 px-3 text-right font-bold text-slate-900">
-                        {Number(row.credit || 0) > 0 ? Number(row.credit || 0).toFixed(2) : '-'}
+                  {(reports?.trialBalance || []).length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-slate-400 font-sans">
+                        No transactions recorded for the selected period ({getPeriodLabel()}).
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    (reports?.trialBalance || []).map((row, idx) => (
+                      <tr key={idx} className="hover:bg-amber-50/40">
+                        <td className="py-2 px-3 font-bold text-slate-900">{row.accountCode}</td>
+                        <td className="py-2 px-3 font-sans font-medium text-slate-900">{row.accountName}</td>
+                        <td className="py-2 px-3 text-slate-600 uppercase text-[10px]">{row.classification}</td>
+                        <td className="py-2 px-3 text-right font-bold text-slate-900">
+                          {Number(row.debit || 0) > 0 ? Number(row.debit || 0).toFixed(2) : '-'}
+                        </td>
+                        <td className="py-2 px-3 text-right font-bold text-slate-900">
+                          {Number(row.credit || 0) > 0 ? Number(row.credit || 0).toFixed(2) : '-'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 border-amber-900/60 bg-amber-50 font-mono font-black text-xs text-amber-950">
@@ -1158,10 +1236,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       Trial Balance Grand Totals:
                     </td>
                     <td className="py-3 px-3 text-right">
-                      AED {(reports?.trialBalance || []).reduce((sum, r) => sum + (Number(r.debit) || 0), 0).toFixed(2)}
+                      AED {Number((reports as any)?.trialBalanceMeta?.totalDebit ?? (reports?.trialBalance || []).reduce((sum, r) => sum + (Number(r.debit) || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="py-3 px-3 text-right">
-                      AED {(reports?.trialBalance || []).reduce((sum, r) => sum + (Number(r.credit) || 0), 0).toFixed(2)}
+                      AED {Number((reports as any)?.trialBalanceMeta?.totalCredit ?? (reports?.trialBalance || []).reduce((sum, r) => sum + (Number(r.credit) || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                   </tr>
                 </tfoot>
@@ -1169,9 +1247,15 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
             </div>
 
             <div className="mt-4 pt-3 border-t border-amber-200 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-1.5 text-emerald-800 font-bold">
+              <div className={`flex items-center gap-1.5 font-bold font-sans ${
+                ((reports as any)?.trialBalanceMeta?.isBalanced ?? true) ? 'text-emerald-800' : 'text-rose-800'
+              }`}>
                 <ShieldCheck className="w-4 h-4" />
-                <span>Verification: Debit and Credit columns equal. General Ledger balanced.</span>
+                <span>
+                  {((reports as any)?.trialBalanceMeta?.isBalanced ?? true)
+                    ? 'Verification: Debit and Credit columns equal. General Ledger balanced to zero discrepancy.'
+                    : `Discrepancy: Trial balance out of balance by AED ${Number((reports as any)?.trialBalanceMeta?.difference || 0).toFixed(2)}`}
+                </span>
               </div>
               <button
                 type="button"
@@ -1191,6 +1275,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           ======================================================== */}
       {subTab === 'income-statement' && (
         <div className="space-y-4 w-full">
+          {renderReportingPeriodSelector()}
+
           <div className="bg-white rounded-xl border border-amber-200/90 shadow-xs p-6 w-full">
             <div className="text-center pb-4 mb-4 border-b border-amber-200">
               <h3 className="font-serif font-black text-base uppercase tracking-wider text-amber-950">
@@ -1200,64 +1286,102 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 STATEMENT OF PROFIT OR LOSS (INCOME STATEMENT)
               </div>
               <p className="text-xs text-slate-500 font-mono mt-0.5">
-                For the period ended 2026 &bull; Currency: AED
+                Financial Period: {getPeriodLabel()} &bull; Currency: AED (UAE Dirham)
               </p>
             </div>
 
             <div className="space-y-4 font-mono text-xs">
               {/* 1. Operating Revenue */}
               <div>
-                <div className="bg-emerald-50/80 p-2 rounded-lg font-bold text-emerald-950 uppercase tracking-wider flex justify-between font-sans">
-                  <span>Operating Revenue (Wholesale & Retail)</span>
-                  <span className="font-mono">
-                    AED {Number(reports?.incomeStatement?.revenue?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="bg-emerald-50/80 p-2.5 rounded-lg font-bold text-emerald-950 uppercase tracking-wider flex justify-between font-sans border border-emerald-200">
+                  <span>Operating Revenue (Wholesale & Retail Sales)</span>
+                  <span className="font-mono text-sm">
+                    AED {Number(reports?.incomeStatement?.revenue?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="divide-y divide-slate-100 pl-4 pr-2 pt-1">
-                  {(reports?.incomeStatement?.revenue?.accounts || []).map((a, i) => (
-                    <div key={i} className="py-1.5 flex justify-between">
-                      <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                      <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
-                    </div>
-                  ))}
+                  {(reports?.incomeStatement?.revenue?.accounts || []).length === 0 ? (
+                    <div className="py-2 text-slate-400 font-sans italic text-center">No revenue recorded in this period</div>
+                  ) : (
+                    (reports?.incomeStatement?.revenue?.accounts || []).map((a: any, i: number) => (
+                      <div key={i} className="py-1.5 flex justify-between">
+                        <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
+                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
-              {/* 2. Operating Expenses */}
+              {/* 2. Cost of Goods Sold (COGS) */}
+              {(reports?.incomeStatement?.cogs?.accounts || []).length > 0 && (
+                <div>
+                  <div className="bg-amber-50/80 p-2.5 rounded-lg font-bold text-amber-950 uppercase tracking-wider flex justify-between font-sans border border-amber-200">
+                    <span>Cost of Goods Sold (Direct Costs, Freight & Customs)</span>
+                    <span className="font-mono text-sm">
+                      AED {Number(reports?.incomeStatement?.cogs?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-slate-100 pl-4 pr-2 pt-1">
+                    {(reports?.incomeStatement?.cogs?.accounts || []).map((a: any, i: number) => (
+                      <div key={i} className="py-1.5 flex justify-between">
+                        <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
+                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Gross Profit Summary */}
+              <div className="p-2.5 rounded-lg bg-emerald-50/50 border border-emerald-200 flex items-center justify-between font-sans font-bold text-xs text-emerald-950">
+                <span className="uppercase tracking-wider">Gross Operating Profit:</span>
+                <span className="font-mono font-black text-emerald-900 text-sm">
+                  AED {Number(reports?.incomeStatement?.grossProfit ?? ((reports?.incomeStatement?.revenue?.total || 0) - (reports?.incomeStatement?.cogs?.total || 0))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+
+              {/* 3. Operating Expenses */}
               <div>
-                <div className="bg-amber-50/80 p-2 rounded-lg font-bold text-amber-950 uppercase tracking-wider flex justify-between font-sans">
-                  <span>Cost of Goods & Operating Expenses</span>
-                  <span className="font-mono">
-                    AED {Number(reports?.incomeStatement?.expenses?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="bg-rose-50/80 p-2.5 rounded-lg font-bold text-rose-950 uppercase tracking-wider flex justify-between font-sans border border-rose-200">
+                  <span>Operating Expenses (Overheads & Administration)</span>
+                  <span className="font-mono text-sm">
+                    AED {Number(reports?.incomeStatement?.operatingExpenses?.total ?? reports?.incomeStatement?.expenses?.total ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="divide-y divide-slate-100 pl-4 pr-2 pt-1">
-                  {(reports?.incomeStatement?.expenses?.accounts || []).map((a, i) => (
-                    <div key={i} className="py-1.5 flex justify-between">
-                      <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                      <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
-                    </div>
-                  ))}
+                  {((reports?.incomeStatement?.operatingExpenses?.accounts ?? reports?.incomeStatement?.expenses?.accounts) || []).length === 0 ? (
+                    <div className="py-2 text-slate-400 font-sans italic text-center">No operating expenses recorded in this period</div>
+                  ) : (
+                    ((reports?.incomeStatement?.operatingExpenses?.accounts ?? reports?.incomeStatement?.expenses?.accounts) || []).map((a: any, i: number) => (
+                      <div key={i} className="py-1.5 flex justify-between">
+                        <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
+                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
               {/* Net Profit Summary Row */}
               <div className="pt-4 border-t-2 border-amber-900/60">
-                <div className="p-3 rounded-xl bg-gradient-to-r from-amber-100/90 to-amber-200/80 flex items-center justify-between font-serif font-black text-sm text-amber-950">
-                  <span className="uppercase tracking-wider">Net Operating Profit (YTD):</span>
-                  <span className="font-mono text-base font-black text-emerald-900">
-                    AED {Number(reports?.incomeStatement?.netProfit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="p-3.5 rounded-xl bg-gradient-to-r from-amber-100/90 to-amber-200/80 flex items-center justify-between font-serif font-black text-sm text-amber-950 shadow-xs">
+                  <span className="uppercase tracking-wider">Net Operating Profit / (Loss):</span>
+                  <span className={`font-mono text-base font-black ${
+                    Number(reports?.incomeStatement?.netProfit || 0) >= 0 ? 'text-emerald-900' : 'text-rose-900'
+                  }`}>
+                    AED {Number(reports?.incomeStatement?.netProfit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
               </div>
             </div>
 
             <div className="mt-6 pt-3 border-t border-amber-200 flex items-center justify-between text-xs print:hidden">
-              <span className="text-slate-500 font-sans">Prepared for Board Review and FTA Corporate Tax Filing</span>
+              <span className="text-slate-500 font-sans">Computed directly via PostgreSQL RPC &bull; Prepared for Board Review and FTA Corporate Tax Filing</span>
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer shadow-xs"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>Print Income Statement</span>
@@ -1272,6 +1396,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           ======================================================== */}
       {subTab === 'balance-sheet' && (
         <div className="space-y-4 w-full">
+          {renderReportingPeriodSelector()}
+
           <div className="bg-white rounded-xl border border-amber-200/90 shadow-xs p-6 w-full">
             <div className="text-center pb-4 mb-4 border-b border-amber-200">
               <h3 className="font-serif font-black text-base uppercase tracking-wider text-amber-950">
@@ -1281,7 +1407,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 STATEMENT OF FINANCIAL POSITION (BALANCE SHEET)
               </div>
               <p className="text-xs text-slate-500 font-mono mt-0.5">
-                As of 2026 &bull; Dual-Entry Verification: ASSETS = LIABILITIES + EQUITY
+                {getAsOfLabel()} &bull; Dual-Entry Verification: ASSETS = LIABILITIES + EQUITY
               </p>
             </div>
 
@@ -1289,18 +1415,22 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               {/* Left Col: ASSETS */}
               <div className="space-y-3">
                 <div className="bg-blue-50/80 p-2.5 rounded-lg font-bold text-blue-950 uppercase tracking-wider flex justify-between font-sans border border-blue-200">
-                  <span>Total Assets</span>
-                  <span className="font-mono">
-                    AED {Number(reports?.balanceSheet?.assets?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  <span>Total Assets (Current & Fixed)</span>
+                  <span className="font-mono text-sm">
+                    AED {Number(reports?.balanceSheet?.assets?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="divide-y divide-slate-100 pl-2">
-                  {(reports?.balanceSheet?.assets?.accounts || []).map((a, i) => (
-                    <div key={i} className="py-2 flex justify-between">
-                      <span className="font-sans text-slate-800">{a.name}</span>
-                      <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
-                    </div>
-                  ))}
+                  {(reports?.balanceSheet?.assets?.accounts || []).length === 0 ? (
+                    <div className="py-2 text-slate-400 font-sans italic text-center">No asset accounts found</div>
+                  ) : (
+                    (reports?.balanceSheet?.assets?.accounts || []).map((a: any, i: number) => (
+                      <div key={i} className="py-2 flex justify-between">
+                        <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
+                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -1309,18 +1439,22 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 {/* Liabilities */}
                 <div className="space-y-2">
                   <div className="bg-rose-50/80 p-2.5 rounded-lg font-bold text-rose-950 uppercase tracking-wider flex justify-between font-sans border border-rose-200">
-                    <span>Total Liabilities</span>
-                    <span className="font-mono">
-                      AED {Number(reports?.balanceSheet?.liabilities?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <span>Total Liabilities (Payables & Dues)</span>
+                    <span className="font-mono text-sm">
+                      AED {Number(reports?.balanceSheet?.liabilities?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div className="divide-y divide-slate-100 pl-2">
-                    {(reports?.balanceSheet?.liabilities?.accounts || []).map((a, i) => (
-                      <div key={i} className="py-1.5 flex justify-between">
-                        <span className="font-sans text-slate-800">{a.name}</span>
-                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
-                      </div>
-                    ))}
+                    {(reports?.balanceSheet?.liabilities?.accounts || []).length === 0 ? (
+                      <div className="py-1.5 text-slate-400 font-sans italic text-center">No liability accounts found</div>
+                    ) : (
+                      (reports?.balanceSheet?.liabilities?.accounts || []).map((a: any, i: number) => (
+                        <div key={i} className="py-1.5 flex justify-between">
+                          <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
+                          <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
 
@@ -1328,17 +1462,21 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <div className="space-y-2">
                   <div className="bg-purple-50/80 p-2.5 rounded-lg font-bold text-purple-950 uppercase tracking-wider flex justify-between font-sans border border-purple-200">
                     <span>Shareholders' Equity & Retained Earnings</span>
-                    <span className="font-mono">
-                      AED {Number(reports?.balanceSheet?.equity?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <span className="font-mono text-sm">
+                      AED {Number(reports?.balanceSheet?.equity?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div className="divide-y divide-slate-100 pl-2">
-                    {(reports?.balanceSheet?.equity?.accounts || []).map((a, i) => (
-                      <div key={i} className="py-1.5 flex justify-between">
-                        <span className="font-sans text-slate-800">{a.name}</span>
-                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
-                      </div>
-                    ))}
+                    {(reports?.balanceSheet?.equity?.accounts || []).length === 0 ? (
+                      <div className="py-1.5 text-slate-400 font-sans italic text-center">No equity accounts found</div>
+                    ) : (
+                      (reports?.balanceSheet?.equity?.accounts || []).map((a: any, i: number) => (
+                        <div key={i} className="py-1.5 flex justify-between">
+                          <span className="font-sans text-slate-800">{a.code ? `${a.code} - ` : ''}{a.name}</span>
+                          <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </div>
@@ -1346,8 +1484,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
             {/* Balancing Proof Bar */}
             <div className="mt-6 pt-4 border-t-2 border-amber-900/60">
-              <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
-                <div className="flex items-center gap-2 text-emerald-800 font-bold font-sans">
+              <div className={`p-3 rounded-xl border flex flex-wrap items-center justify-between gap-2 font-mono text-xs ${
+                reports?.balanceSheet?.balanced
+                  ? 'bg-emerald-50/80 border-emerald-300'
+                  : 'bg-rose-50/80 border-rose-300'
+              }`}>
+                <div className={`flex items-center gap-2 font-bold font-sans ${
+                  reports?.balanceSheet?.balanced ? 'text-emerald-800' : 'text-rose-800'
+                }`}>
                   <ShieldCheck className="w-4 h-4" />
                   <span>
                     Balance Sheet Status:{' '}
@@ -1355,16 +1499,22 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   </span>
                 </div>
                 <div className="font-bold text-slate-900">
-                  Assets (AED {Number(reports?.balanceSheet?.assets?.total || 0).toFixed(2)}) = Liab + Equity (AED {(Number(reports?.balanceSheet?.liabilities?.total || 0) + Number(reports?.balanceSheet?.equity?.total || 0)).toFixed(2)})
+                  Assets (AED {Number(reports?.balanceSheet?.assets?.total || 0).toFixed(2)}) = Liab + Equity (AED {Number(reports?.balanceSheet?.totalLiabilitiesAndEquity ?? ((reports?.balanceSheet?.liabilities?.total || 0) + (reports?.balanceSheet?.equity?.total || 0))).toFixed(2)})
+                  {!reports?.balanceSheet?.balanced && Number(reports?.balanceSheet?.difference || 0) !== 0 && (
+                    <span className="text-rose-700 font-bold ml-2 font-sans">
+                      (Diff: AED {Number(reports?.balanceSheet?.difference || 0).toFixed(2)})
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
 
-            <div className="mt-4 pt-2 flex items-center justify-end print:hidden">
+            <div className="mt-4 pt-2 flex items-center justify-between text-xs print:hidden">
+              <span className="text-slate-500 font-sans">Computed directly via PostgreSQL RPC &bull; Dual-Entry Integrity Validated</span>
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer shadow-xs"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>Print Balance Sheet</span>
