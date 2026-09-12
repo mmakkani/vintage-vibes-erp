@@ -156,10 +156,12 @@ export class SalesService {
     payment_type?: string;
     payment_status?: string;
   }): Promise<any> {
+    const id = String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : ('pos-' + Date.now()));
     const invoiceNumber = sale.invoice_number || `POS-${Date.now().toString().slice(-6)}`;
     const payload = {
+      id,
       invoice_number: invoiceNumber,
-      cashier_id: sale.cashier_id || null,
+      cashier_id: sale.cashier_id ? String(sale.cashier_id) : null,
       customer_name: sale.customer_name || 'Walk-in Customer',
       customer_phone: sale.customer_phone || '',
       items: sale.items || [],
@@ -258,12 +260,14 @@ export class SalesService {
     credit_status?: string;
     shipping_address?: string;
   }): Promise<any> {
+    const id = String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : ('b2b-' + Date.now()));
     const invoiceNum = b2b.b2b_invoice_number || `B2B-${Date.now().toString().slice(-6)}`;
     const total = Number(b2b.total_amount || 0);
     const paid = Number(b2b.paid_amount || 0);
     const balance = b2b.balance_due !== undefined ? Number(b2b.balance_due) : (total - paid);
 
     const payload = {
+      id,
       b2b_invoice_number: invoiceNum,
       company_name: b2b.company_name,
       trn_number: b2b.trn_number || '',
@@ -293,12 +297,15 @@ export class SalesService {
 
     // Auto-record in ledgers if accounts receivable exists
     try {
+      const ledgerId = String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : ('led-' + Date.now()));
       await supabase.from('ledgers').insert({
+        id: ledgerId,
         date: new Date().toISOString().slice(0, 10),
         account_code: '1200-00',
         account_name: `Accounts Receivable - ${b2b.company_name}`,
         debit: total,
         credit: 0,
+        balance: total,
         narration: `B2B Invoice ${invoiceNum} generated for ${b2b.company_name}`
       });
     } catch (e) {
@@ -338,8 +345,10 @@ export class SalesService {
     order_status?: string;
     source?: string;
   }): Promise<any> {
+    const id = String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : ('ord-' + Date.now()));
     const orderNum = order.order_number || `ORD-${Date.now().toString().slice(-6)}`;
     const payload = {
+      id,
       order_number: orderNum,
       customer_name: order.customer_name,
       customer_phone: order.customer_phone,
@@ -395,8 +404,10 @@ export class SalesService {
     claim_status?: string;
     converted_to_order_id?: string;
   }): Promise<any> {
+    const id = String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : ('lss-' + Date.now()));
     const payload = {
-      session_id: sale.session_id || 'LIVE-STREAM',
+      id,
+      session_id: sale.session_id ? String(sale.session_id) : 'LIVE-STREAM',
       platform: sale.platform || 'TIKTOK',
       customer_handle: sale.customer_handle,
       customer_phone: sale.customer_phone || '',
@@ -404,7 +415,7 @@ export class SalesService {
       item_description: sale.item_description || '',
       claimed_price: Number(sale.claimed_price || 0),
       claim_status: sale.claim_status || 'CLAIMED',
-      converted_to_order_id: sale.converted_to_order_id || null,
+      converted_to_order_id: sale.converted_to_order_id ? String(sale.converted_to_order_id) : null,
       created_at: new Date().toISOString()
     };
 
