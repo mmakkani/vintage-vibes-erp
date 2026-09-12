@@ -94,7 +94,7 @@ const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, onViewLe
       </td>
       <td className="px-3.5 py-2.5 text-slate-700">{acc.currency || 'AED'}</td>
       <td className="px-3.5 py-2.5 text-right font-bold text-slate-900">
-        AED {currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        AED {Number(currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
         <span className="text-[9px] text-slate-500 ml-1 font-sans">
           ({isDebit ? 'Dr' : 'Cr'})
         </span>
@@ -668,7 +668,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     {p.key}
                   </div>
                   <div className="font-mono text-sm font-bold text-slate-900">
-                    AED {totalVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {Number(totalVal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </div>
                 </div>
               );
@@ -802,21 +802,21 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
-                  {vouchers.map(v => (
+                  {(vouchers || []).map(v => (
                     <tr key={v.id} className="hover:bg-amber-50/30 transition-colors">
-                      <td className="px-3.5 py-2.5 font-bold text-slate-900">{v.voucherNo}</td>
+                      <td className="px-3.5 py-2.5 font-bold text-slate-900">{v.voucherNo || v.id}</td>
                       <td className="px-3.5 py-2.5">
                         <span className="font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-800 text-[10px]">
-                          {v.type}
+                          {v.type || 'JOURNAL'}
                         </span>
                       </td>
                       <td className="px-3.5 py-2.5 text-slate-600">{v.date}</td>
-                      <td className="px-3.5 py-2.5 font-sans text-slate-800 truncate max-w-xs">{v.narration}</td>
+                      <td className="px-3.5 py-2.5 font-sans text-slate-800 truncate max-w-xs">{v.narration || '-'}</td>
                       <td className="px-3.5 py-2.5 text-right font-bold text-slate-900">
-                        AED {v.totalDebit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        AED {Number(v.totalDebit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
                       <td className="px-3.5 py-2.5 text-right font-bold text-slate-900">
-                        AED {v.totalCredit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        AED {Number(v.totalCredit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
                       <td className="px-3.5 py-2.5 text-center">
                         <span
@@ -978,8 +978,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 Chronological Ledger Statement ({filteredLedgers.length} postings)
               </span>
               <div className="text-xs font-mono font-bold text-slate-800 space-x-4">
-                <span>Total Debits: <strong className="text-emerald-800">AED {totalGlDebits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></span>
-                <span>Total Credits: <strong className="text-rose-800">AED {totalGlCredits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></span>
+                <span>Total Debits: <strong className="text-emerald-800">AED {Number(totalGlDebits || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></span>
+                <span>Total Credits: <strong className="text-rose-800">AED {Number(totalGlCredits || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></span>
               </div>
             </div>
 
@@ -1022,21 +1022,21 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       </td>
                     </tr>
                   ) : (
-                    filteredLedgers.map(l => (
+                    (filteredLedgers || []).map(l => (
                       <tr key={l.id} className="hover:bg-amber-50/30 transition-colors">
                         <td className="px-3.5 py-2 text-slate-600">{l.date}</td>
-                        <td className="px-3.5 py-2 font-bold text-slate-900">{l.voucherNo}</td>
+                        <td className="px-3.5 py-2 font-bold text-slate-900">{l.voucherNo || '-'}</td>
                         <td className="px-3.5 py-2 font-bold text-amber-900">{l.accountCode}</td>
                         <td className="px-3.5 py-2 font-sans text-slate-800">{l.accountName}</td>
                         <td className="px-3.5 py-2 font-sans text-slate-600 truncate max-w-xs">{l.narration}</td>
                         <td className="px-3.5 py-2 text-right font-bold text-slate-900">
-                          {l.debit > 0 ? l.debit.toFixed(2) : '-'}
+                          {Number(l.debit || 0) > 0 ? Number(l.debit || 0).toFixed(2) : '-'}
                         </td>
                         <td className="px-3.5 py-2 text-right font-bold text-slate-900">
-                          {l.credit > 0 ? l.credit.toFixed(2) : '-'}
+                          {Number(l.credit || 0) > 0 ? Number(l.credit || 0).toFixed(2) : '-'}
                         </td>
                         <td className="px-3.5 py-2 text-right font-black text-amber-950">
-                          AED {l.runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          AED {Number(l.runningBalance ?? (l as any).balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </td>
                       </tr>
                     ))
@@ -1078,16 +1078,16 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
-                  {reports?.trialBalance.map((row, idx) => (
+                  {(reports?.trialBalance || []).map((row, idx) => (
                     <tr key={idx} className="hover:bg-amber-50/40">
                       <td className="py-2 px-3 font-bold text-slate-900">{row.accountCode}</td>
                       <td className="py-2 px-3 font-sans font-medium text-slate-900">{row.accountName}</td>
                       <td className="py-2 px-3 text-slate-600 uppercase text-[10px]">{row.classification}</td>
                       <td className="py-2 px-3 text-right font-bold text-slate-900">
-                        {row.debit > 0 ? row.debit.toFixed(2) : '-'}
+                        {Number(row.debit || 0) > 0 ? Number(row.debit || 0).toFixed(2) : '-'}
                       </td>
                       <td className="py-2 px-3 text-right font-bold text-slate-900">
-                        {row.credit > 0 ? row.credit.toFixed(2) : '-'}
+                        {Number(row.credit || 0) > 0 ? Number(row.credit || 0).toFixed(2) : '-'}
                       </td>
                     </tr>
                   ))}
@@ -1098,10 +1098,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       Trial Balance Grand Totals:
                     </td>
                     <td className="py-3 px-3 text-right">
-                      AED {reports?.trialBalance.reduce((sum, r) => sum + r.debit, 0).toFixed(2)}
+                      AED {(reports?.trialBalance || []).reduce((sum, r) => sum + (Number(r.debit) || 0), 0).toFixed(2)}
                     </td>
                     <td className="py-3 px-3 text-right">
-                      AED {reports?.trialBalance.reduce((sum, r) => sum + r.credit, 0).toFixed(2)}
+                      AED {(reports?.trialBalance || []).reduce((sum, r) => sum + (Number(r.credit) || 0), 0).toFixed(2)}
                     </td>
                   </tr>
                 </tfoot>
@@ -1150,14 +1150,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <div className="bg-emerald-50/80 p-2 rounded-lg font-bold text-emerald-950 uppercase tracking-wider flex justify-between font-sans">
                   <span>Operating Revenue (Wholesale & Retail)</span>
                   <span className="font-mono">
-                    AED {reports?.incomeStatement.revenue.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {Number(reports?.incomeStatement?.revenue?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="divide-y divide-slate-100 pl-4 pr-2 pt-1">
-                  {reports?.incomeStatement.revenue.accounts.map((a, i) => (
+                  {(reports?.incomeStatement?.revenue?.accounts || []).map((a, i) => (
                     <div key={i} className="py-1.5 flex justify-between">
                       <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                      <span className="font-bold text-slate-900">AED {a.balance.toFixed(2)}</span>
+                      <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
                     </div>
                   ))}
                 </div>
@@ -1168,14 +1168,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <div className="bg-amber-50/80 p-2 rounded-lg font-bold text-amber-950 uppercase tracking-wider flex justify-between font-sans">
                   <span>Cost of Goods & Operating Expenses</span>
                   <span className="font-mono">
-                    AED {reports?.incomeStatement.expenses.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {Number(reports?.incomeStatement?.expenses?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="divide-y divide-slate-100 pl-4 pr-2 pt-1">
-                  {reports?.incomeStatement.expenses.accounts.map((a, i) => (
+                  {(reports?.incomeStatement?.expenses?.accounts || []).map((a, i) => (
                     <div key={i} className="py-1.5 flex justify-between">
                       <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                      <span className="font-bold text-slate-900">AED {a.balance.toFixed(2)}</span>
+                      <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
                     </div>
                   ))}
                 </div>
@@ -1186,7 +1186,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <div className="p-3 rounded-xl bg-gradient-to-r from-amber-100/90 to-amber-200/80 flex items-center justify-between font-serif font-black text-sm text-amber-950">
                   <span className="uppercase tracking-wider">Net Operating Profit (YTD):</span>
                   <span className="font-mono text-base font-black text-emerald-900">
-                    AED {reports?.incomeStatement.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {Number(reports?.incomeStatement?.netProfit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
               </div>
@@ -1231,14 +1231,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <div className="bg-blue-50/80 p-2.5 rounded-lg font-bold text-blue-950 uppercase tracking-wider flex justify-between font-sans border border-blue-200">
                   <span>Total Assets</span>
                   <span className="font-mono">
-                    AED {reports?.balanceSheet.assets.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {Number(reports?.balanceSheet?.assets?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="divide-y divide-slate-100 pl-2">
-                  {reports?.balanceSheet.assets.accounts.map((a, i) => (
+                  {(reports?.balanceSheet?.assets?.accounts || []).map((a, i) => (
                     <div key={i} className="py-2 flex justify-between">
                       <span className="font-sans text-slate-800">{a.name}</span>
-                      <span className="font-bold text-slate-900">AED {a.balance.toFixed(2)}</span>
+                      <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
                     </div>
                   ))}
                 </div>
@@ -1251,14 +1251,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   <div className="bg-rose-50/80 p-2.5 rounded-lg font-bold text-rose-950 uppercase tracking-wider flex justify-between font-sans border border-rose-200">
                     <span>Total Liabilities</span>
                     <span className="font-mono">
-                      AED {reports?.balanceSheet.liabilities.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      AED {Number(reports?.balanceSheet?.liabilities?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div className="divide-y divide-slate-100 pl-2">
-                    {reports?.balanceSheet.liabilities.accounts.map((a, i) => (
+                    {(reports?.balanceSheet?.liabilities?.accounts || []).map((a, i) => (
                       <div key={i} className="py-1.5 flex justify-between">
                         <span className="font-sans text-slate-800">{a.name}</span>
-                        <span className="font-bold text-slate-900">AED {a.balance.toFixed(2)}</span>
+                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
                       </div>
                     ))}
                   </div>
@@ -1269,14 +1269,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   <div className="bg-purple-50/80 p-2.5 rounded-lg font-bold text-purple-950 uppercase tracking-wider flex justify-between font-sans border border-purple-200">
                     <span>Shareholders' Equity & Retained Earnings</span>
                     <span className="font-mono">
-                      AED {reports?.balanceSheet.equity.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      AED {Number(reports?.balanceSheet?.equity?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div className="divide-y divide-slate-100 pl-2">
-                    {reports?.balanceSheet.equity.accounts.map((a, i) => (
+                    {(reports?.balanceSheet?.equity?.accounts || []).map((a, i) => (
                       <div key={i} className="py-1.5 flex justify-between">
                         <span className="font-sans text-slate-800">{a.name}</span>
-                        <span className="font-bold text-slate-900">AED {a.balance.toFixed(2)}</span>
+                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
                       </div>
                     ))}
                   </div>
@@ -1291,11 +1291,11 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   <ShieldCheck className="w-4 h-4" />
                   <span>
                     Balance Sheet Status:{' '}
-                    <strong>{reports?.balanceSheet.balanced ? 'BALANCED TO ZERO DIFFERENCE' : 'OUT OF BALANCE'}</strong>
+                    <strong>{reports?.balanceSheet?.balanced ? 'BALANCED TO ZERO DIFFERENCE' : 'OUT OF BALANCE'}</strong>
                   </span>
                 </div>
                 <div className="font-bold text-slate-900">
-                  Assets (AED {reports?.balanceSheet.assets.total.toFixed(2)}) = Liab + Equity (AED {(reports?.balanceSheet.liabilities.total! + reports?.balanceSheet.equity.total!).toFixed(2)})
+                  Assets (AED {Number(reports?.balanceSheet?.assets?.total || 0).toFixed(2)}) = Liab + Equity (AED {(Number(reports?.balanceSheet?.liabilities?.total || 0) + Number(reports?.balanceSheet?.equity?.total || 0)).toFixed(2)})
                 </div>
               </div>
             </div>

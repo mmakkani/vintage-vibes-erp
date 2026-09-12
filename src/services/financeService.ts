@@ -89,7 +89,7 @@ export class FinanceService {
       const { data, error } = await supabase
         .from('financial_vouchers')
         .select('*')
-        .order('date', { ascending: false });
+        .order('created_at', { ascending: false });
       if (!error && data && data.length > 0) {
         rows = data;
       }
@@ -99,7 +99,7 @@ export class FinanceService {
       const { data, error } = await supabase
         .from('vouchers')
         .select('*')
-        .order('date', { ascending: false });
+        .order('created_at', { ascending: false });
 
       if (error) {
         console.error('Supabase error on vouchers:', error);
@@ -108,20 +108,62 @@ export class FinanceService {
       }
     }
 
-    return rows.map((row: any) => ({
-      id: row.id,
-      voucherNo: row.voucher_no || row.voucherNo,
-      date: row.date,
-      type: row.type,
-      reference: row.reference || '',
-      narration: row.narration || '',
-      totalDebit: Number(row.total_debit ?? row.totalDebit ?? 0),
-      totalCredit: Number(row.total_credit ?? row.totalCredit ?? 0),
-      status: row.status || 'POSTED',
-      createdBy: row.created_by || row.createdBy || 'System',
-      entries: [],
-      createdAt: row.created_at
-    }));
+    // Fetch entries/lines for rich voucher viewing and printing
+    let allEntries: any[] = [];
+    try {
+      const { data: veData, error: veError } = await supabase
+        .from('voucher_entries')
+        .select('*');
+      if (!veError && veData) {
+        allEntries = veData;
+      }
+    } catch {}
+
+    return rows.map((row: any) => {
+      const voucherId = String(row.id || '');
+      const voucherNo = row.voucher_no || row.voucherNo || '';
+      const matchedEntries = allEntries
+        .filter((e: any) => (voucherId && String(e.voucher_id) === voucherId) || (voucherNo && e.voucher_no === voucherNo))
+        .map((e: any) => ({
+          id: e.id,
+          voucherId: e.voucher_id || voucherId,
+          accountId: e.account_id || '',
+          accountCode: e.account_code || '',
+          accountName: e.account_name || '',
+          partyId: e.party_id || undefined,
+          partyName: e.party_name || undefined,
+          debitAmount: Number(e.debit ?? e.debit_amount ?? 0),
+          creditAmount: Number(e.credit ?? e.credit_amount ?? 0),
+          debit: Number(e.debit ?? e.debit_amount ?? 0),
+          credit: Number(e.credit ?? e.credit_amount ?? 0),
+          memo: e.memo || e.particulars || e.narration || ''
+        }));
+
+      const dateStr = typeof row.date === 'string' 
+        ? row.date.slice(0, 10) 
+        : (row.date ? new Date(row.date).toISOString().slice(0, 10) : (row.voucher_date || new Date().toISOString().slice(0, 10)));
+
+      const totalDebit = Number(row.total_debit ?? row.totalDebit ?? row.total_amount ?? 0);
+      const totalCredit = Number(row.total_credit ?? row.totalCredit ?? row.total_amount ?? 0);
+
+      return {
+        id: row.id,
+        voucherNo: voucherNo || row.id,
+        date: dateStr,
+        type: row.type || row.voucher_type || 'JOURNAL',
+        reference: row.reference || row.reference_no || '',
+        narration: row.narration || '',
+        totalDebit,
+        totalCredit,
+        status: row.status || 'POSTED',
+        currency: row.currency || 'AED',
+        exchangeRate: Number(row.exchange_rate || 1.0),
+        createdBy: row.created_by || row.createdBy || 'System',
+        entries: matchedEntries,
+        lines: matchedEntries,
+        createdAt: row.created_at
+      };
+    });
   }
 
   public static async addVoucher(v: any): Promise<Voucher> {
@@ -140,11 +182,15 @@ export class FinanceService {
       id,
       voucher_no: voucherNo,
       date,
+      voucher_date: date,
       type,
+      voucher_type: type,
       reference,
+      reference_no: reference,
       narration,
       total_debit: totalDebit,
       total_credit: totalCredit,
+      total_amount: totalDebit || totalCredit,
       status,
       created_by: createdBy
     };
@@ -176,6 +222,7 @@ export class FinanceService {
         return {
           id: lineId,
           voucher_id: String(id),
+          voucher_no: voucherNo,
           account_id: l.accountId || l.account_id ? String(l.accountId || l.account_id) : null,
           account_code: String(l.accountCode || l.account_code || ''),
           account_name: String(l.accountName || l.account_name || ''),
@@ -183,7 +230,10 @@ export class FinanceService {
           party_name: l.partyName || l.party_name ? String(l.partyName || l.party_name) : null,
           debit,
           credit,
-          memo
+          particulars: memo,
+          memo,
+          narration: memo,
+          date
         };
       });
 
@@ -194,16 +244,20 @@ export class FinanceService {
         return {
           id: String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `gl-${id}-${idx + 1}`),
           voucher_id: String(id),
+          voucher_no: voucherNo,
           account_id: l.accountId || l.account_id ? String(l.accountId || l.account_id) : null,
           account_code: String(l.accountCode || l.account_code || ''),
           account_name: String(l.accountName || l.account_name || ''),
           party_id: l.partyId || l.party_id ? String(l.partyId || l.party_id) : null,
           party_name: l.partyName || l.party_name ? String(l.partyName || l.party_name) : null,
           date,
+          entry_date: date,
           debit,
           credit,
           balance: debit - credit,
-          narration: memo
+          running_balance: debit - credit,
+          narration: memo,
+          description: memo
         };
       });
 
@@ -238,8 +292,11 @@ export class FinanceService {
       totalDebit,
       totalCredit,
       status: status as any,
+      currency: 'AED',
+      exchangeRate: 1.0,
       createdBy,
-      entries: lines
+      entries: lines,
+      lines
     };
   }
 
@@ -279,14 +336,17 @@ export class FinanceService {
     return rows.map((row: any) => ({
       id: row.id,
       voucherId: row.voucher_id || row.voucherId,
-      accountId: row.account_id || row.accountId,
-      accountCode: row.account_code || row.accountCode,
-      accountName: row.account_name || row.accountName,
-      date: row.date,
+      voucherNo: row.voucher_no || row.voucherNo || '',
+      accountId: row.account_id || row.accountId || '',
+      accountCode: row.account_code || row.accountCode || '',
+      accountName: row.account_name || row.accountName || '',
+      date: typeof row.date === 'string' ? row.date.slice(0, 10) : (row.date ? new Date(row.date).toISOString().slice(0, 10) : (row.entry_date || '')),
       debit: Number(row.debit || 0),
       credit: Number(row.credit || 0),
-      balance: Number(row.balance || 0),
-      narration: row.narration || '',
+      balance: Number(row.balance ?? row.running_balance ?? 0),
+      runningBalance: Number(row.running_balance ?? row.balance ?? 0),
+      documentRef: row.document_ref || row.documentRef || '',
+      narration: row.narration || row.description || '',
       createdAt: row.created_at
     }));
   }

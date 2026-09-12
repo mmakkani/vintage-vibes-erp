@@ -375,32 +375,32 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
                 <div className="bg-white p-3 rounded-lg border border-slate-200">
                   <div className="text-[11px] font-bold text-slate-500 uppercase">Gross Revenues</div>
                   <div className="text-base font-extrabold text-emerald-700 font-mono mt-0.5">
-                    AED {executedReport.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {Number(executedReport.totalRevenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </div>
                 </div>
                 <div className="bg-white p-3 rounded-lg border border-slate-200">
                   <div className="text-[11px] font-bold text-slate-500 uppercase">Total COGS / Cargo Costs</div>
                   <div className="text-base font-extrabold text-amber-700 font-mono mt-0.5">
-                    AED {executedReport.totalCOGS.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {Number(executedReport.totalCOGS || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </div>
                 </div>
                 <div className="bg-white p-3 rounded-lg border border-slate-200">
                   <div className="text-[11px] font-bold text-slate-500 uppercase">Calculated Gross Profit</div>
-                  <div className={`text-base font-extrabold font-mono mt-0.5 ${executedReport.grossProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                    AED {executedReport.grossProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  <div className={`text-base font-extrabold font-mono mt-0.5 ${(executedReport.grossProfit || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    AED {Number(executedReport.grossProfit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </div>
                 </div>
                 <div className="bg-white p-3 rounded-lg border border-slate-200">
                   <div className="text-[11px] font-bold text-slate-500 uppercase">Net Operating Income</div>
-                  <div className={`text-base font-extrabold font-mono mt-0.5 ${executedReport.netOperatingIncome >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                    AED {executedReport.netOperatingIncome.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  <div className={`text-base font-extrabold font-mono mt-0.5 ${(executedReport.netOperatingIncome || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    AED {Number(executedReport.netOperatingIncome || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </div>
                 </div>
               </div>
 
               {/* Sections Render */}
               <div className="space-y-6">
-                {executedReport.sections.map((sec, idx) => (
+                {(executedReport.sections || []).map((sec, idx) => (
                   <div key={sec.id} className="border border-slate-200 rounded-xl overflow-hidden">
                     <div className={`p-3 font-bold text-xs flex items-center justify-between uppercase tracking-wider ${
                       sec.type === 'REVENUE' ? 'bg-emerald-50 text-emerald-900 border-b border-emerald-200' :
@@ -426,7 +426,7 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-sans">
-                        {sec.accounts.length === 0 ? (
+                        {(!sec.accounts || sec.accounts.length === 0) ? (
                           <tr>
                             <td colSpan={2} className="p-4 text-center text-slate-400 italic">
                               No account heads mapped to this section
@@ -442,7 +442,7 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
                                 <span className="font-medium text-slate-800">{acc.name}</span>
                               </td>
                               <td className="p-2.5 text-right font-mono font-bold text-slate-800">
-                                AED {acc.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                AED {Number(acc.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </td>
                             </tr>
                           ))
@@ -454,7 +454,7 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
                             Total {sec.title}
                           </td>
                           <td className="p-2.5 text-right font-mono text-sm text-slate-900">
-                            AED {sec.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            AED {Number(sec.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                           </td>
                         </tr>
                       </tfoot>
@@ -470,11 +470,11 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
                     Net Custom Performance Surplus / (Deficit)
                   </div>
                   <div className="text-[11px] text-slate-400">
-                    Gross Profit (AED {executedReport.grossProfit.toLocaleString()}) minus Overheads (AED {executedReport.totalExpenses.toLocaleString()})
+                    Gross Profit (AED {Number(executedReport.grossProfit || 0).toLocaleString()}) minus Overheads (AED {Number(executedReport.totalExpenses || 0).toLocaleString()})
                   </div>
                 </div>
-                <div className={`text-xl font-extrabold font-mono ${executedReport.netOperatingIncome >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  AED {executedReport.netOperatingIncome.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className={`text-xl font-extrabold font-mono ${(executedReport.netOperatingIncome || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  AED {Number(executedReport.netOperatingIncome || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </div>
               </div>
             </div>

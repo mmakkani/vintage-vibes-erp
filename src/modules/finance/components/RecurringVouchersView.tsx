@@ -318,7 +318,7 @@ export const RecurringVouchersView: React.FC<RecurringVouchersViewProps> = ({
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
           <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Monthly Committed Posting</div>
           <div className="text-xl font-extrabold text-amber-700 mt-1">
-            AED {totalMonthlyCommitments.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            AED {Number(totalMonthlyCommitments || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </div>
           <div className="text-[11px] text-slate-400 mt-0.5">Recurring dual-entry volume</div>
         </div>
@@ -357,7 +357,7 @@ export const RecurringVouchersView: React.FC<RecurringVouchersViewProps> = ({
               <div className="text-right shrink-0">
                 <div className="text-xs font-bold text-slate-500 uppercase">Amount</div>
                 <div className="text-base font-extrabold text-slate-900 font-mono">
-                  AED {t.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  AED {Number(t.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </div>
               </div>
             </div>
@@ -583,7 +583,7 @@ export const RecurringVouchersView: React.FC<RecurringVouchersViewProps> = ({
                 }`}>
                   <div className="flex items-center gap-1.5">
                     {isBalanced ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <AlertCircle className="w-4 h-4 text-rose-600" />}
-                    <span>Total Debits: AED {totalDebits.toLocaleString()} | Total Credits: AED {totalCredits.toLocaleString()}</span>
+                    <span>Total Debits: AED {Number(totalDebits || 0).toLocaleString()} | Total Credits: AED {Number(totalCredits || 0).toLocaleString()}</span>
                   </div>
                   <span>{isBalanced ? 'BALANCED' : `DIFF: AED ${Math.abs(totalDebits - totalCredits).toFixed(2)}`}</span>
                 </div>

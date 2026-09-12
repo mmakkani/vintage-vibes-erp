@@ -235,7 +235,7 @@ export const BudgetingView: React.FC<BudgetingViewProps> = ({ accounts, onRefres
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Monthly Budget</span>
           <div className="text-xl font-extrabold text-slate-900 mt-1">
-            AED {totalBudgetAed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            AED {Number(totalBudgetAed || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="text-[11px] text-slate-400 mt-0.5">Approved allocations for {selectedMonth}</div>
         </div>
@@ -243,7 +243,7 @@ export const BudgetingView: React.FC<BudgetingViewProps> = ({ accounts, onRefres
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Actual Real-Time Spend</span>
           <div className="text-xl font-extrabold text-amber-700 mt-1">
-            AED {totalActualSpentAed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            AED {Number(totalActualSpentAed || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="text-[11px] text-slate-400 mt-0.5">Posted GL debits to date</div>
         </div>
@@ -251,7 +251,7 @@ export const BudgetingView: React.FC<BudgetingViewProps> = ({ accounts, onRefres
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Remaining Variance</span>
           <div className={`text-xl font-extrabold mt-1 ${totalVarianceAed >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-            AED {totalVarianceAed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            AED {Number(totalVarianceAed || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="text-[11px] text-slate-400 mt-0.5">
             {totalVarianceAed >= 0 ? 'Surplus / Available buffer' : 'Over-budget deficit'}
@@ -343,19 +343,19 @@ export const BudgetingView: React.FC<BudgetingViewProps> = ({ accounts, onRefres
                         )}
                       </td>
                       <td className="p-3 text-right font-mono font-bold text-slate-800">
-                        AED {b.budgetLimitAed.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        AED {Number(b.budgetLimitAed || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
                       <td className="p-3 text-right font-mono font-bold text-amber-800">
-                        AED {b.actualSpentAed.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        AED {Number(b.actualSpentAed || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
                       <td className={`p-3 text-right font-mono font-bold ${b.varianceAed >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                        AED {b.varianceAed.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        AED {Number(b.varianceAed || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
                       <td className="p-3">
                         <div className="flex items-center justify-between text-[11px] mb-1 font-semibold">
-                          <span className="text-slate-500 font-mono">{b.percentUsed.toFixed(1)}%</span>
+                          <span className="text-slate-500 font-mono">{(Number(b.percentUsed) || 0).toFixed(1)}%</span>
                           <span className="text-slate-400 text-[10px]">
-                            {b.varianceAed >= 0 ? `${(100 - b.percentUsed).toFixed(1)}% free` : 'Deficit'}
+                            {b.varianceAed >= 0 ? `${(100 - (Number(b.percentUsed) || 0)).toFixed(1)}% free` : 'Deficit'}
                           </span>
                         </div>
                         <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">

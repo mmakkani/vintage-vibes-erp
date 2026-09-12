@@ -122,21 +122,25 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
                 </tr>
               </thead>
               <tbody className="divide-y divide-amber-200 font-mono">
-                {voucher.lines.map((line, idx) => (
-                  <tr key={idx} className="hover:bg-amber-50/30">
-                    <td className="py-2.5 px-3 font-bold text-slate-900">{line.accountCode}</td>
-                    <td className="py-2.5 px-3 font-sans">
-                      <div className="font-bold text-slate-900">{line.accountName}</div>
-                      {line.memo && <div className="text-[10px] text-slate-500">{line.memo}</div>}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                      {line.debitAmount > 0 ? line.debitAmount.toFixed(2) : '-'}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                      {line.creditAmount > 0 ? line.creditAmount.toFixed(2) : '-'}
-                    </td>
-                  </tr>
-                ))}
+                {(voucher.lines || (voucher as any).entries || []).map((line: any, idx: number) => {
+                  const debit = Number(line.debitAmount ?? line.debit ?? 0);
+                  const credit = Number(line.creditAmount ?? line.credit ?? 0);
+                  return (
+                    <tr key={idx} className="hover:bg-amber-50/30">
+                      <td className="py-2.5 px-3 font-bold text-slate-900">{line.accountCode || '-'}</td>
+                      <td className="py-2.5 px-3 font-sans">
+                        <div className="font-bold text-slate-900">{line.accountName || 'General Account'}</div>
+                        {(line.memo || line.particulars) && <div className="text-[10px] text-slate-500">{line.memo || line.particulars}</div>}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-bold text-slate-900">
+                        {debit > 0 ? debit.toFixed(2) : '-'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-bold text-slate-900">
+                        {credit > 0 ? credit.toFixed(2) : '-'}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-amber-800/60 bg-amber-50/90 font-mono font-black text-xs text-amber-950">
@@ -144,10 +148,10 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
                     Voucher Grand Total:
                   </td>
                   <td className="py-2.5 px-3 text-right">
-                    AED {voucher.totalDebit.toFixed(2)}
+                    AED {Number(voucher.totalDebit || 0).toFixed(2)}
                   </td>
                   <td className="py-2.5 px-3 text-right">
-                    AED {voucher.totalCredit.toFixed(2)}
+                    AED {Number(voucher.totalCredit || 0).toFixed(2)}
                   </td>
                 </tr>
               </tfoot>
