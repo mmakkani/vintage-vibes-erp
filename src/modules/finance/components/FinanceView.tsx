@@ -1139,12 +1139,12 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                             onClick={() => {
                               setGlSelectedTarget('ALL');
                               setGlSearchText('');
-                              setGlDateFrom('2026-01-01');
-                              setGlDateTo('2026-12-31');
+                              setGlDateFrom('');
+                              setGlDateTo('');
                             }}
-                            className="mt-2 text-xs bg-amber-100 text-amber-900 px-3 py-1.5 rounded-lg font-bold hover:bg-amber-200 transition-colors shadow-xs"
+                            className="mt-2 text-xs bg-amber-100 text-amber-900 px-3 py-1.5 rounded-lg font-bold hover:bg-amber-200 transition-colors shadow-xs cursor-pointer"
                           >
-                            Reset GL Filters & Show All
+                            Reset GL Filters & Show All Time
                           </button>
                         </div>
                       </td>
