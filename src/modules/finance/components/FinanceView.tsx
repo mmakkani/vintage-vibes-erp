@@ -224,6 +224,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
   // Print voucher modal state
   const [voucherToPrint, setVoucherToPrint] = useState<Voucher | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
 
   // Dynamic Reporting Period for SQL Reports
   const [reportPeriod, setReportPeriod] = useState<'2026' | '2025' | 'ALL' | 'CUSTOM'>('2026');
@@ -245,6 +246,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   };
 
   const loadData = async (customParams?: { startDate?: string; endDate?: string }) => {
+    setLoading(true);
     try {
       const sDate = customParams?.startDate !== undefined ? customParams.startDate : (reportPeriod === 'ALL' ? undefined : (reportStartDate || undefined));
       const eDate = customParams?.endDate !== undefined ? customParams.endDate : (reportPeriod === 'ALL' ? undefined : (reportEndDate || undefined));
@@ -289,6 +291,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       }
     } catch {
       // Graceful fallback
+    } finally {
+      setLoading(false);
     }
   };
 
