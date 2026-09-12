@@ -119,8 +119,8 @@ async function main() {
           UNION
           SELECT id, voucher_no, status, date FROM financial_vouchers WHERE status = 'POSTED'
         ) v ON (v.id = ve.voucher_id OR v.voucher_no = ve.voucher_no)
-        WHERE (v_start IS NULL OR COALESCE(ve.date, v.date) >= v_start)
-          AND (v_end IS NULL OR COALESCE(ve.date, v.date) <= v_end)
+        WHERE (v_start IS NULL OR COALESCE(ve.date::date, v.date::date) >= v_start)
+          AND (v_end IS NULL OR COALESCE(ve.date::date, v.date::date) <= v_end)
       ),
       acc_totals AS (
         SELECT 
@@ -236,8 +236,8 @@ async function main() {
           UNION
           SELECT id, voucher_no, status, date FROM financial_vouchers WHERE status = 'POSTED'
         ) v ON (v.id = ve.voucher_id OR v.voucher_no = ve.voucher_no)
-        WHERE (v_start IS NULL OR COALESCE(ve.date, v.date) >= v_start)
-          AND (v_end IS NULL OR COALESCE(ve.date, v.date) <= v_end)
+        WHERE (v_start IS NULL OR COALESCE(ve.date::date, v.date::date) >= v_start)
+          AND (v_end IS NULL OR COALESCE(ve.date::date, v.date::date) <= v_end)
       ),
       acc_activity AS (
         SELECT 
@@ -367,7 +367,7 @@ async function main() {
           UNION
           SELECT id, voucher_no, status, date FROM financial_vouchers WHERE status = 'POSTED'
         ) v ON (v.id = ve.voucher_id OR v.voucher_no = ve.voucher_no)
-        WHERE (v_as_of IS NULL OR COALESCE(ve.date, v.date) <= v_as_of)
+        WHERE (v_as_of IS NULL OR COALESCE(ve.date::date, v.date::date) <= v_as_of)
       ),
       acc_totals AS (
         SELECT 
