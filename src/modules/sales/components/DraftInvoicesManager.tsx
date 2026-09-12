@@ -665,7 +665,7 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-medium">
-                      {selectedInvoice.items.map((item, idx) => {
+                      {(selectedInvoice?.items || []).map((item, idx) => {
                         const cost = item.calculatedCostPrice || 25;
                         const price = item.finalAmount || item.unitPrice || 0;
                         const profit = price - cost;
@@ -983,10 +983,10 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                   />
                 </div>
                 {/* Stock suggestions */}
-                {availableStock.length > 0 && (
+                {(availableStock || []).length > 0 && (
                   <div className="mt-1 flex flex-wrap gap-1">
                     <span className="text-[10px] text-slate-400">Available:</span>
-                    {availableStock.slice(0, 4).map(p => (
+                    {(availableStock || []).slice(0, 4).map(p => (
                       <button
                         type="button"
                         key={p.id}

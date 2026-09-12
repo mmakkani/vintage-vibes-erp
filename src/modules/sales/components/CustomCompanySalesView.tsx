@@ -544,12 +544,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         invoiceDate: invoiceDate,
         channel: 'WHOLESALE_B2B',
         paymentMethod: paymentMethod as any,
-        subtotal: subTotal,
+        subtotal: itemsSubtotal,
         discountAmount: 0,
         taxAmount: vatAmount,
         totalAmount: grandTotal,
         status: 'DRAFT',
-        items: items.map(i => ({
+        items: (items || []).map(i => ({
           barcode: i.barcode,
           description: i.description,
           unitPrice: i.unitPrice,
@@ -997,7 +997,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                         className="w-full bg-[#FAF4E6]/50 border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:bg-white focus:border-indigo-500 transition"
                       >
                         <option value="">-- Choose Corporate Buyer / Khata --</option>
-                        {customerClients.map(c => (
+                        {(customerClients || []).map(c => (
                           <option key={c.id} value={c.id}>
                             {c.code ? `[${c.code}] ` : ''}{c.name} {c.trnNo ? `(TRN: ${c.trnNo})` : ''} — Bal: AED {Number(c.currentBalance || 0).toFixed(2)}
                           </option>
@@ -1320,7 +1320,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {items.map((item) => {
+                            {(items || []).map((item) => {
                               const isBale = !!item.isRawBale;
                               return (
                                 <tr key={item.id} className="hover:bg-amber-50/40 transition">
@@ -1433,7 +1433,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
                     {otherCharges.length > 0 && (
                       <div className="space-y-1.5">
-                        {otherCharges.map(charge => (
+                        {(otherCharges || []).map(charge => (
                           <div key={charge.id} className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-200 text-xs">
                             <div className="flex items-center gap-2">
                               <span className="font-semibold text-slate-800">{charge.title}</span>
@@ -1874,7 +1874,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
-                      {items.map((it, i) => {
+                      {(items || []).map((it, i) => {
                         const net = Number(it.finalAmount) || 0;
                         const vat = taxType === 'MAINLAND_5_VAT' ? Number((net * 0.05).toFixed(2)) : 0;
                         const lineGross = net + vat;
@@ -1995,7 +1995,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
-                      {items.map((it, idx) => (
+                      {(items || []).map((it, idx) => (
                         <tr key={it.id}>
                           <td className="p-2 border-r border-slate-200 text-center font-mono">{idx + 1}</td>
                           <td className="p-2 border-r border-slate-200 font-mono font-bold">{it.barcode}</td>

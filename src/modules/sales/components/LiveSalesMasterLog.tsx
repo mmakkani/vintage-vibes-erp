@@ -145,7 +145,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
       'Grand Total (AED)'
     ];
 
-    const rows = filteredInvoices.map(inv => {
+    const rows = (filteredInvoices || []).map(inv => {
       const cogs = Array.isArray(inv?.items) ? inv.items.reduce((s, it) => s + (Number(it?.calculatedCostPrice) || 25), 0) : 0;
       const grossProfit = Number(inv?.subTotal || inv?.totalAmount || 0) - cogs;
       const margin = (Number(inv?.subTotal || inv?.totalAmount || 0)) > 0 ? Math.round((grossProfit / Number(inv.subTotal || inv.totalAmount)) * 100) : 0;
@@ -160,19 +160,19 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
         inv.socialPlatform || 'TIKTOK',
         inv.buyerHandle || inv.customerName,
         inv.customerPhone || '',
-        inv.items.length,
+        (inv?.items || []).length,
         `"${barcodes}"`,
-        inv.subTotal.toFixed(2),
+        (Number(inv?.subTotal || 0)).toFixed(2),
         cogs.toFixed(2),
         grossProfit.toFixed(2),
         `${margin}%`,
-        (inv.shippingFeeAed || 25).toFixed(2),
+        (Number(inv?.shippingFeeAed || 25)).toFixed(2),
         inv.shippingBearer || 'CUSTOMER',
         inv.courierPartner || 'DHL',
         inv.trackingNumber || '',
         inv.paymentStatus || 'UNPAID_PENDING_COD',
         inv.status,
-        inv.totalAmount.toFixed(2)
+        (Number(inv?.totalAmount || 0)).toFixed(2)
       ];
     });
 
@@ -382,14 +382,14 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium">
-              {filteredInvoices.length === 0 ? (
+              {(!filteredInvoices || filteredInvoices.length === 0) ? (
                 <tr>
                   <td colSpan={13} className="px-4 py-12 text-center text-slate-400">
                     No sales records found matching the active filter criteria.
                   </td>
                 </tr>
               ) : (
-                filteredInvoices.map(inv => {
+                (filteredInvoices || []).map(inv => {
                   const cogs = Array.isArray(inv?.items) ? inv.items.reduce((s, it) => s + (Number(it?.calculatedCostPrice) || 25), 0) : 0;
                   const saleAmount = Number(inv?.subTotal || inv?.totalAmount || 0);
                   const profit = saleAmount - cogs;
@@ -441,7 +441,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                             onClick={() => setExpandedInvoiceId(isExpanded ? null : inv.id)}
                             className="font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
                           >
-                            <strong>{inv.items.length} pcs</strong>
+                            <strong>{(inv?.items || []).length} pcs</strong>
                             <span className="text-[10px] text-slate-400">({isExpanded ? 'Hide' : 'Show'})</span>
                           </button>
                         </td>
@@ -449,7 +449,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                           AED {cogs.toFixed(2)}
                         </td>
                         <td className="px-4 py-3 font-mono font-bold text-slate-900 whitespace-nowrap">
-                          AED {inv.totalAmount.toFixed(2)}
+                          AED {(Number(inv?.totalAmount || 0)).toFixed(2)}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           <div className="font-mono text-slate-700">
@@ -526,7 +526,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                               Scanned SKUs in {inv.invoiceNo}:
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                              {inv.items.map(item => (
+                              {(inv?.items || []).map(item => (
                                 <div
                                   key={item.barcode}
                                   className="p-2.5 bg-white border border-slate-200 rounded-lg text-xs flex items-center justify-between"

@@ -118,9 +118,9 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
   });
 
   const sendWhatsAppNotification = (inv: SalesInvoice) => {
-    const client = clients.find(c => c.id === inv.customerId);
+    const client = (clients || []).find(c => c.id === inv.customerId);
     const phone = (client?.phone || inv.customerPhone || '').replace(/[^0-9]/g, '');
-    const itemsCount = inv.items.length;
+    const itemsCount = Array.isArray(inv?.items) ? inv.items.length : 0;
     const text = encodeURIComponent(
       `🚚 *VINTAGE VIBES DUBAI - B2B DISPATCH ADVICE*\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -518,7 +518,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                 onChange={e => setSelectedGatePassId(e.target.value)}
                 className="bg-slate-50 border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono font-bold text-slate-900 focus:border-blue-500"
               >
-                {gatePasses.map(g => (
+                {(gatePasses || []).map(g => (
                   <option key={g.id} value={g.id}>
                     {g.gatePassNo} ({g.customerName}) — {g.status}
                   </option>
@@ -633,13 +633,13 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                   </form>
 
                   {/* Quick Click Available Barcodes from Inventory */}
-                  {stockPieces.length > 0 && (
+                  {(stockPieces || []).length > 0 && (
                     <div className="pt-2 border-t border-slate-100">
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
                         Quick-Select Available Stock Barcodes:
                       </span>
                       <div className="flex flex-wrap gap-1.5">
-                        {stockPieces.slice(0, 6).map(piece => (
+                        {(stockPieces || []).slice(0, 6).map(piece => (
                           <button
                             key={piece.id}
                             type="button"
@@ -659,7 +659,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
               <div className="bg-white rounded border border-slate-200 shadow-sm overflow-hidden">
                 <div className="p-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
                   <span className="font-bold text-slate-900 text-xs uppercase tracking-wider">
-                    Scanned Pieces on this Gate Pass ({activeGatePass.items.length} items)
+                    Scanned Pieces on this Gate Pass ({(activeGatePass?.items || []).length} items)
                   </span>
                   <span className="text-[10px] font-mono text-slate-500 uppercase">Live Floor Verification</span>
                 </div>
@@ -679,7 +679,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {activeGatePass.items.map(item => (
+                      {(activeGatePass?.items || []).map(item => (
                         <tr key={item.id} className="hover:bg-blue-50/40 font-mono">
                           <td className="px-3 py-1.5 font-bold text-blue-900">
                             <span className="bg-blue-50 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200">
@@ -733,7 +733,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {invoices.map(inv => (
+                  {(invoices || []).map(inv => (
                     <tr key={inv.id} className="hover:bg-blue-50/40 transition-colors">
                       <td className="px-3 py-2 font-mono font-bold text-blue-900">{inv.invoiceNo}</td>
                       <td className="px-3 py-2 font-medium text-slate-800">{inv.customerName}</td>
@@ -742,10 +742,10 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                       <td className="px-3 py-2">
                         <StatusBadge status={inv.status} />
                       </td>
-                      <td className="px-3 py-2 font-mono">AED {inv.subTotal.toLocaleString()}</td>
-                      <td className="px-3 py-2 font-mono text-slate-500">AED {inv.vatAmount.toLocaleString()}</td>
+                      <td className="px-3 py-2 font-mono">AED {Number(inv?.subTotal ?? (inv as any)?.subtotal ?? 0).toLocaleString()}</td>
+                      <td className="px-3 py-2 font-mono text-slate-500">AED {Number(inv?.vatAmount ?? 0).toLocaleString()}</td>
                       <td className="px-3 py-2 font-mono font-bold text-slate-900">
-                        AED {inv.totalAmount.toLocaleString()}
+                        AED {Number(inv?.totalAmount ?? (inv as any)?.grand_total ?? 0).toLocaleString()}
                       </td>
                       <td className="px-3 py-2 text-right space-x-1 whitespace-nowrap">
                         <button
@@ -823,7 +823,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                   className="w-full border border-slate-300 rounded p-2 text-xs text-slate-800 focus:border-blue-500"
                   required
                 >
-                  {clients.map(c => (
+                  {(clients || []).map(c => (
                     <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
                   ))}
                 </select>
@@ -888,7 +888,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {selectedInvoiceForReceipt.items.map((it, idx) => (
+                  {(selectedInvoiceForReceipt?.items || []).map((it, idx) => (
                     <tr key={idx}>
                       <td className="py-1 font-sans">
                         <div className="font-bold text-slate-900 text-xs">{it.description}</div>

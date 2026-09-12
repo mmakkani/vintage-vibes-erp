@@ -72,6 +72,38 @@ export async function safeFetchJson<T = any>(
       if (url.includes('/sales/orders') || url.includes('/orders')) {
         return (await SalesService.getOrders()) as any;
       }
+      if (url.includes('/live-stream/booths') || url.includes('/live/booths') || url.includes('/live_booths')) {
+        const booths = await LiveStreamService.getBooths();
+        return {
+          booths: (booths || []).map(b => ({
+            boothId: b.id,
+            id: b.id,
+            boothName: b.booth_name || b.id,
+            hostName: b.host_operator_name || 'Staff Host',
+            isBroadcasting: b.is_broadcasting || false,
+            viewerCount: b.viewer_count || 0,
+            activeProductSku: b.active_product_sku || '',
+            destinations: [],
+            comments: []
+          })),
+          totals: {
+            activeStreamers: (booths || []).filter(b => b.is_broadcasting).length,
+            totalViewers: (booths || []).reduce((acc, b) => acc + (b.viewer_count || 0), 0),
+            totalRevenueAed: 0,
+            totalClaimsCount: 0,
+            avgClaimsPerMin: 0
+          }
+        } as any;
+      }
+      if (url.includes('/live-stream/pool')) {
+        return { success: true, pools: [] } as any;
+      }
+      if (url.includes('/sales/returns')) {
+        return [] as any;
+      }
+      if (url.includes('/sales/custom-b2b/available-bales')) {
+        return [] as any;
+      }
       if (url.includes('/finance/coa') || url.includes('/coa')) {
         return (await FinanceService.getCoaAccounts()) as any;
       }

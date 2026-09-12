@@ -335,8 +335,18 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         const res = await fetch('/api/live-stream/booths');
         if (res.ok) {
           const data = await res.json();
-          setAllBoothsData(data);
-          const current: BoothSession = data.booths.find((b: BoothSession) => b.boothId === selectedBoothId) || data.booths[0];
+          const boothsList = Array.isArray(data?.booths) ? data.booths : [];
+          setAllBoothsData({
+            booths: boothsList,
+            totals: data?.totals || {
+              activeStreamers: boothsList.filter((b: any) => b.isBroadcasting).length,
+              totalViewers: 0,
+              totalRevenueAed: 0,
+              totalClaimsCount: 0,
+              avgClaimsPerMin: 0
+            }
+          });
+          const current: BoothSession = boothsList.find((b: BoothSession) => b.boothId === selectedBoothId) || boothsList[0];
           if (current) {
             setActiveBooth(current);
             setComments(current.comments || []);
@@ -764,7 +774,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   }}
                   className="bg-stone-950 border border-amber-500/50 text-amber-300 font-black text-xs sm:text-sm rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400 cursor-pointer"
                 >
-                  {allBoothsData?.booths.map(b => (
+                  {(allBoothsData?.booths || []).map(b => (
                     <option key={b.boothId} value={b.boothId}>
                       {b.boothName} • Host: {b.hostName} ({b.isBroadcasting ? '🔴 LIVE' : '⚪ IDLE'})
                     </option>
@@ -976,7 +986,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
           {/* Bento Grid: 10 Concurrent Booth Monitors */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-            {allBoothsData?.booths.map(b => (
+            {(allBoothsData?.booths || []).map(b => (
               <div
                 key={b.boothId}
                 className={`rounded-xl border p-3 flex flex-col justify-between transition-all ${
@@ -1132,7 +1142,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     }}
                     className="bg-stone-900 border border-stone-700 rounded px-2 py-0.5 text-stone-200 text-[10px] max-w-[200px] truncate focus:outline-none"
                   >
-                    {availableVideoDevices.map(d => (
+                    {(availableVideoDevices || []).map(d => (
                       <option key={d.deviceId} value={d.deviceId}>
                         {d.label || `Camera ${d.deviceId.slice(0, 6)}`}
                       </option>
@@ -1240,7 +1250,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 </div>
 
                 <div className="grid grid-cols-5 gap-1 text-[9px]">
-                  {editDestinations.map(d => (
+                  {(editDestinations || []).map(d => (
                     <div
                       key={d.id}
                       className={`p-1 rounded border text-center transition-all ${
@@ -1274,13 +1284,13 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   </div>
                 </div>
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-100 text-amber-900">
-                  {comments.length} Messages
+                  {(comments || []).length} Messages
                 </span>
               </div>
 
               {/* Scrollable Comments List */}
               <div className="flex-1 p-3 overflow-y-auto space-y-2.5">
-                {comments.map(c => (
+                {(comments || []).map(c => (
                   <div
                     key={c.id}
                     className={`p-2.5 rounded-xl border transition-all text-xs ${
@@ -1494,7 +1504,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               <div className="flex items-center justify-between pb-2 border-b border-stone-100">
                 <h4 className="text-xs font-black text-stone-900 uppercase tracking-tight flex items-center gap-1.5">
                   <ShoppingBag className="w-4 h-4 text-amber-700" />
-                  <span>{activeBooth?.boothName.split('-')[0]} Baskets ({buyerPools.length})</span>
+                  <span>{(activeBooth?.boothName || 'Booth 01').split('-')[0]} Baskets ({(buyerPools || []).length})</span>
                 </h4>
                 <span className="text-[11px] font-extrabold text-stone-800">
                   {totalClaimedItems} Items Claimed
@@ -1506,7 +1516,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   No active buyer baskets in this booth yet. Scan pieces or click claim in the comment feed!
                 </div>
               ) : (
-                buyerPools.map(pool => (
+                (buyerPools || []).map(pool => (
                   <div
                     key={pool.buyerHandle}
                     className="p-3 rounded-xl border border-stone-200 bg-stone-50/70 hover:bg-amber-50/40 transition-colors space-y-2 text-xs"
@@ -1735,7 +1745,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   <span className="text-[10px] text-stone-400">Credentials persist in Local Storage</span>
                 </div>
 
-                {editDestinations.map((d, index) => (
+                {(editDestinations || []).map((d, index) => (
                   <div key={d.id} className="p-3 bg-stone-950 rounded-xl border border-stone-800 space-y-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -1877,7 +1887,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   }}
                   className="bg-white border border-stone-300 rounded-lg px-2.5 py-1 font-extrabold text-stone-900 text-xs focus:outline-none"
                 >
-                  {buyerPools.map(p => (
+                  {(buyerPools || []).map(p => (
                     <option key={p.buyerHandle} value={p.buyerHandle}>
                       {p.buyerHandle} ({p.itemsCount} Garments • AED {p.grandTotalAed.toFixed(2)})
                     </option>
@@ -2269,7 +2279,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-100">
-                    {allBoothsData?.booths.map(b => (
+                    {(allBoothsData?.booths || []).map(b => (
                       <tr key={b.boothId} className="hover:bg-stone-50 transition-colors">
                         <td className="p-2.5 font-bold text-stone-900">
                           {b.boothName.split('-')[0].trim()} ({b.hostName})

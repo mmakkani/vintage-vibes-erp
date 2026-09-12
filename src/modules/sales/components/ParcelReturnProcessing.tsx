@@ -116,8 +116,8 @@ export const ParcelReturnProcessing: React.FC<ParcelReturnProcessingProps> = ({ 
       } else {
         setLookupResult(data);
         // Preselect all items in the invoice for return by default
-        if (data.pieces && data.pieces.length > 0) {
-          setSelectedPieceIds(data.pieces.map((p: PieceBreakdownItem) => p.id));
+        if (Array.isArray(data.pieces) && data.pieces.length > 0) {
+          setSelectedPieceIds((data.pieces || []).map((p: PieceBreakdownItem) => p.id));
         } else if (data.matchedPiece) {
           setSelectedPieceIds([data.matchedPiece.id]);
         }
@@ -487,13 +487,13 @@ export const ParcelReturnProcessing: React.FC<ParcelReturnProcessingProps> = ({ 
                         <input
                           type="checkbox"
                           checked={
-                            lookupResult.pieces &&
+                            Array.isArray(lookupResult.pieces) &&
                             lookupResult.pieces.length > 0 &&
                             selectedPieceIds.length === lookupResult.pieces.length
                           }
                           onChange={e => {
-                            if (e.target.checked && lookupResult.pieces) {
-                              setSelectedPieceIds(lookupResult.pieces.map(p => p.id));
+                            if (e.target.checked && Array.isArray(lookupResult.pieces)) {
+                              setSelectedPieceIds((lookupResult.pieces || []).map(p => p.id));
                             } else {
                               setSelectedPieceIds([]);
                             }
@@ -780,7 +780,7 @@ export const ParcelReturnProcessing: React.FC<ParcelReturnProcessingProps> = ({ 
                   </td>
                 </tr>
               ) : (
-                recentReturns.map(ret => (
+                (recentReturns || []).map(ret => (
                   <tr key={ret.id} className="hover:bg-amber-50/40 font-mono transition-colors">
                     <td className="px-3 py-2 font-bold text-amber-900 whitespace-nowrap">
                       {ret.returnNo}
@@ -872,10 +872,10 @@ export const ParcelReturnProcessing: React.FC<ParcelReturnProcessingProps> = ({ 
 
               <div>
                 <div className="font-bold text-slate-700 uppercase tracking-wider text-[11px] mb-1">
-                  Restored Garment Items ({selectedReturnDetails.returnedItems.length})
+                  Restored Garment Items ({(selectedReturnDetails?.returnedItems || []).length})
                 </div>
                 <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                  {selectedReturnDetails.returnedItems.map(item => (
+                  {(selectedReturnDetails?.returnedItems || []).map(item => (
                     <div
                       key={item.barcode}
                       className="flex items-center justify-between p-2 rounded bg-slate-50 border border-slate-200 font-mono text-[11px]"

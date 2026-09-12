@@ -154,9 +154,7 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
   const handleSendWhatsApp = (inv: SalesInvoice) => {
     const client = clients.find(c => c.id === inv.customerId);
     const phone = (client?.phone || inv.customerPhone || prompt('Customer WhatsApp Number (+971...)', '+971') || '').replace(/[^0-9]/g, '');
-    if (!phone) return;
-
-    const itemsSummary = inv.items.map((it: any) => `• ${it.description} — AED ${it.finalAmount || it.unitPrice}`).join('\n');
+    const itemsSummary = (Array.isArray(inv?.items) ? inv.items : []).map((it: any) => `• ${it?.description || 'Item'} — AED ${it?.finalAmount || it?.unitPrice || 0}`).join('\n');
     const text = encodeURIComponent(
       `🛍️ *VINTAGE VIBES DUBAI - POS E-RECEIPT*\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -417,16 +415,16 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-right text-slate-700">
-                        AED {inv.subTotal.toFixed(2)}
+                        AED {Number(inv?.subTotal ?? inv?.subtotal ?? 0).toFixed(2)}
                       </td>
                       <td className="py-2.5 px-3 text-right text-slate-500">
-                        AED {inv.vatAmount.toFixed(2)}
+                        AED {Number(inv?.vatAmount ?? inv?.taxAmount ?? 0).toFixed(2)}
                       </td>
                       <td className="py-2.5 px-3 text-right font-black text-slate-900">
-                        AED {inv.totalAmount.toFixed(2)}
+                        AED {Number(inv?.totalAmount ?? 0).toFixed(2)}
                       </td>
                       <td className="py-2.5 px-3 text-right text-rose-600 font-bold">
-                        AED {cogs.toFixed(2)}
+                        AED {Number(cogs || 0).toFixed(2)}
                       </td>
                       <td className="py-2.5 px-3 text-right font-bold text-indigo-700 font-sans">
                         +{profit.toFixed(0)} <span className="text-[10px] text-slate-500 font-mono">({margin}%)</span>
@@ -495,7 +493,7 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
 
             <div className="space-y-3">
               <div className="max-h-60 overflow-y-auto space-y-1.5 border border-slate-100 rounded-lg p-2 bg-slate-50">
-                {selectedInvoice.items.map((it, idx) => (
+                {(Array.isArray(selectedInvoice?.items) ? selectedInvoice.items : []).map((it, idx) => (
                   <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-slate-200/60 last:border-none">
                     <div>
                       <span className="font-bold text-slate-800">{it.description}</span>
@@ -504,7 +502,7 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
                     <div className="text-right font-mono">
                       <div className="font-bold text-slate-900">AED {it.finalAmount || it.unitPrice}</div>
                       {it.calculatedCostPrice && (
-                        <div className="text-[10px] text-rose-500">Cost: AED {it.calculatedCostPrice.toFixed(2)}</div>
+                        <div className="text-[10px] text-rose-500">Cost: AED {Number(it.calculatedCostPrice).toFixed(2)}</div>
                       )}
                     </div>
                   </div>
@@ -514,15 +512,15 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
               <div className="space-y-1 pt-2 border-t border-slate-200 font-mono text-right text-xs">
                 <div className="flex justify-between text-slate-600">
                   <span>Subtotal:</span>
-                  <span>AED {selectedInvoice.subTotal.toFixed(2)}</span>
+                  <span>AED {Number(selectedInvoice?.subTotal ?? selectedInvoice?.subtotal ?? 0).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>5% UAE VAT:</span>
-                  <span>AED {selectedInvoice.vatAmount.toFixed(2)}</span>
+                  <span>AED {Number(selectedInvoice?.vatAmount ?? selectedInvoice?.taxAmount ?? 0).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-sm font-black text-slate-900 pt-1 border-t border-dashed border-slate-300">
                   <span>TOTAL PAID:</span>
-                  <span>AED {selectedInvoice.totalAmount.toFixed(2)}</span>
+                  <span>AED {Number(selectedInvoice?.totalAmount ?? 0).toFixed(2)}</span>
                 </div>
               </div>
             </div>

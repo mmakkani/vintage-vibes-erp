@@ -140,17 +140,17 @@ export const ThermalShippingLabelModal: React.FC<ThermalShippingLabelModalProps>
             <div className="border-b-2 border-black pb-2 text-[10px]">
               <div className="flex justify-between font-bold text-slate-800 mb-1">
                 <span>INVOICE: {invoice.invoiceNo}</span>
-                <span>PIECES: {invoice.items.length} PCS</span>
+                <span>PIECES: {(invoice?.items || []).length} PCS</span>
               </div>
               <div className="space-y-0.5">
-                {invoice.items.slice(0, 3).map((it, idx) => (
+                {(invoice?.items || []).slice(0, 3).map((it, idx) => (
                   <div key={idx} className="flex justify-between text-slate-700">
                     <span className="truncate max-w-[240px]">• {it.description} ({it.barcode})</span>
                     <span>AED {it.finalAmount || it.unitPrice}</span>
                   </div>
                 ))}
-                {invoice.items.length > 3 && (
-                  <div className="text-slate-500 italic">+ {invoice.items.length - 3} more garments bundled</div>
+                {(invoice?.items || []).length > 3 && (
+                  <div className="text-slate-500 italic">+ {(invoice?.items || []).length - 3} more garments bundled</div>
                 )}
               </div>
             </div>

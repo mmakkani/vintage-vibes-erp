@@ -180,9 +180,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       if (boothRes.ok) {
         const b = await boothRes.json();
         setBooth(b);
-        if (b.destinations) {
+        if (b && Array.isArray(b.destinations)) {
           if (boothConfig) {
-            const synced = b.destinations.map((d: any) => {
+            const synced = (b.destinations || []).map((d: any) => {
               if (d.platform === 'tiktok' && boothConfig.tikTokStreamKey) {
                 return { ...d, streamKey: boothConfig.tikTokStreamKey, enabled: boothConfig.autoRelayToTikTok };
               }
@@ -624,7 +624,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               }}
               className="appearance-none pl-3 pr-7 py-1.5 bg-black/75 backdrop-blur-md border border-amber-400/40 rounded-lg text-amber-300 font-bold text-xs tracking-wider uppercase shadow-lg focus:outline-hidden focus:ring-1 focus:ring-amber-400 cursor-pointer"
             >
-              {allBooths.length > 0 ? (
+              {Array.isArray(allBooths) && allBooths.length > 0 ? (
                 allBooths.map(b => (
                   <option key={b.boothId} value={b.boothId} className="bg-slate-900 text-white">
                     {b.boothName}
@@ -816,7 +816,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 Listening for incoming live comments across all 4 platforms...
               </p>
             ) : (
-              comments.slice(0, 15).map(c => {
+              (comments || []).slice(0, 15).map(c => {
                 const isClaim = c.isClaimIntent || /(?:claim|mine|bin|take|\d{2,3})/i.test(c.comment);
                 return (
                   <div
@@ -1128,7 +1128,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 The mobile video feed ingests once via WebRTC and is fanned out simultaneously to 4 RTMP destinations. Keys are persistently configured per booth.
               </p>
 
-              {destinations.map(d => (
+              {(destinations || []).map(d => (
                 <div key={d.id} className="p-3 rounded-xl bg-black/50 border border-white/10 space-y-1.5">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-amber-300 flex items-center gap-2">

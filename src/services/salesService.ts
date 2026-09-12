@@ -23,19 +23,30 @@ export class SalesService {
           if (Array.isArray(parsed)) parsedItems = parsed;
         } catch {}
       }
+      const rawDate = row.invoice_date || row.invoiceDate || (row.created_at ? String(row.created_at).slice(0, 10) : new Date().toISOString().slice(0, 10));
+      const subVal = Number(row.subtotal ?? row.sub_total ?? row.total_amount ?? 0);
+      const vatVal = Number(row.tax_amount ?? row.vat_amount ?? row.taxAmount ?? row.vatAmount ?? 0);
+      const totalVal = Number(row.total_amount ?? row.totalAmount ?? (subVal + vatVal));
+
       return {
         id: row.id,
         invoiceNo: row.invoice_no || row.invoiceNo || `SINV-${row.id || Date.now()}`,
         clientId: row.client_id || row.clientId,
+        customerId: row.client_id || row.clientId || row.customer_id || '',
         customerName: row.customer_name || row.customerName || 'Walk-in Guest',
         customerPhone: row.customer_phone || row.customerPhone || '',
-        invoiceDate: row.invoice_date || row.invoiceDate || new Date().toISOString().slice(0, 10),
+        invoiceDate: rawDate,
+        date: rawDate,
+        time: row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '14:30',
         channel: row.channel || 'POS_COUNTER',
         paymentMethod: row.payment_method || row.paymentMethod || 'CASH',
-        subtotal: Number(row.subtotal || row.sub_total || row.total_amount || 0),
+        subtotal: subVal,
+        subTotal: subVal,
         discountAmount: Number(row.discount_amount ?? row.discountAmount ?? 0),
-        taxAmount: Number(row.tax_amount ?? row.taxAmount ?? 0),
-        totalAmount: Number(row.total_amount ?? row.totalAmount ?? 0),
+        taxAmount: vatVal,
+        vatAmount: vatVal,
+        totalAmount: totalVal,
+        grandTotalAED: totalVal,
         status: row.status || 'PAID',
         items: parsedItems,
         createdAt: row.created_at

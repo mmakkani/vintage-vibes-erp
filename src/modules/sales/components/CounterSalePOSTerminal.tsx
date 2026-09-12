@@ -587,7 +587,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     const phone = (selectedCustomer?.phone || prompt('Enter Customer WhatsApp Number (+971...)', '+971') || '').replace(/[^0-9]/g, '');
     if (!phone) return;
 
-    const itemsSummary = inv.items.map((it: any) => `• ${it.description} — AED ${it.finalAmount}`).join('\n');
+    const itemsSummary = (Array.isArray(inv?.items) ? inv.items : []).map((it: any) => `• ${it.description} — AED ${it.finalAmount}`).join('\n');
     const msg = encodeURIComponent(
       `🛍️ *${activeProfile?.companyName || 'VINTAGE VIBES DUBAI'} - E-RECEIPT*\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -619,7 +619,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       trn: activeProfile?.trnTaxNo || '100482910300003',
       customerName: selectedCustomer?.name || 'Retail Client',
       giftMessage: giftMessage.trim() || undefined,
-      items: checkoutSuccessData.pieces.map((p: any) => ({
+      items: (Array.isArray(checkoutSuccessData?.pieces) ? checkoutSuccessData.pieces : []).map((p: any) => ({
         description: `${p.brandName} ${p.itemName}`,
         barcode: p.barcode,
         size: p.sizeScanned || 'M',
@@ -635,7 +635,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     const phone = (selectedCustomer?.phone || prompt('Enter WhatsApp Number for Gift Slip (+971...)', '+971') || '').replace(/[^0-9]/g, '');
     if (!phone) return;
 
-    const itemsSummary = checkoutSuccessData.pieces.map((p: any) => `• ${p.brandName} ${p.itemName} (${p.sizeScanned || 'M'}) [SKU: ${p.barcode}]`).join('\n');
+    const itemsSummary = (Array.isArray(checkoutSuccessData?.pieces) ? checkoutSuccessData.pieces : []).map((p: any) => `• ${p.brandName} ${p.itemName} (${p.sizeScanned || 'M'}) [SKU: ${p.barcode}]`).join('\n');
     const msg = encodeURIComponent(
       `🎁 *${activeProfile?.companyName || 'VINTAGE VIBES DUBAI'} - GIFT SLIP*\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -877,7 +877,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   </p>
                 </div>
               ) : (
-                cart.map((item, idx) => (
+                (cart || []).map((item, idx) => (
                   <div
                     key={`${item.piece.barcode}-${idx}`}
                     className={`py-2.5 px-2.5 rounded-xl border flex items-center justify-between gap-3 transition ${
@@ -1031,7 +1031,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               }`}
             >
               <option value="">👤 Standard Walk-In Retail Customer</option>
-              {parties.map(p => (
+              {(parties || []).map(p => (
                 <option key={p.id} value={p.id}>
                   ⭐ {p.name} ({p.code}) • {p.phone || 'VIP Client'}
                 </option>
@@ -1724,14 +1724,14 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   No parked carts right now. Use "Hold Cart" when a customer steps away.
                 </div>
               ) : (
-                parkedSales.map(park => (
+                (parkedSales || []).map(park => (
                   <div
                     key={park.id}
                     className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between"
                   >
                     <div>
                       <div className="text-xs font-bold text-white">
-                        {park.customerName || 'Walk-In Customer'} ({park.items.length} garments)
+                        {park.customerName || 'Walk-In Customer'} ({(park?.items || []).length} garments)
                       </div>
                       <div className="text-[10px] text-slate-400 font-mono">Held at {park.timestamp}</div>
                     </div>
