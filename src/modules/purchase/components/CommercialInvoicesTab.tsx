@@ -19,10 +19,12 @@ import {
   Tag,
   Edit,
   Trash2,
-  AlertCircle
+  AlertCircle,
+  RotateCcw
 } from 'lucide-react';
 import { openBatchBaleThermalTagsPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { supabase } from '../../../supabaseClient.ts';
+import { PurchaseService } from '../../../services/purchaseService.ts';
 
 interface CommercialInvoicesTabProps {
   invoices: PurchaseInvoice[];
@@ -138,34 +140,71 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
     });
   }, [invoicesList, parties, searchTerm]);
 
+  const getInvoiceAmountInAed = (inv: PurchaseInvoice): number => {
+    const rawTotal = Number(inv.totalAmount || 0);
+    const curr = (inv.currency || 'AED').toUpperCase();
+    if (curr === 'AED') return rawTotal;
+    const rate = Number(inv.exchangeRate) || (curr === 'USD' ? 3.6725 : curr === 'EUR' ? 4.015 : curr === 'GBP' ? 4.72 : 1);
+    return Number((rawTotal * rate).toFixed(2));
+  };
+
   const totalProcurementAed = useMemo(() => {
-    return invoicesList.reduce((sum, i) => sum + (i.totalAmount || 0), 0);
+    return invoicesList.reduce((sum, i) => sum + getInvoiceAmountInAed(i), 0);
   }, [invoicesList]);
 
-  const handlePrintBatchTags = (inv: PurchaseInvoice) => {
-    const invItems = inv.items || [];
+  const handlePrintBatchTags = async (inv: PurchaseInvoice) => {
+    let invItems = inv.items || [];
+    if (invItems.length === 0) {
+      try {
+        const { data: dbItems } = await supabase
+          .from('purchase_invoice_items')
+          .select('*')
+          .eq('invoice_id', String(inv.id));
+        if (dbItems && dbItems.length > 0) {
+          invItems = dbItems.map((itemRow: any) => ({
+            id: String(itemRow.id),
+            itemId: itemRow.item_code || itemRow.id,
+            itemCode: itemRow.item_code || 'VINT-01',
+            itemName: itemRow.item_name || itemRow.description || 'Vintage Mix Bales',
+            packagingUom: itemRow.packaging_uom || itemRow.packaging || 'BALES',
+            packageCount: Number(itemRow.package_count ?? itemRow.quantity ?? 1),
+            weightUom: 'KG',
+            totalWeight: Number(itemRow.total_weight ?? itemRow.total_kg ?? 0),
+            ratePerWeight: Number(itemRow.rate_per_weight ?? itemRow.rate ?? 0),
+            lineTotal: Number(itemRow.line_total ?? 0)
+          }));
+        }
+      } catch (e) {
+        console.warn('Error fetching items for thermal tags:', e);
+      }
+    }
+
     const totalBalesCount = inv.totalBalesCount || invItems.reduce((acc, it) => acc + (Number(it.packageCount) || 1), 0) || 1;
     const balesToPrint: any[] = [];
     let globalBaleIndex = 1;
+    const curr = (inv.currency || 'AED').toUpperCase();
+    const fxRate = curr === 'AED' ? 1 : (Number(inv.exchangeRate) || 3.6725);
+    const sName = getSupplierDisplayName(inv);
 
     if (invItems.length > 0) {
       invItems.forEach(line => {
         const count = Number(line.packageCount) || 1;
         const weightPerBale = (Number(line.totalWeight) || 0) / count;
-        const lineTotal = Number(line.lineTotal) || 0;
-        const costPerBale = lineTotal / count;
+        const rawLineTotal = Number(line.lineTotal) || 0;
+        const lineTotalAed = rawLineTotal * fxRate;
+        const costPerBale = lineTotalAed / count;
         const costPerGram = weightPerBale > 0 ? (costPerBale / (weightPerBale * 1000)) : 0;
 
         for (let i = 1; i <= count; i++) {
           const paddedIdx = String(globalBaleIndex).padStart(3, '0');
           balesToPrint.push({
             baleCode: `BAL-${inv.invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${paddedIdx}`,
-            category: line.itemName,
+            category: line.itemName || 'Vintage Mix Bales',
             grossWeightKg: Number(weightPerBale.toFixed(2)),
             totalCostAed: Number(costPerBale.toFixed(2)),
             costPerGram,
             purchaseInvoiceNo: inv.invoiceNo,
-            supplierName: inv.supplierName,
+            supplierName: sName,
             status: 'Unopened / Ready for Sorting',
             index: globalBaleIndex,
             totalCount: totalBalesCount
@@ -174,8 +213,8 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
         }
       });
     } else {
-      const wt = Number(inv.totalGrossWeightKg || 45);
-      const cost = Number(inv.totalAmount || 0);
+      const wt = Number(inv.totalWeightKg || inv.totalGrossWeightKg || 45);
+      const cost = getInvoiceAmountInAed(inv);
       balesToPrint.push({
         baleCode: `BAL-${inv.invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-001`,
         category: 'Vintage Mix Bales',
@@ -183,7 +222,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
         totalCostAed: cost,
         costPerGram: wt > 0 ? (cost / (wt * 1000)) : 0,
         purchaseInvoiceNo: inv.invoiceNo,
-        supplierName: inv.supplierName,
+        supplierName: sName,
         status: 'Unopened / Ready for Sorting',
         index: 1,
         totalCount: 1
@@ -195,14 +234,22 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
 
   const handlePostInvoice = async (invId: string) => {
     try {
-      const res = await fetch(`/api/purchase/invoices/${invId}/post`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postedBy: 'Procurement Mgr' })
-      });
-      if (res.ok) onRefresh();
+      await supabase.from('purchase_invoices').update({ status: 'POSTED' }).eq('id', invId);
+      setToastMessage("Invoice status updated to POSTED");
+      onRefresh();
     } catch (e) {
       console.warn('Error posting invoice:', e);
+    }
+  };
+
+  const handleUnpostInvoice = async (invId: string) => {
+    if (!window.confirm("Are you sure you want to unpost this invoice back to DRAFT?")) return;
+    try {
+      await PurchaseService.unpostPurchaseInvoice(invId);
+      setToastMessage("Purchase invoice unposted to DRAFT");
+      onRefresh();
+    } catch (e: any) {
+      alert("Failed to unpost invoice: " + (e?.message || 'Error'));
     }
   };
 
@@ -212,9 +259,17 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
-      if (res.ok) onRefresh();
+      if (res.ok) {
+        await supabase.from('purchase_invoices').update({ converted_to_inward: true }).eq('id', invId);
+        onRefresh();
+      } else {
+        await supabase.from('purchase_invoices').update({ converted_to_inward: true }).eq('id', invId);
+        onRefresh();
+      }
     } catch (e) {
       console.warn('Error converting to inward:', e);
+      await supabase.from('purchase_invoices').update({ converted_to_inward: true }).eq('id', invId);
+      onRefresh();
     }
   };
 
@@ -420,7 +475,15 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                         {inv.blAirwayBillNo || 'N/A'}
                       </td>
                       <td className="px-4 py-3 font-mono font-bold text-slate-900">
-                        {inv.currency || 'AED'} {Number(inv.totalAmount || 0).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                        <div>
+                          {(inv.currency || 'AED') === 'USD' ? '$' : (inv.currency || 'AED')} {Number(inv.totalAmount || 0).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                        </div>
+                        {(inv.currency || 'AED').toUpperCase() !== 'AED' && (
+                          <div className="text-[10px] text-indigo-700 font-bold tracking-tight">
+                            ≈ AED {getInvoiceAmountInAed(inv).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                            <span className="text-[9px] text-slate-400 font-normal ml-1">(@ {Number(inv.exchangeRate || 3.6725)})</span>
+                          </div>
+                        )}
                         {inv.applyVat !== false && inv.vatAmount > 0 && (
                           <span className="block text-[9px] text-emerald-600 font-medium">Incl. 5% VAT</span>
                         )}
@@ -503,6 +566,18 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                             <Eye className="w-3.5 h-3.5 text-indigo-600" />
                             <span>View Doc</span>
                           </button>
+
+                          {inv.status === 'POSTED' && !isSortingStarted && !inv.convertedToInward && (
+                            <button
+                              type="button"
+                              onClick={() => handleUnpostInvoice(inv.id)}
+                              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors border border-amber-300"
+                              title="Unpost this invoice back to DRAFT to allow changes or deletion"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                              <span>Unpost</span>
+                            </button>
+                          )}
 
                           {inv.status !== 'POSTED' && (
                             <button

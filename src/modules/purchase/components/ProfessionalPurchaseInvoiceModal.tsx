@@ -634,15 +634,19 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
 
       // Safe cascading insert for purchase_invoice_items
       if (lines && lines.length > 0) {
-        const itemsRows = lines.map((l, idx) => ({
-          id: String(l.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `pii-${targetInvoiceId}-${idx + 1}`)),
+        const itemsRows = lines.map((l) => ({
           invoice_id: targetInvoiceId,
-          item_id: l.itemId ? String(l.itemId) : null,
           item_code: l.itemCode ? String(l.itemCode) : null,
-          item_name: String(l.itemName || ''),
+          description: String(l.itemName || 'Vintage Mix Bales'),
+          item_name: String(l.itemName || 'Vintage Mix Bales'),
+          packaging: String(l.packagingUom || 'BALES'),
+          packaging_uom: String(l.packagingUom || 'BALES'),
+          quantity: Number(l.packageCount || 1),
           package_count: Number(l.packageCount || 1),
-          packaging_uom: String(l.packagingUom || 'Bales'),
+          total_kg: Number(l.totalWeight || 0),
           total_weight: Number(l.totalWeight || 0),
+          rate_basis: l.rateType || 'PER_KG',
+          rate: Number(l.ratePerWeight || 0),
           rate_per_weight: Number(l.ratePerWeight || 0),
           line_total: Number(l.lineTotal || 0)
         }));
@@ -650,7 +654,10 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
           if (editingInvoice) {
             await supabase.from('purchase_invoice_items').delete().eq('invoice_id', targetInvoiceId);
           }
-          await supabase.from('purchase_invoice_items').insert(itemsRows);
+          const { error: insertItemsErr } = await supabase.from('purchase_invoice_items').insert(itemsRows);
+          if (insertItemsErr) {
+            console.error('Error inserting purchase_invoice_items:', insertItemsErr);
+          }
         } catch (itemsEx) {
           console.warn('Notice on purchase_invoice_items insert:', itemsEx);
         }

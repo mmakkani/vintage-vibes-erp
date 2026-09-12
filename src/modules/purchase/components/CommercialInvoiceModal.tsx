@@ -1,8 +1,47 @@
-import React from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { PurchaseInvoice, InwardGatePass } from '../purchase.types.ts';
 import { Printer, X, ShieldCheck, Download, Globe, Award, FileText, Tag } from 'lucide-react';
 import { openBatchBaleThermalTagsPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { RoyalWaxSeal } from '../../../components/RoyalWaxSeal.tsx';
+import { supabase } from '../../../supabaseClient.ts';
+
+function numberToWords(amount: number): string {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const num = Math.floor(amount);
+  const fils = Math.round((amount - num) * 100);
+
+  function convertGroup(n: number): string {
+    let str = '';
+    if (n >= 100) {
+      str += ones[Math.floor(n / 100)] + ' Hundred ';
+      n %= 100;
+    }
+    if (n >= 20) {
+      str += tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '') + ' ';
+    } else if (n > 0) {
+      str += ones[n] + ' ';
+    }
+    return str;
+  }
+
+  if (num === 0) return 'Zero UAE Dirhams Only';
+  let result = '';
+  const millions = Math.floor(num / 1000000);
+  const thousands = Math.floor((num % 1000000) / 1000);
+  const remainder = num % 1000;
+
+  if (millions) result += convertGroup(millions) + 'Million ';
+  if (thousands) result += convertGroup(thousands) + 'Thousand ';
+  if (remainder) result += convertGroup(remainder);
+
+  result = result.trim() + ' UAE Dirhams';
+  if (fils > 0) {
+    result += ' and ' + fils + '/100 Fils';
+  }
+  result += ' Only';
+  return result;
+}
 
 interface CommercialInvoiceModalProps {
   invoice?: PurchaseInvoice | null;
@@ -20,92 +59,142 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
   };
 
   const docNo = invoice ? invoice.invoiceNo : gatePass ? gatePass.gatePassNo : '';
-  const supplierName = invoice?.supplierName || gatePass?.supplierName || 'Supplier';
-  const date = invoice?.date || gatePass?.date || new Date().toISOString().slice(0, 10);
+  const supplierName = invoice?.supplierName || (invoice as any)?.supplier_name || gatePass?.supplierName || 'Supplier';
+  const date = invoice?.date || invoice?.invoiceDate || (invoice as any)?.invoice_date || gatePass?.date || new Date().toISOString().slice(0, 10);
   const status = invoice?.status || gatePass?.status || 'DRAFT';
-  const containerNo = invoice?.containerNo || gatePass?.containerNo || '-';
-  const billOfLading = invoice?.blAirwayBillNo || gatePass?.billOfLading || '-';
-  const vesselName = gatePass?.vesselName || (invoice as any)?.vesselName || '-';
-  const portOfLoading = gatePass?.portOfLoading || (invoice as any)?.portOfLoading || '-';
-  const portOfDischarge = invoice?.portOfEntry || 'Jebel Ali Port (AEJEA), Dubai, UAE';
+  const containerNo = invoice?.containerNo || (invoice as any)?.container_no || gatePass?.containerNo || '-';
+  const billOfLading = invoice?.blAirwayBillNo || (invoice as any)?.bl_no || gatePass?.billOfLading || '-';
+  const vesselName = gatePass?.vesselName || (invoice as any)?.vesselName || (invoice as any)?.vessel_name || '-';
+  const portOfLoading = gatePass?.portOfLoading || (invoice as any)?.portOfLoading || (invoice as any)?.port_of_loading || '-';
+  const portOfDischarge = invoice?.portOfEntry || (invoice as any)?.port_of_arrival || 'Jebel Ali Port (AEJEA), Dubai, UAE';
 
-  // Invoice line calculations from real items
-  const items = (invoice?.items && invoice.items.length > 0)
-    ? invoice.items.map((i, idx) => {
-        const rateInAed = i.ratePerWeight || 0;
-        const lineTotalAed = i.lineTotal || (i.totalWeight * rateInAed);
-        return {
-          id: i.id || `pi-${idx}`,
-          description: `${i.itemName} (${i.packagingUom} packing)`,
-          hsCode: '6309.00.10',
-          quantityBales: i.packageCount || 1,
-          netWeightKg: Number(((i.totalWeight || 0) * 0.96).toFixed(1)),
-          grossWeightKg: i.totalWeight || 0,
-          unitPriceUsd: Number((rateInAed / 3.6725).toFixed(2)),
-          totalUsd: Number((lineTotalAed / 3.6725).toFixed(2)),
-          exchangeRate: 0.272,
-          totalAed: lineTotalAed
-        };
-      })
-    : [];
+  const [invoiceItems, setInvoiceItems] = useState<any[]>(invoice?.items || []);
 
-  const totalUsd = (invoice as any)?.totalUsd || items.reduce((acc, i) => acc + (i.totalUsd || 0), 0);
-  const totalAed = (invoice as any)?.grandTotalAed || (invoice ? invoice.totalAmount : items.reduce((acc, i) => acc + (i.totalAed || 0), 0));
-  const totalNetKg = items.reduce((acc, i) => acc + (i.netWeightKg || 0), 0);
-  const totalGrossKg = items.reduce((acc, i) => acc + (i.grossWeightKg || 0), 0);
-  const totalBales = items.reduce((acc, i) => acc + (i.quantityBales || 0), 0) || (invoice?.totalBalesCount || 1);
+  useEffect(() => {
+    if ((!invoice?.items || invoice.items.length === 0) && invoice?.id) {
+      supabase
+        .from('purchase_invoice_items')
+        .select('*')
+        .eq('invoice_id', String(invoice.id))
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setInvoiceItems(data.map((r: any) => ({
+              id: r.id,
+              itemId: r.item_code || r.id,
+              itemCode: r.item_code || 'VINT-01',
+              itemName: r.item_name || r.description || 'Vintage Mix Bales',
+              packagingUom: r.packaging_uom || r.packaging || 'BALES',
+              packageCount: Number(r.package_count ?? r.quantity ?? 1),
+              totalWeight: Number(r.total_weight ?? r.total_kg ?? 0),
+              ratePerWeight: Number(r.rate_per_weight ?? r.rate ?? 0),
+              lineTotal: Number(r.line_total ?? 0)
+            })));
+          }
+        });
+    } else if (invoice?.items && invoice.items.length > 0) {
+      setInvoiceItems(invoice.items);
+    }
+  }, [invoice?.id, invoice?.items]);
+
+  const currency = (invoice?.currency || 'AED').toUpperCase();
+  const exchangeRate = Number(invoice?.exchangeRate) || (currency === 'USD' ? 3.6725 : 1);
+
+  const rawItems = useMemo(() => {
+    if (invoiceItems && invoiceItems.length > 0) return invoiceItems;
+    const fallbackWt = Number(invoice?.totalWeightKg || (invoice as any)?.total_weight_kg || 25);
+    const fallbackTot = Number(invoice?.totalAmount || (invoice as any)?.total_amount || 0);
+    const fallbackRate = fallbackWt > 0 ? Number((fallbackTot / fallbackWt).toFixed(2)) : 0;
+    return [
+      {
+        id: `pi-${invoice?.id || '1'}`,
+        itemName: 'Vintage Mix Bales',
+        packagingUom: 'BALES',
+        packageCount: Number(invoice?.totalBalesCount || 1),
+        totalWeight: fallbackWt,
+        ratePerWeight: fallbackRate,
+        lineTotal: fallbackTot
+      }
+    ];
+  }, [invoiceItems, invoice]);
+
+  const items = useMemo(() => {
+    return rawItems.map((i, idx) => {
+      const count = Number(i.packageCount) || 1;
+      const grossKg = Number(i.totalWeight) || 0;
+      const netKg = Number((grossKg * 0.96).toFixed(1));
+      const rawRate = Number(i.ratePerWeight) || 0;
+      const rawLineTotal = Number(i.lineTotal) || (grossKg * rawRate);
+
+      let unitPriceUsd = 0;
+      let totalUsd = 0;
+      let unitPriceAed = 0;
+      let totalAed = 0;
+
+      if (currency === 'USD') {
+        unitPriceUsd = rawRate;
+        totalUsd = rawLineTotal;
+        unitPriceAed = Number((rawRate * exchangeRate).toFixed(2));
+        totalAed = Number((rawLineTotal * exchangeRate).toFixed(2));
+      } else {
+        unitPriceAed = rawRate;
+        totalAed = rawLineTotal;
+        unitPriceUsd = Number((rawRate / (exchangeRate || 3.6725)).toFixed(2));
+        totalUsd = Number((rawLineTotal / (exchangeRate || 3.6725)).toFixed(2));
+      }
+
+      return {
+        id: i.id || `pi-${idx}`,
+        description: `${i.itemName || 'Vintage Mix Bales'} (${i.packagingUom || 'BALES'} packing)`,
+        hsCode: '6309.00.10',
+        quantityBales: count,
+        netWeightKg: netKg,
+        grossWeightKg: grossKg,
+        unitPriceUsd,
+        totalUsd,
+        unitPriceAed,
+        totalAed
+      };
+    });
+  }, [rawItems, currency, exchangeRate]);
+
+  const totalUsd = useMemo(() => items.reduce((acc, i) => acc + (i.totalUsd || 0), 0), [items]);
+  const totalAed = useMemo(() => items.reduce((acc, i) => acc + (i.totalAed || 0), 0), [items]);
+  const totalNetKg = useMemo(() => items.reduce((acc, i) => acc + (i.netWeightKg || 0), 0), [items]);
+  const totalGrossKg = useMemo(() => items.reduce((acc, i) => acc + (i.grossWeightKg || 0), 0), [items]);
+  const totalBales = useMemo(() => items.reduce((acc, i) => acc + (i.quantityBales || 0), 0), [items]);
 
   const handlePrintBatchThermalTags = () => {
     if (!invoice && !gatePass) return;
     const invoiceRef = docNo;
     const sName = supplierName;
-    const invItems = invoice?.items || [];
+    const totalBalesCount = totalBales;
 
     const balesToPrint: any[] = [];
     let globalBaleIndex = 1;
-    const totalBalesCount = totalBales;
 
-    if (invItems.length > 0) {
-      invItems.forEach(line => {
-        const count = Number(line.packageCount) || 1;
-        const weightPerBale = (Number(line.totalWeight) || 0) / count;
-        const lineTotal = Number(line.lineTotal) || 0;
-        const costPerBale = lineTotal / count;
-        const costPerGram = weightPerBale > 0 ? (costPerBale / (weightPerBale * 1000)) : 0;
+    items.forEach(line => {
+      const count = line.quantityBales || 1;
+      const weightPerBale = line.grossWeightKg / count;
+      const costPerBale = line.totalAed / count;
+      const costPerGram = weightPerBale > 0 ? (costPerBale / (weightPerBale * 1000)) : 0;
 
-        for (let i = 1; i <= count; i++) {
-          const paddedIdx = String(globalBaleIndex).padStart(3, '0');
-          balesToPrint.push({
-            baleCode: `BAL-${invoiceRef.replace(/[^a-zA-Z0-9]/g, '')}-${paddedIdx}`,
-            category: line.itemName,
-            grossWeightKg: Number(weightPerBale.toFixed(2)),
-            totalCostAed: Number(costPerBale.toFixed(2)),
-            costPerGram,
-            purchaseInvoiceNo: invoiceRef,
-            supplierName: sName,
-            status: 'Unopened / Ready for Sorting',
-            index: globalBaleIndex,
-            totalCount: totalBalesCount
-          });
-          globalBaleIndex++;
-        }
-      });
-    } else {
-      const wt = Number(invoice?.totalGrossWeightKg || gatePass?.totalBaleWeight || 45);
-      const cost = Number(invoice?.totalAmount || gatePass?.totalBaleCost || 0);
-      balesToPrint.push({
-        baleCode: `BAL-${invoiceRef.replace(/[^a-zA-Z0-9]/g, '')}-001`,
-        category: gatePass?.baleCategory || 'Vintage Mix Bales',
-        grossWeightKg: wt,
-        totalCostAed: cost,
-        costPerGram: wt > 0 ? (cost / (wt * 1000)) : 0,
-        purchaseInvoiceNo: invoiceRef,
-        supplierName: sName,
-        status: 'Unopened / Ready for Sorting',
-        index: 1,
-        totalCount: 1
-      });
-    }
+      for (let i = 1; i <= count; i++) {
+        const paddedIdx = String(globalBaleIndex).padStart(3, '0');
+        balesToPrint.push({
+          baleCode: `BAL-${invoiceRef.replace(/[^a-zA-Z0-9]/g, '')}-${paddedIdx}`,
+          category: line.description.split(' (')[0],
+          grossWeightKg: Number(weightPerBale.toFixed(2)),
+          totalCostAed: Number(costPerBale.toFixed(2)),
+          costPerGram,
+          purchaseInvoiceNo: invoiceRef,
+          supplierName: sName,
+          status: 'Unopened / Ready for Sorting',
+          index: globalBaleIndex,
+          totalCount: totalBalesCount
+        });
+        globalBaleIndex++;
+      }
+    });
 
     openBatchBaleThermalTagsPrintWindow(balesToPrint);
   };
@@ -315,7 +404,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-bold text-slate-700">Total Invoice Amount in Words:</span>
               <span className="font-serif italic font-bold text-amber-900">
-                Seventy-Four Thousand Six Hundred Forty UAE Dirhams Only (AED 74,640.00)
+                {numberToWords(totalAed)} (AED {totalAed.toLocaleString(undefined, { minimumFractionDigits: 2 })})
               </span>
             </div>
             <p className="text-[10px] text-slate-600 border-t border-slate-100 pt-1.5">
@@ -349,6 +438,28 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Print Styles for A4 Paper Export */}
+        <style>{`
+          @media print {
+            @page {
+              size: A4 portrait;
+              margin: 10mm;
+            }
+            body {
+              background: #fff !important;
+              print-color-adjust: exact !important;
+              -webkit-print-color-adjust: exact !important;
+            }
+            .fixed {
+              position: static !important;
+              inset: auto !important;
+              background: none !important;
+              padding: 0 !important;
+              backdrop-filter: none !important;
+            }
+          }
+        `}</style>
       </div>
     </div>
   );

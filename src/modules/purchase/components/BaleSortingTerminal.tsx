@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { supabase } from '../../../supabaseClient.ts';
+import { PurchaseService } from '../../../services/purchaseService.ts';
 import { InwardGatePass, PieceBreakdownItem, PurchaseInvoice } from '../purchase.types.ts';
 import { ItemMaster, BrandMaster, LabelGrade, ShopMaster, CategoryMaster, SizeMaster } from '../../setup/setup.types.ts';
 import { PurchaseEngine } from '../purchase.engine.ts';
@@ -289,16 +290,16 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   // Auto print toggle
   const [autoPrintThermalOnAdd, setAutoPrintThermalOnAdd] = useState(true);
 
-  // New Piece High-Speed Input Row Fields
-  const [gramWeight, setGramWeight] = useState<string>('380');
+  // New Piece High-Speed Input Row Fields (Clean Defaults - No Dummy Values)
+  const [gramWeight, setGramWeight] = useState<string>('');
   const [sellingPriceOverride, setSellingPriceOverride] = useState<string>('');
-  const [brandTitle, setBrandTitle] = useState<string>("Levi's 501 Redline Wash");
+  const [brandTitle, setBrandTitle] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>(() => availableCategories[0] || DEFAULT_CATEGORIES[0]);
   const [sizeScanned, setSizeScanned] = useState<string>('L');
   const [selectedGrade, setSelectedGrade] = useState<string>(labels[0]?.name || 'Grade A+ (Pristine Cream)');
   const [shopLocation, setShopLocation] = useState<string>(shops[0]?.name || 'Central Warehouse (Al Quoz)');
   const [countryOfOrigin, setCountryOfOrigin] = useState<string>('Made in USA');
-  const [styleNotes, setStyleNotes] = useState<string>('Single stitch vintage wash');
+  const [styleNotes, setStyleNotes] = useState<string>('');
 
   // Update selected category if availableCategories loads
   useEffect(() => {
@@ -737,9 +738,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setTimeout(onClose, 400);
   };
 
-  // Finalize & Post Bale (upsert COMPLETED into public.bale_sessions and lock)
+  // Finalize & Post Bale (upsert COMPLETED into public.bale_sessions, inward_gate_passes and inventory_pieces)
   const handleFinalizeAndPost = async () => {
     if (!activeBale) return;
+    if (isTerminalFinalized || hudStats.isCompleted || activeBale.status === 'COMPLETED') {
+      alert("This bale is already finalized and posted!");
+      return;
+    }
     luxuryAudio.playMechanicalClick();
     if (!confirm(`Finalize and lock Bale ${activeBale.baleCode || activeBale.gatePassNo}? All ${hudStats.piecesCount} pieces will join active Finished Goods inventory.`)) {
       return;
@@ -760,13 +765,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         updated_at: new Date().toISOString()
       };
 
-      const { error } = await supabase
+      await supabase
         .from('bale_sessions')
         .upsert(sessionPayload, { onConflict: 'id' });
 
-      if (error) {
-        console.error('Error finalizing session in bale_sessions:', error);
-      }
+      // Call service to update inward_gate_passes & copy pieces into inventory_pieces
+      await PurchaseService.finalizeBaleSession(activeBale.id);
     } catch (err) {
       console.warn('Finalize session error:', err);
     }
@@ -1414,7 +1418,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       type="number"
                       step="1"
                       min="1"
-                      placeholder="e.g. 380"
+                      placeholder="[]"
                       value={gramWeight}
                       onChange={e => setGramWeight(e.target.value)}
                       onKeyDown={e => {
@@ -1466,7 +1470,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. Levi's 501"
+                    placeholder="[ENTER BRAND / TITLE]"
                     value={brandTitle}
                     onChange={e => setBrandTitle(e.target.value)}
                     disabled={hudStats.isCompleted}
@@ -1645,6 +1649,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   <tr>
                     <th className="py-2.5 px-3">#</th>
                     <th className="py-2.5 px-3">Barcode</th>
+                    <th className="py-2.5 px-3 text-center">Date / Time</th>
                     <th className="py-2.5 px-3">Category</th>
                     <th className="py-2.5 px-3 text-center">Size</th>
                     <th className="py-2.5 px-3">Brand & Title</th>
@@ -1659,7 +1664,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 <tbody className="divide-y divide-slate-800/60 font-sans">
                   {(!pieces || pieces.length === 0) ? (
                     <tr>
-                      <td colSpan={11} className="py-12 text-center text-slate-500">
+                      <td colSpan={12} className="py-12 text-center text-slate-500">
                         <Tag className="w-8 h-8 text-slate-700 mx-auto mb-2" />
                         <p className="font-semibold text-slate-400">No pieces sorted in this bale yet</p>
                         <p className="text-[11px] text-slate-600 mt-0.5">
@@ -1686,6 +1691,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                         <tr key={piece.id || idx} className="hover:bg-slate-900/80 transition-colors">
                           <td className="py-2.5 px-3 font-mono text-slate-500 text-[11px]">{pieceNum}</td>
                           <td className="py-2.5 px-3 font-mono font-bold text-indigo-400 text-[11px]">{barcode}</td>
+                          <td className="py-2.5 px-3 text-center font-mono text-slate-400 text-[11px] whitespace-nowrap">
+                            {piece.created_at || (piece as any).createdAt
+                              ? new Date(piece.created_at || (piece as any).createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                              : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </td>
                           <td className="py-2.5 px-3 text-slate-300">{category}</td>
                           <td className="py-2.5 px-3 text-center">
                             <span className="px-2 py-0.5 rounded bg-slate-800 text-amber-300 font-mono font-bold border border-slate-700 text-[11px] shadow-xs">
@@ -1694,15 +1704,33 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </td>
                           <td className="py-2.5 px-3 font-medium text-white">{brandTitle} {piece.style ? `• ${piece.style}` : ''}</td>
                           <td className="py-2.5 px-3 text-center">
-                            <div className="flex items-center justify-center gap-1">
+                            <div className="flex items-center justify-center gap-1.5">
                               {frontImg && (
-                                <img src={frontImg} alt="Front" title="Front Look" className="w-6 h-6 object-cover rounded border border-slate-700" />
+                                <img
+                                  src={frontImg}
+                                  alt="Front"
+                                  title="Front Photo - Click to Enlarge"
+                                  onClick={() => setPreviewLightboxImage(frontImg)}
+                                  className="w-7 h-7 object-cover rounded border border-slate-700 hover:border-emerald-400 cursor-pointer hover:scale-125 transition shadow-xs"
+                                />
                               )}
                               {backImg && (
-                                <img src={backImg} alt="Back" title="Back Look" className="w-6 h-6 object-cover rounded border border-slate-700" />
+                                <img
+                                  src={backImg}
+                                  alt="Back"
+                                  title="Back Photo - Click to Enlarge"
+                                  onClick={() => setPreviewLightboxImage(backImg)}
+                                  className="w-7 h-7 object-cover rounded border border-slate-700 hover:border-indigo-400 cursor-pointer hover:scale-125 transition shadow-xs"
+                                />
                               )}
                               {tagImg && (
-                                <img src={tagImg} alt="Tag" title="Tag OCR" className="w-6 h-6 object-cover rounded border border-amber-600" />
+                                <img
+                                  src={tagImg}
+                                  alt="Tag"
+                                  title="Tag OCR Photo - Click to Enlarge"
+                                  onClick={() => setPreviewLightboxImage(tagImg)}
+                                  className="w-7 h-7 object-cover rounded border border-amber-600 hover:border-amber-400 cursor-pointer hover:scale-125 transition shadow-xs"
+                                />
                               )}
                               {!frontImg && !backImg && !tagImg && (
                                 <span className="text-[10px] text-slate-600 font-mono">-</span>
@@ -1786,10 +1814,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             <button
               type="button"
               onClick={handleFinalizeAndPost}
-              className="flex-1 sm:flex-none px-5 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-emerald-600/25 border border-emerald-400/40 flex items-center justify-center gap-2 transition-all transform active:scale-95 cursor-pointer"
+              disabled={isTerminalFinalized || hudStats.isCompleted || activeBale?.status === 'COMPLETED'}
+              className="flex-1 sm:flex-none px-5 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-emerald-600/25 border border-emerald-400/40 flex items-center justify-center gap-2 transition-all transform active:scale-95 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              title={isTerminalFinalized || hudStats.isCompleted ? "Bale is already 100% finalized and posted" : "Finalize and lock this bale"}
             >
               <ShieldCheck className="w-4 h-4 text-slate-950" />
-              <span>Finalize & Post Bale</span>
+              <span>{isTerminalFinalized || hudStats.isCompleted ? '✓ Bale Finalized & Posted' : 'Finalize & Post Bale'}</span>
             </button>
           </div>
         </div>

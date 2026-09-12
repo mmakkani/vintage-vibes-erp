@@ -4,17 +4,42 @@ import { PurchaseInvoice, InwardGatePass, PieceBreakdownItem } from '../modules/
 export class PurchaseService {
   // --- Purchase Invoices ---
   public static async getPurchaseInvoices(): Promise<PurchaseInvoice[]> {
-    const { data, error } = await supabase
-      .from('purchase_invoices')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const [invResult, itemsResult] = await Promise.all([
+      supabase
+        .from('purchase_invoices')
+        .select('*')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('purchase_invoice_items')
+        .select('*')
+    ]);
 
-    if (error) {
-      console.error('Supabase error on purchase_invoices:', error);
-      throw new Error(error.message || 'Database error occurred reading purchase invoices');
+    if (invResult.error) {
+      console.error('Supabase error on purchase_invoices:', invResult.error);
+      throw new Error(invResult.error.message || 'Database error occurred reading purchase invoices');
     }
 
-    return (data || []).map((row: any) => {
+    const itemsByInvoiceId = new Map<string, any[]>();
+    (itemsResult.data || []).forEach((itemRow: any) => {
+      const invId = String(itemRow.invoice_id);
+      if (!itemsByInvoiceId.has(invId)) {
+        itemsByInvoiceId.set(invId, []);
+      }
+      itemsByInvoiceId.get(invId)!.push({
+        id: String(itemRow.id),
+        itemId: itemRow.item_code || itemRow.id,
+        itemCode: itemRow.item_code || 'VINT-01',
+        itemName: itemRow.item_name || itemRow.description || 'Vintage Mix Bales',
+        packagingUom: itemRow.packaging_uom || itemRow.packaging || 'BALES',
+        packageCount: Number(itemRow.package_count ?? itemRow.quantity ?? 1),
+        weightUom: 'KG',
+        totalWeight: Number(itemRow.total_weight ?? itemRow.total_kg ?? 0),
+        ratePerWeight: Number(itemRow.rate_per_weight ?? itemRow.rate ?? 0),
+        lineTotal: Number(itemRow.line_total ?? 0)
+      });
+    });
+
+    return (invResult.data || []).map((row: any) => {
       const rawDate = row.issue_date || row.invoice_date || row.created_at;
       let cleanDate = '';
       if (rawDate) {
@@ -25,6 +50,26 @@ export class PurchaseService {
           cleanDate = String(rawDate).slice(0, 10);
         }
       }
+
+      const totalWeightKg = Number(row.total_weight_kg ?? row.totalWeightKg ?? 0);
+      const totalAmount = Number(row.total_amount ?? row.total_payable ?? row.totalAmount ?? 0);
+      const loadedItems = itemsByInvoiceId.get(String(row.id)) || [];
+
+      // If no items in database, provide a default breakdown item from invoice header
+      const items = loadedItems.length > 0 ? loadedItems : [
+        {
+          id: `item-${row.id}-1`,
+          itemId: 'VINT-BAL-01',
+          itemCode: 'VINT-BAL-01',
+          itemName: 'Vintage Mix Bales',
+          packagingUom: 'BALES',
+          packageCount: 1,
+          weightUom: 'KG',
+          totalWeight: totalWeightKg || 45,
+          ratePerWeight: totalWeightKg > 0 ? Number((totalAmount / totalWeightKg).toFixed(2)) : 0,
+          lineTotal: totalAmount
+        }
+      ];
 
       return {
         id: row.id,
@@ -43,17 +88,30 @@ export class PurchaseService {
         subTotal: Number(row.subtotal || 0),
         taxAmount: Number(row.tax_amount ?? row.vat_amount ?? row.taxAmount ?? 0),
         vatAmount: Number(row.vat_amount ?? row.tax_amount ?? row.vatAmount ?? 0),
-        totalAmount: Number(row.total_amount ?? row.total_payable ?? row.totalAmount ?? 0),
-        totalWeightKg: Number(row.total_weight_kg ?? row.totalWeightKg ?? 0),
+        totalAmount,
+        totalWeightKg,
         status: row.status || 'RECEIVED',
         notes: row.notes || '',
         containerNo: row.container_no || row.containerNo || '',
         blAirwayBillNo: row.bl_no || row.bl_airway_bill_no || row.blAirwayBillNo || '',
         convertedToInward: Boolean(row.converted_to_inward || row.convertedToInward),
+        items,
+        totalBalesCount: items.reduce((acc: number, it: any) => acc + (Number(it.packageCount) || 1), 0),
         createdAt: row.created_at,
         created_at: row.created_at
       } as PurchaseInvoice;
     });
+  }
+
+  public static async unpostPurchaseInvoice(invoiceId: string): Promise<void> {
+    const { error } = await supabase
+      .from('purchase_invoices')
+      .update({ status: 'DRAFT' })
+      .eq('id', String(invoiceId));
+    if (error) {
+      console.error('Supabase error unposting purchase invoice:', error);
+      throw new Error(error.message || 'Failed to unpost purchase invoice');
+    }
   }
 
   public static async addPurchaseInvoice(inv: Partial<PurchaseInvoice>): Promise<PurchaseInvoice> {
@@ -213,46 +271,143 @@ export class PurchaseService {
   }
 
   // --- Individual Garment Pieces ---
-  public static async getInventoryPieces(limit = 500): Promise<PieceBreakdownItem[]> {
-    const { data, error } = await supabase
-      .from('inventory_pieces')
+  public static async getInventoryPieces(limit = 1000): Promise<PieceBreakdownItem[]> {
+    const [invRes, sortedRes] = await Promise.all([
+      supabase
+        .from('inventory_pieces')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(limit),
+      supabase
+        .from('bale_sorted_pieces')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(limit)
+    ]);
+
+    const mappedPieces: PieceBreakdownItem[] = [];
+    const seenBarcodes = new Set<string>();
+
+    (invRes.data || []).forEach((row: any) => {
+      const barcode = row.barcode || row.piece_code || row.id;
+      seenBarcodes.add(barcode);
+      mappedPieces.push({
+        id: row.id,
+        gatePassId: row.gate_pass_id || row.gatePassId,
+        barcode,
+        itemName: row.item_name || row.itemName || 'Garment Piece',
+        brandName: row.brand_name || row.brandName || '',
+        brandTier: row.brand_tier || row.brandTier || 'Grail',
+        labelGrade: row.label_grade || row.labelGrade || 'CREAM',
+        shopLocation: row.shop_location || row.shopLocation || 'Central Warehouse (Al Quoz)',
+        weightKg: Number(row.weight_kg ?? (Number(row.weight_grams || 0) / 1000)),
+        weightGrams: Number(row.weight_grams ?? (Number(row.weight_kg || 0) * 1000)),
+        costPrice: Number(row.cost_price ?? row.costPrice ?? 0),
+        calculatedCostPrice: Number(row.cost_price ?? row.costPrice ?? 0),
+        costPerGram: Number(row.cost_per_gram ?? (Number(row.weight_grams || 0) > 0 ? (Number(row.cost_price || 0) / Number(row.weight_grams)) : 0)),
+        estimatedPrice: Number(row.estimated_price ?? row.retailPriceAed ?? 0),
+        retailPriceAed: Number(row.retail_price_aed ?? row.retailPriceAed ?? row.estimated_price ?? 0),
+        sizeScanned: row.size_scanned || row.sizeScanned || 'L',
+        countryOfOrigin: row.country_of_origin || row.countryOfOrigin || '',
+        style: row.style || '',
+        frontImageUrl: row.front_image_url || row.frontImageUrl || '',
+        backImageUrl: row.back_image_url || row.backImageUrl || '',
+        tagImageUrl: row.tag_image_url || row.tagImageUrl || '',
+        isSold: Boolean(row.is_sold ?? row.isSold),
+        status: row.status || (row.is_sold ? 'SOLD' : 'AVAILABLE'),
+        lockedByBuyer: row.locked_by_buyer || row.lockedByBuyer || '',
+        lockedByBooth: row.locked_by_booth || row.lockedByBooth || '',
+        lockExpiresAt: row.lock_expires_at || row.lockExpiresAt,
+        reservedUntil: row.reserved_until || row.reservedUntil,
+        createdAt: row.created_at
+      });
+    });
+
+    (sortedRes.data || []).forEach((row: any) => {
+      const barcode = row.piece_code || row.barcode || row.id;
+      if (!seenBarcodes.has(barcode)) {
+        seenBarcodes.add(barcode);
+        const wGrams = Number(row.weight_grams || 0);
+        const cPrice = Number(row.cost_price || 0);
+        const sPrice = Number(row.selling_price || 0);
+        mappedPieces.push({
+          id: row.id,
+          gatePassId: row.bale_id || '',
+          barcode,
+          itemName: row.category || 'Garment Piece',
+          brandName: row.brand_title || '',
+          brandTier: 'Vintage Curated',
+          labelGrade: row.quality_grade || 'Grade A+',
+          shopLocation: 'Central Warehouse (Al Quoz)',
+          weightKg: wGrams > 0 ? Number((wGrams / 1000).toFixed(3)) : 0,
+          weightGrams: wGrams,
+          costPrice: cPrice,
+          calculatedCostPrice: cPrice,
+          costPerGram: wGrams > 0 ? Number((cPrice / wGrams).toFixed(6)) : 0,
+          estimatedPrice: sPrice,
+          retailPriceAed: sPrice,
+          sizeScanned: row.size || 'L',
+          countryOfOrigin: 'USA',
+          style: row.brand_title || '',
+          frontImageUrl: row.front_image || '',
+          backImageUrl: row.back_image || '',
+          tagImageUrl: row.tag_image || '',
+          isSold: false,
+          status: 'AVAILABLE',
+          createdAt: row.created_at
+        });
+      }
+    });
+
+    return mappedPieces;
+  }
+
+  public static async finalizeBaleSession(baleId: string): Promise<void> {
+    // 1. Update bale_sessions
+    await supabase
+      .from('bale_sessions')
+      .update({ status: 'COMPLETED', updated_at: new Date().toISOString() })
+      .eq('bale_id', baleId);
+
+    // 2. Update inward_gate_passes
+    await supabase
+      .from('inward_gate_passes')
+      .update({ status: 'COMPLETED' })
+      .eq('id', baleId);
+
+    // 3. Move/sync all pieces from bale_sorted_pieces into inventory_pieces
+    const { data: sortedPieces } = await supabase
+      .from('bale_sorted_pieces')
       .select('*')
-      .order('created_at', { ascending: false })
-      .limit(limit);
+      .eq('bale_id', baleId);
 
-    if (error) {
-      console.error('Supabase error on inventory_pieces:', error);
-      throw new Error(error.message || 'Database error occurred reading inventory pieces');
+    if (sortedPieces && sortedPieces.length > 0) {
+      const inventoryRows = sortedPieces.map((p: any) => ({
+        id: p.id,
+        gate_pass_id: baleId,
+        barcode: p.piece_code || p.id,
+        item_name: p.category || 'Vintage Garment',
+        brand_name: p.brand_title || '',
+        brand_tier: 'Grail',
+        label_grade: p.quality_grade || 'CREAM',
+        shop_location: 'Central Warehouse (Al Quoz)',
+        weight_kg: Number(p.weight_grams ? (Number(p.weight_grams) / 1000) : 0),
+        weight_grams: Number(p.weight_grams || 0),
+        cost_price: Number(p.cost_price || 0),
+        estimated_price: Number(p.selling_price || 0),
+        retail_price_aed: Number(p.selling_price || 0),
+        size_scanned: p.size || 'L',
+        front_image_url: p.front_image || '',
+        back_image_url: p.back_image || '',
+        tag_image_url: p.tag_image || '',
+        is_sold: false,
+        status: 'AVAILABLE'
+      }));
+
+      await supabase
+        .from('inventory_pieces')
+        .upsert(inventoryRows, { onConflict: 'id' });
     }
-
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      gatePassId: row.gate_pass_id || row.gatePassId,
-      barcode: row.barcode,
-      itemName: row.item_name || row.itemName,
-      brandName: row.brand_name || row.brandName || '',
-      brandTier: row.brand_tier || row.brandTier || 'Grail',
-      labelGrade: row.label_grade || row.labelGrade || 'CREAM',
-      shopLocation: row.shop_location || row.shopLocation || 'Central Warehouse (Al Quoz)',
-      weightKg: Number(row.weight_kg ?? row.weightKg ?? 0),
-      weightGrams: Number(row.weight_grams ?? row.weightGrams ?? 0),
-      costPrice: Number(row.cost_price ?? row.costPrice ?? 0),
-      estimatedPrice: Number(row.estimated_price ?? row.estimatedPrice ?? 0),
-      retailPriceAed: Number(row.retail_price_aed ?? row.retailPriceAed ?? row.estimated_price ?? 0),
-      sizeScanned: row.size_scanned || row.sizeScanned || 'L',
-      countryOfOrigin: row.country_of_origin || row.countryOfOrigin || '',
-      style: row.style || '',
-      frontImageUrl: row.front_image_url || row.frontImageUrl || '',
-      backImageUrl: row.back_image_url || row.backImageUrl || '',
-      tagImageUrl: row.tag_image_url || row.tagImageUrl || '',
-      isSold: Boolean(row.is_sold ?? row.isSold),
-      status: row.status || (row.is_sold ? 'SOLD' : 'AVAILABLE'),
-      lockedByBuyer: row.locked_by_buyer || row.lockedByBuyer || '',
-      lockedByBooth: row.locked_by_booth || row.lockedByBooth || '',
-      lockExpiresAt: row.lock_expires_at || row.lockExpiresAt,
-      reservedUntil: row.reserved_until || row.reservedUntil,
-      createdAt: row.created_at
-    }));
   }
 
   public static async addInventoryPiece(piece: Partial<PieceBreakdownItem>): Promise<PieceBreakdownItem> {

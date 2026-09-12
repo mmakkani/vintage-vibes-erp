@@ -17,7 +17,8 @@ import {
   Clock,
   Barcode,
   Sparkles,
-  ExternalLink
+  ExternalLink,
+  X
 } from 'lucide-react';
 
 interface MultiDimensionalInventoryViewProps {
@@ -39,6 +40,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'IN_STOCK' | 'SOLD'>('ALL');
   const [brandFilter, setBrandFilter] = useState('ALL');
+  const [previewLightboxImage, setPreviewLightboxImage] = useState<string | null>(null);
 
   // Map of bale ID / gatepass ID to bale info for reverse trace
   const baleMap = useMemo(() => {
@@ -412,6 +414,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
                 <tr>
                   <th className="px-4 py-3">Barcode / SKU</th>
+                  <th className="px-4 py-3 text-center">Photos</th>
                   <th className="px-4 py-3">Garment Item & Style</th>
                   <th className="px-4 py-3">Brand & Grade</th>
                   <th className="px-4 py-3">Size & Origin</th>
@@ -427,7 +430,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
               <tbody className="divide-y divide-slate-100 font-medium">
                 {filteredPieces.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-4 py-12 text-center text-slate-400">
+                    <td colSpan={12} className="px-4 py-12 text-center text-slate-400">
                       No garment pieces matching search criteria.
                     </td>
                   </tr>
@@ -438,11 +441,48 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                     const price = piece.estimatedPrice || piece.retailPriceAed || 0;
                     const margin = price > 0 ? Math.round(((price - cost) / price) * 100) : 0;
                     const cpg = piece.costPerGram || (grams > 0 ? cost / grams : 0);
+                    const frontImg = piece.frontImageUrl || (piece as any).front_image || (piece as any).front_image_url;
+                    const backImg = piece.backImageUrl || (piece as any).back_image || (piece as any).back_image_url;
+                    const tagImg = piece.tagImageUrl || (piece as any).tag_image || (piece as any).tag_image_url;
 
                     return (
                       <tr key={piece.id || piece.barcode} className="hover:bg-slate-50/80 transition-colors">
                         <td className="px-4 py-3 font-mono font-bold text-indigo-600 whitespace-nowrap">
                           {piece.barcode}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            {frontImg && (
+                              <img
+                                src={frontImg}
+                                alt="Front"
+                                title="Front Photo - Click to Enlarge"
+                                onClick={() => setPreviewLightboxImage(frontImg)}
+                                className="w-8 h-8 object-cover rounded border border-slate-300 hover:border-emerald-500 cursor-pointer hover:scale-125 transition shadow-xs"
+                              />
+                            )}
+                            {backImg && (
+                              <img
+                                src={backImg}
+                                alt="Back"
+                                title="Back Photo - Click to Enlarge"
+                                onClick={() => setPreviewLightboxImage(backImg)}
+                                className="w-8 h-8 object-cover rounded border border-slate-300 hover:border-indigo-500 cursor-pointer hover:scale-125 transition shadow-xs"
+                              />
+                            )}
+                            {tagImg && (
+                              <img
+                                src={tagImg}
+                                alt="Tag"
+                                title="Tag OCR Photo - Click to Enlarge"
+                                onClick={() => setPreviewLightboxImage(tagImg)}
+                                className="w-8 h-8 object-cover rounded border border-amber-400 hover:border-amber-600 cursor-pointer hover:scale-125 transition shadow-xs"
+                              />
+                            )}
+                            {!frontImg && !backImg && !tagImg && (
+                              <span className="text-[10px] text-slate-300 font-mono">-</span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <div className="text-slate-900 font-semibold">{piece.itemName}</div>
@@ -717,6 +757,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                       <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-100">
                         <tr>
                           <th className="px-3 py-2">Piece Barcode</th>
+                          <th className="px-3 py-2 text-center">Photos</th>
                           <th className="px-3 py-2">Garment</th>
                           <th className="px-3 py-2">Brand & Size</th>
                           <th className="px-3 py-2">Weight</th>
@@ -731,9 +772,46 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                           const g = p.weightGrams || Math.round((p.weightKg || 0) * 1000);
                           const cost = p.calculatedCostPrice || 0;
                           const price = p.estimatedPrice || 0;
+                          const frontImg = p.frontImageUrl || (p as any).front_image || (p as any).front_image_url;
+                          const backImg = p.backImageUrl || (p as any).back_image || (p as any).back_image_url;
+                          const tagImg = p.tagImageUrl || (p as any).tag_image || (p as any).tag_image_url;
                           return (
                             <tr key={p.id} className="hover:bg-slate-50/50">
                               <td className="px-3 py-2 font-bold text-indigo-600">{p.barcode}</td>
+                              <td className="px-3 py-2 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  {frontImg && (
+                                    <img
+                                      src={frontImg}
+                                      alt="Front"
+                                      title="Front Photo - Click to Enlarge"
+                                      onClick={() => setPreviewLightboxImage(frontImg)}
+                                      className="w-6 h-6 object-cover rounded border border-slate-300 hover:border-emerald-500 cursor-pointer hover:scale-125 transition shadow-xs"
+                                    />
+                                  )}
+                                  {backImg && (
+                                    <img
+                                      src={backImg}
+                                      alt="Back"
+                                      title="Back Photo - Click to Enlarge"
+                                      onClick={() => setPreviewLightboxImage(backImg)}
+                                      className="w-6 h-6 object-cover rounded border border-slate-300 hover:border-indigo-500 cursor-pointer hover:scale-125 transition shadow-xs"
+                                    />
+                                  )}
+                                  {tagImg && (
+                                    <img
+                                      src={tagImg}
+                                      alt="Tag"
+                                      title="Tag OCR Photo - Click to Enlarge"
+                                      onClick={() => setPreviewLightboxImage(tagImg)}
+                                      className="w-6 h-6 object-cover rounded border border-amber-400 hover:border-amber-600 cursor-pointer hover:scale-125 transition shadow-xs"
+                                    />
+                                  )}
+                                  {!frontImg && !backImg && !tagImg && (
+                                    <span className="text-[10px] text-slate-300 font-mono">-</span>
+                                  )}
+                                </div>
+                              </td>
                               <td className="px-3 py-2 font-sans font-medium text-slate-900">{p.itemName}</td>
                               <td className="px-3 py-2 font-sans text-slate-700">{p.brandName} ({p.sizeScanned || 'L'})</td>
                               <td className="px-3 py-2">{g} g</td>
@@ -775,6 +853,28 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* LIGHTBOX PREVIEW MODAL */}
+      {previewLightboxImage && (
+        <div
+          className="fixed inset-0 z-[120] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
+          onClick={() => setPreviewLightboxImage(null)}
+        >
+          <div
+            className="relative max-w-lg max-h-[85vh] bg-slate-900 rounded-2xl overflow-hidden border border-slate-700 shadow-2xl p-2"
+            onClick={e => e.stopPropagation()}
+          >
+            <img src={previewLightboxImage} alt="Preview" className="w-full h-full object-contain rounded-xl" />
+            <button
+              type="button"
+              onClick={() => setPreviewLightboxImage(null)}
+              className="absolute top-4 right-4 bg-black/70 hover:bg-rose-600 text-white rounded-full p-1.5 transition shadow cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
         </div>
       )}
