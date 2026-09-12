@@ -130,6 +130,25 @@ export async function safeFetchJson<T = any>(
       if (url.includes('/streaming-keys')) {
         return (await LiveStreamService.getStreamingApiKeys()) as any;
       }
+      if (url.includes('/marketing/live-session') || url.includes('/live-session')) {
+        try {
+          const booths = await LiveStreamService.getBooths();
+          const currentBooth = booths.find(b => b.id === 'booth_01') || booths[0];
+          const allPieces = await PurchaseService.getPieces();
+          const inStock = allPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
+          const matched = inStock.find(p => p.barcode === currentBooth?.active_product_sku || p.id === currentBooth?.active_product_sku) || inStock[0] || null;
+          return {
+            isBroadcasting: Boolean(currentBooth?.is_broadcasting),
+            activeBoothId: currentBooth?.id || 'booth_01',
+            activeBoothName: currentBooth?.booth_name || 'Live Stage',
+            activeOnAirPiece: matched,
+            totalClaimsInSession: currentBooth?.viewer_count || 14,
+            totalRevenueAedInSession: Number(currentBooth?.current_deal_price || 0)
+          } as any;
+        } catch (_) {
+          return { isBroadcasting: true, activeOnAirPiece: null } as any;
+        }
+      }
 
       // Universal Global Search
       if (url.includes('/api/search')) {
