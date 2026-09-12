@@ -254,37 +254,25 @@ async function main() {
         WHERE c.type IN ('REVENUE', 'EXPENSE')
         GROUP BY c.id, c.code, c.name, c.type, c.sub_type
       )
-      -- 1. Revenue
       SELECT 
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code), '[]'::jsonb),
-        COALESCE(SUM(net_balance), 0)
-      INTO v_revenue_rows, v_total_revenue
-      FROM acc_activity
-      WHERE account_type = 'REVENUE' AND net_balance != 0;
-
-      -- 2. COGS (Expenses with code starting with 51 or sub_type ILIKE '%Cost of Goods%')
-      SELECT 
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code), '[]'::jsonb),
-        COALESCE(SUM(net_balance), 0)
-      INTO v_cogs_rows, v_total_cogs
-      FROM acc_activity
-      WHERE account_type = 'EXPENSE' AND (account_code LIKE '51%' OR sub_type ILIKE '%Cost of Goods%') AND net_balance != 0;
-
-      -- 3. Operating Expenses (All other expenses)
-      SELECT 
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code), '[]'::jsonb),
-        COALESCE(SUM(net_balance), 0)
-      INTO v_operating_expense_rows, v_total_operating_expenses
-      FROM acc_activity
-      WHERE account_type = 'EXPENSE' AND NOT (account_code LIKE '51%' OR sub_type ILIKE '%Cost of Goods%') AND net_balance != 0;
-
-      -- 4. All Expenses combined
-      SELECT 
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code), '[]'::jsonb),
-        COALESCE(SUM(net_balance), 0)
-      INTO v_all_expense_rows, v_total_expenses
-      FROM acc_activity
-      WHERE account_type = 'EXPENSE' AND net_balance != 0;
+        -- 1. Revenue
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'REVENUE' AND net_balance != 0), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'REVENUE' AND net_balance != 0), 0),
+        -- 2. COGS (Expenses starting with 51 or sub_type Cost of Goods)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'EXPENSE' AND (account_code LIKE '51%' OR sub_type ILIKE '%Cost of Goods%') AND net_balance != 0), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EXPENSE' AND (account_code LIKE '51%' OR sub_type ILIKE '%Cost of Goods%') AND net_balance != 0), 0),
+        -- 3. Operating Expenses
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'EXPENSE' AND NOT (account_code LIKE '51%' OR sub_type ILIKE '%Cost of Goods%') AND net_balance != 0), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EXPENSE' AND NOT (account_code LIKE '51%' OR sub_type ILIKE '%Cost of Goods%') AND net_balance != 0), 0),
+        -- 4. All Expenses combined
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'EXPENSE' AND net_balance != 0), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EXPENSE' AND net_balance != 0), 0)
+      INTO 
+        v_revenue_rows, v_total_revenue,
+        v_cogs_rows, v_total_cogs,
+        v_operating_expense_rows, v_total_operating_expenses,
+        v_all_expense_rows, v_total_expenses
+      FROM acc_activity;
 
       v_gross_profit := ROUND(v_total_revenue - v_total_cogs, 2);
       v_net_profit := ROUND(v_total_revenue - v_total_expenses, 2);
@@ -357,36 +345,24 @@ async function main() {
         LEFT JOIN filtered_entries fe ON (fe.account_id = c.id OR fe.account_code = c.code)
         GROUP BY c.id, c.code, c.name, c.type, c.sub_type
       )
-      -- Compute Net Profit YTD from P&L accounts (Revenue - Expense)
       SELECT 
-        COALESCE(SUM(CASE WHEN account_type = 'REVENUE' THEN net_balance WHEN account_type = 'EXPENSE' THEN -net_balance ELSE 0 END), 0)
-      INTO v_net_profit_ytd
-      FROM acc_totals
-      WHERE account_type IN ('REVENUE', 'EXPENSE');
-
-      -- 1. Assets
-      SELECT 
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code), '[]'::jsonb),
-        COALESCE(SUM(net_balance), 0)
-      INTO v_asset_rows, v_total_assets
-      FROM acc_totals
-      WHERE account_type = 'ASSET' AND net_balance != 0;
-
-      -- 2. Liabilities
-      SELECT 
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code), '[]'::jsonb),
-        COALESCE(SUM(net_balance), 0)
-      INTO v_liability_rows, v_total_liabilities
-      FROM acc_totals
-      WHERE account_type = 'LIABILITY' AND net_balance != 0;
-
-      -- 3. Base Equity
-      SELECT 
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code), '[]'::jsonb),
-        COALESCE(SUM(net_balance), 0)
-      INTO v_equity_rows, v_total_equity
-      FROM acc_totals
-      WHERE account_type = 'EQUITY' AND net_balance != 0;
+        -- Net Profit YTD from P&L accounts (Revenue - Expense)
+        COALESCE(SUM(CASE WHEN account_type = 'REVENUE' THEN net_balance WHEN account_type = 'EXPENSE' THEN -net_balance ELSE 0 END), 0),
+        -- 1. Assets
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET' AND net_balance != 0), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'ASSET' AND net_balance != 0), 0),
+        -- 2. Liabilities
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'LIABILITY' AND net_balance != 0), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'LIABILITY' AND net_balance != 0), 0),
+        -- 3. Base Equity
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'EQUITY' AND net_balance != 0), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EQUITY' AND net_balance != 0), 0)
+      INTO 
+        v_net_profit_ytd,
+        v_asset_rows, v_total_assets,
+        v_liability_rows, v_total_liabilities,
+        v_equity_rows, v_total_equity
+      FROM acc_totals;
 
       -- Add dynamic Retained Earnings / Net Profit to Equity
       v_equity_rows := v_equity_rows || jsonb_build_array(
