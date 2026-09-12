@@ -5,6 +5,7 @@ import {
   Crop, Scissors, CheckCheck
 } from 'lucide-react';
 import { AIOCRScanResult } from '../hr.controller.ts';
+import { HrService } from '../../../services/hrService.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import { executeDocumentOcr, validateGeminiApiKey } from '../../../utils/geminiOcrService.ts';
 import { LiveAIOcrCamera } from './LiveAIOcrCamera.tsx';
@@ -306,6 +307,20 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
 
   const handleConfirmAndApply = () => {
     if (!scanResult) return;
+
+    // Record OCR audit log
+    try {
+      HrService.saveOcrLog({
+        documentType: scanResult.documentType || docMode,
+        extractedName: scanResult.name,
+        extractedId: scanResult.emiratesId || scanResult.passportNo || scanResult.residencyCardNo,
+        confidence: scanResult.confidence || 0.98,
+        source: scanResult.source || 'GEMINI_AI_VISION',
+        scannedBy: 'HR Admin',
+        details: `Verified & applied ${scanResult.documentType} record for ${scanResult.name} to employee master.`
+      });
+    } catch (_) {}
+
     onApplyData({
       name: scanResult.name,
       nameArabic: scanResult.nameArabic,

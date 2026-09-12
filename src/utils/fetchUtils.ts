@@ -226,7 +226,10 @@ export async function safeFetchJson<T = any>(
         }
       }
 
-      // HR AI OCR Status
+      // HR AI OCR Status & Logs
+      if (url.includes('/api/hr/ocr/logs')) {
+        return (await HrService.getOcrLogs()) as any;
+      }
       if (url.includes('/api/hr/ocr/status') || url.includes('/ocr/status')) {
         const storedKey = (typeof localStorage !== 'undefined' ? localStorage.getItem('vintage_gemini_api_key') : '') || '';
         return {
@@ -390,6 +393,18 @@ export async function safeFetchJson<T = any>(
         const { executeDocumentOcr } = await import('./geminiOcrService.ts');
         const scanRes = await executeDocumentOcr(bodyData);
         return scanRes as any;
+      }
+
+      // Enterprise Audit Log Mutation (POST /api/audit, /api/audit/log)
+      if (url.includes('/api/audit') || url.includes('/audit/log')) {
+        await AuditService.addAuditLog(bodyData);
+        return { success: true } as any;
+      }
+
+      // HR OCR Log Mutation (POST /api/hr/ocr/logs)
+      if (url.includes('/api/hr/ocr/logs')) {
+        await HrService.saveOcrLog(bodyData);
+        return { success: true } as any;
       }
 
       return { success: true } as any;

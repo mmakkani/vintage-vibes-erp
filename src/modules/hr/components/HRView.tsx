@@ -4,6 +4,7 @@ import { StatusBadge } from '../../../components/StatusBadge.tsx';
 import { QuickAttendanceSummary } from './QuickAttendanceSummary.tsx';
 import { DocumentVault } from './DocumentVault.tsx';
 import { AIOcrScannerModal } from './AIOcrScannerModal.tsx';
+import { HROcrLogsView } from './HROcrLogsView.tsx';
 import { RoyalWaxSeal } from '../../../components/RoyalWaxSeal.tsx';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
@@ -40,7 +41,8 @@ import {
   ArrowRight,
   RefreshCw,
   HandCoins,
-  Wallet
+  Wallet,
+  History
 } from 'lucide-react';
 
 interface HRViewProps {
@@ -50,22 +52,22 @@ interface HRViewProps {
 
 export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   const { syncVersion, acquireLock, releaseLock, notifyMutation } = useSync();
-  const [subTab, setSubTabState] = useState<'payroll' | 'attendance' | 'employees' | 'loans' | 'vault'>(() => {
+  const [subTab, setSubTabState] = useState<'payroll' | 'attendance' | 'employees' | 'loans' | 'vault' | 'ocr-logs'>(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const sub = urlParams.get('hrSubTab') as any;
-      if (sub && ['payroll', 'attendance', 'employees', 'loans', 'vault'].includes(sub)) {
+      if (sub && ['payroll', 'attendance', 'employees', 'loans', 'vault', 'ocr-logs'].includes(sub)) {
         return sub;
       }
       const saved = localStorage.getItem('vintage_hr_subtab') as any;
-      if (saved && ['payroll', 'attendance', 'employees', 'loans', 'vault'].includes(saved)) {
+      if (saved && ['payroll', 'attendance', 'employees', 'loans', 'vault', 'ocr-logs'].includes(saved)) {
         return saved;
       }
     } catch {}
     return 'payroll';
   });
 
-  const setSubTab = (tab: 'payroll' | 'attendance' | 'employees' | 'loans' | 'vault') => {
+  const setSubTab = (tab: 'payroll' | 'attendance' | 'employees' | 'loans' | 'vault' | 'ocr-logs') => {
     setSubTabState(tab);
     try {
       localStorage.setItem('vintage_hr_subtab', tab);
@@ -78,6 +80,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [payrollSlips, setPayrollSlips] = useState<PayrollRecord[]>([]);
+  const [ocrLogs, setOcrLogs] = useState<any[]>([]);
+  const [hrAuditLogs, setHrAuditLogs] = useState<any[]>([]);
 
   // Selected payroll slip for payslip modal
   const [selectedSlip, setSelectedSlip] = useState<PayrollRecord | null>(null);
@@ -203,14 +207,16 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
 
   const loadData = async () => {
     try {
-      const [empRes, attRes, payRes, coaRes, sheetsLogRes, loansRes, paySheetsLogRes] = await Promise.all([
+      const [empRes, attRes, payRes, coaRes, sheetsLogRes, loansRes, paySheetsLogRes, ocrLogsRes, auditLogsRes] = await Promise.all([
         fetch('/api/hr/employees').then(r => r.json()),
         fetch(`/api/hr/attendance?month=${selectedMonth}`).then(r => r.json()),
         fetch(`/api/hr/payroll?month=${selectedMonth}`).then(r => r.json()),
         fetch('/api/finance/coa').then(r => r.ok ? r.json() : []).catch(() => []),
         fetch('/api/hr/attendance/sheets').then(r => r.ok ? r.json() : []).catch(() => []),
         fetch('/api/hr/loans').then(r => r.ok ? r.json() : []).catch(() => []),
-        fetch('/api/hr/payroll/sheets').then(r => r.ok ? r.json() : []).catch(() => [])
+        fetch('/api/hr/payroll/sheets').then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch('/api/hr/ocr/logs').then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch('/api/audit').then(r => r.ok ? r.json() : []).catch(() => [])
       ]);
 
       setEmployees(Array.isArray(empRes) ? empRes : []);
@@ -219,6 +225,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       setAttendanceSheetsLog(Array.isArray(sheetsLogRes) ? sheetsLogRes : []);
       setEmployeeLoans(Array.isArray(loansRes) ? loansRes : []);
       setPayrollSheetsLog(Array.isArray(paySheetsLogRes) ? paySheetsLogRes : []);
+      setOcrLogs(Array.isArray(ocrLogsRes) ? ocrLogsRes : []);
+      const hrLogs = Array.isArray(auditLogsRes) ? auditLogsRes.filter((l: any) => l.module === 'HR') : [];
+      setHrAuditLogs(hrLogs);
       if (Array.isArray(coaRes)) {
         setCoaAccounts(coaRes);
         const defaultBank = coaRes.find((a: any) => a.code === '1120-00') || coaRes.find((a: any) => a.classification === 'ASSET' && a.name.toLowerCase().includes('bank'));
@@ -781,27 +790,78 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   // Save / Submit Employee Form
   const handleSaveEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
+    const fetchEmployees = () => {
+      loadData();
+      onRefreshAll();
+    };
+    const onClose = () => {
+      setShowEmpModal(false);
+      setEditingEmpId(null);
+    };
+
     try {
+      // 1. Remove any blocking/failing image upload logic; use safe Data URLs or skip storage upload
+      const safeIdFrontImageUrl = typeof empForm.idFrontImageUrl === 'string' ? empForm.idFrontImageUrl : '';
+      const safeIdBackImageUrl = typeof empForm.idBackImageUrl === 'string' ? empForm.idBackImageUrl : '';
+      const safePassportImageUrl = typeof empForm.passportImageUrl === 'string' ? empForm.passportImageUrl : '';
+      const safeResidencyImageUrl = typeof empForm.residencyImageUrl === 'string' ? empForm.residencyImageUrl : '';
+      const safePhotoUrl = typeof empForm.photoUrl === 'string' ? empForm.photoUrl : '';
+
+      // 2. Ensure payload mapping explicitly converts numbers
+      const basic_salary = Number(empForm.baseSalary || 0);
+      const housing_allowance = Number(empForm.housingAllow || 0);
+      const transport_allowance = Number(empForm.transportAllow || 0);
+      const total_package = basic_salary + housing_allowance + transport_allowance;
+      const working_hours_per_day = Number(empForm.workingHoursPerDay || 8);
+
+      const payload = {
+        ...empForm,
+        idFrontImageUrl: safeIdFrontImageUrl,
+        idBackImageUrl: safeIdBackImageUrl,
+        passportImageUrl: safePassportImageUrl,
+        residencyImageUrl: safeResidencyImageUrl,
+        photoUrl: safePhotoUrl,
+        basic_salary,
+        housing_allowance,
+        transport_allowance,
+        total_package,
+        base_salary: basic_salary,
+        baseSalary: basic_salary,
+        housing_allow: housing_allowance,
+        housingAllow: housing_allowance,
+        transport_allow: transport_allowance,
+        transportAllow: transport_allowance,
+        totalPackage: total_package,
+        working_hours_per_day,
+        workingHoursPerDay: working_hours_per_day
+      };
+
       const url = editingEmpId ? `/api/hr/employees/${editingEmpId}` : '/api/hr/employees';
       const method = editingEmpId ? 'PUT' : 'POST';
 
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(empForm)
+        body: JSON.stringify(payload)
       });
 
-      if (res.ok) {
-        showMsg(editingEmpId ? 'Employee record updated successfully!' : 'New employee registered successfully!');
-        setShowEmpModal(false);
-        setEditingEmpId(null);
-        loadData();
-        onRefreshAll();
+      const data = await res.json().catch(() => ({}));
+
+      // 3. Wrap with clear browser alert
+      if (!res.ok || (data && data.success === false) || data?.error) {
+        const errorMsg = data?.error || res.statusText || 'Database request failed';
+        alert("Error saving employee: " + errorMsg);
+        showMsg("Error saving employee: " + errorMsg, 'error');
       } else {
-        showMsg('Failed to save employee record', 'error');
+        alert("Employee registered successfully!");
+        showMsg(editingEmpId ? 'Employee record updated & audit log registered!' : 'Employee registered successfully!');
+        notifyMutation('HR', 'EMPLOYEES', editingEmpId ? 'EDIT' : 'CREATE', empForm.name);
+        fetchEmployees();
+        onClose();
       }
-    } catch (err) {
-      showMsg('Employee save error', 'error');
+    } catch (error: any) {
+      alert("Error saving employee: " + (error?.message || String(error)));
+      showMsg("Error saving employee: " + (error?.message || String(error)), 'error');
     }
   };
 
@@ -874,7 +934,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       passportImageUrl: data.passportImageUrl || prev.passportImageUrl,
       residencyImageUrl: data.residencyImageUrl || prev.residencyImageUrl
     }));
-    showMsg(`AI OCR verified and populated legal identity records for ${data.name || 'employee'}!`);
+    loadData();
+    showMsg(`AI OCR verified and populated legal identity records for ${data.name || 'employee'}! Scan log registered.`);
   };
 
   const totalPayrollCost = payrollSlips.reduce((sum, s) => sum + s.netPay, 0);
@@ -939,6 +1000,16 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
           >
             <Shield className="w-3.5 h-3.5" />
             <span>5. Document Vault</span>
+          </button>
+          <button
+            id="subtab-ocr-logs"
+            onClick={() => setSubTab('ocr-logs')}
+            className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+              subTab === 'ocr-logs' ? 'bg-[#0056b3] text-white shadow-xs' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            <History className="w-3.5 h-3.5" />
+            <span>6. AI OCR & HR Activity Logs ({ocrLogs.length + hrAuditLogs.length})</span>
           </button>
         </div>
 
@@ -1028,6 +1099,28 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
               <Plus className="w-3.5 h-3.5" />
               <span>Create Employee Record</span>
             </button>
+          )}
+
+          {subTab === 'ocr-logs' && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleOpenOcrScanner}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold uppercase tracking-wider shadow-xs transition-colors"
+              >
+                <Scan className="w-3.5 h-3.5 text-amber-300" />
+                <span>Scan with OCR</span>
+              </button>
+              <button
+                type="button"
+                onClick={loadData}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors"
+                title="Refresh logs"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Refresh</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -1649,6 +1742,67 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     </td>
                   </tr>
                 ))}
+                {employees.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="text-center py-10 text-slate-400">
+                      <div className="flex flex-col items-center justify-center gap-2 font-sans">
+                        <Users className="w-8 h-8 text-slate-300" />
+                        <span className="font-bold text-slate-600 text-xs">No Employee Records Found</span>
+                        <span className="text-[11px] text-slate-400 max-w-sm">
+                          Click <strong>+ Create Employee Record</strong> above or use <strong>Scan ID/Passport with AI</strong> to register legal UAE staff documents.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingEmpId(null);
+                            setEmpForm({
+                              name: '',
+                              designation: 'Operations Sorter',
+                              department: 'Sorting & Grading',
+                              baseSalary: 2500,
+                              housingAllow: 0,
+                              transportAllow: 0,
+                              otherAllow: 0,
+                              workingHoursPerDay: 8,
+                              isActive: true,
+                              joiningDate: new Date().toISOString().slice(0, 10),
+                              status: 'POSTED',
+                              emiratesId: '',
+                              residencyCardNo: '',
+                              passportNo: '',
+                              idFrontImageUrl: '',
+                              idBackImageUrl: '',
+                              nameArabic: '',
+                              nationality: 'United Arab Emirates',
+                              gender: 'MALE',
+                              dob: '',
+                              emiratesIdExpiry: '',
+                              idCardNo: '',
+                              passportExpiry: '',
+                              passportIssueDate: '',
+                              passportCountry: 'United Arab Emirates',
+                              passportImageUrl: '',
+                              uidNo: '',
+                              residencyIssueDate: '',
+                              residencyExpiryDate: '',
+                              residencySponsor: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+                              residencyProfession: '',
+                              residencyImageUrl: '',
+                              photoUrl: '',
+                              email: '',
+                              address: '',
+                              notes: ''
+                            });
+                            setShowEmpModal(true);
+                          }}
+                          className="mt-2 px-3 py-1.5 rounded-lg bg-blue-600 text-white font-bold text-xs hover:bg-blue-700 transition-all shadow-xs"
+                        >
+                          + Create Employee Record
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -1813,6 +1967,21 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       {/* ===================== SUBTAB 5: DOCUMENT VAULT ===================== */}
       {subTab === 'vault' && (
         <DocumentVault employees={employees} onRefresh={loadData} />
+      )}
+
+      {/* ===================== SUBTAB 6: AI OCR & HR ACTIVITY LOGS ===================== */}
+      {subTab === 'ocr-logs' && (
+        <HROcrLogsView
+          ocrLogs={ocrLogs}
+          hrAuditLogs={hrAuditLogs}
+          onOpenOcrScanner={handleOpenOcrScanner}
+          onOpenCreateEmpModal={() => {
+            setEditingEmpId(null);
+            setEmpForm(defaultEmpForm);
+            setShowEmpModal(true);
+          }}
+          onRefresh={loadData}
+        />
       )}
 
       {/* CREATE / EDIT EMPLOYEE MODAL WITH LIVE OCR SCAN */}

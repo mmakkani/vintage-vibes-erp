@@ -1,24 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { AuditLogEntry } from '../audit.types.ts';
-import { History, Search, ShieldCheck, Filter, Clock, User } from 'lucide-react';
+import { History, Search, ShieldCheck, Filter, Clock, User, RefreshCw } from 'lucide-react';
 
 interface AuditViewProps {
-  onRefreshAll: () => void;
-  currentUserRole: string;
+  onRefreshAll?: () => void;
+  currentUserRole?: string;
 }
 
 export const AuditView: React.FC<AuditViewProps> = () => {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [filterModule, setFilterModule] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   const loadLogs = async () => {
+    setIsLoading(true);
     try {
       const res = await fetch('/api/audit');
       const data = await res.json();
-      setLogs(data);
+      setLogs(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -26,15 +30,16 @@ export const AuditView: React.FC<AuditViewProps> = () => {
     loadLogs();
   }, []);
 
-  const filteredLogs = logs.filter(log => {
+  const filteredLogs = (Array.isArray(logs) ? logs : []).filter(log => {
+    if (!log) return false;
     if (filterModule !== 'ALL' && log.module !== filterModule) return false;
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       return (
-        log.documentRef.toLowerCase().includes(term) ||
-        log.userName.toLowerCase().includes(term) ||
-        log.action.toLowerCase().includes(term) ||
-        (log.details && log.details.toLowerCase().includes(term))
+        (log.documentRef || '').toLowerCase().includes(term) ||
+        (log.userName || '').toLowerCase().includes(term) ||
+        (log.action || '').toLowerCase().includes(term) ||
+        Boolean(log.details && log.details.toLowerCase().includes(term))
       );
     }
     return true;
@@ -79,6 +84,17 @@ export const AuditView: React.FC<AuditViewProps> = () => {
             <option value="PARTIES">Parties</option>
             <option value="SETUP">Setup</option>
           </select>
+
+          <button
+            type="button"
+            onClick={loadLogs}
+            disabled={isLoading}
+            className="px-2.5 py-1 text-xs font-bold text-[#0056b3] bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded flex items-center gap-1.5 transition-colors"
+            title="Refresh enterprise audit logs"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
         </div>
       </div>
 
@@ -143,6 +159,17 @@ export const AuditView: React.FC<AuditViewProps> = () => {
                   </tr>
                 );
               })}
+              {filteredLogs.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400 font-sans">
+                    <ShieldCheck className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                    <p className="font-semibold text-slate-600">No audit log records found.</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Actions in Purchase, Inventory, Sales, HR (Employees, OCR Scans, Payroll), and Finance are automatically recorded here.
+                    </p>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
