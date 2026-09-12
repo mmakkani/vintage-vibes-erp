@@ -188,6 +188,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const [ledgers, setLedgers] = useState<LedgerEntry[]>([]);
   const [reports, setReports] = useState<FinancialStatements | null>(null);
   const [parties, setParties] = useState<Party[]>([]);
+  const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Search & Filter in COA
   const [coaFilterPillar, setCoaFilterPillar] = useState<string>('ALL');
