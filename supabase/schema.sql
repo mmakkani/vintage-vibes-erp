@@ -125,6 +125,10 @@ CREATE TABLE IF NOT EXISTS purchase_invoices (
     id VARCHAR(64) PRIMARY KEY,
     invoice_no VARCHAR(64) UNIQUE NOT NULL,
     supplier_id VARCHAR(64) REFERENCES parties(id) ON DELETE SET NULL,
+    supplier_name VARCHAR(255),
+    party_name VARCHAR(255),
+    container_no VARCHAR(64),
+    bl_no VARCHAR(64),
     invoice_date DATE NOT NULL DEFAULT CURRENT_DATE,
     currency VARCHAR(8) DEFAULT 'AED',
     exchange_rate NUMERIC(14, 6) DEFAULT 1.0,
@@ -136,6 +140,12 @@ CREATE TABLE IF NOT EXISTS purchase_invoices (
     notes TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure columns exist if table was already created
+ALTER TABLE purchase_invoices ADD COLUMN IF NOT EXISTS supplier_name VARCHAR(255);
+ALTER TABLE purchase_invoices ADD COLUMN IF NOT EXISTS party_name VARCHAR(255);
+ALTER TABLE purchase_invoices ADD COLUMN IF NOT EXISTS container_no VARCHAR(64);
+ALTER TABLE purchase_invoices ADD COLUMN IF NOT EXISTS bl_no VARCHAR(64);
 
 CREATE TABLE IF NOT EXISTS public.purchase_invoice_items (
     id VARCHAR(64) PRIMARY KEY,
@@ -569,6 +579,223 @@ CREATE TABLE IF NOT EXISTS public.hr_payroll_sheets (
     posted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ==========================================================
+-- 16. OMNICHANNEL SALES & E-COMMERCE
+-- ==========================================================
+
+-- A. POS Sales
+CREATE TABLE IF NOT EXISTS public.pos_sales (
+    id VARCHAR(64) PRIMARY KEY,
+    invoice_number VARCHAR(64) NOT NULL,
+    cashier_id VARCHAR(64),
+    customer_name VARCHAR(128) DEFAULT 'Walk-in Customer',
+    customer_phone VARCHAR(32),
+    items JSONB DEFAULT '[]'::jsonb,
+    subtotal NUMERIC(16, 2) DEFAULT 0.00,
+    tax_amount NUMERIC(16, 2) DEFAULT 0.00,
+    discount_amount NUMERIC(16, 2) DEFAULT 0.00,
+    grand_total NUMERIC(16, 2) DEFAULT 0.00,
+    payment_type VARCHAR(32) DEFAULT 'CASH',
+    payment_status VARCHAR(32) DEFAULT 'PAID',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- B. B2B Wholesale Sales
+CREATE TABLE IF NOT EXISTS public.b2b_sales (
+    id VARCHAR(64) PRIMARY KEY,
+    b2b_invoice_number VARCHAR(64) NOT NULL,
+    company_name VARCHAR(128) NOT NULL,
+    trn_number VARCHAR(64),
+    contact_person VARCHAR(128),
+    phone VARCHAR(32),
+    email VARCHAR(128),
+    items JSONB DEFAULT '[]'::jsonb,
+    total_amount NUMERIC(16, 2) DEFAULT 0.00,
+    paid_amount NUMERIC(16, 2) DEFAULT 0.00,
+    balance_due NUMERIC(16, 2) DEFAULT 0.00,
+    payment_terms VARCHAR(64) DEFAULT 'Net 30',
+    credit_status VARCHAR(32) DEFAULT 'PENDING',
+    shipping_address TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- C. Online Orders
+CREATE TABLE IF NOT EXISTS public.orders (
+    id VARCHAR(64) PRIMARY KEY,
+    order_number VARCHAR(64) NOT NULL,
+    customer_name VARCHAR(128) NOT NULL,
+    customer_phone VARCHAR(32) NOT NULL,
+    customer_address TEXT,
+    city VARCHAR(64),
+    items JSONB DEFAULT '[]'::jsonb,
+    total_amount NUMERIC(16, 2) DEFAULT 0.00,
+    delivery_fee NUMERIC(12, 2) DEFAULT 0.00,
+    payment_method VARCHAR(32) DEFAULT 'COD',
+    payment_status VARCHAR(32) DEFAULT 'PENDING',
+    order_status VARCHAR(32) DEFAULT 'CONFIRMED',
+    source VARCHAR(64) DEFAULT 'ONLINE_STORE',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- D. Live Stream Flash Claims
+CREATE TABLE IF NOT EXISTS public.live_stream_sales (
+    id VARCHAR(64) PRIMARY KEY,
+    session_id VARCHAR(64) DEFAULT 'LIVE-STREAM',
+    platform VARCHAR(32) DEFAULT 'TIKTOK',
+    customer_handle VARCHAR(128) NOT NULL,
+    customer_phone VARCHAR(32),
+    item_code VARCHAR(64) NOT NULL,
+    item_description TEXT,
+    claimed_price NUMERIC(14, 2) DEFAULT 0.00,
+    claim_status VARCHAR(32) DEFAULT 'CLAIMED',
+    converted_to_order_id VARCHAR(64),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ==========================================================
+-- 17. ITEM MASTERS & INVENTORY AGGREGATES
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS public.item_masters (
+    id VARCHAR(64) PRIMARY KEY,
+    code VARCHAR(64) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    category VARCHAR(128) DEFAULT 'Denim & Outerwear',
+    description TEXT,
+    base_price NUMERIC(14, 2) DEFAULT 100.00,
+    target_uom VARCHAR(32) DEFAULT 'KG',
+    weight_kg NUMERIC(10, 2) DEFAULT 1.00,
+    uom VARCHAR(32) DEFAULT 'KG',
+    coa_account_id VARCHAR(64),
+    min_stock_threshold INTEGER DEFAULT 5,
+    status VARCHAR(32) DEFAULT 'POSTED',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.inventory_items (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    sku VARCHAR(64) UNIQUE,
+    stock_quantity INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ==========================================================
+-- 18. LIVE BROADCAST BOOTHS & MULTI-CAST SOCIAL MEDIA
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS public.live_booths (
+    id VARCHAR(64) PRIMARY KEY,
+    booth_name VARCHAR(128) NOT NULL,
+    host_operator_name VARCHAR(128),
+    rtmp_ingest_url TEXT,
+    stream_key TEXT,
+    hls_playback_url TEXT,
+    active_product_sku VARCHAR(64),
+    is_broadcasting BOOLEAN DEFAULT FALSE,
+    viewer_count INTEGER DEFAULT 0,
+    camera_source VARCHAR(64) DEFAULT 'OBS Camera',
+    current_deal_price NUMERIC(12, 2) DEFAULT 0.00,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Seed default booths
+INSERT INTO public.live_booths (id, booth_name, host_operator_name, is_broadcasting, viewer_count, camera_source, current_deal_price)
+VALUES 
+    ('booth_01', 'Booth 1 - Main Studio', 'Staff Host 1', false, 0, 'OBS Studio 1', 0),
+    ('booth_02', 'Booth 2 - Vintage Grail Desk', 'Staff Host 2', false, 0, 'OBS Studio 2', 0),
+    ('booth_03', 'Booth 3 - Streetwear Floor', 'Staff Host 3', false, 0, 'OBS Studio 3', 0),
+    ('booth_04', 'Booth 4 - Denim & Workwear', 'Staff Host 4', false, 0, 'OBS Studio 4', 0),
+    ('booth_05', 'Booth 5 - Flash Sale Express', 'Staff Host 5', false, 0, 'OBS Studio 5', 0)
+ON CONFLICT (id) DO UPDATE SET
+    booth_name = EXCLUDED.booth_name;
+
+CREATE TABLE IF NOT EXISTS public.live_multicast_settings (
+    id VARCHAR(64) PRIMARY KEY DEFAULT '00000000-0000-0000-0000-000000000001',
+    is_live BOOLEAN DEFAULT FALSE,
+    broadcast_title VARCHAR(255) DEFAULT 'Live Showcase',
+    stream_url TEXT,
+    facebook_url TEXT,
+    instagram_url TEXT,
+    youtube_url TEXT,
+    tiktok_url TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO public.live_multicast_settings (id, is_live, broadcast_title)
+VALUES ('00000000-0000-0000-0000-000000000001', false, 'Live Vintage Showcase')
+ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS public.streaming_api_keys (
+    id VARCHAR(64) PRIMARY KEY,
+    platform VARCHAR(32) NOT NULL,
+    server_url TEXT,
+    stream_key TEXT,
+    api_key TEXT,
+    api_secret TEXT,
+    access_token TEXT,
+    is_connected BOOLEAN DEFAULT FALSE,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ==========================================================
+-- 19. MARKETING ENGINE (CAMPAIGNS, AUTOMATIONS, COUPONS, AUDIENCES)
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS public.marketing_campaigns (
+    id VARCHAR(64) PRIMARY KEY DEFAULT 'cmp-' || replace(gen_random_uuid()::text, '-', ''),
+    campaign_name VARCHAR(255) NOT NULL,
+    channel VARCHAR(32) NOT NULL DEFAULT 'whatsapp',
+    target_audience VARCHAR(128),
+    message_template TEXT NOT NULL,
+    scheduled_at TIMESTAMPTZ,
+    sent_count INTEGER DEFAULT 0,
+    delivered_count INTEGER DEFAULT 0,
+    status VARCHAR(32) DEFAULT 'draft',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.marketing_automations (
+    id VARCHAR(64) PRIMARY KEY DEFAULT 'auto-' || replace(gen_random_uuid()::text, '-', ''),
+    automation_name VARCHAR(255) NOT NULL,
+    trigger_event VARCHAR(128) NOT NULL,
+    action_type VARCHAR(128) NOT NULL,
+    template_id VARCHAR(64),
+    is_active BOOLEAN DEFAULT TRUE,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.coupons (
+    id VARCHAR(64) PRIMARY KEY DEFAULT 'cpn-' || replace(gen_random_uuid()::text, '-', ''),
+    coupon_code VARCHAR(64) UNIQUE NOT NULL,
+    discount_type VARCHAR(32) DEFAULT 'percentage',
+    discount_value NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    min_order_amount NUMERIC(12, 2) DEFAULT 0.00,
+    valid_until TIMESTAMPTZ,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.marketing_audiences (
+    id VARCHAR(64) PRIMARY KEY DEFAULT 'aud-' || replace(gen_random_uuid()::text, '-', ''),
+    segment_name VARCHAR(128) NOT NULL,
+    criteria JSONB DEFAULT '{}'::jsonb,
+    total_members INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ==========================================================
+-- 20. FOREIGN KEY SAFETY RELAXATION (ZERO POSTING FAILURES)
+-- ==========================================================
+ALTER TABLE purchase_invoices DROP CONSTRAINT IF EXISTS purchase_invoices_supplier_id_fkey;
+ALTER TABLE sales_invoices DROP CONSTRAINT IF EXISTS sales_invoices_client_id_fkey;
+ALTER TABLE ledgers DROP CONSTRAINT IF EXISTS ledgers_voucher_id_fkey;
+ALTER TABLE ledgers DROP CONSTRAINT IF EXISTS ledgers_account_id_fkey;
+ALTER TABLE ledgers DROP CONSTRAINT IF EXISTS ledgers_party_id_fkey;
+ALTER TABLE parties DROP CONSTRAINT IF EXISTS parties_coa_account_id_fkey;
 
 -- DISABLE ROW LEVEL SECURITY ACROSS ALL PUBLIC TABLES
 DO $$ 

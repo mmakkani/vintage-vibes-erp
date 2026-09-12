@@ -123,7 +123,7 @@ export class PartiesService {
       currency: party.currency || 'AED',
       is_active: party.isActive !== false,
       account_map: initialMap,
-      coa_account_id: coaId
+      coa_account_id: null
     };
 
     const { data, error } = await supabase

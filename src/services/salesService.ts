@@ -46,10 +46,12 @@ export class SalesService {
   public static async createSalesInvoice(inv: Partial<SalesInvoice>): Promise<SalesInvoice> {
     const id = String(inv.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `inv-${Date.now()}`));
     const invoiceNo = inv.invoiceNo || `SINV-${Date.now().toString().slice(-6)}`;
+    const rawClientId = inv.clientId ? String(inv.clientId).trim() : '';
+    const cleanClientId = (rawClientId && !rawClientId.toLowerCase().includes('walk') && rawClientId !== 'none' && rawClientId !== 'undefined' && rawClientId !== 'null') ? rawClientId : null;
     const payload = {
       id,
       invoice_no: invoiceNo,
-      client_id: inv.clientId ? String(inv.clientId) : null,
+      client_id: cleanClientId,
       customer_name: inv.customerName || 'Walk-in Buyer',
       customer_phone: inv.customerPhone || '',
       invoice_date: inv.invoiceDate || new Date().toISOString().slice(0, 10),
@@ -300,6 +302,7 @@ export class SalesService {
       const ledgerId = String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : ('led-' + Date.now()));
       await supabase.from('ledgers').insert({
         id: ledgerId,
+        voucher_id: 'VCH-' + invoiceNum,
         date: new Date().toISOString().slice(0, 10),
         account_code: '1200-00',
         account_name: `Accounts Receivable - ${b2b.company_name}`,

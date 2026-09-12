@@ -1,5 +1,6 @@
 import { supabase } from '../supabaseClient.ts';
 import { PurchaseInvoice, InwardGatePass, PieceBreakdownItem } from '../modules/purchase/purchase.types.ts';
+import { FinanceService } from './financeService.ts';
 
 export class PurchaseService {
   // --- Purchase Invoices ---
@@ -116,10 +117,12 @@ export class PurchaseService {
 
   public static async addPurchaseInvoice(inv: Partial<PurchaseInvoice>): Promise<PurchaseInvoice> {
     const id = inv.id || `pi-${Date.now()}`;
+    const rawSupplierId = inv.supplierId || (inv as any).supplier_id;
+    const cleanSupplierId = (rawSupplierId && String(rawSupplierId).trim() !== '' && String(rawSupplierId) !== 'undefined' && String(rawSupplierId) !== 'null') ? String(rawSupplierId) : null;
     const payload = {
       id,
       invoice_no: inv.invoiceNo || `PINV-${Date.now().toString().slice(-6)}`,
-      supplier_id: inv.supplierId || (inv as any).supplier_id,
+      supplier_id: cleanSupplierId,
       supplier_name: inv.supplierName || (inv as any).supplier_name || '',
       party_name: inv.supplierName || (inv as any).supplier_name || '',
       invoice_date: inv.invoiceDate || inv.date || new Date().toISOString().slice(0, 10),
@@ -204,33 +207,243 @@ export class PurchaseService {
       throw new Error(error.message || 'Database error occurred reading inward gate passes');
     }
 
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      passNo: row.pass_no || row.passNo,
-      purchaseInvoiceId: row.purchase_invoice_id || row.purchaseInvoiceId,
-      supplierName: row.supplier_name || row.supplierName || '',
-      baleTagNo: row.bale_tag_no || row.baleTagNo || '',
-      weightKg: Number(row.weight_kg ?? row.weightKg ?? 0),
-      status: row.status || 'CLEARED',
-      piecesCount: Number(row.pieces_count || 0),
-      createdAt: row.created_at
-    }));
+    return (data || []).map((row: any) => {
+      const grossKg = Number(row.total_bale_weight ?? row.weight_kg ?? 0);
+      const brokenDownKg = Number(row.broken_down_weight ?? 0);
+      const totalCost = Number(row.total_bale_cost ?? row.cost_price ?? 0);
+      const costPerGram = Number(row.cost_per_gram ?? (grossKg > 0 ? (totalCost / (grossKg * 1000)) : 0));
+      const piecesList = Array.isArray(row.pieces) ? row.pieces : [];
+      const pieceCount = Number(row.piece_count ?? row.pieces_count ?? piecesList.length ?? 0);
+
+      return {
+        id: String(row.id),
+        passNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
+        gatePassNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
+        baleCode: row.bale_code || row.bale_tag_no || `BAL-${String(row.id).slice(-6)}`,
+        baleCategory: row.bale_category || 'Vintage Mixed Bales',
+        purchaseInvoiceId: row.purchase_invoice_id || row.purchaseInvoiceId || '',
+        purchaseInvoiceNo: row.purchase_invoice_no || row.purchaseInvoiceNo || '',
+        supplierName: row.supplier_name || row.supplierName || 'Trade Supplier',
+        date: (row.created_at || new Date().toISOString()).slice(0, 10),
+        status: (row.status || 'UNOPENED') as any,
+        sortingStatus: (row.status || 'UNOPENED') as any,
+        totalBaleCost: totalCost,
+        totalBaleWeight: grossKg,
+        costPerGram,
+        brokenDownWeight: brokenDownKg,
+        remainingWeight: Math.max(0, grossKg - brokenDownKg),
+        pieceCount,
+        pieces: piecesList,
+        createdAt: row.created_at
+      } as InwardGatePass;
+    });
   }
 
   public static async getGatePasses(): Promise<InwardGatePass[]> {
     return this.getInwardGatePasses();
   }
 
+  public static async convertToInwardGatePass(invoiceId: string): Promise<InwardGatePass[]> {
+    // 1. Fetch invoice and its line items
+    const { data: invRows, error: invError } = await supabase
+      .from('purchase_invoices')
+      .select('*')
+      .eq('id', invoiceId)
+      .limit(1);
+
+    if (invError || !invRows || invRows.length === 0) {
+      throw new Error(`Invoice with ID ${invoiceId} not found`);
+    }
+
+    const invoice = invRows[0];
+    const { data: itemRows } = await supabase
+      .from('purchase_invoice_items')
+      .select('*')
+      .eq('invoice_id', invoiceId);
+
+    const currency = (invoice.currency || 'AED').toUpperCase();
+    const exchangeRate = Number(invoice.exchange_rate) || (currency === 'USD' ? 3.6725 : 1);
+    const invoiceTotalAmount = Number(invoice.total_amount || 0);
+    const invoiceTotalAed = currency === 'AED' ? invoiceTotalAmount : Number((invoiceTotalAmount * exchangeRate).toFixed(2));
+    const invoiceNo = invoice.invoice_no || `PUR-${Date.now().toString().slice(-6)}`;
+    const supplierName = invoice.supplier_name || invoice.party_name || 'Trade Supplier';
+
+    // 2. Prepare manifest line items
+    let lines = (itemRows && itemRows.length > 0) ? itemRows : [];
+    if (lines.length === 0) {
+      const weight = Number(invoice.total_weight_kg) || 25;
+      const subtotal = Number(invoice.subtotal) || invoiceTotalAmount;
+      const rate = weight > 0 ? Number((subtotal / weight).toFixed(2)) : 0;
+      lines = [{
+        item_name: 'Vintage Mix Bales',
+        packaging_uom: 'BALES',
+        package_count: 1,
+        total_weight: weight,
+        rate_per_weight: rate,
+        line_total: subtotal
+      }];
+    }
+
+    // 3. Generate inward gate pass records
+    const createdPasses: InwardGatePass[] = [];
+    let baleSeq = 1;
+
+    for (const item of lines) {
+      const packageCount = Math.max(1, Number(item.package_count || item.quantity || 1));
+      const totalWeightKg = Number(item.total_weight || item.total_kg || 0) || (packageCount * 45);
+      const lineTotal = Number(item.line_total || 0) || (totalWeightKg * Number(item.rate_per_weight || item.rate || 0));
+      const lineTotalAed = currency === 'AED' ? lineTotal : Number((lineTotal * exchangeRate).toFixed(2));
+
+      const weightPerBale = Number((totalWeightKg / packageCount).toFixed(2));
+      const costPerBale = Number((lineTotalAed / packageCount).toFixed(2));
+      const costPerGram = weightPerBale > 0 ? Number((costPerBale / (weightPerBale * 1000)).toFixed(6)) : 0;
+
+      for (let p = 0; p < packageCount; p++) {
+        const passSeqStr = String(baleSeq).padStart(2, '0');
+        const baleSeqStr = String(baleSeq).padStart(3, '0');
+        const passNo = `IGP-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${passSeqStr}`;
+        const baleCode = `BAL-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${baleSeqStr}`;
+        const baleId = `igp-${Date.now()}-${baleSeq}-${Math.random().toString(36).slice(2, 6)}`;
+
+        const gatePassPayload = {
+          id: baleId,
+          pass_no: passNo,
+          gate_pass_no: passNo,
+          bale_code: baleCode,
+          bale_tag_no: baleCode,
+          purchase_invoice_id: invoice.id,
+          purchase_invoice_no: invoiceNo,
+          supplier_name: supplierName,
+          bale_category: item.item_name || 'Vintage Mixed Bales',
+          weight_kg: weightPerBale,
+          total_bale_weight: weightPerBale,
+          total_bale_cost: costPerBale,
+          cost_per_gram: costPerGram,
+          broken_down_weight: 0,
+          piece_count: 0,
+          status: 'UNOPENED',
+          created_at: new Date().toISOString()
+        };
+
+        const { error: igpErr } = await supabase
+          .from('inward_gate_passes')
+          .insert([gatePassPayload]);
+
+        if (igpErr) {
+          console.error('Error inserting inward_gate_passes:', igpErr);
+        }
+
+        // Initialize session in bale_sessions
+        try {
+          await supabase.from('bale_sessions').insert([{
+            bale_id: baleId,
+            status: 'UNOPENED',
+            total_weight_grams: Math.round(weightPerBale * 1000),
+            remaining_grams: Math.round(weightPerBale * 1000),
+            sorted_grams: 0,
+            pieces_count: 0
+          }]);
+        } catch (sessErr) {
+          console.warn('bale_sessions notice:', sessErr);
+        }
+
+        createdPasses.push({
+          id: baleId,
+          gatePassNo: passNo,
+          baleCode: baleCode,
+          baleCategory: item.item_name || 'Vintage Mixed Bales',
+          purchaseInvoiceId: invoice.id,
+          purchaseInvoiceNo: invoiceNo,
+          supplierName: supplierName,
+          date: new Date().toISOString().slice(0, 10),
+          status: 'UNOPENED',
+          totalBaleCost: costPerBale,
+          totalBaleWeight: weightPerBale,
+          costPerGram: costPerGram,
+          brokenDownWeight: 0,
+          remainingWeight: weightPerBale,
+          pieceCount: 0,
+          pieces: [],
+          createdAt: new Date().toISOString()
+        } as InwardGatePass);
+
+        baleSeq++;
+      }
+    }
+
+    // 4. POST TO COA (WIP INVENTORY & SUPPLIER AP)
+    try {
+      await FinanceService.addVoucher({
+        voucherNo: `JV-INW-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
+        date: new Date().toISOString().slice(0, 10),
+        type: 'JOURNAL',
+        reference: `INWARD-${invoiceNo}`,
+        narration: `Inward Consignment Bales Transferred to WIP Inventory: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
+        totalDebit: invoiceTotalAed,
+        totalCredit: invoiceTotalAed,
+        status: 'POSTED',
+        createdBy: 'System (Purchase Inward)',
+        lines: [
+          {
+            accountCode: '1150-00',
+            accountName: 'Inventory - Sorting Work-in-Progress (WIP Bales Under Grading)',
+            debitAmount: invoiceTotalAed,
+            creditAmount: 0,
+            memo: `WIP Raw Bales Inward: ${invoiceNo} (${createdPasses.length} bales)`
+          },
+          {
+            accountCode: '2110-00',
+            accountName: 'Accounts Payable - Trade Suppliers (Bale Exporters)',
+            partyId: invoice.supplier_id || null,
+            partyName: supplierName,
+            debitAmount: 0,
+            creditAmount: invoiceTotalAed,
+            memo: `Supplier Payable: ${supplierName} for ${invoiceNo}`
+          }
+        ]
+      });
+
+      // Update current_balance on coa_accounts
+      const { data: accWip } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1150-00').single();
+      if (accWip) {
+        const newBal = Number(accWip.current_balance || 0) + invoiceTotalAed;
+        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1150-00');
+      }
+      const { data: accAp } = await supabase.from('coa_accounts').select('current_balance').eq('code', '2110-00').single();
+      if (accAp) {
+        const newBal = Number(accAp.current_balance || 0) + invoiceTotalAed;
+        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '2110-00');
+      }
+    } catch (coaErr) {
+      console.warn('Notice on COA voucher posting:', coaErr);
+    }
+
+    // 5. Update purchase_invoices converted_to_inward
+    await supabase
+      .from('purchase_invoices')
+      .update({ converted_to_inward: true })
+      .eq('id', invoiceId);
+
+    return createdPasses;
+  }
+
   public static async addInwardGatePass(igp: Partial<InwardGatePass>): Promise<InwardGatePass> {
     const id = igp.id || `igp-${Date.now()}`;
     const payload = {
       id,
-      pass_no: igp.passNo || `IGP-${Date.now().toString().slice(-6)}`,
+      pass_no: igp.gatePassNo || igp.passNo || `IGP-${Date.now().toString().slice(-6)}`,
+      gate_pass_no: igp.gatePassNo || igp.passNo || `IGP-${Date.now().toString().slice(-6)}`,
+      bale_code: igp.baleCode || igp.baleTagNo || `BAL-${Date.now().toString().slice(-6)}`,
+      bale_tag_no: igp.baleCode || igp.baleTagNo || `BAL-${Date.now().toString().slice(-6)}`,
+      bale_category: igp.baleCategory || 'Vintage Mixed Bales',
       purchase_invoice_id: igp.purchaseInvoiceId,
+      purchase_invoice_no: igp.purchaseInvoiceNo || '',
       supplier_name: igp.supplierName || '',
-      bale_tag_no: igp.baleTagNo || '',
-      weight_kg: Number(igp.weightKg || 0),
-      status: igp.status || 'CLEARED'
+      weight_kg: Number(igp.totalBaleWeight || igp.weightKg || 0),
+      total_bale_weight: Number(igp.totalBaleWeight || igp.weightKg || 0),
+      total_bale_cost: Number(igp.totalBaleCost || 0),
+      cost_per_gram: Number(igp.costPerGram || 0),
+      status: igp.status || 'UNOPENED'
     };
 
     const { data, error } = await supabase
@@ -246,21 +459,29 @@ export class PurchaseService {
 
     return {
       id: data.id,
-      passNo: data.pass_no,
+      passNo: data.gate_pass_no || data.pass_no,
+      gatePassNo: data.gate_pass_no || data.pass_no,
+      baleCode: data.bale_code || data.bale_tag_no,
+      baleCategory: data.bale_category || 'Vintage Mixed Bales',
       purchaseInvoiceId: data.purchase_invoice_id,
+      purchaseInvoiceNo: data.purchase_invoice_no,
       supplierName: data.supplier_name,
-      baleTagNo: data.bale_tag_no,
-      weightKg: Number(data.weight_kg),
+      totalBaleWeight: Number(data.total_bale_weight || data.weight_kg),
+      weightKg: Number(data.total_bale_weight || data.weight_kg),
+      totalBaleCost: Number(data.total_bale_cost || 0),
+      costPerGram: Number(data.cost_per_gram || 0),
       status: data.status,
       createdAt: data.created_at
-    };
+    } as InwardGatePass;
   }
 
   public static async updateInwardGatePass(id: string, updates: Partial<InwardGatePass>): Promise<void> {
     const payload: any = {};
     if (updates.status !== undefined) payload.status = updates.status;
     if (updates.weightKg !== undefined) payload.weight_kg = Number(updates.weightKg);
+    if (updates.totalBaleWeight !== undefined) payload.total_bale_weight = Number(updates.totalBaleWeight);
     if (updates.baleTagNo !== undefined) payload.bale_tag_no = updates.baleTagNo;
+    if (updates.baleCode !== undefined) payload.bale_code = updates.baleCode;
     if (updates.supplierName !== undefined) payload.supplier_name = updates.supplierName;
 
     const { error } = await supabase.from('inward_gate_passes').update(payload).eq('id', id);

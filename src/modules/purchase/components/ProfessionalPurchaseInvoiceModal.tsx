@@ -574,16 +574,31 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
 
       let invoicePayload: any = {
         id: targetInvoiceId,
+        invoice_no: invoiceNo,
         invoiceNo,
+        supplier_id: cleanSupplierId,
         supplierId: cleanSupplierId,
+        supplier_name: selectedSupplier?.name || '',
         supplierName: selectedSupplier?.name || '',
+        party_name: selectedSupplier?.name || '',
+        invoice_date: invoiceDate,
         date: invoiceDate,
         status: editingInvoice ? (editingInvoice.status || submitStatus) : submitStatus,
         currency,
+        exchange_rate: exchangeRate,
         exchangeRate,
+        subtotal: itemsSubTotal,
         subTotal: itemsSubTotal,
+        tax_amount: vatAmount,
         vatAmount,
+        total_amount: grandTotal,
         totalAmount: grandTotal,
+        total_weight_kg: totalGrossWeightKg,
+        totalWeightKg: totalGrossWeightKg,
+        container_no: containerNo || '',
+        bl_no: blAirwayBillNo || '',
+        vessel_name: vesselName || null,
+        port_of_arrival: portOfEntry || null,
         notes: notes ? `${notes} | Terms: ${paymentTerms.replace(/_/g, ' ')}` : `Terms: ${paymentTerms.replace(/_/g, ' ')}`
       };
 
@@ -660,6 +675,14 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
           }
         } catch (itemsEx) {
           console.warn('Notice on purchase_invoice_items insert:', itemsEx);
+        }
+      }
+
+      if (autoConvertToInward) {
+        try {
+          await PurchaseService.convertToInwardGatePass(targetInvoiceId);
+        } catch (convErr) {
+          console.warn('Notice on auto convert to inward:', convErr);
         }
       }
 

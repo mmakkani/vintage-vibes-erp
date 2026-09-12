@@ -255,21 +255,12 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
 
   const handleConvertToInward = async (invId: string) => {
     try {
-      const res = await fetch(`/api/purchase/invoices/${invId}/convert-inward`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      if (res.ok) {
-        await supabase.from('purchase_invoices').update({ converted_to_inward: true }).eq('id', invId);
-        onRefresh();
-      } else {
-        await supabase.from('purchase_invoices').update({ converted_to_inward: true }).eq('id', invId);
-        onRefresh();
-      }
-    } catch (e) {
-      console.warn('Error converting to inward:', e);
-      await supabase.from('purchase_invoices').update({ converted_to_inward: true }).eq('id', invId);
+      const createdBales = await PurchaseService.convertToInwardGatePass(invId);
+      alert(`✅ Inward Gate Pass Created!\n\n${createdBales.length} bale(s) generated and ready for sorting in Terminal.\nConsignment value successfully booked to COA Account 1150-00 (Sorting WIP Inventory).`);
       onRefresh();
+    } catch (e: any) {
+      console.warn('Error converting to inward:', e);
+      alert(`Failed to create inward gate pass: ${e.message || 'Unknown error'}`);
     }
   };
 

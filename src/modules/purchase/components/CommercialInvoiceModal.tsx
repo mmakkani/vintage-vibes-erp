@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { PurchaseInvoice, InwardGatePass } from '../purchase.types.ts';
 import { Printer, X, ShieldCheck, Download, Globe, Award, FileText, Tag } from 'lucide-react';
 import { openBatchBaleThermalTagsPrintWindow } from '../../../utils/thermalPrinter.ts';
+import { openCommercialInvoiceA4PrintWindow } from '../../../utils/printInvoiceA4.ts';
 import { RoyalWaxSeal } from '../../../components/RoyalWaxSeal.tsx';
 import { supabase } from '../../../supabaseClient.ts';
 
@@ -54,10 +55,6 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
   gatePass,
   onClose
 }) => {
-  const handlePrint = () => {
-    window.print();
-  };
-
   const docNo = invoice ? invoice.invoiceNo : gatePass ? gatePass.gatePassNo : '';
   const supplierName = invoice?.supplierName || (invoice as any)?.supplier_name || gatePass?.supplierName || 'Supplier';
   const date = invoice?.date || invoice?.invoiceDate || (invoice as any)?.invoice_date || gatePass?.date || new Date().toISOString().slice(0, 10);
@@ -100,8 +97,18 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
   const exchangeRate = Number(invoice?.exchangeRate) || (currency === 'USD' ? 3.6725 : 1);
 
   const rawItems = useMemo(() => {
-    if (invoiceItems && invoiceItems.length > 0) return invoiceItems;
-    const fallbackWt = Number(invoice?.totalWeightKg || (invoice as any)?.total_weight_kg || 25);
+    if (invoiceItems && invoiceItems.length > 0) {
+      return invoiceItems.map((it, idx) => ({
+        id: it.id || `pi-${idx}`,
+        itemName: it.itemName || it.item_name || it.description || 'Vintage Mix Bales',
+        packagingUom: it.packagingUom || it.packaging_uom || it.packaging || 'BALES',
+        packageCount: Number(it.packageCount ?? it.package_count ?? it.quantity ?? 1),
+        totalWeight: Number(it.totalWeight ?? it.total_weight ?? it.total_kg ?? (Number(invoice?.totalWeightKg || (invoice as any)?.total_weight_kg) || 25)),
+        ratePerWeight: Number(it.ratePerWeight ?? it.rate_per_weight ?? it.rate ?? 0),
+        lineTotal: Number(it.lineTotal ?? it.line_total ?? 0)
+      }));
+    }
+    const fallbackWt = Number(invoice?.totalWeightKg || (invoice as any)?.total_weight_kg || (invoice as any)?.totalGrossWeightKg || 25);
     const fallbackTot = Number(invoice?.totalAmount || (invoice as any)?.total_amount || 0);
     const fallbackRate = fallbackWt > 0 ? Number((fallbackTot / fallbackWt).toFixed(2)) : 0;
     return [
@@ -109,7 +116,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
         id: `pi-${invoice?.id || '1'}`,
         itemName: 'Vintage Mix Bales',
         packagingUom: 'BALES',
-        packageCount: Number(invoice?.totalBalesCount || 1),
+        packageCount: Number(invoice?.totalBalesCount || (invoice as any)?.total_bales_count || 1),
         totalWeight: fallbackWt,
         ratePerWeight: fallbackRate,
         lineTotal: fallbackTot
@@ -162,6 +169,66 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
   const totalNetKg = useMemo(() => items.reduce((acc, i) => acc + (i.netWeightKg || 0), 0), [items]);
   const totalGrossKg = useMemo(() => items.reduce((acc, i) => acc + (i.grossWeightKg || 0), 0), [items]);
   const totalBales = useMemo(() => items.reduce((acc, i) => acc + (i.quantityBales || 0), 0), [items]);
+
+  const handlePrint = () => {
+    openCommercialInvoiceA4PrintWindow({
+      docNo,
+      date,
+      supplierName,
+      supplierTrn: invoice?.supplierTrn,
+      consigneeName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+      consigneeAddress: 'Al Quoz Industrial 3, Dubai, UAE',
+      consigneeTrn: '100492819200003',
+      vesselName,
+      billOfLading,
+      containerNo,
+      portOfDischarge,
+      items,
+      totalBales,
+      totalNetKg,
+      totalGrossKg,
+      totalUsd,
+      totalAed,
+      amountInWords: numberToWords(totalAed)
+    });
+  };
+
+  const balesList = useMemo(() => {
+    const list: any[] = [];
+    let idx = 1;
+    items.forEach(line => {
+      const count = line.quantityBales || 1;
+      const weightPerBale = line.grossWeightKg / count;
+      const costPerBale = line.totalAed / count;
+      const costPerGram = weightPerBale > 0 ? (costPerBale / (weightPerBale * 1000)) : 0;
+
+      for (let i = 1; i <= count; i++) {
+        const paddedIdx = String(idx).padStart(3, '0');
+        const baleCode = `BAL-${docNo.replace(/[^a-zA-Z0-9]/g, '')}-${paddedIdx}`;
+        list.push({
+          index: idx,
+          baleCode,
+          category: line.description.split(' (')[0],
+          grossWeightKg: Number(weightPerBale.toFixed(2)),
+          totalGrams: Math.round(weightPerBale * 1000),
+          totalCostAed: Number(costPerBale.toFixed(2)),
+          costPerGram: Number(costPerGram.toFixed(4)),
+          purchaseInvoiceNo: docNo,
+          supplierName,
+          status: 'Unopened / Ready for Sorting'
+        });
+        idx++;
+      }
+    });
+    return list;
+  }, [items, docNo, supplierName]);
+
+  const handlePrintSingleThermalTag = (bale: any) => {
+    openBatchBaleThermalTagsPrintWindow([{
+      ...bale,
+      totalCount: balesList.length
+    }]);
+  };
 
   const handlePrintBatchThermalTags = () => {
     if (!invoice && !gatePass) return;
@@ -435,6 +502,67 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
                 </div>
               </div>
               <span>Vintage Vibes Managing Director</span>
+            </div>
+          </div>
+
+          {/* BALE BARCODE TAG MANIFEST TABLE */}
+          <div className="mt-8 pt-6 border-t-2 border-dashed border-amber-300 print:hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2">
+                <Tag className="w-4 h-4 text-amber-800" />
+                <h3 className="font-bold text-xs uppercase tracking-wider text-amber-950 font-serif">
+                  Bale Barcode Tag Manifest & Cost Breakdown ({balesList.length} Bales)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={handlePrintBatchThermalTags}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs hover:shadow transition flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
+              >
+                <Tag className="w-3.5 h-3.5 text-amber-300" />
+                <span>Print All Thermal Tags ({balesList.length})</span>
+              </button>
+            </div>
+
+            <div className="bg-amber-50/60 rounded-xl border border-amber-200 overflow-hidden shadow-2xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-amber-100/80 text-amber-950 font-bold uppercase text-[10px] tracking-wider border-b border-amber-200">
+                    <tr>
+                      <th className="py-2.5 px-3">Bale Code / Tag #</th>
+                      <th className="py-2.5 px-3">Garment Category</th>
+                      <th className="py-2.5 px-3 text-right">Gross Wt (KG)</th>
+                      <th className="py-2.5 px-3 text-right">Total Grams</th>
+                      <th className="py-2.5 px-3 text-right">Cost / Gram</th>
+                      <th className="py-2.5 px-3 text-right">Bale Cost (AED)</th>
+                      <th className="py-2.5 px-3 text-center">Thermal Sticker</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-amber-200/60 font-mono text-[11px]">
+                    {balesList.map(bale => (
+                      <tr key={bale.baleCode} className="hover:bg-amber-100/50 transition-colors">
+                        <td className="py-2.5 px-3 font-bold text-indigo-700 whitespace-nowrap">{bale.baleCode}</td>
+                        <td className="py-2.5 px-3 font-sans font-medium text-slate-900">{bale.category}</td>
+                        <td className="py-2.5 px-3 text-right font-bold text-slate-800">{bale.grossWeightKg.toFixed(2)} KG</td>
+                        <td className="py-2.5 px-3 text-right text-slate-700">{bale.totalGrams.toLocaleString()} g</td>
+                        <td className="py-2.5 px-3 text-right font-bold text-indigo-600">AED {bale.costPerGram.toFixed(4)}</td>
+                        <td className="py-2.5 px-3 text-right font-bold text-emerald-700">AED {bale.totalCostAed.toFixed(2)}</td>
+                        <td className="py-2.5 px-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handlePrintSingleThermalTag(bale)}
+                            className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 hover:text-indigo-700 border border-slate-300 rounded font-sans text-[10px] font-bold cursor-pointer transition shadow-2xs inline-flex items-center gap-1"
+                            title="Print 4x2 Thermal Barcode Sticker for this bale"
+                          >
+                            <Printer className="w-3 h-3 text-slate-500" />
+                            <span>Print Tag</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
