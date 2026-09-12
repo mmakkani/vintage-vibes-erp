@@ -41,6 +41,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   const sseRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSyncingRef = useRef(false);
+  const lastSyncedAtRef = useRef<number>(Date.now());
 
   const triggerGlobalSync = useCallback(async (module?: string) => {
     if (isSyncingRef.current) return;
@@ -52,7 +53,9 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         await onGlobalRefresh();
       }
       setSyncVersion(v => v + 1);
-      setLastSyncedAt(new Date());
+      const now = new Date();
+      setLastSyncedAt(now);
+      lastSyncedAtRef.current = now.getTime();
     } catch (err) {
       console.warn('[SyncContext] Sync trigger error:', err);
     } finally {
@@ -133,15 +136,19 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     };
     window.addEventListener('storage', handleStorage);
 
-    // Fallback polling every 30 seconds to guarantee consistency across dormant tabs
+    // Throttled fallback polling (every 5 minutes) to guarantee consistency across dormant tabs without spamming
     const fallbackInterval = setInterval(() => {
-      triggerGlobalSync();
-    }, 30000);
+      if (Date.now() - lastSyncedAtRef.current >= 5 * 60 * 1000) {
+        triggerGlobalSync();
+      }
+    }, 5 * 60 * 1000);
 
-    // Sync on tab visibility focus
+    // Sync on tab visibility focus only if at least 5 minutes have elapsed since last sync
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        triggerGlobalSync();
+        if (Date.now() - lastSyncedAtRef.current >= 5 * 60 * 1000) {
+          triggerGlobalSync();
+        }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);

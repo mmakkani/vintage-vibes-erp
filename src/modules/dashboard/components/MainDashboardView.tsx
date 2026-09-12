@@ -45,14 +45,20 @@ interface StockAlertItem {
   severity: 'CRITICAL' | 'WARNING';
 }
 
+let cachedMainDashboardKpi: any = null;
+let cachedMainDashboardStockAlerts: StockAlertItem[] | null = null;
+let cachedMainDashboardThreshold: number = 20;
+let lastMainDashboardFetchTime = 0;
+const MAIN_DASHBOARD_TTL_MS = 60 * 1000; // 1 minute cache
+
 export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
   onNavigateTab,
   currentUser
 }) => {
-  const [loading, setLoading] = useState(true);
-  const [stockAlerts, setStockAlerts] = useState<StockAlertItem[]>([]);
-  const [globalThreshold, setGlobalThreshold] = useState<number>(20);
-  const [kpiData, setKpiData] = useState({
+  const [loading, setLoading] = useState(() => !cachedMainDashboardKpi);
+  const [stockAlerts, setStockAlerts] = useState<StockAlertItem[]>(() => cachedMainDashboardStockAlerts || []);
+  const [globalThreshold, setGlobalThreshold] = useState<number>(() => cachedMainDashboardThreshold);
+  const [kpiData, setKpiData] = useState(() => cachedMainDashboardKpi || {
     totalInventoryValueAED: 0,
     totalBalesInStock: 0,
     totalSortedPcs: 0,
@@ -75,7 +81,11 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
   }, []);
 
   useEffect(() => {
-    const fetchDashboardData = async () => {
+    const fetchDashboardData = async (force: boolean = false) => {
+      if (!force && cachedMainDashboardKpi && (Date.now() - lastMainDashboardFetchTime < MAIN_DASHBOARD_TTL_MS)) {
+        setLoading(false);
+        return;
+      }
       try {
         const [purchaseInvoicesRes, gatePassesRes, salesRes, partiesRes, financeRes, currRes, itemsRes, companyRes] = await Promise.all([
           safeFetchJson<any[]>('/api/purchase/invoices', undefined, 3, 300),
@@ -153,7 +163,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
             }))
           : [];
 
-        setKpiData({
+        const newKpi = {
           totalInventoryValueAED: computedInventoryValue,
           totalBalesInStock: computedBalesCount,
           totalSortedPcs: computedSortedPcs,
@@ -164,7 +174,9 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
           currencyRates: Array.isArray(currRes) ? currRes.filter((c: any) => !c.isBase) : [],
           recentGatePasses: recentGatePassesArr,
           clientKhatas: clientKhatasArr
-        });
+        };
+        setKpiData(newKpi);
+        cachedMainDashboardKpi = newKpi;
 
         if (itemsRes && Array.isArray(itemsRes)) {
           const triggered: StockAlertItem[] = [];
@@ -185,7 +197,9 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
             }
           }
           setStockAlerts(triggered);
+          cachedMainDashboardStockAlerts = triggered;
         }
+        lastMainDashboardFetchTime = Date.now();
       } catch {
         // Fallback gracefully on network retry
       } finally {

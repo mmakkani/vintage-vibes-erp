@@ -30,65 +30,110 @@ function saveLocalEmployees(list: Employee[]): void {
 }
 
 export class HrService {
+  private static cachedEmployees: Employee[] | null = null;
+  private static employeesPromise: Promise<Employee[]> | null = null;
+  private static lastEmployeesFetched: number = 0;
+  private static readonly EMPLOYEES_TTL_MS = 5 * 60 * 1000; // 5 mins cache
+
+  private static cachedPayrollSheets: any[] | null = null;
+  private static payrollSheetsPromise: Promise<any[]> | null = null;
+  private static lastPayrollSheetsFetched: number = 0;
+  private static readonly PAYROLL_SHEETS_TTL_MS = 5 * 60 * 1000; // 5 mins cache
+
+  public static clearEmployeeCache(): void {
+    this.cachedEmployees = null;
+    this.employeesPromise = null;
+    this.lastEmployeesFetched = 0;
+  }
+
+  public static clearPayrollSheetsCache(): void {
+    this.cachedPayrollSheets = null;
+    this.payrollSheetsPromise = null;
+    this.lastPayrollSheetsFetched = 0;
+  }
+
   // ==========================================
   // 1. EMPLOYEES (public.employees + localStorage offline fallback)
   // ==========================================
-  public static async getEmployees(): Promise<Employee[]> {
-    try {
-      const { data, error } = await supabase
-        .from('employees')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (!error && Array.isArray(data) && data.length > 0) {
-        const mapped = data.map((row: any) => ({
-          id: String(row.id),
-          empCode: row.emp_code || '',
-          name: row.name || '',
-          designation: row.designation || '',
-          department: row.department || '',
-          baseSalary: Number(row.base_salary || 0),
-          housingAllow: Number(row.housing_allow || 0),
-          transportAllow: Number(row.transport_allow || 0),
-          workingHoursPerDay: Number(row.working_hours_per_day || 8),
-          isActive: row.is_active !== false,
-          joiningDate: row.joining_date || new Date().toISOString().slice(0, 10),
-          status: row.status || 'POSTED',
-          emiratesId: row.emirates_id || '',
-          residencyCardNo: row.residency_card_no || '',
-          passportNo: row.passport_no || '',
-          idFrontImageUrl: row.id_front_image_url || '',
-          idBackImageUrl: row.id_back_image_url || '',
-          nameArabic: row.name_arabic || '',
-          nationality: row.nationality || '',
-          gender: row.gender || 'MALE',
-          dob: row.dob || '',
-          emiratesIdExpiry: row.emirates_id_expiry || '',
-          idCardNo: row.id_card_no || '',
-          passportExpiry: row.passport_expiry || '',
-          passportIssueDate: row.passport_issue_date || '',
-          passportCountry: row.passport_country || '',
-          passportImageUrl: row.passport_image_url || '',
-          uidNo: row.uid_no || '',
-          residencyIssueDate: row.residency_issue_date || '',
-          residencyExpiryDate: row.residency_expiry_date || '',
-          residencySponsor: row.residency_sponsor || '',
-          residencyProfession: row.residency_profession || '',
-          residencyImageUrl: row.residency_image_url || '',
-          photoUrl: row.photo_url || ''
-        }));
-        saveLocalEmployees(mapped);
-        return mapped;
-      }
-    } catch (err) {
-      console.warn('Supabase fetch employees failed, falling back to local store:', err);
+  public static async getEmployees(forceRefresh: boolean = false): Promise<Employee[]> {
+    if (!forceRefresh && this.cachedEmployees && (Date.now() - this.lastEmployeesFetched < this.EMPLOYEES_TTL_MS)) {
+      return this.cachedEmployees;
+    }
+    if (this.employeesPromise) {
+      return this.employeesPromise;
     }
 
-    // Return stored local employees if Supabase is offline/anon placeholder
-    return getLocalEmployees();
+    this.employeesPromise = (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('employees')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && Array.isArray(data) && data.length > 0) {
+          const mapped = data.map((row: any) => ({
+            id: String(row.id),
+            empCode: row.emp_code || '',
+            name: row.name || '',
+            designation: row.designation || '',
+            department: row.department || '',
+            baseSalary: Number(row.base_salary || 0),
+            housingAllow: Number(row.housing_allow || 0),
+            transportAllow: Number(row.transport_allow || 0),
+            workingHoursPerDay: Number(row.working_hours_per_day || 8),
+            isActive: row.is_active !== false,
+            joiningDate: row.joining_date || new Date().toISOString().slice(0, 10),
+            status: row.status || 'POSTED',
+            emiratesId: row.emirates_id || '',
+            residencyCardNo: row.residency_card_no || '',
+            passportNo: row.passport_no || '',
+            idFrontImageUrl: row.id_front_image_url || '',
+            idBackImageUrl: row.id_back_image_url || '',
+            nameArabic: row.name_arabic || '',
+            nationality: row.nationality || '',
+            gender: row.gender || 'MALE',
+            dob: row.dob || '',
+            emiratesIdExpiry: row.emirates_id_expiry || '',
+            idCardNo: row.id_card_no || '',
+            passportExpiry: row.passport_expiry || '',
+            passportIssueDate: row.passport_issue_date || '',
+            passportCountry: row.passport_country || '',
+            passportImageUrl: row.passport_image_url || '',
+            uidNo: row.uid_no || '',
+            residencyIssueDate: row.residency_issue_date || '',
+            residencyExpiryDate: row.residency_expiry_date || '',
+            residencySponsor: row.residency_sponsor || '',
+            residencyProfession: row.residency_profession || '',
+            residencyImageUrl: row.residency_image_url || '',
+            photoUrl: row.photo_url || ''
+          }));
+          saveLocalEmployees(mapped);
+          this.cachedEmployees = mapped;
+          this.lastEmployeesFetched = Date.now();
+          return mapped;
+        }
+
+        // Return stored local employees if Supabase is offline/anon placeholder
+        const fallback = getLocalEmployees();
+        this.cachedEmployees = fallback;
+        this.lastEmployeesFetched = Date.now();
+        return fallback;
+      } catch (err) {
+        console.warn('Supabase fetch employees failed, falling back to local store:', err);
+        const fallback = getLocalEmployees();
+        this.cachedEmployees = fallback;
+        this.lastEmployeesFetched = Date.now();
+        return fallback;
+      } finally {
+        this.employeesPromise = null;
+      }
+    })();
+
+    return this.employeesPromise;
   }
 
   public static async createEmployee(emp: Partial<Employee>): Promise<Employee> {
+    this.clearEmployeeCache();
     const id = emp.id ? String(emp.id) : generateId('emp');
     const empCode = emp.empCode || `EMP-${Date.now().toString().slice(-4)}`;
 
@@ -236,6 +281,7 @@ export class HrService {
   }
 
   public static async updateEmployee(id: string, updates: Partial<Employee>): Promise<void> {
+    this.clearEmployeeCache();
     const payload: any = {};
     if (updates.name !== undefined || (updates as any).full_name !== undefined || (updates as any).fullName !== undefined) {
       const nameVal = updates.name || (updates as any).full_name || (updates as any).fullName || '';
@@ -331,6 +377,7 @@ export class HrService {
   }
 
   public static async deleteEmployee(id: string): Promise<void> {
+    this.clearEmployeeCache();
     try {
       await supabase
         .from('employees')
@@ -711,6 +758,7 @@ export class HrService {
     const totalDeductions = slips.reduce((sum, s) => sum + s.total_deductions, 0);
     const totalNet = slips.reduce((sum, s) => sum + s.net_pay, 0);
 
+    this.clearPayrollSheetsCache();
     await supabase.from('hr_payroll_sheets').upsert({
       id: `pay-sheet-${monthYear}`,
       month_year: monthYear,
@@ -725,6 +773,7 @@ export class HrService {
   }
 
   public static async postPayrollSheet(monthYear: string, disbursement?: { paymentMethod: string; bankAccountId?: string }): Promise<void> {
+    this.clearPayrollSheetsCache();
     await supabase
       .from('employee_payroll')
       .update({
@@ -747,6 +796,7 @@ export class HrService {
   }
 
   public static async unpostPayrollSheet(monthYear: string): Promise<void> {
+    this.clearPayrollSheetsCache();
     await supabase
       .from('employee_payroll')
       .update({
@@ -790,23 +840,44 @@ export class HrService {
     }
   }
 
-  public static async getPayrollSheets(): Promise<any[]> {
-    const { data, error } = await supabase
-      .from('hr_payroll_sheets')
-      .select('*')
-      .order('month_year', { ascending: false });
+  public static async getPayrollSheets(forceRefresh: boolean = false): Promise<any[]> {
+    if (!forceRefresh && this.cachedPayrollSheets && (Date.now() - this.lastPayrollSheetsFetched < this.PAYROLL_SHEETS_TTL_MS)) {
+      return this.cachedPayrollSheets;
+    }
+    if (this.payrollSheetsPromise) {
+      return this.payrollSheetsPromise;
+    }
 
-    if (error) return [];
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      monthYear: row.month_year,
-      totalEmployees: row.total_employees,
-      totalGross: Number(row.total_gross || 0),
-      totalDeductions: Number(row.total_deductions || 0),
-      totalNet: Number(row.total_net || 0),
-      status: row.status,
-      createdAt: row.created_at
-    }));
+    this.payrollSheetsPromise = (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('hr_payroll_sheets')
+          .select('*')
+          .order('month_year', { ascending: false });
+
+        if (error) {
+          if (this.cachedPayrollSheets) return this.cachedPayrollSheets;
+          return [];
+        }
+        const mapped = (data || []).map((row: any) => ({
+          id: row.id,
+          monthYear: row.month_year,
+          totalEmployees: row.total_employees,
+          totalGross: Number(row.total_gross || 0),
+          totalDeductions: Number(row.total_deductions || 0),
+          totalNet: Number(row.total_net || 0),
+          status: row.status,
+          createdAt: row.created_at
+        }));
+        this.cachedPayrollSheets = mapped;
+        this.lastPayrollSheetsFetched = Date.now();
+        return mapped;
+      } finally {
+        this.payrollSheetsPromise = null;
+      }
+    })();
+
+    return this.payrollSheetsPromise;
   }
 
   // ==========================================

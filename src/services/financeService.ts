@@ -2,43 +2,75 @@ import { supabase } from '../supabaseClient.ts';
 import { COAAccount, Voucher, LedgerEntry } from '../modules/finance/finance.types.ts';
 
 export class FinanceService {
-  // --- Chart of Accounts (COA) ---
-  public static async getCoaAccounts(): Promise<COAAccount[]> {
-    const { data, error } = await supabase
-      .from('coa_accounts')
-      .select('id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, party_id')
-      .order('code', { ascending: true });
+  private static cachedCoaAccounts: COAAccount[] | null = null;
+  private static coaAccountsPromise: Promise<COAAccount[]> | null = null;
+  private static lastCoaFetched: number = 0;
+  private static readonly COA_TTL_MS = 5 * 60 * 1000; // 5 mins cache
 
-    if (error) {
-      console.error('Supabase error on coa_accounts:', error);
-      throw new Error(error.message || 'Database error occurred reading Chart of Accounts');
+  public static clearCoaCache(): void {
+    this.cachedCoaAccounts = null;
+    this.coaAccountsPromise = null;
+    this.lastCoaFetched = 0;
+  }
+
+  // --- Chart of Accounts (COA) ---
+  public static async getCoaAccounts(forceRefresh: boolean = false): Promise<COAAccount[]> {
+    if (!forceRefresh && this.cachedCoaAccounts && (Date.now() - this.lastCoaFetched < this.COA_TTL_MS)) {
+      return this.cachedCoaAccounts;
+    }
+    if (this.coaAccountsPromise) {
+      return this.coaAccountsPromise;
     }
 
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      code: row.code,
-      name: row.name,
-      type: (row.type || 'ASSET').toUpperCase(),
-      classification: (row.type || 'ASSET').toUpperCase() as any,
-      subType: row.sub_type || '',
-      sub_type: row.sub_type || '',
-      currency: row.currency || 'AED',
-      currentBalance: Number(row.current_balance ?? 0),
-      current_balance: Number(row.current_balance ?? 0),
-      isActive: row.is_active !== false,
-      is_active: row.is_active !== false,
-      parentId: row.parent_id,
-      parent_id: row.parent_id,
-      partyId: row.party_id,
-      party_id: row.party_id,
-      tierLevel: row.tier_level || (row.code?.includes('-') ? (row.code.split('-').length > 2 ? 3 : 2) : 1),
-      parentCode: row.parent_code || '',
-      isSystem: Boolean(row.is_system),
-      createdAt: row.created_at
-    }));
+    this.coaAccountsPromise = (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('coa_accounts')
+          .select('id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, party_id')
+          .order('code', { ascending: true });
+
+        if (error) {
+          console.error('Supabase error on coa_accounts:', error);
+          if (this.cachedCoaAccounts) return this.cachedCoaAccounts;
+          throw new Error(error.message || 'Database error occurred reading Chart of Accounts');
+        }
+
+        const mapped = (data || []).map((row: any) => ({
+          id: row.id,
+          code: row.code,
+          name: row.name,
+          type: (row.type || 'ASSET').toUpperCase(),
+          classification: (row.type || 'ASSET').toUpperCase() as any,
+          subType: row.sub_type || '',
+          sub_type: row.sub_type || '',
+          currency: row.currency || 'AED',
+          currentBalance: Number(row.current_balance ?? 0),
+          current_balance: Number(row.current_balance ?? 0),
+          isActive: row.is_active !== false,
+          is_active: row.is_active !== false,
+          parentId: row.parent_id,
+          parent_id: row.parent_id,
+          partyId: row.party_id,
+          party_id: row.party_id,
+          tierLevel: row.tier_level || (row.code?.includes('-') ? (row.code.split('-').length > 2 ? 3 : 2) : 1),
+          parentCode: row.parent_code || '',
+          isSystem: Boolean(row.is_system),
+          createdAt: row.created_at
+        }));
+
+        this.cachedCoaAccounts = mapped;
+        this.lastCoaFetched = Date.now();
+        return mapped;
+      } finally {
+        this.coaAccountsPromise = null;
+      }
+    })();
+
+    return this.coaAccountsPromise;
   }
 
   public static async addCoaAccount(acc: Partial<COAAccount>): Promise<COAAccount> {
+    this.clearCoaCache();
     const id = acc.id || `acc-${acc.code || Date.now()}`;
     const payload = {
       id,

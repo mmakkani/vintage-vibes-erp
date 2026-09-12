@@ -102,21 +102,44 @@ export class CompanyProfileService {
     return data.publicUrl;
   }
 
-  public static async getCompanyProfile(): Promise<CompanyProfile> {
-    const { data, error } = await supabase
-      .from('company_profile')
-      .select('*')
-      .eq('id', 'default-company')
-      .maybeSingle();
+  private static cachedProfile: CompanyProfile | null = null;
+  private static profilePromise: Promise<CompanyProfile> | null = null;
+  private static lastFetched: number = 0;
+  private static readonly TTL_MS = 5 * 60 * 1000; // 5 minutes cache
 
-    if (error) {
-      console.error('Supabase error on company_profile:', error);
-      throw new Error(error.message || 'Database error occurred reading company profile');
+  public static clearCache(): void {
+    this.cachedProfile = null;
+    this.profilePromise = null;
+    this.lastFetched = 0;
+  }
+
+  public static async getCompanyProfile(forceRefresh: boolean = false): Promise<CompanyProfile> {
+    if (!forceRefresh && this.cachedProfile && (Date.now() - this.lastFetched < this.TTL_MS)) {
+      return this.cachedProfile;
+    }
+    if (this.profilePromise) {
+      return this.profilePromise;
     }
 
-    if (!data) {
-      return DEFAULT_COMPANY_PROFILE;
-    }
+    this.profilePromise = (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('company_profile')
+          .select('*')
+          .eq('id', 'default-company')
+          .maybeSingle();
+
+        if (error) {
+          console.error('Supabase error on company_profile:', error);
+          if (this.cachedProfile) return this.cachedProfile;
+          throw new Error(error.message || 'Database error occurred reading company profile');
+        }
+
+        if (!data) {
+          this.cachedProfile = DEFAULT_COMPANY_PROFILE;
+          this.lastFetched = Date.now();
+          return DEFAULT_COMPANY_PROFILE;
+        }
 
     const waOrdersNumber = data.whatsapp_orders_number || data.whatsapp_order_number || data.whatsappOrderNumber || DEFAULT_COMPANY_PROFILE.whatsappOrderNumber || '';
     const companyDisplayName = data.company_display_name || data.companyDisplayName || data.company_name || data.companyName || DEFAULT_COMPANY_PROFILE.companyName;
@@ -178,7 +201,15 @@ export class CompanyProfileService {
       ...(data.profile_data || {})
     };
 
-    return prof;
+        this.cachedProfile = prof;
+        this.lastFetched = Date.now();
+        return prof;
+      } finally {
+        this.profilePromise = null;
+      }
+    })();
+
+    return this.profilePromise;
   }
 
   public static async updateCompanyProfile(profile: Partial<CompanyProfile>): Promise<CompanyProfile> {
@@ -263,6 +294,7 @@ export class CompanyProfileService {
       throw new Error(error.message || 'Database error occurred saving company profile');
     }
 
-    return this.getCompanyProfile();
+    this.clearCache();
+    return this.getCompanyProfile(true);
   }
 }

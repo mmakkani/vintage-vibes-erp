@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header.tsx';
 import { DubaiLiveSoukTicker } from './components/DubaiLiveSoukTicker.tsx';
 import { Navigation, ActiveTab } from './components/Navigation.tsx';
@@ -258,7 +258,7 @@ export default function App() {
   const [allUsers, setAllUsers] = useState<User[]>([]);
 
   // Global refresh handler to re-sync profile, currencies, and users directly from Supabase
-  const refreshGlobalData = async () => {
+  const refreshGlobalData = useCallback(async () => {
     try {
       const [profile, currs, users] = await Promise.all([
         CompanyProfileService.getCompanyProfile().catch(e => {
@@ -295,7 +295,7 @@ export default function App() {
     } catch (err: any) {
       console.warn('Global data sync notice (using resilient client state):', err?.message);
     }
-  };
+  }, [currentUser.id, currentUser.username]);
 
   useEffect(() => {
     refreshGlobalData();

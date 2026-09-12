@@ -48,13 +48,18 @@ interface KPIData {
   pendingActionTotal?: number;
 }
 
+let cachedKpiData: KPIData | null = null;
+let cachedUsdRate: number = 0.2723;
+let lastKpiFetchTime = 0;
+const KPI_TTL_MS = 60 * 1000; // 1 minute cache
+
 export const DashboardKPIs: React.FC<DashboardKPIsProps> = ({
   activeTab,
   onRefreshTrigger,
   onTriggerDownloadPdf,
   onNavigateTab
 }) => {
-  const [kpis, setKpis] = useState<KPIData>({
+  const [kpis, setKpis] = useState<KPIData>(() => cachedKpiData || {
     totalInventoryValue: 0,
     totalInventoryCount: 0,
     pendingSalesCount: 0,
@@ -78,9 +83,13 @@ export const DashboardKPIs: React.FC<DashboardKPIsProps> = ({
   });
   const [loading, setLoading] = useState(false);
   const [currencyMode, setCurrencyMode] = useState<'AED' | 'USD'>('AED');
-  const [usdRate, setUsdRate] = useState<number>(0.2723); // 1 AED = 0.2723 USD default
+  const [usdRate, setUsdRate] = useState<number>(() => cachedUsdRate);
 
-  const fetchKPIs = async () => {
+  const fetchKPIs = async (force: boolean = false) => {
+    if (!force && cachedKpiData && (Date.now() - lastKpiFetchTime < KPI_TTL_MS)) {
+      setKpis(cachedKpiData);
+      return;
+    }
     try {
       setLoading(true);
       const [kpiData, currencies] = await Promise.all([
@@ -88,12 +97,16 @@ export const DashboardKPIs: React.FC<DashboardKPIsProps> = ({
         safeFetchJson<any[]>('/api/setup/currency', undefined, 3, 300)
       ]);
       if (kpiData) {
+        cachedKpiData = kpiData;
+        lastKpiFetchTime = Date.now();
         setKpis(kpiData);
       }
       if (Array.isArray(currencies)) {
         const usd = currencies.find((c: any) => c.code === 'USD');
         if (usd && usd.exchangeRate) {
-          setUsdRate(Number(usd.exchangeRate));
+          const rate = Number(usd.exchangeRate);
+          cachedUsdRate = rate;
+          setUsdRate(rate);
         }
       }
     } catch {
@@ -105,7 +118,7 @@ export const DashboardKPIs: React.FC<DashboardKPIsProps> = ({
 
   useEffect(() => {
     fetchKPIs();
-  }, [activeTab]);
+  }, []);
 
   const formatMoney = (valAED: number) => {
     if (currencyMode === 'USD') {

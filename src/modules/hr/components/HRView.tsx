@@ -7,6 +7,7 @@ import { AIOcrScannerModal } from './AIOcrScannerModal.tsx';
 import { HROcrLogsView } from './HROcrLogsView.tsx';
 import { RoyalWaxSeal } from '../../../components/RoyalWaxSeal.tsx';
 import { useSync } from '../../../context/SyncContext.tsx';
+import { HrService } from '../../../services/hrService.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import {
   Briefcase,
@@ -252,15 +253,40 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     }
   };
 
+  const loadMonthData = async (month: string) => {
+    try {
+      const [attRes, payRes] = await Promise.all([
+        fetch(`/api/hr/attendance?month=${month}`).then(r => r.json()),
+        fetch(`/api/hr/payroll?month=${month}`).then(r => r.json())
+      ]);
+      setAttendance(Array.isArray(attRes) ? attRes : []);
+      setPayrollSlips(Array.isArray(payRes) ? payRes : []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 1. Initial full data fetch on mount only: runs ONCE
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  // 2. Month selector switch: ONLY re-fetches attendance and payroll for that specific month
+  const isFirstMonthMount = useRef(true);
+  useEffect(() => {
+    if (isFirstMonthMount.current) {
+      isFirstMonthMount.current = false;
+      return;
+    }
+    loadMonthData(selectedMonth);
+  }, [selectedMonth]);
+
+  // 3. Dedicated Sheet Window: only re-fetches when active sheet month changes
   useEffect(() => {
     if (activeAttendanceSheetMonth) {
       loadSheetWindowData(activeAttendanceSheetMonth);
     }
-  }, [activeAttendanceSheetMonth, syncVersion]);
-
-  useEffect(() => {
-    loadData();
-  }, [selectedMonth, syncVersion]);
+  }, [activeAttendanceSheetMonth]);
 
   const showMsg = (text: string, type: 'success' | 'error' = 'success') => {
     setActionMessage({ type, text });
@@ -582,9 +608,10 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         showMsg(data.error || 'Failed to delete payroll', 'error');
       } else {
         showMsg(`Draft payroll for ${selectedMonth} deleted.`);
+        HrService.clearPayrollSheetsCache();
         notifyMutation('HR', 'PAYROLL', 'DELETE', selectedMonth);
         loadData();
-        onRefreshAll();
+        onRefreshAll?.();
       }
     } catch (err) {
       showMsg('Failed to delete payroll', 'error');
@@ -612,9 +639,10 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         const chosenBank = coaAccounts.find(a => a.id === selectedBankAccountId);
         const paidViaText = paymentMode === 'CASH' ? 'Cash in Hand (1110-00)' : (chosenBank ? `${chosenBank.code} ${chosenBank.name}` : 'Corporate Bank');
         showMsg(`Monthly payroll for ${selectedMonth} POSTED! Double-entry Journal Voucher recorded: Debit 5310-00 (Staff Salaries Expense), Credit ${paidViaText}.`);
+        HrService.clearPayrollSheetsCache();
         notifyMutation('HR', 'PAYROLL', 'POST', selectedMonth);
         loadData();
-        onRefreshAll();
+        onRefreshAll?.();
       }
     } catch (err) {
       showMsg('Monthly payroll posting error', 'error');
@@ -636,7 +664,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         showMsg('Salary slip approved and posted!');
         notifyMutation('HR', 'PAYROLL', 'POST', slipId);
         loadData();
-        onRefreshAll();
+        onRefreshAll?.();
       }
     } catch (err) {
       showMsg('Posting error', 'error');
@@ -677,9 +705,10 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         showMsg(data.error || 'Could not unpost monthly payroll', 'error');
       } else {
         showMsg(`Monthly payroll for ${month} unposted back to DRAFT. General Ledger voucher reversed.`);
+        HrService.clearPayrollSheetsCache();
         notifyMutation('HR', 'PAYROLL', 'UNPOST', month);
         loadData();
-        onRefreshAll();
+        onRefreshAll?.();
       }
     } catch (err) {
       showMsg('Unposting error', 'error');
@@ -793,8 +822,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   const handleSaveEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     const fetchEmployees = () => {
+      HrService.clearEmployeeCache();
       loadData();
-      onRefreshAll();
+      onRefreshAll?.();
     };
     const onClose = () => {
       setShowEmpModal(false);
@@ -884,6 +914,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const res = await fetch(`/api/hr/employees/${id}/post`, { method: 'POST' });
       if (res.ok) {
         showMsg('Employee record posted and activated.');
+        HrService.clearEmployeeCache();
         loadData();
       }
     } catch (err) {
@@ -896,6 +927,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const res = await fetch(`/api/hr/employees/${id}/unpost`, { method: 'POST' });
       if (res.ok) {
         showMsg('Employee record unposted.');
+        HrService.clearEmployeeCache();
         loadData();
       }
     } catch (err) {
@@ -909,6 +941,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const res = await fetch(`/api/hr/employees/${id}`, { method: 'DELETE' });
       if (res.ok) {
         showMsg('Employee record deleted.');
+        HrService.clearEmployeeCache();
         loadData();
       }
     } catch (err) {
