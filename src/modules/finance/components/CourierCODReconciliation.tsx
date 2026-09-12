@@ -17,19 +17,42 @@ import {
   Receipt
 } from 'lucide-react';
 
+import { COAAccount } from '../finance.types.ts';
+import { FinanceService } from '../../../services/financeService.ts';
+
 interface CourierCODReconciliationProps {
   onRefreshAll?: () => void;
+  accounts?: COAAccount[];
 }
 
 export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> = ({
-  onRefreshAll
+  onRefreshAll,
+  accounts = []
 }) => {
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCourier, setSelectedCourier] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
-  const [settlementBankId, setSettlementBankId] = useState<string>('acc-1120'); // Emirates NBD
+
+  // Find Bank and Cash accounts from COA
+  const bankAccounts = useMemo(() => {
+    const list = accounts.filter(a => a.code?.startsWith('111') || a.code?.startsWith('112') || a.sub_type?.includes('Bank') || a.sub_type?.includes('Cash'));
+    if (list.length > 0) return list;
+    return [
+      { id: 'acc-1120', code: '1120-00', name: 'Primary Bank Account (Current Account)' },
+      { id: 'acc-1110', code: '1110-00', name: 'Cash in Hand (Counter 1 POS Drawer)' }
+    ];
+  }, [accounts]);
+
+  // Find Courier COD Clearing account from COA (1128-00)
+  const codClearingAccount = useMemo(() => {
+    const acc = accounts.find(a => a.code === '1128-00' || a.name?.toLowerCase().includes('cod clearing'));
+    if (acc) return acc;
+    return { id: 'acc-1128', code: '1128-00', name: 'Courier COD Clearing (Pending Remittance - Aramex / iMile / TCS)' };
+  }, [accounts]);
+
+  const [settlementBankId, setSettlementBankId] = useState<string>(() => bankAccounts[0]?.id || 'acc-1120');
   const [remittanceRef, setRemittanceRef] = useState<string>(`REMIT-DHL-${new Date().toISOString().slice(0, 10)}`);
   const [processing, setProcessing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -133,44 +156,45 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
     try {
       setProcessing(true);
 
+      const chosenBank = bankAccounts.find(b => b.id === settlementBankId) || bankAccounts[0];
+
       // Create a double-entry Voucher:
-      // DEBIT: Bank Checking (1120 Emirates NBD) -> Cash inflow
-      // CREDIT: Courier COD Clearing In-Transit (1140)
+      // DEBIT: Bank Checking (1120-00) -> Cash inflow
+      // CREDIT: Courier COD Clearing In-Transit (1128-00)
       const voucherPayload = {
-        voucherNo: `VCH-${Date.now().toString().slice(-6)}`,
+        voucherNo: `VCH-COD-${Date.now().toString().slice(-6)}`,
         date: new Date().toISOString().slice(0, 10),
-        type: 'RECEIPT',
-        totalDebit: selectedTotal,
-        totalCredit: selectedTotal,
-        notes: `Courier COD remittance settlement (${remittanceRef}) for ${selectedInvoiceIds.size} parcels via ${selectedCourier === 'ALL' ? 'Courier' : selectedCourier}`,
+        type: 'CRV',
+        currency: 'AED' as const,
+        exchangeRate: 1.0,
+        totalDebit: Number(selectedTotal.toFixed(2)),
+        totalCredit: Number(selectedTotal.toFixed(2)),
+        narration: `Courier COD remittance settlement (${remittanceRef}) for ${selectedInvoiceIds.size} parcels via ${selectedCourier === 'ALL' ? 'Courier' : selectedCourier}`,
+        status: 'POSTED' as const,
         lines: [
           {
             id: 'vl-cod-01',
-            accountId: settlementBankId,
-            accountCode: settlementBankId === 'acc-1120' ? '1120-00' : '1110-00',
-            accountName: settlementBankId === 'acc-1120' ? 'Emirates NBD Business Checking (AED)' : 'Cash in Vault',
-            debitAmount: selectedTotal,
+            accountId: chosenBank.id,
+            accountCode: chosenBank.code,
+            accountName: chosenBank.name,
+            debitAmount: Number(selectedTotal.toFixed(2)),
             creditAmount: 0,
             memo: `COD Payout deposited: ${remittanceRef}`
           },
           {
             id: 'vl-cod-02',
-            accountId: 'acc-1140',
-            accountCode: '1140-00',
-            accountName: 'Courier COD Clearing In-Transit',
+            accountId: codClearingAccount.id,
+            accountCode: codClearingAccount.code,
+            accountName: codClearingAccount.name,
             debitAmount: 0,
-            creditAmount: selectedTotal,
+            creditAmount: Number(selectedTotal.toFixed(2)),
             memo: `Settlement cleared for ${selectedInvoiceIds.size} waybills`
           }
         ]
       };
 
-      // Post voucher to finance backend
-      await fetch('/api/finance/vouchers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(voucherPayload)
-      });
+      // Post voucher directly into PostgreSQL Database via FinanceService
+      await FinanceService.addVoucher(voucherPayload);
 
       // Update local invoice states
       setInvoices(prev =>
@@ -213,7 +237,7 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
             <h2 className="text-base font-black tracking-tight flex items-center gap-2">
               <span>Courier COD Clearing & Remittance Reconciler</span>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
-                GL: 1140-00
+                GL: 1128-00
               </span>
             </h2>
             <p className="text-xs text-slate-300">
@@ -305,8 +329,11 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
                 onChange={e => setSettlementBankId(e.target.value)}
                 className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:outline-hidden"
               >
-                <option value="acc-1120">Emirates NBD Business Checking (1120)</option>
-                <option value="acc-1110">Cash in Vault (1110)</option>
+                {bankAccounts.map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.code} - {b.name}
+                  </option>
+                ))}
               </select>
             </div>
 

@@ -1816,7 +1816,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           SUBTAB: COURIER COD REMITTANCE & CLEARING RECONCILER
           ======================================================== */}
       {subTab === 'cod-reconciliation' && (
-        <CourierCODReconciliation onRefreshAll={loadData} />
+        <CourierCODReconciliation onRefreshAll={loadData} accounts={accounts} />
       )}
 
       {/* ========================================================
