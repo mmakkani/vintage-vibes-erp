@@ -122,6 +122,12 @@ export async function safeFetchJson<T = any>(
       if (url.includes('/audit')) {
         return (await AuditService.getAuditLogs()) as any;
       }
+      if (url.includes('/hr/ocr/logs') || url.includes('/ocr/logs')) {
+        return (await HrService.getOcrLogs()) as any;
+      }
+      if (url.includes('/hr/employees') || url.includes('/employees')) {
+        return (await HrService.getEmployees()) as any;
+      }
       if (url.includes('/marketing/campaigns')) {
         return (await MarketingService.getCampaigns()) as any;
       }

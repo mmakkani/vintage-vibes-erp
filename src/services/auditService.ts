@@ -3,26 +3,15 @@ import { AuditLogEntry } from '../types/common.types.ts';
 
 const LOCAL_STORAGE_AUDIT_KEY = 'vintage_vibes_audit_logs';
 
-function getLocalAuditLogs(): AuditLogEntry[] {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const saved = localStorage.getItem(LOCAL_STORAGE_AUDIT_KEY);
-      if (saved) return JSON.parse(saved);
-    }
-  } catch (_) {}
-  return [];
-}
-
-function saveLocalAuditLogs(logs: AuditLogEntry[]): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(LOCAL_STORAGE_AUDIT_KEY, JSON.stringify(logs.slice(0, 300)));
-    }
-  } catch (_) {}
-}
-
 export class AuditService {
   public static async getAuditLogs(limit = 200): Promise<AuditLogEntry[]> {
+    // Purge stale local cache so direct DB deletes reflect immediately
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(LOCAL_STORAGE_AUDIT_KEY);
+      }
+    } catch (_) {}
+
     try {
       const { data, error } = await supabase
         .from('audit_logs')
@@ -30,8 +19,12 @@ export class AuditService {
         .order('timestamp', { ascending: false })
         .limit(limit);
 
-      if (!error && Array.isArray(data) && data.length > 0) {
-        const mapped = data.map((row: any) => ({
+      if (!error && Array.isArray(data)) {
+        if (data.length === 0) {
+          return [];
+        }
+
+        return data.map((row: any) => ({
           id: row.id,
           module: row.module || 'HR',
           action: row.action || 'POST',
@@ -42,20 +35,16 @@ export class AuditService {
           details: row.details || '',
           timestamp: row.timestamp || new Date().toISOString()
         } as AuditLogEntry));
+      }
 
-        // Merge with local logs to ensure no logs are lost
-        const localLogs = getLocalAuditLogs();
-        const mergedMap = new Map<string, AuditLogEntry>();
-        [...mapped, ...localLogs].forEach(l => mergedMap.set(l.id, l));
-        const merged = Array.from(mergedMap.values()).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-        saveLocalAuditLogs(merged);
-        return merged.slice(0, limit);
+      if (error) {
+        console.warn('Supabase getAuditLogs error:', error.message);
       }
     } catch (err) {
-      console.warn('Supabase getAuditLogs failed, using local store:', err);
+      console.warn('Supabase getAuditLogs failed:', err);
     }
 
-    return getLocalAuditLogs().slice(0, limit);
+    return [];
   }
 
   public static async addAuditLog(entry: Partial<AuditLogEntry> & { actor?: string; userName?: string }): Promise<void> {
@@ -86,17 +75,20 @@ export class AuditService {
       timestamp
     };
 
-    // 1. Immediately store in LocalStorage so Audit Log table never misses it
-    const current = getLocalAuditLogs();
-    saveLocalAuditLogs([normalizedEntry, ...current.filter(l => l.id !== id)]);
-
-    // 2. Try persisting to Supabase in the background
+    // Strictly persist to Supabase PostgreSQL (public.audit_logs)
     try {
       await supabase
         .from('audit_logs')
         .insert(payload);
     } catch (err) {
-      console.warn('Supabase insert audit log warning (saved locally):', err);
+      console.warn('Supabase insert audit log warning:', err);
     }
+
+    // Ensure stale local cache is cleared
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(LOCAL_STORAGE_AUDIT_KEY);
+      }
+    } catch (_) {}
   }
 }

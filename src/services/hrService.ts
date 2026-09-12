@@ -28,24 +28,6 @@ function isValidUuid(id: any): boolean {
 
 const LOCAL_STORAGE_EMPLOYEES_KEY = 'vintage_vibes_employees_db';
 
-function getLocalEmployees(): Employee[] {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const saved = localStorage.getItem(LOCAL_STORAGE_EMPLOYEES_KEY);
-      if (saved) return JSON.parse(saved);
-    }
-  } catch (_) {}
-  return [];
-}
-
-function saveLocalEmployees(list: Employee[]): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(LOCAL_STORAGE_EMPLOYEES_KEY, JSON.stringify(list));
-    }
-  } catch (_) {}
-}
-
 export class HrService {
   private static cachedEmployees: Employee[] | null = null;
   private static employeesPromise: Promise<Employee[]> | null = null;
@@ -70,7 +52,7 @@ export class HrService {
   }
 
   // ==========================================
-  // 1. EMPLOYEES (public.employees + localStorage offline fallback)
+  // 1. EMPLOYEES (public.employees strictly)
   // ==========================================
   public static async getEmployees(forceRefresh: boolean = false): Promise<Employee[]> {
     if (!forceRefresh && this.cachedEmployees && (Date.now() - this.lastEmployeesFetched < this.EMPLOYEES_TTL_MS)) {
@@ -81,13 +63,26 @@ export class HrService {
     }
 
     this.employeesPromise = (async () => {
+      // Purge stale local storage cache so direct database deletes reflect immediately
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem(LOCAL_STORAGE_EMPLOYEES_KEY);
+        }
+      } catch (_) {}
+
       try {
         const { data, error } = await supabase
           .from('employees')
           .select('*')
           .order('created_at', { ascending: false });
 
-        if (!error && Array.isArray(data) && data.length > 0) {
+        if (!error && Array.isArray(data)) {
+          if (data.length === 0) {
+            this.cachedEmployees = [];
+            this.lastEmployeesFetched = Date.now();
+            return [];
+          }
+
           const mapped = data.map((row: any) => ({
             id: String(row.id),
             empCode: row.emp_code || '',
@@ -124,26 +119,24 @@ export class HrService {
             residencyImageUrl: row.residency_image_url || '',
             photoUrl: row.photo_url || ''
           }));
-          saveLocalEmployees(mapped);
+
           this.cachedEmployees = mapped;
           this.lastEmployeesFetched = Date.now();
           return mapped;
         }
 
-        // Return stored local employees if Supabase is offline/anon placeholder
-        const fallback = getLocalEmployees();
-        this.cachedEmployees = fallback;
-        this.lastEmployeesFetched = Date.now();
-        return fallback;
+        if (error) {
+          console.warn('Supabase fetch employees error:', error.message);
+        }
       } catch (err) {
-        console.warn('Supabase fetch employees failed, falling back to local store:', err);
-        const fallback = getLocalEmployees();
-        this.cachedEmployees = fallback;
-        this.lastEmployeesFetched = Date.now();
-        return fallback;
+        console.warn('Supabase fetch employees failed:', err);
       } finally {
         this.employeesPromise = null;
       }
+
+      this.cachedEmployees = [];
+      this.lastEmployeesFetched = Date.now();
+      return [];
     })();
 
     return this.employeesPromise;
@@ -319,16 +312,18 @@ export class HrService {
         savedEmp.id = String(data.id);
         savedEmp.empCode = data.emp_code || data.employee_code || empCode;
       } else if (error) {
-        console.warn('Supabase create employee warning response (persisting locally):', error);
+        console.warn('Supabase create employee warning response:', error);
       }
     } catch (err) {
-      console.warn('Supabase create employee failed, saved locally:', err);
+      console.warn('Supabase create employee failed:', err);
     }
 
-    // Always update local storage so UI never shows 0 employees
-    const currentList = getLocalEmployees();
-    const updatedList = [savedEmp, ...currentList.filter(e => e.id !== savedEmp.id)];
-    saveLocalEmployees(updatedList);
+    // Purge local storage cache so remote state remains single source of truth
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(LOCAL_STORAGE_EMPLOYEES_KEY);
+      }
+    } catch (_) {}
 
     // Record immutable audit log entry in Audit Trail
     try {
@@ -481,31 +476,35 @@ export class HrService {
         }
       }
     } catch (err) {
-      console.warn('Supabase update employee error, proceeding with local update:', err);
+      console.warn('Supabase update employee error:', err);
     }
 
-    // Always update local list
-    const list = getLocalEmployees();
-    const idx = list.findIndex(e => e.id === String(id));
-    if (idx >= 0) {
-      list[idx] = { ...list[idx], ...updates };
-      saveLocalEmployees(list);
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(LOCAL_STORAGE_EMPLOYEES_KEY);
+      }
+    } catch (_) {}
 
-      try {
-        AuditService.addAuditLog({
-          module: 'HR',
-          action: 'UPDATE',
-          documentRef: list[idx].empCode || String(id),
-          status: list[idx].status || 'POSTED',
-          userName: 'HR Administrator',
-          details: `Updated employee record for ${list[idx].name}`
-        });
-      } catch (_) {}
-    }
+    try {
+      AuditService.addAuditLog({
+        module: 'HR',
+        action: 'UPDATE',
+        documentRef: String(id),
+        status: 'POSTED',
+        userName: 'HR Administrator',
+        details: `Updated employee record for ID ${id}`
+      });
+    } catch (_) {}
   }
 
   public static async deleteEmployee(id: string): Promise<void> {
     this.clearEmployeeCache();
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(LOCAL_STORAGE_EMPLOYEES_KEY);
+      }
+    } catch (_) {}
+
     try {
       await supabase
         .from('employees')
@@ -515,22 +514,16 @@ export class HrService {
       console.warn('Supabase delete employee error:', err);
     }
 
-    const list = getLocalEmployees();
-    const target = list.find(e => e.id === String(id));
-    saveLocalEmployees(list.filter(e => e.id !== String(id)));
-
-    if (target) {
-      try {
-        AuditService.addAuditLog({
-          module: 'HR',
-          action: 'DELETE',
-          documentRef: target.empCode || String(id),
-          status: 'UNPOSTED',
-          userName: 'HR Administrator',
-          details: `Deleted employee record ${target.name} (${target.empCode})`
-        });
-      } catch (_) {}
-    }
+    try {
+      AuditService.addAuditLog({
+        module: 'HR',
+        action: 'DELETE',
+        documentRef: String(id),
+        status: 'UNPOSTED',
+        userName: 'HR Administrator',
+        details: `Deleted employee record with ID ${id}`
+      });
+    } catch (_) {}
   }
 
   // ==========================================
@@ -1043,18 +1036,19 @@ export class HrService {
     };
 
     try {
-      await supabase.from('hr_ocr_logs').insert(entry);
-    } catch (err) {
-      console.warn('Supabase ocr log insert failed, saving to local store:', err);
-    }
-
-    try {
       if (typeof localStorage !== 'undefined') {
-        const key = 'vintage_vibes_hr_ocr_logs';
-        const saved = JSON.parse(localStorage.getItem(key) || '[]');
-        localStorage.setItem(key, JSON.stringify([entry, ...saved.slice(0, 49)]));
+        localStorage.removeItem('vintage_vibes_hr_ocr_logs');
       }
     } catch (_) {}
+
+    try {
+      const { error } = await supabase.from('hr_ocr_logs').insert(entry);
+      if (error) {
+        console.warn('Supabase ocr log insert warning:', error);
+      }
+    } catch (err) {
+      console.warn('Supabase ocr log insert failed:', err);
+    }
 
     // Record immutable audit log entry in Enterprise Audit Trail
     try {
@@ -1071,22 +1065,25 @@ export class HrService {
 
   public static async getOcrLogs(): Promise<any[]> {
     try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('vintage_vibes_hr_ocr_logs');
+      }
+    } catch (_) {}
+
+    try {
       const { data, error } = await supabase
         .from('hr_ocr_logs')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(50);
 
-      if (!error && Array.isArray(data) && data.length > 0) {
+      if (!error && Array.isArray(data)) {
         return data;
       }
-    } catch (_) {}
+    } catch (err) {
+      console.warn('Failed to fetch hr_ocr_logs from Supabase:', err);
+    }
 
-    try {
-      if (typeof localStorage !== 'undefined') {
-        return JSON.parse(localStorage.getItem('vintage_vibes_hr_ocr_logs') || '[]');
-      }
-    } catch (_) {}
     return [];
   }
 }

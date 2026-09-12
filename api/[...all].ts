@@ -763,9 +763,66 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    // Audit Logging
-    if (pathname.includes('/audit/log')) {
-      return res.status(200).json({ success: true });
+    // Enterprise Audit Trail (Supabase public.audit_logs)
+    if (pathname.includes('/audit')) {
+      if (method === 'GET') {
+        try {
+          const { data, error } = await supabaseAdmin
+            .from('audit_logs')
+            .select('*')
+            .order('timestamp', { ascending: false })
+            .limit(100);
+          if (!error && Array.isArray(data)) {
+            return res.status(200).json({ success: true, data });
+          }
+          return res.status(200).json({ success: true, data: [] });
+        } catch (err: any) {
+          return res.status(200).json({ success: true, data: [] });
+        }
+      }
+      if (method === 'POST') {
+        try {
+          const logPayload = body?.log || body || {};
+          await supabaseAdmin.from('audit_logs').insert({
+            id: logPayload.id || `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            timestamp: logPayload.timestamp || new Date().toISOString(),
+            module: logPayload.module || 'SYSTEM',
+            action: logPayload.action || 'UPDATE',
+            actor: logPayload.userName || logPayload.actor || logPayload.user_name || 'System Admin',
+            document_ref: logPayload.documentRef || logPayload.document_ref || '',
+            status: logPayload.status || 'POSTED',
+            details: logPayload.details || ''
+          });
+        } catch (_) {}
+        return res.status(200).json({ success: true });
+      }
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    // HR OCR Logs (Supabase public.hr_ocr_logs)
+    if (pathname.includes('/hr/ocr/logs') || pathname.includes('/ocr/logs')) {
+      if (method === 'GET') {
+        try {
+          const { data, error } = await supabaseAdmin
+            .from('hr_ocr_logs')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(50);
+          if (!error && Array.isArray(data)) {
+            return res.status(200).json({ success: true, data });
+          }
+          return res.status(200).json({ success: true, data: [] });
+        } catch (err: any) {
+          return res.status(200).json({ success: true, data: [] });
+        }
+      }
+      if (method === 'POST') {
+        try {
+          await supabaseAdmin.from('hr_ocr_logs').insert(body);
+        } catch (_) {}
+        return res.status(200).json({ success: true });
+      }
+      return res.status(200).json({ success: true, data: [] });
     }
 
     // Auth Login
