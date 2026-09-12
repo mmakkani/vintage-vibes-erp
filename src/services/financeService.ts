@@ -425,7 +425,8 @@ export class FinanceService {
         return {
           revenue: {
             accounts: data.revenue?.accounts || [],
-            total: Number(data.revenue?.total || 0)
+            total: Number(data.revenue?.total || 0),
+            categories: data.revenue?.categories || {}
           },
           cogs: {
             accounts: data.cogs?.accounts || [],
@@ -460,9 +461,9 @@ export class FinanceService {
   }
 
   public static async getBalanceSheet(asOfDate?: string): Promise<{
-    assets: { accounts: any[]; total: number };
-    liabilities: { accounts: any[]; total: number };
-    equity: { accounts: any[]; total: number };
+    assets: { accounts: any[]; total: number; categories?: any };
+    liabilities: { accounts: any[]; total: number; categories?: any };
+    equity: { accounts: any[]; total: number; categories?: any };
     retainedEarnings: number;
     totalAssets: number;
     totalLiabilities: number;
@@ -479,15 +480,18 @@ export class FinanceService {
         return {
           assets: {
             accounts: data.assets?.accounts || [],
-            total: Number(data.assets?.total || 0)
+            total: Number(data.assets?.total || 0),
+            categories: data.assets?.categories || {}
           },
           liabilities: {
             accounts: data.liabilities?.accounts || [],
-            total: Number(data.liabilities?.total || 0)
+            total: Number(data.liabilities?.total || 0),
+            categories: data.liabilities?.categories || {}
           },
           equity: {
             accounts: data.equity?.accounts || [],
-            total: Number(data.equity?.total || 0)
+            total: Number(data.equity?.total || 0),
+            categories: data.equity?.categories || {}
           },
           retainedEarnings: Number(data.retainedEarnings || 0),
           totalAssets: Number(data.totalAssets || 0),

@@ -230,6 +230,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const [reportPeriod, setReportPeriod] = useState<'2026' | '2025' | 'ALL' | 'CUSTOM'>('2026');
   const [reportStartDate, setReportStartDate] = useState<string>('2026-01-01');
   const [reportEndDate, setReportEndDate] = useState<string>('2026-12-31');
+  const [showAllCoaAccounts, setShowAllCoaAccounts] = useState<boolean>(true);
 
   const handlePeriodChange = (period: '2026' | '2025' | 'ALL' | 'CUSTOM') => {
     setReportPeriod(period);
@@ -687,6 +688,15 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
             />
           </div>
         )}
+        <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-xs font-bold text-amber-950 cursor-pointer hover:bg-amber-50/80 transition-colors">
+          <input
+            type="checkbox"
+            checked={showAllCoaAccounts}
+            onChange={(e) => setShowAllCoaAccounts(e.target.checked)}
+            className="rounded border-amber-300 text-amber-600 focus:ring-amber-500 w-3.5 h-3.5 cursor-pointer"
+          />
+          <span>Show All Accounts (Incl. Zero Balances)</span>
+        </label>
         <button
           type="button"
           onClick={() => loadData()}
@@ -1295,84 +1305,149 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               </p>
             </div>
 
-            <div className="space-y-4 font-mono text-xs">
+            <div className="space-y-6 font-mono text-xs">
               {/* 1. Operating Revenue */}
-              <div>
+              <div className="space-y-2">
                 <div className="bg-emerald-50/80 p-2.5 rounded-lg font-bold text-emerald-950 uppercase tracking-wider flex justify-between font-sans border border-emerald-200">
-                  <span>Operating Revenue (Wholesale & Retail Sales)</span>
-                  <span className="font-mono text-sm">
+                  <span className="flex items-center gap-1.5">
+                    <span>1. Operating Revenue</span>
+                  </span>
+                  <span className="font-mono text-sm font-black text-emerald-900">
                     AED {Number(reports?.incomeStatement?.revenue?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                <div className="divide-y divide-slate-100 pl-4 pr-2 pt-1">
-                  {(reports?.incomeStatement?.revenue?.accounts || []).length === 0 ? (
-                    <div className="py-2 text-slate-400 font-sans italic text-center">No revenue recorded in this period</div>
-                  ) : (
-                    (reports?.incomeStatement?.revenue?.accounts || []).map((a: any, i: number) => (
-                      <div key={i} className="py-1.5 flex justify-between">
-                        <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
+
+                {/* Sub-categories or flat accounts */}
+                {(() => {
+                  const salesAccs = (reports?.incomeStatement?.revenue?.categories?.sales?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0);
+                  const otherAccs = (reports?.incomeStatement?.revenue?.categories?.otherIncome?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0);
+                  const allRev = (reports?.incomeStatement?.revenue?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0);
+
+                  if (reports?.incomeStatement?.revenue?.categories) {
+                    return (
+                      <div className="space-y-3 pl-2 pr-1">
+                        {/* 1A. Sales Revenue */}
+                        <div>
+                          <div className="flex justify-between items-center text-[11px] font-sans font-bold text-emerald-900 border-b border-emerald-100 pb-1">
+                            <span>1.1 Retail POS, Live Stream & Wholesale Sales</span>
+                            <span>AED {Number(reports?.incomeStatement?.revenue?.categories?.sales?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          </div>
+                          <div className="divide-y divide-slate-100 pl-3">
+                            {salesAccs.length === 0 ? (
+                              <div className="py-1.5 text-slate-400 font-sans italic text-xs">No sales accounts recorded in this period</div>
+                            ) : (
+                              salesAccs.map((a: any, i: number) => (
+                                <div key={i} className="py-1.5 flex justify-between hover:bg-emerald-50/20">
+                                  <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
+                                  <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 1B. Other Operating Revenue */}
+                        {otherAccs.length > 0 && (
+                          <div>
+                            <div className="flex justify-between items-center text-[11px] font-sans font-bold text-emerald-900 border-b border-emerald-100 pb-1">
+                              <span>1.2 Packaging & Delivery Revenue</span>
+                              <span>AED {Number(reports?.incomeStatement?.revenue?.categories?.otherIncome?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            </div>
+                            <div className="divide-y divide-slate-100 pl-3">
+                              {otherAccs.map((a: any, i: number) => (
+                                <div key={i} className="py-1.5 flex justify-between hover:bg-emerald-50/20">
+                                  <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
+                                  <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    ))
-                  )}
-                </div>
+                    );
+                  }
+
+                  return (
+                    <div className="divide-y divide-slate-100 pl-3">
+                      {allRev.map((a: any, i: number) => (
+                        <div key={i} className="py-1.5 flex justify-between hover:bg-emerald-50/20">
+                          <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
+                          <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* 2. Cost of Goods Sold (COGS) */}
-              {(reports?.incomeStatement?.cogs?.accounts || []).length > 0 && (
-                <div>
-                  <div className="bg-amber-50/80 p-2.5 rounded-lg font-bold text-amber-950 uppercase tracking-wider flex justify-between font-sans border border-amber-200">
-                    <span>Cost of Goods Sold (Direct Costs, Freight & Customs)</span>
-                    <span className="font-mono text-sm">
-                      AED {Number(reports?.incomeStatement?.cogs?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="divide-y divide-slate-100 pl-4 pr-2 pt-1">
-                    {(reports?.incomeStatement?.cogs?.accounts || []).map((a: any, i: number) => (
-                      <div key={i} className="py-1.5 flex justify-between">
-                        <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
-                      </div>
-                    ))}
-                  </div>
+              <div className="space-y-2">
+                <div className="bg-amber-50/80 p-2.5 rounded-lg font-bold text-amber-950 uppercase tracking-wider flex justify-between font-sans border border-amber-200">
+                  <span className="flex items-center gap-1.5">
+                    <span>2. Cost of Goods Sold (Bulk Bales, Sorting & Direct Imports)</span>
+                  </span>
+                  <span className="font-mono text-sm font-black text-amber-900">
+                    AED {Number(reports?.incomeStatement?.cogs?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
                 </div>
-              )}
+                <div className="divide-y divide-slate-100 pl-4 pr-2">
+                  {(() => {
+                    const cogsAccs = (reports?.incomeStatement?.cogs?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0);
+                    if (cogsAccs.length === 0) {
+                      return <div className="py-2 text-slate-400 font-sans italic text-center">No cost of goods sold recorded in this period</div>;
+                    }
+                    return cogsAccs.map((a: any, i: number) => (
+                      <div key={i} className="py-1.5 flex justify-between hover:bg-amber-50/20">
+                        <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
+                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
 
-              {/* Gross Profit Summary */}
-              <div className="p-2.5 rounded-lg bg-emerald-50/50 border border-emerald-200 flex items-center justify-between font-sans font-bold text-xs text-emerald-950">
-                <span className="uppercase tracking-wider">Gross Operating Profit:</span>
+              {/* Gross Profit Summary Bar */}
+              <div className="p-3 rounded-lg bg-emerald-50/60 border border-emerald-300 flex items-center justify-between font-sans font-bold text-xs text-emerald-950">
+                <span className="uppercase tracking-wider">Gross Operating Profit (Revenue - COGS):</span>
                 <span className="font-mono font-black text-emerald-900 text-sm">
                   AED {Number(reports?.incomeStatement?.grossProfit ?? ((reports?.incomeStatement?.revenue?.total || 0) - (reports?.incomeStatement?.cogs?.total || 0))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
 
               {/* 3. Operating Expenses */}
-              <div>
+              <div className="space-y-2">
                 <div className="bg-rose-50/80 p-2.5 rounded-lg font-bold text-rose-950 uppercase tracking-wider flex justify-between font-sans border border-rose-200">
-                  <span>Operating Expenses (Overheads & Administration)</span>
-                  <span className="font-mono text-sm">
+                  <span className="flex items-center gap-1.5">
+                    <span>3. Operating & Administrative Expenses</span>
+                  </span>
+                  <span className="font-mono text-sm font-black text-rose-900">
                     AED {Number(reports?.incomeStatement?.operatingExpenses?.total ?? reports?.incomeStatement?.expenses?.total ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                <div className="divide-y divide-slate-100 pl-4 pr-2 pt-1">
-                  {((reports?.incomeStatement?.operatingExpenses?.accounts ?? reports?.incomeStatement?.expenses?.accounts) || []).length === 0 ? (
-                    <div className="py-2 text-slate-400 font-sans italic text-center">No operating expenses recorded in this period</div>
-                  ) : (
-                    ((reports?.incomeStatement?.operatingExpenses?.accounts ?? reports?.incomeStatement?.expenses?.accounts) || []).map((a: any, i: number) => (
-                      <div key={i} className="py-1.5 flex justify-between">
+                <div className="divide-y divide-slate-100 pl-4 pr-2">
+                  {(() => {
+                    const opAccs = ((reports?.incomeStatement?.operatingExpenses?.accounts ?? reports?.incomeStatement?.expenses?.accounts) || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0);
+                    if (opAccs.length === 0) {
+                      return <div className="py-2 text-slate-400 font-sans italic text-center">No operating expenses recorded in this period</div>;
+                    }
+                    return opAccs.map((a: any, i: number) => (
+                      <div key={i} className="py-1.5 flex justify-between hover:bg-rose-50/20">
                         <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
+                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                       </div>
-                    ))
-                  )}
+                    ));
+                  })()}
                 </div>
               </div>
 
               {/* Net Profit Summary Row */}
               <div className="pt-4 border-t-2 border-amber-900/60">
-                <div className="p-3.5 rounded-xl bg-gradient-to-r from-amber-100/90 to-amber-200/80 flex items-center justify-between font-serif font-black text-sm text-amber-950 shadow-xs">
-                  <span className="uppercase tracking-wider">Net Operating Profit / (Loss):</span>
-                  <span className={`font-mono text-base font-black ${
+                <div className="p-4 rounded-xl bg-gradient-to-r from-amber-100/90 to-amber-200/80 flex items-center justify-between font-serif font-black text-sm text-amber-950 shadow-xs">
+                  <div className="flex flex-col">
+                    <span className="uppercase tracking-wider text-base">Net Operating Profit / (Loss):</span>
+                    <span className="font-sans text-[11px] font-normal text-slate-600">Operating Revenue &bull; COGS &bull; Overhead Expenses</span>
+                  </div>
+                  <span className={`font-mono text-lg font-black ${
                     Number(reports?.incomeStatement?.netProfit || 0) >= 0 ? 'text-emerald-900' : 'text-rose-900'
                   }`}>
                     AED {Number(reports?.incomeStatement?.netProfit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1417,97 +1492,274 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 font-mono text-xs">
-              {/* Left Col: ASSETS */}
-              <div className="space-y-3">
+              {/* ================= LEFT COL: ASSETS ================= */}
+              <div className="space-y-4">
                 <div className="bg-blue-50/80 p-2.5 rounded-lg font-bold text-blue-950 uppercase tracking-wider flex justify-between font-sans border border-blue-200">
-                  <span>Total Assets (Current & Fixed)</span>
-                  <span className="font-mono text-sm">
+                  <span>Total Assets</span>
+                  <span className="font-mono text-sm font-black text-blue-950">
                     AED {Number(reports?.balanceSheet?.assets?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                <div className="divide-y divide-slate-100 pl-2">
-                  {(reports?.balanceSheet?.assets?.accounts || []).length === 0 ? (
-                    <div className="py-2 text-slate-400 font-sans italic text-center">No asset accounts found</div>
-                  ) : (
-                    (reports?.balanceSheet?.assets?.accounts || []).map((a: any, i: number) => (
+
+                {reports?.balanceSheet?.assets?.categories ? (
+                  <div className="space-y-3 pl-1 pr-1">
+                    {/* 1. Cash & Bank */}
+                    <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
+                      <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
+                        <span>Cash & Cash Equivalents</span>
+                        <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.cashAndBank?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="divide-y divide-slate-100 pl-2">
+                        {(reports.balanceSheet.assets.categories.cashAndBank?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                          <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
+                            <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
+                            <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 2. Clearing Accounts */}
+                    <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
+                      <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
+                        <span>Payment & COD Clearing Accounts</span>
+                        <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.clearing?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="divide-y divide-slate-100 pl-2">
+                        {(reports.balanceSheet.assets.categories.clearing?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                          <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
+                            <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
+                            <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 3. Receivables */}
+                    <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
+                      <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
+                        <span>Trade & Customer Receivables</span>
+                        <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.receivables?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="divide-y divide-slate-100 pl-2">
+                        {(reports.balanceSheet.assets.categories.receivables?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                          <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
+                            <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
+                            <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 4. Inventories (Raw Bales, WIP Sorting, Finished Goods) */}
+                    <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
+                      <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
+                        <span>Inventories (Raw Bales, WIP Sorting & Finished Garments)</span>
+                        <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.inventory?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="divide-y divide-slate-100 pl-2">
+                        {(reports.balanceSheet.assets.categories.inventory?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                          <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
+                            <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
+                            <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 5. Fixed & Non-Current Assets */}
+                    <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
+                      <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
+                        <span>Fixed & Non-Current Assets (Equipment & Deposits)</span>
+                        <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.fixedAssets?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="divide-y divide-slate-100 pl-2">
+                        {(reports.balanceSheet.assets.categories.fixedAssets?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                          <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
+                            <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
+                            <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100 pl-2">
+                    {(reports?.balanceSheet?.assets?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
                       <div key={i} className="py-2 flex justify-between">
                         <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
                         <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
                       </div>
-                    ))
-                  )}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
-              {/* Right Col: LIABILITIES & EQUITY */}
+              {/* ================= RIGHT COL: LIABILITIES & EQUITY ================= */}
               <div className="space-y-4">
-                {/* Liabilities */}
-                <div className="space-y-2">
+                {/* 1. LIABILITIES */}
+                <div className="space-y-3">
                   <div className="bg-rose-50/80 p-2.5 rounded-lg font-bold text-rose-950 uppercase tracking-wider flex justify-between font-sans border border-rose-200">
-                    <span>Total Liabilities (Payables & Dues)</span>
-                    <span className="font-mono text-sm">
+                    <span>Total Liabilities</span>
+                    <span className="font-mono text-sm font-black text-rose-950">
                       AED {Number(reports?.balanceSheet?.liabilities?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
-                  <div className="divide-y divide-slate-100 pl-2">
-                    {(reports?.balanceSheet?.liabilities?.accounts || []).length === 0 ? (
-                      <div className="py-1.5 text-slate-400 font-sans italic text-center">No liability accounts found</div>
-                    ) : (
-                      (reports?.balanceSheet?.liabilities?.accounts || []).map((a: any, i: number) => (
+
+                  {reports?.balanceSheet?.liabilities?.categories ? (
+                    <div className="space-y-3 pl-1 pr-1">
+                      {/* Trade Payables */}
+                      <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
+                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
+                          <span>Trade & Logistics Payables</span>
+                          <span className="font-mono">AED {Number(reports.balanceSheet.liabilities.categories.payables?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="divide-y divide-slate-100 pl-2">
+                          {(reports.balanceSheet.liabilities.categories.payables?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                            <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
+                              <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
+                              <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Statutory & Tax Payables */}
+                      <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
+                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
+                          <span>Statutory & Tax Obligations</span>
+                          <span className="font-mono">AED {Number(reports.balanceSheet.liabilities.categories.taxPayables?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="divide-y divide-slate-100 pl-2">
+                          {(reports.balanceSheet.liabilities.categories.taxPayables?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                            <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
+                              <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
+                              <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Accrued Payroll */}
+                      <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
+                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
+                          <span>Accrued Payroll & Overheads</span>
+                          <span className="font-mono">AED {Number(reports.balanceSheet.liabilities.categories.accruedPayroll?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="divide-y divide-slate-100 pl-2">
+                          {(reports.balanceSheet.liabilities.categories.accruedPayroll?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                            <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
+                              <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
+                              <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-100 pl-2">
+                      {(reports?.balanceSheet?.liabilities?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
                         <div key={i} className="py-1.5 flex justify-between">
                           <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
                           <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
                         </div>
-                      ))
-                    )}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                {/* Equity */}
-                <div className="space-y-2">
+                {/* 2. SHAREHOLDERS' EQUITY */}
+                <div className="space-y-3 pt-2">
                   <div className="bg-purple-50/80 p-2.5 rounded-lg font-bold text-purple-950 uppercase tracking-wider flex justify-between font-sans border border-purple-200">
-                    <span>Shareholders' Equity & Retained Earnings</span>
-                    <span className="font-mono text-sm">
+                    <span>Shareholders' Equity & Reserves</span>
+                    <span className="font-mono text-sm font-black text-purple-950">
                       AED {Number(reports?.balanceSheet?.equity?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
-                  <div className="divide-y divide-slate-100 pl-2">
-                    {(reports?.balanceSheet?.equity?.accounts || []).length === 0 ? (
-                      <div className="py-1.5 text-slate-400 font-sans italic text-center">No equity accounts found</div>
-                    ) : (
-                      (reports?.balanceSheet?.equity?.accounts || []).map((a: any, i: number) => (
+
+                  {reports?.balanceSheet?.equity?.categories ? (
+                    <div className="space-y-3 pl-1 pr-1">
+                      {/* Capital */}
+                      <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
+                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
+                          <span>Owner & Shareholder Capital</span>
+                          <span className="font-mono">AED {Number(reports.balanceSheet.equity.categories.capital?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="divide-y divide-slate-100 pl-2">
+                          {(reports.balanceSheet.equity.categories.capital?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                            <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
+                              <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
+                              <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Retained Earnings */}
+                      <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
+                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
+                          <span>Retained Earnings & General Reserves</span>
+                          <span className="font-mono">AED {Number(reports.balanceSheet.equity.categories.retainedEarnings?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="divide-y divide-slate-100 pl-2">
+                          {(reports.balanceSheet.equity.categories.retainedEarnings?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                            <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
+                              <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
+                              <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Current Year Net Profit YTD */}
+                      <div className="bg-purple-100/50 p-2.5 rounded-lg border border-purple-300">
+                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-purple-950">
+                          <span>Current Year Net Operating Profit / (Loss) YTD</span>
+                          <span className={`font-mono font-black ${
+                            Number(reports.balanceSheet.equity.categories.currentNetProfit?.balance ?? (reports?.incomeStatement?.netProfit || 0)) >= 0
+                              ? 'text-emerald-900'
+                              : 'text-rose-900'
+                          }`}>
+                            AED {Number(reports.balanceSheet.equity.categories.currentNetProfit?.balance ?? (reports?.incomeStatement?.netProfit || 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-100 pl-2">
+                      {(reports?.balanceSheet?.equity?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
                         <div key={i} className="py-1.5 flex justify-between">
                           <span className="font-sans text-slate-800">{a.code ? `${a.code} - ` : ''}{a.name}</span>
                           <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
                         </div>
-                      ))
-                    )}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
 
             {/* Balancing Proof Bar */}
             <div className="mt-6 pt-4 border-t-2 border-amber-900/60">
-              <div className={`p-3 rounded-xl border flex flex-wrap items-center justify-between gap-2 font-mono text-xs ${
+              <div className={`p-3.5 rounded-xl border flex flex-wrap items-center justify-between gap-3 font-mono text-xs ${
                 reports?.balanceSheet?.balanced
-                  ? 'bg-emerald-50/80 border-emerald-300'
-                  : 'bg-rose-50/80 border-rose-300'
+                  ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950'
+                  : 'bg-rose-50/80 border-rose-300 text-rose-950'
               }`}>
                 <div className={`flex items-center gap-2 font-bold font-sans ${
                   reports?.balanceSheet?.balanced ? 'text-emerald-800' : 'text-rose-800'
                 }`}>
-                  <ShieldCheck className="w-4 h-4" />
+                  <ShieldCheck className="w-5 h-5" />
                   <span>
-                    Balance Sheet Status:{' '}
-                    <strong>{reports?.balanceSheet?.balanced ? 'BALANCED TO ZERO DIFFERENCE' : 'OUT OF BALANCE'}</strong>
+                    Balance Sheet Mathematical Verification:{' '}
+                    <strong className="uppercase">{reports?.balanceSheet?.balanced ? 'BALANCED TO ZERO DISCREPANCY' : 'OUT OF BALANCE'}</strong>
                   </span>
                 </div>
-                <div className="font-bold text-slate-900">
-                  Assets (AED {Number(reports?.balanceSheet?.assets?.total || 0).toFixed(2)}) = Liab + Equity (AED {Number(reports?.balanceSheet?.totalLiabilitiesAndEquity ?? ((reports?.balanceSheet?.liabilities?.total || 0) + (reports?.balanceSheet?.equity?.total || 0))).toFixed(2)})
+                <div className="font-bold text-slate-900 text-xs">
+                  Total Assets (AED {Number(reports?.balanceSheet?.assets?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}) = Liabilities & Equity (AED {Number(reports?.balanceSheet?.totalLiabilitiesAndEquity ?? ((reports?.balanceSheet?.liabilities?.total || 0) + (reports?.balanceSheet?.equity?.total || 0))).toLocaleString(undefined, { minimumFractionDigits: 2 })})
                   {!reports?.balanceSheet?.balanced && Number(reports?.balanceSheet?.difference || 0) !== 0 && (
-                    <span className="text-rose-700 font-bold ml-2 font-sans">
-                      (Diff: AED {Number(reports?.balanceSheet?.difference || 0).toFixed(2)})
+                    <span className="text-rose-700 font-black ml-2 font-sans">
+                      [Discrepancy: AED {Number(reports?.balanceSheet?.difference || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}]
                     </span>
                   )}
                 </div>

@@ -84,16 +84,69 @@ export interface TrialBalanceRow {
 export interface FinancialStatements {
   trialBalance: TrialBalanceRow[];
   balanceSheet: {
-    assets: { accounts: { code: string; name: string; balance: number }[]; total: number };
-    liabilities: { accounts: { code: string; name: string; balance: number }[]; total: number };
-    equity: { accounts: { code: string; name: string; balance: number }[]; total: number };
+    assets: {
+      accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[];
+      total: number;
+      categories?: {
+        cashAndBank?: { accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[]; total: number };
+        clearing?: { accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[]; total: number };
+        receivables?: { accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[]; total: number };
+        inventory?: { accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[]; total: number };
+        fixedAssets?: { accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[]; total: number };
+      };
+    };
+    liabilities: {
+      accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[];
+      total: number;
+      categories?: {
+        payables?: { accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[]; total: number };
+        taxPayables?: { accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[]; total: number };
+        accruedPayroll?: { accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[]; total: number };
+      };
+    };
+    equity: {
+      accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[];
+      total: number;
+      categories?: {
+        capital?: { accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[]; total: number };
+        retainedEarnings?: { accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[]; total: number };
+        currentNetProfit?: { balance: number };
+      };
+    };
+    totalAssets?: number;
+    totalLiabilities?: number;
+    totalEquity?: number;
+    totalLiabilitiesAndEquity?: number;
+    retainedEarnings?: number;
     balanced: boolean;
+    difference?: number;
   };
   incomeStatement: {
-    revenue: { accounts: { code: string; name: string; balance: number }[]; total: number };
-    expenses: { accounts: { code: string; name: string; balance: number }[]; total: number };
+    revenue: {
+      accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[];
+      total: number;
+      categories?: {
+        sales?: { accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[]; total: number };
+        otherIncome?: { accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[]; total: number };
+      };
+    };
+    cogs?: {
+      accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[];
+      total: number;
+    };
+    operatingExpenses?: {
+      accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[];
+      total: number;
+    };
+    expenses: {
+      accounts: { id?: string; code: string; name: string; balance: number; subType?: string }[];
+      total: number;
+    };
+    grossProfit?: number;
     netProfit: number;
+    netOperatingProfit?: number;
   };
+  trialBalanceMeta?: any;
 }
 
 export interface BudgetLimit {
