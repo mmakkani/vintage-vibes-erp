@@ -446,6 +446,130 @@ INSERT INTO company_profile (
 )
 ON CONFLICT (id) DO NOTHING;
 
+-- 15. HR & WORKFORCE MANAGEMENT (EMPLOYEES, ATTENDANCE, LOANS, PAYROLL)
+CREATE TABLE IF NOT EXISTS public.employees (
+    id VARCHAR(64) PRIMARY KEY,
+    emp_code VARCHAR(32) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    designation VARCHAR(128),
+    department VARCHAR(128),
+    base_salary NUMERIC(12,2) DEFAULT 0,
+    housing_allow NUMERIC(12,2) DEFAULT 0,
+    transport_allow NUMERIC(12,2) DEFAULT 0,
+    working_hours_per_day NUMERIC(4,1) DEFAULT 8,
+    is_active BOOLEAN DEFAULT TRUE,
+    joining_date DATE DEFAULT CURRENT_DATE,
+    status VARCHAR(32) DEFAULT 'POSTED',
+    emirates_id VARCHAR(64),
+    residency_card_no VARCHAR(64),
+    passport_no VARCHAR(64),
+    id_front_image_url TEXT,
+    id_back_image_url TEXT,
+    name_arabic VARCHAR(255),
+    nationality VARCHAR(64),
+    gender VARCHAR(16),
+    dob DATE,
+    emirates_id_expiry DATE,
+    id_card_no VARCHAR(64),
+    passport_expiry DATE,
+    passport_issue_date DATE,
+    passport_country VARCHAR(64),
+    passport_image_url TEXT,
+    uid_no VARCHAR(64),
+    residency_issue_date DATE,
+    residency_expiry_date DATE,
+    residency_sponsor VARCHAR(128),
+    residency_profession VARCHAR(128),
+    residency_image_url TEXT,
+    photo_url TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.employee_attendance (
+    id VARCHAR(64) PRIMARY KEY,
+    employee_id VARCHAR(64) NOT NULL,
+    employee_name VARCHAR(255),
+    emp_code VARCHAR(32),
+    month_year VARCHAR(16) NOT NULL,
+    days_worked NUMERIC(5,2) DEFAULT 30,
+    overtime_hours NUMERIC(6,2) DEFAULT 0,
+    status VARCHAR(32) DEFAULT 'DRAFT',
+    locked_at TIMESTAMPTZ,
+    locked_by VARCHAR(64),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.hr_attendance_sheets (
+    id VARCHAR(64) PRIMARY KEY,
+    month_year VARCHAR(16) NOT NULL UNIQUE,
+    total_employees INTEGER DEFAULT 0,
+    status VARCHAR(32) DEFAULT 'DRAFT',
+    created_by VARCHAR(64),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.employee_loans (
+    id VARCHAR(64) PRIMARY KEY,
+    employee_id VARCHAR(64) NOT NULL,
+    employee_name VARCHAR(255),
+    emp_code VARCHAR(32),
+    type VARCHAR(32) DEFAULT 'SALARY_ADVANCE',
+    principal_amount NUMERIC(12,2) DEFAULT 0,
+    emi_amount NUMERIC(12,2) DEFAULT 0,
+    total_months INTEGER DEFAULT 1,
+    start_month VARCHAR(16),
+    remaining_amount NUMERIC(12,2) DEFAULT 0,
+    status VARCHAR(32) DEFAULT 'ACTIVE',
+    disbursement_account VARCHAR(64),
+    disbursement_method VARCHAR(32) DEFAULT 'BANK_TRANSFER',
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.employee_payroll (
+    id VARCHAR(64) PRIMARY KEY,
+    employee_id VARCHAR(64) NOT NULL,
+    employee_name VARCHAR(255),
+    emp_code VARCHAR(32),
+    designation VARCHAR(128),
+    month_year VARCHAR(16) NOT NULL,
+    status VARCHAR(32) DEFAULT 'DRAFT',
+    base_salary NUMERIC(12,2) DEFAULT 0,
+    allowances NUMERIC(12,2) DEFAULT 0,
+    daily_rate NUMERIC(12,2) DEFAULT 0,
+    hourly_rate NUMERIC(12,2) DEFAULT 0,
+    days_worked NUMERIC(5,2) DEFAULT 30,
+    overtime_hours NUMERIC(6,2) DEFAULT 0,
+    earned_basic NUMERIC(12,2) DEFAULT 0,
+    overtime_pay NUMERIC(12,2) DEFAULT 0,
+    gross_pay NUMERIC(12,2) DEFAULT 0,
+    advance_deduction NUMERIC(12,2) DEFAULT 0,
+    loan_emi_deduction NUMERIC(12,2) DEFAULT 0,
+    total_deductions NUMERIC(12,2) DEFAULT 0,
+    net_pay NUMERIC(12,2) DEFAULT 0,
+    payment_method VARCHAR(32) DEFAULT 'BANK_TRANSFER',
+    bank_account_id VARCHAR(64),
+    bank_account_name VARCHAR(128),
+    posted_at TIMESTAMPTZ,
+    posted_by VARCHAR(64),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.hr_payroll_sheets (
+    id VARCHAR(64) PRIMARY KEY,
+    month_year VARCHAR(16) NOT NULL UNIQUE,
+    total_employees INTEGER DEFAULT 0,
+    total_gross NUMERIC(14,2) DEFAULT 0,
+    total_deductions NUMERIC(14,2) DEFAULT 0,
+    total_net NUMERIC(14,2) DEFAULT 0,
+    status VARCHAR(32) DEFAULT 'DRAFT',
+    disbursement_method VARCHAR(32),
+    disbursement_account VARCHAR(64),
+    posted_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- DISABLE ROW LEVEL SECURITY ACROSS ALL PUBLIC TABLES
 DO $$ 
 DECLARE 

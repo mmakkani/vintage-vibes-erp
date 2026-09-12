@@ -3199,6 +3199,18 @@ class RelationalStore {
       );
     }
 
+    if (filters.searchBarcode) {
+      pieces = pieces.filter(p => p.barcode.toLowerCase().includes(filters.searchBarcode!.toLowerCase()));
+    }
+
+    if (filters.brandName && filters.brandName !== 'ALL') {
+      pieces = pieces.filter(p => p.brandName === filters.brandName);
+    }
+
+    if (filters.labelGrade && filters.labelGrade !== 'ALL') {
+      pieces = pieces.filter(p => p.labelGrade === filters.labelGrade);
+    }
+
     if (filters.category && filters.category !== 'ALL') {
       pieces = pieces.filter(p => p.itemId === filters.category || p.itemName.toLowerCase().includes(filters.category!.toLowerCase()));
     }
@@ -3523,27 +3535,6 @@ class RelationalStore {
     );
 
     return { success: true, count: createdInvoices.length, invoices: createdInvoices };
-  }
-
-  public queryInventoryStock(filters: InventoryFilterOptions): PieceBreakdownItem[] {
-    return this.inventoryPieces.filter(piece => {
-      if (filters.searchBarcode && !piece.barcode.toLowerCase().includes(filters.searchBarcode.toLowerCase())) {
-        return false;
-      }
-      if (filters.brandName && piece.brandName !== filters.brandName) {
-        return false;
-      }
-      if (filters.labelGrade && piece.labelGrade !== filters.labelGrade) {
-        return false;
-      }
-      if (filters.soldStatus === 'IN_STOCK' && piece.isSold) {
-        return false;
-      }
-      if (filters.soldStatus === 'SOLD' && !piece.isSold) {
-        return false;
-      }
-      return true;
-    });
   }
 
   // --- Sales & Invoicing ---
@@ -4341,31 +4332,6 @@ class RelationalStore {
       action: 'POST',
       documentRef: params.barcode
     });
-  }
-
-  // Helper to retrieve an existing COA account by code or auto-provision standard child account
-  public getOrCreateAccount(
-    codePrefix: string,
-    fallbackName: string,
-    classification: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE'
-  ): COAAccount {
-    let acc = this.coaAccounts.find(a => a.code.startsWith(codePrefix) || a.name.toLowerCase() === fallbackName.toLowerCase());
-    if (!acc) {
-      const cleanNum = codePrefix.replace(/[^0-9]/g, '');
-      acc = {
-        id: `acc-${cleanNum || Date.now()}`,
-        code: `${codePrefix}-00`,
-        name: fallbackName,
-        classification,
-        tierLevel: 2,
-        currency: 'AED',
-        currentBalance: 0,
-        isSystem: true,
-        isActive: true
-      };
-      this.coaAccounts.push(acc);
-    }
-    return acc;
   }
 
   /**

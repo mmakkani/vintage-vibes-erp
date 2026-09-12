@@ -8,7 +8,9 @@ import {
   AuthService,
   AuditService,
   MarketingService,
-  LiveStreamService
+  LiveStreamService,
+  HrService,
+  SearchService
 } from '../services/index.ts';
 
 /**
@@ -128,6 +130,58 @@ export async function safeFetchJson<T = any>(
       if (url.includes('/streaming-keys')) {
         return (await LiveStreamService.getStreamingApiKeys()) as any;
       }
+
+      // Universal Global Search
+      if (url.includes('/api/search')) {
+        try {
+          const urlObj = new URL(url, 'http://localhost');
+          const q = urlObj.searchParams.get('q') || '';
+          return (await SearchService.globalSearch(q)) as any;
+        } catch (_) {
+          const q = url.split('q=')[1] ? decodeURIComponent(url.split('q=')[1].split('&')[0]) : '';
+          return (await SearchService.globalSearch(q)) as any;
+        }
+      }
+
+      // HR GET Endpoints
+      if (url.includes('/api/hr/employees')) {
+        return (await HrService.getEmployees()) as any;
+      }
+      if (url.includes('/api/hr/attendance/sheets')) {
+        return (await HrService.getAttendanceSheets()) as any;
+      }
+      if (url.includes('/api/hr/attendance')) {
+        try {
+          const urlObj = new URL(url, 'http://localhost');
+          const month = urlObj.searchParams.get('month') || undefined;
+          return (await HrService.getAttendance(month)) as any;
+        } catch (_) {
+          return (await HrService.getAttendance()) as any;
+        }
+      }
+      if (url.includes('/api/hr/loans')) {
+        return (await HrService.getLoans()) as any;
+      }
+      if (url.includes('/api/hr/payroll/sheets')) {
+        return (await HrService.getPayrollSheets()) as any;
+      }
+      if (url.includes('/api/hr/payroll')) {
+        try {
+          const urlObj = new URL(url, 'http://localhost');
+          const month = urlObj.searchParams.get('month') || undefined;
+          return (await HrService.getPayroll(month)) as any;
+        } catch (_) {
+          return (await HrService.getPayroll()) as any;
+        }
+      }
+
+      if (url.includes('/whatsapp-report')) {
+        const comp = await CompanyProfileService.getCompanyProfile();
+        return {
+          success: true,
+          report: `*${comp?.company_name || 'VINTAGE VIBES'} - STATUS REPORT*\nGenerated: ${new Date().toLocaleString()}\nStatus: Cloud Database Online`
+        } as any;
+      }
     } catch (dbErr: any) {
       console.warn(`[Supabase Direct Query Notice for ${url}]:`, dbErr?.message);
     }
@@ -177,6 +231,98 @@ export async function safeFetchJson<T = any>(
           total_amount: bodyData.grandTotal || 0
         });
         return { success: true, invoice: b2b } as any;
+      }
+
+      // HR Employees Mutations
+      if (url.includes('/api/hr/employees')) {
+        if (url.endsWith('/post')) {
+          const parts = url.split('/');
+          const id = parts[parts.length - 2];
+          await HrService.updateEmployee(id, { status: 'POSTED' as any });
+          return { success: true } as any;
+        }
+        if (url.endsWith('/unpost')) {
+          const parts = url.split('/');
+          const id = parts[parts.length - 2];
+          await HrService.updateEmployee(id, { status: 'DRAFT' as any });
+          return { success: true } as any;
+        }
+        if (method === 'DELETE') {
+          const parts = url.split('/');
+          const id = parts[parts.length - 1];
+          await HrService.deleteEmployee(id);
+          return { success: true } as any;
+        }
+        if (method === 'PUT') {
+          const parts = url.split('/');
+          const id = parts[parts.length - 1];
+          await HrService.updateEmployee(id, bodyData);
+          return { success: true } as any;
+        }
+        if (method === 'POST') {
+          const created = await HrService.createEmployee(bodyData);
+          return { success: true, employee: created } as any;
+        }
+      }
+
+      // HR Attendance Mutations
+      if (url.includes('/api/hr/attendance/create-sheet')) {
+        const month = bodyData.monthYear || bodyData.month || new Date().toISOString().slice(0, 7);
+        const records = await HrService.createAttendanceSheet(month);
+        return { success: true, records } as any;
+      }
+      if (url.includes('/api/hr/attendance/post')) {
+        const month = bodyData.monthYear || bodyData.month || new Date().toISOString().slice(0, 7);
+        await HrService.postAttendanceSheet(month);
+        return { success: true } as any;
+      }
+      if (url.includes('/api/hr/attendance/unpost')) {
+        const month = bodyData.monthYear || bodyData.month || new Date().toISOString().slice(0, 7);
+        await HrService.unpostAttendanceSheet(month);
+        return { success: true } as any;
+      }
+      if (url.includes('/api/hr/attendance/')) {
+        const parts = url.split('/');
+        const id = parts[parts.length - 1];
+        await HrService.updateAttendance(id, bodyData);
+        return { success: true } as any;
+      }
+
+      // HR Payroll Mutations
+      if (url.includes('/api/hr/payroll/run')) {
+        const month = bodyData.monthYear || bodyData.month || new Date().toISOString().slice(0, 7);
+        const slips = await HrService.runPayroll(month);
+        return { success: true, slips } as any;
+      }
+      if (url.includes('/api/hr/payroll/post')) {
+        const month = bodyData.monthYear || bodyData.month || new Date().toISOString().slice(0, 7);
+        await HrService.postPayrollSheet(month, { paymentMethod: bodyData.paymentMethod, bankAccountId: bodyData.bankAccountId });
+        return { success: true } as any;
+      }
+      if (url.includes('/api/hr/payroll/unpost')) {
+        const month = bodyData.monthYear || bodyData.month || new Date().toISOString().slice(0, 7);
+        await HrService.unpostPayrollSheet(month);
+        return { success: true } as any;
+      }
+      if (url.includes('/deductions')) {
+        const parts = url.split('/');
+        const id = parts[parts.length - 2];
+        await HrService.updatePayrollDeductions(id, bodyData);
+        return { success: true } as any;
+      }
+
+      // HR Loans Mutations
+      if (url.includes('/api/hr/loans')) {
+        if (method === 'DELETE') {
+          const parts = url.split('/');
+          const id = parts[parts.length - 1];
+          await HrService.deleteLoan(id);
+          return { success: true } as any;
+        }
+        if (method === 'POST') {
+          const loan = await HrService.createLoan(bodyData);
+          return { success: true, loan } as any;
+        }
       }
 
       return { success: true } as any;

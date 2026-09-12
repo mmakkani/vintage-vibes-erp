@@ -8,3 +8,5 @@ export * from './authService.ts';
 export * from './auditService.ts';
 export * from './marketingService.ts';
 export * from './liveStreamService.ts';
+export * from './hrService.ts';
+export * from './searchService.ts';
