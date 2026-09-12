@@ -39,6 +39,8 @@ import {
   UploadCloud,
   Eye,
   RotateCw,
+  RotateCcw,
+  Unlock,
   Maximize2
 } from 'lucide-react';
 
@@ -702,33 +704,102 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setFeedbackToast({ text: 'Piece deleted; weights updated.', type: 'info' });
   };
 
+  // Re-open / Unlock Bale for Sorting
+  const handleReopenBale = async () => {
+    if (!activeBale) return;
+    luxuryAudio.playMechanicalClick();
+    if (!confirm(`Are you sure you want to re-open and unlock Bale ${activeBale.baleCode || activeBale.gatePassNo}? This will unlock the terminal and allow you to scan and add remaining garments.`)) {
+      return;
+    }
+    setIsSubmitting(true);
+
+    const newStatus = pieces.length > 0 ? 'PARTIAL' : 'UNOPENED';
+    try {
+      // 1. Update inward_gate_passes table in Supabase
+      await supabase
+        .from('inward_gate_passes')
+        .update({ status: newStatus })
+        .eq('id', activeBale.id);
+
+      // 2. Update bale_sessions table in Supabase
+      const sessionPayload = {
+        bale_id: activeBale.id,
+        total_grams: hudStats.totalGrams,
+        sorted_grams: hudStats.sortedGrams,
+        remaining_grams: hudStats.remainingGrams,
+        total_pieces: hudStats.piecesCount,
+        status: 'IN_PROGRESS',
+        updated_at: new Date().toISOString()
+      };
+
+      await supabase
+        .from('bale_sessions')
+        .upsert(sessionPayload, { onConflict: 'bale_id' });
+
+      // 3. Reset local state
+      setIsTerminalFinalized(false);
+      activeBale.status = newStatus as any;
+      activeBale.sortingStatus = (newStatus === 'PARTIAL' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any;
+
+      if (onSavePartial) {
+        onSavePartial(activeBale.id);
+      }
+
+      setFeedbackToast({
+        text: `✓ Bale ${activeBale.baleCode || activeBale.gatePassNo} unlocked & re-opened for sorting!`,
+        type: 'success'
+      });
+    } catch (err: any) {
+      console.error('Error reopening bale:', err);
+      alert(`Failed to unlock bale: ${err?.message || 'Database error'}`);
+    } finally {
+      setIsSubmitting(false);
+      setTimeout(() => {
+        const el = document.getElementById('weight-input-field') as HTMLInputElement | null;
+        if (el) {
+          el.focus();
+          el.select();
+        }
+      }, 150);
+    }
+  };
+
   // Save as in-progress (upsert into public.bale_sessions)
   const handleSaveInProgress = async () => {
     if (!activeBale) return;
     luxuryAudio.playMechanicalClick();
     setIsSubmitting(true);
 
+    const newStatus = hudStats.piecesCount > 0 ? 'PARTIAL' : 'UNOPENED';
     try {
       const sessionPayload = {
-        id: activeBale.id,
         bale_id: activeBale.id,
-        bale_code: activeBale.baleCode || activeBale.gatePassNo,
         total_grams: hudStats.totalGrams,
         sorted_grams: hudStats.sortedGrams,
         remaining_grams: hudStats.remainingGrams,
-        pieces_count: hudStats.piecesCount,
-        progress_percent: hudStats.progressPercent,
+        total_pieces: hudStats.piecesCount,
         status: 'IN_PROGRESS',
         updated_at: new Date().toISOString()
       };
 
       const { error } = await supabase
         .from('bale_sessions')
-        .upsert(sessionPayload, { onConflict: 'id' });
+        .upsert(sessionPayload, { onConflict: 'bale_id' });
 
       if (error) {
         console.error('Error saving session to bale_sessions:', error);
       }
+
+      // Ensure inward_gate_passes table reflects in-progress status
+      await supabase
+        .from('inward_gate_passes')
+        .update({ status: newStatus })
+        .eq('id', activeBale.id);
+
+      // Explicitly unlock local terminal state
+      setIsTerminalFinalized(false);
+      activeBale.status = newStatus as any;
+      activeBale.sortingStatus = (newStatus === 'PARTIAL' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any;
     } catch (err) {
       console.warn('Session save error:', err);
     }
@@ -746,29 +817,48 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       alert("This bale is already finalized and posted!");
       return;
     }
-    luxuryAudio.playMechanicalClick();
-    if (!confirm(`Finalize and lock Bale ${activeBale.baleCode || activeBale.gatePassNo}? All ${hudStats.piecesCount} pieces will join active Finished Goods inventory.`)) {
+
+    // Strict check 1: Empty bale cannot be finalized
+    if (hudStats.piecesCount === 0) {
+      alert("⚠️ Cannot finalize an empty bale! There are 0 garments sorted. Please sort at least one piece before finalizing, or use 'Save as In-Progress' to keep it open.");
       return;
     }
+
+    // Strict check 2: Strong warning if incomplete weight remains
+    if (hudStats.remainingGrams > 500 && hudStats.progressPercent < 90) {
+      const proceed = confirm(
+        `⚠️ INCOMPLETE BALE WARNING:\n\n` +
+        `• Total Weight: ${hudStats.totalGrams.toLocaleString()}g\n` +
+        `• Sorted So Far: ${hudStats.sortedGrams.toLocaleString()}g (${hudStats.piecesCount} garments)\n` +
+        `• REMAINING UNSORTED: ${hudStats.remainingGrams.toLocaleString()}g (${100 - hudStats.progressPercent}%)\n\n` +
+        `This bale is only ${hudStats.progressPercent}% sorted!\n` +
+        `Are you sure you want to prematurely close and lock this bale?\n\n` +
+        `Click 'Cancel' to continue sorting, or 'OK' if the bale is physically finished.`
+      );
+      if (!proceed) return;
+    } else {
+      if (!confirm(`Finalize and lock Bale ${activeBale.baleCode || activeBale.gatePassNo}? All ${hudStats.piecesCount} pieces will join active Finished Goods inventory.`)) {
+        return;
+      }
+    }
+
+    luxuryAudio.playMechanicalClick();
     setIsSubmitting(true);
 
     try {
       const sessionPayload = {
-        id: activeBale.id,
         bale_id: activeBale.id,
-        bale_code: activeBale.baleCode || activeBale.gatePassNo,
         total_grams: hudStats.totalGrams,
         sorted_grams: hudStats.sortedGrams,
         remaining_grams: hudStats.remainingGrams,
-        pieces_count: hudStats.piecesCount,
-        progress_percent: hudStats.progressPercent,
+        total_pieces: hudStats.piecesCount,
         status: 'COMPLETED',
         updated_at: new Date().toISOString()
       };
 
       await supabase
         .from('bale_sessions')
-        .upsert(sessionPayload, { onConflict: 'id' });
+        .upsert(sessionPayload, { onConflict: 'bale_id' });
 
       // Call service to update inward_gate_passes & copy pieces into inventory_pieces
       await PurchaseService.finalizeBaleSession(activeBale.id);
@@ -984,7 +1074,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 {completedBalesList.length > 0 && (
                   <optgroup label="🔒 Completed Bales (Closed)">
                     {completedBalesList.map(b => (
-                      <option key={b.id} value={b.id} disabled>
+                      <option key={b.id} value={b.id}>
                         🔒 {b.baleCode || b.gatePassNo} - COMPLETED ({b.pieces?.length || b.pieceCount || 0} pcs)
                       </option>
                     ))}
@@ -1060,21 +1150,36 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         {/* STEP 2: HIGH-SPEED REPETITIVE PIECE ENTRY ROW */}
         <div className="p-5 bg-slate-900 border-b border-slate-800">
           {hudStats.isCompleted ? (
-            <div className="bg-emerald-950/90 border-2 border-emerald-500/60 p-4 rounded-xl flex items-center justify-between gap-3 text-emerald-200 shadow-lg">
+            <div className="bg-emerald-950/90 border-2 border-emerald-500/60 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-emerald-200 shadow-lg">
               <div className="flex items-center gap-3">
                 <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
                 <div>
                   <span className="font-extrabold text-sm text-white block">
-                    Bale {activeBale?.baleCode || activeBale?.gatePassNo} is 100% Completed & Locked
+                    Bale {activeBale?.baleCode || activeBale?.gatePassNo} is {hudStats.piecesCount > 0 ? '100% Completed & Locked' : 'Marked Closed'}
                   </span>
                   <span className="text-xs text-emerald-300/90">
-                    All {hudStats.piecesCount} garments have been sorted, tagged, and posted into Finished Goods. New barcode scanning and piece entries for this bale are closed.
+                    {hudStats.piecesCount > 0
+                      ? `All ${hudStats.piecesCount} garments have been sorted, tagged, and posted into Finished Goods. New barcode scanning and piece entries for this bale are closed.`
+                      : 'This bale was marked closed with 0 pieces sorted.'}{' '}
+                    Need to add more garments or edit this bale? Click Re-open below to unlock the sorting stream.
                   </span>
                 </div>
               </div>
-              <span className="px-3 py-1.5 bg-emerald-500/20 border border-emerald-400/40 rounded-lg text-xs font-mono font-bold text-emerald-300 uppercase">
-                Bale Closed
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  id="btn-reopen-bale"
+                  onClick={handleReopenBale}
+                  className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 shadow-md transition-all cursor-pointer transform active:scale-95 whitespace-nowrap"
+                  title="Unlock and reopen this bale for sorting"
+                >
+                  <Unlock className="w-4 h-4 text-slate-950" />
+                  <span>🔓 Re-open / Unlock Bale</span>
+                </button>
+                <span className="px-3 py-1.5 bg-emerald-500/20 border border-emerald-400/40 rounded-lg text-xs font-mono font-bold text-emerald-300 uppercase whitespace-nowrap">
+                  Bale Closed
+                </span>
+              </div>
             </div>
           ) : (
             <div className="bg-slate-950/70 p-4 rounded-xl border border-indigo-500/30 shadow-inner space-y-3">
@@ -1935,6 +2040,19 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto">
+            {(isTerminalFinalized || hudStats.isCompleted || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED') && (
+              <button
+                type="button"
+                id="btn-bottom-reopen-bale"
+                onClick={handleReopenBale}
+                className="flex-1 sm:flex-none px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer transform active:scale-95 whitespace-nowrap"
+                title="Unlock and reopen this bale for continuous garment sorting"
+              >
+                <Unlock className="w-4 h-4 text-slate-950" />
+                <span>🔓 Re-open / Unlock Bale</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={handleSaveInProgress}
@@ -1947,12 +2065,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             <button
               type="button"
               onClick={handleFinalizeAndPost}
-              disabled={isTerminalFinalized || hudStats.isCompleted || activeBale?.status === 'COMPLETED'}
+              disabled={isTerminalFinalized || hudStats.isCompleted || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED'}
               className="flex-1 sm:flex-none px-5 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-emerald-600/25 border border-emerald-400/40 flex items-center justify-center gap-2 transition-all transform active:scale-95 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              title={isTerminalFinalized || hudStats.isCompleted ? "Bale is already 100% finalized and posted" : "Finalize and lock this bale"}
+              title={isTerminalFinalized || hudStats.isCompleted ? "Bale is already finalized and posted" : "Finalize and lock this bale"}
             >
               <ShieldCheck className="w-4 h-4 text-slate-950" />
-              <span>{isTerminalFinalized || hudStats.isCompleted ? '✓ Bale Finalized & Posted' : 'Finalize & Post Bale'}</span>
+              <span>{isTerminalFinalized || hudStats.isCompleted || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED' ? '✓ Bale Finalized & Posted' : 'Finalize & Post Bale'}</span>
             </button>
           </div>
         </div>

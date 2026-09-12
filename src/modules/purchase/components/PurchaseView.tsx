@@ -278,12 +278,14 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
     onRefreshAll();
   };
 
-  // Handle save partial
+  // Handle save partial / reopen
   const handleSavePartial = async (baleId: string) => {
     try {
-      await PurchaseService.updateInwardGatePass(baleId, { status: 'PARTIAL' });
+      const b = bales.find(x => x.id === baleId);
+      const newStatus = (b && ((b.pieceCount || 0) > 0 || (b.pieces && b.pieces.length > 0))) ? 'PARTIAL' : 'UNOPENED';
+      await PurchaseService.updateInwardGatePass(baleId, { status: newStatus as any });
       setBales(prev => {
-        const next = prev.map(b => b.id === baleId ? { ...b, status: 'PARTIAL' } : b);
+        const next = prev.map(item => item.id === baleId ? { ...item, status: newStatus as any, sortingStatus: (newStatus === 'PARTIAL' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any } : item);
         saveCached(CACHE_KEYS.BALES, next);
         return next;
       });
