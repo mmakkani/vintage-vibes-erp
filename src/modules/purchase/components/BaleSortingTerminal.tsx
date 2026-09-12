@@ -9,6 +9,7 @@ import { openThermalLabelPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { CameraTagScannerModal, ExtractedTagData } from './CameraTagScannerModal.tsx';
 import { StudioPhotoCaptureModal } from './StudioPhotoCaptureModal.tsx';
+import { compressImage } from '../../../utils/imageCompressor.ts';
 import {
   Scale,
   Sparkles,
@@ -1154,48 +1155,80 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
                     <div className="flex items-center justify-between gap-2">
                       {frontImageUrl ? (
-                        <div className="flex items-center gap-2">
-                          <img
-                            src={frontImageUrl}
-                            alt="Front"
-                            onClick={() => setPreviewLightboxImage(frontImageUrl)}
-                            className="w-10 h-10 object-cover rounded-lg border border-emerald-500 cursor-pointer hover:opacity-80 transition"
-                            title="Click to view full photo"
-                          />
-                          <div className="flex flex-col gap-1">
-                            <button
-                              type="button"
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={frontImageUrl}
+                              alt="Front"
                               onClick={() => setPreviewLightboxImage(frontImageUrl)}
-                              className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1"
-                            >
-                              <Eye className="w-3 h-3 text-indigo-400" /> View
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setFrontImageUrl(undefined)}
-                              className="text-[10px] text-rose-400 hover:text-rose-300 flex items-center gap-1"
-                            >
-                              ✕ Remove
-                            </button>
+                              className="w-10 h-10 object-cover rounded-lg border border-emerald-500 cursor-pointer hover:opacity-80 transition"
+                              title="Click to view full photo"
+                            />
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                type="button"
+                                onClick={() => setPreviewLightboxImage(frontImageUrl)}
+                                className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1"
+                              >
+                                <Eye className="w-3 h-3 text-indigo-400" /> View
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStudioCameraSlot('front');
+                                  setShowStudioCamera(true);
+                                }}
+                                className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                              >
+                                <RotateCw className="w-3 h-3" /> Retake
+                              </button>
+                            </div>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => setFrontImageUrl(undefined)}
+                            className="text-[10px] text-rose-400 hover:text-rose-300 p-1 rounded hover:bg-rose-950/40 transition"
+                            title="Remove Front Photo"
+                          >
+                            ✕
+                          </button>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1.5 w-full">
+                          {/* Live studio camera */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setStudioCameraSlot('front');
+                              setShowStudioCamera(true);
+                            }}
+                            className="bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer transition active:scale-95"
+                            title="Open live camera"
+                          >
+                            <Camera className="w-3 h-3 text-indigo-400" />
+                            <span>Live</span>
+                          </button>
+
                           {/* Snap with native Phone Camera */}
-                          <label className="flex-1 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 hover:border-indigo-400 py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition">
-                            <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>📷 Camera</span>
+                          <label className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition" title="Snap with phone camera">
+                            <Smartphone className="w-3 h-3 text-emerald-400" />
+                            <span>Snap</span>
                             <input
                               type="file"
                               accept="image/*"
                               capture="environment"
                               className="hidden"
-                              onChange={e => {
+                              onChange={async e => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  const r = new FileReader();
-                                  r.onload = () => setFrontImageUrl(r.result as string);
-                                  r.readAsDataURL(file);
+                                  try {
+                                    const compressed = await compressImage(file, 1280, 0.85);
+                                    setFrontImageUrl(compressed);
+                                  } catch {
+                                    const r = new FileReader();
+                                    r.onload = () => setFrontImageUrl(r.result as string);
+                                    r.readAsDataURL(file);
+                                  }
                                 }
                                 e.target.value = '';
                               }}
@@ -1203,19 +1236,24 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </label>
 
                           {/* Pick from Gallery / PC */}
-                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center gap-1 cursor-pointer transition">
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center gap-1 cursor-pointer transition" title="Upload from file">
                             <UploadCloud className="w-3 h-3 text-slate-400" />
                             <span>Upload</span>
                             <input
                               type="file"
                               accept="image/*"
                               className="hidden"
-                              onChange={e => {
+                              onChange={async e => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  const r = new FileReader();
-                                  r.onload = () => setFrontImageUrl(r.result as string);
-                                  r.readAsDataURL(file);
+                                  try {
+                                    const compressed = await compressImage(file, 1280, 0.85);
+                                    setFrontImageUrl(compressed);
+                                  } catch {
+                                    const r = new FileReader();
+                                    r.onload = () => setFrontImageUrl(r.result as string);
+                                    r.readAsDataURL(file);
+                                  }
                                 }
                                 e.target.value = '';
                               }}
@@ -1247,48 +1285,80 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
                     <div className="flex items-center justify-between gap-2">
                       {backImageUrl ? (
-                        <div className="flex items-center gap-2">
-                          <img
-                            src={backImageUrl}
-                            alt="Back"
-                            onClick={() => setPreviewLightboxImage(backImageUrl)}
-                            className="w-10 h-10 object-cover rounded-lg border border-emerald-500 cursor-pointer hover:opacity-80 transition"
-                            title="Click to view full photo"
-                          />
-                          <div className="flex flex-col gap-1">
-                            <button
-                              type="button"
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={backImageUrl}
+                              alt="Back"
                               onClick={() => setPreviewLightboxImage(backImageUrl)}
-                              className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1"
-                            >
-                              <Eye className="w-3 h-3 text-indigo-400" /> View
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setBackImageUrl(undefined)}
-                              className="text-[10px] text-rose-400 hover:text-rose-300 flex items-center gap-1"
-                            >
-                              ✕ Remove
-                            </button>
+                              className="w-10 h-10 object-cover rounded-lg border border-emerald-500 cursor-pointer hover:opacity-80 transition"
+                              title="Click to view full photo"
+                            />
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                type="button"
+                                onClick={() => setPreviewLightboxImage(backImageUrl)}
+                                className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1"
+                              >
+                                <Eye className="w-3 h-3 text-indigo-400" /> View
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStudioCameraSlot('back');
+                                  setShowStudioCamera(true);
+                                }}
+                                className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                              >
+                                <RotateCw className="w-3 h-3" /> Retake
+                              </button>
+                            </div>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => setBackImageUrl(undefined)}
+                            className="text-[10px] text-rose-400 hover:text-rose-300 p-1 rounded hover:bg-rose-950/40 transition"
+                            title="Remove Back Photo"
+                          >
+                            ✕
+                          </button>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1.5 w-full">
+                          {/* Live studio camera */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setStudioCameraSlot('back');
+                              setShowStudioCamera(true);
+                            }}
+                            className="bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer transition active:scale-95"
+                            title="Open live camera"
+                          >
+                            <Camera className="w-3 h-3 text-indigo-400" />
+                            <span>Live</span>
+                          </button>
+
                           {/* Snap with native Phone Camera */}
-                          <label className="flex-1 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 hover:border-indigo-400 py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition">
-                            <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>📷 Camera</span>
+                          <label className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition" title="Snap with phone camera">
+                            <Smartphone className="w-3 h-3 text-emerald-400" />
+                            <span>Snap</span>
                             <input
                               type="file"
                               accept="image/*"
                               capture="environment"
                               className="hidden"
-                              onChange={e => {
+                              onChange={async e => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  const r = new FileReader();
-                                  r.onload = () => setBackImageUrl(r.result as string);
-                                  r.readAsDataURL(file);
+                                  try {
+                                    const compressed = await compressImage(file, 1280, 0.85);
+                                    setBackImageUrl(compressed);
+                                  } catch {
+                                    const r = new FileReader();
+                                    r.onload = () => setBackImageUrl(r.result as string);
+                                    r.readAsDataURL(file);
+                                  }
                                 }
                                 e.target.value = '';
                               }}
@@ -1296,19 +1366,24 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </label>
 
                           {/* Pick from Gallery / PC */}
-                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center gap-1 cursor-pointer transition">
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center gap-1 cursor-pointer transition" title="Upload from file">
                             <UploadCloud className="w-3 h-3 text-slate-400" />
                             <span>Upload</span>
                             <input
                               type="file"
                               accept="image/*"
                               className="hidden"
-                              onChange={e => {
+                              onChange={async e => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  const r = new FileReader();
-                                  r.onload = () => setBackImageUrl(r.result as string);
-                                  r.readAsDataURL(file);
+                                  try {
+                                    const compressed = await compressImage(file, 1280, 0.85);
+                                    setBackImageUrl(compressed);
+                                  } catch {
+                                    const r = new FileReader();
+                                    r.onload = () => setBackImageUrl(r.result as string);
+                                    r.readAsDataURL(file);
+                                  }
                                 }
                                 e.target.value = '';
                               }}
@@ -1340,45 +1415,73 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
                     <div className="flex items-center justify-between gap-2">
                       {tagImageUrl ? (
-                        <div className="flex items-center gap-2">
-                          <img
-                            src={tagImageUrl}
-                            alt="Tag"
-                            onClick={() => setPreviewLightboxImage(tagImageUrl)}
-                            className="w-10 h-10 object-cover rounded-lg border border-amber-500 cursor-pointer hover:opacity-80 transition"
-                            title="Click to view full photo"
-                          />
-                          <div className="flex flex-col gap-1">
-                            <button
-                              type="button"
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={tagImageUrl}
+                              alt="Tag"
                               onClick={() => setPreviewLightboxImage(tagImageUrl)}
-                              className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1"
-                            >
-                              <Eye className="w-3 h-3 text-indigo-400" /> View
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setTagImageUrl(undefined)}
-                              className="text-[10px] text-rose-400 hover:text-rose-300 flex items-center gap-1"
-                            >
-                              ✕ Remove
-                            </button>
+                              className="w-10 h-10 object-cover rounded-lg border border-amber-500 cursor-pointer hover:opacity-80 transition"
+                              title="Click to view full photo"
+                            />
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                type="button"
+                                onClick={() => setPreviewLightboxImage(tagImageUrl)}
+                                className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1"
+                              >
+                                <Eye className="w-3 h-3 text-indigo-400" /> View
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStudioCameraSlot('tag');
+                                  setShowStudioCamera(true);
+                                }}
+                                className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1"
+                              >
+                                <RotateCw className="w-3 h-3" /> Retake
+                              </button>
+                            </div>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => setTagImageUrl(undefined)}
+                            className="text-[10px] text-rose-400 hover:text-rose-300 p-1 rounded hover:bg-rose-950/40 transition"
+                            title="Remove Tag Photo"
+                          >
+                            ✕
+                          </button>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1.5 w-full">
-                          {/* AI OCR Scanner modal button */}
+                          {/* Live camera for tag */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setStudioCameraSlot('tag');
+                              setShowStudioCamera(true);
+                            }}
+                            className="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 border border-amber-500/40 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition"
+                            title="Live Tag Camera"
+                          >
+                            <Camera className="w-3 h-3 text-amber-400" />
+                            <span>Live</span>
+                          </button>
+
+                          {/* AI OCR Scanner */}
                           <button
                             type="button"
                             onClick={() => setShowTagScanner(true)}
-                            className="flex-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition"
+                            className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition"
+                            title="AI OCR Tag Reader"
                           >
-                            <Camera className="w-3.5 h-3.5" />
+                            <Sparkles className="w-3 h-3 text-amber-400" />
                             <span>AI OCR</span>
                           </button>
 
-                          {/* Quick Tag Snap with native phone camera */}
-                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center gap-1 cursor-pointer transition" title="Snap Tag Photo">
+                          {/* Snap Tag Photo with Phone */}
+                          <label className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition" title="Snap Tag with phone camera">
                             <Smartphone className="w-3 h-3 text-emerald-400" />
                             <span>Snap</span>
                             <input
@@ -1386,12 +1489,42 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                               accept="image/*"
                               capture="environment"
                               className="hidden"
-                              onChange={e => {
+                              onChange={async e => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  const r = new FileReader();
-                                  r.onload = () => setTagImageUrl(r.result as string);
-                                  r.readAsDataURL(file);
+                                  try {
+                                    const compressed = await compressImage(file, 1280, 0.85);
+                                    setTagImageUrl(compressed);
+                                  } catch {
+                                    const r = new FileReader();
+                                    r.onload = () => setTagImageUrl(r.result as string);
+                                    r.readAsDataURL(file);
+                                  }
+                                }
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+
+                          {/* Upload Tag Photo */}
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center gap-1 cursor-pointer transition" title="Upload Tag File">
+                            <UploadCloud className="w-3 h-3 text-slate-400" />
+                            <span>Upload</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={async e => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  try {
+                                    const compressed = await compressImage(file, 1280, 0.85);
+                                    setTagImageUrl(compressed);
+                                  } catch {
+                                    const r = new FileReader();
+                                    r.onload = () => setTagImageUrl(r.result as string);
+                                    r.readAsDataURL(file);
+                                  }
                                 }
                                 e.target.value = '';
                               }}
@@ -1946,9 +2079,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             backImageUrl={backImageUrl}
             tagImageUrl={tagImageUrl}
             onSavePhotos={({ front, back, tag }) => {
-              if (front !== undefined) setFrontImageUrl(front);
-              if (back !== undefined) setBackImageUrl(back);
-              if (tag !== undefined) setTagImageUrl(tag);
+              setFrontImageUrl(front);
+              setBackImageUrl(back);
+              setTagImageUrl(tag);
             }}
           />
         )}

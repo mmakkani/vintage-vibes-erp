@@ -76,36 +76,78 @@ export const CameraInvoiceScannerOverlay: React.FC<CameraInvoiceScannerOverlayPr
     setCapturedImage(null);
     setExtractedData(null);
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Camera device API not supported in this browser. Please use the Upload Document option.');
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        }
-      });
+
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => {
+          try { t.stop(); } catch {}
+        });
+        streamRef.current = null;
+      }
+
+      let stream: MediaStream | null = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
       streamRef.current = stream;
+      setCameraActive(true);
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        videoRef.current.play().catch(() => {});
       }
-      setCameraActive(true);
     } catch (err: any) {
       console.warn('Camera access issue:', err);
-      setCameraError(err.message || 'Camera access permission denied or unavailable. Please use the Upload Document option.');
+      const isDenied =
+        err?.name === 'NotAllowedError' ||
+        err?.name === 'PermissionDeniedError' ||
+        (err?.message || '').toLowerCase().includes('denied') ||
+        (err?.message || '').toLowerCase().includes('permission');
+
+      setCameraError(
+        isDenied
+          ? 'Browser Camera Access Blocked. Please click the lock icon next to the URL to allow camera.'
+          : err.message || 'Camera access permission denied or unavailable. Please use the Upload Document option.'
+      );
       setCameraActive(false);
     }
   };
 
   const stopCamera = () => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach(track => {
+        try { track.stop(); } catch {}
+      });
       streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
     setCameraActive(false);
   };
+
+  useEffect(() => {
+    if (cameraActive && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(e => {
+        if (videoRef.current) {
+          videoRef.current.muted = true;
+          videoRef.current.play().catch(() => {});
+        }
+      });
+    }
+  }, [cameraActive]);
 
   useEffect(() => {
     if (isOpen) {
@@ -343,15 +385,17 @@ export const CameraInvoiceScannerOverlay: React.FC<CameraInvoiceScannerOverlayPr
           {!extractedData && (
             <div className="space-y-4">
               <div className="relative bg-slate-900 rounded-xl overflow-hidden aspect-video max-h-[380px] flex items-center justify-center border-2 border-slate-700 shadow-inner">
+                {/* Persistent Video Stream */}
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full object-cover ${cameraActive && !capturedImage ? 'block' : 'hidden'}`}
+                />
+
                 {cameraActive && !capturedImage && (
                   <>
-                    <video
-                      ref={videoRef}
-                      playsInline
-                      muted
-                      className="w-full h-full object-cover"
-                    />
-
                     {/* Viewfinder Target Frame */}
                     <div className="absolute inset-8 border-2 border-amber-400/80 rounded-lg pointer-events-none flex flex-col justify-between p-3">
                       <div className="flex justify-between text-amber-400 font-mono text-[10px] font-bold">

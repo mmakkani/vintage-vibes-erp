@@ -9,8 +9,11 @@ import {
   RotateCw,
   RefreshCw,
   Tag,
-  ArrowRight
+  ArrowRight,
+  Smartphone,
+  ShieldAlert
 } from 'lucide-react';
+import { compressImage } from '../../../utils/imageCompressor.ts';
 
 export interface ExtractedTagData {
   brand: string;
@@ -40,48 +43,113 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
   const [scanStep, setScanStep] = useState<string>('');
   const [extractedData, setExtractedData] = useState<ExtractedTagData | null>(null);
   const [tagOcrError, setTagOcrError] = useState<string | null>(null);
+  const [isPermissionDenied, setIsPermissionDenied] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
 
   const startCamera = async () => {
     setCameraError(null);
     setTagOcrError(null);
     setCapturedImage(null);
     setExtractedData(null);
+    setIsPermissionDenied(false);
+
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Camera API not available on this browser or device. Please upload a tag photo instead.');
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Direct camera API not available on this browser or device. Please upload a tag photo instead.');
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+
+      // Stop previous tracks if any
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => {
+          try { t.stop(); } catch {}
+        });
+        streamRef.current = null;
+      }
+
+      let stream: MediaStream | null = null;
+      let lastErr: any = null;
+
+      // Tier 1: facingMode environment with 1280x720
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+      } catch (e) {
+        lastErr = e;
+      }
+
+      // Tier 2: generic video stream (works with desktop webcams and USB cameras)
+      if (!stream) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        } catch (e) {
+          lastErr = e;
         }
-      });
+      }
+
+      if (!stream) {
+        throw lastErr || new Error('Unable to connect to camera.');
+      }
+
       streamRef.current = stream;
+      setCameraActive(true);
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        videoRef.current.play().catch(() => {});
       }
-      setCameraActive(true);
     } catch (err: any) {
       console.warn('Camera stream error:', err);
-      setCameraError(err.message || 'Camera permission denied or unavailable. Please use the Upload Tag Photo option.');
+      const isDenied =
+        err?.name === 'NotAllowedError' ||
+        err?.name === 'PermissionDeniedError' ||
+        (err?.message || '').toLowerCase().includes('denied') ||
+        (err?.message || '').toLowerCase().includes('permission');
+
+      setIsPermissionDenied(isDenied);
+      setCameraError(
+        isDenied
+          ? 'Browser Camera Access Blocked (Permission Denied)'
+          : err.message || 'Camera unavailable. Please upload a tag photo.'
+      );
       setCameraActive(false);
     }
   };
 
   const stopCamera = () => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current.getTracks().forEach(t => {
+        try { t.stop(); } catch {}
+      });
       streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
     setCameraActive(false);
   };
+
+  // Wire stream to video whenever cameraActive becomes true
+  useEffect(() => {
+    if (cameraActive && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(e => {
+        if (videoRef.current) {
+          videoRef.current.muted = true;
+          videoRef.current.play().catch(() => {});
+        }
+      });
+    }
+  }, [cameraActive]);
 
   useEffect(() => {
     if (isOpen) {
@@ -316,15 +384,17 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
           {!extractedData && (
             <div className="space-y-4">
               <div className="relative bg-slate-900 rounded-xl overflow-hidden aspect-video max-h-[380px] flex items-center justify-center border-2 border-slate-700 shadow-inner">
+                {/* Persistent Video Element */}
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full object-cover ${cameraActive && !capturedImage ? 'block' : 'hidden'}`}
+                />
+
                 {cameraActive && !capturedImage && (
                   <>
-                    <video
-                      ref={videoRef}
-                      playsInline
-                      muted
-                      className="w-full h-full object-cover"
-                    />
-
                     {/* Viewfinder Frame Guide */}
                     <div className="absolute inset-10 border-2 border-indigo-400/80 rounded-lg pointer-events-none flex flex-col justify-between p-3">
                       <div className="flex justify-between text-indigo-300 font-mono text-[10px] font-bold">
@@ -375,34 +445,75 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                 )}
 
                 {!cameraActive && !capturedImage && (
-                  <div className="p-8 text-center text-slate-300 space-y-3">
-                    <Tag className="w-12 h-12 mx-auto text-indigo-400 opacity-60" />
-                    <div>
-                      <h4 className="text-sm font-bold text-white">Camera Feed Standby</h4>
-                      <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
-                        {cameraError || 'Use your device camera or upload a clear photo of the clothing tag.'}
-                      </p>
-                    </div>
+                  <div className="p-6 text-center text-slate-300 space-y-3 w-full max-w-md">
+                    {isPermissionDenied ? (
+                      <div className="bg-rose-950/40 border border-rose-500/40 rounded-xl p-4 text-left space-y-2.5">
+                        <div className="flex items-center gap-2 text-rose-400 font-bold text-xs">
+                          <ShieldAlert className="w-4 h-4" />
+                          <span>Camera Access Blocked in Browser</span>
+                        </div>
+                        <p className="text-[11px] text-slate-300">
+                          Click the <strong>🔒 lock icon</strong> next to the URL at the top of your browser, set <strong>Camera</strong> to <strong>Allow</strong>, then tap Retry below.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={startCamera}
+                            className="btn-3d btn-3d-indigo text-xs py-1 px-3 flex items-center gap-1.5"
+                          >
+                            <RotateCw className="w-3 h-3" />
+                            <span>Retry Live Camera</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => nativeCameraInputRef.current?.click()}
+                            className="btn-3d btn-3d-emerald text-xs py-1 px-3 flex items-center gap-1.5"
+                          >
+                            <Smartphone className="w-3 h-3" />
+                            <span>Phone Camera</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <Tag className="w-10 h-10 mx-auto text-indigo-400 opacity-60" />
+                        <div>
+                          <h4 className="text-sm font-bold text-white">Tag Camera Standby</h4>
+                          <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
+                            {cameraError || 'Use live camera or upload a clear photo of the clothing tag.'}
+                          </p>
+                        </div>
 
-                    <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-                      <button
-                        type="button"
-                        onClick={startCamera}
-                        className="btn-3d btn-3d-indigo text-xs py-1.5 px-4 cursor-pointer inline-flex items-center gap-1.5"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        <span>Turn On Camera</span>
-                      </button>
+                        <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                          <button
+                            type="button"
+                            onClick={startCamera}
+                            className="btn-3d btn-3d-indigo text-xs py-1.5 px-3.5 cursor-pointer inline-flex items-center gap-1.5"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            <span>Turn On Camera</span>
+                          </button>
 
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="btn-3d btn-3d-slate text-xs py-1.5 px-4 cursor-pointer inline-flex items-center gap-1.5"
-                      >
-                        <UploadCloud className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>Upload Tag Photo</span>
-                      </button>
-                    </div>
+                          <button
+                            type="button"
+                            onClick={() => nativeCameraInputRef.current?.click()}
+                            className="btn-3d btn-3d-emerald text-xs py-1.5 px-3.5 cursor-pointer inline-flex items-center gap-1.5"
+                          >
+                            <Smartphone className="w-3.5 h-3.5" />
+                            <span>Phone Camera</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="btn-3d btn-3d-slate text-xs py-1.5 px-3 cursor-pointer inline-flex items-center gap-1.5"
+                          >
+                            <UploadCloud className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Upload File</span>
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -505,6 +616,23 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
             </button>
           )}
         </div>
+
+        {/* Hidden inputs for gallery and native phone camera */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleFileUpload}
+        />
+        <input
+          ref={nativeCameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={handleFileUpload}
+        />
       </div>
     </div>
   );
