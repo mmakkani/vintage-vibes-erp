@@ -3,6 +3,7 @@ import { supabase } from '../../../supabaseClient.ts';
 import { Party } from '../../parties/parties.types.ts';
 import { ItemMaster } from '../../setup/setup.types.ts';
 import { PurchaseInvoice, PurchaseInvoiceItem } from '../purchase.types.ts';
+import { PurchaseService } from '../../../services/purchaseService.ts';
 import { CameraInvoiceScannerOverlay } from './CameraInvoiceScannerOverlay.tsx';
 import { useFormAutoSave } from '../../../hooks/useFormAutoSave.ts';
 import { AutoSaveDraftBanner, AutoSaveIndicator } from '../../../components/AutoSaveNotice.tsx';
