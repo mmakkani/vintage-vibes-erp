@@ -405,7 +405,7 @@ export async function safeFetchJson<T = any>(
       }
       if (url.includes('/api/hr/payroll/post')) {
         const month = bodyData.monthYear || bodyData.month || new Date().toISOString().slice(0, 7);
-        await HrService.postPayrollSheet(month, { paymentMethod: bodyData.paymentMethod, bankAccountId: bodyData.bankAccountId });
+        await HrService.postPayrollSheet(month, { postedBy: bodyData.postedBy, paymentMethod: bodyData.paymentMethod, bankAccountId: bodyData.bankAccountId });
         return { success: true } as any;
       }
       if (url.includes('/api/hr/payroll/unpost')) {

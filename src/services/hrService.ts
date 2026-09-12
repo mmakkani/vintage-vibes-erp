@@ -1,6 +1,7 @@
 import { supabase } from '../supabaseClient.ts';
 import { Employee, AttendanceRecord, EmployeeLoan, PayrollRecord } from '../modules/hr/hr.types.ts';
 import { AuditService } from './auditService.ts';
+import { FinanceService } from './financeService.ts';
 
 function generateId(prefix: string): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -893,27 +894,131 @@ export class HrService {
     return this.getPayroll(monthYear);
   }
 
-  public static async postPayrollSheet(monthYear: string, disbursement?: { paymentMethod: string; bankAccountId?: string }): Promise<void> {
+  public static async postPayrollSheet(monthYear: string, disbursement?: { paymentMethod?: string; bankAccountId?: string; postedBy?: string }): Promise<void> {
     this.clearPayrollSheetsCache();
+    const nowIso = new Date().toISOString();
+    const postedBy = disbursement?.postedBy || 'Finance & HR Controller';
+
+    // 1. Update employee_payroll records for this month
     await supabase
       .from('employee_payroll')
       .update({
         status: 'POSTED',
         payment_method: disbursement?.paymentMethod || 'BANK_TRANSFER',
         bank_account_id: disbursement?.bankAccountId || null,
-        posted_at: new Date().toISOString(),
-        posted_by: 'Finance & HR Controller'
+        posted_at: nowIso,
+        posted_by: postedBy
       })
       .eq('month_year', monthYear);
 
+    // 2. Fetch employee_payroll to get accurate totals
+    const { data: records } = await supabase
+      .from('employee_payroll')
+      .select('*')
+      .eq('month_year', monthYear);
+
+    const slips = records || [];
+    const totalGross = Number(slips.reduce((sum: number, s: any) => sum + (Number(s.gross_pay) || 0), 0).toFixed(2));
+    const totalDeductions = Number(slips.reduce((sum: number, s: any) => sum + (Number(s.total_deductions) || 0), 0).toFixed(2));
+    const totalNet = Number(slips.reduce((sum: number, s: any) => sum + (Number(s.net_pay) || 0), 0).toFixed(2));
+
+    // 3. Upsert hr_payroll_sheets
     await supabase
       .from('hr_payroll_sheets')
       .upsert({
         id: `pay-sheet-${monthYear}`,
         month_year: monthYear,
+        total_employees: slips.length,
+        total_gross: totalGross,
+        total_deductions: totalDeductions,
+        total_net: totalNet,
         status: 'POSTED',
-        posted_at: new Date().toISOString()
+        posted_at: nowIso
       });
+
+    // 4. Double-Entry Journal Voucher in General Ledger & COA:
+    // DEBIT:  5310-00 Staff Salaries, Live Host Commissions & Overtime (totalGross)
+    // CREDIT: 1135-00 Staff Advances & Short-Term Loan Receivables (totalDeductions, if > 0)
+    // CREDIT: 2310-00 Accrued Staff Payroll & End-of-Service Gratuity (totalNet)
+    if (totalGross > 0) {
+      const voucherNo = `JV-PAY-${monthYear}`;
+      const voucherDate = (monthYear === new Date().toISOString().slice(0, 7))
+        ? new Date().toISOString().slice(0, 10)
+        : `${monthYear}-01`;
+
+      // Clean up previous entries if re-posting
+      try {
+        await supabase.from('voucher_entries').delete().eq('voucher_no', voucherNo);
+        await supabase.from('general_ledger').delete().eq('voucher_no', voucherNo);
+        await supabase.from('ledgers').delete().eq('voucher_no', voucherNo);
+        await supabase.from('financial_vouchers').delete().eq('voucher_no', voucherNo);
+        await supabase.from('vouchers').delete().eq('voucher_no', voucherNo);
+      } catch (e) {
+        console.warn('Voucher cleanup warning:', e);
+      }
+
+      const voucherLines: any[] = [
+        {
+          id: `vli-pay-dr-${monthYear}`,
+          accountId: 'acc-5310',
+          accountCode: '5310-00',
+          accountName: 'Staff Salaries, Live Host Commissions & Overtime',
+          debitAmount: totalGross,
+          creditAmount: 0,
+          memo: `Staff Salaries Expense for ${monthYear}`
+        }
+      ];
+
+      if (totalDeductions > 0) {
+        voucherLines.push({
+          id: `vli-pay-ded-${monthYear}`,
+          accountId: 'acc-1135',
+          accountCode: '1135-00',
+          accountName: 'Staff Advances & Short-Term Loan Receivables',
+          debitAmount: 0,
+          creditAmount: totalDeductions,
+          memo: `Staff Loan & Advance Recoveries for ${monthYear}`
+        });
+      }
+
+      voucherLines.push({
+        id: `vli-pay-cr-${monthYear}`,
+        accountId: 'acc-2310',
+        accountCode: '2310-00',
+        accountName: 'Accrued Staff Payroll & End-of-Service Gratuity',
+        debitAmount: 0,
+        creditAmount: totalNet,
+        memo: `Accrued Salaries Payable for ${monthYear}`
+      });
+
+      await FinanceService.addVoucher({
+        id: `vch-pay-${monthYear}`,
+        voucherNo,
+        date: voucherDate,
+        type: 'JOURNAL',
+        reference: `PAY-${monthYear}`,
+        narration: `Monthly payroll accrual for ${monthYear} (${slips.length} employees) - Gross: AED ${totalGross.toFixed(2)}, Deductions: AED ${totalDeductions.toFixed(2)}, Net Salaries Payable: AED ${totalNet.toFixed(2)}`,
+        totalDebit: totalGross,
+        totalCredit: totalGross,
+        status: 'POSTED',
+        createdBy: postedBy,
+        lines: voucherLines
+      });
+
+      try {
+        FinanceService.clearCoaCache();
+        await supabase.rpc('sync_coa_current_balances');
+      } catch (_) {}
+
+      try {
+        await AuditService.logAction({
+          action: 'POST',
+          entityType: 'PAYROLL',
+          entityId: `PAY-${monthYear}`,
+          details: `Posted monthly payroll for ${monthYear} (${slips.length} staff). Recorded Journal Voucher ${voucherNo}: Debit 5310-00 AED ${totalGross.toFixed(2)}, Credit 2310-00 AED ${totalNet.toFixed(2)}`
+        });
+      } catch (_) {}
+    }
   }
 
   public static async unpostPayrollSheet(monthYear: string): Promise<void> {
@@ -934,6 +1039,32 @@ export class HrService {
         month_year: monthYear,
         status: 'DRAFT'
       });
+
+    // Remove the associated Journal Voucher and entries
+    const voucherNo = `JV-PAY-${monthYear}`;
+    try {
+      await supabase.from('voucher_entries').delete().eq('voucher_no', voucherNo);
+      await supabase.from('general_ledger').delete().eq('voucher_no', voucherNo);
+      await supabase.from('ledgers').delete().eq('voucher_no', voucherNo);
+      await supabase.from('financial_vouchers').delete().eq('voucher_no', voucherNo);
+      await supabase.from('vouchers').delete().eq('voucher_no', voucherNo);
+    } catch (e) {
+      console.warn('Voucher deletion warning:', e);
+    }
+
+    try {
+      FinanceService.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
+    } catch (_) {}
+
+    try {
+      await AuditService.logAction({
+        action: 'UNPOST',
+        entityType: 'PAYROLL',
+        entityId: `PAY-${monthYear}`,
+        details: `Unposted monthly payroll for ${monthYear} and reversed Journal Voucher ${voucherNo} from General Ledger`
+      });
+    } catch (_) {}
   }
 
   public static async updatePayrollDeductions(id: string, deductions: { advanceDeduction?: number; loanEmiDeduction?: number }): Promise<void> {

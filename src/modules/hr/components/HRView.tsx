@@ -220,10 +220,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     notes: ''
   });
 
-  // Payment Disbursement Modal for Posting Payroll
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentMode, setPaymentMode] = useState<'BANK_TRANSFER' | 'CASH'>('BANK_TRANSFER');
-  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>('');
+  // General Ledger COA Accounts
   const [coaAccounts, setCoaAccounts] = useState<any[]>([]);
 
   const loadData = async () => {
@@ -251,10 +248,6 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       setHrAuditLogs(hrLogs);
       if (Array.isArray(coaRes)) {
         setCoaAccounts(coaRes);
-        const defaultBank = coaRes.find((a: any) => a.code === '1120-00') || coaRes.find((a: any) => a.classification === 'ASSET' && a.name.toLowerCase().includes('bank'));
-        if (defaultBank && !selectedBankAccountId) {
-          setSelectedBankAccountId(defaultBank.id);
-        }
       }
     } catch (err) {
       console.error(err);
@@ -636,29 +629,25 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     }
   };
 
-  // Confirm Post Monthly Payroll with Payment Mode & GL Account Link
-  const handleConfirmPostMonthlyPayroll = async () => {
+  // Post Monthly Payroll directly to General Ledger: hits Salary Expense (5310-00) & Accrued Salaries Payable (2310-00)
+  const handleConfirmPostMonthlyPayroll = async (targetMonthOverride?: string) => {
+    const targetMonth = targetMonthOverride || activePayrollSheetMonth || selectedMonth;
     try {
       const res = await fetch('/api/hr/payroll/post', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          month: selectedMonth,
-          postedBy: 'HR Director',
-          paymentMethod: paymentMode,
-          bankAccountId: paymentMode === 'BANK_TRANSFER' ? selectedBankAccountId : undefined
+          month: targetMonth,
+          postedBy: 'Finance & HR Controller'
         })
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
         showMsg(data.error || 'Could not post monthly payroll', 'error');
       } else {
-        setShowPaymentModal(false);
-        const chosenBank = coaAccounts.find(a => a.id === selectedBankAccountId);
-        const paidViaText = paymentMode === 'CASH' ? 'Cash in Hand (1110-00)' : (chosenBank ? `${chosenBank.code} ${chosenBank.name}` : 'Corporate Bank');
-        showMsg(`Monthly payroll for ${selectedMonth} POSTED! Double-entry Journal Voucher recorded: Debit 5310-00 (Staff Salaries Expense), Credit ${paidViaText}.`);
+        showMsg(`Monthly payroll for ${targetMonth} POSTED! Recorded in General Ledger & COA: Debit 5310-00 (Staff Salaries Expense) & Credit 2310-00 (Accrued Staff Payroll Payable).`);
         HrService.clearPayrollSheetsCache();
-        notifyMutation('HR', 'PAYROLL', 'POST', selectedMonth);
+        notifyMutation('HR', 'PAYROLL', 'POST', targetMonth);
         loadData();
         onRefreshAll?.();
       }
@@ -3338,150 +3327,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       )}
 
       {/* Modal: Payroll Payment & General Ledger Settlement */}
-      {showPaymentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full border border-slate-200 overflow-hidden">
-            <div className="p-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <CreditCard className="w-4 h-4 text-emerald-600" />
-                <div>
-                  <h3 className="font-bold text-slate-900 text-sm">Disburse Payroll & Link General Ledger</h3>
-                  <p className="text-[11px] text-slate-500">Post monthly salary slips and record double-entry Journal Voucher</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowPaymentModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
-              >
-                ✕
-              </button>
-            </div>
 
-            <div className="p-4 space-y-3.5">
-              {/* Summary Card */}
-              <div className="bg-slate-50 border border-slate-200 rounded p-3 flex justify-between items-center">
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-500">Total Net Salaries Payable</span>
-                  <div className="text-xl font-bold font-mono text-slate-900">
-                    AED {safeFormatAed(totalPayrollCost)}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] uppercase font-bold text-slate-500">Period</span>
-                  <div className="text-xs font-bold font-mono text-blue-900">{selectedMonth} ({payrollSlips.length} Slips)</div>
-                </div>
-              </div>
-
-              {/* Payment Method Selector */}
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                  Select Disbursement Mode
-                </label>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMode('BANK_TRANSFER')}
-                    className={`p-3 rounded border text-left flex items-start gap-2.5 transition-all ${
-                      paymentMode === 'BANK_TRANSFER'
-                        ? 'border-blue-600 bg-blue-50/50 ring-2 ring-blue-500/20'
-                        : 'border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Building2 className={`w-4 h-4 mt-0.5 ${paymentMode === 'BANK_TRANSFER' ? 'text-blue-600' : 'text-slate-400'}`} />
-                    <div>
-                      <div className="font-bold text-xs text-slate-900">Bank Transfer / WPS</div>
-                      <div className="text-[10px] text-slate-500">Corporate operating bank account</div>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMode('CASH')}
-                    className={`p-3 rounded border text-left flex items-start gap-2.5 transition-all ${
-                      paymentMode === 'CASH'
-                        ? 'border-blue-600 bg-blue-50/50 ring-2 ring-blue-500/20'
-                        : 'border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    <DollarSign className={`w-4 h-4 mt-0.5 ${paymentMode === 'CASH' ? 'text-blue-600' : 'text-slate-400'}`} />
-                    <div>
-                      <div className="font-bold text-xs text-slate-900">Cash in Hand</div>
-                      <div className="text-[10px] text-slate-500">Branch petty / vault cash</div>
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              {/* Bank Selection Dropdown (if Bank Transfer) */}
-              {paymentMode === 'BANK_TRANSFER' ? (
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Select Corporate Bank Account (COA)
-                  </label>
-                  <select
-                    value={selectedBankAccountId}
-                    onChange={e => setSelectedBankAccountId(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded text-xs font-bold text-slate-800 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  >
-                    {coaAccounts
-                      .filter(a => a.classification === 'ASSET' && (a.code.startsWith('112') || a.name.toLowerCase().includes('bank') || a.code.startsWith('111')))
-                      .map(a => (
-                        <option key={a.id} value={a.id}>
-                          {a.code} - {a.name} (Balance: AED {safeFormatNum(a.currentBalance)})
-                        </option>
-                      ))}
-                    {coaAccounts.filter(a => a.classification === 'ASSET' && (a.code.startsWith('112') || a.name.toLowerCase().includes('bank'))).length === 0 && (
-                      <option value="acc-1120">1120-00 - Emirates NBD Primary Operating Account</option>
-                    )}
-                  </select>
-                </div>
-              ) : (
-                <div className="bg-slate-50 border border-slate-200 rounded p-2.5 text-xs">
-                  <span className="text-[10px] uppercase font-bold text-slate-500 block mb-0.5">Credit Source Account:</span>
-                  <div className="font-mono font-bold text-slate-800">1110-00 - Cash in Hand (Main Vault)</div>
-                </div>
-              )}
-
-              {/* Accounting Double-Entry Preview Box */}
-              <div className="bg-slate-900 text-white rounded p-3 text-xs space-y-2 font-mono">
-                <div className="text-[10px] uppercase tracking-wider font-sans font-bold text-slate-400 border-b border-slate-800 pb-1 flex items-center justify-between">
-                  <span>General Ledger Posting Preview (JV-PAY-{selectedMonth})</span>
-                  <span className="text-emerald-400">Balanced</span>
-                </div>
-                <div className="flex justify-between items-center text-emerald-400">
-                  <span>DEBIT : 5310-00 Staff Salaries Expense</span>
-                  <span className="font-bold">+AED {safeFixed(totalPayrollCost, 2)}</span>
-                </div>
-                <div className="flex justify-between items-center text-rose-400">
-                  <span>
-                    CREDIT: {paymentMode === 'CASH' ? '1110-00 Cash in Hand' : (coaAccounts.find(a => a.id === selectedBankAccountId)?.name || '1120-00 Bank Account')}
-                  </span>
-                  <span className="font-bold">-AED {safeFixed(totalPayrollCost, 2)}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowPaymentModal(false)}
-                className="px-3 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-xs"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                id="btn-confirm-disburse-payroll"
-                onClick={handleConfirmPostMonthlyPayroll}
-                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-bold uppercase tracking-wider text-xs shadow-xs transition-colors"
-              >
-                <CheckCircle className="w-3.5 h-3.5" />
-                <span>Confirm Disbursement & Post</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ===================== MODAL: ISSUE SALARY ADVANCE OR INSTALLMENT LOAN (EMI) ===================== */}
       {showLoanModal && (
@@ -3820,11 +3666,11 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 {isPayrollPosted ? (
                   <span className="text-emerald-700 font-bold flex items-center gap-1">
                     <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Disbursed & Linked to GL. Click "Unpost Month" if adjustments are required.</span>
+                    <span>POSTED to General Ledger (Debit 5310-00 / Credit 2310-00). Click "Unpost Month" if adjustments are required.</span>
                   </span>
                 ) : (
                   <span className="text-amber-800 font-medium">
-                    ⚠️ Review deductions above, then click "Post Month & Link GL" to disburse and record double-entry voucher.
+                    ⚠️ Review deductions above, then click "Post Month & Link GL" to record Salary Expense (5310-00) & Salaries Payable (2310-00) in General Ledger.
                   </span>
                 )}
               </div>
@@ -3850,10 +3696,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 {!isPayrollPosted ? (
                   <button
                     type="button"
-                    onClick={() => {
-                      setShowPayrollRegisterWindow(false);
-                      setShowPaymentModal(true);
-                    }}
+                    id="btn-confirm-post-payroll"
+                    onClick={() => handleConfirmPostMonthlyPayroll()}
                     className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-bold uppercase tracking-wider text-xs shadow-xs transition-colors"
                   >
                     <CheckCircle className="w-3.5 h-3.5" />

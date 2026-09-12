@@ -2173,7 +2173,7 @@ class RelationalStore {
     const defaultBank = this.coaAccounts.find(a => a.code === '1120-00') || this.coaAccounts.find(a => a.classification === 'ASSET' && a.name.toLowerCase().includes('bank'));
     const defaultCash = this.coaAccounts.find(a => a.code === '1110-00') || this.coaAccounts.find(a => a.classification === 'ASSET' && a.name.toLowerCase().includes('cash'));
 
-    const creditAccount = paymentMethod === 'CASH' ? defaultCash : (chosenBank || defaultBank);
+    const payableAcc = this.coaAccounts.find(a => a.code === '2310-00') || this.coaAccounts.find(a => a.classification === 'LIABILITY' && a.name.toLowerCase().includes('payroll'));
     const expenseAcc = this.coaAccounts.find(a => a.code === '5310-00') || this.coaAccounts.find(a => a.classification === 'EXPENSE' && a.name.toLowerCase().includes('salar'));
     const loanAssetAcc = this.coaAccounts.find(a => a.code === '1135-00') || this.coaAccounts.find(a => a.name.toLowerCase().includes('advance'));
 
@@ -2181,8 +2181,8 @@ class RelationalStore {
       p.status = 'POSTED';
       p.postedAt = new Date().toISOString();
       p.paymentMethod = paymentMethod;
-      p.bankAccountId = creditAccount?.id;
-      p.bankAccountName = creditAccount?.name;
+      p.bankAccountId = payableAcc?.id;
+      p.bankAccountName = payableAcc?.name;
 
       // Update remaining amounts on active loans
       const totalDed = (Number(p.advanceDeduction) || 0) + (Number(p.loanEmiDeduction) || 0);
@@ -2208,7 +2208,7 @@ class RelationalStore {
     // Double Entry Journal Voucher in General Ledger:
     // Debit: 5310-00 Staff Salaries Expense (Total Gross)
     // Credit: 1135-00 Staff Advance & Loan Receivables (Total Deductions recovered)
-    // Credit: Bank Account (1120-00) or Cash in Hand (1110-00) (Net Cash Disbursed)
+    // Credit: 2310-00 Accrued Staff Payroll & End-of-Service Gratuity (Total Net Payable)
     const voucherLines: VoucherLine[] = [
       {
         id: `vli-${Date.now()}-1-${Math.random().toString(36).substring(2, 7)}`,
@@ -2233,9 +2233,9 @@ class RelationalStore {
 
     voucherLines.push({
       id: `vli-${Date.now()}-2-${Math.random().toString(36).substring(2, 7)}`,
-      accountId: creditAccount?.id || (paymentMethod === 'CASH' ? 'acc-1110' : 'acc-1120'),
-      accountCode: creditAccount?.code || (paymentMethod === 'CASH' ? '1110-00' : '1120-00'),
-      accountName: creditAccount?.name || (paymentMethod === 'CASH' ? 'Cash in Hand (Counter 1 POS Drawer)' : 'Emirates NBD - Primary Corporate Operating Account'),
+      accountId: payableAcc?.id || 'acc-2310',
+      accountCode: payableAcc?.code || '2310-00',
+      accountName: payableAcc?.name || 'Accrued Staff Payroll & End-of-Service Gratuity',
       debitAmount: 0,
       creditAmount: totalNet
     });
@@ -2246,7 +2246,7 @@ class RelationalStore {
       type: 'JOURNAL',
       status: 'POSTED',
       date: new Date().toISOString().slice(0, 10),
-      narration: `Official payroll salary disbursement for ${identifier} via ${paymentMethod === 'CASH' ? 'Cash in Hand' : (creditAccount?.name || 'Bank Transfer')} (Gross: AED ${totalGross.toFixed(2)}, Advances/Loans Recovered: AED ${totalDeductions.toFixed(2)}, Net Disbursed: AED ${totalNet.toFixed(2)})`,
+      narration: `Monthly payroll salary accrual for ${identifier} (Gross: AED ${totalGross.toFixed(2)}, Advances/Loans Recovered: AED ${totalDeductions.toFixed(2)}, Accrued Salaries Payable: AED ${totalNet.toFixed(2)})`,
       totalDebit: totalGross,
       totalCredit: totalGross,
       currency: 'AED',
@@ -2258,7 +2258,7 @@ class RelationalStore {
     });
 
     this.auditLogs.unshift(
-      AuditEngine.createLogEntry('HR', 'POST', `PAY-${identifier}`, 'POSTED', postedBy, `Disbursed payroll for ${identifier} (Gross: AED ${totalGross.toFixed(2)}, Net: AED ${totalNet.toFixed(2)}) via ${paymentMethod === 'CASH' ? 'Cash' : creditAccount?.name || 'Bank'} and linked to General Ledger`)
+      AuditEngine.createLogEntry('HR', 'POST', `PAY-${identifier}`, 'POSTED', postedBy, `Posted payroll for ${identifier} (Gross: AED ${totalGross.toFixed(2)}, Net: AED ${totalNet.toFixed(2)}) and linked to General Ledger (Debit 5310-00, Credit 2310-00)`)
     );
 
     this.saveToDisk();
