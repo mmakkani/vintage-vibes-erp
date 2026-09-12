@@ -10,12 +10,13 @@ import {
   Sparkles,
   Smartphone,
   ShieldAlert,
-  HelpCircle,
-  Video,
+  Monitor,
+  FolderOpen,
   Eye,
   RefreshCw
 } from 'lucide-react';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
+import { compressImage } from '../../../utils/imageCompressor.ts';
 
 export type PhotoSlot = 'front' | 'back' | 'tag';
 
@@ -29,51 +30,6 @@ interface StudioPhotoCaptureModalProps {
   onSavePhotos: (photos: { front?: string; back?: string; tag?: string }) => void;
 }
 
-/**
- * High-performance client-side image compression:
- * Scales down large mobile phone camera photos (15MB+) to crisp ~1280px studio JPEGs (~150KB-250KB)
- * Prevents memory exhaustion, payload errors, and lag.
- */
-const compressImage = (fileOrDataUrl: File | string, maxDimension = 1280, quality = 0.85): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      let { width, height } = img;
-      if (width > maxDimension || height > maxDimension) {
-        if (width > height) {
-          height = Math.round((height * maxDimension) / width);
-          width = maxDimension;
-        } else {
-          width = Math.round((width * maxDimension) / height);
-          height = maxDimension;
-        }
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        resolve(typeof fileOrDataUrl === 'string' ? fileOrDataUrl : '');
-        return;
-      }
-      ctx.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', quality));
-    };
-    img.onerror = (e) => reject(e);
-
-    if (typeof fileOrDataUrl === 'string') {
-      img.src = fileOrDataUrl;
-    } else {
-      const reader = new FileReader();
-      reader.onload = () => {
-        img.src = reader.result as string;
-      };
-      reader.onerror = (e) => reject(e);
-      reader.readAsDataURL(fileOrDataUrl);
-    }
-  });
-};
-
 export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = ({
   isOpen,
   onClose,
@@ -83,20 +39,26 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   tagImageUrl: initialTag,
   onSavePhotos
 }) => {
+  const isMobile = typeof navigator !== 'undefined' && /mobi|android|iphone|ipad|ipod/i.test(navigator.userAgent.toLowerCase());
+  const isIOS = typeof navigator !== 'undefined' && /iphone|ipad|ipod/i.test(navigator.userAgent.toLowerCase());
+
   const [currentSlot, setCurrentSlot] = useState<PhotoSlot>(activeSlot);
   const [frontImg, setFrontImg] = useState<string | undefined>(initialFront);
   const [backImg, setBackImg] = useState<string | undefined>(initialBack);
   const [tagImg, setTagImg] = useState<string | undefined>(initialTag);
 
   const [cameraActive, setCameraActive] = useState(false);
-  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
+  // Default to 'user' on desktop PC to avoid OverconstrainedError, 'environment' on phones
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>(isMobile ? 'environment' : 'user');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isPermissionDenied, setIsPermissionDenied] = useState(false);
+  const [isNotFound, setIsNotFound] = useState(false);
   const [isFlashActive, setIsFlashActive] = useState(false);
   const [showSilhouette, setShowSilhouette] = useState(true);
   const [availableDevices, setAvailableDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const [previewLightbox, setPreviewLightbox] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -121,13 +83,14 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     setCameraActive(false);
   }, []);
 
-  // Multi-tier camera initialization with resilience against strict constraints
+  // Universal camera initialization optimized for Computer, Android, and iPhone
   const startCamera = useCallback(async (overrideDeviceId?: string) => {
     setCameraError(null);
     setIsPermissionDenied(false);
+    setIsNotFound(false);
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setCameraError('Webcam / live camera streaming is not supported by your browser environment. Please use the Native Phone Camera button below.');
+      setCameraError('Webcam / live camera streaming is not supported by this browser. Use file upload or native device camera below.');
       return;
     }
 
@@ -135,7 +98,6 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     stopCamera();
 
     const deviceToUse = overrideDeviceId !== undefined ? overrideDeviceId : selectedDeviceId;
-
     let stream: MediaStream | null = null;
     let lastErr: any = null;
 
@@ -148,41 +110,48 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         });
       } catch (err: any) {
         lastErr = err;
-        console.warn('Direct deviceId access failed, trying facingMode:', err);
       }
     }
 
-    // Strategy 2: Ideal facingMode and standard 1280x720 studio resolution
+    // Strategy 2: Desktop PC vs Mobile strategy
     if (!stream) {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: facingMode },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: false
-        });
-      } catch (err: any) {
-        lastErr = err;
-        console.warn('High-res facingMode stream failed, falling back to basic facingMode:', err);
+      if (!isMobile) {
+        // Desktop PC: Try generic video: true FIRST so it never fails on non-existent 'environment' cameras
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+        } catch (err: any) {
+          lastErr = err;
+        }
+      } else {
+        // Mobile (iPhone / Android): Try rear camera first
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: facingMode },
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            },
+            audio: false
+          });
+        } catch (err: any) {
+          lastErr = err;
+          // Fallback to basic facingMode without resolution constraints (for older iPhones)
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: { ideal: facingMode } },
+              audio: false
+            });
+          } catch (err2: any) {
+            lastErr = err2;
+          }
+        }
       }
     }
 
-    // Strategy 3: Basic facingMode
-    if (!stream) {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode },
-          audio: false
-        });
-      } catch (err: any) {
-        lastErr = err;
-        console.warn('Basic facingMode failed, falling back to generic video stream:', err);
-      }
-    }
-
-    // Strategy 4: Universal fallback - any available video input (laptop webcams, USB cameras)
+    // Strategy 3: Universal fallback - generic video: true for any platform
     if (!stream) {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -191,7 +160,6 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         });
       } catch (err: any) {
         lastErr = err;
-        console.error('All camera initialization strategies failed:', err);
       }
     }
 
@@ -199,18 +167,29 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     if (!stream) {
       const errName = lastErr?.name || '';
       const errMsg = (lastErr?.message || '').toLowerCase();
-      const isDenied =
-        errName === 'NotAllowedError' ||
-        errName === 'PermissionDeniedError' ||
-        errMsg.includes('denied') ||
-        errMsg.includes('permission');
+      const notFound =
+        errName === 'NotFoundError' ||
+        errName === 'DevicesNotFoundError' ||
+        errMsg.includes('not found') ||
+        errMsg.includes('device not found');
 
+      const isDenied =
+        (errName === 'NotAllowedError' ||
+         errName === 'PermissionDeniedError' ||
+         errMsg.includes('denied') ||
+         errMsg.includes('permission')) &&
+        !notFound;
+
+      setIsNotFound(notFound);
       setIsPermissionDenied(isDenied);
-      setCameraError(
-        isDenied
-          ? 'Browser Camera Access Blocked (Permission Denied)'
-          : lastErr?.message || 'Unable to start camera. Please verify device connection.'
-      );
+
+      if (notFound) {
+        setCameraError('No webcam hardware detected on this computer. Please attach a USB camera or upload photos from files.');
+      } else if (isDenied) {
+        setCameraError('Camera access is currently blocked by your browser.');
+      } else {
+        setCameraError(lastErr?.message || 'Unable to open camera stream.');
+      }
       setCameraActive(false);
       return;
     }
@@ -220,14 +199,20 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     setCameraActive(true);
 
     if (videoRef.current) {
+      // iPhone / Safari WebKit strict compliance
+      videoRef.current.setAttribute('playsinline', 'true');
+      videoRef.current.setAttribute('webkit-playsinline', 'true');
+      videoRef.current.muted = true;
       videoRef.current.srcObject = stream;
-      videoRef.current.play().catch(e => {
-        console.warn('Autoplay error, falling back to muted play:', e);
+      try {
+        await videoRef.current.play();
+      } catch (playErr) {
+        console.warn('Initial play error, retrying muted:', playErr);
         if (videoRef.current) {
           videoRef.current.muted = true;
-          videoRef.current.play().catch(err => console.error('Final play error:', err));
+          videoRef.current.play().catch(() => {});
         }
-      });
+      }
     }
 
     // Query connected camera devices
@@ -243,9 +228,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     } catch (e) {
       console.warn('Device enumeration error:', e);
     }
-  }, [facingMode, selectedDeviceId, stopCamera]);
+  }, [facingMode, isMobile, selectedDeviceId, stopCamera]);
 
-  // Sync initial images when modal opens
+  // Sync initial images when modal opens and start camera
   useEffect(() => {
     if (isOpen) {
       setCurrentSlot(activeSlot);
@@ -261,12 +246,14 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     };
   }, [isOpen, activeSlot, initialFront, initialBack, initialTag, startCamera, stopCamera]);
 
-  // Re-attach video stream if cameraActive changes or element mounts
+  // Re-attach video stream whenever cameraActive becomes true
   useEffect(() => {
     if (cameraActive && streamRef.current && videoRef.current) {
+      videoRef.current.setAttribute('playsinline', 'true');
+      videoRef.current.setAttribute('webkit-playsinline', 'true');
+      videoRef.current.muted = true;
       videoRef.current.srcObject = streamRef.current;
       videoRef.current.play().catch(e => {
-        console.warn('Video play re-attachment failed, retrying muted:', e);
         if (videoRef.current) {
           videoRef.current.muted = true;
           videoRef.current.play().catch(() => {});
@@ -275,12 +262,34 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   }, [cameraActive]);
 
+  // Live browser permission listener: auto-resumes camera when user allows it in the URL bar
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'camera' as any })
+        .then(permStatus => {
+          if (permStatus.state === 'granted' && !cameraActive && isOpen) {
+            startCamera();
+          }
+          permStatus.onchange = () => {
+            if (permStatus.state === 'granted') {
+              setIsPermissionDenied(false);
+              setCameraError(null);
+              startCamera();
+            } else if (permStatus.state === 'denied') {
+              setIsPermissionDenied(true);
+            }
+          };
+        })
+        .catch(() => {});
+    }
+  }, [isOpen, cameraActive, startCamera]);
+
   // Flip rear / front camera
   const toggleFacingMode = () => {
     luxuryAudio.playMechanicalClick();
     const nextMode = facingMode === 'environment' ? 'user' : 'environment';
     setFacingMode(nextMode);
-    setSelectedDeviceId(''); // clear exact device id to allow facing mode selection
+    setSelectedDeviceId('');
     startCamera();
   };
 
@@ -353,7 +362,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // Native phone camera & gallery input handler with automatic studio compression
+  // File input handler with automatic studio compression
   const handleNativeFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -371,6 +380,27 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       }
     }
     e.target.value = '';
+  };
+
+  // Drag and drop handler for desktop users
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      setIsProcessing(true);
+      try {
+        const compressed = await compressImage(file, 1280, 0.85);
+        applyPhotoToCurrentSlot(compressed);
+        try {
+          luxuryAudio.playMechanicalClick();
+        } catch {}
+      } catch (err) {
+        console.error('Drag drop error:', err);
+      } finally {
+        setIsProcessing(false);
+      }
+    }
   };
 
   const handleSaveAndClose = () => {
@@ -400,7 +430,11 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             <div>
               <h2 className="text-sm font-bold text-white flex items-center gap-2">
                 Garment 3-Angle Studio Camera
-                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded-full border border-emerald-500/30">
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                  cameraActive
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                    : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                }`}>
                   {cameraActive ? 'Live Viewfinder' : 'Ready'}
                 </span>
                 <span className="text-[10px] bg-indigo-500/20 text-indigo-300 font-mono px-2 py-0.5 rounded-full border border-indigo-500/30">
@@ -473,8 +507,18 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           </button>
         </div>
 
-        {/* CAMERA VIEWFINDER VIEWPORT */}
-        <div className="relative bg-black flex-1 min-h-[300px] max-h-[460px] overflow-hidden flex items-center justify-center select-none">
+        {/* CAMERA VIEWFINDER & STUDIO VIEWPORT */}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragOver(true);
+          }}
+          onDragLeave={() => setIsDragOver(false)}
+          onDrop={handleDrop}
+          className={`relative bg-black flex-1 min-h-[300px] max-h-[460px] overflow-hidden flex items-center justify-center select-none ${
+            isDragOver ? 'ring-4 ring-indigo-500 bg-indigo-950/40' : ''
+          }`}
+        >
           {/* Hidden Canvas for Frame Capture */}
           <canvas ref={canvasRef} className="hidden" />
 
@@ -483,107 +527,97 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             <div className="absolute inset-0 bg-white z-40 animate-out fade-out duration-150" />
           )}
 
-          {/* Persistent Video Stream Element (Always in DOM to guarantee ref binding) */}
+          {/* Persistent Video Stream Element (Never display:none so Safari WebKit doesn't abort playback) */}
           <video
             ref={videoRef}
             autoPlay
             playsInline
             muted
-            className={`w-full h-full object-cover transition-opacity duration-200 ${
-              cameraActive ? 'opacity-100' : 'hidden opacity-0'
+            className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${
+              cameraActive ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none -z-10'
             }`}
           />
 
-          {/* STANDBY & PERMISSION DENIED TROUBLESHOOTING SCREEN */}
+          {/* STANDBY / NON-BLOCKING ASSISTANT SCREEN (Displayed when live stream is inactive) */}
           {!cameraActive && (
-            <div className="p-4 sm:p-6 text-center text-slate-300 w-full max-w-lg mx-auto space-y-4">
-              {isPermissionDenied ? (
-                <div className="bg-rose-950/40 border border-rose-500/40 rounded-2xl p-4 sm:p-5 text-left space-y-3 backdrop-blur-sm shadow-xl">
-                  <div className="flex items-center gap-2.5 text-rose-400 font-bold text-sm">
-                    <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0" />
-                    <span>Camera Permission Blocked in Browser</span>
+            <div className="relative z-20 p-4 sm:p-6 text-center text-slate-300 w-full max-w-lg mx-auto space-y-4">
+              {/* Central Capture Card */}
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-2xl backdrop-blur-md space-y-3.5">
+                <div className="flex items-center justify-center">
+                  <div className="w-14 h-14 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-inner">
+                    <Camera className="w-7 h-7" />
                   </div>
+                </div>
 
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    Your browser has restricted live camera access for this website. To enable live viewfinder:
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center justify-center gap-1.5">
+                    <span>Ready to Capture:</span>
+                    <span className="text-amber-300 uppercase tracking-wide">
+                      {currentSlot === 'front' ? '1. Front Look' : currentSlot === 'back' ? '2. Back Look' : '3. Garment Tag'}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                    {isMobile
+                      ? 'Tap below to open your camera or choose a photo from your gallery.'
+                      : 'Take a photo with your webcam, or select / drop garment pictures from your computer.'}
                   </p>
+                </div>
 
-                  <div className="bg-slate-900/80 rounded-xl p-3 border border-slate-800 space-y-2 text-[11px] text-slate-300">
-                    <div className="flex items-start gap-2">
-                      <span className="font-bold text-indigo-400 shrink-0">💻 Desktop (Chrome/Edge):</span>
-                      <span>Click the <strong>🔒 lock</strong> or <strong>🎛️ site settings</strong> icon next to the URL at the very top, switch <strong>Camera</strong> to <strong>Allow</strong>, then retry.</span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <span className="font-bold text-amber-400 shrink-0">📱 iPhone / Safari:</span>
-                      <span>Tap the <strong>aA</strong> icon in the address bar → <strong>Website Settings</strong> → set <strong>Camera</strong> to <strong>Allow</strong>.</span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <span className="font-bold text-emerald-400 shrink-0">🤖 Android (Chrome):</span>
-                      <span>Tap the <strong>🔒 lock</strong> icon → <strong>Permissions</strong> → <strong>Camera</strong> → <strong>Allow</strong>.</span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => startCamera()}
-                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow"
-                    >
-                      <RotateCw className="w-3.5 h-3.5" />
-                      <span>Retry Live Camera</span>
-                    </button>
-
+                {/* Primary Action Buttons */}
+                <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+                  {/* On Mobile: Direct Phone Camera trigger */}
+                  {isMobile ? (
                     <button
                       type="button"
                       onClick={() => nativeCameraInputRef.current?.click()}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow"
+                      className="px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-indigo-600/30 transition active:scale-95 cursor-pointer"
                     >
-                      <Smartphone className="w-3.5 h-3.5" />
+                      <Smartphone className="w-4 h-4 text-emerald-400" />
                       <span>Snap with Phone Camera</span>
                     </button>
-                  </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => galleryInputRef.current?.click()}
+                      className="px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-indigo-600/30 transition active:scale-95 cursor-pointer"
+                    >
+                      <FolderOpen className="w-4 h-4 text-emerald-400" />
+                      <span>Select Photo from PC</span>
+                    </button>
+                  )}
+
+                  {/* Launch Live Webcam / Stream button */}
+                  <button
+                    type="button"
+                    onClick={() => startCamera()}
+                    className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                  >
+                    <RotateCw className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>{cameraError ? 'Retry Live Camera' : 'Turn On Live Camera'}</span>
+                  </button>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="w-16 h-16 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto text-slate-500">
-                    <Camera className="w-8 h-8" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-white">Live Camera Standby</h4>
-                    <p className="text-xs max-w-sm mx-auto text-slate-400 mt-1">
-                      {cameraError || 'Click below to activate live viewfinder, or snap directly with your phone camera.'}
+
+                {/* Helpful Permission Guidance (Subtle & Non-blocking) */}
+                {isPermissionDenied && (
+                  <div className="bg-slate-950/80 rounded-xl p-3 border border-amber-500/30 text-left space-y-1.5 text-[11px] text-slate-300 animate-in fade-in duration-200">
+                    <div className="flex items-center gap-1.5 font-bold text-amber-400 text-xs">
+                      <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Camera is blocked in browser settings</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      To use the live webcam feed: Click the <strong>🔒 lock icon</strong> next to the web address at the top of your screen, set <strong>Camera</strong> to <strong>Allow</strong>, and it will turn on automatically!
                     </p>
                   </div>
-
-                  <div className="flex justify-center gap-2 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => startCamera()}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 transition active:scale-95"
-                    >
-                      <RotateCw className="w-3.5 h-3.5" />
-                      <span>Launch Live Camera</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => nativeCameraInputRef.current?.click()}
-                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition active:scale-95"
-                    >
-                      <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Use Phone Camera</span>
-                    </button>
-                  </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           )}
 
-          {/* Garment Silhouette / Guide Outline Overlay */}
+          {/* Garment Silhouette / Guide Outline Overlay (Active when camera is live) */}
           {cameraActive && showSilhouette && (
-            <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-4">
+            <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-4 z-20">
               <div className="w-52 h-68 sm:w-60 sm:h-76 border-2 border-dashed border-white/40 rounded-3xl relative flex items-center justify-center">
-                <div className="absolute top-2 left-1/2 -translate-x-1/2 text-[10px] font-bold text-white/90 tracking-wider uppercase bg-black/70 px-3 py-0.5 rounded-full border border-white/20 backdrop-blur-sm">
+                <div className="absolute top-2 left-1/2 -translate-x-1/2 text-[10px] font-bold text-white/90 tracking-wider uppercase bg-black/70 px-3 py-0.5 rounded-full border border-white/20 backdrop-blur-sm whitespace-nowrap">
                   {currentSlot === 'front' ? '👔 FRONT CHEST' : currentSlot === 'back' ? '🧥 BACK VIEW' : '🏷️ TAG / COLLAR'}
                 </div>
                 {/* Center crosshair */}
@@ -593,9 +627,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             </div>
           )}
 
-          {/* Viewfinder HUD Overlays */}
+          {/* Viewfinder HUD Overlays (Top Right) */}
           {cameraActive && (
-            <div className="absolute top-2 right-2 flex items-center gap-1.5 z-20">
+            <div className="absolute top-2 right-2 flex items-center gap-1.5 z-30">
               {/* Multi-device camera switch selector */}
               {availableDevices.length > 1 && (
                 <select
@@ -640,10 +674,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             </div>
           )}
 
-          {/* Live Slot Indicator Badge */}
-          <div className="absolute bottom-2 left-2 z-20 bg-slate-950/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/20 text-white text-[11px] font-mono flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <span className="font-bold">Capturing:</span>
+          {/* Live Slot Indicator Badge (Bottom Left) */}
+          <div className="absolute bottom-2 left-2 z-30 bg-slate-950/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/20 text-white text-[11px] font-mono flex items-center gap-1.5">
+            <span className={`w-2 h-2 rounded-full ${cameraActive ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`} />
+            <span className="font-bold">Slot:</span>
             <span className="text-amber-300 uppercase font-semibold">
               {currentSlot === 'front' ? 'Front Look' : currentSlot === 'back' ? 'Back Look' : 'Garment Tag'}
             </span>
@@ -664,7 +698,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         <div className="bg-slate-900 p-3.5 border-t border-slate-800 space-y-3">
           {/* Main Shutter Row */}
           <div className="flex items-center justify-between gap-2 sm:gap-4">
-            {/* Direct Native Phone Camera Trigger */}
+            {/* Direct Native Phone Camera Trigger (Invokes phone camera app on mobile) */}
             <div>
               <input
                 ref={nativeCameraInputRef}
@@ -677,21 +711,29 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
               <button
                 type="button"
                 onClick={() => nativeCameraInputRef.current?.click()}
-                className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 px-3 py-2 rounded-xl text-xs font-semibold transition active:scale-95"
-                title="Opens the native camera app on your phone"
+                className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 px-3 py-2 rounded-xl text-xs font-semibold transition active:scale-95 cursor-pointer"
+                title="Opens the camera app on your phone"
               >
                 <Smartphone className="w-4 h-4 text-emerald-400" />
-                <span className="hidden sm:inline">Native</span> Phone Camera
+                <span className="hidden sm:inline">Native</span> Camera
               </button>
             </div>
 
-            {/* Central Big Shutter Button */}
+            {/* Central Big Shutter Button: Snaps live frame if camera is on, or triggers camera/picker if standby */}
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={cameraActive ? capturePhoto : () => nativeCameraInputRef.current?.click()}
+                onClick={() => {
+                  if (cameraActive) {
+                    capturePhoto();
+                  } else if (isMobile) {
+                    nativeCameraInputRef.current?.click();
+                  } else {
+                    galleryInputRef.current?.click();
+                  }
+                }}
                 className="group relative flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-r from-rose-500 via-indigo-600 to-indigo-700 text-white shadow-xl shadow-indigo-600/40 hover:scale-105 active:scale-95 transition-all duration-150 ring-4 ring-white/20 cursor-pointer"
-                title={cameraActive ? "Snap photo from live camera" : "Open phone camera"}
+                title={cameraActive ? "Snap photo from live camera" : "Choose / snap photo for this slot"}
               >
                 <div className="w-11 h-11 sm:w-13 sm:h-13 rounded-full border-2 border-white/80 flex items-center justify-center">
                   <Camera className="w-6 h-6 text-white group-hover:scale-110 transition-transform" />
@@ -711,11 +753,11 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
               <button
                 type="button"
                 onClick={() => galleryInputRef.current?.click()}
-                className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 px-3 py-2 rounded-xl text-xs font-semibold transition active:scale-95"
-                title="Choose photo from device gallery or files"
+                className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 px-3 py-2 rounded-xl text-xs font-semibold transition active:scale-95 cursor-pointer"
+                title="Choose photo from computer files or gallery"
               >
                 <UploadCloud className="w-4 h-4 text-indigo-400" />
-                <span>Gallery</span>
+                <span>{isMobile ? 'Gallery' : 'Browse PC'}</span>
               </button>
             </div>
           </div>
@@ -830,7 +872,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             <button
               type="button"
               onClick={handleSaveAndClose}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 transition shrink-0 active:scale-95"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 transition shrink-0 active:scale-95 cursor-pointer"
             >
               <Check className="w-4 h-4" />
               <span>Attach to Piece</span>
