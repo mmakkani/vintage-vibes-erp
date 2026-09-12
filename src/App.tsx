@@ -36,6 +36,7 @@ import { MarketingAutomationView } from './modules/marketing/components/Marketin
 import { LiveOBSOverlayView } from './modules/marketing/components/LiveOBSOverlayView.tsx';
 import { CompanyProfileService, SetupService, AuthService } from './services/index.ts';
 import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
+import { ModuleMaintenanceGuard } from './components/ModuleMaintenanceGuard.tsx';
 
 const VALID_TABS: ActiveTab[] = [
   'dashboard',
@@ -299,7 +300,19 @@ export default function App() {
 
   useEffect(() => {
     refreshGlobalData();
-  }, []);
+
+    const unsubscribe = CompanyProfileService.subscribeToMaintenanceChanges((newModules) => {
+      setCompanyProfile(prev => ({
+        ...prev,
+        maintenance_modules: newModules,
+        maintenanceModules: newModules
+      }));
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [refreshGlobalData]);
 
   // Auto-route to the first accessible tab if the current activeTab is restricted for this user
   useEffect(() => {
@@ -538,16 +551,27 @@ export default function App() {
           )}
           {activeTab === 'purchase' && (
             <ErrorBoundary sectionName="Purchase & Container Inward Module">
-              <PurchaseView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+              <PurchaseView
+                onRefreshAll={refreshGlobalData}
+                currentUserRole={currentUser.role}
+                maintenanceModules={companyProfile.maintenance_modules}
+              />
             </ErrorBoundary>
           )}
           {activeTab === 'sales' && (
             <ErrorBoundary sectionName="Sales, Barcode & Dispatch Module">
-              <SalesView
-                onRefreshAll={refreshGlobalData}
+              <ModuleMaintenanceGuard
+                moduleKey="sales"
+                moduleName="Sales & Dispatch Terminal"
                 currentUserRole={currentUser.role}
-                onSubTabChange={(tab) => setIsLiveStudioActive(tab === 'liveSelling')}
-              />
+                maintenanceModules={companyProfile.maintenance_modules}
+              >
+                <SalesView
+                  onRefreshAll={refreshGlobalData}
+                  currentUserRole={currentUser.role}
+                  onSubTabChange={(tab) => setIsLiveStudioActive(tab === 'liveSelling')}
+                />
+              </ModuleMaintenanceGuard>
             </ErrorBoundary>
           )}
           {activeTab === 'marketing' && (
@@ -560,12 +584,22 @@ export default function App() {
           )}
           {activeTab === 'finance' && (
             <ErrorBoundary sectionName="Financial Accounts & COA Module">
-              <FinanceView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} initialSubTab={currentUser.role === 'ADMIN' ? 'coa' : 'vouchers'} />
+              <FinanceView
+                onRefreshAll={refreshGlobalData}
+                currentUserRole={currentUser.role}
+                initialSubTab={currentUser.role === 'ADMIN' ? 'coa' : 'vouchers'}
+                maintenanceModules={companyProfile.maintenance_modules}
+              />
             </ErrorBoundary>
           )}
           {activeTab === 'ledger' && (
             <ErrorBoundary sectionName="General Ledger & Vouchers Module">
-              <FinanceView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} initialSubTab="ledger" />
+              <FinanceView
+                onRefreshAll={refreshGlobalData}
+                currentUserRole={currentUser.role}
+                initialSubTab="ledger"
+                maintenanceModules={companyProfile.maintenance_modules}
+              />
             </ErrorBoundary>
           )}
           {activeTab === 'parties' && (
@@ -575,7 +609,14 @@ export default function App() {
           )}
           {activeTab === 'hr' && (
             <ErrorBoundary sectionName="HR, Vault & Payroll Module">
-              <HRView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+              <ModuleMaintenanceGuard
+                moduleKey="hr_payroll"
+                moduleName="HR & Payroll Vault"
+                currentUserRole={currentUser.role}
+                maintenanceModules={companyProfile.maintenance_modules}
+              >
+                <HRView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+              </ModuleMaintenanceGuard>
             </ErrorBoundary>
           )}
           {activeTab === 'setup' && (

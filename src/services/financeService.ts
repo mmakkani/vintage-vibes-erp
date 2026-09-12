@@ -24,18 +24,45 @@ export class FinanceService {
 
     this.coaAccountsPromise = (async () => {
       try {
-        const { data, error } = await supabase
-          .from('coa_accounts')
-          .select('id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, party_id')
-          .order('code', { ascending: true });
+        // Prefer live SQL view with dynamically calculated balances
+        let rows: any[] = [];
+        try {
+          const { data: viewData, error: viewErr } = await supabase
+            .from('view_coa_live_balances')
+            .select('*')
+            .order('account_code', { ascending: true });
+          if (!viewErr && Array.isArray(viewData) && viewData.length > 0) {
+            rows = viewData.map((r: any) => ({
+              id: r.account_id || r.id,
+              code: r.account_code || r.code,
+              name: r.account_name || r.name,
+              type: (r.account_type || r.type || 'ASSET').toUpperCase(),
+              sub_type: r.sub_type || '',
+              currency: r.currency || 'AED',
+              current_balance: Number(r.current_balance ?? 0),
+              is_active: r.is_active !== false,
+              parent_id: r.parent_id,
+              tier_level: r.tier_level,
+              parent_code: r.parent_code
+            }));
+          }
+        } catch (_) {}
 
-        if (error) {
-          console.error('Supabase error on coa_accounts:', error);
-          if (this.cachedCoaAccounts) return this.cachedCoaAccounts;
-          throw new Error(error.message || 'Database error occurred reading Chart of Accounts');
+        if (rows.length === 0) {
+          const { data, error } = await supabase
+            .from('coa_accounts')
+            .select('id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, party_id')
+            .order('code', { ascending: true });
+
+          if (error) {
+            console.error('Supabase error on coa_accounts:', error);
+            if (this.cachedCoaAccounts) return this.cachedCoaAccounts;
+            throw new Error(error.message || 'Database error occurred reading Chart of Accounts');
+          }
+          rows = data || [];
         }
 
-        const mapped = (data || []).map((row: any) => ({
+        const mapped = rows.map((row: any) => ({
           id: row.id,
           code: row.code,
           name: row.name,
@@ -314,6 +341,11 @@ export class FinanceService {
       }
     }
 
+    try {
+      this.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
+    } catch (_) {}
+
     return {
       id,
       voucherNo,
@@ -340,6 +372,207 @@ export class FinanceService {
     try {
       await supabase.from('vouchers').update({ status }).eq('id', cleanId);
     } catch {}
+    try {
+      this.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
+    } catch (_) {}
+  }
+
+  // --- SQL DATABASE REPORTING RPCS ---
+  public static async getTrialBalance(startDate?: string, endDate?: string): Promise<{
+    rows: any[];
+    totalDebit: number;
+    totalCredit: number;
+    isBalanced: boolean;
+    difference: number;
+  }> {
+    try {
+      const { data, error } = await supabase.rpc('get_trial_balance', {
+        p_start_date: startDate || null,
+        p_end_date: endDate || null
+      });
+      if (!error && data) {
+        return {
+          rows: data.rows || [],
+          totalDebit: Number(data.totalDebit || 0),
+          totalCredit: Number(data.totalCredit || 0),
+          isBalanced: Boolean(data.isBalanced),
+          difference: Number(data.difference || 0)
+        };
+      }
+      if (error) console.warn('Supabase get_trial_balance warning:', error.message);
+    } catch (err) {
+      console.warn('Supabase get_trial_balance exception:', err);
+    }
+    return { rows: [], totalDebit: 0, totalCredit: 0, isBalanced: true, difference: 0 };
+  }
+
+  public static async getIncomeStatement(startDate?: string, endDate?: string): Promise<{
+    revenue: { accounts: any[]; total: number };
+    cogs: { accounts: any[]; total: number };
+    operatingExpenses: { accounts: any[]; total: number };
+    expenses: { accounts: any[]; total: number };
+    grossProfit: number;
+    netProfit: number;
+    netOperatingProfit: number;
+  }> {
+    try {
+      const { data, error } = await supabase.rpc('get_income_statement', {
+        p_start_date: startDate || null,
+        p_end_date: endDate || null
+      });
+      if (!error && data) {
+        return {
+          revenue: {
+            accounts: data.revenue?.accounts || [],
+            total: Number(data.revenue?.total || 0)
+          },
+          cogs: {
+            accounts: data.cogs?.accounts || [],
+            total: Number(data.cogs?.total || 0)
+          },
+          operatingExpenses: {
+            accounts: data.operatingExpenses?.accounts || [],
+            total: Number(data.operatingExpenses?.total || 0)
+          },
+          expenses: {
+            accounts: data.expenses?.accounts || [],
+            total: Number(data.expenses?.total || 0)
+          },
+          grossProfit: Number(data.grossProfit || 0),
+          netProfit: Number(data.netProfit || 0),
+          netOperatingProfit: Number(data.netOperatingProfit || data.netProfit || 0)
+        };
+      }
+      if (error) console.warn('Supabase get_income_statement warning:', error.message);
+    } catch (err) {
+      console.warn('Supabase get_income_statement exception:', err);
+    }
+    return {
+      revenue: { accounts: [], total: 0 },
+      cogs: { accounts: [], total: 0 },
+      operatingExpenses: { accounts: [], total: 0 },
+      expenses: { accounts: [], total: 0 },
+      grossProfit: 0,
+      netProfit: 0,
+      netOperatingProfit: 0
+    };
+  }
+
+  public static async getBalanceSheet(asOfDate?: string): Promise<{
+    assets: { accounts: any[]; total: number };
+    liabilities: { accounts: any[]; total: number };
+    equity: { accounts: any[]; total: number };
+    retainedEarnings: number;
+    totalAssets: number;
+    totalLiabilities: number;
+    totalEquity: number;
+    totalLiabilitiesAndEquity: number;
+    balanced: boolean;
+    difference: number;
+  }> {
+    try {
+      const { data, error } = await supabase.rpc('get_balance_sheet', {
+        p_as_of_date: asOfDate || null
+      });
+      if (!error && data) {
+        return {
+          assets: {
+            accounts: data.assets?.accounts || [],
+            total: Number(data.assets?.total || 0)
+          },
+          liabilities: {
+            accounts: data.liabilities?.accounts || [],
+            total: Number(data.liabilities?.total || 0)
+          },
+          equity: {
+            accounts: data.equity?.accounts || [],
+            total: Number(data.equity?.total || 0)
+          },
+          retainedEarnings: Number(data.retainedEarnings || 0),
+          totalAssets: Number(data.totalAssets || 0),
+          totalLiabilities: Number(data.totalLiabilities || 0),
+          totalEquity: Number(data.totalEquity || 0),
+          totalLiabilitiesAndEquity: Number(data.totalLiabilitiesAndEquity || 0),
+          balanced: Boolean(data.balanced),
+          difference: Number(data.difference || 0)
+        };
+      }
+      if (error) console.warn('Supabase get_balance_sheet warning:', error.message);
+    } catch (err) {
+      console.warn('Supabase get_balance_sheet exception:', err);
+    }
+    return {
+      assets: { accounts: [], total: 0 },
+      liabilities: { accounts: [], total: 0 },
+      equity: { accounts: [], total: 0 },
+      retainedEarnings: 0,
+      totalAssets: 0,
+      totalLiabilities: 0,
+      totalEquity: 0,
+      totalLiabilitiesAndEquity: 0,
+      balanced: true,
+      difference: 0
+    };
+  }
+
+  public static async getFinancialReports(params?: { startDate?: string; endDate?: string; asOfDate?: string }): Promise<any> {
+    const [tb, inc, bs] = await Promise.all([
+      this.getTrialBalance(params?.startDate, params?.endDate),
+      this.getIncomeStatement(params?.startDate, params?.endDate),
+      this.getBalanceSheet(params?.asOfDate || params?.endDate)
+    ]);
+    return {
+      trialBalance: tb.rows,
+      trialBalanceMeta: tb,
+      incomeStatement: inc,
+      balanceSheet: bs
+    };
+  }
+
+  public static async getGeneralLedgerEntries(filters?: {
+    accountId?: string;
+    partyId?: string;
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+  }): Promise<{ entries: LedgerEntry[]; totalDebit: number; totalCredit: number }> {
+    try {
+      const { data, error } = await supabase.rpc('get_general_ledger_entries', {
+        p_account_id: filters?.accountId || null,
+        p_party_id: filters?.partyId || null,
+        p_start_date: filters?.startDate || null,
+        p_end_date: filters?.endDate || null,
+        p_search: filters?.search || null
+      });
+      if (!error && data) {
+        return {
+          entries: (data.entries || []).map((r: any) => ({
+            id: r.id,
+            voucherId: r.voucherId,
+            voucherNo: r.voucherNo,
+            accountId: r.accountId,
+            accountCode: r.accountCode,
+            accountName: r.accountName,
+            partyId: r.partyId,
+            partyName: r.partyName,
+            date: r.date,
+            debit: Number(r.debit || 0),
+            credit: Number(r.credit || 0),
+            runningBalance: Number(r.runningBalance || 0),
+            balance: Number(r.runningBalance || 0),
+            documentRef: r.documentRef || '',
+            narration: r.narration || ''
+          })),
+          totalDebit: Number(data.totalDebit || 0),
+          totalCredit: Number(data.totalCredit || 0)
+        };
+      }
+      if (error) console.warn('Supabase get_general_ledger_entries warning:', error.message);
+    } catch (err) {
+      console.warn('Supabase get_general_ledger_entries exception:', err);
+    }
+    return { entries: [], totalDebit: 0, totalCredit: 0 };
   }
 
   // --- Ledgers ---

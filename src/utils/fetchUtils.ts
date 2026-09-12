@@ -104,6 +104,30 @@ export async function safeFetchJson<T = any>(
       if (url.includes('/sales/custom-b2b/available-bales')) {
         return [] as any;
       }
+      if (url.includes('/finance/reports/trial-balance')) {
+        const u = new URL(url, 'http://localhost');
+        const s = u.searchParams.get('startDate') || undefined;
+        const e = u.searchParams.get('endDate') || undefined;
+        return (await FinanceService.getTrialBalance(s, e)) as any;
+      }
+      if (url.includes('/finance/reports/income-statement')) {
+        const u = new URL(url, 'http://localhost');
+        const s = u.searchParams.get('startDate') || undefined;
+        const e = u.searchParams.get('endDate') || undefined;
+        return (await FinanceService.getIncomeStatement(s, e)) as any;
+      }
+      if (url.includes('/finance/reports/balance-sheet')) {
+        const u = new URL(url, 'http://localhost');
+        const asOf = u.searchParams.get('asOfDate') || undefined;
+        return (await FinanceService.getBalanceSheet(asOf)) as any;
+      }
+      if (url.includes('/finance/reports')) {
+        const u = new URL(url, 'http://localhost');
+        const s = u.searchParams.get('startDate') || undefined;
+        const e = u.searchParams.get('endDate') || undefined;
+        const asOf = u.searchParams.get('asOfDate') || undefined;
+        return (await FinanceService.getFinancialReports({ startDate: s, endDate: e, asOfDate: asOf })) as any;
+      }
       if (url.includes('/finance/coa') || url.includes('/coa')) {
         return (await FinanceService.getCoaAccounts()) as any;
       }
@@ -111,6 +135,22 @@ export async function safeFetchJson<T = any>(
         return (await FinanceService.getVouchers()) as any;
       }
       if (url.includes('/finance/ledgers') || url.includes('/ledgers')) {
+        const u = new URL(url, 'http://localhost');
+        const accId = u.searchParams.get('accountId') || undefined;
+        const ptyId = u.searchParams.get('partyId') || undefined;
+        const s = u.searchParams.get('startDate') || undefined;
+        const e = u.searchParams.get('endDate') || undefined;
+        const q = u.searchParams.get('search') || undefined;
+        if (accId || ptyId || s || e || q) {
+          const glRes = await FinanceService.getGeneralLedgerEntries({
+            accountId: accId,
+            partyId: ptyId,
+            startDate: s,
+            endDate: e,
+            search: q
+          });
+          return glRes.entries as any;
+        }
         return (await FinanceService.getLedgers()) as any;
       }
       if (url.includes('/finance/banks') || url.includes('/bank-accounts')) {

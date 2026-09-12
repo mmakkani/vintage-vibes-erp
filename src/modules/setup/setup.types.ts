@@ -114,7 +114,17 @@ export interface CompanyProfile {
   paymentGateway?: PaymentGatewayConfig;
   tiktokLiveSocket?: TikTokLiveSocketConfig;
   posBridge?: PhysicalPOSTerminalBridgeConfig;
+  maintenance_modules?: Record<string, boolean>;
+  maintenanceModules?: Record<string, boolean>;
 }
+
+export type MaintenanceModuleKey =
+  | 'hr_payroll'
+  | 'purchases'
+  | 'sales'
+  | 'sorting'
+  | 'vouchers'
+  | 'inventory';
 
 export interface CurrencyItem {
   id: string;

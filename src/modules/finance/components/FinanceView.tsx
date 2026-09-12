@@ -37,9 +37,12 @@ import {
   Coins,
   Target,
   Repeat,
-  Truck
+  Truck,
+  Calendar,
+  RefreshCw
 } from 'lucide-react';
 import { AccessDeniedNotice } from '../../../components/AccessDeniedNotice.tsx';
+import { ModuleMaintenanceGuard } from '../../../components/ModuleMaintenanceGuard.tsx';
 
 interface COARowProps {
   acc: COAAccount;
@@ -128,6 +131,7 @@ interface FinanceViewProps {
   onRefreshAll: () => void;
   currentUserRole: string;
   initialSubTab?: 'coa' | 'vouchers' | 'cod-reconciliation' | 'recurring-vouchers' | 'budgeting' | 'tax-compliance' | 'ledger' | 'trial-balance' | 'income-statement' | 'custom-reports' | 'balance-sheet';
+  maintenanceModules?: Record<string, boolean>;
 }
 
 interface NewVoucherLineItem {
@@ -140,7 +144,7 @@ interface NewVoucherLineItem {
   memo: string;
 }
 
-export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentUserRole, initialSubTab = 'coa' }) => {
+export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentUserRole, initialSubTab = 'coa', maintenanceModules }) => {
   const { syncVersion, acquireLock, releaseLock, notifyMutation } = useSync();
 
   const [subTab, setSubTabState] = useState<
@@ -220,15 +224,45 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   // Print voucher modal state
   const [voucherToPrint, setVoucherToPrint] = useState<Voucher | null>(null);
 
-  const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  // Dynamic Reporting Period for SQL Reports
+  const [reportPeriod, setReportPeriod] = useState<'2026' | '2025' | 'ALL' | 'CUSTOM'>('2026');
+  const [reportStartDate, setReportStartDate] = useState<string>('2026-01-01');
+  const [reportEndDate, setReportEndDate] = useState<string>('2026-12-31');
 
-  const loadData = async () => {
+  const handlePeriodChange = (period: '2026' | '2025' | 'ALL' | 'CUSTOM') => {
+    setReportPeriod(period);
+    if (period === '2026') {
+      setReportStartDate('2026-01-01');
+      setReportEndDate('2026-12-31');
+    } else if (period === '2025') {
+      setReportStartDate('2025-01-01');
+      setReportEndDate('2025-12-31');
+    } else if (period === 'ALL') {
+      setReportStartDate('');
+      setReportEndDate('');
+    }
+  };
+
+  const loadData = async (customParams?: { startDate?: string; endDate?: string }) => {
     try {
+      const sDate = customParams?.startDate !== undefined ? customParams.startDate : (reportPeriod === 'ALL' ? undefined : (reportStartDate || undefined));
+      const eDate = customParams?.endDate !== undefined ? customParams.endDate : (reportPeriod === 'ALL' ? undefined : (reportEndDate || undefined));
+
       const [coaRes, vchRes, ledRes, repRes, ptyRes] = await Promise.all([
-        FinanceService.getCoaAccounts().catch(() => safeFetchJson<COAAccount[]>('/api/finance/coa', undefined, 3, 300)),
+        FinanceService.getCoaAccounts(true).catch(() => safeFetchJson<COAAccount[]>('/api/finance/coa', undefined, 3, 300)),
         FinanceService.getVouchers().catch(() => safeFetchJson<Voucher[]>('/api/finance/vouchers', undefined, 3, 300)),
-        FinanceService.getLedgers().catch(() => safeFetchJson<LedgerEntry[]>('/api/finance/ledgers', undefined, 3, 300)),
-        safeFetchJson<FinancialStatements>('/api/finance/reports', undefined, 3, 300),
+        FinanceService.getGeneralLedgerEntries({
+          accountId: glSelectedTarget.startsWith('ACC:') ? glSelectedTarget.replace('ACC:', '') : undefined,
+          partyId: glSelectedTarget.startsWith('PTY:') ? glSelectedTarget.replace('PTY:', '') : undefined,
+          startDate: glDateFrom || undefined,
+          endDate: glDateTo || undefined,
+          search: glSearchText || undefined
+        }).then(r => r.entries).catch(() => safeFetchJson<LedgerEntry[]>('/api/finance/ledgers', undefined, 3, 300)),
+        FinanceService.getFinancialReports({
+          startDate: sDate,
+          endDate: eDate,
+          asOfDate: eDate
+        }).catch(() => safeFetchJson<FinancialStatements>('/api/finance/reports', undefined, 3, 300)),
         PartiesService.getParties().catch(() => safeFetchJson<Party[]>('/api/parties', undefined, 3, 300))
       ]);
 
@@ -256,6 +290,28 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       // Graceful fallback
     }
   };
+
+  // Reactively re-fetch reports when reporting period or dates change
+  useEffect(() => {
+    if (subTab === 'trial-balance' || subTab === 'income-statement' || subTab === 'balance-sheet') {
+      loadData();
+    }
+  }, [reportStartDate, reportEndDate, subTab]);
+
+  // Reactively re-fetch General Ledger entries from PostgreSQL when filters change
+  useEffect(() => {
+    if (subTab === 'ledger') {
+      FinanceService.getGeneralLedgerEntries({
+        accountId: glSelectedTarget.startsWith('ACC:') ? glSelectedTarget.replace('ACC:', '') : undefined,
+        partyId: glSelectedTarget.startsWith('PTY:') ? glSelectedTarget.replace('PTY:', '') : undefined,
+        startDate: glDateFrom || undefined,
+        endDate: glDateTo || undefined,
+        search: glSearchText || undefined
+      }).then(res => {
+        setLedgers(res.entries || []);
+      });
+    }
+  }, [glSelectedTarget, glDateFrom, glDateTo, glSearchText, subTab]);
 
   useEffect(() => {
     loadData();
@@ -487,97 +543,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     return sorted;
   }, [accounts, coaFilterPillar, coaSearchText]);
 
-  // Memoized Filtered General Ledger Entries
-  const filteredLedgers = useMemo(() => {
-    const rawFiltered = ledgers.filter(entry => {
-      // Target filter: COA account or Party
-      if (glSelectedTarget !== 'ALL') {
-        if (glSelectedTarget.startsWith('ACC:')) {
-          const accId = glSelectedTarget.replace('ACC:', '');
-          const targetAcc = accounts.find(a => a.id === accId || a.code === accId);
-          const matches = entry.accountId === accId ||
-            (targetAcc && (
-              entry.accountCode === targetAcc.code ||
-              (targetAcc.party_id && (entry.partyId === targetAcc.party_id || (entry as any).party_id === targetAcc.party_id)) ||
-              (targetAcc.partyId && (entry.partyId === targetAcc.partyId || (entry as any).party_id === targetAcc.partyId))
-            ));
-          if (!matches) return false;
-        } else if (glSelectedTarget.startsWith('PTY:')) {
-          const partyId = glSelectedTarget.replace('PTY:', '');
-          const targetParty = parties.find(p => p.id === partyId);
-          const cleanPartyCode = targetParty?.code?.replace(/[^A-Za-z0-9]/g, '');
-          const matches = entry.partyId === partyId || (entry as any).party_id === partyId ||
-            (targetParty && (
-              (targetParty.coa_account_id && entry.accountId === targetParty.coa_account_id) ||
-              entry.accountId === `acc-${partyId}` ||
-              (cleanPartyCode && entry.accountCode?.includes(cleanPartyCode)) ||
-              (targetParty.name && (
-                entry.partyName?.toLowerCase() === targetParty.name.toLowerCase() ||
-                entry.accountName?.toLowerCase().includes(targetParty.name.toLowerCase()) ||
-                entry.narration?.toLowerCase().includes(targetParty.name.toLowerCase())
-              ))
-            ));
-          if (!matches) return false;
-        }
-      }
-
-      // Date range
-      if (entry.date) {
-        if (glDateFrom && entry.date < glDateFrom) return false;
-        if (glDateTo && entry.date > glDateTo) return false;
-      }
-
-      // Search query
-      if (glSearchText.trim()) {
-        const q = glSearchText.toLowerCase();
-        return (
-          (entry.voucherNo || '').toLowerCase().includes(q) ||
-          (entry.accountCode || '').toLowerCase().includes(q) ||
-          (entry.accountName || '').toLowerCase().includes(q) ||
-          (entry.narration || '').toLowerCase().includes(q) ||
-          (entry.documentRef || '').toLowerCase().includes(q)
-        );
-      }
-
-      return true;
-    });
-
-    // If a specific target (account or party) is selected, calculate the progressive running balance
-    if (glSelectedTarget !== 'ALL') {
-      let isCreditNormal = false;
-      if (glSelectedTarget.startsWith('ACC:')) {
-        const accId = glSelectedTarget.replace('ACC:', '');
-        const targetAcc = accounts.find(a => a.id === accId || a.code === accId);
-        const classification = (targetAcc?.classification || targetAcc?.type || '').toUpperCase();
-        isCreditNormal = classification === 'LIABILITY' || classification === 'EQUITY' || classification === 'REVENUE' || (targetAcc?.code?.startsWith('2') || targetAcc?.code?.startsWith('3') || targetAcc?.code?.startsWith('4'));
-      } else if (glSelectedTarget.startsWith('PTY:')) {
-        const partyId = glSelectedTarget.replace('PTY:', '');
-        const targetParty = parties.find(p => p.id === partyId);
-        isCreditNormal = targetParty?.type === 'SUPPLIER';
-      }
-
-      // Sort ascending by date for accurate running balance calculation, then reverse for chronological display
-      const sortedAsc = [...rawFiltered].sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.id || '').localeCompare(b.id || ''));
-      let running = 0;
-      const computed = sortedAsc.map(entry => {
-        const d = Number(entry.debit || 0);
-        const c = Number(entry.credit || 0);
-        if (isCreditNormal) {
-          running += (c - d);
-        } else {
-          running += (d - c);
-        }
-        return {
-          ...entry,
-          runningBalance: running
-        };
-      });
-
-      return computed.reverse();
-    }
-
-    return rawFiltered;
-  }, [ledgers, accounts, parties, glSelectedTarget, glDateFrom, glDateTo, glSearchText]);
+  // General Ledger Entries strictly queried and aggregated via PostgreSQL window functions
+  const filteredLedgers = ledgers;
 
   // Memoized GL Totals
   const { totalGlDebits, totalGlCredits } = useMemo(() => {
@@ -711,7 +678,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
             </button>
           )}
 
-          {subTab === 'vouchers' && (
+          {subTab === 'vouchers' && (!maintenanceModules?.vouchers || currentUserRole === 'ADMIN') && (
             <button
               type="button"
               onClick={() => setShowNewVoucherModal(true)}
@@ -888,103 +855,104 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           SUBTAB 2: VOUCHERS (JV / BPV / BRV / CPV / CRV)
           ======================================================== */}
       {subTab === 'vouchers' && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-xl border border-amber-200/90 shadow-xs overflow-hidden">
-            <div className="p-3.5 border-b border-amber-200/70 bg-amber-50/50 flex flex-wrap items-center justify-between gap-2">
-              <span className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2">
-                <FileText className="w-4 h-4 text-amber-600" />
-                <span>Financial Vouchers Register ({vouchers.length} records)</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowNewVoucherModal(true)}
-                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Create Double-Entry Voucher</span>
-              </button>
-            </div>
+        <ModuleMaintenanceGuard
+          moduleKey="vouchers"
+          moduleName="Financial Vouchers Register"
+          currentUserRole={currentUserRole}
+          maintenanceModules={maintenanceModules}
+        >
+          <div className="space-y-4">
+            <div className="bg-white rounded-xl border border-amber-200/90 shadow-xs overflow-hidden">
+              <div className="p-3.5 border-b border-amber-200/70 bg-amber-50/50 flex flex-wrap items-center justify-between gap-2">
+                <span className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-amber-600" />
+                  <span>Financial Vouchers Register ({vouchers.length} records)</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowNewVoucherModal(true)}
+                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create Double-Entry Voucher</span>
+                </button>
+              </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
-                  <tr>
-                    <th className="px-3.5 py-2.5">Voucher No</th>
-                    <th className="px-3.5 py-2.5">Type</th>
-                    <th className="px-3.5 py-2.5">Date</th>
-                    <th className="px-3.5 py-2.5">Narration / Particulars</th>
-                    <th className="px-3.5 py-2.5 text-right">Debit (AED)</th>
-                    <th className="px-3.5 py-2.5 text-right">Credit (AED)</th>
-                    <th className="px-3.5 py-2.5 text-center">Status</th>
-                    <th className="px-3.5 py-2.5 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-mono">
-                  {(vouchers || []).map(v => (
-                    <tr key={v.id} className="hover:bg-amber-50/30 transition-colors">
-                      <td className="px-3.5 py-2.5 font-bold text-slate-900">{v.voucherNo || v.id}</td>
-                      <td className="px-3.5 py-2.5">
-                        <span className="font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-800 text-[10px]">
-                          {v.type || 'JOURNAL'}
-                        </span>
-                      </td>
-                      <td className="px-3.5 py-2.5 text-slate-600">{v.date}</td>
-                      <td className="px-3.5 py-2.5 font-sans text-slate-800 truncate max-w-xs">{v.narration || '-'}</td>
-                      <td className="px-3.5 py-2.5 text-right font-bold text-slate-900">
-                        AED {Number(v.totalDebit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="px-3.5 py-2.5 text-right font-bold text-slate-900">
-                        AED {Number(v.totalCredit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="px-3.5 py-2.5 text-center">
-                        <span
-                          className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                            v.status === 'POSTED'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {v.status}
-                        </span>
-                      </td>
-                      <td className="px-3.5 py-2.5 text-right space-x-1.5 whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => setVoucherToPrint(v)}
-                          className="px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-[10px] uppercase tracking-wider inline-flex items-center gap-1 cursor-pointer"
-                          title="Print official voucher with authorized stamps"
-                        >
-                          <Printer className="w-3 h-3" />
-                          <span>Print</span>
-                        </button>
-                        {v.status === 'DRAFT' && (
-                          <button
-                            type="button"
-                            onClick={() => handlePostVoucher(v.id)}
-                            className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] uppercase tracking-wider shadow-xs inline-flex items-center gap-1 cursor-pointer"
-                          >
-                            <CheckCircle className="w-3 h-3" />
-                            <span>Post</span>
-                          </button>
-                        )}
-                        {v.status === 'POSTED' && (
-                          <button
-                            type="button"
-                            onClick={() => handleUnpostVoucher(v.id)}
-                            className="px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-[10px] uppercase tracking-wider border border-amber-300 inline-flex items-center gap-1 cursor-pointer"
-                          >
-                            <XCircle className="w-3 h-3" />
-                            <span>Unpost</span>
-                          </button>
-                        )}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
+                    <tr>
+                      <th className="px-3.5 py-2.5">Voucher No</th>
+                      <th className="px-3.5 py-2.5">Type</th>
+                      <th className="px-3.5 py-2.5">Date</th>
+                      <th className="px-3.5 py-2.5">Narration / Particulars</th>
+                      <th className="px-3.5 py-2.5 text-right">Debit (AED)</th>
+                      <th className="px-3.5 py-2.5 text-right">Credit (AED)</th>
+                      <th className="px-3.5 py-2.5 text-center">Status</th>
+                      <th className="px-3.5 py-2.5 text-right">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-mono">
+                    {(vouchers || []).map(v => (
+                      <tr key={v.id} className="hover:bg-amber-50/40 transition-colors">
+                        <td className="px-3.5 py-2 font-bold text-amber-900">{v.voucherNo}</td>
+                        <td className="px-3.5 py-2">
+                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">
+                            {v.type}
+                          </span>
+                        </td>
+                        <td className="px-3.5 py-2 text-slate-600">{v.date}</td>
+                        <td className="px-3.5 py-2 max-w-xs truncate text-slate-800" title={v.narration}>
+                          {v.narration}
+                        </td>
+                        <td className="px-3.5 py-2 text-right font-bold text-slate-900">
+                          {Number(v.totalDebit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-3.5 py-2 text-right font-bold text-slate-900">
+                          {Number(v.totalCredit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-3.5 py-2 text-center">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                              v.status === 'POSTED'
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                : 'bg-slate-100 text-slate-700'
+                            }`}
+                          >
+                            {v.status}
+                          </span>
+                        </td>
+                        <td className="px-3.5 py-2 text-right flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedVoucherForPrint(v);
+                              setIsPrintModalOpen(true);
+                            }}
+                            className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] uppercase tracking-wider inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Printer className="w-3 h-3" />
+                            <span>Print</span>
+                          </button>
+                          {v.status === 'POSTED' && (
+                            <button
+                              type="button"
+                              onClick={() => handleUnpostVoucher(v.id)}
+                              className="px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-[10px] uppercase tracking-wider border border-amber-300 inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              <XCircle className="w-3 h-3" />
+                              <span>Unpost</span>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
+        </ModuleMaintenanceGuard>
       )}
 
       {/* ========================================================

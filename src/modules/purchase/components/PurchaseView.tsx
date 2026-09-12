@@ -20,10 +20,12 @@ import {
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { SetupService } from '../../../services/setupService.ts';
+import { ModuleMaintenanceGuard } from '../../../components/ModuleMaintenanceGuard.tsx';
 
 interface PurchaseViewProps {
   onRefreshAll: () => void;
   currentUserRole: string;
+  maintenanceModules?: Record<string, boolean>;
 }
 
 // Local storage cache keys
@@ -75,7 +77,8 @@ type PurchaseSubTab = 'sorting_terminal' | 'inventory' | 'commercial_invoices' |
 
 export const PurchaseView: React.FC<PurchaseViewProps> = ({
   onRefreshAll,
-  currentUserRole
+  currentUserRole,
+  maintenanceModules
 }) => {
   const [activeSubTab, setActiveSubTabState] = useState<PurchaseSubTab>(() => {
     try {
@@ -398,61 +401,82 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
 
       {/* SUB-TAB 1: CENTRAL BALE SORTING OPERATIONS HUB & EXECUTION LOG */}
       {activeSubTab === 'sorting_terminal' && (
-        <BaleSortingExecutionLog
-          bales={bales}
-          invoices={invoices}
-          parties={parties}
-          items={items}
-          brands={brands}
-          labels={labels}
-          shops={shops}
-          onOpenSortingTerminal={handleOpenSortingTerminal}
-          onRefresh={fetchPurchaseData}
-        />
+        <ModuleMaintenanceGuard
+          moduleKey="sorting"
+          moduleName="Bale Sorting Terminal"
+          currentUserRole={currentUserRole}
+          maintenanceModules={maintenanceModules}
+        >
+          <BaleSortingExecutionLog
+            bales={bales}
+            invoices={invoices}
+            parties={parties}
+            items={items}
+            brands={brands}
+            labels={labels}
+            shops={shops}
+            onOpenSortingTerminal={handleOpenSortingTerminal}
+            onRefresh={fetchPurchaseData}
+          />
+        </ModuleMaintenanceGuard>
       )}
 
       {/* SUB-TAB 2: MULTI-DIMENSIONAL INVENTORY */}
       {activeSubTab === 'inventory' && (
-        <MultiDimensionalInventoryView
-          pieces={inventoryPieces}
-          bales={bales}
-          onPrintSticker={stk => {
-            setStickerData(stk);
-            setIsStickerModalOpen(true);
-          }}
-          onSelectBale={id => {
-            setActiveSortingBaleId(id);
-            setIsTerminalModalOpen(true);
-          }}
-        />
+        <ModuleMaintenanceGuard
+          moduleKey="inventory"
+          moduleName="Real-Time Inventory Room"
+          currentUserRole={currentUserRole}
+          maintenanceModules={maintenanceModules}
+        >
+          <MultiDimensionalInventoryView
+            pieces={inventoryPieces}
+            bales={bales}
+            onPrintSticker={stk => {
+              setStickerData(stk);
+              setIsStickerModalOpen(true);
+            }}
+            onSelectBale={id => {
+              setActiveSortingBaleId(id);
+              setIsTerminalModalOpen(true);
+            }}
+          />
+        </ModuleMaintenanceGuard>
       )}
 
       {/* SUB-TAB 3: COMMERCIAL INVOICES */}
       {activeSubTab === 'commercial_invoices' && (
-        <CommercialInvoicesTab
-          invoices={invoices}
-          parties={parties}
-          items={items}
-          balePresets={balePresets}
-          bales={bales}
-          onRefresh={fetchPurchaseData}
-          onInvoiceCreated={inv => {
-            setInvoices(prev => {
-              const next = [inv, ...prev.filter(i => i.id !== inv.id)];
-              saveCached(CACHE_KEYS.INVOICES, next);
-              return next;
-            });
-            onRefreshAll();
-          }}
-          onDeleteInvoice={deletedId => {
-            setInvoices(prev => {
-              const next = prev.filter(i => String(i.id) !== String(deletedId));
-              saveCached(CACHE_KEYS.INVOICES, next);
-              return next;
-            });
-            onRefreshAll();
-          }}
-        />
+        <ModuleMaintenanceGuard
+          moduleKey="purchases"
+          moduleName="Commercial Purchases & Invoices"
+          currentUserRole={currentUserRole}
+          maintenanceModules={maintenanceModules}
+        >
+          <CommercialInvoicesTab
+            invoices={invoices}
+            parties={parties}
+            items={items}
+            balePresets={balePresets}
+            bales={bales}
+            onRefresh={fetchPurchaseData}
+            onInvoiceCreated={inv => {
+              setInvoices(prev => {
+                const next = [inv, ...prev.filter(i => i.id !== inv.id)];
+                saveCached(CACHE_KEYS.INVOICES, next);
+                return next;
+              });
+              onRefreshAll();
+            }}
+            onDeleteInvoice={deletedId => {
+              setInvoices(prev => {
+                const next = prev.filter(i => String(i.id) !== String(deletedId));
+                saveCached(CACHE_KEYS.INVOICES, next);
+                return next;
+              });
+              onRefreshAll();
+            }}
+          />
+        </ModuleMaintenanceGuard>
       )}
 
       {/* SUB-TAB 4: FACTORY & TEMPLATE SETTINGS */}

@@ -65,6 +65,22 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
     currency: 'AED',
     settlementCoaAccountId: '1120-00',
     gatewayFeePercent: 2.9
+  },
+  maintenance_modules: {
+    hr_payroll: false,
+    purchases: false,
+    sales: false,
+    sorting: false,
+    vouchers: false,
+    inventory: false
+  },
+  maintenanceModules: {
+    hr_payroll: false,
+    purchases: false,
+    sales: false,
+    sorting: false,
+    vouchers: false,
+    inventory: false
   }
 };
 
@@ -198,6 +214,8 @@ export class CompanyProfileService {
       paymentGateway: data.payment_gateway || data.paymentGateway || DEFAULT_COMPANY_PROFILE.paymentGateway,
       tiktokLiveSocket: data.tiktok_live_socket || data.tiktokLiveSocket,
       posBridge: data.pos_bridge || data.posBridge,
+      maintenance_modules: data.maintenance_modules || data.maintenanceModules || DEFAULT_COMPANY_PROFILE.maintenance_modules,
+      maintenanceModules: data.maintenance_modules || data.maintenanceModules || DEFAULT_COMPANY_PROFILE.maintenance_modules,
       ...(data.profile_data || {})
     };
 
@@ -266,6 +284,7 @@ export class CompanyProfileService {
       payment_gateway: profile.paymentGateway,
       tiktok_live_socket: profile.tiktokLiveSocket,
       pos_bridge: profile.posBridge,
+      maintenance_modules: profile.maintenance_modules || profile.maintenanceModules || (this.cachedProfile?.maintenance_modules ?? DEFAULT_COMPANY_PROFILE.maintenance_modules),
       profile_data: {
         ...profile,
         company_display_name: companyDisplayName,
@@ -278,7 +297,8 @@ export class CompanyProfileService {
         corporate_email: corpEmail,
         social_links: socialLinks,
         whatsapp_orders_number: cleanedWa,
-        whatsappOrderNumber: cleanedWa
+        whatsappOrderNumber: cleanedWa,
+        maintenance_modules: profile.maintenance_modules || profile.maintenanceModules || (this.cachedProfile?.maintenance_modules ?? DEFAULT_COMPANY_PROFILE.maintenance_modules)
       },
       updated_at: new Date().toISOString()
     };
@@ -296,5 +316,67 @@ export class CompanyProfileService {
 
     this.clearCache();
     return this.getCompanyProfile(true);
+  }
+
+  public static async setModuleMaintenance(moduleKey: string, isMaintenance: boolean): Promise<CompanyProfile> {
+    const current = await this.getCompanyProfile();
+    const updatedModules = {
+      ...(current.maintenance_modules || current.maintenanceModules || DEFAULT_COMPANY_PROFILE.maintenance_modules),
+      [moduleKey]: isMaintenance
+    };
+    const updated = await this.updateCompanyProfile({
+      ...current,
+      maintenance_modules: updatedModules,
+      maintenanceModules: updatedModules
+    });
+
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        const bc = new BroadcastChannel('vintage_maintenance_sync');
+        bc.postMessage({ maintenance_modules: updatedModules });
+        bc.close();
+      }
+    } catch {}
+
+    return updated;
+  }
+
+  public static subscribeToMaintenanceChanges(callback: (modules: Record<string, boolean>) => void): () => void {
+    const channel = supabase
+      .channel('company_profile_maintenance_' + Math.random().toString(36).substring(2, 9))
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'company_profile' },
+        (payload: any) => {
+          CompanyProfileService.clearCache();
+          const newModules = payload.new?.maintenance_modules || payload.new?.maintenanceModules;
+          if (newModules && typeof newModules === 'object') {
+            callback(newModules);
+          } else {
+            CompanyProfileService.getCompanyProfile(true).then(p => {
+              if (p.maintenance_modules) callback(p.maintenance_modules);
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    let bc: BroadcastChannel | null = null;
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        bc = new BroadcastChannel('vintage_maintenance_sync');
+        bc.onmessage = (event) => {
+          if (event.data?.maintenance_modules) {
+            CompanyProfileService.clearCache();
+            callback(event.data.maintenance_modules);
+          }
+        };
+      }
+    } catch {}
+
+    return () => {
+      try { supabase.removeChannel(channel); } catch {}
+      if (bc) try { bc.close(); } catch {}
+    };
   }
 }
