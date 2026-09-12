@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 import { AIOCRScanResult } from '../hr.controller.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
-import { executeDocumentOcr } from '../../../utils/geminiOcrService.ts';
+import { executeDocumentOcr, validateGeminiApiKey } from '../../../utils/geminiOcrService.ts';
+import { LiveAIOcrCamera } from './LiveAIOcrCamera.tsx';
 
 interface AIOcrScannerModalProps {
   isOpen: boolean;
@@ -83,11 +84,17 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
   const [isCropping, setIsCropping] = useState<Record<string, boolean>>({});
   const [isAutoCropped, setIsAutoCropped] = useState<Record<string, boolean>>({});
 
+  // Live Camera state
+  const [showLiveCamera, setShowLiveCamera] = useState(false);
+  const [liveCameraTargetDoc, setLiveCameraTargetDoc] = useState<'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA'>('EMIRATES_ID');
+
   // API Key management
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [storedApiKey, setStoredApiKey] = useState('');
   const [serverKeyConfigured, setServerKeyConfigured] = useState(false);
+  const [testingKey, setTestingKey] = useState(false);
+  const [keyTestResult, setKeyTestResult] = useState<{ valid?: boolean; message?: string } | null>(null);
 
   // Scanning status & result
   const [isScanning, setIsScanning] = useState(false);
@@ -122,6 +129,46 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
     localStorage.setItem('vintage_gemini_api_key', trimmed);
     setStoredApiKey(trimmed);
     setShowKeyModal(false);
+  };
+
+  const handleTestApiKey = async () => {
+    if (!apiKeyInput || apiKeyInput.trim().length < 8) {
+      setKeyTestResult({ valid: false, message: 'Please enter a valid API key starting with AIzaSy...' });
+      return;
+    }
+    setTestingKey(true);
+    setKeyTestResult(null);
+    try {
+      const res = await validateGeminiApiKey(apiKeyInput.trim());
+      if (res.valid) {
+        setKeyTestResult({ valid: true, message: `Connected to ${res.model}! Key is verified and ready for live extraction.` });
+        // Also auto-save valid key
+        localStorage.setItem('vintage_gemini_api_key', apiKeyInput.trim());
+        setStoredApiKey(apiKeyInput.trim());
+      } else {
+        setKeyTestResult({ valid: false, message: res.error || 'Invalid API key.' });
+      }
+    } catch (err: any) {
+      setKeyTestResult({ valid: false, message: err?.message || 'Error testing API key.' });
+    } finally {
+      setTestingKey(false);
+    }
+  };
+
+  const handleLiveCameraComplete = (result: AIOCRScanResult, capturedImg: string) => {
+    setShowLiveCamera(false);
+    if (docMode === 'EMIRATES_ID') {
+      setFrontImage(capturedImg);
+      result.idFrontImageUrl = capturedImg;
+    } else if (docMode === 'PASSPORT') {
+      setPassportImage(capturedImg);
+      result.passportImageUrl = capturedImg;
+    } else {
+      setResidencyImage(capturedImg);
+      result.residencyImageUrl = capturedImg;
+    }
+    setScanResult(result);
+    setShowVerificationOverlay(true);
   };
 
   /**
@@ -399,14 +446,28 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={handleLoadSampleData}
-            className="text-[11px] font-bold text-slate-600 hover:text-blue-700 bg-slate-100 hover:bg-blue-50 px-2.5 py-1 rounded border border-slate-200 transition-all flex items-center gap-1 shrink-0 mb-1"
-          >
-            <Sparkles className="w-3 h-3 text-amber-500" />
-            <span>Load Sample Preset</span>
-          </button>
+          <div className="flex items-center gap-2 mb-1">
+            <button
+              type="button"
+              onClick={() => {
+                setLiveCameraTargetDoc(docMode);
+                setShowLiveCamera(true);
+              }}
+              className="text-[11px] font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 px-3 py-1 rounded-md border border-blue-500 shadow-xs transition-all flex items-center gap-1.5 shrink-0"
+            >
+              <Camera className="w-3.5 h-3.5 animate-pulse text-amber-300" />
+              <span>Live AI Camera Scan</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleLoadSampleData}
+              className="text-[11px] font-bold text-slate-600 hover:text-blue-700 bg-slate-100 hover:bg-blue-50 px-2.5 py-1 rounded border border-slate-200 transition-all flex items-center gap-1 shrink-0"
+            >
+              <Sparkles className="w-3 h-3 text-amber-500" />
+              <span>Load Sample Preset</span>
+            </button>
+          </div>
         </div>
 
         {/* Main Content Area */}
@@ -485,14 +546,26 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     />
                   </div>
 
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-1.5">
                     <button
                       type="button"
                       onClick={() => frontInputRef.current?.click()}
-                      className="flex-1 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1"
+                      className="flex-1 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1 min-w-[90px]"
                     >
-                      <Camera className="w-3 h-3" />
-                      <span>{frontImage ? 'Change Front Photo' : 'Upload Front Image'}</span>
+                      <Upload className="w-3 h-3" />
+                      <span>{frontImage ? 'Change Photo' : 'Upload File'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLiveCameraTargetDoc('EMIRATES_ID');
+                        setShowLiveCamera(true);
+                      }}
+                      className="py-1.5 px-2.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-[10px] flex items-center justify-center gap-1"
+                      title="Open Live AI Camera to snap front of ID"
+                    >
+                      <Camera className="w-3 h-3 text-blue-600" />
+                      <span>Live Cam</span>
                     </button>
                     {frontImage && (
                       <button
@@ -556,14 +629,26 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     />
                   </div>
 
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-1.5">
                     <button
                       type="button"
                       onClick={() => backInputRef.current?.click()}
-                      className="flex-1 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1"
+                      className="flex-1 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1 min-w-[90px]"
                     >
-                      <Camera className="w-3 h-3" />
-                      <span>{backImage ? 'Change Back Photo' : 'Upload Back Image'}</span>
+                      <Upload className="w-3 h-3" />
+                      <span>{backImage ? 'Change Photo' : 'Upload File'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLiveCameraTargetDoc('EMIRATES_ID');
+                        setShowLiveCamera(true);
+                      }}
+                      className="py-1.5 px-2.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-[10px] flex items-center justify-center gap-1"
+                      title="Open Live AI Camera to snap back of ID"
+                    >
+                      <Camera className="w-3 h-3 text-blue-600" />
+                      <span>Live Cam</span>
                     </button>
                     {backImage && (
                       <button
@@ -640,20 +725,32 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                   />
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-1.5">
                   <button
                     type="button"
                     onClick={() => passportInputRef.current?.click()}
-                    className="flex-1 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1"
+                    className="flex-1 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1 min-w-[90px]"
                   >
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>{passportImage ? 'Change Passport Photo' : 'Upload Passport Image'}</span>
+                    <Upload className="w-3 h-3" />
+                    <span>{passportImage ? 'Change Photo' : 'Upload File'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLiveCameraTargetDoc('PASSPORT');
+                      setShowLiveCamera(true);
+                    }}
+                    className="py-1.5 px-2.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-[10px] flex items-center justify-center gap-1"
+                    title="Open Live AI Camera to snap passport bio page"
+                  >
+                    <Camera className="w-3 h-3 text-blue-600" />
+                    <span>Live Cam</span>
                   </button>
                   {passportImage && (
                     <button
                       type="button"
                       onClick={() => handleReCrop(passportImage, setPassportImage, 'passport', 'PASSPORT')}
-                      className="px-3 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1"
+                      className="px-2.5 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1"
                     >
                       <Crop className="w-3 h-3" />
                       <span>Re-Crop</span>
@@ -722,20 +819,32 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                   />
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-1.5">
                   <button
                     type="button"
                     onClick={() => residencyInputRef.current?.click()}
-                    className="flex-1 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1"
+                    className="flex-1 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1 min-w-[90px]"
                   >
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>{residencyImage ? 'Change Visa Photo' : 'Upload Residency Document'}</span>
+                    <Upload className="w-3 h-3" />
+                    <span>{residencyImage ? 'Change Photo' : 'Upload File'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLiveCameraTargetDoc('RESIDENCY_VISA');
+                      setShowLiveCamera(true);
+                    }}
+                    className="py-1.5 px-2.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-[10px] flex items-center justify-center gap-1"
+                    title="Open Live AI Camera to snap residency document or visa"
+                  >
+                    <Camera className="w-3 h-3 text-blue-600" />
+                    <span>Live Cam</span>
                   </button>
                   {residencyImage && (
                     <button
                       type="button"
                       onClick={() => handleReCrop(residencyImage, setResidencyImage, 'residency', 'RESIDENCY_VISA')}
-                      className="px-3 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1"
+                      className="px-2.5 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1"
                     >
                       <Crop className="w-3 h-3" />
                       <span>Re-Crop</span>
@@ -834,22 +943,59 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                 <div>• If left blank, the system will use sample presets for full demonstration.</div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
+              {/* Key Validation Feedback */}
+              {keyTestResult && (
+                <div className={`p-2.5 rounded-lg text-xs flex items-start gap-2 border ${
+                  keyTestResult.valid 
+                    ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                    : 'bg-rose-50 border-rose-300 text-rose-800'
+                }`}>
+                  {keyTestResult.valid ? (
+                    <CheckCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  )}
+                  <span className="text-[11px] leading-relaxed">{keyTestResult.message}</span>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center gap-2 pt-2 border-t border-slate-200">
                 <button
                   type="button"
-                  onClick={() => setShowKeyModal(false)}
-                  className="px-3 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
+                  disabled={testingKey || !apiKeyInput.trim()}
+                  onClick={handleTestApiKey}
+                  className="px-3 py-1.5 rounded bg-slate-100 hover:bg-blue-50 text-blue-700 border border-slate-300 hover:border-blue-300 font-bold text-xs flex items-center gap-1.5 disabled:opacity-50 transition-all"
                 >
-                  Cancel
+                  {testingKey ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                      <span>Testing with Google...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Test Key Live</span>
+                    </>
+                  )}
                 </button>
-                <button
-                  type="button"
-                  onClick={handleSaveApiKey}
-                  className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs flex items-center gap-1.5"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>Save API Key</span>
-                </button>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowKeyModal(false)}
+                    className="px-3 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveApiKey}
+                    className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs flex items-center gap-1.5"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Save API Key</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1132,6 +1278,17 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
             </div>
           </div>
         </div>
+      )}
+
+      {/* ======================= LIVE AI OCR CAMERA ======================= */}
+      {showLiveCamera && (
+        <LiveAIOcrCamera
+          isOpen={showLiveCamera}
+          onClose={() => setShowLiveCamera(false)}
+          defaultDocType={liveCameraTargetDoc}
+          apiKey={storedApiKey || undefined}
+          onScanComplete={handleLiveCameraComplete}
+        />
       )}
     </div>
   );

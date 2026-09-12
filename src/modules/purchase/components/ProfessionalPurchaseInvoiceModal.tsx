@@ -22,6 +22,7 @@ import {
   AlertCircle,
   Camera
 } from 'lucide-react';
+import { SearchableSelect } from '../../../components/SearchableSelect.tsx';
 
 import { PackagingUOM } from '../../../types/common.types.ts';
 
@@ -839,18 +840,19 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
                 <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
                   Supplier / Shipper: <span className="text-red-600">*</span>
                 </label>
-                <select
+                <SearchableSelect
                   value={supplierId}
-                  onChange={e => setSupplierId(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-xs text-slate-800 focus:border-blue-500 font-medium"
-                  required
-                >
-                  {suppliers.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.code})
-                    </option>
-                  ))}
-                </select>
+                  onChange={val => setSupplierId(val)}
+                  options={suppliers.map(s => ({
+                    value: s.id,
+                    label: `${s.name} (${s.code})`,
+                    badge: 'SUPPLIER',
+                    sublabel: s.trnNo ? `TRN: ${s.trnNo}` : undefined
+                  }))}
+                  placeholder="Select Supplier / Shipper..."
+                  searchPlaceholder="Search supplier name or code..."
+                  className="w-full bg-white text-xs font-medium"
+                />
                 {selectedSupplier && (
                   <div className="mt-1 flex items-center justify-between text-[10px] text-slate-500">
                     <span>Balance: <strong className={selectedSupplier.currentBalance < 0 ? 'text-red-700' : 'text-emerald-700'}>AED {selectedSupplier.currentBalance.toLocaleString()}</strong></span>
@@ -1046,24 +1048,19 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
                       <tr key={line.id} className="hover:bg-blue-50/30">
                         <td className="px-3 py-2 font-mono text-slate-400 font-bold">{idx + 1}</td>
                         <td className="px-3 py-2">
-                          <select
+                          <SearchableSelect
                             value={line.itemId || (allAvailableItems[0]?.id ?? '')}
-                            onChange={e => handleLineChange(idx, 'itemId', e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                          >
-                            {allAvailableItems.length === 0 ? (
-                              <option value="">-- No Bale Presets Found in Purchase Settings --</option>
-                            ) : (
-                              <>
-                                <option value="" disabled>-- Select Bale / Item from Purchase Settings --</option>
-                                {allAvailableItems.map(it => (
-                                  <option key={it.id} value={it.id}>
-                                    {it.name} ({it.code}){it.category ? ` • [${it.category}]` : ''} - {it.stdWeight}KG @ AED {it.baseRate}
-                                  </option>
-                                ))}
-                              </>
-                            )}
-                          </select>
+                            onChange={val => handleLineChange(idx, 'itemId', val)}
+                            options={allAvailableItems.map(it => ({
+                              value: it.id,
+                              label: `${it.name} (${it.code})`,
+                              badge: it.category || 'ITEM',
+                              sublabel: `${it.stdWeight || 45}KG @ AED ${it.baseRate || 0}`
+                            }))}
+                            placeholder="Select Bale / Item..."
+                            searchPlaceholder="Search bale name, category, or code..."
+                            className="w-full bg-white text-xs font-bold"
+                          />
                         </td>
                         <td className="px-3 py-2">
                           <select

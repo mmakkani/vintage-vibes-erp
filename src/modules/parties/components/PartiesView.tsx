@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
+import { SearchableSelect } from '../../../components/SearchableSelect.tsx';
 
 interface PartiesViewProps {
   onRefreshAll: () => void;
@@ -494,23 +495,18 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
                       1. Accounts Payable Account (Liability):
                     </label>
-                    <select
+                    <SearchableSelect
                       value={partyForm.payableAccountId}
-                      onChange={e => setPartyForm({ ...partyForm, payableAccountId: e.target.value })}
-                      className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 bg-white"
-                    >
-                      {coaAccounts.filter(a => a.classification === 'LIABILITY').length > 0 ? (
-                        coaAccounts
-                          .filter(a => a.classification === 'LIABILITY')
-                          .map(a => (
-                            <option key={a.code} value={a.code}>
-                              {a.code} - {a.name}
-                            </option>
-                          ))
-                      ) : (
-                        <option value="2110-00">2110-00 - Accounts Payable - Trade</option>
-                      )}
-                    </select>
+                      onChange={val => setPartyForm({ ...partyForm, payableAccountId: val })}
+                      options={coaAccounts.filter(a => a.classification === 'LIABILITY').map(a => ({
+                        value: a.code,
+                        label: `${a.code} - ${a.name}`,
+                        badge: 'LIABILITY'
+                      }))}
+                      placeholder="Select Payable Account (2110-00)..."
+                      searchPlaceholder="Search liabilities / payables..."
+                      className="w-full bg-white"
+                    />
                     <span className="text-[9px] text-slate-500">Credited when purchasing raw bales on credit</span>
                   </div>
 
@@ -518,23 +514,18 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
                       2. Stock Bale Inventory / Goods Clearing (Asset):
                     </label>
-                    <select
+                    <SearchableSelect
                       value={partyForm.clearingAccountId}
-                      onChange={e => setPartyForm({ ...partyForm, clearingAccountId: e.target.value })}
-                      className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 bg-white"
-                    >
-                      {coaAccounts.filter(a => a.classification === 'ASSET').length > 0 ? (
-                        coaAccounts
-                          .filter(a => a.classification === 'ASSET')
-                          .map(a => (
-                            <option key={a.code} value={a.code}>
-                              {a.code} - {a.name}
-                            </option>
-                          ))
-                      ) : (
-                        <option value="1310-00">1310-00 - Raw Material - Bulk Bales</option>
-                      )}
-                    </select>
+                      onChange={val => setPartyForm({ ...partyForm, clearingAccountId: val })}
+                      options={coaAccounts.filter(a => a.classification === 'ASSET').map(a => ({
+                        value: a.code,
+                        label: `${a.code} - ${a.name}`,
+                        badge: 'ASSET'
+                      }))}
+                      placeholder="Select Inventory Asset Account..."
+                      searchPlaceholder="Search inventory assets..."
+                      className="w-full bg-white"
+                    />
                     <span className="text-[9px] text-slate-500">Debited to capitalize physical inward bales into inventory assets</span>
                   </div>
                 </div>
@@ -551,23 +542,18 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
                       1. Accounts Receivable Account (Asset):
                     </label>
-                    <select
+                    <SearchableSelect
                       value={partyForm.receivableAccountId}
-                      onChange={e => setPartyForm({ ...partyForm, receivableAccountId: e.target.value })}
-                      className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 bg-white"
-                    >
-                      {coaAccounts.filter(a => a.classification === 'ASSET').length > 0 ? (
-                        coaAccounts
-                          .filter(a => a.classification === 'ASSET')
-                          .map(a => (
-                            <option key={a.code} value={a.code}>
-                              {a.code} - {a.name}
-                            </option>
-                          ))
-                      ) : (
-                        <option value="1120-00">1120-00 - Accounts Receivable - Trade</option>
-                      )}
-                    </select>
+                      onChange={val => setPartyForm({ ...partyForm, receivableAccountId: val })}
+                      options={coaAccounts.filter(a => a.classification === 'ASSET').map(a => ({
+                        value: a.code,
+                        label: `${a.code} - ${a.name}`,
+                        badge: 'ASSET'
+                      }))}
+                      placeholder="Select Receivable Account (1120-00)..."
+                      searchPlaceholder="Search trade receivables..."
+                      className="w-full bg-white"
+                    />
                     <span className="text-[9px] text-slate-500">Debited when client purchases vintage apparel on credit</span>
                   </div>
 
@@ -575,23 +561,18 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
                       2. Sales Revenue Account (Revenue):
                     </label>
-                    <select
+                    <SearchableSelect
                       value={partyForm.revenueAccountId}
-                      onChange={e => setPartyForm({ ...partyForm, revenueAccountId: e.target.value })}
-                      className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 bg-white"
-                    >
-                      {coaAccounts.filter(a => a.classification === 'REVENUE').length > 0 ? (
-                        coaAccounts
-                          .filter(a => a.classification === 'REVENUE')
-                          .map(a => (
-                            <option key={a.code} value={a.code}>
-                              {a.code} - {a.name}
-                            </option>
-                          ))
-                      ) : (
-                        <option value="4110-00">4110-00 - Wholesale Sales Revenue</option>
-                      )}
-                    </select>
+                      onChange={val => setPartyForm({ ...partyForm, revenueAccountId: val })}
+                      options={coaAccounts.filter(a => a.classification === 'REVENUE').map(a => ({
+                        value: a.code,
+                        label: `${a.code} - ${a.name}`,
+                        badge: 'REVENUE'
+                      }))}
+                      placeholder="Select Sales Revenue Account..."
+                      searchPlaceholder="Search revenue accounts..."
+                      className="w-full bg-white"
+                    />
                     <span className="text-[9px] text-slate-500">Credited when sales are finalized</span>
                   </div>
                 </div>

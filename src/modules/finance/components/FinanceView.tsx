@@ -13,6 +13,7 @@ import { VoucherInputSchema, validateWithZod } from '../../../validation/schemas
 import { safeFetchJson } from '../../../utils/fetchUtils.ts';
 import { FinanceService } from '../../../services/financeService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
+import { SearchableSelect, SearchableOption, SearchableGroup } from '../../../components/SearchableSelect.tsx';
 import {
   Landmark,
   FileSpreadsheet,
@@ -589,6 +590,67 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     return { totalGlDebits: debits, totalGlCredits: credits };
   }, [filteredLedgers]);
 
+  // Groups for SearchableSelect in General Ledger
+  const glTargetGroups: SearchableGroup[] = useMemo(() => {
+    return [
+      {
+        label: 'Chart of Accounts (COA)',
+        options: accounts.map(a => ({
+          value: `ACC:${a.id}`,
+          label: `${a.code} - ${a.name}`,
+          badge: a.classification,
+          badgeColor: a.classification === 'ASSET' ? 'bg-blue-100 text-blue-900 border-blue-300' :
+                      a.classification === 'LIABILITY' ? 'bg-rose-100 text-rose-900 border-rose-300' :
+                      a.classification === 'EQUITY' ? 'bg-purple-100 text-purple-900 border-purple-300' :
+                      a.classification === 'REVENUE' ? 'bg-emerald-100 text-emerald-900 border-emerald-300' :
+                      'bg-amber-100 text-amber-900 border-amber-300',
+          sublabel: a.sub_type || a.subType
+        }))
+      },
+      {
+        label: 'Customers / Clients',
+        options: parties.filter(p => p.type === 'CLIENT').map(p => ({
+          value: `PTY:${p.id}`,
+          label: `${p.code} - ${p.name}`,
+          badge: 'CLIENT',
+          badgeColor: 'bg-blue-100 text-blue-900 border-blue-300',
+          sublabel: p.phone ? `Phone: ${p.phone}` : undefined
+        }))
+      },
+      {
+        label: 'Suppliers / Exporters',
+        options: parties.filter(p => p.type === 'SUPPLIER').map(p => ({
+          value: `PTY:${p.id}`,
+          label: `${p.code} - ${p.name}`,
+          badge: 'SUPPLIER',
+          badgeColor: 'bg-amber-100 text-amber-900 border-amber-300',
+          sublabel: p.phone ? `Phone: ${p.phone}` : undefined
+        }))
+      },
+      {
+        label: 'Clearing Agents',
+        options: parties.filter(p => p.type === 'AGENT').map(p => ({
+          value: `PTY:${p.id}`,
+          label: `${p.code} - ${p.name}`,
+          badge: 'AGENT',
+          badgeColor: 'bg-indigo-100 text-indigo-900 border-indigo-300',
+          sublabel: p.phone ? `Phone: ${p.phone}` : undefined
+        }))
+      }
+    ];
+  }, [accounts, parties]);
+
+  const glTargetFlatOptions: SearchableOption[] = useMemo(() => {
+    return [
+      {
+        value: 'ALL',
+        label: '-- All Accounts & Parties Combined --',
+        badge: 'ALL',
+        badgeColor: 'bg-slate-100 text-slate-800 border-slate-300'
+      }
+    ];
+  }, []);
+
   // Pillars list
   const coaPillars = [
     { key: 'ASSET', code: '1000', label: '1000: ASSETS (Assets & Bank)', color: 'text-blue-900', bg: 'bg-blue-50 border-blue-200' },
@@ -948,41 +1010,15 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">
                   Target Account / Party:
                 </label>
-                <select
+                <SearchableSelect
                   value={glSelectedTarget}
-                  onChange={e => setGlSelectedTarget(e.target.value)}
-                  className="w-full text-xs px-2.5 py-2 border border-slate-300 rounded-lg bg-white font-mono font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
-                >
-                  <option value="ALL">-- All Accounts & Parties Combined --</option>
-                  <optgroup label="Chart of Accounts (COA)">
-                    {accounts.map(a => (
-                      <option key={a.id} value={`ACC:${a.id}`}>
-                        [{a.classification}] {a.code} - {a.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Customers / Clients">
-                    {parties.filter(p => p.type === 'CLIENT').map(p => (
-                      <option key={p.id} value={`PTY:${p.id}`}>
-                        [CLIENT] {p.code} - {p.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Suppliers / Exporters">
-                    {parties.filter(p => p.type === 'SUPPLIER').map(p => (
-                      <option key={p.id} value={`PTY:${p.id}`}>
-                        [SUPPLIER] {p.code} - {p.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Clearing Agents">
-                    {parties.filter(p => p.type === 'AGENT').map(p => (
-                      <option key={p.id} value={`PTY:${p.id}`}>
-                        [AGENT] {p.code} - {p.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                </select>
+                  onChange={val => setGlSelectedTarget(val || 'ALL')}
+                  options={glTargetFlatOptions}
+                  groups={glTargetGroups}
+                  placeholder="Select Account or Party..."
+                  searchPlaceholder="Search account, code (e.g. 2110), party, or supplier..."
+                  className="w-full font-mono font-bold text-xs"
+                />
               </div>
 
               {/* Text Search */}
@@ -1508,19 +1544,20 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
                     Parent {newAccTierLevel === 2 ? 'Master Folder (Tier 1)' : 'Sub-Folder (Tier 2)'} *
                   </label>
-                  <select
+                  <SearchableSelect
                     value={newAccParentCode}
-                    onChange={e => setNewAccParentCode(e.target.value)}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-amber-200 text-xs font-mono bg-[#fdfcf9] focus:ring-2 focus:ring-amber-500"
-                  >
-                    {accounts
+                    onChange={val => setNewAccParentCode(val)}
+                    options={accounts
                       .filter(a => a.classification === newAccClassification && a.tierLevel === (newAccTierLevel - 1))
-                      .map(parentAcc => (
-                        <option key={parentAcc.id} value={parentAcc.code}>
-                          {parentAcc.code} - {parentAcc.name}
-                        </option>
-                      ))}
-                  </select>
+                      .map(parentAcc => ({
+                        value: parentAcc.code,
+                        label: `${parentAcc.code} - ${parentAcc.name}`,
+                        badge: parentAcc.classification
+                      }))}
+                    placeholder="Select Parent Folder..."
+                    searchPlaceholder="Search parent folders..."
+                    className="w-full text-xs font-mono"
+                  />
                 </div>
               )}
 
@@ -1706,17 +1743,24 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   {voucherLines.map((line, idx) => (
                     <div key={line.id} className="grid grid-cols-12 gap-2 items-center bg-slate-50/80 p-2 rounded-lg border border-slate-200 text-xs">
                       <div className="col-span-5">
-                        <select
+                        <SearchableSelect
                           value={line.accountId}
-                          onChange={e => handleUpdateVoucherLine(idx, 'accountId', e.target.value)}
-                          className="w-full text-[11px] p-1.5 border border-slate-300 rounded font-mono font-bold bg-white focus:ring-2 focus:ring-amber-500"
-                        >
-                          {accounts.map(a => (
-                            <option key={a.id} value={a.id}>
-                              {a.code} - {a.name}
-                            </option>
-                          ))}
-                        </select>
+                          onChange={val => handleUpdateVoucherLine(idx, 'accountId', val)}
+                          options={accounts.map(a => ({
+                            value: a.id,
+                            label: `${a.code} - ${a.name}`,
+                            badge: a.classification,
+                            badgeColor: a.classification === 'ASSET' ? 'bg-blue-100 text-blue-900 border-blue-300' :
+                                        a.classification === 'LIABILITY' ? 'bg-rose-100 text-rose-900 border-rose-300' :
+                                        a.classification === 'EQUITY' ? 'bg-purple-100 text-purple-900 border-purple-300' :
+                                        a.classification === 'REVENUE' ? 'bg-emerald-100 text-emerald-900 border-emerald-300' :
+                                        'bg-amber-100 text-amber-900 border-amber-300',
+                            sublabel: a.sub_type || a.subType
+                          }))}
+                          placeholder="Select Account..."
+                          searchPlaceholder="Search code or account title..."
+                          className="w-full text-[11px] font-mono font-bold"
+                        />
                       </div>
 
                       <div className="col-span-3">
