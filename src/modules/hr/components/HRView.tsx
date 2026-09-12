@@ -42,7 +42,9 @@ import {
   RefreshCw,
   HandCoins,
   Wallet,
-  History
+  History,
+  Bell,
+  AlertCircle
 } from 'lucide-react';
 
 interface HRViewProps {
@@ -1619,70 +1621,247 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
             </div>
           </div>
 
+          {/* Expiry Alarms Summary Banner */}
+          {(() => {
+            const now = new Date();
+            const alerts: Array<{ empName: string; docType: string; docNo: string; expiry: string; daysLeft: number; isExpired: boolean }> = [];
+            employees.forEach(emp => {
+              const checkExpiry = (docType: string, docNo: string, expStr?: string) => {
+                if (!expStr) return;
+                const exp = new Date(expStr);
+                if (isNaN(exp.getTime())) return;
+                const diffTime = exp.getTime() - now.getTime();
+                const daysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                if (daysLeft <= 90) {
+                  alerts.push({ empName: emp.name, docType, docNo, expiry: expStr, daysLeft, isExpired: daysLeft < 0 });
+                }
+              };
+              checkExpiry('Emirates ID', emp.emiratesId || '', emp.emiratesIdExpiry);
+              checkExpiry('Passport', emp.passportNo || '', emp.passportExpiry);
+              checkExpiry('Residency Visa', emp.residencyCardNo || emp.uidNo || '', emp.residencyExpiryDate);
+            });
+
+            if (alerts.length === 0) return null;
+
+            return (
+              <div className="bg-rose-50 border-b border-rose-200 p-3 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-full bg-rose-600 text-white flex items-center justify-center animate-pulse">
+                    <Bell className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-rose-950 text-xs flex items-center gap-1.5">
+                      <span>DOCUMENT EXPIRY ALARMS ({alerts.length} Warnings)</span>
+                      <span className="text-[9px] bg-rose-200 text-rose-900 px-1.5 py-0.2 rounded-full font-bold">Action Required</span>
+                    </div>
+                    <p className="text-[10px] text-rose-700">
+                      Employees with Passport, UAE Visa, or Emirates ID expiring soon or already expired.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {alerts.slice(0, 4).map((a, i) => (
+                    <div key={i} className={`px-2 py-1 rounded text-[10px] font-bold border flex items-center gap-1.5 ${
+                      a.isExpired ? 'bg-rose-100 border-rose-300 text-rose-950' : 'bg-amber-100 border-amber-300 text-amber-950'
+                    }`}>
+                      <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />
+                      <span>{a.empName} • {a.docType}:</span>
+                      <span className="font-mono">{a.isExpired ? `EXPIRED (${a.expiry})` : `${a.daysLeft}d left (${a.expiry})`}</span>
+                    </div>
+                  ))}
+                  {alerts.length > 4 && (
+                    <span className="text-[10px] font-bold text-rose-800 self-center">+{alerts.length - 4} more</span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-[11px] border-collapse">
-              <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
+              <thead className="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                 <tr>
-                  <th className="px-3 py-2">Code</th>
-                  <th className="px-3 py-2">Employee & Arabic Name</th>
-                  <th className="px-3 py-2">Designation & Dept</th>
-                  <th className="px-3 py-2">Emirates ID (Front/Back)</th>
-                  <th className="px-3 py-2">Passport & Residency (UID)</th>
-                  <th className="px-3 py-2">Base Salary</th>
-                  <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2 text-right">Actions</th>
+                  <th className="px-3 py-2.5">Code</th>
+                  <th className="px-3 py-2.5">Employee & Arabic Name</th>
+                  <th className="px-3 py-2.5">Designation & Dept</th>
+                  <th className="px-3 py-2.5 bg-blue-50/50 border-x border-blue-100 text-blue-900">1. Emirates ID (Identity)</th>
+                  <th className="px-3 py-2.5 bg-indigo-50/50 border-r border-indigo-100 text-indigo-900">2. Passport (Travel Doc)</th>
+                  <th className="px-3 py-2.5 bg-emerald-50/50 border-r border-emerald-100 text-emerald-900">3. Residency Visa & UID</th>
+                  <th className="px-3 py-2.5">Salary Package</th>
+                  <th className="px-3 py-2.5">Status</th>
+                  <th className="px-3 py-2.5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono">
-                {employees.map(emp => (
-                  <tr key={emp.id} className="hover:bg-blue-50/40 transition-colors">
-                    <td className="px-3 py-2 font-bold text-blue-900">{emp.empCode}</td>
-                    <td className="px-3 py-2 font-sans font-semibold text-slate-800">
-                      <div className="flex items-center gap-2">
-                        {emp.idFrontImageUrl ? (
-                          <img src={emp.idFrontImageUrl} alt="" className="w-6 h-6 rounded-full object-cover border border-slate-300 shrink-0" />
-                        ) : (
-                          <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center font-bold text-[10px] shrink-0">
-                            {emp.name.charAt(0)}
+                {employees.map(emp => {
+                  const now = new Date();
+                  
+                  // Helper for expiry alarm status
+                  const getAlarmStatus = (expDateStr?: string) => {
+                    if (!expDateStr) return null;
+                    const d = new Date(expDateStr);
+                    if (isNaN(d.getTime())) return null;
+                    const days = Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                    if (days < 0) {
+                      return { text: `EXPIRED (${Math.abs(days)}d ago)`, color: 'bg-rose-600 text-white font-bold animate-pulse' };
+                    }
+                    if (days <= 30) {
+                      return { text: `CRITICAL (${days}d left)`, color: 'bg-rose-100 text-rose-900 border border-rose-300 font-bold' };
+                    }
+                    if (days <= 90) {
+                      return { text: `EXPIRING (${days}d left)`, color: 'bg-amber-100 text-amber-900 border border-amber-300 font-bold' };
+                    }
+                    return { text: `Valid (${days}d)`, color: 'bg-emerald-50 text-emerald-800 border border-emerald-200' };
+                  };
+
+                  const eidAlarm = getAlarmStatus(emp.emiratesIdExpiry);
+                  const passAlarm = getAlarmStatus(emp.passportExpiry);
+                  const resAlarm = getAlarmStatus(emp.residencyExpiryDate);
+
+                  return (
+                    <tr key={emp.id} className="hover:bg-blue-50/40 transition-colors">
+                      <td className="px-3 py-2 font-bold text-blue-900">{emp.empCode}</td>
+                      <td className="px-3 py-2 font-sans font-semibold text-slate-800">
+                        <div className="flex items-center gap-2">
+                          {emp.idFrontImageUrl ? (
+                            <img src={emp.idFrontImageUrl} alt="" className="w-8 h-8 rounded-full object-cover border border-slate-300 shrink-0" />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center font-bold text-[11px] shrink-0">
+                              {emp.name.charAt(0)}
+                            </div>
+                          )}
+                          <div>
+                            <div className="font-bold text-slate-900">{emp.name}</div>
+                            {emp.nameArabic && (
+                              <div className="text-[10px] text-slate-500 font-normal font-sans" dir="rtl">{emp.nameArabic}</div>
+                            )}
                           </div>
-                        )}
-                        <div>
-                          <div>{emp.name}</div>
-                          {emp.nameArabic && (
-                            <div className="text-[10px] text-slate-500 font-normal font-sans" dir="rtl">{emp.nameArabic}</div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 font-sans text-slate-600">
+                        <div className="font-medium text-slate-800">{emp.designation}</div>
+                        <div className="text-[10px] text-slate-400">{emp.department} • {emp.nationality || 'Pakistan'}</div>
+                      </td>
+
+                      {/* 1. EMIRATES ID COLUMN */}
+                      <td className="px-3 py-2 text-[10px] bg-blue-50/30 border-x border-blue-100">
+                        <div className="font-bold font-mono text-blue-950 flex items-center gap-1">
+                          <CreditCard className="w-3 h-3 text-blue-700 shrink-0" />
+                          <span>{emp.emiratesId || 'N/A'}</span>
+                        </div>
+                        <div className="text-[9px] text-slate-500 font-mono mt-0.5">
+                          Card No: <strong>{emp.idCardNo || 'N/A'}</strong>
+                        </div>
+                        <div className="flex items-center gap-1 mt-1 flex-wrap">
+                          {emp.emiratesIdExpiry && (
+                            <span className="text-[9px] text-slate-600 font-mono">
+                              Exp: {emp.emiratesIdExpiry}
+                            </span>
+                          )}
+                          {eidAlarm && (
+                            <span className={`px-1.5 py-0.2 rounded text-[8px] uppercase tracking-wider ${eidAlarm.color}`}>
+                              {eidAlarm.text}
+                            </span>
                           )}
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 font-sans text-slate-600">
-                      <div className="font-medium text-slate-800">{emp.designation}</div>
-                      <div className="text-[10px] text-slate-400">{emp.department} • {emp.nationality || 'UAE'}</div>
-                    </td>
-                    <td className="px-3 py-2 text-[10px]">
-                      <div className="font-bold text-blue-900">{emp.emiratesId || 'N/A'}</div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        {emp.idFrontImageUrl && (
-                          <span className="text-[9px] bg-blue-50 text-blue-700 px-1 py-0.2 rounded border border-blue-200">Front ID</span>
+                        {(emp.idFrontImageUrl || emp.idBackImageUrl) && (
+                          <div className="flex items-center gap-1 mt-1">
+                            {emp.idFrontImageUrl && (
+                              <a href={emp.idFrontImageUrl} target="_blank" rel="noreferrer" className="text-[8px] bg-blue-100 hover:bg-blue-200 text-blue-800 px-1 py-0.2 rounded border border-blue-200 font-bold">
+                                Front Photo ↗
+                              </a>
+                            )}
+                            {emp.idBackImageUrl && (
+                              <a href={emp.idBackImageUrl} target="_blank" rel="noreferrer" className="text-[8px] bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-1 py-0.2 rounded border border-indigo-200 font-bold">
+                                Back Photo ↗
+                              </a>
+                            )}
+                          </div>
                         )}
-                        {emp.idBackImageUrl && (
-                          <span className="text-[9px] bg-indigo-50 text-indigo-700 px-1 py-0.2 rounded border border-indigo-200">Back ID</span>
+                      </td>
+
+                      {/* 2. PASSPORT COLUMN */}
+                      <td className="px-3 py-2 text-[10px] bg-indigo-50/30 border-r border-indigo-100">
+                        <div className="font-bold font-mono text-indigo-950 flex items-center gap-1">
+                          <Globe className="w-3 h-3 text-indigo-700 shrink-0" />
+                          <span>{emp.passportNo || 'N/A'}</span>
+                          {emp.passportCountry && <span className="text-slate-400 font-normal">({emp.passportCountry})</span>}
+                        </div>
+                        <div className="text-[9px] text-slate-500 font-mono mt-0.5">
+                          Issue: {emp.passportIssueDate || 'N/A'}
+                        </div>
+                        <div className="flex items-center gap-1 mt-1 flex-wrap">
+                          {emp.passportExpiry && (
+                            <span className="text-[9px] text-slate-600 font-mono">
+                              Exp: {emp.passportExpiry}
+                            </span>
+                          )}
+                          {passAlarm && (
+                            <span className={`px-1.5 py-0.2 rounded text-[8px] uppercase tracking-wider ${passAlarm.color}`}>
+                              {passAlarm.text}
+                            </span>
+                          )}
+                        </div>
+                        {emp.passportImageUrl && (
+                          <div className="mt-1">
+                            <a href={emp.passportImageUrl} target="_blank" rel="noreferrer" className="text-[8px] bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-1 py-0.2 rounded border border-indigo-200 font-bold">
+                              Bio Page Scan ↗
+                            </a>
+                          </div>
                         )}
-                        {emp.emiratesIdExpiry && (
-                          <span className="text-[9px] text-slate-400 font-mono">Exp: {emp.emiratesIdExpiry}</span>
+                      </td>
+
+                      {/* 3. RESIDENCY VISA & UID COLUMN */}
+                      <td className="px-3 py-2 text-[10px] bg-emerald-50/30 border-r border-emerald-100">
+                        <div className="font-bold font-mono text-emerald-950 flex items-center gap-1">
+                          <Building2 className="w-3 h-3 text-emerald-700 shrink-0" />
+                          <span>File: {emp.residencyCardNo || 'N/A'}</span>
+                        </div>
+                        <div className="text-[9px] text-slate-600 font-mono mt-0.5">
+                          UID: <strong>{emp.uidNo || 'N/A'}</strong>
+                        </div>
+                        <div className="text-[9px] text-slate-500 truncate max-w-[150px]" title={emp.residencySponsor || ''}>
+                          {emp.residencySponsor || 'Sponsor N/A'}
+                        </div>
+                        <div className="flex items-center gap-1 mt-1 flex-wrap">
+                          {emp.residencyExpiryDate && (
+                            <span className="text-[9px] text-slate-600 font-mono">
+                              Exp: {emp.residencyExpiryDate}
+                            </span>
+                          )}
+                          {resAlarm && (
+                            <span className={`px-1.5 py-0.2 rounded text-[8px] uppercase tracking-wider ${resAlarm.color}`}>
+                              {resAlarm.text}
+                            </span>
+                          )}
+                        </div>
+                        {emp.residencyImageUrl && (
+                          <div className="mt-1">
+                            <a href={emp.residencyImageUrl} target="_blank" rel="noreferrer" className="text-[8px] bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-1 py-0.2 rounded border border-emerald-200 font-bold">
+                              Visa Photo ↗
+                            </a>
+                          </div>
                         )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-[10px]">
-                      <div>Pass: <span className="font-bold text-slate-800">{emp.passportNo || 'N/A'}</span></div>
-                      <div className="text-slate-500">
-                        UID: <span className="font-mono">{emp.uidNo || emp.residencyCardNo || 'N/A'}</span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 font-bold text-slate-900">AED {emp.baseSalary.toLocaleString()}</td>
-                    <td className="px-3 py-2 font-sans">
-                      <StatusBadge status={emp.status || 'POSTED'} size="sm" />
-                    </td>
-                    <td className="px-3 py-2 text-right space-x-1 font-sans">
+                      </td>
+
+                      {/* SALARY PACKAGE */}
+                      <td className="px-3 py-2 text-[10px]">
+                        <div className="font-bold text-slate-900 font-mono">
+                          AED {(Number(emp.baseSalary || 0) + Number(emp.housingAllow || 0) + Number(emp.transportAllow || 0)).toLocaleString()}
+                        </div>
+                        <div className="text-[9px] text-slate-400 font-mono">
+                          Base: AED {Number(emp.baseSalary || 0).toLocaleString()}
+                        </div>
+                      </td>
+
+                      {/* STATUS */}
+                      <td className="px-3 py-2 font-sans">
+                        <StatusBadge status={emp.status || 'POSTED'} size="sm" />
+                      </td>
+
+                      {/* ACTIONS */}
+                      <td className="px-3 py-2 text-right space-x-1 font-sans whitespace-nowrap">
                       <button
                         onClick={() => {
                           setEditingEmpId(emp.id);
@@ -1753,10 +1932,11 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       </button>
                     </td>
                   </tr>
-                ))}
-                {employees.length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="text-center py-10 text-slate-400">
+                );
+              })}
+              {employees.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="text-center py-10 text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-2 font-sans">
                         <Users className="w-8 h-8 text-slate-300" />
                         <span className="font-bold text-slate-600 text-xs">No Employee Records Found</span>
@@ -2214,7 +2394,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Emirates ID Expiry Date</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[10px] font-bold text-slate-700 uppercase">Emirates ID Expiry Date</label>
+                      {empForm.emiratesIdExpiry && (() => {
+                        const days = Math.ceil((new Date(empForm.emiratesIdExpiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                        return days < 0 ? (
+                          <span className="text-[9px] bg-rose-600 text-white font-bold px-1.5 py-0.2 rounded animate-pulse">ALARM: EXPIRED</span>
+                        ) : days <= 90 ? (
+                          <span className="text-[9px] bg-amber-100 text-amber-900 border border-amber-300 font-bold px-1.5 py-0.2 rounded">ALARM: {days}d left</span>
+                        ) : (
+                          <span className="text-[9px] text-emerald-700 font-bold font-mono">Valid ({days}d)</span>
+                        );
+                      })()}
+                    </div>
                     <input
                       type="date"
                       value={empForm.emiratesIdExpiry}
@@ -2386,7 +2578,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Expiry Date</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[10px] font-bold text-slate-700 uppercase">Expiry Date</label>
+                      {empForm.passportExpiry && (() => {
+                        const days = Math.ceil((new Date(empForm.passportExpiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                        return days < 0 ? (
+                          <span className="text-[9px] bg-rose-600 text-white font-bold px-1.5 py-0.2 rounded animate-pulse">ALARM: EXPIRED</span>
+                        ) : days <= 90 ? (
+                          <span className="text-[9px] bg-amber-100 text-amber-900 border border-amber-300 font-bold px-1.5 py-0.2 rounded">ALARM: {days}d left</span>
+                        ) : (
+                          <span className="text-[9px] text-emerald-700 font-bold font-mono">Valid ({days}d)</span>
+                        );
+                      })()}
+                    </div>
                     <input
                       type="date"
                       value={empForm.passportExpiry}
@@ -2520,7 +2724,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Residency Expiry Date</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[10px] font-bold text-slate-700 uppercase">Residency Expiry Date</label>
+                      {empForm.residencyExpiryDate && (() => {
+                        const days = Math.ceil((new Date(empForm.residencyExpiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                        return days < 0 ? (
+                          <span className="text-[9px] bg-rose-600 text-white font-bold px-1.5 py-0.2 rounded animate-pulse">ALARM: EXPIRED</span>
+                        ) : days <= 90 ? (
+                          <span className="text-[9px] bg-amber-100 text-amber-900 border border-amber-300 font-bold px-1.5 py-0.2 rounded">ALARM: {days}d left</span>
+                        ) : (
+                          <span className="text-[9px] text-emerald-700 font-bold font-mono">Valid ({days}d)</span>
+                        );
+                      })()}
+                    </div>
                     <input
                       type="date"
                       value={empForm.residencyExpiryDate}

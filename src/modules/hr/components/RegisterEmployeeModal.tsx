@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { User, Shield, CreditCard, Building2, DollarSign, Upload, Scan, Sparkles, FileText, CheckCircle2 } from 'lucide-react';
+import { User, Shield, CreditCard, Building2, DollarSign, Upload, Scan, Sparkles, FileText, CheckCircle2, Globe } from 'lucide-react';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import { AIOcrScannerModal } from './AIOcrScannerModal.tsx';
 
@@ -400,7 +400,19 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Emirates ID Expiry Date</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[10px] font-bold text-slate-700 uppercase">Emirates ID Expiry Date</label>
+                  {form.emiratesIdExpiry && (() => {
+                    const days = Math.ceil((new Date(form.emiratesIdExpiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                    return days < 0 ? (
+                      <span className="text-[9px] bg-rose-600 text-white font-bold px-1.5 py-0.2 rounded animate-pulse">ALARM: EXPIRED</span>
+                    ) : days <= 90 ? (
+                      <span className="text-[9px] bg-amber-100 text-amber-900 border border-amber-300 font-bold px-1.5 py-0.2 rounded">ALARM: {days}d left</span>
+                    ) : (
+                      <span className="text-[9px] text-emerald-700 font-bold font-mono">Valid ({days}d)</span>
+                    );
+                  })()}
+                </div>
                 <input
                   type="date"
                   value={form.emiratesIdExpiry}
@@ -453,54 +465,199 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
             </div>
           </div>
 
-          {/* SECTION 3: PASSPORT & RESIDENCY */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/30 space-y-3">
-              <div className="text-[11px] font-bold text-amber-950 uppercase border-b border-amber-200 pb-1.5 flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5 text-amber-700" />
-                <span>3. Passport Details</span>
-              </div>
+          {/* SECTION 3: PASSPORT & TRAVEL DOCUMENT */}
+          <div className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/30 space-y-3">
+            <div className="text-[11px] font-bold text-indigo-950 uppercase border-b border-indigo-200 pb-1.5 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-indigo-700" />
+                <span>3. Passport Details (Travel Document)</span>
+              </span>
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <div>
                 <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Passport Number</label>
                 <input
                   type="text"
                   value={form.passportNo}
                   onChange={e => setForm({ ...form, passportNo: e.target.value })}
-                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
-                  placeholder="A1234567"
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs font-bold text-indigo-900 bg-white"
+                  placeholder="e.g. AA0306605"
                 />
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-slate-500">{form.passportImageUrl ? 'Passport Scan attached' : 'No photo'}</span>
-                <input ref={passportDocRef} type="file" accept="image/*" onChange={e => handlePhotoUpload(e, 'passportImageUrl')} className="hidden" />
-                <button type="button" onClick={() => passportDocRef.current?.click()} className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px]">
-                  Upload
-                </button>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Issuing Country</label>
+                <input
+                  type="text"
+                  value={form.passportCountry}
+                  onChange={e => setForm({ ...form, passportCountry: e.target.value })}
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs bg-white"
+                  placeholder="Pakistan"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Issue Date</label>
+                <input
+                  type="date"
+                  value={form.passportIssueDate}
+                  onChange={e => setForm({ ...form, passportIssueDate: e.target.value })}
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[10px] font-bold text-slate-700 uppercase">Expiry Date</label>
+                  {form.passportExpiry && (() => {
+                    const days = Math.ceil((new Date(form.passportExpiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                    return days < 0 ? (
+                      <span className="text-[9px] bg-rose-600 text-white font-bold px-1.5 py-0.2 rounded animate-pulse">ALARM: EXPIRED</span>
+                    ) : days <= 90 ? (
+                      <span className="text-[9px] bg-amber-100 text-amber-900 border border-amber-300 font-bold px-1.5 py-0.2 rounded">ALARM: {days}d left</span>
+                    ) : (
+                      <span className="text-[9px] text-emerald-700 font-bold font-mono">Valid ({days}d)</span>
+                    );
+                  })()}
+                </div>
+                <input
+                  type="date"
+                  value={form.passportExpiry}
+                  onChange={e => setForm({ ...form, passportExpiry: e.target.value })}
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
+                />
               </div>
             </div>
 
-            <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/30 space-y-3">
-              <div className="text-[11px] font-bold text-emerald-950 uppercase border-b border-emerald-200 pb-1.5 flex items-center gap-1.5">
-                <Building2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>4. Residency Visa Details</span>
+            <div className="p-2.5 rounded-lg bg-white border border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-14 h-10 rounded bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center">
+                  {form.passportImageUrl ? (
+                    <img src={form.passportImageUrl} alt="Passport" className="w-full h-full object-contain" />
+                  ) : (
+                    <FileText className="w-5 h-5 text-slate-400" />
+                  )}
+                </div>
+                <div>
+                  <div className="font-bold text-[10px] text-slate-700">Passport Bio Scan</div>
+                  <div className="text-[10px] text-slate-400">{form.passportImageUrl ? 'Scan Attached' : 'Empty'}</div>
+                </div>
               </div>
+              <input ref={passportDocRef} type="file" accept="image/*" onChange={e => handlePhotoUpload(e, 'passportImageUrl')} className="hidden" />
+              <button type="button" onClick={() => passportDocRef.current?.click()} className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px]">
+                Upload
+              </button>
+            </div>
+          </div>
+
+          {/* SECTION 4: RESIDENCY VISA & UID */}
+          <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/30 space-y-3">
+            <div className="text-[11px] font-bold text-emerald-950 uppercase border-b border-emerald-200 pb-1.5 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>4. UAE Residency Visa Details</span>
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <div>
-                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Residency Card / File No</label>
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Residency File / Card No</label>
                 <input
                   type="text"
                   value={form.residencyCardNo}
                   onChange={e => setForm({ ...form, residencyCardNo: e.target.value })}
-                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
-                  placeholder="201/..."
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs font-bold text-emerald-900 bg-white"
+                  placeholder="301/2024/7/93764"
                 />
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-slate-500">{form.residencyImageUrl ? 'Residency Scan attached' : 'No photo'}</span>
-                <input ref={residencyDocRef} type="file" accept="image/*" onChange={e => handlePhotoUpload(e, 'residencyImageUrl')} className="hidden" />
-                <button type="button" onClick={() => residencyDocRef.current?.click()} className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px]">
-                  Upload
-                </button>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Unified Number (UID)</label>
+                <input
+                  type="text"
+                  value={form.uidNo}
+                  onChange={e => setForm({ ...form, uidNo: e.target.value })}
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
+                  placeholder="784198573523622"
+                />
               </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Profession</label>
+                <input
+                  type="text"
+                  value={form.residencyProfession}
+                  onChange={e => setForm({ ...form, residencyProfession: e.target.value })}
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs bg-white"
+                  placeholder="CHIEF OPERATIONS OFFICER"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Sponsor / Employer</label>
+                <input
+                  type="text"
+                  value={form.residencySponsor}
+                  onChange={e => setForm({ ...form, residencySponsor: e.target.value })}
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs bg-white"
+                  placeholder="HFZA GOLDTEX FZC"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Residency Issue Date</label>
+                <input
+                  type="date"
+                  value={form.residencyIssueDate}
+                  onChange={e => setForm({ ...form, residencyIssueDate: e.target.value })}
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[10px] font-bold text-slate-700 uppercase">Residency Expiry Date</label>
+                  {form.residencyExpiryDate && (() => {
+                    const days = Math.ceil((new Date(form.residencyExpiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                    return days < 0 ? (
+                      <span className="text-[9px] bg-rose-600 text-white font-bold px-1.5 py-0.2 rounded animate-pulse">ALARM: EXPIRED</span>
+                    ) : days <= 90 ? (
+                      <span className="text-[9px] bg-amber-100 text-amber-900 border border-amber-300 font-bold px-1.5 py-0.2 rounded">ALARM: {days}d left</span>
+                    ) : (
+                      <span className="text-[9px] text-emerald-700 font-bold font-mono">Valid ({days}d)</span>
+                    );
+                  })()}
+                </div>
+                <input
+                  type="date"
+                  value={form.residencyExpiryDate}
+                  onChange={e => setForm({ ...form, residencyExpiryDate: e.target.value })}
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
+                />
+              </div>
+            </div>
+
+            <div className="p-2.5 rounded-lg bg-white border border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-14 h-10 rounded bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center">
+                  {form.residencyImageUrl ? (
+                    <img src={form.residencyImageUrl} alt="Residency" className="w-full h-full object-contain" />
+                  ) : (
+                    <Building2 className="w-5 h-5 text-slate-400" />
+                  )}
+                </div>
+                <div>
+                  <div className="font-bold text-[10px] text-slate-700">Residency Visa Scan</div>
+                  <div className="text-[10px] text-slate-400">{form.residencyImageUrl ? 'Scan Attached' : 'Empty'}</div>
+                </div>
+              </div>
+              <input ref={residencyDocRef} type="file" accept="image/*" onChange={e => handlePhotoUpload(e, 'residencyImageUrl')} className="hidden" />
+              <button type="button" onClick={() => residencyDocRef.current?.click()} className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px]">
+                Upload
+              </button>
             </div>
           </div>
 
