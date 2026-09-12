@@ -1,55 +1,137 @@
 import { Router } from 'express';
 import { FinanceController } from './finance.controller.ts';
+import { FinanceService } from '../../services/financeService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 
 export const financeRouter = Router();
 
-financeRouter.get('/coa', (req, res) => {
-  return res.json(FinanceController.getCOA());
-});
-
-financeRouter.post('/coa', (req, res) => {
-  return res.json(FinanceController.addAccount(req.body));
-});
-
-financeRouter.get('/vouchers', (req, res) => {
-  return res.json(FinanceController.getVouchers());
-});
-
-financeRouter.post('/vouchers', (req, res) => {
-  const result = FinanceController.createVoucher(req.body);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+financeRouter.get('/coa', async (req, res) => {
+  try {
+    const data = await FinanceService.getCoaAccounts();
+    return res.json(data);
+  } catch (_) {
+    return res.json(FinanceController.getCOA());
   }
-  return res.json(result);
 });
 
-financeRouter.post('/vouchers/:id/post', (req, res) => {
+financeRouter.post('/coa', async (req, res) => {
+  try {
+    const created = await FinanceService.addCoaAccount(req.body);
+    return res.json(created);
+  } catch (_) {
+    return res.json(FinanceController.addAccount(req.body));
+  }
+});
+
+financeRouter.get('/vouchers', async (req, res) => {
+  try {
+    const data = await FinanceService.getVouchers();
+    return res.json(data);
+  } catch (_) {
+    return res.json(FinanceController.getVouchers());
+  }
+});
+
+financeRouter.post('/vouchers', async (req, res) => {
+  try {
+    const v = await FinanceService.addVoucher(req.body);
+    return res.json({ success: true, voucher: v });
+  } catch (err: any) {
+    const result = FinanceController.createVoucher(req.body);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
+  }
+});
+
+financeRouter.post('/vouchers/:id/post', async (req, res) => {
   const { id } = req.params;
   const { postedBy } = req.body;
-  const result = FinanceController.postVoucher(id, postedBy || 'Admin');
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    await FinanceService.postVoucher(id);
+    return res.json({ success: true });
+  } catch (err: any) {
+    const result = FinanceController.postVoucher(id, postedBy || 'Admin');
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-financeRouter.post('/vouchers/:id/unpost', (req, res) => {
+financeRouter.post('/vouchers/:id/unpost', async (req, res) => {
   const { id } = req.params;
-  const result = FinanceController.unpostVoucher(id);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    await FinanceService.unpostVoucher(id);
+    return res.json({ success: true });
+  } catch (err: any) {
+    const result = FinanceController.unpostVoucher(id);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-financeRouter.get('/ledgers', (req, res) => {
-  const { accountId, partyId } = req.query as { accountId?: string; partyId?: string };
-  return res.json(FinanceController.getLedger(accountId, partyId));
+financeRouter.get('/ledgers', async (req, res) => {
+  const { accountId, partyId, startDate, endDate, search } = req.query as any;
+  try {
+    const data = await FinanceService.getGeneralLedgerEntries({
+      accountId,
+      partyId,
+      startDate,
+      endDate,
+      search
+    });
+    return res.json(data.entries);
+  } catch (_) {
+    return res.json(FinanceController.getLedger(accountId, partyId));
+  }
 });
 
-financeRouter.get('/reports', (req, res) => {
-  return res.json(FinanceController.getFinancialStatements());
+financeRouter.get('/reports', async (req, res) => {
+  try {
+    const s = req.query.startDate as string;
+    const e = req.query.endDate as string;
+    const asOf = req.query.asOfDate as string;
+    const data = await FinanceService.getFinancialReports({ startDate: s, endDate: e, asOfDate: asOf });
+    return res.json(data);
+  } catch (_) {
+    return res.json(FinanceController.getFinancialStatements());
+  }
+});
+
+financeRouter.get('/reports/trial-balance', async (req, res) => {
+  try {
+    const s = req.query.startDate as string;
+    const e = req.query.endDate as string;
+    const data = await FinanceService.getTrialBalance(s, e);
+    return res.json(data);
+  } catch (_) {
+    return res.json([]);
+  }
+});
+
+financeRouter.get('/reports/income-statement', async (req, res) => {
+  try {
+    const s = req.query.startDate as string;
+    const e = req.query.endDate as string;
+    const data = await FinanceService.getIncomeStatement(s, e);
+    return res.json(data);
+  } catch (_) {
+    return res.json([]);
+  }
+});
+
+financeRouter.get('/reports/balance-sheet', async (req, res) => {
+  try {
+    const asOf = req.query.asOfDate as string;
+    const data = await FinanceService.getBalanceSheet(asOf);
+    return res.json(data);
+  } catch (_) {
+    return res.json([]);
+  }
 });
 
 // --- Budgets ---

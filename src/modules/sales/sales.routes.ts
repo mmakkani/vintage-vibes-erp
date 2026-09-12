@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { SalesController } from './sales.controller.ts';
+import { SalesService } from '../../services/salesService.ts';
 
 export const salesRouter = Router();
 
@@ -49,8 +50,50 @@ salesRouter.post('/gate-passes/:id/convert-invoice', (req, res) => {
   return res.json(result);
 });
 
-salesRouter.get('/invoices', (req, res) => {
-  return res.json(SalesController.getInvoices());
+salesRouter.get('/invoices', async (req, res) => {
+  try {
+    const list = await SalesService.getSalesInvoices();
+    return res.json(list);
+  } catch (_) {
+    return res.json(SalesController.getInvoices());
+  }
+});
+
+salesRouter.post('/invoices', async (req, res) => {
+  try {
+    const inv = await SalesService.createSalesInvoice(req.body);
+    return res.json(inv);
+  } catch (_) {
+    const inv = SalesController.createSalesInvoice(req.body);
+    return res.json(inv);
+  }
+});
+
+salesRouter.get('/pos', async (req, res) => {
+  try {
+    const list = await SalesService.getPosSales();
+    return res.json(list);
+  } catch (_) {
+    return res.json([]);
+  }
+});
+
+salesRouter.get('/b2b', async (req, res) => {
+  try {
+    const list = await SalesService.getB2bSales();
+    return res.json(list);
+  } catch (_) {
+    return res.json([]);
+  }
+});
+
+salesRouter.get('/orders', async (req, res) => {
+  try {
+    const list = await SalesService.getOrders();
+    return res.json(list);
+  } catch (_) {
+    return res.json([]);
+  }
 });
 
 salesRouter.post('/live-checkout', (req, res) => {

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { AuthController } from './auth.controller.ts';
+import { AuthService } from '../../services/authService.ts';
 
 export const authRouter = Router();
 
@@ -16,8 +17,13 @@ authRouter.post('/login', (req, res) => {
   return res.json(result);
 });
 
-authRouter.get('/users', (req, res) => {
-  return res.json(AuthController.listUsers());
+authRouter.get('/users', async (req, res) => {
+  try {
+    const list = await AuthService.getUsers();
+    return res.json(list);
+  } catch (_) {
+    return res.json(AuthController.listUsers());
+  }
 });
 
 authRouter.post('/users', (req, res) => {

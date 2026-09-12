@@ -1,180 +1,296 @@
 import { Router } from 'express';
 import { HRController } from './hr.controller.ts';
+import { HrService } from '../../services/hrService.ts';
 
 export const hrRouter = Router();
 
-hrRouter.get('/employees', (req, res) => {
-  return res.json(HRController.getEmployees());
+hrRouter.get('/employees', async (req, res) => {
+  try {
+    const data = await HrService.getEmployees();
+    return res.json(data);
+  } catch (_) {
+    return res.json(HRController.getEmployees());
+  }
 });
 
-hrRouter.post('/employees', (req, res) => {
-  return res.json(HRController.addEmployee(req.body));
+hrRouter.post('/employees', async (req, res) => {
+  try {
+    const data = await HrService.createEmployee(req.body);
+    return res.json(data);
+  } catch (_) {
+    return res.json(HRController.addEmployee(req.body));
+  }
 });
 
-hrRouter.put('/employees/:id', (req, res) => {
+hrRouter.put('/employees/:id', async (req, res) => {
   const { id } = req.params;
-  return res.json(HRController.updateEmployee(id, req.body));
+  try {
+    const data = await HrService.updateEmployee(id, req.body);
+    return res.json(data);
+  } catch (_) {
+    return res.json(HRController.updateEmployee(id, req.body));
+  }
 });
 
-hrRouter.post('/employees/:id/post', (req, res) => {
+hrRouter.post('/employees/:id/post', async (req, res) => {
   const { id } = req.params;
-  const result = HRController.postEmployee(id);
-  if (!result.success) return res.status(400).json({ error: result.error });
-  return res.json(result);
+  try {
+    const data = await HrService.updateEmployee(id, { status: 'POSTED' as any });
+    return res.json({ success: true, employee: data });
+  } catch (_) {
+    const result = HRController.postEmployee(id);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    return res.json(result);
+  }
 });
 
-hrRouter.post('/employees/:id/unpost', (req, res) => {
+hrRouter.post('/employees/:id/unpost', async (req, res) => {
   const { id } = req.params;
-  const result = HRController.unpostEmployee(id);
-  if (!result.success) return res.status(400).json({ error: result.error });
-  return res.json(result);
+  try {
+    const data = await HrService.updateEmployee(id, { status: 'DRAFT' as any });
+    return res.json({ success: true, employee: data });
+  } catch (_) {
+    const result = HRController.unpostEmployee(id);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    return res.json(result);
+  }
 });
 
-hrRouter.delete('/employees/:id', (req, res) => {
+hrRouter.delete('/employees/:id', async (req, res) => {
   const { id } = req.params;
-  const result = HRController.deleteEmployee(id);
-  if (!result.success) return res.status(400).json({ error: result.error });
-  return res.json(result);
+  try {
+    await HrService.deleteEmployee(id);
+    return res.json({ success: true });
+  } catch (_) {
+    const result = HRController.deleteEmployee(id);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    return res.json(result);
+  }
 });
 
-hrRouter.get('/attendance/sheets', (req, res) => {
-  return res.json(HRController.getAttendanceSheetsLog());
+hrRouter.get('/attendance/sheets', async (req, res) => {
+  try {
+    const data = await HrService.getAttendanceSheets();
+    return res.json(data);
+  } catch (_) {
+    return res.json(HRController.getAttendanceSheetsLog());
+  }
 });
 
-hrRouter.get('/attendance', (req, res) => {
+hrRouter.get('/attendance', async (req, res) => {
   const { month } = req.query as { month?: string };
   const monthYear = month || new Date().toISOString().slice(0, 7);
-  return res.json(HRController.getAttendance(monthYear));
+  try {
+    const data = await HrService.getAttendance(monthYear);
+    return res.json(data);
+  } catch (_) {
+    return res.json(HRController.getAttendance(monthYear));
+  }
 });
 
-hrRouter.put('/attendance/:id', (req, res) => {
+hrRouter.put('/attendance/:id', async (req, res) => {
   const { id } = req.params;
   const { daysWorked, overtimeHours } = req.body;
-  return res.json(HRController.updateAttendance(id, Number(daysWorked), Number(overtimeHours)));
+  try {
+    await HrService.updateAttendance(id, { daysWorked: Number(daysWorked), overtimeHours: Number(overtimeHours) });
+    return res.json({ success: true });
+  } catch (_) {
+    return res.json(HRController.updateAttendance(id, Number(daysWorked), Number(overtimeHours)));
+  }
 });
 
-hrRouter.post('/attendance/create-sheet', (req, res) => {
+hrRouter.post('/attendance/create-sheet', async (req, res) => {
   const { month } = req.body;
   if (!month) {
     return res.status(400).json({ error: 'Month is required (e.g. 2026-09)' });
   }
-  const result = HRController.createAttendanceSheet(month);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    const records = await HrService.createAttendanceSheet(month);
+    return res.json({ success: true, records });
+  } catch (_) {
+    const result = HRController.createAttendanceSheet(month);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-hrRouter.delete(['/attendance/sheet', '/attendance/:month'], (req, res) => {
+hrRouter.delete(['/attendance/sheet', '/attendance/:month'], async (req, res) => {
   const month = req.params.month || req.body?.month || (req.query?.month as string);
   if (!month) {
     return res.status(400).json({ error: 'Month parameter is required' });
   }
-  const result = HRController.deleteAttendanceSheet(month);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    await HrService.deleteAttendanceSheet(month);
+    return res.json({ success: true });
+  } catch (_) {
+    const result = HRController.deleteAttendanceSheet(month);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-hrRouter.post('/attendance/post', (req, res) => {
+hrRouter.post('/attendance/post', async (req, res) => {
   const { month, postedBy } = req.body;
-  const result = HRController.postAttendanceSheet(month, postedBy || 'HR Manager');
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    await HrService.postAttendanceSheet(month);
+    return res.json({ success: true });
+  } catch (_) {
+    const result = HRController.postAttendanceSheet(month, postedBy || 'HR Manager');
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-hrRouter.post('/attendance/unpost', (req, res) => {
+hrRouter.post('/attendance/unpost', async (req, res) => {
   const { month } = req.body;
-  const result = HRController.unpostAttendanceSheet(month);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    await HrService.unpostAttendanceSheet(month);
+    return res.json({ success: true });
+  } catch (_) {
+    const result = HRController.unpostAttendanceSheet(month);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-hrRouter.get('/payroll/sheets', (req, res) => {
-  return res.json(HRController.getPayrollSheetsLog());
+hrRouter.get('/payroll/sheets', async (req, res) => {
+  try {
+    const data = await HrService.getPayrollSheets();
+    return res.json(data);
+  } catch (_) {
+    return res.json(HRController.getPayrollSheetsLog());
+  }
 });
 
-hrRouter.get('/payroll', (req, res) => {
+hrRouter.get('/payroll', async (req, res) => {
   const { month } = req.query as { month?: string };
   const monthYear = month || new Date().toISOString().slice(0, 7);
-  return res.json(HRController.getPayroll(monthYear));
-});
-
-hrRouter.post('/payroll/run', (req, res) => {
-  const { month } = req.body;
-  const result = HRController.runPayroll(month);
-  if (!result.success) {
-    return res.status(400).json({ error: result.errors?.join(', ') || 'Failed to calculate payroll' });
+  try {
+    const data = await HrService.getPayroll(monthYear);
+    return res.json(data);
+  } catch (_) {
+    return res.json(HRController.getPayroll(monthYear));
   }
-  return res.json(result);
 });
 
-hrRouter.delete(['/payroll/sheet', '/payroll/:month'], (req, res) => {
+hrRouter.post('/payroll/run', async (req, res) => {
+  const { month } = req.body;
+  try {
+    const slips = await HrService.runPayroll(month);
+    return res.json({ success: true, records: slips });
+  } catch (_) {
+    const result = HRController.runPayroll(month);
+    if (!result.success) {
+      return res.status(400).json({ error: result.errors?.join(', ') || 'Failed to calculate payroll' });
+    }
+    return res.json(result);
+  }
+});
+
+hrRouter.delete(['/payroll/sheet', '/payroll/:month'], async (req, res) => {
   const month = req.params.month || req.body?.month || (req.query?.month as string);
   if (!month) {
     return res.status(400).json({ error: 'Month parameter is required' });
   }
-  const result = HRController.deletePayroll(month);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    await HrService.deletePayrollSheet(month);
+    return res.json({ success: true });
+  } catch (_) {
+    const result = HRController.deletePayroll(month);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-hrRouter.put('/payroll/:id/deductions', (req, res) => {
+hrRouter.put('/payroll/:id/deductions', async (req, res) => {
   const { advanceDeduction, loanEmiDeduction } = req.body;
-  const result = HRController.updatePayrollDeductions(req.params.id, advanceDeduction, loanEmiDeduction);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    await HrService.updatePayrollDeductions(req.params.id, { advanceDeduction, loanEmiDeduction });
+    return res.json({ success: true });
+  } catch (_) {
+    const result = HRController.updatePayrollDeductions(req.params.id, advanceDeduction, loanEmiDeduction);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-hrRouter.post(['/payroll/post', '/payroll/:id/post'], (req, res) => {
+hrRouter.post(['/payroll/post', '/payroll/:id/post'], async (req, res) => {
   const { month, postedBy, paymentMethod, bankAccountId } = req.body;
   const target = req.params.id || month;
-  const result = HRController.postPayroll(target, postedBy || 'HR Director', paymentMethod, bankAccountId);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    await HrService.postPayrollSheet(target, { postedBy, paymentMethod, bankAccountId });
+    return res.json({ success: true });
+  } catch (err: any) {
+    const result = HRController.postPayroll(target, postedBy || 'HR Director', paymentMethod, bankAccountId);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-hrRouter.post(['/payroll/unpost', '/payroll/:id/unpost'], (req, res) => {
+hrRouter.post(['/payroll/unpost', '/payroll/:id/unpost'], async (req, res) => {
   const { month } = req.body;
   const target = req.params.id || month;
-  const result = HRController.unpostPayroll(target);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    await HrService.unpostPayrollSheet(target);
+    return res.json({ success: true });
+  } catch (err: any) {
+    const result = HRController.unpostPayroll(target);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
 // Employee Loans & Advances (EMI)
-hrRouter.get('/loans', (req, res) => {
-  const { employeeId } = req.query as { employeeId?: string };
-  return res.json(HRController.getEmployeeLoans(employeeId));
+hrRouter.get('/loans', async (req, res) => {
+  try {
+    const data = await HrService.getLoans();
+    return res.json(data);
+  } catch (_) {
+    const { employeeId } = req.query as { employeeId?: string };
+    return res.json(HRController.getEmployeeLoans(employeeId));
+  }
 });
 
-hrRouter.post('/loans', (req, res) => {
-  const result = HRController.createEmployeeLoan(req.body);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+hrRouter.post('/loans', async (req, res) => {
+  try {
+    const loan = await HrService.createLoan(req.body);
+    return res.json({ success: true, loan });
+  } catch (_) {
+    const result = HRController.createEmployeeLoan(req.body);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-hrRouter.delete('/loans/:id', (req, res) => {
-  const result = HRController.deleteEmployeeLoan(req.params.id);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+hrRouter.delete('/loans/:id', async (req, res) => {
+  try {
+    await HrService.deleteLoan(req.params.id);
+    return res.json({ success: true });
+  } catch (_) {
+    const result = HRController.deleteEmployeeLoan(req.params.id);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
 // AI OCR Document Scanning Endpoints

@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { marketingService } from './marketing.service.ts';
 import { baileysManager } from './baileys.service.ts';
-import { relationalStore } from '../../db/relationalStore.ts';
 
 export const marketingRouter = Router();
 export const publicFeedRouter = Router();

@@ -1,15 +1,26 @@
 import { Router } from 'express';
 import { PurchaseController } from './purchase.controller.ts';
+import { PurchaseService } from '../../services/purchaseService.ts';
 
 export const purchaseRouter = Router();
 
-purchaseRouter.get('/invoices', (req, res) => {
-  return res.json(PurchaseController.getInvoices());
+purchaseRouter.get('/invoices', async (req, res) => {
+  try {
+    const list = await PurchaseService.getPurchaseInvoices();
+    return res.json(list);
+  } catch (_) {
+    return res.json(PurchaseController.getInvoices());
+  }
 });
 
-purchaseRouter.post('/invoices', (req, res) => {
-  const invoice = PurchaseController.createInvoice(req.body);
-  return res.json(invoice);
+purchaseRouter.post('/invoices', async (req, res) => {
+  try {
+    const invoice = await PurchaseService.addPurchaseInvoice(req.body);
+    return res.json(invoice);
+  } catch (_) {
+    const invoice = PurchaseController.createInvoice(req.body);
+    return res.json(invoice);
+  }
 });
 
 purchaseRouter.put('/invoices/:id', (req, res) => {
@@ -21,32 +32,47 @@ purchaseRouter.put('/invoices/:id', (req, res) => {
   return res.json(result);
 });
 
-purchaseRouter.delete('/invoices/:id', (req, res) => {
+purchaseRouter.delete('/invoices/:id', async (req, res) => {
   const { id } = req.params;
-  const result = PurchaseController.deleteInvoice(id);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    await PurchaseService.deletePurchaseInvoice(id);
+    return res.json({ success: true });
+  } catch (_) {
+    const result = PurchaseController.deleteInvoice(id);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-purchaseRouter.post('/invoices/:id/post', (req, res) => {
+purchaseRouter.post('/invoices/:id/post', async (req, res) => {
   const { id } = req.params;
   const { postedBy } = req.body;
-  const result = PurchaseController.postInvoice(id, postedBy || 'Procurement Mgr');
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    await PurchaseService.postPurchaseInvoice(id);
+    return res.json({ success: true });
+  } catch (_) {
+    const result = PurchaseController.postInvoice(id, postedBy || 'Procurement Mgr');
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-purchaseRouter.post('/invoices/:id/unpost', (req, res) => {
+purchaseRouter.post('/invoices/:id/unpost', async (req, res) => {
   const { id } = req.params;
-  const result = PurchaseController.unpostInvoice(id);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    await PurchaseService.unpostPurchaseInvoice(id);
+    return res.json({ success: true });
+  } catch (_) {
+    const result = PurchaseController.unpostInvoice(id);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
 purchaseRouter.post('/invoices/:id/status', (req, res) => {
@@ -89,25 +115,40 @@ purchaseRouter.put('/gate-passes/:id/status', (req, res) => {
   return res.json(result);
 });
 
-purchaseRouter.post(['/invoices/:id/convert-inward', '/invoices/:id/convert-to-gate-pass'], (req, res) => {
+purchaseRouter.post(['/invoices/:id/convert-inward', '/invoices/:id/convert-to-gate-pass'], async (req, res) => {
   const { id } = req.params;
-  const result = PurchaseController.convertToInwardGatePass(id);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    const gatePasses = await PurchaseService.convertToInwardGatePass(id);
+    return res.json({ success: true, count: gatePasses.length, gatePasses });
+  } catch (_) {
+    const result = PurchaseController.convertToInwardGatePass(id);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
-purchaseRouter.get(['/gate-passes', '/bales', '/'], (req, res) => {
-  return res.json(PurchaseController.getInwardGatePasses());
+purchaseRouter.get(['/gate-passes', '/bales', '/'], async (req, res) => {
+  try {
+    const list = await PurchaseService.getInwardGatePasses();
+    return res.json(list);
+  } catch (_) {
+    return res.json(PurchaseController.getInwardGatePasses());
+  }
 });
 
-purchaseRouter.post(['/gate-passes/bale-inward', '/bales/inward', '/bales'], (req, res) => {
-  const result = PurchaseController.createBaleInward(req.body);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+purchaseRouter.post(['/gate-passes/bale-inward', '/bales/inward', '/bales'], async (req, res) => {
+  try {
+    const item = await PurchaseService.addInwardGatePass(req.body);
+    return res.json({ success: true, inwardPass: item });
+  } catch (_) {
+    const result = PurchaseController.createBaleInward(req.body);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
   }
-  return res.json(result);
 });
 
 purchaseRouter.get(['/gate-passes/:id', '/bales/:id'], (req, res) => {
@@ -174,14 +215,24 @@ purchaseRouter.post(['/gate-passes/:id/unpost', '/bales/:id/unpost'], (req, res)
   return res.json(result);
 });
 
-purchaseRouter.get('/inventory', (req, res) => {
-  const filters = req.query as any;
-  return res.json(PurchaseController.getInventoryStock(filters));
+purchaseRouter.get('/inventory', async (req, res) => {
+  try {
+    const list = await PurchaseService.getInventoryPieces();
+    return res.json(list);
+  } catch (_) {
+    const filters = req.query as any;
+    return res.json(PurchaseController.getInventoryStock(filters));
+  }
 });
 
-purchaseRouter.get('/pieces', (req, res) => {
-  const filters = req.query as any;
-  return res.json(PurchaseController.getInventoryStock(filters));
+purchaseRouter.get('/pieces', async (req, res) => {
+  try {
+    const list = await PurchaseService.getInventoryPieces();
+    return res.json(list);
+  } catch (_) {
+    const filters = req.query as any;
+    return res.json(PurchaseController.getInventoryStock(filters));
+  }
 });
 
 purchaseRouter.post('/ai-ocr-scan', async (req, res) => {

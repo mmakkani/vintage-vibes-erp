@@ -1,15 +1,27 @@
 import { Router } from 'express';
 import { SetupController } from './setup.controller.ts';
+import { CompanyProfileService } from '../../services/companyProfileService.ts';
+import { SetupService } from '../../services/setupService.ts';
 
 export const setupRouter = Router();
 
 // Company profile (supports both /company and /company-profile)
-setupRouter.get(['/company', '/company-profile'], (req, res) => {
-  return res.json(SetupController.getCompanyProfile());
+setupRouter.get(['/company', '/company-profile'], async (req, res) => {
+  try {
+    const data = await CompanyProfileService.getCompanyProfile();
+    return res.json(data);
+  } catch (_) {
+    return res.json(SetupController.getCompanyProfile());
+  }
 });
 
-setupRouter.put(['/company', '/company-profile'], (req, res) => {
-  return res.json(SetupController.updateCompanyProfile(req.body));
+setupRouter.put(['/company', '/company-profile'], async (req, res) => {
+  try {
+    const updated = await CompanyProfileService.updateCompanyProfile(req.body);
+    return res.json(updated);
+  } catch (_) {
+    return res.json(SetupController.updateCompanyProfile(req.body));
+  }
 });
 
 // Live Streaming Multicast Gateway (Restream / Livepush / Ingest Key)
@@ -37,8 +49,13 @@ setupRouter.put('/live-booths/:boothId', (req, res) => {
 });
 
 // Currencies & FX (supports both /currencies and /currency)
-setupRouter.get(['/currencies', '/currency'], (req, res) => {
-  return res.json(SetupController.getCurrencies());
+setupRouter.get(['/currencies', '/currency'], async (req, res) => {
+  try {
+    const list = await SetupService.getCurrencies();
+    return res.json(list);
+  } catch (_) {
+    return res.json(SetupController.getCurrencies());
+  }
 });
 
 setupRouter.post(['/currencies', '/currency'], (req, res) => {
@@ -62,23 +79,43 @@ setupRouter.delete(['/currencies/:code', '/currency/:code'], (req, res) => {
   return res.json({ success });
 });
 
-setupRouter.get(['/items', '/item-master'], (req, res) => {
-  return res.json(SetupController.getItemMasters());
+setupRouter.get(['/items', '/item-master'], async (req, res) => {
+  try {
+    const list = await SetupService.getItems();
+    return res.json(list);
+  } catch (_) {
+    return res.json(SetupController.getItemMasters());
+  }
 });
 
-setupRouter.post(['/items', '/item-master'], (req, res) => {
-  return res.json(SetupController.addItemMaster(req.body));
+setupRouter.post(['/items', '/item-master'], async (req, res) => {
+  try {
+    const created = await SetupService.addItem(req.body);
+    return res.json(created);
+  } catch (_) {
+    return res.json(SetupController.addItemMaster(req.body));
+  }
 });
 
-setupRouter.put(['/items/:id', '/item-master/:id'], (req, res) => {
-  const updated = SetupController.updateItemMaster(req.params.id, req.body);
-  if (!updated) return res.status(404).json({ error: 'Item not found' });
-  return res.json(updated);
+setupRouter.put(['/items/:id', '/item-master/:id'], async (req, res) => {
+  try {
+    await SetupService.updateItem(req.params.id, req.body);
+    return res.json({ success: true, id: req.params.id, ...req.body });
+  } catch (_) {
+    const updated = SetupController.updateItemMaster(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: 'Item not found' });
+    return res.json(updated);
+  }
 });
 
-setupRouter.delete(['/items/:id', '/item-master/:id'], (req, res) => {
-  const success = SetupController.deleteItemMaster(req.params.id);
-  return res.json({ success });
+setupRouter.delete(['/items/:id', '/item-master/:id'], async (req, res) => {
+  try {
+    await SetupService.deleteItem(req.params.id);
+    return res.json({ success: true });
+  } catch (_) {
+    const success = SetupController.deleteItemMaster(req.params.id);
+    return res.json({ success });
+  }
 });
 
 setupRouter.post(['/items/:id/post', '/item-master/:id/post'], (req, res) => {
@@ -94,23 +131,43 @@ setupRouter.post(['/items/:id/unpost', '/item-master/:id/unpost'], (req, res) =>
 });
 
 // Labels
-setupRouter.get(['/labels', '/label-grade', '/labels-grade'], (req, res) => {
-  return res.json(SetupController.getLabelGrades());
+setupRouter.get(['/labels', '/label-grade', '/labels-grade'], async (req, res) => {
+  try {
+    const list = await SetupService.getLabelGrades();
+    return res.json(list);
+  } catch (_) {
+    return res.json(SetupController.getLabelGrades());
+  }
 });
 
-setupRouter.post(['/labels', '/label-grade', '/labels-grade'], (req, res) => {
-  return res.json(SetupController.addLabelGrade(req.body));
+setupRouter.post(['/labels', '/label-grade', '/labels-grade'], async (req, res) => {
+  try {
+    const created = await SetupService.addLabelGrade(req.body);
+    return res.json(created);
+  } catch (_) {
+    return res.json(SetupController.addLabelGrade(req.body));
+  }
 });
 
-setupRouter.put(['/labels/:id', '/label-grade/:id'], (req, res) => {
-  const updated = SetupController.updateLabelGrade(req.params.id, req.body);
-  if (!updated) return res.status(404).json({ error: 'Label grade not found' });
-  return res.json(updated);
+setupRouter.put(['/labels/:id', '/label-grade/:id'], async (req, res) => {
+  try {
+    await SetupService.updateLabelGrade(req.params.id, req.body);
+    return res.json({ success: true, id: req.params.id, ...req.body });
+  } catch (_) {
+    const updated = SetupController.updateLabelGrade(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: 'Label grade not found' });
+    return res.json(updated);
+  }
 });
 
-setupRouter.delete(['/labels/:id', '/label-grade/:id'], (req, res) => {
-  const success = SetupController.deleteLabelGrade(req.params.id);
-  return res.json({ success });
+setupRouter.delete(['/labels/:id', '/label-grade/:id'], async (req, res) => {
+  try {
+    await SetupService.deleteLabelGrade(req.params.id);
+    return res.json({ success: true });
+  } catch (_) {
+    const success = SetupController.deleteLabelGrade(req.params.id);
+    return res.json({ success });
+  }
 });
 
 setupRouter.post(['/labels/:id/post', '/label-grade/:id/post'], (req, res) => {
@@ -126,23 +183,43 @@ setupRouter.post(['/labels/:id/unpost', '/label-grade/:id/unpost'], (req, res) =
 });
 
 // Brands
-setupRouter.get(['/brands', '/brand-master'], (req, res) => {
-  return res.json(SetupController.getBrandMasters());
+setupRouter.get(['/brands', '/brand-master'], async (req, res) => {
+  try {
+    const list = await SetupService.getBrands();
+    return res.json(list);
+  } catch (_) {
+    return res.json(SetupController.getBrandMasters());
+  }
 });
 
-setupRouter.post(['/brands', '/brand-master'], (req, res) => {
-  return res.json(SetupController.addBrandMaster(req.body));
+setupRouter.post(['/brands', '/brand-master'], async (req, res) => {
+  try {
+    const created = await SetupService.addBrand(req.body);
+    return res.json(created);
+  } catch (_) {
+    return res.json(SetupController.addBrandMaster(req.body));
+  }
 });
 
-setupRouter.put(['/brands/:id', '/brand-master/:id'], (req, res) => {
-  const updated = SetupController.updateBrandMaster(req.params.id, req.body);
-  if (!updated) return res.status(404).json({ error: 'Brand tier not found' });
-  return res.json(updated);
+setupRouter.put(['/brands/:id', '/brand-master/:id'], async (req, res) => {
+  try {
+    await SetupService.updateBrand(req.params.id, req.body);
+    return res.json({ success: true, id: req.params.id, ...req.body });
+  } catch (_) {
+    const updated = SetupController.updateBrandMaster(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: 'Brand tier not found' });
+    return res.json(updated);
+  }
 });
 
-setupRouter.delete(['/brands/:id', '/brand-master/:id'], (req, res) => {
-  const success = SetupController.deleteBrandMaster(req.params.id);
-  return res.json({ success });
+setupRouter.delete(['/brands/:id', '/brand-master/:id'], async (req, res) => {
+  try {
+    await SetupService.deleteBrand(req.params.id);
+    return res.json({ success: true });
+  } catch (_) {
+    const success = SetupController.deleteBrandMaster(req.params.id);
+    return res.json({ success });
+  }
 });
 
 setupRouter.post(['/brands/:id/post', '/brand-master/:id/post'], (req, res) => {
@@ -158,23 +235,43 @@ setupRouter.post(['/brands/:id/unpost', '/brand-master/:id/unpost'], (req, res) 
 });
 
 // Shops & Racks
-setupRouter.get(['/shops', '/shop-master'], (req, res) => {
-  return res.json(SetupController.getShopMasters());
+setupRouter.get(['/shops', '/shop-master'], async (req, res) => {
+  try {
+    const list = await SetupService.getShops();
+    return res.json(list);
+  } catch (_) {
+    return res.json(SetupController.getShopMasters());
+  }
 });
 
-setupRouter.post(['/shops', '/shop-master'], (req, res) => {
-  return res.json(SetupController.addShopMaster(req.body));
+setupRouter.post(['/shops', '/shop-master'], async (req, res) => {
+  try {
+    const created = await SetupService.addShop(req.body);
+    return res.json(created);
+  } catch (_) {
+    return res.json(SetupController.addShopMaster(req.body));
+  }
 });
 
-setupRouter.put(['/shops/:id', '/shop-master/:id'], (req, res) => {
-  const updated = SetupController.updateShopMaster(req.params.id, req.body);
-  if (!updated) return res.status(404).json({ error: 'Shop not found' });
-  return res.json(updated);
+setupRouter.put(['/shops/:id', '/shop-master/:id'], async (req, res) => {
+  try {
+    await SetupService.updateShop(req.params.id, req.body);
+    return res.json({ success: true, id: req.params.id, ...req.body });
+  } catch (_) {
+    const updated = SetupController.updateShopMaster(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: 'Shop not found' });
+    return res.json(updated);
+  }
 });
 
-setupRouter.delete(['/shops/:id', '/shop-master/:id'], (req, res) => {
-  const success = SetupController.deleteShopMaster(req.params.id);
-  return res.json({ success });
+setupRouter.delete(['/shops/:id', '/shop-master/:id'], async (req, res) => {
+  try {
+    await SetupService.deleteShop(req.params.id);
+    return res.json({ success: true });
+  } catch (_) {
+    const success = SetupController.deleteShopMaster(req.params.id);
+    return res.json({ success });
+  }
 });
 
 setupRouter.post(['/shops/:id/post', '/shop-master/:id/post'], (req, res) => {
@@ -190,23 +287,43 @@ setupRouter.post(['/shops/:id/unpost', '/shop-master/:id/unpost'], (req, res) =>
 });
 
 // Garment Categories
-setupRouter.get(['/categories', '/category-master'], (req, res) => {
-  return res.json(SetupController.getCategories());
+setupRouter.get(['/categories', '/category-master'], async (req, res) => {
+  try {
+    const list = await SetupService.getCategories();
+    return res.json(list);
+  } catch (_) {
+    return res.json(SetupController.getCategories());
+  }
 });
 
-setupRouter.post(['/categories', '/category-master'], (req, res) => {
-  return res.json(SetupController.addCategory(req.body));
+setupRouter.post(['/categories', '/category-master'], async (req, res) => {
+  try {
+    const created = await SetupService.addCategory(req.body);
+    return res.json(created);
+  } catch (_) {
+    return res.json(SetupController.addCategory(req.body));
+  }
 });
 
-setupRouter.put(['/categories/:id', '/category-master/:id'], (req, res) => {
-  const updated = SetupController.updateCategory(req.params.id, req.body);
-  if (!updated) return res.status(404).json({ error: 'Category not found' });
-  return res.json(updated);
+setupRouter.put(['/categories/:id', '/category-master/:id'], async (req, res) => {
+  try {
+    await SetupService.updateCategory(req.params.id, req.body);
+    return res.json({ success: true, id: req.params.id, ...req.body });
+  } catch (_) {
+    const updated = SetupController.updateCategory(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: 'Category not found' });
+    return res.json(updated);
+  }
 });
 
-setupRouter.delete(['/categories/:id', '/category-master/:id'], (req, res) => {
-  const success = SetupController.deleteCategory(req.params.id);
-  return res.json({ success });
+setupRouter.delete(['/categories/:id', '/category-master/:id'], async (req, res) => {
+  try {
+    await SetupService.deleteCategory(req.params.id);
+    return res.json({ success: true });
+  } catch (_) {
+    const success = SetupController.deleteCategory(req.params.id);
+    return res.json({ success });
+  }
 });
 
 setupRouter.post(['/categories/:id/post', '/category-master/:id/post'], (req, res) => {
@@ -222,23 +339,43 @@ setupRouter.post(['/categories/:id/unpost', '/category-master/:id/unpost'], (req
 });
 
 // Garment Sizes
-setupRouter.get(['/sizes', '/size-master'], (req, res) => {
-  return res.json(SetupController.getSizes());
+setupRouter.get(['/sizes', '/size-master'], async (req, res) => {
+  try {
+    const list = await SetupService.getSizes();
+    return res.json(list);
+  } catch (_) {
+    return res.json(SetupController.getSizes());
+  }
 });
 
-setupRouter.post(['/sizes', '/size-master'], (req, res) => {
-  return res.json(SetupController.addSize(req.body));
+setupRouter.post(['/sizes', '/size-master'], async (req, res) => {
+  try {
+    const created = await SetupService.addSize(req.body);
+    return res.json(created);
+  } catch (_) {
+    return res.json(SetupController.addSize(req.body));
+  }
 });
 
-setupRouter.put(['/sizes/:id', '/size-master/:id'], (req, res) => {
-  const updated = SetupController.updateSize(req.params.id, req.body);
-  if (!updated) return res.status(404).json({ error: 'Size not found' });
-  return res.json(updated);
+setupRouter.put(['/sizes/:id', '/size-master/:id'], async (req, res) => {
+  try {
+    await SetupService.updateSize(req.params.id, req.body);
+    return res.json({ success: true, id: req.params.id, ...req.body });
+  } catch (_) {
+    const updated = SetupController.updateSize(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ error: 'Size not found' });
+    return res.json(updated);
+  }
 });
 
-setupRouter.delete(['/sizes/:id', '/size-master/:id'], (req, res) => {
-  const success = SetupController.deleteSize(req.params.id);
-  return res.json({ success });
+setupRouter.delete(['/sizes/:id', '/size-master/:id'], async (req, res) => {
+  try {
+    await SetupService.deleteSize(req.params.id);
+    return res.json({ success: true });
+  } catch (_) {
+    const success = SetupController.deleteSize(req.params.id);
+    return res.json({ success });
+  }
 });
 
 setupRouter.post(['/sizes/:id/post', '/size-master/:id/post'], (req, res) => {
