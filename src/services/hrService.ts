@@ -9,6 +9,23 @@ function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function cleanDate(d: any): string | null {
+  if (!d || typeof d !== 'string') return null;
+  const trimmed = d.trim();
+  if (!trimmed || trimmed === '' || trimmed === 'null' || trimmed === 'undefined') return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const parsed = new Date(trimmed);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
+function isValidUuid(id: any): boolean {
+  if (typeof id !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id.trim());
+}
+
 const LOCAL_STORAGE_EMPLOYEES_KEY = 'vintage_vibes_employees_db';
 
 function getLocalEmployees(): Employee[] {
@@ -134,13 +151,15 @@ export class HrService {
 
   public static async createEmployee(emp: Partial<Employee>): Promise<Employee> {
     this.clearEmployeeCache();
-    const id = emp.id ? String(emp.id) : generateId('emp');
-    const empCode = emp.empCode || `EMP-${Date.now().toString().slice(-4)}`;
+    const fallbackId = generateId('emp');
+    const empCode = emp.empCode || (emp as any).emp_code || (emp as any).employee_code || `EMP-${Date.now().toString().slice(-4)}`;
 
     const basicSalary = Number(emp.basic_salary ?? emp.baseSalary ?? emp.base_salary ?? 0);
     const housingAllowance = Number(emp.housing_allowance ?? emp.housingAllow ?? emp.housing_allow ?? 0);
     const transportAllowance = Number(emp.transport_allowance ?? emp.transportAllow ?? emp.transport_allow ?? 0);
-    const totalPackage = Number(emp.total_package ?? emp.totalPackage ?? (basicSalary + housingAllowance + transportAllowance));
+    const otherAllowance = Number((emp as any).other_allow ?? emp.otherAllow ?? 0);
+    const totalPackage = Number(emp.total_package ?? emp.totalPackage ?? (basicSalary + housingAllowance + transportAllowance + otherAllowance));
+    const workingHoursPerDay = Number((emp as any).working_hours_per_day ?? emp.workingHoursPerDay ?? 8);
 
     const resolvedFullName = 
       (emp as any).full_name || 
@@ -150,99 +169,129 @@ export class HrService {
       (emp as any).full_name_english || 
       'Staff Member';
 
+    const firstName = resolvedFullName.split(' ')[0] || resolvedFullName;
+    const lastName = resolvedFullName.split(' ').slice(1).join(' ') || '';
+
     const resolvedArabicName = 
       emp.nameArabic || 
       (emp as any).full_name_arabic || 
       (emp as any).fullNameArabic || 
+      (emp as any).name_arabic || 
       '';
 
-    const payload = {
-      id,
+    const safeJoiningDate = cleanDate(emp.joiningDate || (emp as any).joining_date) || new Date().toISOString().slice(0, 10);
+
+    const payload: any = {
+      employee_code: empCode,
       emp_code: empCode,
+      first_name: firstName,
+      last_name: lastName,
       name: resolvedFullName,
       full_name: resolvedFullName,
       name_arabic: resolvedArabicName,
+      arabic_name: resolvedArabicName,
       full_name_arabic: resolvedArabicName,
       designation: emp.designation || 'Staff',
       department: emp.department || 'Operations',
       basic_salary: basicSalary,
       base_salary: basicSalary,
+      salary: basicSalary,
       housing_allowance: housingAllowance,
       housing_allow: housingAllowance,
       transport_allowance: transportAllowance,
       transport_allow: transportAllowance,
+      other_allow: otherAllowance,
       total_package: totalPackage,
-      other_allow: Number(emp.otherAllow || 0),
-      working_hours_per_day: Number(emp.workingHoursPerDay || 8),
+      gross_salary: totalPackage,
+      working_hours_per_day: workingHoursPerDay,
       is_active: emp.isActive !== false,
-      joining_date: emp.joiningDate || new Date().toISOString().slice(0, 10),
+      joining_date: safeJoiningDate,
+      date_of_joining: safeJoiningDate,
       status: emp.status || 'POSTED',
-      emirates_id: emp.emiratesId || '',
-      residency_card_no: emp.residencyCardNo || '',
-      passport_no: emp.passportNo || '',
-      id_front_image_url: emp.idFrontImageUrl || '',
-      id_back_image_url: emp.idBackImageUrl || '',
-      nationality: emp.nationality || '',
-      gender: emp.gender || 'MALE',
-      dob: emp.dob || null,
-      emirates_id_expiry: emp.emiratesIdExpiry || null,
-      id_card_no: emp.idCardNo || '',
-      passport_expiry: emp.passportExpiry || null,
-      passport_issue_date: emp.passportIssueDate || null,
-      passport_country: emp.passportCountry || '',
-      passport_image_url: emp.passportImageUrl || '',
-      uid_no: emp.uidNo || '',
-      residency_issue_date: emp.residencyIssueDate || null,
-      residency_expiry_date: emp.residencyExpiryDate || null,
-      residency_sponsor: emp.residencySponsor || '',
-      residency_profession: emp.residencyProfession || '',
-      residency_image_url: emp.residencyImageUrl || '',
-      photo_url: emp.photoUrl || '',
-      email: emp.email || '',
-      address: emp.address || '',
-      notes: emp.notes || ''
+      emirates_id: emp.emiratesId || (emp as any).emirates_id || '',
+      emirates_id_no: emp.emiratesId || (emp as any).emirates_id || '',
+      id_card_no: emp.idCardNo || (emp as any).id_card_no || '',
+      passport_no: emp.passportNo || (emp as any).passport_no || (emp as any).passport_number || '',
+      passport_number: emp.passportNo || (emp as any).passport_no || (emp as any).passport_number || '',
+      passport_country: emp.passportCountry || (emp as any).passport_country || '',
+      residency_card_no: emp.residencyCardNo || (emp as any).residency_card_no || (emp as any).residency_no || '',
+      residency_no: emp.residencyCardNo || (emp as any).residency_card_no || (emp as any).residency_no || '',
+      uid_no: emp.uidNo || (emp as any).uid_no || (emp as any).visa_uid || '',
+      visa_uid: emp.uidNo || (emp as any).uid_no || (emp as any).visa_uid || '',
+      residency_sponsor: emp.residencySponsor || (emp as any).residency_sponsor || (emp as any).sponsor || '',
+      sponsor: emp.residencySponsor || (emp as any).residency_sponsor || (emp as any).sponsor || '',
+      residency_profession: emp.residencyProfession || (emp as any).residency_profession || (emp as any).profession_on_visa || '',
+      profession_on_visa: emp.residencyProfession || (emp as any).residency_profession || (emp as any).profession_on_visa || '',
+      nationality: emp.nationality || (emp as any).nationality || '',
+      gender: emp.gender || (emp as any).gender || 'MALE',
+      email: emp.email || (emp as any).email || '',
+      address: emp.address || (emp as any).address || '',
+      notes: emp.notes || (emp as any).notes || '',
+      id_front_image_url: typeof emp.idFrontImageUrl === 'string' ? emp.idFrontImageUrl : ((emp as any).id_front_image_url || ''),
+      id_back_image_url: typeof emp.idBackImageUrl === 'string' ? emp.idBackImageUrl : ((emp as any).id_back_image_url || ''),
+      passport_image_url: typeof emp.passportImageUrl === 'string' ? emp.passportImageUrl : ((emp as any).passport_image_url || ''),
+      residency_image_url: typeof emp.residencyImageUrl === 'string' ? emp.residencyImageUrl : ((emp as any).residency_image_url || ''),
+      visa_image_url: typeof emp.residencyImageUrl === 'string' ? emp.residencyImageUrl : ((emp as any).residency_image_url || ''),
+      photo_url: typeof emp.photoUrl === 'string' ? emp.photoUrl : ((emp as any).photo_url || ''),
+
+      // Cleaned dates (strictly YYYY-MM-DD or null)
+      dob: cleanDate(emp.dob || (emp as any).dob || (emp as any).date_of_birth),
+      date_of_birth: cleanDate(emp.dob || (emp as any).dob || (emp as any).date_of_birth),
+      emirates_id_expiry: cleanDate(emp.emiratesIdExpiry || (emp as any).emirates_id_expiry),
+      passport_expiry: cleanDate(emp.passportExpiry || (emp as any).passport_expiry || (emp as any).passport_expiry_date),
+      passport_expiry_date: cleanDate(emp.passportExpiry || (emp as any).passport_expiry || (emp as any).passport_expiry_date),
+      passport_issue_date: cleanDate(emp.passportIssueDate || (emp as any).passport_issue_date),
+      residency_issue_date: cleanDate(emp.residencyIssueDate || (emp as any).residency_issue_date || (emp as any).visa_issue_date),
+      visa_issue_date: cleanDate(emp.residencyIssueDate || (emp as any).residency_issue_date || (emp as any).visa_issue_date),
+      residency_expiry_date: cleanDate(emp.residencyExpiryDate || (emp as any).residency_expiry_date || (emp as any).visa_expiry_date),
+      visa_expiry_date: cleanDate(emp.residencyExpiryDate || (emp as any).residency_expiry_date || (emp as any).visa_expiry_date)
     };
+
+    // Only include id if it's already a valid UUID
+    if (isValidUuid(emp.id)) {
+      payload.id = emp.id;
+    }
 
     let savedEmp: Employee = {
       ...emp,
-      id,
+      id: isValidUuid(emp.id) ? emp.id : fallbackId,
       empCode,
-      name: emp.name || 'Unnamed Employee',
+      name: resolvedFullName,
+      nameArabic: resolvedArabicName,
       designation: emp.designation || 'Staff',
       department: emp.department || 'Operations',
-      baseSalary: Number(emp.baseSalary || 0),
-      housingAllow: Number(emp.housingAllow || 0),
-      transportAllow: Number(emp.transportAllow || 0),
-      otherAllow: Number(emp.otherAllow || 0),
-      workingHoursPerDay: Number(emp.workingHoursPerDay || 8),
+      baseSalary: basicSalary,
+      housingAllow: housingAllowance,
+      transportAllow: transportAllowance,
+      otherAllow: otherAllowance,
+      workingHoursPerDay,
       isActive: emp.isActive !== false,
-      joiningDate: emp.joiningDate || new Date().toISOString().slice(0, 10),
+      joiningDate: safeJoiningDate,
       status: emp.status || 'POSTED',
-      emiratesId: emp.emiratesId || '',
-      residencyCardNo: emp.residencyCardNo || '',
-      passportNo: emp.passportNo || '',
-      idFrontImageUrl: emp.idFrontImageUrl || '',
-      idBackImageUrl: emp.idBackImageUrl || '',
-      nameArabic: emp.nameArabic || '',
-      nationality: emp.nationality || '',
-      gender: emp.gender || 'MALE',
-      dob: emp.dob || '',
-      emiratesIdExpiry: emp.emiratesIdExpiry || '',
-      idCardNo: emp.idCardNo || '',
-      passportExpiry: emp.passportExpiry || '',
-      passportIssueDate: emp.passportIssueDate || '',
-      passportCountry: emp.passportCountry || '',
-      passportImageUrl: emp.passportImageUrl || '',
-      uidNo: emp.uidNo || '',
-      residencyIssueDate: emp.residencyIssueDate || '',
-      residencyExpiryDate: emp.residencyExpiryDate || '',
-      residencySponsor: emp.residencySponsor || '',
-      residencyProfession: emp.residencyProfession || '',
-      residencyImageUrl: emp.residencyImageUrl || '',
-      photoUrl: emp.photoUrl || '',
-      email: emp.email || '',
-      address: emp.address || '',
-      notes: emp.notes || ''
+      emiratesId: payload.emirates_id,
+      residencyCardNo: payload.residency_card_no,
+      passportNo: payload.passport_no,
+      idFrontImageUrl: payload.id_front_image_url,
+      idBackImageUrl: payload.id_back_image_url,
+      nationality: payload.nationality,
+      gender: payload.gender,
+      dob: payload.dob || '',
+      emiratesIdExpiry: payload.emirates_id_expiry || '',
+      idCardNo: payload.id_card_no,
+      passportExpiry: payload.passport_expiry || '',
+      passportIssueDate: payload.passport_issue_date || '',
+      passportCountry: payload.passport_country,
+      passportImageUrl: payload.passport_image_url,
+      uidNo: payload.uid_no,
+      residencyIssueDate: payload.residency_issue_date || '',
+      residencyExpiryDate: payload.residency_expiry_date || '',
+      residencySponsor: payload.residency_sponsor,
+      residencyProfession: payload.residency_profession,
+      residencyImageUrl: payload.residency_image_url,
+      photoUrl: payload.photo_url,
+      email: payload.email,
+      address: payload.address,
+      notes: payload.notes
     } as Employee;
 
     try {
@@ -254,7 +303,9 @@ export class HrService {
 
       if (!error && data) {
         savedEmp.id = String(data.id);
-        savedEmp.empCode = data.emp_code || empCode;
+        savedEmp.empCode = data.emp_code || data.employee_code || empCode;
+      } else if (error) {
+        console.warn('Supabase create employee warning response (persisting locally):', error);
       }
     } catch (err) {
       console.warn('Supabase create employee failed, saved locally:', err);
@@ -287,17 +338,22 @@ export class HrService {
       const nameVal = updates.name || (updates as any).full_name || (updates as any).fullName || '';
       payload.name = nameVal;
       payload.full_name = nameVal;
+      payload.first_name = nameVal.split(' ')[0] || nameVal;
+      payload.last_name = nameVal.split(' ').slice(1).join(' ') || '';
     }
     if (updates.nameArabic !== undefined || (updates as any).full_name_arabic !== undefined || (updates as any).fullNameArabic !== undefined) {
       const arabicVal = updates.nameArabic || (updates as any).full_name_arabic || (updates as any).fullNameArabic || '';
       payload.name_arabic = arabicVal;
+      payload.arabic_name = arabicVal;
       payload.full_name_arabic = arabicVal;
     }
     if (updates.designation !== undefined) payload.designation = updates.designation;
+    if (updates.department !== undefined) payload.department = updates.department;
     if (updates.baseSalary !== undefined || (updates as any).basic_salary !== undefined) {
       const val = Number(updates.baseSalary ?? (updates as any).basic_salary ?? 0);
       payload.base_salary = val;
       payload.basic_salary = val;
+      payload.salary = val;
     }
     if (updates.housingAllow !== undefined || (updates as any).housing_allowance !== undefined) {
       const val = Number(updates.housingAllow ?? (updates as any).housing_allowance ?? 0);
@@ -313,12 +369,23 @@ export class HrService {
     const currentHousing = Number(payload.housing_allow ?? payload.housing_allowance ?? 0);
     const currentTransport = Number(payload.transport_allow ?? payload.transport_allowance ?? 0);
     payload.total_package = currentBase + currentHousing + currentTransport;
+    payload.gross_salary = payload.total_package;
     if (updates.otherAllow !== undefined) payload.other_allow = Number(updates.otherAllow);
     if (updates.workingHoursPerDay !== undefined) payload.working_hours_per_day = Number(updates.workingHoursPerDay);
     if (updates.isActive !== undefined) payload.is_active = updates.isActive;
     if (updates.status !== undefined) payload.status = updates.status;
-    if (updates.joiningDate !== undefined) payload.joining_date = updates.joiningDate;
-    if (updates.dob !== undefined) payload.dob = updates.dob || null;
+    if (updates.joiningDate !== undefined) {
+      const jd = cleanDate(updates.joiningDate);
+      if (jd) {
+        payload.joining_date = jd;
+        payload.date_of_joining = jd;
+      }
+    }
+    if (updates.dob !== undefined) {
+      const cd = cleanDate(updates.dob);
+      payload.dob = cd;
+      payload.date_of_birth = cd;
+    }
     if (updates.gender !== undefined) payload.gender = updates.gender;
     if (updates.nationality !== undefined) payload.nationality = updates.nationality;
     if (updates.email !== undefined) payload.email = updates.email;
@@ -326,32 +393,66 @@ export class HrService {
     if (updates.notes !== undefined) payload.notes = updates.notes;
 
     // Legal Document IDs & Images
-    if (updates.emiratesId !== undefined) payload.emirates_id = updates.emiratesId;
+    if (updates.emiratesId !== undefined) {
+      payload.emirates_id = updates.emiratesId;
+      payload.emirates_id_no = updates.emiratesId;
+    }
     if (updates.idCardNo !== undefined) payload.id_card_no = updates.idCardNo;
-    if (updates.emiratesIdExpiry !== undefined) payload.emirates_id_expiry = updates.emiratesIdExpiry || null;
-    if (updates.passportNo !== undefined) payload.passport_no = updates.passportNo;
+    if (updates.emiratesIdExpiry !== undefined) payload.emirates_id_expiry = cleanDate(updates.emiratesIdExpiry);
+    if (updates.passportNo !== undefined) {
+      payload.passport_no = updates.passportNo;
+      payload.passport_number = updates.passportNo;
+    }
     if (updates.passportCountry !== undefined) payload.passport_country = updates.passportCountry;
-    if (updates.passportIssueDate !== undefined) payload.passport_issue_date = updates.passportIssueDate || null;
-    if (updates.passportExpiry !== undefined) payload.passport_expiry = updates.passportExpiry || null;
-    if (updates.residencyCardNo !== undefined) payload.residency_card_no = updates.residencyCardNo;
-    if (updates.uidNo !== undefined) payload.uid_no = updates.uidNo;
-    if (updates.residencyProfession !== undefined) payload.residency_profession = updates.residencyProfession;
-    if (updates.residencySponsor !== undefined) payload.residency_sponsor = updates.residencySponsor;
-    if (updates.residencyIssueDate !== undefined) payload.residency_issue_date = updates.residencyIssueDate || null;
-    if (updates.residencyExpiryDate !== undefined) payload.residency_expiry_date = updates.residencyExpiryDate || null;
+    if (updates.passportIssueDate !== undefined) payload.passport_issue_date = cleanDate(updates.passportIssueDate);
+    if (updates.passportExpiry !== undefined) {
+      const pe = cleanDate(updates.passportExpiry);
+      payload.passport_expiry = pe;
+      payload.passport_expiry_date = pe;
+    }
+    if (updates.residencyCardNo !== undefined) {
+      payload.residency_card_no = updates.residencyCardNo;
+      payload.residency_no = updates.residencyCardNo;
+    }
+    if (updates.uidNo !== undefined) {
+      payload.uid_no = updates.uidNo;
+      payload.visa_uid = updates.uidNo;
+    }
+    if (updates.residencyProfession !== undefined) {
+      payload.residency_profession = updates.residencyProfession;
+      payload.profession_on_visa = updates.residencyProfession;
+    }
+    if (updates.residencySponsor !== undefined) {
+      payload.residency_sponsor = updates.residencySponsor;
+      payload.sponsor = updates.residencySponsor;
+    }
+    if (updates.residencyIssueDate !== undefined) {
+      const ri = cleanDate(updates.residencyIssueDate);
+      payload.residency_issue_date = ri;
+      payload.visa_issue_date = ri;
+    }
+    if (updates.residencyExpiryDate !== undefined) {
+      const re = cleanDate(updates.residencyExpiryDate);
+      payload.residency_expiry_date = re;
+      payload.visa_expiry_date = re;
+    }
     if (updates.idFrontImageUrl !== undefined) payload.id_front_image_url = updates.idFrontImageUrl;
     if (updates.idBackImageUrl !== undefined) payload.id_back_image_url = updates.idBackImageUrl;
     if (updates.passportImageUrl !== undefined) payload.passport_image_url = updates.passportImageUrl;
-    if (updates.residencyImageUrl !== undefined) payload.residency_image_url = updates.residencyImageUrl;
+    if (updates.residencyImageUrl !== undefined) {
+      payload.residency_image_url = updates.residencyImageUrl;
+      payload.visa_image_url = updates.residencyImageUrl;
+    }
     if (updates.photoUrl !== undefined) payload.photo_url = updates.photoUrl;
 
     payload.updated_at = new Date().toISOString();
 
     try {
-      await supabase
-        .from('employees')
-        .update(payload)
-        .eq('id', String(id));
+      if (isValidUuid(id)) {
+        await supabase.from('employees').update(payload).eq('id', id);
+      } else {
+        await supabase.from('employees').update(payload).or(`emp_code.eq.${id},employee_code.eq.${id}`);
+      }
     } catch (err) {
       console.warn('Supabase update employee error, proceeding with local update:', err);
     }
@@ -898,9 +999,19 @@ export class HrService {
       extracted_name: log.extractedName || '',
       extracted_id: log.extractedId || '',
       confidence: Number(log.confidence || 0.98),
+      confidence_score: Number(log.confidence || 0.98),
       source: log.source || 'GEMINI_AI_VISION',
       scanned_by: log.scannedBy || 'HR Admin',
       details: log.details || '',
+      extracted_data: {
+        extractedName: log.extractedName || '',
+        extractedId: log.extractedId || '',
+        confidence: Number(log.confidence || 0.98),
+        source: log.source || 'GEMINI_AI_VISION',
+        scannedBy: log.scannedBy || 'HR Admin',
+        details: log.details || ''
+      },
+      raw_response: log.details || '',
       created_at: new Date().toISOString()
     };
 

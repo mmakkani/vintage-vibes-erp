@@ -1,3 +1,6 @@
+import { supabase } from '../supabaseClient.ts';
+import { AuditLogEntry } from '../types/common.types.ts';
+
 const LOCAL_STORAGE_AUDIT_KEY = 'vintage_vibes_audit_logs';
 
 function getLocalAuditLogs(): AuditLogEntry[] {

@@ -247,7 +247,7 @@ MANDATORY RULES:
         parts.push({ text: promptText });
 
         let response: any = null;
-        const candidateModels = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+        const candidateModels = ['gemini-2.0-flash'];
         let lastModelErr: any = null;
         for (const m of candidateModels) {
           try {

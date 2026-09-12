@@ -134,6 +134,15 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
         (form as any).full_name_english || 
         'Staff Member';
 
+      const cleanDateVal = (d: any) => {
+        if (!d || typeof d !== 'string') return null;
+        const trimmed = d.trim();
+        if (!trimmed || trimmed === '' || trimmed === 'null' || trimmed === 'undefined') return null;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+        const parsed = new Date(trimmed);
+        return !isNaN(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null;
+      };
+
       const basic_salary = Number(form.baseSalary || (form as any).basic_salary || 0);
       const housing_allowance = Number(form.housingAllow || (form as any).housing_allowance || 0);
       const transport_allowance = Number(form.transportAllow || (form as any).transport_allowance || 0);
@@ -163,7 +172,14 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
         transportAllow: transport_allowance,
         totalPackage: total_package,
         working_hours_per_day,
-        workingHoursPerDay: working_hours_per_day
+        workingHoursPerDay: working_hours_per_day,
+        dob: cleanDateVal(form.dob),
+        joining_date: cleanDateVal(form.joiningDate) || new Date().toISOString().slice(0, 10),
+        emirates_id_expiry: cleanDateVal(form.emiratesIdExpiry),
+        passport_expiry: cleanDateVal(form.passportExpiry),
+        passport_issue_date: cleanDateVal(form.passportIssueDate),
+        residency_issue_date: cleanDateVal(form.residencyIssueDate),
+        residency_expiry_date: cleanDateVal(form.residencyExpiryDate)
       };
 
       const url = editingEmployee?.id ? `/api/hr/employees/${editingEmployee.id}` : '/api/hr/employees';

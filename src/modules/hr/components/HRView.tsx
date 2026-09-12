@@ -848,6 +848,15 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         (empForm as any).full_name_english || 
         'Staff Member';
 
+      const cleanDateVal = (d: any) => {
+        if (!d || typeof d !== 'string') return null;
+        const trimmed = d.trim();
+        if (!trimmed || trimmed === '' || trimmed === 'null' || trimmed === 'undefined') return null;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+        const parsed = new Date(trimmed);
+        return !isNaN(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null;
+      };
+
       const basic_salary = Number(empForm.baseSalary || (empForm as any).basic_salary || 0);
       const housing_allowance = Number(empForm.housingAllow || (empForm as any).housing_allowance || 0);
       const transport_allowance = Number(empForm.transportAllow || (empForm as any).transport_allowance || 0);
@@ -877,7 +886,14 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         transportAllow: transport_allowance,
         totalPackage: total_package,
         working_hours_per_day,
-        workingHoursPerDay: working_hours_per_day
+        workingHoursPerDay: working_hours_per_day,
+        dob: cleanDateVal(empForm.dob),
+        joining_date: cleanDateVal(empForm.joiningDate) || new Date().toISOString().slice(0, 10),
+        emirates_id_expiry: cleanDateVal(empForm.emiratesIdExpiry),
+        passport_expiry: cleanDateVal(empForm.passportExpiry),
+        passport_issue_date: cleanDateVal(empForm.passportIssueDate),
+        residency_issue_date: cleanDateVal(empForm.residencyIssueDate),
+        residency_expiry_date: cleanDateVal(empForm.residencyExpiryDate)
       };
 
       const url = editingEmpId ? `/api/hr/employees/${editingEmpId}` : '/api/hr/employees';
