@@ -219,8 +219,8 @@ async function runMigration() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    console.log('[HR Migration] Verified hr_ocr_logs table.');
-
+    await client.query("NOTIFY pgrst, 'reload schema';");
+    console.log('[HR Migration] Notified PostgREST to reload schema cache.');
     console.log('[HR Migration] All HR tables and columns successfully migrated!');
   } catch (err) {
     console.error('[HR Migration Error]:', err);

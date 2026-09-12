@@ -295,11 +295,25 @@ export class HrService {
     } as Employee;
 
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('employees')
         .insert(payload)
         .select()
         .single();
+
+      // If schema cache was stale for working_hours_per_day, strip it and retry automatically
+      if (error && (error.message?.includes('working_hours_per_day') || error.code === 'PGRST204')) {
+        console.warn('PostgREST schema cache notice for working_hours_per_day, retrying payload...');
+        const retryPayload = { ...payload };
+        delete retryPayload.working_hours_per_day;
+        const retryRes = await supabase
+          .from('employees')
+          .insert(retryPayload)
+          .select()
+          .single();
+        data = retryRes.data;
+        error = retryRes.error;
+      }
 
       if (!error && data) {
         savedEmp.id = String(data.id);
@@ -448,10 +462,23 @@ export class HrService {
     payload.updated_at = new Date().toISOString();
 
     try {
+      let errRes: any = null;
       if (isValidUuid(id)) {
-        await supabase.from('employees').update(payload).eq('id', id);
+        const { error } = await supabase.from('employees').update(payload).eq('id', id);
+        errRes = error;
       } else {
-        await supabase.from('employees').update(payload).or(`emp_code.eq.${id},employee_code.eq.${id}`);
+        const { error } = await supabase.from('employees').update(payload).or(`emp_code.eq.${id},employee_code.eq.${id}`);
+        errRes = error;
+      }
+
+      if (errRes && (errRes.message?.includes('working_hours_per_day') || errRes.code === 'PGRST204')) {
+        const retryPayload = { ...payload };
+        delete retryPayload.working_hours_per_day;
+        if (isValidUuid(id)) {
+          await supabase.from('employees').update(retryPayload).eq('id', id);
+        } else {
+          await supabase.from('employees').update(retryPayload).or(`emp_code.eq.${id},employee_code.eq.${id}`);
+        }
       }
     } catch (err) {
       console.warn('Supabase update employee error, proceeding with local update:', err);
