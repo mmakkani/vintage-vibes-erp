@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, ChevronDown, X, Check } from 'lucide-react';
 
 export interface SearchableOption {
@@ -52,8 +53,16 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [dropdownCoords, setDropdownCoords] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    openUpwards: boolean;
+    bottom?: number;
+  } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -147,10 +156,53 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
     }
   }, [isOpen]);
 
-  // Close on outside click
+  // Auto calculate dropdown position & keep in sync on scroll/resize
+  useEffect(() => {
+    if (!isOpen) {
+      setDropdownCoords(null);
+      return;
+    }
+
+    const updateCoords = () => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const openUpwards = spaceBelow < 280 && spaceAbove > spaceBelow;
+      const width = Math.max(rect.width, 320);
+
+      let left = rect.left;
+      if (left + width > window.innerWidth - 12) {
+        left = Math.max(12, window.innerWidth - width - 12);
+      }
+
+      setDropdownCoords({
+        top: openUpwards ? rect.top - 4 : rect.bottom + 4,
+        left,
+        width,
+        openUpwards,
+        bottom: openUpwards ? window.innerHeight - rect.top + 4 : undefined
+      });
+    };
+
+    updateCoords();
+    window.addEventListener('resize', updateCoords);
+    window.addEventListener('scroll', updateCoords, true);
+    return () => {
+      window.removeEventListener('resize', updateCoords);
+      window.removeEventListener('scroll', updateCoords, true);
+    };
+  }, [isOpen]);
+
+  // Close on outside click (checks both trigger button and portal dropdown)
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(target) &&
+        (!dropdownRef.current || !dropdownRef.current.contains(target))
+      ) {
         setIsOpen(false);
       }
     };
@@ -279,11 +331,21 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
         </div>
       </button>
 
-      {/* Floating Dropdown Panel */}
-      {isOpen && (
+      {/* Floating Dropdown Panel rendered via Portal into document.body */}
+      {isOpen && dropdownCoords && typeof document !== 'undefined' && createPortal(
         <div
-          className={`absolute left-0 top-full mt-1 w-full min-w-[280px] bg-white rounded-xl shadow-2xl border border-amber-200/90 z-[999] overflow-hidden animate-in fade-in zoom-in-95 duration-100 ${dropdownClassName}`}
+          ref={dropdownRef}
+          style={{
+            position: 'fixed',
+            top: dropdownCoords.openUpwards ? 'auto' : `${dropdownCoords.top}px`,
+            bottom: dropdownCoords.openUpwards ? `${dropdownCoords.bottom}px` : 'auto',
+            left: `${dropdownCoords.left}px`,
+            width: `${dropdownCoords.width}px`,
+            zIndex: 9999999
+          }}
+          className={`bg-white rounded-xl shadow-2xl border border-amber-300 ring-2 ring-amber-500/20 overflow-hidden animate-in fade-in zoom-in-95 duration-100 ${dropdownClassName}`}
           role="listbox"
+          onKeyDown={handleKeyDown}
         >
           {/* Integrated Search Box */}
           <div className="p-2 border-b border-amber-100 bg-amber-50/40 sticky top-0 z-10">
@@ -454,7 +516,8 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
               </>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

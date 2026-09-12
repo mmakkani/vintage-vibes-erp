@@ -999,8 +999,8 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
           </div>
 
           {/* SECTION 3: ITEMIZED BALE / SACK LINE ITEMS TABLE */}
-          <div className="bg-white rounded-xl border border-slate-300 shadow-xs overflow-hidden">
-            <div className="p-3 bg-slate-100 border-b border-slate-200 flex items-center justify-between">
+          <div className="bg-white rounded-xl border border-slate-300 shadow-xs overflow-visible">
+            <div className="p-3 bg-slate-100 border-b border-slate-200 flex items-center justify-between rounded-t-xl">
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4 text-blue-700" />
                 <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider">
@@ -1026,7 +1026,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto min-h-[160px]">
               <table className="w-full text-left text-[11px] border-collapse">
                 <thead className="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                   <tr>
