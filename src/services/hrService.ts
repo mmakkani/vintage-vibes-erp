@@ -97,11 +97,27 @@ export class HrService {
     const transportAllowance = Number(emp.transport_allowance ?? emp.transportAllow ?? emp.transport_allow ?? 0);
     const totalPackage = Number(emp.total_package ?? emp.totalPackage ?? (basicSalary + housingAllowance + transportAllowance));
 
+    const resolvedFullName = 
+      (emp as any).full_name || 
+      (emp as any).fullName || 
+      (emp as any).fullNameEnglish || 
+      emp.name || 
+      (emp as any).full_name_english || 
+      'Staff Member';
+
+    const resolvedArabicName = 
+      emp.nameArabic || 
+      (emp as any).full_name_arabic || 
+      (emp as any).fullNameArabic || 
+      '';
+
     const payload = {
       id,
       emp_code: empCode,
-      name: emp.name || (emp as any).fullName || 'Unnamed Employee',
-      full_name: emp.name || (emp as any).fullName || 'Unnamed Employee',
+      name: resolvedFullName,
+      full_name: resolvedFullName,
+      name_arabic: resolvedArabicName,
+      full_name_arabic: resolvedArabicName,
       designation: emp.designation || 'Staff',
       department: emp.department || 'Operations',
       basic_salary: basicSalary,
@@ -121,7 +137,6 @@ export class HrService {
       passport_no: emp.passportNo || '',
       id_front_image_url: emp.idFrontImageUrl || '',
       id_back_image_url: emp.idBackImageUrl || '',
-      name_arabic: emp.nameArabic || '',
       nationality: emp.nationality || '',
       gender: emp.gender || 'MALE',
       dob: emp.dob || null,
@@ -222,8 +237,16 @@ export class HrService {
 
   public static async updateEmployee(id: string, updates: Partial<Employee>): Promise<void> {
     const payload: any = {};
-    if (updates.name !== undefined) payload.name = updates.name;
-    if (updates.nameArabic !== undefined) payload.name_arabic = updates.nameArabic;
+    if (updates.name !== undefined || (updates as any).full_name !== undefined || (updates as any).fullName !== undefined) {
+      const nameVal = updates.name || (updates as any).full_name || (updates as any).fullName || '';
+      payload.name = nameVal;
+      payload.full_name = nameVal;
+    }
+    if (updates.nameArabic !== undefined || (updates as any).full_name_arabic !== undefined || (updates as any).fullNameArabic !== undefined) {
+      const arabicVal = updates.nameArabic || (updates as any).full_name_arabic || (updates as any).fullNameArabic || '';
+      payload.name_arabic = arabicVal;
+      payload.full_name_arabic = arabicVal;
+    }
     if (updates.designation !== undefined) payload.designation = updates.designation;
     if (updates.baseSalary !== undefined || (updates as any).basic_salary !== undefined) {
       const val = Number(updates.baseSalary ?? (updates as any).basic_salary ?? 0);

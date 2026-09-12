@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { User, Shield, CreditCard, Building2, DollarSign, Upload, Scan, Sparkles, FileText, CheckCircle2 } from 'lucide-react';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import { AIOcrScannerModal } from './AIOcrScannerModal.tsx';
@@ -125,15 +125,27 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
       const safeResidencyImageUrl = typeof form.residencyImageUrl === 'string' ? form.residencyImageUrl : '';
       const safePhotoUrl = typeof form.photoUrl === 'string' ? form.photoUrl : '';
 
-      // 2. Ensure payload mapping explicitly converts numbers
-      const basic_salary = Number(form.baseSalary || 0);
-      const housing_allowance = Number(form.housingAllow || 0);
-      const transport_allowance = Number(form.transportAllow || 0);
+      // 2. Ensure full_name is NEVER null and numbers are properly converted
+      const resolvedFullName = 
+        (form as any).full_name || 
+        (form as any).fullName || 
+        (form as any).fullNameEnglish || 
+        form.name || 
+        (form as any).full_name_english || 
+        'Staff Member';
+
+      const basic_salary = Number(form.baseSalary || (form as any).basic_salary || 0);
+      const housing_allowance = Number(form.housingAllow || (form as any).housing_allowance || 0);
+      const transport_allowance = Number(form.transportAllow || (form as any).transport_allowance || 0);
       const total_package = basic_salary + housing_allowance + transport_allowance;
-      const working_hours_per_day = Number(form.workingHoursPerDay || 8);
+      const working_hours_per_day = Number(form.workingHoursPerDay || (form as any).working_hours_per_day || 8);
 
       const payload = {
         ...form,
+        name: resolvedFullName,
+        full_name: resolvedFullName,
+        name_arabic: form.nameArabic || (form as any).full_name_arabic || (form as any).fullNameArabic || '',
+        full_name_arabic: form.nameArabic || (form as any).full_name_arabic || (form as any).fullNameArabic || '',
         idFrontImageUrl: safeIdFrontImageUrl,
         idBackImageUrl: safeIdBackImageUrl,
         passportImageUrl: safePassportImageUrl,

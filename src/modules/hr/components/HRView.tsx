@@ -807,15 +807,27 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const safeResidencyImageUrl = typeof empForm.residencyImageUrl === 'string' ? empForm.residencyImageUrl : '';
       const safePhotoUrl = typeof empForm.photoUrl === 'string' ? empForm.photoUrl : '';
 
-      // 2. Ensure payload mapping explicitly converts numbers
-      const basic_salary = Number(empForm.baseSalary || 0);
-      const housing_allowance = Number(empForm.housingAllow || 0);
-      const transport_allowance = Number(empForm.transportAllow || 0);
+      // 2. Ensure full_name is NEVER null and numbers are properly converted
+      const resolvedFullName = 
+        (empForm as any).full_name || 
+        (empForm as any).fullName || 
+        (empForm as any).fullNameEnglish || 
+        empForm.name || 
+        (empForm as any).full_name_english || 
+        'Staff Member';
+
+      const basic_salary = Number(empForm.baseSalary || (empForm as any).basic_salary || 0);
+      const housing_allowance = Number(empForm.housingAllow || (empForm as any).housing_allowance || 0);
+      const transport_allowance = Number(empForm.transportAllow || (empForm as any).transport_allowance || 0);
       const total_package = basic_salary + housing_allowance + transport_allowance;
-      const working_hours_per_day = Number(empForm.workingHoursPerDay || 8);
+      const working_hours_per_day = Number(empForm.workingHoursPerDay || (empForm as any).working_hours_per_day || 8);
 
       const payload = {
         ...empForm,
+        name: resolvedFullName,
+        full_name: resolvedFullName,
+        name_arabic: empForm.nameArabic || (empForm as any).full_name_arabic || (empForm as any).fullNameArabic || '',
+        full_name_arabic: empForm.nameArabic || (empForm as any).full_name_arabic || (empForm as any).fullNameArabic || '',
         idFrontImageUrl: safeIdFrontImageUrl,
         idBackImageUrl: safeIdBackImageUrl,
         passportImageUrl: safePassportImageUrl,

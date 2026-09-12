@@ -116,8 +116,8 @@ export async function validateGeminiApiKey(apiKey: string): Promise<{ valid: boo
   }
 
   const cleanKey = apiKey.trim();
-  // Valid active production Google Gemini models
-  const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
+  // Universally supported active production Google Gemini models
+  const models = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
   let lastError = '';
 
   for (const model of models) {
@@ -163,7 +163,7 @@ export async function validateGeminiApiKey(apiKey: string): Promise<{ valid: boo
  * Executes direct Gemini Vision API call from browser
  */
 async function callGeminiVisionApi(apiKey: string, parts: any[]): Promise<any> {
-  const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
+  const models = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
   let lastError: any = null;
 
   for (const model of models) {
@@ -289,9 +289,13 @@ function getUaeDocumentFallback(documentType: string, imageBase64: string): AIOC
 export async function executeDocumentOcr(payload: AIOCRScanPayload): Promise<AIOCRScanResult> {
   const { documentType, imageBase64, secondaryImageBase64, apiKey: inputKey } = payload;
 
+  const envKey = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
+    (typeof window !== 'undefined' && (window as any).__ENV__?.VITE_GEMINI_API_KEY) ||
+    (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_api_key') || '').trim() : '');
+
   const apiKey = (inputKey && inputKey.trim().length > 5)
     ? inputKey.trim()
-    : (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_api_key') || '').trim() : '');
+    : (envKey || '').trim();
 
   if (!imageBase64 || imageBase64.trim().length < 100) {
     throw new Error('Please upload or snap a photo of the document before scanning.');
