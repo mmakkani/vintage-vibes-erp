@@ -41,7 +41,8 @@ import {
   Calendar,
   RefreshCw,
   Edit3,
-  Trash2
+  Trash2,
+  Lock
 } from 'lucide-react';
 import { AccessDeniedNotice } from '../../../components/AccessDeniedNotice.tsx';
 import { ModuleMaintenanceGuard } from '../../../components/ModuleMaintenanceGuard.tsx';
@@ -134,6 +135,7 @@ interface FinanceViewProps {
   currentUserRole: string;
   initialSubTab?: 'coa' | 'vouchers' | 'cod-reconciliation' | 'recurring-vouchers' | 'budgeting' | 'tax-compliance' | 'ledger' | 'trial-balance' | 'income-statement' | 'custom-reports' | 'balance-sheet';
   maintenanceModules?: Record<string, boolean>;
+  companyProfile?: any;
 }
 
 interface NewVoucherLineItem {
@@ -153,7 +155,7 @@ interface SingleVoucherLineItem {
   memo: string;
 }
 
-export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentUserRole, initialSubTab = 'coa', maintenanceModules }) => {
+export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentUserRole, initialSubTab = 'coa', maintenanceModules, companyProfile }) => {
   const { syncVersion, acquireLock, releaseLock, notifyMutation } = useSync();
 
   const [subTab, setSubTabState] = useState<
@@ -851,9 +853,18 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     }
   };
 
+  const isPeriodLocked = (voucherDate?: string) => {
+    if (!companyProfile?.isFinancialLocked || !companyProfile?.financialLockDate || !voucherDate) return false;
+    return voucherDate <= companyProfile.financialLockDate;
+  };
+
   const handleOpenEditVoucher = (v: Voucher) => {
     if (v.isAuto || (v as any).is_auto || FinanceService.isAutoVoucher(v)) {
       showMsg('Auto-generated system vouchers cannot be edited.', 'error');
+      return;
+    }
+    if (isPeriodLocked(v.date)) {
+      showMsg(`Cannot edit: Financial period up to ${companyProfile.financialLockDate} is locked for VAT & audit compliance.`, 'error');
       return;
     }
     setEditingVoucherId(v.id);
@@ -945,6 +956,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       showMsg('Auto-generated system vouchers cannot be removed or deleted.', 'error');
       return;
     }
+    if (isPeriodLocked(v.date)) {
+      showMsg(`Cannot delete: Financial period up to ${companyProfile.financialLockDate} is locked for VAT & audit compliance.`, 'error');
+      return;
+    }
     if (!window.confirm(`Are you sure you want to permanently delete manual voucher ${v.voucherNo}? All corresponding General Ledger entries will be removed.`)) {
       return;
     }
@@ -979,6 +994,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const handleUnpostVoucher = async (voucherId: string) => {
     const lockKey = `unpost-voucher-${voucherId}`;
     if (!acquireLock(lockKey)) return;
+
+    const v = (vouchers || []).find(x => x.id === voucherId);
+    if (v && isPeriodLocked(v.date)) {
+      showMsg(`Cannot unpost: Financial period up to ${companyProfile.financialLockDate} is locked for VAT & audit compliance.`, 'error');
+      releaseLock(lockKey);
+      return;
+    }
 
     try {
       await FinanceService.updateVoucherStatus(voucherId, 'DRAFT');
@@ -1497,10 +1519,11 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   <tbody className="divide-y divide-slate-100 font-mono">
                     {(Array.isArray(vouchers) ? vouchers : []).map(v => {
                       const isAuto = Boolean(v.isAuto || (v as any).is_auto || FinanceService.isAutoVoucher(v));
+                      const isLocked = isPeriodLocked(v.date);
                       return (
                         <tr key={v.id} className="hover:bg-amber-50/40 transition-colors">
                           <td className="px-3.5 py-2 font-bold text-amber-900">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <span>{v.voucherNo}</span>
                               {isAuto ? (
                                 <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-800 border border-purple-200" title="System Auto Generated (Locked)">
@@ -1509,6 +1532,11 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                               ) : (
                                 <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200" title="Manual Posted Voucher">
                                   Manual
+                                </span>
+                              )}
+                              {isLocked && (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-100 text-rose-800 border border-rose-200 inline-flex items-center gap-0.5" title={`Financial period locked up to ${companyProfile?.financialLockDate} for UAE VAT and audit compliance`}>
+                                  <Lock className="w-2.5 h-2.5" /> Locked
                                 </span>
                               )}
                             </div>
@@ -1584,7 +1612,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                               <Printer className="w-3 h-3" />
                               <span>Print</span>
                             </button>
-                            {!isAuto && (
+                            {!isAuto && !isLocked && (
                               <>
                                 <button
                                   type="button"
@@ -1606,7 +1634,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                                 </button>
                               </>
                             )}
-                            {v.status === 'POSTED' && !isAuto && (
+                            {v.status === 'POSTED' && !isAuto && !isLocked && (
                               <button
                                 type="button"
                                 onClick={() => handleUnpostVoucher(v.id)}
@@ -1617,7 +1645,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                                 <span>Unpost</span>
                               </button>
                             )}
-                            {v.status !== 'POSTED' && !isAuto && (
+                            {v.status !== 'POSTED' && !isAuto && !isLocked && (
                               <button
                                 type="button"
                                 onClick={() => handlePostVoucher(v.id)}
@@ -1627,6 +1655,12 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                                 <CheckCircle className="w-3 h-3 text-emerald-600" />
                                 <span>Post</span>
                               </button>
+                            )}
+                            {isLocked && !isAuto && (
+                              <span className="px-2 py-1 rounded bg-slate-100 text-slate-400 font-bold text-[10px] uppercase tracking-wider border border-slate-200 inline-flex items-center gap-1" title="Locked by Accounting Period Lock">
+                                <Lock className="w-3 h-3" />
+                                <span>Locked</span>
+                              </span>
                             )}
                           </td>
                         </tr>

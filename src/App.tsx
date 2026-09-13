@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { Header } from './components/Header.tsx';
 import { DubaiLiveSoukTicker } from './components/DubaiLiveSoukTicker.tsx';
 import { Navigation, ActiveTab } from './components/Navigation.tsx';
@@ -12,32 +12,44 @@ import { WhatsAppModal } from './components/WhatsAppModal.tsx';
 import { exportCurrentViewToPdf } from './utils/pdfExport.ts';
 import { MainDashboardView } from './modules/dashboard/components/MainDashboardView.tsx';
 import { LoginScreen } from './modules/auth/components/LoginScreen.tsx';
-import { PurchaseView } from './modules/purchase/components/PurchaseView.tsx';
-import { SalesView } from './modules/sales/components/SalesView.tsx';
-import { FinanceView } from './modules/finance/components/FinanceView.tsx';
-import { PartiesView } from './modules/parties/components/PartiesView.tsx';
-import { HRView } from './modules/hr/components/HRView.tsx';
-import { SetupView } from './modules/setup/components/SetupView.tsx';
-import { AuditView } from './modules/audit/components/AuditView.tsx';
-import { AccessControlView } from './modules/auth/components/AccessControlView.tsx';
 import { CompanyProfile, CurrencyItem } from './modules/setup/setup.types.ts';
 import { User } from './modules/auth/auth.types.ts';
-import { StorefrontView } from './modules/ecommerce/StorefrontView.tsx';
 import { SyncProvider } from './context/SyncContext.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
-import { MobileLiveHostView } from './modules/sales/components/MobileLiveHostView.tsx';
-import { StaffMobileAppView } from './modules/staff/StaffMobileAppView.tsx';
-import { CounterSalePOSTerminal } from './modules/sales/components/CounterSalePOSTerminal.tsx';
 import { AccessDeniedNotice } from './components/AccessDeniedNotice.tsx';
 import { GoldenCursorDust } from './components/GoldenCursorDust.tsx';
 import { useIdleTimer } from './hooks/useIdleTimer.ts';
 import { isTabAccessible, getAccessibleTabs } from './modules/auth/utils/permissionUtils.ts';
-import { MarketingAutomationView } from './modules/marketing/components/MarketingAutomationView.tsx';
-import { LiveOBSOverlayView } from './modules/marketing/components/LiveOBSOverlayView.tsx';
 import { CompanyProfileService, SetupService, AuthService } from './services/index.ts';
 import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
 import { ModuleMaintenanceGuard } from './components/ModuleMaintenanceGuard.tsx';
 import { PWAUpdatePrompt } from './components/PWAUpdatePrompt.tsx';
+
+// Code-Split Dynamic Views for 10x Load Speed
+const PurchaseView = React.lazy(() => import('./modules/purchase/components/PurchaseView.tsx').then(m => ({ default: m.PurchaseView })));
+const SalesView = React.lazy(() => import('./modules/sales/components/SalesView.tsx').then(m => ({ default: m.SalesView })));
+const FinanceView = React.lazy(() => import('./modules/finance/components/FinanceView.tsx').then(m => ({ default: m.FinanceView })));
+const PartiesView = React.lazy(() => import('./modules/parties/components/PartiesView.tsx').then(m => ({ default: m.PartiesView })));
+const HRView = React.lazy(() => import('./modules/hr/components/HRView.tsx').then(m => ({ default: m.HRView })));
+const SetupView = React.lazy(() => import('./modules/setup/components/SetupView.tsx').then(m => ({ default: m.SetupView })));
+const AuditView = React.lazy(() => import('./modules/audit/components/AuditView.tsx').then(m => ({ default: m.AuditView })));
+const AccessControlView = React.lazy(() => import('./modules/auth/components/AccessControlView.tsx').then(m => ({ default: m.AccessControlView })));
+const StorefrontView = React.lazy(() => import('./modules/ecommerce/StorefrontView.tsx').then(m => ({ default: m.StorefrontView })));
+const MobileLiveHostView = React.lazy(() => import('./modules/sales/components/MobileLiveHostView.tsx').then(m => ({ default: m.MobileLiveHostView })));
+const StaffMobileAppView = React.lazy(() => import('./modules/staff/StaffMobileAppView.tsx').then(m => ({ default: m.StaffMobileAppView })));
+const CounterSalePOSTerminal = React.lazy(() => import('./modules/sales/components/CounterSalePOSTerminal.tsx').then(m => ({ default: m.CounterSalePOSTerminal })));
+const MarketingAutomationView = React.lazy(() => import('./modules/marketing/components/MarketingAutomationView.tsx').then(m => ({ default: m.MarketingAutomationView })));
+const LiveOBSOverlayView = React.lazy(() => import('./modules/marketing/components/LiveOBSOverlayView.tsx').then(m => ({ default: m.LiveOBSOverlayView })));
+
+const ModuleLoadingFallback: React.FC<{ name?: string }> = ({ name }) => (
+  <div className="flex flex-col items-center justify-center py-24 px-4 min-h-[380px]">
+    <div className="w-10 h-10 border-3 border-amber-500 border-t-transparent rounded-full animate-spin mb-3.5" />
+    <div className="text-xs font-bold uppercase tracking-widest text-amber-900 font-mono">
+      Loading {name || 'Workspace'}...
+    </div>
+    <div className="text-[11px] text-slate-400 mt-1 font-mono">Connecting to relational data streams</div>
+  </div>
+);
 
 const VALID_TABS: ActiveTab[] = [
   'dashboard',
@@ -349,17 +361,19 @@ export default function App() {
   };
 
   const renderViewContent = () => {
-    // 1. If in dedicated streamer mobile host mode (/live-host/:boothId), render isolated mobile app
+    // 1. If in dedicated streamer mobile host mode (/live-host/:boothId), render isolated mobile app    // 1. MOBILE LIVE SELLING STREAMER BROADCASTER VIEW
     if (liveHostState.isHostMode) {
       return (
         <SyncProvider onGlobalRefresh={refreshGlobalData}>
-          <MobileLiveHostView
-            initialBoothId={liveHostState.boothId}
-            onExitToERP={() => {
-              window.history.pushState({}, '', '/');
-              setLiveHostState({ isHostMode: false, boothId: 'booth-01' });
-            }}
-          />
+          <Suspense fallback={<ModuleLoadingFallback name="Live Host Terminal" />}>
+            <MobileLiveHostView
+              initialBoothId={liveHostState.boothId}
+              onExitToERP={() => {
+                window.history.pushState({}, '', '/');
+                setLiveHostState({ isHostMode: false, boothId: 'booth-01' });
+              }}
+            />
+          </Suspense>
         </SyncProvider>
       );
     }
@@ -368,17 +382,19 @@ export default function App() {
     if (currentView === 'staff-mobile') {
       return (
         <ErrorBoundary sectionName="Vintage Vibes Staff Mobile OS">
-          <StaffMobileAppView
-            companyProfile={companyProfile}
-            onExitToStore={() => {
-              localStorage.setItem('vintage_app_view_mode', 'storefront');
-              setCurrentView('storefront');
-            }}
-            onExitToDesktopERP={() => {
-              localStorage.setItem('vintage_app_view_mode', 'erp');
-              setCurrentView('erp');
-            }}
-          />
+          <Suspense fallback={<ModuleLoadingFallback name="Staff Mobile App" />}>
+            <StaffMobileAppView
+              companyProfile={companyProfile}
+              onExitToStore={() => {
+                localStorage.setItem('vintage_app_view_mode', 'storefront');
+                setCurrentView('storefront');
+              }}
+              onExitToDesktopERP={() => {
+                localStorage.setItem('vintage_app_view_mode', 'erp');
+                setCurrentView('erp');
+              }}
+            />
+          </Suspense>
         </ErrorBoundary>
       );
     }
@@ -415,12 +431,14 @@ export default function App() {
               </div>
 
               <div className="flex-1 overflow-auto">
-                <CounterSalePOSTerminal
-                  companyProfile={companyProfile}
-                  operatorName={currentUser?.name || 'Cashier Lead'}
-                  onRefreshAll={refreshGlobalData}
-                  onSaleCompleted={refreshGlobalData}
-                />
+                <Suspense fallback={<ModuleLoadingFallback name="POS Terminal" />}>
+                  <CounterSalePOSTerminal
+                    companyProfile={companyProfile}
+                    operatorName={currentUser?.name || 'Cashier Lead'}
+                    onRefreshAll={refreshGlobalData}
+                    onSaleCompleted={refreshGlobalData}
+                  />
+                </Suspense>
               </div>
             </div>
           </ErrorBoundary>
@@ -432,7 +450,9 @@ export default function App() {
     if (currentView === 'live-overlay' || window.location.pathname === '/live-overlay') {
       return (
         <ErrorBoundary sectionName="OBS Studio Broadcast Live Overlay">
-          <LiveOBSOverlayView />
+          <Suspense fallback={<ModuleLoadingFallback name="OBS Live Stream Overlay" />}>
+            <LiveOBSOverlayView />
+          </Suspense>
         </ErrorBoundary>
       );
     }
@@ -441,22 +461,24 @@ export default function App() {
     if (currentView === 'storefront') {
       return (
         <ErrorBoundary sectionName="Vintage Vibes Luxury Storefront">
-          <StorefrontView
-            companyProfile={companyProfile}
-            onOpenERPLogin={() => {
-              if (isAuthenticated) {
-                localStorage.setItem('vintage_app_view_mode', 'erp');
-                setCurrentView('erp');
-              } else {
-                setCurrentView('login');
-              }
-            }}
-            onOpenStaffMobileApp={() => {
-              localStorage.setItem('vintage_app_view_mode', 'staff-mobile');
-              setCurrentView('staff-mobile');
-            }}
-            onInventoryMutated={refreshGlobalData}
-          />
+          <Suspense fallback={<ModuleLoadingFallback name="Luxury Storefront" />}>
+            <StorefrontView
+              companyProfile={companyProfile}
+              onOpenERPLogin={() => {
+                if (isAuthenticated) {
+                  localStorage.setItem('vintage_app_view_mode', 'erp');
+                  setCurrentView('erp');
+                } else {
+                  setCurrentView('login');
+                }
+              }}
+              onOpenStaffMobileApp={() => {
+                localStorage.setItem('vintage_app_view_mode', 'staff-mobile');
+                setCurrentView('staff-mobile');
+              }}
+              onInventoryMutated={refreshGlobalData}
+            />
+          </Suspense>
         </ErrorBoundary>
       );
     }
@@ -542,121 +564,125 @@ export default function App() {
             </ErrorBoundary>
           )}
 
-          {activeTab === 'dashboard' && isTabAccessible('dashboard', currentUser) && (
-            <ErrorBoundary sectionName="Executive Dashboard">
-              <MainDashboardView
-                onNavigateTab={tab => setActiveTab(tab as ActiveTab)}
-                currentUser={currentUser}
-              />
-            </ErrorBoundary>
-          )}
-          {activeTab === 'purchase' && (
-            <ErrorBoundary sectionName="Purchase & Container Inward Module">
-              <PurchaseView
-                onRefreshAll={refreshGlobalData}
-                currentUserRole={currentUser.role}
-                maintenanceModules={companyProfile.maintenance_modules}
-              />
-            </ErrorBoundary>
-          )}
-          {activeTab === 'sales' && (
-            <ErrorBoundary sectionName="Sales, Barcode & Dispatch Module">
-              <ModuleMaintenanceGuard
-                moduleKey="sales"
-                moduleName="Sales & Dispatch Terminal"
-                currentUserRole={currentUser.role}
-                maintenanceModules={companyProfile.maintenance_modules}
-              >
-                <SalesView
+          <Suspense fallback={<ModuleLoadingFallback name={activeTab.toUpperCase()} />}>
+            {activeTab === 'dashboard' && isTabAccessible('dashboard', currentUser) && (
+              <ErrorBoundary sectionName="Executive Dashboard">
+                <MainDashboardView
+                  onNavigateTab={tab => setActiveTab(tab as ActiveTab)}
+                  currentUser={currentUser}
+                />
+              </ErrorBoundary>
+            )}
+            {activeTab === 'purchase' && (
+              <ErrorBoundary sectionName="Purchase & Container Inward Module">
+                <PurchaseView
                   onRefreshAll={refreshGlobalData}
                   currentUserRole={currentUser.role}
-                  onSubTabChange={(tab) => setIsLiveStudioActive(tab === 'liveSelling')}
+                  maintenanceModules={companyProfile.maintenance_modules}
                 />
-              </ModuleMaintenanceGuard>
-            </ErrorBoundary>
-          )}
-          {activeTab === 'marketing' && (
-            <ErrorBoundary sectionName="Marketing & AI Automation Module">
-              <MarketingAutomationView
-                onRefreshAll={refreshGlobalData}
-                currentUserRole={currentUser.role}
-              />
-            </ErrorBoundary>
-          )}
-          {activeTab === 'finance' && (
-            <ErrorBoundary sectionName="Financial Accounts & COA Module">
-              <FinanceView
-                onRefreshAll={refreshGlobalData}
-                currentUserRole={currentUser.role}
-                initialSubTab={currentUser.role === 'ADMIN' ? 'coa' : 'vouchers'}
-                maintenanceModules={companyProfile.maintenance_modules}
-              />
-            </ErrorBoundary>
-          )}
-          {activeTab === 'ledger' && (
-            <ErrorBoundary sectionName="General Ledger & Vouchers Module">
-              <FinanceView
-                onRefreshAll={refreshGlobalData}
-                currentUserRole={currentUser.role}
-                initialSubTab="ledger"
-                maintenanceModules={companyProfile.maintenance_modules}
-              />
-            </ErrorBoundary>
-          )}
-          {activeTab === 'parties' && (
-            <ErrorBoundary sectionName="Parties & Khata Ledger Module">
-              <PartiesView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
-            </ErrorBoundary>
-          )}
-          {activeTab === 'hr' && (
-            <ErrorBoundary sectionName="HR, Vault & Payroll Module">
-              <ModuleMaintenanceGuard
-                moduleKey="hr_payroll"
-                moduleName="HR & Payroll Vault"
-                currentUserRole={currentUser.role}
-                maintenanceModules={companyProfile.maintenance_modules}
-              >
-                <HRView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
-              </ModuleMaintenanceGuard>
-            </ErrorBoundary>
-          )}
-          {activeTab === 'setup' && (
-            !isTabAccessible('setup', currentUser) ? (
-              <AccessDeniedNotice
-                moduleName="Global Master Setup & Configuration"
-                currentRole={currentUser.role}
-                onGoDashboard={() => {
-                  const allowed = getAccessibleTabs(currentUser);
-                  setActiveTab(allowed[0] || 'sales');
-                }}
-              />
-            ) : (
-              <ErrorBoundary sectionName="Master Setup & Configuration Module">
-                <SetupView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
               </ErrorBoundary>
-            )
-          )}
-          {activeTab === 'audit' && (
-            <ErrorBoundary sectionName="System Audit Trail & Compliance Module">
-              <AuditView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
-            </ErrorBoundary>
-          )}
-          {activeTab === 'access' && (
-            !isTabAccessible('access', currentUser) ? (
-              <AccessDeniedNotice
-                moduleName="Access Control & Authority Matrix (RBAC)"
-                currentRole={currentUser.role}
-                onGoDashboard={() => {
-                  const allowed = getAccessibleTabs(currentUser);
-                  setActiveTab(allowed[0] || 'sales');
-                }}
-              />
-            ) : (
-              <ErrorBoundary sectionName="RBAC Access Control Module">
-                <AccessControlView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+            )}
+            {activeTab === 'sales' && (
+              <ErrorBoundary sectionName="Sales, Barcode & Dispatch Module">
+                <ModuleMaintenanceGuard
+                  moduleKey="sales"
+                  moduleName="Sales & Dispatch Terminal"
+                  currentUserRole={currentUser.role}
+                  maintenanceModules={companyProfile.maintenance_modules}
+                >
+                  <SalesView
+                    onRefreshAll={refreshGlobalData}
+                    currentUserRole={currentUser.role}
+                    onSubTabChange={(tab) => setIsLiveStudioActive(tab === 'liveSelling')}
+                  />
+                </ModuleMaintenanceGuard>
               </ErrorBoundary>
-            )
-          )}
+            )}
+            {activeTab === 'marketing' && (
+              <ErrorBoundary sectionName="Marketing & AI Automation Module">
+                <MarketingAutomationView
+                  onRefreshAll={refreshGlobalData}
+                  currentUserRole={currentUser.role}
+                />
+              </ErrorBoundary>
+            )}
+            {activeTab === 'finance' && (
+              <ErrorBoundary sectionName="Financial Accounts & COA Module">
+                <FinanceView
+                  onRefreshAll={refreshGlobalData}
+                  currentUserRole={currentUser.role}
+                  initialSubTab={currentUser.role === 'ADMIN' ? 'coa' : 'vouchers'}
+                  maintenanceModules={companyProfile.maintenance_modules}
+                  companyProfile={companyProfile}
+                />
+              </ErrorBoundary>
+            )}
+            {activeTab === 'ledger' && (
+              <ErrorBoundary sectionName="General Ledger & Vouchers Module">
+                <FinanceView
+                  onRefreshAll={refreshGlobalData}
+                  currentUserRole={currentUser.role}
+                  initialSubTab="ledger"
+                  maintenanceModules={companyProfile.maintenance_modules}
+                  companyProfile={companyProfile}
+                />
+              </ErrorBoundary>
+            )}
+            {activeTab === 'parties' && (
+              <ErrorBoundary sectionName="Parties & Khata Ledger Module">
+                <PartiesView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+              </ErrorBoundary>
+            )}
+            {activeTab === 'hr' && (
+              <ErrorBoundary sectionName="HR, Vault & Payroll Module">
+                <ModuleMaintenanceGuard
+                  moduleKey="hr_payroll"
+                  moduleName="HR & Payroll Vault"
+                  currentUserRole={currentUser.role}
+                  maintenanceModules={companyProfile.maintenance_modules}
+                >
+                  <HRView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+                </ModuleMaintenanceGuard>
+              </ErrorBoundary>
+            )}
+            {activeTab === 'setup' && (
+              !isTabAccessible('setup', currentUser) ? (
+                <AccessDeniedNotice
+                  moduleName="Global Master Setup & Configuration"
+                  currentRole={currentUser.role}
+                  onGoDashboard={() => {
+                    const allowed = getAccessibleTabs(currentUser);
+                    setActiveTab(allowed[0] || 'sales');
+                  }}
+                />
+              ) : (
+                <ErrorBoundary sectionName="Master Setup & Configuration Module">
+                  <SetupView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+                </ErrorBoundary>
+              )
+            )}
+            {activeTab === 'audit' && (
+              <ErrorBoundary sectionName="System Audit Trail & Compliance Module">
+                <AuditView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+              </ErrorBoundary>
+            )}
+            {activeTab === 'access' && (
+              !isTabAccessible('access', currentUser) ? (
+                <AccessDeniedNotice
+                  moduleName="Access Control & Authority Matrix (RBAC)"
+                  currentRole={currentUser.role}
+                  onGoDashboard={() => {
+                    const allowed = getAccessibleTabs(currentUser);
+                    setActiveTab(allowed[0] || 'sales');
+                  }}
+                />
+              ) : (
+                <ErrorBoundary sectionName="RBAC Access Control Module">
+                  <AccessControlView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+                </ErrorBoundary>
+              )
+            )}
+          </Suspense>
         </main>
 
         {/* Full-Width Enterprise Footer */}

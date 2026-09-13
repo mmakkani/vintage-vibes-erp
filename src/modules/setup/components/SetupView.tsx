@@ -1521,6 +1521,48 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               </div>
             </div>
 
+            {/* UAE VAT & Financial Period Closing Lock */}
+            <div className="p-3.5 bg-rose-50/70 border border-rose-200 rounded-lg space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-rose-800 font-black text-xs uppercase tracking-wider flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5 text-rose-600" />
+                    Financial Period & UAE VAT Closing Lock
+                  </span>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={companyProfile.isFinancialLocked ?? true}
+                    onChange={e => setCompanyProfile({ ...companyProfile, isFinancialLocked: e.target.checked })}
+                    className="w-4 h-4 text-rose-600 rounded cursor-pointer"
+                  />
+                  <span className="text-xs font-bold text-rose-900">Enable Period Lock</span>
+                </label>
+              </div>
+              <p className="text-[11px] text-slate-600">
+                Protect historical accounting records. When enabled, vouchers and financial transactions dated on or prior to the cutoff date cannot be deleted, edited, or unposted without explicit Admin authorization.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    Lock All Transactions Up To (Cutoff Date):
+                  </label>
+                  <input
+                    type="date"
+                    value={companyProfile.financialLockDate || '2026-08-31'}
+                    onChange={e => setCompanyProfile({ ...companyProfile, financialLockDate: e.target.value })}
+                    className="w-full border border-rose-300 rounded p-1.5 text-slate-800 font-mono text-xs bg-white focus:border-rose-500"
+                  />
+                </div>
+                <div className="flex items-center">
+                  <div className="text-[11px] text-rose-800 bg-rose-100/70 p-2 rounded border border-rose-200 w-full">
+                    🛡️ Vouchers on or before <strong>{companyProfile.financialLockDate || '2026-08-31'}</strong> are locked against edit/delete.
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div className="pt-2.5 border-t border-slate-200 flex items-center justify-between">
 
               <button

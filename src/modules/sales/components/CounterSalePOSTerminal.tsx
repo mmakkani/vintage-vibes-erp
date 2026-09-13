@@ -41,6 +41,7 @@ import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { SalesService } from '../../../services/salesService.ts';
 import { openThermalLabelPrintWindow, openGiftReceiptPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { useBarcodeScanner } from '../../../hooks/useBarcodeScanner.ts';
+import { offlineQueue } from '../../../services/offlineQueueService.ts';
 
 interface CounterCartItem {
   piece: PieceBreakdownItem;
@@ -94,6 +95,14 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   }, [propCompanyProfile]);
 
   const activeProfile = propCompanyProfile || internalProfile;
+
+  const [pendingOfflineCount, setPendingOfflineCount] = useState<number>(() => offlineQueue.getPendingCount());
+
+  useEffect(() => {
+    return offlineQueue.subscribe(() => {
+      setPendingOfflineCount(offlineQueue.getPendingCount());
+    });
+  }, []);
 
   // Theme Mode: 'light' (Vintage Boutique Web Cream) vs 'dark' (Midnight Vault)
   const [posTheme, setPosTheme] = useState<'light' | 'dark'>(() => {
@@ -471,6 +480,66 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       const vatAmt = Number((subtotalAmt * 0.05).toFixed(2));
       const totalAmt = Number((subtotalAmt + vatAmt + giftBoxFee).toFixed(2));
 
+      // Offline resilience: buffer locally if network is offline
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        offlineQueue.enqueueSale({
+          invoiceNo: invoiceNum,
+          clientId: selectedCustomer?.id,
+          customerName: selectedCustomer?.name || 'Walk-In Customer',
+          customerPhone: selectedCustomer?.phone || '',
+          subtotal: subtotalAmt,
+          discountAmount: discountTotal,
+          taxAmount: vatAmt,
+          totalAmount: totalAmt,
+          paymentMethod: paymentMode,
+          items: cart.map(c => ({
+            barcode: c.piece.barcode,
+            pieceId: c.piece.id,
+            description: `${c.piece.brandName} ${c.piece.itemName}`,
+            unitPrice: c.sellingPrice,
+            discount: c.discount,
+            finalAmount: c.sellingPrice - c.discount,
+            weightKg: c.piece.weightKg || 0.45
+          }))
+        });
+
+        luxuryAudio.playCashChime();
+        setShowPaymentModal(false);
+        setCheckoutSuccessData({
+          invoice: {
+            id: invoiceNum,
+            invoiceNo: invoiceNum,
+            date: new Date().toISOString(),
+            customerName: selectedCustomer?.name || 'Walk-In Customer',
+            customerPhone: selectedCustomer?.phone || '',
+            subTotal: subtotalAmt,
+            discountAmount: discountTotal,
+            vatAmount: vatAmt,
+            totalAmount: totalAmt,
+            paymentMethod: paymentMode,
+            items: cart.map(c => ({
+              barcode: c.piece.barcode,
+              description: `${c.piece.brandName} ${c.piece.itemName}`,
+              unitPrice: c.sellingPrice,
+              discount: c.discount,
+              finalAmount: c.sellingPrice - c.discount,
+              weightKg: c.piece.weightKg || 0.45
+            }))
+          },
+          voucher: { voucherNo: `OFFLINE-${Date.now().toString().slice(-6)}` },
+          cogsSummary: { totalCogs: safeCart.reduce((sum, c) => sum + (Number(c?.cogsCost) || 0), 0) },
+          pieces: safeCart.map(c => c.piece)
+        });
+
+        setCart([]);
+        setSelectedCustomer(null);
+        setDiscountTotal(0);
+        setIsGiftOrder(false);
+        setGiftMessage('');
+        setIncludeGiftBox(false);
+        return;
+      }
+
       // 1. Direct insert to public.pos_sales and auto stock decrement
       const posRecord = await SalesService.createPosSale({
         invoice_number: invoiceNum,
@@ -679,6 +748,16 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                 <Wifi className="w-3 h-3 animate-pulse" />
                 {posConfig.terminalName} • ONLINE
               </span>
+              {pendingOfflineCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => offlineQueue.syncPendingSales()}
+                  className="text-[10px] bg-amber-500/25 text-amber-800 dark:text-amber-300 font-mono px-2.5 py-0.5 rounded-full border border-amber-500/40 flex items-center gap-1 font-bold animate-pulse hover:bg-amber-500/40 cursor-pointer"
+                  title="Click to sync offline buffered sales to PostgreSQL"
+                >
+                  <span>● {pendingOfflineCount} Offline Sales Buffered (Sync)</span>
+                </button>
+              )}
             </div>
             <p className={`text-[11px] ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
               Continuous Barcode Gun Scanner • Multi-Piece Basket • Instant COA & COGS Accounting

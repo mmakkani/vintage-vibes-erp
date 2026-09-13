@@ -1182,6 +1182,18 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json([]);
     }
 
+    // Finance Bale Yield & Container ROI Analytics
+    if (pathname.includes('/finance/yield-analytics')) {
+      return res.status(200).json({
+        totalBalesProcessed: 0,
+        totalPiecesRealized: 0,
+        totalPiecesSold: 0,
+        overallSoldRevenue: 0,
+        overallStockValue: 0,
+        baleDetails: []
+      });
+    }
+
     // Chart of Accounts (COA)
     if (pathname.includes('/finance/coa')) {
       let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
@@ -1219,6 +1231,9 @@ export default async function handler(req: any, res: any) {
           console.warn('Error querying coa_accounts in serverless gateway:', e?.message);
         }
       }
+      return res.status(200).json([]);
+    }
+
     // Finance Vouchers
     if (pathname.includes('/finance/vouchers')) {
       let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;

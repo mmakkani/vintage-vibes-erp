@@ -2533,10 +2533,31 @@ class RelationalStore {
       b => b.purchaseInvoiceId !== invoiceId && b.purchaseInvoiceNo !== invoice.invoiceNo
     );
 
+    // Cascade purge associated vouchers and general ledger entries
+    const invNo = invoice.invoiceNo;
+    const removedVouchers = this.vouchers.filter(v => 
+      v.reference === invNo ||
+      v.reference === `PINV-${invNo}` ||
+      v.reference === `INWARD-${invNo}` ||
+      v.reference === `PUR-${invNo}` ||
+      (v.narration && v.narration.includes(invNo))
+    );
+    const removedVoucherIds = new Set(removedVouchers.map(v => v.id));
+    if (removedVoucherIds.size > 0) {
+      this.vouchers = this.vouchers.filter(v => !removedVoucherIds.has(v.id));
+      this.generalLedgers = this.generalLedgers.filter(l => 
+        !removedVoucherIds.has(l.voucherId) &&
+        l.reference !== invNo &&
+        l.reference !== `PINV-${invNo}` &&
+        l.reference !== `INWARD-${invNo}` &&
+        !(l.narration && l.narration.includes(invNo))
+      );
+    }
+
     this.purchaseInvoices = this.purchaseInvoices.filter(i => i.id !== invoiceId);
 
     this.auditLogs.unshift(
-      AuditEngine.createLogEntry('PURCHASE', 'DELETE', invoice.invoiceNo, 'UNPOSTED', 'Procurement Mgr', `Deleted purchase invoice ${invoice.invoiceNo} and cleared associated un-sorted bales`)
+      AuditEngine.createLogEntry('PURCHASE', 'DELETE', invoice.invoiceNo, 'UNPOSTED', 'Procurement Mgr', `Deleted purchase invoice ${invoice.invoiceNo}, un-sorted bales, and purged auto-vouchers`)
     );
 
     return { success: true };

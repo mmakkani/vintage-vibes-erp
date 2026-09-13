@@ -116,6 +116,8 @@ export interface CompanyProfile {
   posBridge?: PhysicalPOSTerminalBridgeConfig;
   maintenance_modules?: Record<string, boolean>;
   maintenanceModules?: Record<string, boolean>;
+  financialLockDate?: string; // e.g. "2026-08-31" - Locked financial transactions up to this date
+  isFinancialLocked?: boolean;
 }
 
 export type MaintenanceModuleKey =
