@@ -111,13 +111,36 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     }
 
     let broadcastChannel: BroadcastChannel | null = null;
+    const clientId = `tab_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
+    const peers = new Map<string, number>();
+
+    const updateOnlineCount = () => {
+      if (unmounted) return;
+      const now = Date.now();
+      // Purge peers not heard from in 8 seconds
+      for (const [id, lastSeen] of peers.entries()) {
+        if (now - lastSeen > 8000) {
+          peers.delete(id);
+        }
+      }
+      setActiveClientsCount(peers.size + 1); // Peers + self
+    };
+
     try {
       if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
         broadcastChannel = new BroadcastChannel('vintage_vibes_erp_sync');
         broadcastChannel.onmessage = (event) => {
           if (unmounted) return;
           const data = event.data;
-          if (data && (data.type === 'ENTITY_MUTATED' || data.type === 'SYNC_TRIGGER')) {
+          if (!data) return;
+
+          if (data.type === 'HEARTBEAT' && data.clientId && data.clientId !== clientId) {
+            peers.set(data.clientId, data.timestamp || Date.now());
+            updateOnlineCount();
+          } else if (data.type === 'DISCONNECT' && data.clientId) {
+            peers.delete(data.clientId);
+            updateOnlineCount();
+          } else if (data.type === 'ENTITY_MUTATED' || data.type === 'SYNC_TRIGGER') {
             triggerGlobalSync(data.module);
           }
         };
@@ -126,6 +149,25 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     } catch {
       // Fallback silently if BroadcastChannel restricted
     }
+
+    // Send heartbeat every 3 seconds to announce active presence
+    const sendHeartbeat = () => {
+      if (unmounted) return;
+      const now = Date.now();
+      if (broadcastChannel) {
+        try {
+          broadcastChannel.postMessage({
+            type: 'HEARTBEAT',
+            clientId,
+            timestamp: now
+          });
+        } catch {}
+      }
+      updateOnlineCount();
+    };
+
+    sendHeartbeat();
+    const heartbeatInterval = setInterval(sendHeartbeat, 3000);
 
     // Inter-tab sync fallback via localStorage storage events
     const handleStorage = (e: StorageEvent) => {
@@ -146,6 +188,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     // Sync on tab visibility focus only if at least 5 minutes have elapsed since last sync
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
+        sendHeartbeat();
         if (Date.now() - lastSyncedAtRef.current >= 5 * 60 * 1000) {
           triggerGlobalSync();
         }
@@ -156,7 +199,10 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     return () => {
       unmounted = true;
       if (broadcastChannel) {
-        try { broadcastChannel.close(); } catch {}
+        try {
+          broadcastChannel.postMessage({ type: 'DISCONNECT', clientId });
+          broadcastChannel.close();
+        } catch {}
       }
       if (sseRef.current) {
         try { sseRef.current.close(); } catch {}
@@ -166,6 +212,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
+      clearInterval(heartbeatInterval);
       clearInterval(fallbackInterval);
       window.removeEventListener('storage', handleStorage);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
