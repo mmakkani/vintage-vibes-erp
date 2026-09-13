@@ -12,14 +12,18 @@ class LuxuryAudioManager {
     }
   }
 
+  private hasUserInteracted: boolean = false;
+
   private initCtx() {
     if (!this.ctx && typeof window !== 'undefined') {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioCtx) {
-        this.ctx = new AudioCtx();
+        try {
+          this.ctx = new AudioCtx();
+        } catch (_) {}
       }
     }
-    if (this.ctx && this.ctx.state === 'suspended') {
+    if (this.ctx && this.ctx.state === 'suspended' && this.hasUserInteracted) {
       this.ctx.resume().catch(() => {});
     }
   }
@@ -82,14 +86,13 @@ class LuxuryAudioManager {
 
   // Subtle luxury micro-tick on button hover
   public playCoolHoverSound() {
-    if (this.isMuted) return;
+    if (this.isMuted || !this.hasUserInteracted || !this.ctx || this.ctx.state !== 'running') return;
     const nowMs = Date.now();
     // Throttle hover sounds so rapid mouse moves don't stutter
     if (nowMs - this.lastSoundTime < 60) return;
     this.lastSoundTime = nowMs;
 
     try {
-      this.initCtx();
       if (!this.ctx) return;
       const now = this.ctx.currentTime;
 
@@ -243,9 +246,20 @@ class LuxuryAudioManager {
   private attachGlobalListeners() {
     if (typeof window === 'undefined') return;
 
+    const unlockGesture = () => {
+      this.hasUserInteracted = true;
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
+    };
+    window.addEventListener('click', unlockGesture, { once: true, capture: true });
+    window.addEventListener('touchstart', unlockGesture, { once: true, capture: true });
+    window.addEventListener('keydown', unlockGesture, { once: true, capture: true });
+
     window.addEventListener(
       'click',
       (e) => {
+        this.hasUserInteracted = true;
         const target = (e.target as HTMLElement)?.closest(
           'button, [role="button"], .btn-3d, input[type="button"], input[type="submit"], nav a'
         );

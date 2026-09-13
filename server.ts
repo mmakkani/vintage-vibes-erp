@@ -18,6 +18,7 @@ import { paymentRouter } from './src/server/paymentRoutes.ts';
 import { marketingRouter, publicFeedRouter } from './src/modules/marketing/marketing.routes.ts';
 import { SetupController } from './src/modules/setup/setup.controller.ts';
 import { devicesRouter } from './src/modules/devices/devices.routes.ts';
+import { presenceRouter } from './src/modules/presence/presence.routes.ts';
 import { eventHub } from './src/server/events.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -79,6 +80,7 @@ async function startServer() {
   app.use('/api/marketing', marketingRouter);
   app.use('/api/feed', publicFeedRouter);
   app.use('/api/devices', devicesRouter);
+  app.use('/api/presence', presenceRouter);
   app.get('/api/search', (req, res) => {
     return res.json(SetupController.globalSearch((req.query.q as string) || ''));
   });

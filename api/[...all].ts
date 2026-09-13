@@ -4,6 +4,7 @@ import os from 'os';
 import { Client } from 'pg';
 import { createClient } from '@supabase/supabase-js';
 import { DevicesController } from '../src/modules/devices/devices.controller.ts';
+import { PresenceController } from '../src/modules/presence/presence.controller.ts';
 
 const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
@@ -1873,6 +1874,23 @@ export default async function handler(req: any, res: any) {
       if (method === 'GET') {
         return DevicesController.listDevices(req, res);
       }
+    }
+
+    if (pathname.includes('/presence')) {
+      if (pathname.includes('/presence/heartbeat') && method === 'POST') {
+        return PresenceController.heartbeat(req, res);
+      }
+      if (pathname.includes('/presence/logout') && method === 'POST') {
+        return PresenceController.logout(req, res);
+      }
+      if (method === 'GET') {
+        return PresenceController.getOnlineUsers(req, res);
+      }
+    }
+
+    if (pathname.includes('/auth/login') && method === 'POST') {
+      const loginHandler = (await import('./auth/login.ts')).default;
+      return loginHandler(req, res);
     }
 
     return res.status(200).json({

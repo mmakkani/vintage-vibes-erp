@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback, ReactNode } from 'react';
 
+import { PresenceService, OnlineUserPresence } from '../services/presenceService.ts';
+
 export interface SyncEventPayload {
   type: 'ENTITY_MUTATED' | 'SYNC_TRIGGER' | 'CONNECTED';
   module?: string;
@@ -14,10 +16,12 @@ export interface SyncEventPayload {
 interface SyncContextType {
   isLiveConnected: boolean;
   activeClientsCount: number;
+  onlineUsers: OnlineUserPresence[];
   lastSyncedAt: Date | null;
   isSyncing: boolean;
   syncVersion: number;
   triggerGlobalSync: (module?: string) => Promise<void>;
+  refreshPresence: () => Promise<void>;
   acquireLock: (lockKey: string) => boolean;
   releaseLock: (lockKey: string) => void;
   isLocked: (lockKey: string) => boolean;
@@ -32,9 +36,21 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
 }) => {
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [activeClientsCount, setActiveClientsCount] = useState(1);
+  const [onlineUsers, setOnlineUsers] = useState<OnlineUserPresence[]>([]);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(new Date());
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncVersion, setSyncVersion] = useState(1);
+
+  const refreshPresence = useCallback(async () => {
+    try {
+      const res = await PresenceService.sendHeartbeat();
+      if (res && res.success) {
+        setActiveClientsCount(Math.max(1, res.onlineCount));
+        setOnlineUsers(res.users || []);
+        setIsLiveConnected(true);
+      }
+    } catch (_) {}
+  }, []);
 
   // Set of in-flight form action locks to prevent duplicate submissions
   const lockSetRef = useRef<Set<string>>(new Set());
@@ -186,15 +202,27 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     }, 5 * 60 * 1000);
 
     // Sync on tab visibility focus only if at least 5 minutes have elapsed since last sync
+    // SQL-backed presence tracking timer
+    refreshPresence();
+    const presenceInterval = setInterval(() => {
+      if (!unmounted) refreshPresence();
+    }, 12000);
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         sendHeartbeat();
+        refreshPresence();
         if (Date.now() - lastSyncedAtRef.current >= 5 * 60 * 1000) {
           triggerGlobalSync();
         }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    const handleBeforeUnload = () => {
+      PresenceService.logout();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
       unmounted = true;
@@ -214,20 +242,24 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       }
       clearInterval(heartbeatInterval);
       clearInterval(fallbackInterval);
+      clearInterval(presenceInterval);
       window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [triggerGlobalSync]);
+  }, [triggerGlobalSync, refreshPresence]);
 
   return (
     <SyncContext.Provider
       value={{
         isLiveConnected,
         activeClientsCount,
+        onlineUsers,
         lastSyncedAt,
         isSyncing,
         syncVersion,
         triggerGlobalSync,
+        refreshPresence,
         acquireLock,
         releaseLock,
         isLocked,

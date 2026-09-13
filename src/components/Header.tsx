@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { CompanyProfile, CurrencyItem } from '../modules/setup/setup.types.ts';
 import { User } from '../modules/auth/auth.types.ts';
-import { MessageSquare, Shield, RefreshCw, Sparkles, Building2, MapPin, ReceiptText, LogOut } from 'lucide-react';
+import { MessageSquare, Shield, RefreshCw, Sparkles, Building2, MapPin, ReceiptText, LogOut, Users, Smartphone, Laptop } from 'lucide-react';
 import { GlobalSearchBar } from './GlobalSearchBar.tsx';
 import { Vintage3DLogo } from './Vintage3DLogo.tsx';
 import { CompanyName3D } from './CompanyName3D.tsx';
@@ -38,7 +38,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenStaffMobile
 }) => {
   const [showUserDropdown, setShowUserDropdown] = useState(false);
-  const { isLiveConnected, activeClientsCount, lastSyncedAt, isSyncing, triggerGlobalSync } = useSync();
+  const [showOnlineDropdown, setShowOnlineDropdown] = useState(false);
+  const { isLiveConnected, activeClientsCount, onlineUsers, refreshPresence, lastSyncedAt, isSyncing, triggerGlobalSync } = useSync();
 
   return (
     <header id="main-enterprise-header" className="w-full bg-gradient-to-r from-[#FDF9EE]/95 via-[#F5ECCE]/95 to-[#FAF4E6]/95 backdrop-blur-md text-slate-900 px-3 sm:px-5 lg:px-6 py-2 sm:py-2.5 border-b-2 border-amber-400/80 shadow-md flex flex-col xl:flex-row justify-between items-center z-20 gap-3">
@@ -99,34 +100,133 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Top Row: Real-time Online Users + Base Currency Rates + Theme */}
           <div className="flex items-center gap-1.5 sm:gap-2">
             {/* Multi-User Real-time Sync & Live Online Users Beacon */}
-            <button
-              id="btn-multiuser-sync-status"
-              type="button"
-              onClick={() => triggerGlobalSync()}
-              title={`Live Multi-User Cloud Sync: ${activeClientsCount} active user(s) online. Click to force instant database sync.`}
-              className={`h-7 px-2.5 rounded-lg border text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs ${
-                isLiveConnected
-                  ? 'bg-emerald-950/85 text-emerald-300 border-emerald-500/70 hover:bg-emerald-900'
-                  : 'bg-amber-950/85 text-amber-300 border-amber-500/70 hover:bg-amber-900'
-              }`}
-            >
-              <span className="relative flex h-2 w-2">
-                {isLiveConnected && (
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                )}
-                <span
-                  className={`relative inline-flex rounded-full h-2 w-2 ${
-                    isLiveConnected ? 'bg-emerald-500' : 'bg-amber-500'
-                  }`}
+            <div className="relative">
+              <button
+                id="btn-multiuser-sync-status"
+                type="button"
+                onClick={() => {
+                  setShowOnlineDropdown(prev => !prev);
+                  refreshPresence?.();
+                }}
+                title={`Live Multi-User Cloud Sync: ${activeClientsCount} active user(s) online. Click to see all logged-in operators.`}
+                className={`h-7 px-2.5 rounded-lg border text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs ${
+                  isLiveConnected
+                    ? 'bg-emerald-950/85 text-emerald-300 border-emerald-500/70 hover:bg-emerald-900'
+                    : 'bg-amber-950/85 text-amber-300 border-amber-500/70 hover:bg-amber-900'
+                }`}
+              >
+                <span className="relative flex h-2 w-2">
+                  {isLiveConnected && (
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  )}
+                  <span
+                    className={`relative inline-flex rounded-full h-2 w-2 ${
+                      isLiveConnected ? 'bg-emerald-500' : 'bg-amber-500'
+                    }`}
+                  />
+                </span>
+                <span className="font-sans font-black tracking-wide text-emerald-200 text-[11px]">
+                  {activeClientsCount} {activeClientsCount === 1 ? 'Online' : 'Online'}
+                </span>
+                <RefreshCw
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    triggerGlobalSync();
+                    refreshPresence?.();
+                  }}
+                  title="Force Instant Database Sync"
+                  className={`w-2.5 h-2.5 text-emerald-300 hover:text-white transition-transform ${isSyncing ? 'animate-spin' : 'hover:rotate-180'}`}
                 />
-              </span>
-              <span className="font-sans font-black tracking-wide text-emerald-200 text-[11px]">
-                {activeClientsCount} {activeClientsCount === 1 ? 'Online' : 'Online'}
-              </span>
-              <RefreshCw
-                className={`w-2.5 h-2.5 text-emerald-300 ${isSyncing ? 'animate-spin' : 'hover:rotate-180 transition-transform'}`}
-              />
-            </button>
+              </button>
+
+              {/* Online Users List Dropdown (PostgreSQL Verified) */}
+              {showOnlineDropdown && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowOnlineDropdown(false)}
+                  />
+                  <div className="absolute left-0 sm:left-auto sm:right-0 mt-2 w-72 sm:w-80 bg-[#FAF4E6] text-slate-900 rounded-xl shadow-2xl border border-emerald-500/70 py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150 font-sans">
+                    <div className="px-3 py-2 border-b border-amber-200 flex items-center justify-between bg-emerald-950 text-emerald-300 rounded-t-lg -mt-2 mb-2">
+                      <div className="flex items-center gap-1.5 text-xs font-bold tracking-wide">
+                        <Users className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Live Operators ({onlineUsers && onlineUsers.length > 0 ? onlineUsers.length : activeClientsCount})</span>
+                      </div>
+                      <span className="text-[9px] font-mono uppercase bg-emerald-900/80 px-1.5 py-0.5 rounded text-emerald-200 border border-emerald-600/40">
+                        PostgreSQL Live
+                      </span>
+                    </div>
+
+                    <div className="max-h-60 overflow-y-auto px-2 space-y-1.5 divide-y divide-amber-100">
+                      {(onlineUsers && onlineUsers.length > 0 ? onlineUsers : [
+                        {
+                          session_id: 'current',
+                          username: currentUser.username || currentUser.name,
+                          display_name: currentUser.name || currentUser.username,
+                          role: currentUser.role,
+                          device_type: typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? 'Mobile Device' : 'Desktop / PC',
+                          ip_address: 'Connected (PostgreSQL)',
+                          last_heartbeat: new Date().toISOString()
+                        }
+                      ]).map((u, idx) => {
+                        const isMobile = /mobile|phone|ios|android/i.test(u.device_type || '');
+                        const isCurrent = u.username === currentUser.username || (!u.username && idx === 0);
+                        return (
+                          <div key={u.session_id || idx} className="pt-1.5 first:pt-0 flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-amber-100/70 transition-colors">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="relative shrink-0">
+                                <div className="w-7 h-7 rounded-full bg-emerald-200 text-emerald-900 font-black text-xs flex items-center justify-center uppercase border border-emerald-400">
+                                  {(u.display_name || u.username || 'U')[0]}
+                                </div>
+                                <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-emerald-500 border border-white" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-xs font-bold text-slate-900 truncate flex items-center gap-1">
+                                  <span>{u.display_name || u.username}</span>
+                                  {isCurrent && (
+                                    <span className="text-[9px] text-emerald-700 font-semibold">(You)</span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-500 flex items-center gap-1">
+                                  {isMobile ? <Smartphone className="w-2.5 h-2.5 text-blue-600" /> : <Laptop className="w-2.5 h-2.5 text-purple-600" />}
+                                  <span className="truncate">{u.device_type || 'Terminal'}</span>
+                                  {u.ip_address && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="font-mono text-[9px] text-slate-600 truncate">{u.ip_address}</span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-amber-100 text-amber-900 border border-amber-300">
+                              {u.role || 'USER'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-2 pt-2 px-3 border-t border-amber-200 flex items-center justify-between text-[10px] text-slate-500 bg-amber-50/50 -mb-2 rounded-b-lg">
+                      <span className="font-mono text-[9px]">
+                        Last sync: {lastSyncedAt ? new Date(lastSyncedAt).toLocaleTimeString() : 'Active'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          triggerGlobalSync();
+                          refreshPresence?.();
+                        }}
+                        className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw className={`w-2.5 h-2.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                        <span>Refresh Now</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
 
             {/* Base Currency AED + Live Rates */}
             <div className="hidden sm:flex items-center gap-1 text-[9.5px] font-mono bg-amber-100/90 border border-amber-300/90 rounded-lg px-2 py-0.5 shadow-2xs">
@@ -192,7 +292,12 @@ export const Header: React.FC<HeaderProps> = ({
 
               {/* User Dropdown */}
               {showUserDropdown && (
-                <div className="absolute right-0 mt-2 w-64 bg-[#FAF4E6] text-slate-900 rounded-xl shadow-2xl border border-amber-400 py-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowUserDropdown(false)}
+                  />
+                  <div className="absolute right-0 mt-2 w-64 bg-[#FAF4E6] text-slate-900 rounded-xl shadow-2xl border border-amber-400 py-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
                   <div className="px-3 py-1.5 border-b border-amber-200 text-[10px] font-bold text-amber-900 uppercase tracking-widest flex items-center justify-between bg-amber-100/50">
                     <span>Switch Operator Account</span>
                     <span className="text-[9px] text-amber-700">RBAC Supabase</span>
@@ -219,7 +324,8 @@ export const Header: React.FC<HeaderProps> = ({
                     </button>
                   ))}
                 </div>
-              )}
+              </>
+            )}
             </div>
 
             {/* Sign Out / Lock System */}

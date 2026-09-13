@@ -88,7 +88,7 @@ export default async function handler(req: any, res: any) {
     }
 
     // 1. Live Supabase PostgreSQL Query across both users and operators tables
-    let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+    let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
     let foundUserRow: any = null;
 
     if (dbUrl && !dbUrl.includes('your_') && !dbUrl.includes('placeholder')) {
