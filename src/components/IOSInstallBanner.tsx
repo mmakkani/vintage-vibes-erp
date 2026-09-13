@@ -64,7 +64,7 @@ export const IOSInstallBanner: React.FC = () => {
     setProfileDownloaded(true);
     setShowGuideModal(true);
     // Trigger native iOS configuration profile download
-    window.location.href = '/vintagevibes.mobileconfig';
+    window.location.href = '/api/ios/install';
   };
 
   return (
@@ -154,7 +154,7 @@ export const IOSInstallBanner: React.FC = () => {
             {/* Primary Action Button: Direct Download Profile */}
             <div className="mb-4">
               <a
-                href="/vintagevibes.mobileconfig"
+                href="/api/ios/install"
                 download="vintagevibes.mobileconfig"
                 onClick={() => setProfileDownloaded(true)}
                 className="w-full bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-slate-950 font-black text-sm py-3 px-4 rounded-xl shadow-lg flex items-center justify-center gap-2 transition cursor-pointer text-center"

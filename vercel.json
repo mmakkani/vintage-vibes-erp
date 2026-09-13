@@ -64,7 +64,7 @@
       "destination": "/assets/$1"
     },
     {
-      "source": "/((?!api/|assets/).*)",
+      "source": "/((?!api/|assets/|vintagevibes\\.mobileconfig).*)",
       "destination": "/index.html"
     }
   ]
