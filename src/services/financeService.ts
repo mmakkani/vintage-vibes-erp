@@ -43,7 +43,8 @@ export class FinanceService {
               is_active: r.is_active !== false,
               parent_id: r.parent_id,
               tier_level: r.tier_level,
-              parent_code: r.parent_code
+              parent_code: r.parent_code,
+              party_id: r.party_id
             }));
           }
         } catch (_) {}
@@ -288,6 +289,8 @@ export class FinanceService {
     // 2. Write balanced lines to voucher_entries and general_ledger
     const lines = v.lines || v.entries || [];
     if (Array.isArray(lines) && lines.length > 0) {
+      const coaList = await this.getCoaAccounts();
+
       const voucherEntriesRows = lines.map((l: any, idx: number) => {
         const lineId = String(l.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ve-${id}-${idx + 1}`));
         const debit = Number(l.debitAmount ?? l.debit ?? 0);
@@ -295,15 +298,24 @@ export class FinanceService {
         const foreignDebit = Number(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
         const foreignCredit = Number(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
         const memo = l.memo || l.narration || narration;
+
+        const targetAccId = String(l.accountId || l.account_id || '');
+        const matchedAcc = coaList.find(a => a.id === targetAccId || a.code === targetAccId);
+
+        const resolvedCode = String(l.accountCode || l.account_code || matchedAcc?.code || '');
+        const resolvedName = String(l.accountName || l.account_name || matchedAcc?.name || '');
+        const resolvedPartyId = l.partyId || l.party_id || matchedAcc?.party_id || matchedAcc?.partyId || null;
+        const resolvedPartyName = l.partyName || l.party_name || (resolvedPartyId ? resolvedName.replace(/\s*\([^)]*\)/g, '') : null);
+
         return {
           id: lineId,
           voucher_id: String(id),
           voucher_no: voucherNo,
-          account_id: l.accountId || l.account_id ? String(l.accountId || l.account_id) : null,
-          account_code: String(l.accountCode || l.account_code || ''),
-          account_name: String(l.accountName || l.account_name || ''),
-          party_id: l.partyId || l.party_id ? String(l.partyId || l.party_id) : null,
-          party_name: l.partyName || l.party_name ? String(l.partyName || l.party_name) : null,
+          account_id: targetAccId || matchedAcc?.id || null,
+          account_code: resolvedCode,
+          account_name: resolvedName,
+          party_id: resolvedPartyId,
+          party_name: resolvedPartyName,
           debit,
           credit,
           currency,
@@ -317,33 +329,28 @@ export class FinanceService {
         };
       });
 
-      const generalLedgerRows = lines.map((l: any, idx: number) => {
-        const debit = Number(l.debitAmount ?? l.debit ?? 0);
-        const credit = Number(l.creditAmount ?? l.credit ?? 0);
-        const foreignDebit = Number(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
-        const foreignCredit = Number(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
-        const memo = l.memo || l.narration || narration;
+      const generalLedgerRows = voucherEntriesRows.map((veRow: any, idx: number) => {
         return {
           id: String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `gl-${id}-${idx + 1}`),
           voucher_id: String(id),
           voucher_no: voucherNo,
-          account_id: l.accountId || l.account_id ? String(l.accountId || l.account_id) : null,
-          account_code: String(l.accountCode || l.account_code || ''),
-          account_name: String(l.accountName || l.account_name || ''),
-          party_id: l.partyId || l.party_id ? String(l.partyId || l.party_id) : null,
-          party_name: l.partyName || l.party_name ? String(l.partyName || l.party_name) : null,
+          account_id: veRow.account_id,
+          account_code: veRow.account_code,
+          account_name: veRow.account_name,
+          party_id: veRow.party_id,
+          party_name: veRow.party_name,
           date,
           entry_date: date,
-          debit,
-          credit,
+          debit: veRow.debit,
+          credit: veRow.credit,
           currency,
           exchange_rate: exchangeRate,
-          foreign_debit: foreignDebit,
-          foreign_credit: foreignCredit,
-          balance: debit - credit,
-          running_balance: debit - credit,
-          narration: memo,
-          description: memo
+          foreign_debit: veRow.foreign_debit,
+          foreign_credit: veRow.foreign_credit,
+          balance: veRow.debit - veRow.credit,
+          running_balance: veRow.debit - veRow.credit,
+          narration: veRow.narration,
+          description: veRow.narration
         };
       });
 
@@ -509,6 +516,8 @@ export class FinanceService {
       } catch {}
 
       // 2. Insert updated line items
+      const coaList = await this.getCoaAccounts();
+
       const voucherEntriesRows = lines.map((l: any, idx: number) => {
         const lineId = String(l.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ve-${cleanId}-${idx + 1}`));
         const debit = Number(l.debitAmount ?? l.debit ?? 0);
@@ -516,15 +525,24 @@ export class FinanceService {
         const foreignDebit = Number(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
         const foreignCredit = Number(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
         const memo = l.memo || l.narration || narration;
+
+        const targetAccId = String(l.accountId || l.account_id || '');
+        const matchedAcc = coaList.find(a => a.id === targetAccId || a.code === targetAccId);
+
+        const resolvedCode = String(l.accountCode || l.account_code || matchedAcc?.code || '');
+        const resolvedName = String(l.accountName || l.account_name || matchedAcc?.name || '');
+        const resolvedPartyId = l.partyId || l.party_id || matchedAcc?.party_id || matchedAcc?.partyId || null;
+        const resolvedPartyName = l.partyName || l.party_name || (resolvedPartyId ? resolvedName.replace(/\s*\([^)]*\)/g, '') : null);
+
         return {
           id: lineId,
           voucher_id: cleanId,
           voucher_no: voucherNo,
-          account_id: l.accountId || l.account_id ? String(l.accountId || l.account_id) : null,
-          account_code: String(l.accountCode || l.account_code || ''),
-          account_name: String(l.accountName || l.account_name || ''),
-          party_id: l.partyId || l.party_id ? String(l.partyId || l.party_id) : null,
-          party_name: l.partyName || l.party_name ? String(l.partyName || l.party_name) : null,
+          account_id: targetAccId || matchedAcc?.id || null,
+          account_code: resolvedCode,
+          account_name: resolvedName,
+          party_id: resolvedPartyId,
+          party_name: resolvedPartyName,
           debit,
           credit,
           currency,
@@ -538,33 +556,28 @@ export class FinanceService {
         };
       });
 
-      const generalLedgerRows = lines.map((l: any, idx: number) => {
-        const debit = Number(l.debitAmount ?? l.debit ?? 0);
-        const credit = Number(l.creditAmount ?? l.credit ?? 0);
-        const foreignDebit = Number(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
-        const foreignCredit = Number(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
-        const memo = l.memo || l.narration || narration;
+      const generalLedgerRows = voucherEntriesRows.map((veRow: any, idx: number) => {
         return {
           id: String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `gl-${cleanId}-${idx + 1}`),
           voucher_id: cleanId,
           voucher_no: voucherNo,
-          account_id: l.accountId || l.account_id ? String(l.accountId || l.account_id) : null,
-          account_code: String(l.accountCode || l.account_code || ''),
-          account_name: String(l.accountName || l.account_name || ''),
-          party_id: l.partyId || l.party_id ? String(l.partyId || l.party_id) : null,
-          party_name: l.partyName || l.party_name ? String(l.partyName || l.party_name) : null,
+          account_id: veRow.account_id,
+          account_code: veRow.account_code,
+          account_name: veRow.account_name,
+          party_id: veRow.party_id,
+          party_name: veRow.party_name,
           date,
           entry_date: date,
-          debit,
-          credit,
+          debit: veRow.debit,
+          credit: veRow.credit,
           currency,
           exchange_rate: exchangeRate,
-          foreign_debit: foreignDebit,
-          foreign_credit: foreignCredit,
-          balance: debit - credit,
-          running_balance: debit - credit,
-          narration: memo,
-          description: memo
+          foreign_debit: veRow.foreign_debit,
+          foreign_credit: veRow.foreign_credit,
+          balance: veRow.debit - veRow.credit,
+          running_balance: veRow.debit - veRow.credit,
+          narration: veRow.narration,
+          description: veRow.narration
         };
       });
 

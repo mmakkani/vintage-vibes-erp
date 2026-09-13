@@ -6,6 +6,10 @@ import { z } from 'zod';
 
 export const VoucherLineSchema = z.object({
   accountId: z.string().min(1, 'Debit/Operating account selection is required'),
+  accountCode: z.string().optional().nullable(),
+  accountName: z.string().optional().nullable(),
+  partyId: z.string().optional().nullable(),
+  partyName: z.string().optional().nullable(),
   creditAccId: z.string().optional().nullable(),
   debitAmount: z.number().min(0, 'Debit amount must be non-negative'),
   creditAmount: z.number().min(0, 'Credit amount must be non-negative'),

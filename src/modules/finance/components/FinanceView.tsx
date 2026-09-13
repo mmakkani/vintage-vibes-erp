@@ -691,13 +691,19 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       }
 
       const isPayment = voucherType === 'BPV' || voucherType === 'CPV';
+      const primaryAcc = accounts.find(a => a.id === primaryBankCashAccountId);
+
       if (isPayment) {
         // Payment: Line items are Debited, Master Bank/Cash is Credited
         finalLines = singleLines.map(l => {
           const enteredAmt = Number(l.amount) || 0;
           const baseAmt = isForeign ? Number((enteredAmt * rate).toFixed(2)) : enteredAmt;
+          const lineAcc = accounts.find(a => a.id === l.accountId);
           return {
             accountId: l.accountId,
+            accountCode: lineAcc?.code || '',
+            accountName: lineAcc?.name || '',
+            partyId: lineAcc?.party_id || lineAcc?.partyId || undefined,
             debitAmount: baseAmt,
             creditAmount: 0,
             foreignDebit: isForeign ? enteredAmt : undefined,
@@ -708,6 +714,9 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         const totalBase = isForeign ? Number((singleEntryTotal * rate).toFixed(2)) : Number(singleEntryTotal.toFixed(2));
         finalLines.push({
           accountId: primaryBankCashAccountId,
+          accountCode: primaryAcc?.code || '',
+          accountName: primaryAcc?.name || '',
+          partyId: primaryAcc?.party_id || primaryAcc?.partyId || undefined,
           debitAmount: 0,
           creditAmount: totalBase,
           foreignDebit: undefined,
@@ -719,8 +728,12 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         finalLines = singleLines.map(l => {
           const enteredAmt = Number(l.amount) || 0;
           const baseAmt = isForeign ? Number((enteredAmt * rate).toFixed(2)) : enteredAmt;
+          const lineAcc = accounts.find(a => a.id === l.accountId);
           return {
             accountId: l.accountId,
+            accountCode: lineAcc?.code || '',
+            accountName: lineAcc?.name || '',
+            partyId: lineAcc?.party_id || lineAcc?.partyId || undefined,
             debitAmount: 0,
             creditAmount: baseAmt,
             foreignDebit: undefined,
@@ -731,6 +744,9 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         const totalBase = isForeign ? Number((singleEntryTotal * rate).toFixed(2)) : Number(singleEntryTotal.toFixed(2));
         finalLines.push({
           accountId: primaryBankCashAccountId,
+          accountCode: primaryAcc?.code || '',
+          accountName: primaryAcc?.name || '',
+          partyId: primaryAcc?.party_id || primaryAcc?.partyId || undefined,
           debitAmount: totalBase,
           creditAmount: 0,
           foreignDebit: isForeign ? Number(singleEntryTotal.toFixed(2)) : undefined,
@@ -750,8 +766,12 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         const credEntered = Number(l.creditAmount) || 0;
         const debBase = isForeign ? Number((debEntered * rate).toFixed(2)) : debEntered;
         const credBase = isForeign ? Number((credEntered * rate).toFixed(2)) : credEntered;
+        const lineAcc = accounts.find(a => a.id === l.accountId);
         return {
           accountId: l.accountId,
+          accountCode: l.accountCode || lineAcc?.code || '',
+          accountName: l.accountName || lineAcc?.name || '',
+          partyId: lineAcc?.party_id || lineAcc?.partyId || undefined,
           debitAmount: debBase,
           creditAmount: credBase,
           foreignDebit: isForeign && debEntered > 0 ? debEntered : undefined,
@@ -1503,8 +1523,26 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                             </div>
                           </td>
                           <td className="px-3.5 py-2 text-slate-600">{v.date}</td>
-                          <td className="px-3.5 py-2 max-w-xs truncate text-slate-800" title={v.narration}>
-                            {v.narration}
+                          <td className="px-3.5 py-2 max-w-xs text-slate-800" title={v.narration || ''}>
+                            {v.narration ? (
+                              <div className="truncate">{v.narration}</div>
+                            ) : (
+                              <div className="text-[11px] text-slate-700">
+                                {(v.lines || v.entries || []).map((l: any, i: number) => {
+                                  const name = l.accountName || l.account_name || accounts.find(a => a.id === (l.accountId || l.account_id))?.name || '';
+                                  if (!name) return null;
+                                  const dr = Number(l.debitAmount ?? l.debit ?? 0);
+                                  const cr = Number(l.creditAmount ?? l.credit ?? 0);
+                                  return (
+                                    <span key={i} className="inline-block mr-1">
+                                      <span className="font-semibold text-slate-900">{name}</span>
+                                      <span className="text-[10px] text-slate-500"> ({dr > 0 ? `Dr ${dr}` : `Cr ${cr}`})</span>
+                                      {i < (v.lines || v.entries || []).length - 1 ? ' • ' : ''}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3.5 py-2 text-right font-bold text-slate-900">
                             <div>{Number(v.totalDebit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
