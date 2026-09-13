@@ -469,7 +469,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
   // Single Entry Line Helpers
   const singleEntryTotal = useMemo(() => {
-    return singleLines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
+    const list = Array.isArray(singleLines) ? singleLines : [];
+    return list.reduce((sum, l) => sum + (Number(l?.amount) || 0), 0);
   }, [singleLines]);
 
   const handleAddSingleLine = () => {
@@ -649,8 +650,9 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   };
 
   // Calculations for total debit and credit in modal
-  const totalDebitSum = voucherLines.reduce((acc, l) => acc + (Number(l.debitAmount) || 0), 0);
-  const totalCreditSum = voucherLines.reduce((acc, l) => acc + (Number(l.creditAmount) || 0), 0);
+  const safeVoucherLines = Array.isArray(voucherLines) ? voucherLines : [];
+  const totalDebitSum = safeVoucherLines.reduce((acc, l) => acc + (Number(l?.debitAmount) || 0), 0);
+  const totalCreditSum = safeVoucherLines.reduce((acc, l) => acc + (Number(l?.creditAmount) || 0), 0);
   const voucherDiff = Math.abs(Number((totalDebitSum - totalCreditSum).toFixed(2)));
   const isVoucherBalanced = voucherDiff === 0 && totalDebitSum > 0;
 
@@ -1015,14 +1017,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     const tier1 = matches.filter(a => (a.tierLevel === 1 || a.tier_level === 1 || !(a.code || '').includes('-')));
     for (const t1 of tier1) {
       sorted.push(t1);
-      const tier2 = matches.filter(a => (a.tierLevel === 2 || a.tier_level === 2 || (a.code.endsWith('-00') && a.code !== t1.code)) && (a.parentCode === t1.code || a.parent_id === t1.id || (a.type || a.classification) === (t1.type || t1.classification)));
+      const tier2 = matches.filter(a => (a.tierLevel === 2 || a.tier_level === 2 || ((a.code || '').endsWith('-00') && a.code !== t1.code)) && (a.parentCode === t1.code || a.parent_id === t1.id || (a.type || a.classification) === (t1.type || t1.classification)));
       for (const t2 of tier2) {
         if (!sorted.includes(t2)) sorted.push(t2);
-        const prefix = t2.code.split('-')[0];
+        const prefix = (t2.code || '').split('-')[0];
         const tier3 = matches.filter(a => 
           a.id !== t2.id &&
-          (a.tierLevel === 3 || a.tier_level === 3 || Boolean(a.party_id || a.partyId) || !a.code.endsWith('-00')) && 
-          (a.parentCode === t2.code || a.parent_id === t2.id || a.code.startsWith(`${prefix}-`))
+          (a.tierLevel === 3 || a.tier_level === 3 || Boolean(a.party_id || a.partyId) || !(a.code || '').endsWith('-00')) && 
+          (a.parentCode === t2.code || a.parent_id === t2.id || (prefix && (a.code || '').startsWith(`${prefix}-`)))
         );
         for (const t3 of tier3) {
           if (!sorted.includes(t3)) sorted.push(t3);
@@ -1447,7 +1449,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               <div className="p-3.5 border-b border-amber-200/70 bg-amber-50/50 flex flex-wrap items-center justify-between gap-2">
                 <span className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2">
                   <FileText className="w-4 h-4 text-amber-600" />
-                  <span>Financial Vouchers Register ({vouchers.length} records)</span>
+                  <span>Financial Vouchers Register {Array.isArray(vouchers) ? `(${vouchers.length} records)` : ''}</span>
                 </span>
                 <button
                   type="button"
@@ -1493,7 +1495,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-mono">
-                    {(vouchers || []).map(v => {
+                    {(Array.isArray(vouchers) ? vouchers : []).map(v => {
                       const isAuto = Boolean(v.isAuto || (v as any).is_auto || FinanceService.isAutoVoucher(v));
                       return (
                         <tr key={v.id} className="hover:bg-amber-50/40 transition-colors">
@@ -1721,8 +1723,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 Chronological Ledger Statement ({filteredLedgers.length} postings)
               </span>
               <div className="text-xs font-mono font-bold text-slate-800 space-x-4">
-                <span>Total Debits: <strong className="text-emerald-800">AED {Number(totalGlDebits || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></span>
-                <span>Total Credits: <strong className="text-rose-800">AED {Number(totalGlCredits || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></span>
+                <span>Total Debits: <strong className="text-emerald-800">AED {Number(glTotals.debit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></span>
+                <span>Total Credits: <strong className="text-rose-800">AED {Number(glTotals.credit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></span>
               </div>
             </div>
 

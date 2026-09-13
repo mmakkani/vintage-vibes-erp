@@ -43,7 +43,7 @@ export const BudgetingView: React.FC<BudgetingViewProps> = ({ accounts, onRefres
       const res = await fetch(`/api/finance/budgets?period=${month}`);
       if (res.ok) {
         const data = await res.json();
-        setBudgets(data);
+        setBudgets(Array.isArray(data) ? data : (Array.isArray(data?.budgets) ? data.budgets : []));
       }
     } catch (err) {
       console.error('Failed to load budgets:', err);
@@ -56,8 +56,11 @@ export const BudgetingView: React.FC<BudgetingViewProps> = ({ accounts, onRefres
     fetchBudgets(selectedMonth);
   }, [selectedMonth]);
 
-  const expenseAccounts = accounts.filter(
-    a => a.classification === 'EXPENSE' || a.code.startsWith('5')
+  const safeAccounts = Array.isArray(accounts) ? accounts : [];
+  const safeBudgets = Array.isArray(budgets) ? budgets : [];
+
+  const expenseAccounts = safeAccounts.filter(
+    a => a && ((a.classification === 'EXPENSE' || (a.type && a.type.toUpperCase() === 'EXPENSE')) || (a.code && a.code.startsWith('5')))
   );
 
   const handleOpenAdd = () => {
@@ -153,8 +156,8 @@ export const BudgetingView: React.FC<BudgetingViewProps> = ({ accounts, onRefres
   };
 
   // Aggregates
-  const totalBudgetAed = budgets.reduce((sum, b) => sum + b.budgetLimitAed, 0);
-  const totalActualSpentAed = budgets.reduce((sum, b) => sum + b.actualSpentAed, 0);
+  const totalBudgetAed = safeBudgets.reduce((sum, b) => sum + (Number(b?.budgetLimitAed) || 0), 0);
+  const totalActualSpentAed = safeBudgets.reduce((sum, b) => sum + (Number(b?.actualSpentAed) || 0), 0);
   const totalVarianceAed = totalBudgetAed - totalActualSpentAed;
   const overallPercent = totalBudgetAed > 0 ? (totalActualSpentAed / totalBudgetAed) * 100 : 0;
 
@@ -296,7 +299,7 @@ export const BudgetingView: React.FC<BudgetingViewProps> = ({ accounts, onRefres
           </button>
         </div>
 
-        {budgets.length === 0 ? (
+        {safeBudgets.length === 0 ? (
           <div className="p-12 text-center text-slate-400">
             <Target className="w-10 h-10 mx-auto mb-2 opacity-30 text-amber-600" />
             <p className="text-sm font-semibold text-slate-600">No budget ceilings configured for {selectedMonth}</p>
@@ -326,7 +329,7 @@ export const BudgetingView: React.FC<BudgetingViewProps> = ({ accounts, onRefres
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {budgets.map(b => {
+                {safeBudgets.map(b => {
                   const isExceeded = b.status === 'EXCEEDED';
                   const isWarning = b.status === 'WARNING';
                   return (

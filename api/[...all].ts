@@ -1172,6 +1172,16 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    // Finance Budgets
+    if (pathname.includes('/finance/budgets')) {
+      return res.status(200).json([]);
+    }
+
+    // Finance Recurring Vouchers
+    if (pathname.includes('/finance/recurring-vouchers')) {
+      return res.status(200).json([]);
+    }
+
     // Chart of Accounts (COA)
     if (pathname.includes('/finance/coa')) {
       let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;

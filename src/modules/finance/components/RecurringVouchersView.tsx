@@ -51,7 +51,7 @@ export const RecurringVouchersView: React.FC<RecurringVouchersViewProps> = ({
       const res = await fetch('/api/finance/recurring-vouchers');
       if (res.ok) {
         const data = await res.json();
-        setTemplates(data);
+        setTemplates(Array.isArray(data) ? data : (Array.isArray(data?.templates) ? data.templates : []));
       }
     } catch (err) {
       console.error('Failed to load recurring vouchers:', err);
@@ -63,6 +63,9 @@ export const RecurringVouchersView: React.FC<RecurringVouchersViewProps> = ({
   useEffect(() => {
     fetchTemplates();
   }, []);
+
+  const safeTemplates = Array.isArray(templates) ? templates : [];
+  const safeAccounts = Array.isArray(accounts) ? accounts : [];
 
   const handleOpenAdd = () => {
     setEditingTemplate(null);
@@ -253,7 +256,7 @@ export const RecurringVouchersView: React.FC<RecurringVouchersViewProps> = ({
     }
   };
 
-  const totalMonthlyCommitments = templates.reduce((sum, t) => sum + t.totalAmount, 0);
+  const totalMonthlyCommitments = safeTemplates.reduce((sum, t) => sum + (Number(t?.totalAmount) || 0), 0);
 
   return (
     <div className="space-y-4">
@@ -311,7 +314,7 @@ export const RecurringVouchersView: React.FC<RecurringVouchersViewProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
           <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Active Templates</div>
-          <div className="text-xl font-extrabold text-slate-900 mt-1">{templates.length}</div>
+          <div className="text-xl font-extrabold text-slate-900 mt-1">{safeTemplates.length}</div>
           <div className="text-[11px] text-slate-400 mt-0.5">Automated accounting routines</div>
         </div>
 
@@ -335,7 +338,7 @@ export const RecurringVouchersView: React.FC<RecurringVouchersViewProps> = ({
 
       {/* Templates List */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {templates.map(t => (
+        {safeTemplates.map(t => (
           <div
             key={t.id}
             className="bg-white rounded-xl border border-slate-200 hover:border-amber-300 shadow-xs p-4 space-y-3 transition-all"

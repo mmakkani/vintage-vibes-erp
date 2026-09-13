@@ -141,9 +141,10 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
 
   // Calculate selected total
   const selectedTotal = useMemo(() => {
-    return filteredInvoices
-      .filter(inv => selectedInvoiceIds.has(inv.id))
-      .reduce((sum, inv) => sum + (inv.grandTotalAED || inv.totalAmount || 0), 0);
+    const list = Array.isArray(filteredInvoices) ? filteredInvoices : [];
+    return list
+      .filter(inv => inv && selectedInvoiceIds.has(inv.id))
+      .reduce((sum, inv) => sum + (Number(inv.grandTotalAED) || Number(inv.totalAmount) || 0), 0);
   }, [filteredInvoices, selectedInvoiceIds]);
 
   // Execute Reconcile Settlement
