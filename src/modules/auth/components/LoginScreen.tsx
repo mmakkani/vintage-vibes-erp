@@ -71,10 +71,17 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           const data = await res.json();
           if (res.ok && data.success && data.user) {
             authenticatedUser = data.user;
-          } else if (data && data.error && (res.status === 401 || res.status === 403)) {
-            setErrorMsg(data.error);
-            setLoading(false);
-            return;
+          } else if (data && data.error) {
+            if (res.status === 403 || data.error.includes('deactivated')) {
+              setErrorMsg('User account has been deactivated');
+              setLoading(false);
+              return;
+            }
+            if (data.error.includes('Invalid password')) {
+              setErrorMsg('Invalid password. Please check your credentials');
+              setLoading(false);
+              return;
+            }
           }
         }
       } catch (netErr) {
@@ -93,33 +100,52 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       if (supabase) {
         try {
           const term = cleanUsername.toLowerCase();
-          const { data: supaUsers, error: supaErr } = await supabase
+          let matchedRow: any = null;
+
+          // Check operators table first
+          const { data: supaOps } = await supabase
             .from('operators')
             .select('*')
             .ilike('username', term)
             .limit(1);
 
-          if (!supaErr && supaUsers && supaUsers.length > 0) {
-            const row = supaUsers[0];
-            if (!row.is_active) {
+          if (supaOps && supaOps.length > 0) {
+            matchedRow = supaOps[0];
+          } else {
+            // Check users table
+            const { data: supaUsers } = await supabase
+              .from('users')
+              .select('*')
+              .or(`username.ilike.${term},email.ilike.${term}`)
+              .limit(1);
+
+            if (supaUsers && supaUsers.length > 0) {
+              matchedRow = supaUsers[0];
+            }
+          }
+
+          if (matchedRow) {
+            if (!matchedRow.is_active) {
               setErrorMsg('User account has been deactivated');
               setLoading(false);
               return;
             }
-            if (cleanPassword && row.password_hash && row.password_hash !== cleanPassword) {
+            if (cleanPassword && matchedRow.password_hash && matchedRow.password_hash.trim() !== cleanPassword) {
               setErrorMsg('Invalid password. Check username & password');
               setLoading(false);
               return;
             }
             const supaUser: User = {
-              id: row.id,
-              username: row.username,
-              name: row.display_name || row.username || 'Muhammad',
-              email: `${row.username}@vintagevibe.ae`,
-              role: (row.role || 'ADMIN').toUpperCase() as any,
-              isActive: row.is_active !== false,
-              permissions: row.permissions || AuthEngine.generateDefaultPermissions(row.id, (row.role || 'ADMIN').toUpperCase() as any),
-              createdAt: row.created_at || new Date().toISOString()
+              id: String(matchedRow.id),
+              username: matchedRow.username,
+              name: matchedRow.display_name || matchedRow.name || matchedRow.username || 'Operator',
+              email: matchedRow.email || `${matchedRow.username}@vintagevibe.ae`,
+              role: (matchedRow.role || 'ADMIN').toUpperCase() as any,
+              isActive: matchedRow.is_active !== false,
+              permissions: (Array.isArray(matchedRow.permissions) && matchedRow.permissions.length > 0)
+                ? matchedRow.permissions
+                : AuthEngine.generateDefaultPermissions(String(matchedRow.id), (matchedRow.role || 'ADMIN').toUpperCase() as any),
+              createdAt: matchedRow.created_at || new Date().toISOString()
             };
             localStorage.setItem('vintage_erp_logged_user', JSON.stringify(supaUser));
             localStorage.setItem('vintage_vibes_auth_user', JSON.stringify(supaUser));

@@ -45,10 +45,17 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           const data = await res.json();
           if (res.ok && data.success && data.user) {
             authenticatedUser = data.user;
-          } else if (data && data.error && (res.status === 401 || res.status === 403)) {
-            setErrorMessage(data.error);
-            setIsLoading(false);
-            return;
+          } else if (data && data.error) {
+            if (res.status === 403 || data.error.includes('deactivated')) {
+              setErrorMessage('User account has been deactivated');
+              setIsLoading(false);
+              return;
+            }
+            if (data.error.includes('Invalid password')) {
+              setErrorMessage('Invalid password. Please check your credentials');
+              setIsLoading(false);
+              return;
+            }
           }
         }
       } catch (netErr) {
@@ -67,32 +74,52 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       if (supabase) {
         try {
           const term = cleanUsername.toLowerCase();
-          const { data: supaUsers, error: supaErr } = await supabase
+          let matchedRow: any = null;
+
+          // Check operators table first
+          const { data: supaOps } = await supabase
             .from('operators')
             .select('*')
             .ilike('username', term)
             .limit(1);
 
-          if (!supaErr && supaUsers && supaUsers.length > 0) {
-            const row = supaUsers[0];
+          if (supaOps && supaOps.length > 0) {
+            matchedRow = supaOps[0];
+          } else {
+            // Check users table
+            const { data: supaUsers } = await supabase
+              .from('users')
+              .select('*')
+              .or(`username.ilike.${term},email.ilike.${term}`)
+              .limit(1);
+
+            if (supaUsers && supaUsers.length > 0) {
+              matchedRow = supaUsers[0];
+            }
+          }
+
+          if (matchedRow) {
+            const row = matchedRow;
             if (!row.is_active) {
               setErrorMessage('User account has been deactivated');
               setIsLoading(false);
               return;
             }
-            if (cleanPassword && row.password_hash && row.password_hash !== cleanPassword) {
+            if (cleanPassword && row.password_hash && row.password_hash.trim() !== cleanPassword) {
               setErrorMessage('Invalid password. Please check your credentials');
               setIsLoading(false);
               return;
             }
             const supaUser: UserType = {
-              id: row.id,
+              id: String(row.id),
               username: row.username,
-              name: row.display_name || row.username || 'Muhammad',
-              email: `${row.username}@vintagevibe.ae`,
+              name: row.display_name || row.name || row.username || 'Operator',
+              email: row.email || `${row.username}@vintagevibe.ae`,
               role: (row.role || 'ADMIN').toUpperCase() as any,
               isActive: row.is_active !== false,
-              permissions: row.permissions || AuthEngine.generateDefaultPermissions(row.id, (row.role || 'ADMIN').toUpperCase() as any),
+              permissions: (Array.isArray(row.permissions) && row.permissions.length > 0)
+                ? row.permissions
+                : AuthEngine.generateDefaultPermissions(String(row.id), (row.role || 'ADMIN').toUpperCase() as any),
               createdAt: row.created_at || new Date().toISOString()
             };
             localStorage.setItem('vintage_vibes_auth_user', JSON.stringify(supaUser));

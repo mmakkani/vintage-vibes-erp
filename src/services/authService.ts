@@ -84,7 +84,28 @@ export class AuthService {
       throw new Error('Operator was inserted but no record returned');
     }
 
-    return mapOperatorRowToUser(data[0]);
+    const createdUser = mapOperatorRowToUser(data[0]);
+
+    // Dual-write into public.users table for unified SQL authentication
+    try {
+      const email = createdUser.username.includes('@') ? createdUser.username : `${createdUser.username}@vintagevibe.ae`;
+      await supabase
+        .from('users')
+        .upsert([{
+          id: data[0].id,
+          username: newOperatorPayload.username.toLowerCase(),
+          password_hash: newOperatorPayload.password_hash,
+          name: newOperatorPayload.display_name,
+          email,
+          role: (newOperatorPayload.role || 'ADMIN').toUpperCase(),
+          is_active: newOperatorPayload.is_active,
+          permissions: newOperatorPayload.permissions
+        }], { onConflict: 'username' });
+    } catch (uErr) {
+      console.warn('Sync to users table skipped:', uErr);
+    }
+
+    return createdUser;
   }
 
   /**
@@ -115,7 +136,23 @@ export class AuthService {
       throw new Error('Operator record not found or update failed');
     }
 
-    return mapOperatorRowToUser(data[0]);
+    const updatedUser = mapOperatorRowToUser(data[0]);
+
+    // Dual-update into public.users table
+    try {
+      const userPayload: any = {};
+      if (payload.username) userPayload.username = payload.username.toLowerCase();
+      if (payload.password_hash) userPayload.password_hash = payload.password_hash;
+      if (payload.display_name) userPayload.name = payload.display_name;
+      if (payload.role) userPayload.role = payload.role.toUpperCase();
+      if (payload.is_active !== undefined) userPayload.is_active = payload.is_active;
+      if (payload.permissions) userPayload.permissions = payload.permissions;
+      await supabase.from('users').update(userPayload).eq('id', id);
+    } catch (uErr) {
+      console.warn('Sync update to users table skipped:', uErr);
+    }
+
+    return updatedUser;
   }
 
   /**
@@ -131,6 +168,10 @@ export class AuthService {
       console.error('Supabase error deleting operator:', error);
       throw new Error(error.message || 'Failed to delete operator');
     }
+
+    try {
+      await supabase.from('users').delete().eq('id', id);
+    } catch (_) {}
   }
 
   /**
@@ -146,6 +187,10 @@ export class AuthService {
       console.error('Supabase error updating operator permissions:', error);
       throw new Error(error.message || 'Failed to update operator permissions');
     }
+
+    try {
+      await supabase.from('users').update({ permissions }).eq('id', userId);
+    } catch (_) {}
   }
 
   public static async updateUserPermissions(userId: string, permissions: any): Promise<void> {
