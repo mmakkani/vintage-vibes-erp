@@ -49,7 +49,11 @@ export async function safeFetchJson<T = any>(
         return (await SetupService.getShops()) as any;
       }
       if (url.includes('/parties')) {
-        return (await PartiesService.getParties()) as any;
+        try {
+          const cached = typeof localStorage !== 'undefined' ? localStorage.getItem('vibe_cached_parties') : null;
+          if (cached) return JSON.parse(cached);
+        } catch (_) {}
+        return [];
       }
       if (url.includes('/purchase/gate-passes') || url.includes('/bales')) {
         return (await PurchaseService.getInwardGatePasses()) as any;
@@ -479,9 +483,22 @@ export function initUniversalFetchInterceptor() {
   (window as any).__vv_fetch_interceptor_installed = true;
 
   const originalFetch = window.fetch;
+  (window as any).__originalFetch = originalFetch;
+
   window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
     if (typeof url === 'string' && url.includes('/api/')) {
+      // 1. Try real server HTTP request first
+      try {
+        const res = await originalFetch.apply(this, [input, init]);
+        if (res.ok || (res.status !== 404 && res.status !== 502 && res.status !== 503)) {
+          return res;
+        }
+      } catch (_) {
+        // Network offline or server unreachable, proceed to client fallback
+      }
+
+      // 2. Client-side fallback if server is unreachable
       try {
         const data = await safeFetchJson(url, init);
         if (data !== null && data !== undefined) {
@@ -491,7 +508,7 @@ export function initUniversalFetchInterceptor() {
           });
         }
       } catch (err: any) {
-        console.warn(`[Fetch Interceptor Intercepted ${url}]:`, err?.message);
+        console.warn(`[Fetch Interceptor Fallback for ${url}]:`, err?.message);
       }
       // Return safe JSON fallback
       return new Response(JSON.stringify({ success: true, data: [] }), {

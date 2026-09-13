@@ -1467,7 +1467,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       <CameraInvoiceScannerOverlay
         isOpen={showScannerModal}
         onClose={() => setShowScannerModal(false)}
-        parties={parties}
+        parties={internalParties}
         items={items}
         onApplyExtractedData={handleApplyScannedData}
       />

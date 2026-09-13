@@ -4,18 +4,21 @@ import { Party, PartyKhataLog } from '../modules/parties/parties.types.ts';
 export class PartiesService {
   public static async getParties(): Promise<Party[]> {
     // 1. Primary & direct route: query server endpoint which connects directly to PostgreSQL
-    try {
-      const apiRes = await fetch('/api/parties');
-      if (apiRes.ok) {
-        const list = await apiRes.json();
-        if (Array.isArray(list) && list.length > 0) {
-          try {
-            localStorage.setItem('vibe_cached_parties', JSON.stringify(list));
-          } catch {}
-          return list;
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const apiRes = await rawFetch('/api/parties');
+        if (apiRes && apiRes.ok) {
+          const list = await apiRes.json();
+          if (Array.isArray(list) && list.length > 0) {
+            try {
+              localStorage.setItem('vibe_cached_parties', JSON.stringify(list));
+            } catch {}
+            return list;
+          }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
 
     // 2. Secondary route: Supabase REST client
     try {

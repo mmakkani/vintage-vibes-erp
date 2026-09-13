@@ -71,13 +71,10 @@ partiesRouter.get('/', async (req, res) => {
   }
 
   try {
-    const list = await PartiesService.getParties();
-    if (type) {
-      return res.json(list.filter(p => (p.type || '').toUpperCase() === (type || '').toUpperCase()));
-    }
-    return res.json(list);
+    const list = PartiesController.getParties(type);
+    return res.json(list || []);
   } catch (_) {
-    return res.json(PartiesController.getParties(type));
+    return res.json([]);
   }
 });
 
