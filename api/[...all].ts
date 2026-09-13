@@ -1881,6 +1881,17 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json(data || []);
     }
 
+    if (pathname.includes('/ios/install') || pathname.endsWith('.mobileconfig')) {
+      res.setHeader('Content-Type', 'application/x-apple-aspen-config; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="vintagevibes.mobileconfig"');
+      const mobileconfigPath = path.join(process.cwd(), 'public', 'vintagevibes.mobileconfig');
+      if (fs.existsSync(mobileconfigPath)) {
+        const content = fs.readFileSync(mobileconfigPath, 'utf-8');
+        return res.status(200).send(content);
+      }
+      return res.redirect(302, '/vintagevibes.mobileconfig');
+    }
+
     if (pathname.includes('/devices')) {
       const ip = getClientIp(req);
       if (pathname.includes('/devices/register') && method === 'POST') {
