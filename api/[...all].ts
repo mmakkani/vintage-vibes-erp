@@ -15,6 +15,22 @@ function getClientIp(req: any): string {
          '127.0.0.1';
 }
 
+function getClientLocation(req: any): { city: string; country: string } {
+  let country = (req.headers?.['x-vercel-ip-country'] || req.headers?.['cf-ipcountry'] || '').toString().trim().toUpperCase();
+  let city = (req.headers?.['x-vercel-ip-city'] || '').toString().trim();
+  if (city) {
+    try {
+      city = decodeURIComponent(city);
+    } catch (_) {}
+  }
+  if (!country && !city) {
+    // Default fallback location for Dubai / UAE headquarters if local development or test
+    country = 'AE';
+    city = 'Dubai';
+  }
+  return { city: city || 'Unknown City', country: country || 'AE' };
+}
+
 const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabaseAdmin = createClient(supaUrl, supaKey || 'anon-key');
@@ -1894,6 +1910,7 @@ export default async function handler(req: any, res: any) {
 
     if (pathname.includes('/devices')) {
       const ip = getClientIp(req);
+      const loc = getClientLocation(req);
       if (pathname.includes('/devices/register') && method === 'POST') {
         const { deviceId, userId, username, deviceType, deviceModel, userAgent, isStandalone } = body || {};
         if (!deviceId) return res.status(400).json({ success: false, error: 'Device ID is required' });
@@ -1913,11 +1930,13 @@ export default async function handler(req: any, res: any) {
                     user_id = COALESCE(NULLIF($4, ''), user_id),
                     device_type = COALESCE(NULLIF($5, ''), device_type),
                     device_model = COALESCE(NULLIF($6, ''), device_model),
-                    user_agent = COALESCE(NULLIF($7, ''), user_agent)
+                    user_agent = COALESCE(NULLIF($7, ''), user_agent),
+                    city = COALESCE(NULLIF($9, ''), city),
+                    country = COALESCE(NULLIF($10, ''), country)
                 WHERE device_id = $8 RETURNING *;
-              `, [ip, Boolean(isStandalone), username || null, userId || null, deviceType || null, deviceModel || null, userAgent || null, deviceId]);
+              `, [ip, Boolean(isStandalone), username || null, userId || null, deviceType || null, deviceModel || null, userAgent || null, deviceId, loc.city, loc.country]);
               await client.end();
-              return res.status(200).json({ success: true, device: updated.rows[0], ip });
+              return res.status(200).json({ success: true, device: updated.rows[0], ip, city: loc.city, country: loc.country });
             }
             const cleanUser = (username || '').trim();
             const maxLimit = 2;
@@ -1930,11 +1949,11 @@ export default async function handler(req: any, res: any) {
               }
             }
             const inserted = await client.query(`
-              INSERT INTO device_installations (device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, max_devices_limit)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ACTIVE', $9) RETURNING *;
-            `, [deviceId, userId || null, cleanUser || 'Guest / Visitor', ip, deviceType || 'Unknown', deviceModel || 'Unknown Device', userAgent || '', Boolean(isStandalone), maxLimit]);
+              INSERT INTO device_installations (device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, max_devices_limit, city, country)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ACTIVE', $9, $10, $11) RETURNING *;
+            `, [deviceId, userId || null, cleanUser || 'Guest / Visitor', ip, deviceType || 'Unknown', deviceModel || 'Unknown Device', userAgent || '', Boolean(isStandalone), maxLimit, loc.city, loc.country]);
             await client.end();
-            return res.status(201).json({ success: true, device: inserted.rows[0], ip });
+            return res.status(201).json({ success: true, device: inserted.rows[0], ip, city: loc.city, country: loc.country });
           } catch (err: any) {
             try { await client.end(); } catch (_) {}
             console.error('[Device Register PG Error]:', err);
@@ -1944,11 +1963,11 @@ export default async function handler(req: any, res: any) {
           const { data: existing } = await supabaseAdmin.from('device_installations').select('*').eq('device_id', deviceId).maybeSingle();
           if (existing) {
             if (existing.install_status === 'BLOCKED') return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked.' });
-            const { data: updated } = await supabaseAdmin.from('device_installations').update({ ip_address: ip, is_standalone: Boolean(isStandalone), last_active_at: new Date().toISOString(), username: username || existing.username }).eq('device_id', deviceId).select().single();
-            return res.status(200).json({ success: true, device: updated, ip });
+            const { data: updated } = await supabaseAdmin.from('device_installations').update({ ip_address: ip, is_standalone: Boolean(isStandalone), last_active_at: new Date().toISOString(), username: username || existing.username, city: loc.city, country: loc.country }).eq('device_id', deviceId).select().single();
+            return res.status(200).json({ success: true, device: updated, ip, city: loc.city, country: loc.country });
           }
-          const { data: ins } = await supabaseAdmin.from('device_installations').insert({ device_id: deviceId, user_id: userId || null, username: username || 'Guest / Visitor', ip_address: ip, device_type: deviceType || 'Unknown', device_model: deviceModel || 'Unknown', user_agent: userAgent || '', is_standalone: Boolean(isStandalone), install_status: 'ACTIVE', max_devices_limit: 2 }).select().single();
-          return res.status(201).json({ success: true, device: ins, ip });
+          const { data: ins } = await supabaseAdmin.from('device_installations').insert({ device_id: deviceId, user_id: userId || null, username: username || 'Guest / Visitor', ip_address: ip, device_type: deviceType || 'Unknown', device_model: deviceModel || 'Unknown', user_agent: userAgent || '', is_standalone: Boolean(isStandalone), install_status: 'ACTIVE', max_devices_limit: 2, city: loc.city, country: loc.country }).select().single();
+          return res.status(201).json({ success: true, device: ins, ip, city: loc.city, country: loc.country });
         } catch (err: any) {
           return res.status(500).json({ success: false, error: err?.message });
         }
@@ -2013,6 +2032,7 @@ export default async function handler(req: any, res: any) {
 
     if (pathname.includes('/presence')) {
       const ip = getClientIp(req);
+      const loc = getClientLocation(req);
       if (pathname.includes('/presence/heartbeat') && method === 'POST') {
         const { sessionId, userId, username, displayName, role, deviceType } = body || {};
         if (!sessionId || !username) {
@@ -2022,19 +2042,21 @@ export default async function handler(req: any, res: any) {
         if (client) {
           try {
             await client.query(`
-              INSERT INTO user_presences (session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+              INSERT INTO user_presences (session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat, city, country)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9)
               ON CONFLICT (session_id) DO UPDATE
               SET last_heartbeat = NOW(),
                   username = EXCLUDED.username,
                   display_name = EXCLUDED.display_name,
                   role = EXCLUDED.role,
                   device_type = EXCLUDED.device_type,
-                  ip_address = EXCLUDED.ip_address;
-            `, [sessionId, userId || null, username, displayName || username, role || 'OPERATOR', deviceType || 'Web Client', ip]);
+                  ip_address = EXCLUDED.ip_address,
+                  city = EXCLUDED.city,
+                  country = EXCLUDED.country;
+            `, [sessionId, userId || null, username, displayName || username, role || 'OPERATOR', deviceType || 'Web Client', ip, loc.city, loc.country]);
             await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '45 seconds';");
             const activeRes = await client.query(`
-              SELECT session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat
+              SELECT session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat, city, country
               FROM user_presences
               WHERE last_heartbeat > NOW() - INTERVAL '45 seconds'
               ORDER BY last_heartbeat DESC;
@@ -2073,7 +2095,7 @@ export default async function handler(req: any, res: any) {
           try {
             await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '45 seconds';");
             const activeRes = await client.query(`
-              SELECT session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat
+              SELECT session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat, city, country
               FROM user_presences
               WHERE last_heartbeat > NOW() - INTERVAL '45 seconds'
               ORDER BY last_heartbeat DESC;

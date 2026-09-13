@@ -14,7 +14,9 @@ import {
   Unlock,
   Copy,
   Sliders,
-  Sparkles
+  Sparkles,
+  MapPin,
+  Globe
 } from 'lucide-react';
 
 export const DeviceManagementView: React.FC = () => {
@@ -113,6 +115,28 @@ export const DeviceManagementView: React.FC = () => {
       return <Laptop className="w-5 h-5 text-sky-500" />;
     }
     return <Monitor className="w-5 h-5 text-slate-400" />;
+  };
+
+  const getCountryFlag = (code?: string) => {
+    if (!code) return '🌐';
+    const c = code.trim().toUpperCase();
+    if (c === 'AE') return '🇦🇪';
+    if (c === 'PK') return '🇵🇰';
+    if (c === 'SA') return '🇸🇦';
+    if (c === 'US') return '🇺🇸';
+    if (c === 'GB' || c === 'UK') return '🇬🇧';
+    if (c === 'IN') return '🇮🇳';
+    if (c === 'OM') return '🇴🇲';
+    if (c === 'QA') return '🇶🇦';
+    if (c === 'BH') return '🇧🇭';
+    if (c === 'KW') return '🇰🇼';
+    if (c.length === 2) {
+      const codePoints = c
+        .split('')
+        .map(char => 127397 + char.charCodeAt(0));
+      return String.fromCodePoint(...codePoints);
+    }
+    return '🌐';
   };
 
   const totalCount = devices.length;
@@ -232,6 +256,7 @@ export const DeviceManagementView: React.FC = () => {
                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold text-[11px] uppercase tracking-wider">
                   <th className="py-3 px-4">Device & Model</th>
                   <th className="py-3 px-4">Operator</th>
+                  <th className="py-3 px-4">Location (City & Country)</th>
                   <th className="py-3 px-4">IP Address (SQL)</th>
                   <th className="py-3 px-4">PWA Install State</th>
                   <th className="py-3 px-4">Last Active</th>
@@ -270,6 +295,28 @@ export const DeviceManagementView: React.FC = () => {
                         <span className="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 font-mono text-[11px]">
                           @{device.username || 'Guest / Visitor'}
                         </span>
+                      </td>
+
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-base leading-none shrink-0" title={device.country || 'Location'}>
+                            {getCountryFlag(device.country)}
+                          </span>
+                          <div>
+                            <div className="font-bold text-slate-900 text-[11px] flex items-center gap-1">
+                              <span>{device.city || 'Dubai'}</span>
+                              {device.country && (
+                                <span className="text-[9.5px] font-mono px-1 py-0.2 bg-amber-100/70 border border-amber-300/80 text-amber-900 rounded font-semibold">
+                                  {device.country}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[9.5px] text-slate-400 flex items-center gap-0.5">
+                              <MapPin className="w-2.5 h-2.5 text-slate-400" />
+                              <span>{device.country === 'AE' ? 'United Arab Emirates' : (device.country === 'PK' ? 'Pakistan' : (device.country || 'Global'))}</span>
+                            </div>
+                          </div>
+                        </div>
                       </td>
 
                       <td className="py-3 px-4">

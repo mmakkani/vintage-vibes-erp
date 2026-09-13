@@ -13,6 +13,8 @@ export interface OnlineUserPresence {
   role?: string;
   device_type?: string;
   ip_address?: string;
+  city?: string;
+  country?: string;
   last_heartbeat: string;
 }
 

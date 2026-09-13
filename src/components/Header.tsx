@@ -187,9 +187,18 @@ export const Header: React.FC<HeaderProps> = ({
                                     <span className="text-[9px] text-emerald-700 font-semibold">(You)</span>
                                   )}
                                 </div>
-                                <div className="text-[10px] text-slate-500 flex items-center gap-1">
+                                <div className="text-[10px] text-slate-500 flex items-center gap-1 flex-wrap">
                                   {isMobile ? <Smartphone className="w-2.5 h-2.5 text-blue-600" /> : <Laptop className="w-2.5 h-2.5 text-purple-600" />}
                                   <span className="truncate">{u.device_type || 'Terminal'}</span>
+                                  {(u.city || u.country) && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="inline-flex items-center gap-0.5 text-[9.5px] font-semibold text-amber-900 bg-amber-100/80 px-1 py-0.2 rounded border border-amber-300">
+                                        <MapPin className="w-2 h-2 text-amber-700" />
+                                        <span>{u.city ? `${u.city}${u.country ? `, ${u.country}` : ''}` : (u.country || 'Dubai, AE')}</span>
+                                      </span>
+                                    </>
+                                  )}
                                   {u.ip_address && (
                                     <>
                                       <span>•</span>

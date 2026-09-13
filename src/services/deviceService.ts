@@ -9,6 +9,8 @@ export interface DeviceInstallation {
   user_id?: string;
   username?: string;
   ip_address?: string;
+  city?: string;
+  country?: string;
   device_type: string;
   device_model: string;
   user_agent: string;
@@ -24,6 +26,8 @@ export interface RegisterDeviceResponse {
   success: boolean;
   device?: DeviceInstallation;
   ip?: string;
+  city?: string;
+  country?: string;
   blocked?: boolean;
   limitReached?: boolean;
   message?: string;

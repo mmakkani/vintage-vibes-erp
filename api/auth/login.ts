@@ -92,23 +92,24 @@ export default async function handler(req: any, res: any) {
     let foundUserRow: any = null;
 
     if (dbUrl && !dbUrl.includes('your_') && !dbUrl.includes('placeholder')) {
-      try {
-        // Normalize connection string if special characters exist in password
-        const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-        if (match) {
-          let [_, u, rawPwd, host, port, rest] = match;
-          if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) {
-            rawPwd = rawPwd.slice(1, -1);
-          }
-          dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+      if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
+        dbUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+      }
+      const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+      if (match) {
+        let [_, u, rawPwd, host, port, rest] = match;
+        if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) {
+          rawPwd = rawPwd.slice(1, -1);
         }
+        dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+      }
 
+      async function tryPgQuery(connStr: string) {
         const client = new Client({
-          connectionString: dbUrl,
+          connectionString: connStr,
           ssl: { rejectUnauthorized: false }
         });
         await client.connect();
-
         const result = await client.query(
           `SELECT id, username, email, name, role, is_active, password_hash, permissions
            FROM (
@@ -116,17 +117,24 @@ export default async function handler(req: any, res: any) {
              UNION ALL
              SELECT id::text, username, (CASE WHEN username LIKE '%@%' THEN username ELSE username || '@vintagevibe.ae' END) AS email, display_name AS name, UPPER(role) AS role, is_active, password_hash, permissions FROM operators
            ) combined_auth
-           WHERE LOWER(username) = $1 OR LOWER(email) = $1 
+           WHERE LOWER(username) = $1 OR LOWER(email) = $1 OR LOWER(name) = $1
            LIMIT 1`,
           [username]
         );
         await client.end();
+        return result.rows?.[0] || null;
+      }
 
-        if (result.rows && result.rows.length > 0) {
-          foundUserRow = result.rows[0];
-        }
+      try {
+        foundUserRow = await tryPgQuery(dbUrl);
       } catch (dbErr: any) {
-        console.warn('[Vercel Serverless] PostgreSQL direct query failed:', dbErr?.message);
+        console.warn('[Vercel Serverless] PostgreSQL primary connect failed, trying fallback pooler:', dbErr?.message);
+        try {
+          const fallbackPooler = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+          foundUserRow = await tryPgQuery(fallbackPooler);
+        } catch (fbErr: any) {
+          console.warn('[Vercel Serverless] Fallback pooler also failed:', fbErr?.message);
+        }
       }
     }
 
