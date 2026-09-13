@@ -53,10 +53,10 @@ export const LuxuryCarClock3D: React.FC<LuxuryCarClock3DProps> = ({
 
   // Rolls-Royce Dashboard Proportions
   const dimensions = {
-    sm: 'w-20 h-20 sm:w-24 sm:h-24',
-    md: 'w-24 h-24 sm:w-28 sm:h-28',
-    lg: 'w-32 h-32 sm:w-36 sm:h-36 lg:w-40 lg:h-40',
-    xl: 'w-40 h-40 sm:w-44 sm:h-44 lg:w-48 lg:h-48'
+    sm: 'w-14 h-14 sm:w-16 sm:h-16',
+    md: 'w-18 h-18 sm:w-20 sm:h-20',
+    lg: 'w-24 h-24 sm:w-28 sm:h-28',
+    xl: 'w-32 h-32 sm:w-36 sm:h-36'
   }[size];
 
   // 12-hour formatted time with AM/PM for high-contrast digital sub-window
@@ -109,10 +109,10 @@ export const LuxuryCarClock3D: React.FC<LuxuryCarClock3DProps> = ({
           transform: isHovered && !isDragging ? 'scale(1.05)' : 'scale(1)'
         }}
       >
-        {/* Ambient Gold/Platinum Halo Glow */}
+        {/* Ambient Gold Halo Glow (Soft, no dark shading) */}
         <div
-          className="absolute -inset-2.5 rounded-full bg-gradient-to-tr from-amber-400/40 via-yellow-200/30 to-amber-500/40 blur-xl pointer-events-none transition-opacity duration-300"
-          style={{ opacity: isHovered || isDragging ? 0.95 : 0.4 }}
+          className="absolute -inset-1 rounded-full bg-gradient-to-tr from-amber-400/25 via-yellow-200/20 to-amber-500/25 blur-sm pointer-events-none transition-opacity duration-300"
+          style={{ opacity: isHovered || isDragging ? 0.7 : 0.2 }}
         />
 
         {/* =====================================================================
@@ -122,7 +122,7 @@ export const LuxuryCarClock3D: React.FC<LuxuryCarClock3DProps> = ({
             ===================================================================== */}
         <svg
           viewBox="0 0 240 240"
-          className="w-full h-full drop-shadow-[0_14px_28px_rgba(0,0,0,0.65)]"
+          className="w-full h-full drop-shadow-[0_4px_8px_rgba(0,0,0,0.22)]"
         >
           <defs>
             {/* Mirror-Polished Rolls-Royce Heavy Chrome / Gold Bezel */}
