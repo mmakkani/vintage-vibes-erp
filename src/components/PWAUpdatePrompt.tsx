@@ -15,7 +15,8 @@ export const PWAUpdatePrompt: React.FC = () => {
     try {
       const updateSW = registerSW({
         onNeedRefresh() {
-          console.log('[PWA] New version detected, update ready.');
+          // Triggered ONLY when the new Service Worker has finished downloading & installing into waiting state
+          console.log('[PWA] New version downloaded and fully ready to activate.');
           setNeedRefresh(true);
         },
         onOfflineReady() {
@@ -23,22 +24,13 @@ export const PWAUpdatePrompt: React.FC = () => {
         },
         onRegisteredSW(swUrl, registration) {
           if (registration) {
-            // Check for service worker updates periodically every 15 minutes
+            // Check for service worker updates periodically every 30 minutes
             const interval = setInterval(() => {
               registration.update().catch(err => console.warn('[PWA] Periodic update check failed:', err));
-            }, 15 * 60 * 1000);
-
-            // Also check whenever user returns to the tab
-            const handleVisibilityChange = () => {
-              if (document.visibilityState === 'visible') {
-                registration.update().catch(err => console.warn('[PWA] Visibility update check failed:', err));
-              }
-            };
-            document.addEventListener('visibilitychange', handleVisibilityChange);
+            }, 30 * 60 * 1000);
 
             return () => {
               clearInterval(interval);
-              document.removeEventListener('visibilitychange', handleVisibilityChange);
             };
           }
         },
@@ -46,10 +38,14 @@ export const PWAUpdatePrompt: React.FC = () => {
 
       setUpdateFunction(() => updateSW);
 
-      // Listen for controller changes (when a new worker takes over)
+      // When the new worker takes control, immediately reload to run the updated bundle
+      let refreshing = false;
       const handleControllerChange = () => {
-        console.log('[PWA] Service Worker controller changed.');
-        setNeedRefresh(true);
+        if (!refreshing) {
+          refreshing = true;
+          console.log('[PWA] Controller changed -> reloading to latest build.');
+          window.location.reload();
+        }
       };
       navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
 
@@ -65,10 +61,13 @@ export const PWAUpdatePrompt: React.FC = () => {
     setIsUpdating(true);
     try {
       if (updateFunction) {
+        // Post message SKIP_WAITING to the waiting service worker
         await updateFunction(true);
-      } else {
-        window.location.reload();
       }
+      // Safety timeout: if controllerchange doesn't fire within 1.2s, force reload
+      setTimeout(() => {
+        window.location.reload();
+      }, 1200);
     } catch (err) {
       console.error('[PWA] Error activating new SW, falling back to window reload:', err);
       window.location.reload();
