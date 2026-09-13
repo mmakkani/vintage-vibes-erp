@@ -174,6 +174,45 @@ purchaseRouter.get(['/gate-passes', '/bales', '/'], async (req, res) => {
   return res.json(PurchaseController.getInwardGatePasses());
 });
 
+purchaseRouter.get(['/bale-presets', '/presets'], async (req, res) => {
+  try {
+    const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+    if (dbUrl && !dbUrl.includes('placeholder')) {
+      const { Client } = await import('pg');
+      const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+      await client.connect();
+      const q = await client.query('SELECT * FROM bale_presets ORDER BY name ASC;');
+      await client.end();
+      if (q.rows && q.rows.length > 0) {
+        const mapped = q.rows.map((r: any) => ({
+          id: String(r.id),
+          code: r.item_code || r.code || `BALE-${r.id}`,
+          name: r.name,
+          category: r.category || 'Apparel',
+          uom: r.uom || 'BALES',
+          targetUom: r.uom || 'BALES',
+          stdWeight: Number(r.std_weight ?? 45),
+          weightKg: Number(r.std_weight ?? 45),
+          basePrice: Number(r.base_rate ?? 0),
+          baseRate: Number(r.base_rate ?? 0),
+          status: 'POSTED',
+          isActive: true
+        }));
+        return res.json(mapped);
+      }
+    }
+  } catch (err: any) {
+    console.warn('Postgres direct query notice on /bale-presets:', err?.message);
+  }
+
+  try {
+    const presets = await PurchaseService.getBalePresets();
+    return res.json(presets);
+  } catch (_) {
+    return res.json([]);
+  }
+});
+
 purchaseRouter.post(['/gate-passes/bale-inward', '/bales/inward', '/bales'], async (req, res) => {
   try {
     const item = await PurchaseService.addInwardGatePass(req.body);

@@ -1117,48 +1117,59 @@ export class PurchaseService {
 
   // --- Bale Presets Catalog ---
   public static async getBalePresets(): Promise<any[]> {
+    // 1. Query server endpoint directly connecting to PostgreSQL
+    try {
+      const apiRes = await fetch('/api/purchase/bale-presets');
+      if (apiRes.ok) {
+        const list = await apiRes.json();
+        if (Array.isArray(list) && list.length > 0) {
+          try {
+            localStorage.setItem('vintage_bale_presets_cache', JSON.stringify(list));
+          } catch {}
+          return list;
+        }
+      }
+    } catch (_) {}
+
+    // 2. Fallback to Supabase REST
     try {
       const { data, error } = await supabase
         .from('bale_presets')
         .select('*')
         .order('name', { ascending: true });
 
-      if (error) {
-        console.warn('Supabase error reading bale_presets:', error);
+      if (!error && data && data.length > 0) {
+        const mapped = data.map((r: any) => ({
+          id: r.id,
+          code: r.item_code || r.code || `BALE-${r.id}`,
+          name: r.name,
+          category: r.category || 'Apparel',
+          uom: r.uom || 'BALES',
+          targetUom: r.uom || 'BALES',
+          stdWeight: Number(r.std_weight ?? 45),
+          weightKg: Number(r.std_weight ?? 45),
+          basePrice: Number(r.base_rate ?? 0),
+          baseRate: Number(r.base_rate ?? 0),
+          status: 'POSTED',
+          isActive: true
+        }));
+
         try {
-          const cached = localStorage.getItem('vintage_bale_presets_cache');
-          if (cached) return JSON.parse(cached);
+          localStorage.setItem('vintage_bale_presets_cache', JSON.stringify(mapped));
         } catch {}
-        return [];
+
+        return mapped;
       }
-
-      const mapped = (data || []).map((r: any) => ({
-        id: r.id,
-        code: r.item_code || r.code || `BALE-${r.id}`,
-        name: r.name,
-        category: r.category || 'Apparel',
-        uom: r.uom || 'BALES',
-        targetUom: r.uom || 'BALES',
-        stdWeight: Number(r.std_weight ?? 45),
-        weightKg: Number(r.std_weight ?? 45),
-        basePrice: Number(r.base_rate ?? 0),
-        baseRate: Number(r.base_rate ?? 0),
-        status: 'POSTED',
-        isActive: true
-      }));
-
-      try {
-        localStorage.setItem('vintage_bale_presets_cache', JSON.stringify(mapped));
-      } catch {}
-
-      return mapped;
     } catch (e) {
-      console.warn('Failed to fetch bale presets:', e);
-      try {
-        const cached = localStorage.getItem('vintage_bale_presets_cache');
-        if (cached) return JSON.parse(cached);
-      } catch {}
-      return [];
+      console.warn('Failed to fetch bale presets via Supabase:', e);
     }
+
+    // 3. Fallback to localStorage cache
+    try {
+      const cached = localStorage.getItem('vintage_bale_presets_cache');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+
+    return [];
   }
 }

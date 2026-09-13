@@ -4,6 +4,7 @@ import { Party } from '../../parties/parties.types.ts';
 import { ItemMaster } from '../../setup/setup.types.ts';
 import { PurchaseInvoice, PurchaseInvoiceItem } from '../purchase.types.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
+import { PartiesService } from '../../../services/partiesService.ts';
 import { CameraInvoiceScannerOverlay } from './CameraInvoiceScannerOverlay.tsx';
 import { useFormAutoSave } from '../../../hooks/useFormAutoSave.ts';
 import { AutoSaveDraftBanner, AutoSaveIndicator } from '../../../components/AutoSaveNotice.tsx';
@@ -54,14 +55,48 @@ export interface InvoiceLineDraft {
 export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvoiceModalProps> = ({
   isOpen,
   onClose,
-  parties,
+  parties: partiesProp,
   items = [],
   balePresets: balePresetsProp,
   initialScannedData,
   editingInvoice,
   onSuccess
 }) => {
-  const suppliers = parties.filter(p => p.type === 'SUPPLIER');
+  const [internalParties, setInternalParties] = useState<Party[]>(() => {
+    if (Array.isArray(partiesProp) && partiesProp.length > 0) return partiesProp;
+    try {
+      const cached = localStorage.getItem('vibe_cached_parties');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+
+  useEffect(() => {
+    if (Array.isArray(partiesProp) && partiesProp.length > 0) {
+      setInternalParties(partiesProp);
+    }
+  }, [partiesProp]);
+
+  // If internalParties has no suppliers, immediately auto-fetch from PostgreSQL via PartiesService
+  useEffect(() => {
+    if (!isOpen) return;
+    const hasSuppliers = internalParties.some(p => (p.type || '').toUpperCase() === 'SUPPLIER');
+    if (!hasSuppliers) {
+      PartiesService.getParties().then(pts => {
+        if (Array.isArray(pts) && pts.length > 0) {
+          setInternalParties(pts);
+        }
+      }).catch(console.error);
+    }
+  }, [isOpen, internalParties]);
+
+  const suppliers = useMemo(() => {
+    const list = internalParties.length > 0 ? internalParties : (partiesProp || []);
+    return list.filter(p => (p.type || '').toUpperCase() === 'SUPPLIER');
+  }, [internalParties, partiesProp]);
 
   // Dynamic Bale Presets fetched from public.bale_presets (Purchase Factory Settings Master Catalog)
   const [balePresets, setBalePresets] = useState<any[]>(() => {
@@ -150,6 +185,12 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
   // Document Info
   const [invoiceNo, setInvoiceNo] = useState(`PUR-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '');
+
+  useEffect(() => {
+    if (!supplierId && suppliers.length > 0) {
+      setSupplierId(suppliers[0].id);
+    }
+  }, [suppliers, supplierId]);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
   const [dueDate, setDueDate] = useState(() => {
     const d = new Date();

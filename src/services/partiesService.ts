@@ -3,56 +3,86 @@ import { Party, PartyKhataLog } from '../modules/parties/parties.types.ts';
 
 export class PartiesService {
   public static async getParties(): Promise<Party[]> {
-    const [partiesRes, liveBalancesRes] = await Promise.all([
-      supabase.from('parties').select('*').order('name'),
-      supabase.from('view_coa_live_balances').select('party_id, account_id, current_balance')
-    ]);
-
-    if (partiesRes.error) {
-      console.error('Supabase error on parties:', partiesRes.error);
-      throw new Error(partiesRes.error.message || 'Database error occurred reading parties');
-    }
-
-    const liveBalancesMap = new Map<string, number>();
-    if (liveBalancesRes.data) {
-      liveBalancesRes.data.forEach((row: any) => {
-        if (row.party_id) {
-          liveBalancesMap.set(String(row.party_id), Number(row.current_balance || 0));
+    // 1. Primary & direct route: query server endpoint which connects directly to PostgreSQL
+    try {
+      const apiRes = await fetch('/api/parties');
+      if (apiRes.ok) {
+        const list = await apiRes.json();
+        if (Array.isArray(list) && list.length > 0) {
+          try {
+            localStorage.setItem('vibe_cached_parties', JSON.stringify(list));
+          } catch {}
+          return list;
         }
-        if (row.account_id) {
-          liveBalancesMap.set(String(row.account_id), Number(row.current_balance || 0));
+      }
+    } catch (_) {}
+
+    // 2. Secondary route: Supabase REST client
+    try {
+      const [partiesRes, liveBalancesRes] = await Promise.all([
+        supabase.from('parties').select('*').order('name'),
+        supabase.from('view_coa_live_balances').select('party_id, account_id, current_balance')
+      ]);
+
+      if (!partiesRes.error && partiesRes.data && partiesRes.data.length > 0) {
+        const liveBalancesMap = new Map<string, number>();
+        if (liveBalancesRes.data) {
+          liveBalancesRes.data.forEach((row: any) => {
+            if (row.party_id) {
+              liveBalancesMap.set(String(row.party_id), Number(row.current_balance || 0));
+            }
+            if (row.account_id) {
+              liveBalancesMap.set(String(row.account_id), Number(row.current_balance || 0));
+            }
+          });
         }
-      });
-    }
 
-    return (partiesRes.data || []).map((row: any) => {
-      // Prioritize real-time live balance from PostgreSQL view_coa_live_balances
-      const liveBal = liveBalancesMap.has(String(row.id))
-        ? liveBalancesMap.get(String(row.id))!
-        : (row.coa_account_id && liveBalancesMap.has(String(row.coa_account_id))
-          ? liveBalancesMap.get(String(row.coa_account_id))!
-          : Number(row.current_balance ?? row.currentBalance ?? 0));
+        const mapped = (partiesRes.data || []).map((row: any) => {
+          const liveBal = liveBalancesMap.has(String(row.id))
+            ? liveBalancesMap.get(String(row.id))!
+            : (row.coa_account_id && liveBalancesMap.has(String(row.coa_account_id))
+              ? liveBalancesMap.get(String(row.coa_account_id))!
+              : Number(row.current_balance ?? row.currentBalance ?? 0));
 
-      return {
-        id: row.id,
-        code: row.code,
-        name: row.name,
-        type: row.type || 'CLIENT',
-        contactPerson: row.contact_person || row.contactPerson || '',
-        phone: row.phone || '',
-        email: row.email || '',
-        address: row.address || '',
-        trnNo: row.trn_no || row.trnNo || '',
-        creditLimit: Number(row.credit_limit ?? row.creditLimit ?? 0),
-        currentBalance: Number(liveBal.toFixed(2)),
-        currency: row.currency || 'AED',
-        isActive: row.is_active !== false && row.isActive !== false,
-        accountMap: row.account_map || row.accountMap || {},
-        coaAccountId: row.coa_account_id,
-        coa_account_id: row.coa_account_id,
-        createdAt: row.created_at || new Date().toISOString()
-      };
-    });
+          return {
+            id: row.id,
+            code: row.code,
+            name: row.name,
+            type: (row.type || 'CLIENT').toUpperCase(),
+            contactPerson: row.contact_person || row.contactPerson || '',
+            phone: row.phone || '',
+            email: row.email || '',
+            address: row.address || '',
+            trnNo: row.trn_no || row.trnNo || '',
+            creditLimit: Number(row.credit_limit ?? row.creditLimit ?? 0),
+            currentBalance: Number(liveBal.toFixed(2)),
+            currency: row.currency || 'AED',
+            isActive: row.is_active !== false && row.isActive !== false,
+            accountMap: row.account_map || row.accountMap || {},
+            coaAccountId: row.coa_account_id,
+            coa_account_id: row.coa_account_id,
+            createdAt: row.created_at || new Date().toISOString()
+          };
+        });
+
+        try {
+          localStorage.setItem('vibe_cached_parties', JSON.stringify(mapped));
+        } catch {}
+
+        return mapped;
+      }
+    } catch (_) {}
+
+    // 3. Fallback to localStorage cache
+    try {
+      const cached = localStorage.getItem('vibe_cached_parties');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+
+    return [];
   }
 
   public static async ensurePartyCoaAccount(party: {
