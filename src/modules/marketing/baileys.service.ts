@@ -9,7 +9,8 @@ import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  delay
+  delay,
+  Browsers
 } from '@whiskeysockets/baileys';
 
 // Self-healing patch to ensure WhatsApp Channel newsletter media upload utilizes /m1/ CDN routing
@@ -166,7 +167,7 @@ class BaileysManager extends EventEmitter {
       logger: this.logger,
       auth: state,
       printQRInTerminal: false,
-      browser: ['Ubuntu', 'Chrome', '20.0.04'],
+      browser: Browsers.ubuntu('Chrome'),
       syncFullHistory: false,
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 0,

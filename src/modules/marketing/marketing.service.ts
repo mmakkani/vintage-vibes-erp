@@ -1349,13 +1349,26 @@ class MarketingService {
       this.userWhatsAppSessions.set(userId, session);
     }
     const liveSession = baileysManager.getSession(userId);
-    if (liveSession?.status === 'CONNECTED') {
-      session.isConnected = true;
-      session.pairingStatus = 'CONNECTED';
-      if (liveSession.phoneNumber) {
-        session.phoneNumber = liveSession.phoneNumber;
+    if (liveSession) {
+      if (liveSession.qrCodeDataUrl) {
+        session.qrCodeDataUrl = liveSession.qrCodeDataUrl;
+      } else if (liveSession.qrCode) {
+        session.qrCodeDataUrl = liveSession.qrCode;
       }
-      session.lastActive = 'Active Online (Baileys Connected)';
+      if (liveSession.pairingCode) {
+        session.pairingCode = liveSession.pairingCode;
+      }
+      if (liveSession.status === 'CONNECTED') {
+        session.isConnected = true;
+        session.pairingStatus = 'CONNECTED';
+        if (liveSession.phoneNumber) {
+          session.phoneNumber = liveSession.phoneNumber;
+        }
+        session.lastActive = 'Active Online (Baileys Connected)';
+      } else if (liveSession.status === 'WAITING_QR') {
+        session.pairingStatus = 'AWAITING_CODE_ENTRY';
+        session.lastActive = 'Live QR Ready for Scan';
+      }
     }
     return session;
   }
@@ -1364,35 +1377,45 @@ class MarketingService {
     return Array.from(this.userWhatsAppSessions.values());
   }
 
-  public generateNewQRCode(userId: string, userName?: string): WhatsAppDeviceSession {
+  public async generateNewQRCodeAsync(userId: string, userName?: string): Promise<WhatsAppDeviceSession> {
     const session = this.getWhatsAppSession(userId, userName);
     session.isConnected = false;
     session.pairingStatus = 'AWAITING_CODE_ENTRY';
     session.lastActive = 'Connecting WhatsApp Web Socket...';
+    session.qrCodeDataUrl = undefined;
 
-    // Start real Baileys socket for live QR code
-    baileysManager.initSocket(userId).catch(err => {
-      console.warn('[Marketing] Baileys QR init notice:', err?.message);
+    // Wait up to 7 seconds for live QR code from Baileys socket
+    const qrPromise = new Promise<string | undefined>((resolve) => {
+      let done = false;
+      const timeout = setTimeout(() => {
+        if (!done) {
+          done = true;
+          const live = baileysManager.getSession(userId);
+          resolve(live?.qrCodeDataUrl || live?.qrCode);
+        }
+      }, 7000);
+
+      const onQr = ({ userId: u, qr, dataUrl }: { userId: string; qr: string; dataUrl?: string }) => {
+        if (u === userId && !done) {
+          done = true;
+          clearTimeout(timeout);
+          baileysManager.removeListener('qr', onQr);
+          session.qrCodeDataUrl = dataUrl || qr;
+          session.lastActive = 'Live QR Ready for Scan';
+          this.userWhatsAppSessions.set(userId, session);
+          eventHub.broadcast({
+            type: 'ENTITY_MUTATED',
+            module: 'ALL',
+            entity: 'WHATSAPP_DEVICE',
+            action: 'UPDATE',
+            documentRef: userId,
+            data: { session }
+          });
+          resolve(dataUrl || qr);
+        }
+      };
+      baileysManager.on('qr', onQr);
     });
-
-    // Listen to real QR update with base64 dataUrl
-    const onQr = ({ userId: u, qr, dataUrl }: { userId: string; qr: string; dataUrl?: string }) => {
-      if (u === userId) {
-        session.qrCodeDataUrl = dataUrl || qr;
-        session.lastActive = 'Live QR Ready for Scan';
-        this.userWhatsAppSessions.set(userId, session);
-        eventHub.broadcast({
-          type: 'ENTITY_MUTATED',
-          module: 'ALL',
-          entity: 'WHATSAPP_DEVICE',
-          action: 'UPDATE',
-          documentRef: userId,
-          data: { session }
-        });
-      }
-    };
-    baileysManager.off('qr', onQr);
-    baileysManager.on('qr', onQr);
 
     const onOpen = ({ userId: u, user }: { userId: string; user: any }) => {
       if (u === userId) {
@@ -1412,11 +1435,35 @@ class MarketingService {
         });
       }
     };
-    baileysManager.off('connection.open', onOpen);
     baileysManager.on('connection.open', onOpen);
+
+    // Start real Baileys socket for live QR code
+    baileysManager.initSocket(userId).catch(err => {
+      console.warn('[Marketing] Baileys QR init notice:', err?.message);
+    });
+
+    const qrResult = await qrPromise;
+    if (qrResult) {
+      session.qrCodeDataUrl = qrResult;
+      session.lastActive = 'Live QR Ready for Scan';
+    }
+
+    const liveSession = baileysManager.getSession(userId);
+    if (liveSession?.qrCodeDataUrl) {
+      session.qrCodeDataUrl = liveSession.qrCodeDataUrl;
+      session.lastActive = 'Live QR Ready for Scan';
+    } else if (liveSession?.qrCode) {
+      session.qrCodeDataUrl = liveSession.qrCode;
+      session.lastActive = 'Live QR Ready for Scan';
+    }
 
     this.userWhatsAppSessions.set(userId, session);
     return session;
+  }
+
+  public generateNewQRCode(userId: string, userName?: string): WhatsAppDeviceSession {
+    this.generateNewQRCodeAsync(userId, userName).catch(() => {});
+    return this.getWhatsAppSession(userId, userName);
   }
 
   /**

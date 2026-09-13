@@ -237,11 +237,17 @@ marketingRouter.get('/whatsapp/all-sessions', (req, res) => {
 });
 
 // Generate fresh QR code for linking new phone
-marketingRouter.post('/whatsapp/generate-qr', (req, res) => {
+marketingRouter.post('/whatsapp/generate-qr', async (req, res) => {
   const { userId, userName } = req.body;
   if (!userId) return res.status(400).json({ error: 'userId is required' });
-  const session = marketingService.generateNewQRCode(userId, userName);
-  return res.json(session);
+  try {
+    const session = await marketingService.generateNewQRCodeAsync(userId, userName);
+    return res.json(session);
+  } catch (err: any) {
+    console.warn('[Marketing Route] Error generating QR:', err?.message);
+    const session = marketingService.getWhatsAppSession(userId, userName);
+    return res.json(session);
+  }
 });
 
 // Request pairing code for phone number

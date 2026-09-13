@@ -110,6 +110,13 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
     }
   }, [isOpen, currentUserId]);
 
+  // Auto-generate QR immediately when user opens Tab 2 (QR)
+  useEffect(() => {
+    if (isOpen && activeTab === 'qr' && !session?.isConnected && !session?.qrCodeDataUrl) {
+      handleRefreshQr();
+    }
+  }, [isOpen, activeTab, session?.isConnected, session?.qrCodeDataUrl]);
+
   if (!isOpen) return null;
 
   const handleRefreshQr = async () => {
@@ -737,7 +744,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                           <span>Regenerate QR</span>
                         </button>
                       </div>
-                      <span className="text-[10px] text-slate-400 font-mono mt-1">Noise Handshake Active</span>
+                      <span className="text-[10px] text-slate-500 font-mono mt-1">{session?.lastActive || 'Noise Handshake Active'}</span>
                     </div>
 
                     {/* Step Instructions */}
