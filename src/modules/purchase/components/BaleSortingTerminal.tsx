@@ -1041,23 +1041,23 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-      <div className="bg-slate-900 border-2 border-indigo-500/50 rounded-2xl shadow-2xl w-full max-w-7xl max-h-[96vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-0 sm:p-4 overflow-hidden">
+      <div className="bg-slate-900 border-0 sm:border-2 border-indigo-500/50 rounded-none sm:rounded-2xl shadow-2xl w-full max-w-7xl h-[100dvh] sm:h-auto sm:max-h-[96vh] flex flex-col overflow-hidden">
         {/* TOP STATUS BAR */}
-        <div className="bg-slate-950 px-5 py-3 border-b border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center">
+        <div className="bg-slate-950 px-4 sm:px-5 py-2.5 sm:py-3 border-b border-slate-800 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 sm:gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
               <Scale className="w-4 h-4 text-indigo-400" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white tracking-tight flex items-center gap-2">
-                <span>Bale Sorting & Individual Piece Breakdown Terminal</span>
-                <span className="bg-emerald-500/20 text-emerald-300 text-[10px] font-mono px-2 py-0.5 rounded-full border border-emerald-500/30 font-semibold">
-                  LIVE SPEED-SORT ENGINE
+              <h2 className="text-xs sm:text-sm font-bold text-white tracking-tight flex items-center gap-1.5 sm:gap-2">
+                <span>Bale Sorting Terminal</span>
+                <span className="bg-emerald-500/20 text-emerald-300 text-[9px] sm:text-[10px] font-mono px-1.5 sm:px-2 py-0.5 rounded-full border border-emerald-500/30 font-semibold whitespace-nowrap">
+                  LIVE SPEED-SORT
                 </span>
               </h2>
-              <p className="text-[11px] text-slate-400">
-                Continuous weight depletion scale, dual barcode generation & studio 3-angle cataloger
+              <p className="text-[10px] sm:text-[11px] text-slate-400 truncate max-w-[240px] sm:max-w-none">
+                Weight depletion scale, dual barcodes & studio cataloger
               </p>
             </div>
           </div>
@@ -1076,7 +1076,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         {/* FEEDBACK TOAST BANNER */}
         {feedbackToast && (
           <div
-            className={`px-4 py-2 text-xs font-semibold flex items-center justify-between transition-all ${
+            className={`px-4 py-2 text-xs font-semibold flex items-center justify-between transition-all shrink-0 ${
               feedbackToast.type === 'success'
                 ? 'bg-emerald-950/80 text-emerald-300 border-b border-emerald-800'
                 : feedbackToast.type === 'error'
@@ -1095,14 +1095,16 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           </div>
         )}
 
-        {/* STEP 1: BALE IDENTIFICATION & REAL-TIME HUD BAR */}
-        <div className="bg-slate-900/90 border-b border-slate-800 px-5 py-3.5 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
-          {/* Scan Barcode Gun or Select Dropdown */}
-          <div className="flex flex-wrap items-center gap-2.5 flex-1">
-            <form onSubmit={handleBaleBarcodeScan} className="flex items-center gap-1.5 flex-1 min-w-[280px]">
-              <div className="relative flex-1">
-                <Barcode className="w-4 h-4 text-indigo-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
+        {/* MAIN SCROLLABLE BODY (Scrolls all steps on mobile and desktop) */}
+        <div className="flex-1 overflow-y-auto min-h-0 divide-y divide-slate-800 overscroll-contain">
+          {/* STEP 1: BALE IDENTIFICATION & REAL-TIME HUD BAR */}
+          <div className="bg-slate-900/90 p-3.5 sm:px-5 sm:py-3.5 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 sm:gap-4">
+            {/* Scan Barcode Gun or Select Dropdown */}
+            <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2.5 flex-1 w-full">
+              <form onSubmit={handleBaleBarcodeScan} className="flex items-center gap-1.5 flex-1 min-w-[240px] sm:min-w-[280px]">
+                <div className="relative flex-1">
+                  <Barcode className="w-4 h-4 text-indigo-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
                   ref={barcodeScanInputRef}
                   type="text"
                   placeholder="Scan Bale Barcode Gun or Type (e.g. BAL-001)..."
@@ -1172,34 +1174,34 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           </div>
 
           {/* REAL-TIME HUD DASHBOARD */}
-          <div className="flex items-center gap-2 sm:gap-3 bg-slate-950/80 px-4 py-2 rounded-xl border border-slate-800 font-mono shrink-0">
-            <div className="text-center px-1">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Total</span>
-              <span className="text-xs font-black text-slate-200">{hudStats.totalGrams.toLocaleString()}g</span>
+          <div className="grid grid-cols-5 sm:flex items-center gap-1 sm:gap-3 bg-slate-950/80 px-2 sm:px-4 py-2 rounded-xl border border-slate-800 font-mono shrink-0 w-full sm:w-auto text-center">
+            <div className="px-0.5 sm:px-1">
+              <span className="text-[9px] sm:text-[10px] text-slate-400 uppercase tracking-wider block truncate">Total</span>
+              <span className="text-[11px] sm:text-xs font-black text-slate-200">{hudStats.totalGrams.toLocaleString()}g</span>
             </div>
-            <div className="h-6 w-px bg-slate-800" />
+            <div className="h-6 w-px bg-slate-800 hidden sm:block" />
 
-            <div className="text-center px-1">
-              <span className="text-[10px] text-emerald-400 uppercase tracking-wider block">Sorted</span>
-              <span className="text-xs font-black text-emerald-400">{hudStats.sortedGrams.toLocaleString()}g</span>
+            <div className="px-0.5 sm:px-1">
+              <span className="text-[9px] sm:text-[10px] text-emerald-400 uppercase tracking-wider block truncate">Sorted</span>
+              <span className="text-[11px] sm:text-xs font-black text-emerald-400">{hudStats.sortedGrams.toLocaleString()}g</span>
             </div>
-            <div className="h-6 w-px bg-slate-800" />
+            <div className="h-6 w-px bg-slate-800 hidden sm:block" />
 
-            <div className="text-center px-1">
-              <span className="text-[10px] text-amber-400 uppercase tracking-wider block">Remaining</span>
-              <span className="text-xs font-black text-amber-400">{hudStats.remainingGrams.toLocaleString()}g</span>
+            <div className="px-0.5 sm:px-1">
+              <span className="text-[9px] sm:text-[10px] text-amber-400 uppercase tracking-wider block truncate">Remain</span>
+              <span className="text-[11px] sm:text-xs font-black text-amber-400">{hudStats.remainingGrams.toLocaleString()}g</span>
             </div>
-            <div className="h-6 w-px bg-slate-800" />
+            <div className="h-6 w-px bg-slate-800 hidden sm:block" />
 
-            <div className="text-center px-1">
-              <span className="text-[10px] text-indigo-400 uppercase tracking-wider block">Pieces</span>
-              <span className="text-xs font-black text-indigo-300">{hudStats.piecesCount} pcs</span>
+            <div className="px-0.5 sm:px-1">
+              <span className="text-[9px] sm:text-[10px] text-indigo-400 uppercase tracking-wider block truncate">Pieces</span>
+              <span className="text-[11px] sm:text-xs font-black text-indigo-300">{hudStats.piecesCount} pcs</span>
             </div>
-            <div className="h-6 w-px bg-slate-800" />
+            <div className="h-6 w-px bg-slate-800 hidden sm:block" />
 
-            <div className="text-center px-1">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Progress</span>
-              <span className={`text-xs font-black ${hudStats.isCompleted ? 'text-emerald-400' : 'text-indigo-400'}`}>
+            <div className="px-0.5 sm:px-1">
+              <span className="text-[9px] sm:text-[10px] text-slate-400 uppercase tracking-wider block truncate">Prog</span>
+              <span className={`text-[11px] sm:text-xs font-black ${hudStats.isCompleted ? 'text-emerald-400' : 'text-indigo-400'}`}>
                 {hudStats.progressPercent}%
               </span>
             </div>
@@ -1225,7 +1227,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         )}
 
         {/* STEP 2: HIGH-SPEED REPETITIVE PIECE ENTRY ROW */}
-        <div className="p-5 bg-slate-900 border-b border-slate-800">
+        <div className="p-3 sm:p-5 bg-slate-900 border-b border-slate-800">
           {hudStats.isCompleted ? (
             <div className="bg-emerald-950/90 border-2 border-emerald-500/60 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-emerald-200 shadow-lg">
               <div className="flex items-center gap-3">
@@ -1377,7 +1379,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1.5 w-full">
+                        <div className="grid grid-cols-3 gap-1.5 w-full">
                           {/* Live studio camera */}
                           <button
                             type="button"
@@ -1393,7 +1395,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </button>
 
                           {/* Snap with native Phone Camera */}
-                          <label className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition" title="Snap with phone camera">
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition" title="Snap with phone camera">
                             <Smartphone className="w-3 h-3 text-emerald-400" />
                             <span>Snap</span>
                             <input
@@ -1419,7 +1421,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </label>
 
                           {/* Pick from Gallery / PC */}
-                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center gap-1 cursor-pointer transition" title="Upload from file">
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer transition" title="Upload from file">
                             <UploadCloud className="w-3 h-3 text-slate-400" />
                             <span>Upload</span>
                             <input
@@ -1507,7 +1509,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1.5 w-full">
+                        <div className="grid grid-cols-3 gap-1.5 w-full">
                           {/* Live studio camera */}
                           <button
                             type="button"
@@ -1523,7 +1525,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </button>
 
                           {/* Snap with native Phone Camera */}
-                          <label className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition" title="Snap with phone camera">
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition" title="Snap with phone camera">
                             <Smartphone className="w-3 h-3 text-emerald-400" />
                             <span>Snap</span>
                             <input
@@ -1549,7 +1551,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </label>
 
                           {/* Pick from Gallery / PC */}
-                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center gap-1 cursor-pointer transition" title="Upload from file">
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer transition" title="Upload from file">
                             <UploadCloud className="w-3 h-3 text-slate-400" />
                             <span>Upload</span>
                             <input
@@ -1637,7 +1639,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1.5 w-full">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 w-full">
                           {/* Live camera for tag */}
                           <button
                             type="button"
@@ -1664,7 +1666,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </button>
 
                           {/* Snap Tag Photo with Phone */}
-                          <label className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition" title="Snap Tag with phone camera">
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition" title="Snap Tag with phone camera">
                             <Smartphone className="w-3 h-3 text-emerald-400" />
                             <span>Snap</span>
                             <input
@@ -1690,7 +1692,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </label>
 
                           {/* Upload Tag Photo */}
-                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center gap-1 cursor-pointer transition" title="Upload Tag File">
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer transition" title="Upload Tag File">
                             <UploadCloud className="w-3 h-3 text-slate-400" />
                             <span>Upload</span>
                             <input
@@ -1762,9 +1764,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               )}
 
               {/* RAPID INPUT CONTROLS ROW */}
-              <form onSubmit={handleAddPieceAndNext} className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-12 gap-2.5 items-end">
+              <form onSubmit={handleAddPieceAndNext} className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-12 gap-2 sm:gap-2.5 items-end">
                 {/* 1. Weight in Grams (Auto-focused) */}
-                <div className="lg:col-span-2 space-y-1">
+                <div className="col-span-1 lg:col-span-2 space-y-1">
                   <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide">
                     Weight (Grams) *
                   </label>
@@ -1795,7 +1797,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 </div>
 
                 {/* 2. Auto Calculated Cost (AED) */}
-                <div className="lg:col-span-2 space-y-1">
+                <div className="col-span-1 lg:col-span-2 space-y-1">
                   <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide">
                     Piece Cost (AED)
                   </label>
@@ -1805,7 +1807,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 </div>
 
                 {/* 3. Estimated Selling Price */}
-                <div className="lg:col-span-2 space-y-1">
+                <div className="col-span-1 lg:col-span-2 space-y-1">
                   <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide">
                     Selling Price (AED)
                   </label>
@@ -1821,7 +1823,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 </div>
 
                 {/* 4. Brand / Title */}
-                <div className="lg:col-span-2 space-y-1">
+                <div className="col-span-1 lg:col-span-2 space-y-1">
                   <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide">
                     Brand / Title
                   </label>
@@ -1836,7 +1838,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 </div>
 
                 {/* 5. Category Dropdown */}
-                <div className="lg:col-span-2 space-y-1">
+                <div className="col-span-1 lg:col-span-2 space-y-1">
                   <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
                     <span>Category</span>
                     <span className="text-[9px] text-slate-400">Setup Sync</span>
@@ -1857,7 +1859,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 </div>
 
                 {/* 6. Size Selector Dropdown */}
-                <div className="lg:col-span-1 space-y-1">
+                <div className="col-span-1 lg:col-span-1 space-y-1">
                   <label className="block text-[11px] font-bold text-indigo-300 uppercase tracking-wide flex items-center justify-between">
                     <span>Size</span>
                     <span className="font-mono text-[9px] text-amber-400 font-bold bg-slate-800 px-1 py-0.2 rounded">
@@ -1879,7 +1881,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 </div>
 
                 {/* 7. Quality Grade Dropdown */}
-                <div className="lg:col-span-2 space-y-1">
+                <div className="col-span-2 sm:col-span-1 lg:col-span-1 space-y-1">
                   <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
                     <span className="flex items-center gap-1">
                       <Sparkles className="w-3 h-3 text-amber-400" />
@@ -1901,8 +1903,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 </div>
 
                 {/* 8. Quick Pills (Quality & Sizing) & Submit Button */}
-                <div className="lg:col-span-12 flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800/80 mt-1">
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 overflow-x-auto py-1">
+                <div className="col-span-2 sm:col-span-2 md:col-span-3 lg:col-span-12 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-800/80 mt-1">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 overflow-x-auto py-1 max-w-full">
                     {/* Quick Quality Grade Pills */}
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] uppercase font-bold text-amber-400 tracking-wider mr-1">
@@ -1964,7 +1966,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   <button
                     type="submit"
                     disabled={isSubmitting || !activeBale || hudStats.isCompleted}
-                    className="py-2 px-5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-lg shadow-md shadow-emerald-500/20 border border-emerald-400/40 flex items-center justify-center gap-1.5 transition-all transform active:scale-95 cursor-pointer disabled:opacity-40 ml-auto"
+                    className="w-full sm:w-auto py-2.5 sm:py-2 px-5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-lg shadow-md shadow-emerald-500/20 border border-emerald-400/40 flex items-center justify-center gap-1.5 transition-all transform active:scale-95 cursor-pointer disabled:opacity-40 sm:ml-auto"
                   >
                     <Plus className="w-4 h-4 text-slate-950" />
                     <span>+ Add Piece & Next (↵)</span>
@@ -1985,7 +1987,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         </div>
 
         {/* STEP 3: INTERACTIVE SESSION TABLE */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+        <div className="p-3 sm:p-5 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-xs uppercase tracking-wider text-slate-300 flex items-center gap-2">
               <span>Current Session Pieces Log</span>
@@ -2142,10 +2144,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             </div>
           </div>
         </div>
+        </div>
 
         {/* STEP 4: SESSION ACTIONS BAR */}
-        <div className="bg-slate-950 px-5 py-3 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs text-slate-400">
+        <div className="bg-slate-950 px-3 sm:px-5 py-2.5 sm:py-3 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-2.5 sm:gap-3 shrink-0 z-10 shadow-2xl">
+          <div className="flex items-center justify-between sm:justify-start w-full sm:w-auto gap-2 text-xs text-slate-400">
             <span>Bale Status:</span>
             <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
               hudStats.isCompleted
@@ -2158,38 +2161,38 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
             {(isTerminalFinalized || hudStats.isCompleted || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED') && (
               <button
                 type="button"
                 id="btn-bottom-reopen-bale"
                 onClick={handleReopenBale}
-                className="flex-1 sm:flex-none px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer transform active:scale-95 whitespace-nowrap"
+                className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer transform active:scale-95 whitespace-nowrap"
                 title="Unlock and reopen this bale for continuous garment sorting"
               >
                 <Unlock className="w-4 h-4 text-slate-950" />
-                <span>🔓 Re-open / Unlock Bale</span>
+                <span>🔓 Re-open</span>
               </button>
             )}
 
             <button
               type="button"
               onClick={handleSaveInProgress}
-              className="flex-1 sm:flex-none px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl border border-slate-700 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl border border-slate-700 transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
             >
               <Save className="w-4 h-4 text-indigo-400" />
-              <span>Save as In-Progress</span>
+              <span>Save Partial</span>
             </button>
 
             <button
               type="button"
               onClick={handleFinalizeAndPost}
               disabled={isTerminalFinalized || hudStats.isCompleted || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED'}
-              className="flex-1 sm:flex-none px-5 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-emerald-600/25 border border-emerald-400/40 flex items-center justify-center gap-2 transition-all transform active:scale-95 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex-1 sm:flex-none px-3 sm:px-5 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-emerald-600/25 border border-emerald-400/40 flex items-center justify-center gap-2 transition-all transform active:scale-95 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
               title={isTerminalFinalized || hudStats.isCompleted ? "Bale is already finalized and posted" : "Finalize and lock this bale"}
             >
               <ShieldCheck className="w-4 h-4 text-slate-950" />
-              <span>{isTerminalFinalized || hudStats.isCompleted || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED' ? '✓ Bale Finalized & Posted' : 'Finalize & Post Bale'}</span>
+              <span>{isTerminalFinalized || hudStats.isCompleted || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED' ? '✓ Finalized' : 'Finalize & Post'}</span>
             </button>
           </div>
         </div>
