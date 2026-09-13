@@ -1,12 +1,30 @@
 // Web Audio synthesizer for realistic hardware feedback (beeps, success chimes, tare clicks)
 class HardwareAudioManager {
   private ctx: AudioContext | null = null;
+  private hasUserInteracted: boolean = false;
+
+  constructor() {
+    if (typeof window !== 'undefined') {
+      const unlock = () => {
+        this.hasUserInteracted = true;
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(() => {});
+        }
+      };
+      window.addEventListener('click', unlock, { once: true, capture: true });
+      window.addEventListener('touchstart', unlock, { once: true, capture: true });
+      window.addEventListener('keydown', unlock, { once: true, capture: true });
+    }
+  }
 
   private initCtx() {
-    if (!this.ctx && typeof window !== 'undefined') {
+    if (!this.hasUserInteracted || typeof window === 'undefined') return;
+    if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioCtx) {
-        this.ctx = new AudioCtx();
+        try {
+          this.ctx = new AudioCtx();
+        } catch (_) {}
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {

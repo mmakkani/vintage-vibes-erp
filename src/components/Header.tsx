@@ -42,7 +42,7 @@ export const Header: React.FC<HeaderProps> = ({
   const { isLiveConnected, activeClientsCount, onlineUsers, refreshPresence, lastSyncedAt, isSyncing, triggerGlobalSync } = useSync();
 
   return (
-    <header id="main-enterprise-header" className="w-full bg-gradient-to-r from-[#FDF9EE]/95 via-[#F5ECCE]/95 to-[#FAF4E6]/95 backdrop-blur-md text-slate-900 px-3 sm:px-5 lg:px-6 py-2 sm:py-2.5 border-b-2 border-amber-400/80 shadow-md flex flex-col xl:flex-row justify-between items-center z-20 gap-3">
+    <header id="main-enterprise-header" className="relative z-50 w-full bg-gradient-to-r from-[#FDF9EE]/95 via-[#F5ECCE]/95 to-[#FAF4E6]/95 backdrop-blur-md text-slate-900 px-3 sm:px-5 lg:px-6 py-2 sm:py-2.5 border-b-2 border-amber-400/80 shadow-md flex flex-col xl:flex-row justify-between items-center gap-3">
       {/* Left: Grand 3D Logo (Enlarged & Majestic) + 3D Corporate Brand Title & TRN */}
       <div className="flex items-center gap-3.5 sm:gap-4 w-full xl:w-auto justify-between xl:justify-start shrink-0">
         <div className="flex items-center gap-3 sm:gap-4">

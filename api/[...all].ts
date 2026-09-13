@@ -3,8 +3,17 @@ import path from 'path';
 import os from 'os';
 import { Client } from 'pg';
 import { createClient } from '@supabase/supabase-js';
-import { DevicesController } from '../src/modules/devices/devices.controller.ts';
-import { PresenceController } from '../src/modules/presence/presence.controller.ts';
+function getClientIp(req: any): string {
+  const forwarded = req.headers?.['x-forwarded-for'];
+  if (typeof forwarded === 'string') {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.headers?.['cf-connecting-ip'] ||
+         req.headers?.['x-real-ip'] ||
+         req.connection?.remoteAddress ||
+         req.socket?.remoteAddress ||
+         '127.0.0.1';
+}
 
 const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
@@ -1857,40 +1866,199 @@ export default async function handler(req: any, res: any) {
     }
 
     if (pathname.includes('/devices')) {
+      const ip = getClientIp(req);
       if (pathname.includes('/devices/register') && method === 'POST') {
-        return DevicesController.registerDevice(req, res);
+        const { deviceId, userId, username, deviceType, deviceModel, userAgent, isStandalone } = req.body || {};
+        if (!deviceId) return res.status(400).json({ success: false, error: 'Device ID is required' });
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const existing = await client.query('SELECT * FROM device_installations WHERE device_id = $1 LIMIT 1;', [deviceId]);
+            if (existing.rows && existing.rows.length > 0) {
+              if (existing.rows[0].install_status === 'BLOCKED') {
+                await client.end();
+                return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator.' });
+              }
+              const updated = await client.query(`
+                UPDATE device_installations
+                SET ip_address = $1, is_standalone = $2, last_active_at = NOW(),
+                    username = COALESCE(NULLIF($3, ''), username),
+                    user_id = COALESCE(NULLIF($4, ''), user_id),
+                    device_type = COALESCE(NULLIF($5, ''), device_type),
+                    device_model = COALESCE(NULLIF($6, ''), device_model),
+                    user_agent = COALESCE(NULLIF($7, ''), user_agent)
+                WHERE device_id = $8 RETURNING *;
+              `, [ip, Boolean(isStandalone), username || null, userId || null, deviceType || null, deviceModel || null, userAgent || null, deviceId]);
+              await client.end();
+              return res.status(200).json({ success: true, device: updated.rows[0], ip });
+            }
+            const cleanUser = (username || '').trim();
+            const maxLimit = 2;
+            if (cleanUser && cleanUser !== 'Guest / Visitor' && cleanUser !== 'guest') {
+              const userCountRes = await client.query("SELECT COUNT(*) AS count FROM device_installations WHERE username = $1 AND install_status = 'ACTIVE';", [cleanUser]);
+              const activeCount = parseInt(userCountRes.rows[0]?.count || '0', 10);
+              if (activeCount >= maxLimit) {
+                await client.end();
+                return res.status(403).json({ success: false, limitReached: true, message: `Device limit reached (${maxLimit} devices) for operator @${cleanUser}.` });
+              }
+            }
+            const inserted = await client.query(`
+              INSERT INTO device_installations (device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, max_devices_limit)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ACTIVE', $9) RETURNING *;
+            `, [deviceId, userId || null, cleanUser || 'Guest / Visitor', ip, deviceType || 'Unknown', deviceModel || 'Unknown Device', userAgent || '', Boolean(isStandalone), maxLimit]);
+            await client.end();
+            return res.status(201).json({ success: true, device: inserted.rows[0], ip });
+          } catch (err: any) {
+            try { await client.end(); } catch (_) {}
+            console.error('[Device Register PG Error]:', err);
+          }
+        }
+        try {
+          const { data: existing } = await supabaseAdmin.from('device_installations').select('*').eq('device_id', deviceId).maybeSingle();
+          if (existing) {
+            if (existing.install_status === 'BLOCKED') return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked.' });
+            const { data: updated } = await supabaseAdmin.from('device_installations').update({ ip_address: ip, is_standalone: Boolean(isStandalone), last_active_at: new Date().toISOString(), username: username || existing.username }).eq('device_id', deviceId).select().single();
+            return res.status(200).json({ success: true, device: updated, ip });
+          }
+          const { data: ins } = await supabaseAdmin.from('device_installations').insert({ device_id: deviceId, user_id: userId || null, username: username || 'Guest / Visitor', ip_address: ip, device_type: deviceType || 'Unknown', device_model: deviceModel || 'Unknown', user_agent: userAgent || '', is_standalone: Boolean(isStandalone), install_status: 'ACTIVE', max_devices_limit: 2 }).select().single();
+          return res.status(201).json({ success: true, device: ins, ip });
+        } catch (err: any) {
+          return res.status(500).json({ success: false, error: err?.message });
+        }
       }
+
       if (pathname.includes('/devices/toggle-status') && method === 'POST') {
-        return DevicesController.toggleDeviceStatus(req, res);
+        const { deviceId, status } = req.body || {};
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const q = await client.query('UPDATE device_installations SET install_status = $1 WHERE device_id = $2 RETURNING *;', [status, deviceId]);
+            await client.end();
+            return res.status(200).json({ success: true, device: q.rows[0] });
+          } catch (e) { try { await client.end(); } catch (_) {} }
+        }
+        const { data } = await supabaseAdmin.from('device_installations').update({ install_status: status }).eq('device_id', deviceId).select().single();
+        return res.status(200).json({ success: true, device: data });
       }
+
       if (pathname.includes('/devices/update-limit') && method === 'POST') {
-        return DevicesController.updateDeviceLimit(req, res);
+        const { deviceId, maxLimit } = req.body || {};
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const q = await client.query('UPDATE device_installations SET max_devices_limit = $1 WHERE device_id = $2 RETURNING *;', [parseInt(maxLimit, 10), deviceId]);
+            await client.end();
+            return res.status(200).json({ success: true, device: q.rows[0] });
+          } catch (e) { try { await client.end(); } catch (_) {} }
+        }
+        const { data } = await supabaseAdmin.from('device_installations').update({ max_devices_limit: parseInt(maxLimit, 10) }).eq('device_id', deviceId).select().single();
+        return res.status(200).json({ success: true, device: data });
       }
+
       if (method === 'DELETE') {
         const parts = pathname.split('/');
-        req.params = { id: parts[parts.length - 1] };
-        return DevicesController.deleteDevice(req, res);
+        const id = parts[parts.length - 1];
+        const client = await getPgClient();
+        if (client) {
+          try {
+            await client.query('DELETE FROM device_installations WHERE device_id = $1 OR id::text = $1;', [id]);
+            await client.end();
+            return res.status(200).json({ success: true });
+          } catch (e) { try { await client.end(); } catch (_) {} }
+        }
+        await supabaseAdmin.from('device_installations').delete().or(`device_id.eq.${id},id.eq.${id}`);
+        return res.status(200).json({ success: true });
       }
+
       if (method === 'GET') {
-        return DevicesController.listDevices(req, res);
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const result = await client.query('SELECT * FROM device_installations ORDER BY last_active_at DESC LIMIT 100;');
+            await client.end();
+            return res.status(200).json(result.rows || []);
+          } catch (e) { try { await client.end(); } catch (_) {} }
+        }
+        const { data } = await supabaseAdmin.from('device_installations').select('*').order('last_active_at', { ascending: false }).limit(100);
+        return res.status(200).json(data || []);
       }
     }
 
     if (pathname.includes('/presence')) {
+      const ip = getClientIp(req);
       if (pathname.includes('/presence/heartbeat') && method === 'POST') {
-        return PresenceController.heartbeat(req, res);
+        const { sessionId, userId, username, displayName, role, deviceType } = req.body || {};
+        if (!sessionId || !username) {
+          return res.status(400).json({ success: false, error: 'Session ID and Username required' });
+        }
+        const client = await getPgClient();
+        if (client) {
+          try {
+            await client.query(`
+              INSERT INTO user_presences (session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+              ON CONFLICT (session_id) DO UPDATE
+              SET last_heartbeat = NOW(),
+                  username = EXCLUDED.username,
+                  display_name = EXCLUDED.display_name,
+                  role = EXCLUDED.role,
+                  device_type = EXCLUDED.device_type,
+                  ip_address = EXCLUDED.ip_address;
+            `, [sessionId, userId || null, username, displayName || username, role || 'OPERATOR', deviceType || 'Web Client', ip]);
+            await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '45 seconds';");
+            const activeRes = await client.query(`
+              SELECT session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat
+              FROM user_presences
+              WHERE last_heartbeat > NOW() - INTERVAL '45 seconds'
+              ORDER BY last_heartbeat DESC;
+            `);
+            await client.end();
+            return res.status(200).json({ success: true, onlineCount: activeRes.rows.length, users: activeRes.rows });
+          } catch (err: any) {
+            try { await client.end(); } catch (_) {}
+            return res.status(200).json({ success: true, onlineCount: 1, users: [] });
+          }
+        }
+        return res.status(200).json({ success: true, onlineCount: 1, users: [] });
       }
-      if (pathname.includes('/presence/logout') && method === 'POST') {
-        return PresenceController.logout(req, res);
-      }
-      if (method === 'GET') {
-        return PresenceController.getOnlineUsers(req, res);
-      }
-    }
 
-    if (pathname.includes('/auth/login') && method === 'POST') {
-      const loginHandler = (await import('./auth/login.ts')).default;
-      return loginHandler(req, res);
+      if (pathname.includes('/presence/logout') && method === 'POST') {
+        const { sessionId, username } = req.body || {};
+        const client = await getPgClient();
+        if (client) {
+          try {
+            if (sessionId) {
+              await client.query('DELETE FROM user_presences WHERE session_id = $1;', [sessionId]);
+            } else if (username) {
+              await client.query('DELETE FROM user_presences WHERE username = $1;', [username]);
+            }
+            await client.end();
+          } catch (e) {
+            try { await client.end(); } catch (_) {}
+          }
+        }
+        return res.status(200).json({ success: true });
+      }
+
+      if (method === 'GET') {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '45 seconds';");
+            const activeRes = await client.query(`
+              SELECT session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat
+              FROM user_presences
+              WHERE last_heartbeat > NOW() - INTERVAL '45 seconds'
+              ORDER BY last_heartbeat DESC;
+            `);
+            await client.end();
+            return res.status(200).json({ success: true, onlineCount: activeRes.rows.length, users: activeRes.rows });
+          } catch (e) {
+            try { await client.end(); } catch (_) {}
+          }
+        }
+        return res.status(200).json({ success: true, onlineCount: 1, users: [] });
+      }
     }
 
     return res.status(200).json({

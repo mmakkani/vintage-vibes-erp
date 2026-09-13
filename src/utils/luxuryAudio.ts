@@ -15,6 +15,7 @@ class LuxuryAudioManager {
   private hasUserInteracted: boolean = false;
 
   private initCtx() {
+    if (!this.hasUserInteracted) return;
     if (!this.ctx && typeof window !== 'undefined') {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioCtx) {
