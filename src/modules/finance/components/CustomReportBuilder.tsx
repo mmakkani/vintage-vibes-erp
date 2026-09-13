@@ -41,15 +41,20 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
   const [draggedAccountId, setDraggedAccountId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const safeAccounts = Array.isArray(accounts) ? accounts : [];
+
   const fetchTemplates = async () => {
     setLoading(true);
     try {
       const res = await fetch('/api/finance/custom-reports');
       if (res.ok) {
-        const data: CustomReportTemplate[] = await res.json();
-        setTemplates(data);
-        if (data.length > 0 && !selectedTemplateId) {
-          setSelectedTemplateId(data[0].id);
+        const data = await res.json();
+        const list: CustomReportTemplate[] = Array.isArray(data)
+          ? data
+          : (Array.isArray(data?.templates) ? data.templates : (Array.isArray(data?.reports) ? data.reports : []));
+        setTemplates(list);
+        if (list.length > 0 && !selectedTemplateId) {
+          setSelectedTemplateId(list[0].id);
         }
       }
     } catch (err) {
@@ -65,8 +70,13 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
     try {
       const res = await fetch(`/api/finance/custom-reports/${id}/execute`);
       if (res.ok) {
-        const data: ExecutedCustomReport = await res.json();
-        setExecutedReport(data);
+        const data = await res.json();
+        if (data && typeof data === 'object' && !data.error) {
+          setExecutedReport({
+            ...data,
+            sections: Array.isArray(data.sections) ? data.sections : []
+          });
+        }
       }
     } catch (err) {
       console.error('Failed to execute custom report:', err);
@@ -229,11 +239,14 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
   };
 
   // Filter accounts in picker
-  const filteredAccounts = accounts.filter(a => {
+  const filteredAccounts = safeAccounts.filter(a => {
+    if (!a) return false;
     if (!searchAccountQuery) return true;
     const q = searchAccountQuery.toLowerCase();
-    return a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q) || a.classification.toLowerCase().includes(q);
+    return (a.code || '').toLowerCase().includes(q) || (a.name || '').toLowerCase().includes(q) || (a.classification || '').toLowerCase().includes(q);
   });
+
+  const safeTemplates = Array.isArray(templates) ? templates : [];
 
   return (
     <div className="space-y-4">
@@ -263,7 +276,7 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
                   onChange={e => setSelectedTemplateId(e.target.value)}
                   className="bg-transparent text-xs font-bold text-slate-800 outline-none cursor-pointer max-w-[220px] truncate"
                 >
-                  {templates.map(t => (
+                  {safeTemplates.map(t => (
                     <option key={t.id} value={t.id}>
                       {t.name}
                     </option>
@@ -275,7 +288,7 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
                 <button
                   type="button"
                   onClick={() => {
-                    const t = templates.find(item => item.id === selectedTemplateId);
+                    const t = safeTemplates.find(item => item.id === selectedTemplateId);
                     if (t) handleStartEdit(t);
                   }}
                   className="btn-3d btn-3d-slate text-xs py-1.5 px-3 cursor-pointer"
@@ -656,14 +669,14 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
                     <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
                       Assigned Account Heads (Drop here):
                     </div>
-                    {sec.accountIds.length === 0 ? (
+                    {(!sec.accountIds || sec.accountIds.length === 0) ? (
                       <div className="text-xs text-slate-400 italic py-2 text-center">
                         Drop COA accounts here or click "+{secIdx + 1}" on the left drawer
                       </div>
                     ) : (
                       <div className="flex flex-wrap gap-1.5">
-                        {sec.accountIds.map(accId => {
-                          const acc = accounts.find(a => a.id === accId);
+                        {(sec.accountIds || []).map(accId => {
+                          const acc = safeAccounts.find(a => a.id === accId || a.code === accId);
                           return (
                             <div
                               key={accId}

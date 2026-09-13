@@ -159,6 +159,35 @@ let groupsList = [
   }
 ];
 
+let customReportTemplatesList: any[] = [
+  {
+    id: 'crt-default-1',
+    name: 'Consignment Net Trading Statement',
+    description: 'Custom operational layout for vintage cargo shipments and direct clearance costs',
+    sections: [
+      {
+        id: 'sec-rev-1',
+        title: 'Core Apparel Revenues',
+        type: 'REVENUE',
+        accountIds: ['acc-4110']
+      },
+      {
+        id: 'sec-cogs-1',
+        title: 'Bale Consignment & Clearance',
+        type: 'COGS',
+        accountIds: ['acc-5110']
+      },
+      {
+        id: 'sec-exp-1',
+        title: 'Sorting & Facility Overheads',
+        type: 'EXPENSE',
+        accountIds: ['acc-5410']
+      }
+    ],
+    createdAt: new Date().toISOString()
+  }
+];
+
 // Helper: 8-character pairing code
 function generatePairingCode(): string {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -1032,6 +1061,117 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    // Finance Custom Reports
+    if (pathname.includes('/finance/custom-reports')) {
+      if (pathname.endsWith('/execute')) {
+        // GET /finance/custom-reports/:id/execute
+        const parts = pathname.split('/').filter(Boolean);
+        const templateId = parts[parts.length - 2];
+        const template = customReportTemplatesList.find(t => t.id === templateId) || customReportTemplatesList[0];
+        
+        let coaRows: any[] = [];
+        let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+        if (dbUrl && !dbUrl.includes('placeholder')) {
+          try {
+            const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+            if (match) {
+              let [_, user, rawPwd, host, port, rest] = match;
+              if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
+              dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+            }
+            const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+            await client.connect();
+            const resQ = await client.query('SELECT id, code, name, type, sub_type, current_balance FROM coa_accounts');
+            coaRows = resQ.rows;
+            await client.end();
+          } catch (_) {}
+        }
+
+        const executedSections = (template?.sections || []).map((sec: any) => {
+          const sectionAccounts = (sec.accountIds || []).map((accId: string) => {
+            const acc = coaRows.find((a: any) => a.id === accId || a.code === accId) || {
+              id: accId,
+              code: accId.replace('acc-', ''),
+              name: 'Operating Ledger Head',
+              current_balance: 0
+            };
+            return {
+              id: acc.id,
+              code: acc.code,
+              name: acc.name,
+              balance: Number(acc.current_balance || 0)
+            };
+          });
+          const subtotal = sectionAccounts.reduce((sum: number, a: any) => sum + (Number(a.balance) || 0), 0);
+          return {
+            id: sec.id,
+            title: sec.title,
+            type: sec.type,
+            accounts: sectionAccounts,
+            subtotal: Number(subtotal.toFixed(2))
+          };
+        });
+
+        const totalRevenue = executedSections
+          .filter((s: any) => s.type === 'REVENUE')
+          .reduce((sum: number, s: any) => sum + s.subtotal, 0);
+
+        const totalCOGS = executedSections
+          .filter((s: any) => s.type === 'COGS')
+          .reduce((sum: number, s: any) => sum + s.subtotal, 0);
+
+        const grossProfit = Number((totalRevenue - totalCOGS).toFixed(2));
+
+        const totalExpenses = executedSections
+          .filter((s: any) => s.type === 'EXPENSE')
+          .reduce((sum: number, s: any) => sum + s.subtotal, 0);
+
+        const netOperatingIncome = Number((grossProfit - totalExpenses).toFixed(2));
+
+        return res.status(200).json({
+          templateId: template?.id || 'crt-default-1',
+          templateName: template?.name || 'Consignment Net Trading Statement',
+          sections: executedSections,
+          totalRevenue: Number(totalRevenue.toFixed(2)),
+          totalCOGS: Number(totalCOGS.toFixed(2)),
+          grossProfit,
+          totalExpenses: Number(totalExpenses.toFixed(2)),
+          netOperatingIncome,
+          generatedAt: new Date().toISOString()
+        });
+      }
+
+      if (method === 'GET') {
+        return res.status(200).json(customReportTemplatesList);
+      }
+
+      if (method === 'POST') {
+        const payload = body || {};
+        const id = payload.id || `crt-${Date.now()}`;
+        const newTemplate = {
+          id,
+          name: payload.name || 'Untitled Custom Statement',
+          description: payload.description || '',
+          sections: Array.isArray(payload.sections) ? payload.sections : [],
+          createdAt: payload.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        const idx = customReportTemplatesList.findIndex(t => t.id === id);
+        if (idx >= 0) {
+          customReportTemplatesList[idx] = newTemplate;
+        } else {
+          customReportTemplatesList.push(newTemplate);
+        }
+        return res.status(200).json(newTemplate);
+      }
+
+      if (method === 'DELETE') {
+        const id = pathname.split('/').filter(Boolean).pop();
+        customReportTemplatesList = customReportTemplatesList.filter(t => t.id !== id);
+        return res.status(200).json({ success: true });
+      }
+    }
+
     // Chart of Accounts (COA)
     if (pathname.includes('/finance/coa')) {
       let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
@@ -1069,6 +1209,71 @@ export default async function handler(req: any, res: any) {
           console.warn('Error querying coa_accounts in serverless gateway:', e?.message);
         }
       }
+    // Finance Vouchers
+    if (pathname.includes('/finance/vouchers')) {
+      let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+      if (dbUrl && !dbUrl.includes('placeholder')) {
+        try {
+          const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+          if (match) {
+            let [_, user, rawPwd, host, port, rest] = match;
+            if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
+            dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+          }
+          const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+          await client.connect();
+          const vchRes = await client.query('SELECT * FROM vouchers ORDER BY date DESC, created_at DESC LIMIT 200');
+          const veRes = await client.query('SELECT * FROM voucher_entries ORDER BY id ASC');
+          await client.end();
+
+          const allEntries = veRes.rows || [];
+          const formatted = vchRes.rows.map((row: any) => {
+            const vId = String(row.id || '');
+            const vNo = row.voucher_no || row.voucherNo || '';
+            const matched = allEntries
+              .filter((e: any) => (vId && String(e.voucher_id) === vId) || (vNo && e.voucher_no === vNo))
+              .map((e: any) => ({
+                id: e.id,
+                voucherId: e.voucher_id || vId,
+                accountId: e.account_id || '',
+                accountCode: e.account_code || '',
+                accountName: e.account_name || '',
+                partyId: e.party_id || undefined,
+                partyName: e.party_name || undefined,
+                debitAmount: Number(e.debit ?? e.debit_amount ?? 0),
+                creditAmount: Number(e.credit ?? e.credit_amount ?? 0),
+                memo: e.memo || e.particulars || e.narration || ''
+              }));
+            return {
+              id: row.id,
+              voucherNo: vNo || row.id,
+              date: row.date ? String(row.date).slice(0, 10) : new Date().toISOString().slice(0, 10),
+              type: row.type || row.voucher_type || 'JOURNAL',
+              reference: row.reference || row.reference_no || '',
+              narration: row.narration || '',
+              totalDebit: Number(row.total_debit ?? row.totalDebit ?? 0),
+              totalCredit: Number(row.total_credit ?? row.totalCredit ?? 0),
+              status: row.status || 'POSTED',
+              currency: (row.currency || 'AED').toUpperCase(),
+              exchangeRate: Number(row.exchange_rate || 1.0),
+              baseCurrency: (row.base_currency || 'AED').toUpperCase(),
+              foreignTotalAmount: Number(row.foreign_total_amount || 0),
+              createdBy: row.created_by || 'System',
+              entries: matched,
+              lines: matched,
+              createdAt: row.created_at
+            };
+          });
+          return res.status(200).json(formatted);
+        } catch (e: any) {
+          console.warn('Error querying vouchers in serverless gateway:', e?.message);
+        }
+      }
+      return res.status(200).json([]);
+    }
+
+    // Finance General Ledgers
+    if (pathname.includes('/finance/ledgers')) {
       return res.status(200).json([]);
     }
 

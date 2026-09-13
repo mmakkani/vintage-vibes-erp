@@ -993,7 +993,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
   // Memoized Filtered COA Accounts with Hierarchical Sorting
   const filteredAccounts = useMemo(() => {
-    const matches = accounts.filter(acc => {
+    const safeAccountsList = Array.isArray(accounts) ? accounts : [];
+    const matches = safeAccountsList.filter(acc => {
       const accType = (acc.type || acc.classification || '').toString().toUpperCase();
       if (coaFilterPillar !== 'ALL' && accType !== coaFilterPillar.toUpperCase()) {
         return false;
@@ -1038,22 +1039,21 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const filteredLedgers = ledgers;
 
   // Memoized GL Totals
-  const { totalGlDebits, totalGlCredits } = useMemo(() => {
-    let debits = 0;
-    let credits = 0;
-    for (let i = 0; i < filteredLedgers.length; i++) {
-      debits += (filteredLedgers[i].debit || 0);
-      credits += (filteredLedgers[i].credit || 0);
-    }
-    return { totalGlDebits: debits, totalGlCredits: credits };
+  const glTotals = useMemo(() => {
+    const list = Array.isArray(filteredLedgers) ? filteredLedgers : [];
+    const debit = list.reduce((sum, entry) => sum + (Number(entry.debit) || 0), 0);
+    const credit = list.reduce((sum, entry) => sum + (Number(entry.credit) || 0), 0);
+    return { debit, credit, count: list.length };
   }, [filteredLedgers]);
 
   // Groups for SearchableSelect in General Ledger
   const glTargetGroups: SearchableGroup[] = useMemo(() => {
+    const safeAcc = Array.isArray(accounts) ? accounts : [];
+    const safePty = Array.isArray(parties) ? parties : [];
     return [
       {
         label: 'Chart of Accounts (COA)',
-        options: accounts.map(a => ({
+        options: safeAcc.map(a => ({
           value: `ACC:${a.id}`,
           label: `${a.code} - ${a.name}`,
           badge: a.classification,
@@ -1067,7 +1067,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       },
       {
         label: 'Customers / Clients',
-        options: parties.filter(p => p.type === 'CLIENT').map(p => ({
+        options: safePty.filter(p => p.type === 'CLIENT').map(p => ({
           value: `PTY:${p.id}`,
           label: `${p.code} - ${p.name}`,
           badge: 'CLIENT',
@@ -1077,7 +1077,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       },
       {
         label: 'Suppliers / Exporters',
-        options: parties.filter(p => p.type === 'SUPPLIER').map(p => ({
+        options: safePty.filter(p => p.type === 'SUPPLIER').map(p => ({
           value: `PTY:${p.id}`,
           label: `${p.code} - ${p.name}`,
           badge: 'SUPPLIER',
@@ -1087,7 +1087,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       },
       {
         label: 'Clearing Agents',
-        options: parties.filter(p => p.type === 'AGENT').map(p => ({
+        options: safePty.filter(p => p.type === 'AGENT').map(p => ({
           value: `PTY:${p.id}`,
           label: `${p.code} - ${p.name}`,
           badge: 'AGENT',
@@ -1310,7 +1310,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           {/* 5 Pillars Summary Bar */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
             {coaPillars.map(p => {
-              const pillarAccounts = accounts.filter(a => (a.type || a.classification || '').toString().toUpperCase() === p.key);
+              const safeAcc = Array.isArray(accounts) ? accounts : [];
+              const pillarAccounts = safeAcc.filter(a => (a.type || a.classification || '').toString().toUpperCase() === p.key);
               const count = pillarAccounts.length;
               const totalVal = pillarAccounts
                 .reduce((sum, a) => sum + (typeof a.current_balance === 'number' ? a.current_balance : (Number(a.currentBalance) || 0)), 0);
@@ -1850,10 +1851,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       Trial Balance Grand Totals:
                     </td>
                     <td className="py-3 px-3 text-right">
-                      AED {Number((reports as any)?.trialBalanceMeta?.totalDebit ?? (reports?.trialBalance || []).reduce((sum, r) => sum + (Number(r.debit) || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      AED {Number((reports as any)?.trialBalanceMeta?.totalDebit ?? (Array.isArray(reports?.trialBalance) ? reports.trialBalance : []).reduce((sum, r) => sum + (Number(r.debit) || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="py-3 px-3 text-right">
-                      AED {Number((reports as any)?.trialBalanceMeta?.totalCredit ?? (reports?.trialBalance || []).reduce((sum, r) => sum + (Number(r.credit) || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      AED {Number((reports as any)?.trialBalanceMeta?.totalCredit ?? (Array.isArray(reports?.trialBalance) ? reports.trialBalance : []).reduce((sum, r) => sum + (Number(r.credit) || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                   </tr>
                 </tfoot>
