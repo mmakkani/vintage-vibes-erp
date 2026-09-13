@@ -323,6 +323,19 @@ export const Header: React.FC<HeaderProps> = ({
                       </span>
                     </button>
                   ))}
+                  <div className="border-t border-amber-200 mt-1 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowUserDropdown(false);
+                        window.dispatchEvent(new CustomEvent('open_ios_install_guide'));
+                      }}
+                      className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-amber-100 text-amber-950 font-bold transition-colors cursor-pointer"
+                    >
+                      <Smartphone className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Install App / iOS Guide</span>
+                    </button>
+                  </div>
                 </div>
               </>
             )}

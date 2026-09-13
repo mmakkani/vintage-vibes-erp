@@ -1868,7 +1868,7 @@ export default async function handler(req: any, res: any) {
     if (pathname.includes('/devices')) {
       const ip = getClientIp(req);
       if (pathname.includes('/devices/register') && method === 'POST') {
-        const { deviceId, userId, username, deviceType, deviceModel, userAgent, isStandalone } = req.body || {};
+        const { deviceId, userId, username, deviceType, deviceModel, userAgent, isStandalone } = body || {};
         if (!deviceId) return res.status(400).json({ success: false, error: 'Device ID is required' });
         const client = await getPgClient();
         if (client) {
@@ -1928,7 +1928,7 @@ export default async function handler(req: any, res: any) {
       }
 
       if (pathname.includes('/devices/toggle-status') && method === 'POST') {
-        const { deviceId, status } = req.body || {};
+        const { deviceId, status } = body || {};
         const client = await getPgClient();
         if (client) {
           try {
@@ -1942,7 +1942,7 @@ export default async function handler(req: any, res: any) {
       }
 
       if (pathname.includes('/devices/update-limit') && method === 'POST') {
-        const { deviceId, maxLimit } = req.body || {};
+        const { deviceId, maxLimit } = body || {};
         const client = await getPgClient();
         if (client) {
           try {
@@ -1987,7 +1987,7 @@ export default async function handler(req: any, res: any) {
     if (pathname.includes('/presence')) {
       const ip = getClientIp(req);
       if (pathname.includes('/presence/heartbeat') && method === 'POST') {
-        const { sessionId, userId, username, displayName, role, deviceType } = req.body || {};
+        const { sessionId, userId, username, displayName, role, deviceType } = body || {};
         if (!sessionId || !username) {
           return res.status(400).json({ success: false, error: 'Session ID and Username required' });
         }
@@ -2023,7 +2023,7 @@ export default async function handler(req: any, res: any) {
       }
 
       if (pathname.includes('/presence/logout') && method === 'POST') {
-        const { sessionId, username } = req.body || {};
+        const { sessionId, username } = body || {};
         const client = await getPgClient();
         if (client) {
           try {
