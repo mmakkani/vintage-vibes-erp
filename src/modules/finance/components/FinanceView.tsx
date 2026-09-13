@@ -146,6 +146,13 @@ interface NewVoucherLineItem {
   memo: string;
 }
 
+interface SingleVoucherLineItem {
+  id: string;
+  accountId: string;
+  amount: number;
+  memo: string;
+}
+
 export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentUserRole, initialSubTab = 'coa', maintenanceModules }) => {
   const { syncVersion, acquireLock, releaseLock, notifyMutation } = useSync();
 
@@ -217,14 +224,76 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const [showNewVoucherModal, setShowNewVoucherModal] = useState(false);
   const [editingVoucherId, setEditingVoucherId] = useState<string | null>(null);
   const [editingVoucherNo, setEditingVoucherNo] = useState<string>('');
-  const [voucherType, setVoucherType] = useState<any>('JV');
-  const [voucherNarration, setVoucherNarration] = useState('Vintage cargo port handling & customs duty adjustment');
+  const [voucherType, setVoucherType] = useState<any>('BPV');
+  const [entryMode, setEntryMode] = useState<'SINGLE' | 'DOUBLE'>('SINGLE');
+  const [primaryBankCashAccountId, setPrimaryBankCashAccountId] = useState<string>('');
+  const [singleLines, setSingleLines] = useState<SingleVoucherLineItem[]>([
+    { id: '1', accountId: '', amount: 0, memo: '' }
+  ]);
+  const [voucherNarration, setVoucherNarration] = useState('');
   const [voucherDate, setVoucherDate] = useState(new Date().toISOString().slice(0, 10));
   const [voucherLines, setVoucherLines] = useState<NewVoucherLineItem[]>([
-    { id: '1', accountId: '', accountCode: '', accountName: '', debitAmount: 4200, creditAmount: 0, memo: 'Customs duty debit' },
-    { id: '2', accountId: '', accountCode: '', accountName: '', debitAmount: 0, creditAmount: 4200, memo: 'Bank payment credit' }
+    { id: '1', accountId: '', accountCode: '', accountName: '', debitAmount: 0, creditAmount: 0, memo: '' },
+    { id: '2', accountId: '', accountCode: '', accountName: '', debitAmount: 0, creditAmount: 0, memo: '' }
   ]);
   const [isSavingVoucher, setIsSavingVoucher] = useState(false);
+
+  // Auto-detect Bank & Cash accounts directly from COA (SQL)
+  const bankAccounts = useMemo(() => {
+    return (accounts || []).filter(a => {
+      const sub = (a.sub_type || a.subType || '').toLowerCase();
+      const name = (a.name || '').toLowerCase();
+      const code = a.code || '';
+      const type = (a.type || a.classification || '').toUpperCase();
+      return type === 'ASSET' && (sub.includes('bank') || name.includes('bank') || code.startsWith('112'));
+    });
+  }, [accounts]);
+
+  const cashAccounts = useMemo(() => {
+    return (accounts || []).filter(a => {
+      const sub = (a.sub_type || a.subType || '').toLowerCase();
+      const name = (a.name || '').toLowerCase();
+      const code = a.code || '';
+      const type = (a.type || a.classification || '').toUpperCase();
+      return type === 'ASSET' && (sub.includes('cash') || name.includes('cash') || code.startsWith('111'));
+    });
+  }, [accounts]);
+
+  const bankAndCashAccounts = useMemo(() => {
+    const combined = [...bankAccounts, ...cashAccounts];
+    const unique = new Map<string, COAAccount>();
+    combined.forEach(acc => unique.set(acc.id, acc));
+    return Array.from(unique.values());
+  }, [bankAccounts, cashAccounts]);
+
+  const selectablePrimaryAccounts = useMemo(() => {
+    if (voucherType === 'BPV' || voucherType === 'BRV') {
+      return bankAccounts.length > 0 ? bankAccounts : bankAndCashAccounts;
+    }
+    if (voucherType === 'CPV' || voucherType === 'CRV') {
+      return cashAccounts.length > 0 ? cashAccounts : bankAndCashAccounts;
+    }
+    return bankAndCashAccounts;
+  }, [voucherType, bankAccounts, cashAccounts, bankAndCashAccounts]);
+
+  const primaryAccount = useMemo(() => {
+    return accounts.find(a => a.id === primaryBankCashAccountId);
+  }, [accounts, primaryBankCashAccountId]);
+
+  const primaryAccBalance = primaryAccount
+    ? (typeof primaryAccount.current_balance === 'number'
+        ? primaryAccount.current_balance
+        : (Number(primaryAccount.currentBalance) || 0))
+    : 0;
+
+  useEffect(() => {
+    if (entryMode === 'SINGLE' && selectablePrimaryAccounts.length > 0) {
+      const exists = selectablePrimaryAccounts.some(a => a.id === primaryBankCashAccountId);
+      if (!exists && !editingVoucherId) {
+        setPrimaryBankCashAccountId(selectablePrimaryAccounts[0].id);
+      }
+    }
+  }, [entryMode, selectablePrimaryAccounts, primaryBankCashAccountId, editingVoucherId]);
 
   // Print voucher modal state
   const [voucherToPrint, setVoucherToPrint] = useState<Voucher | null>(null);
@@ -372,7 +441,128 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     }
   };
 
-  // Voucher Line Helpers
+  // Single Entry Line Helpers
+  const singleEntryTotal = useMemo(() => {
+    return singleLines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
+  }, [singleLines]);
+
+  const handleAddSingleLine = () => {
+    setSingleLines(prev => [
+      ...prev,
+      { id: String(Date.now()), accountId: '', amount: 0, memo: '' }
+    ]);
+  };
+
+  const handleRemoveSingleLine = (idx: number) => {
+    if (singleLines.length <= 1) {
+      showMsg('Voucher requires at least one line item', 'error');
+      return;
+    }
+    setSingleLines(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleUpdateSingleLine = (idx: number, field: keyof SingleVoucherLineItem, value: any) => {
+    setSingleLines(prev => prev.map((l, i) => {
+      if (i !== idx) return l;
+      return { ...l, [field]: value };
+    }));
+  };
+
+  const handleVoucherTypeChange = (newType: string) => {
+    setVoucherType(newType);
+    if (newType === 'JV') {
+      setEntryMode('DOUBLE');
+    } else if (newType === 'BPV' || newType === 'BRV') {
+      setEntryMode('SINGLE');
+      const isBank = bankAccounts.some(b => b.id === primaryBankCashAccountId);
+      if (!isBank && bankAccounts.length > 0) {
+        setPrimaryBankCashAccountId(bankAccounts[0].id);
+      }
+    } else if (newType === 'CPV' || newType === 'CRV') {
+      setEntryMode('SINGLE');
+      const isCash = cashAccounts.some(c => c.id === primaryBankCashAccountId);
+      if (!isCash && cashAccounts.length > 0) {
+        setPrimaryBankCashAccountId(cashAccounts[0].id);
+      }
+    }
+  };
+
+  const handleSwitchMode = (targetMode: 'SINGLE' | 'DOUBLE') => {
+    if (voucherType === 'JV' && targetMode === 'SINGLE') {
+      showMsg('Journal Voucher (JV) must use Double-Entry mode', 'error');
+      return;
+    }
+
+    if (targetMode === 'DOUBLE') {
+      // Sync single lines into double entry voucher lines
+      if (primaryBankCashAccountId && singleEntryTotal > 0) {
+        const isPayment = voucherType === 'BPV' || voucherType === 'CPV';
+        const convertedLines: NewVoucherLineItem[] = [];
+
+        singleLines.forEach((sl, idx) => {
+          const acc = accounts.find(a => a.id === sl.accountId);
+          convertedLines.push({
+            id: String(sl.id || `line-${idx + 1}`),
+            accountId: sl.accountId,
+            accountCode: acc?.code || '',
+            accountName: acc?.name || '',
+            debitAmount: isPayment ? Number(sl.amount || 0) : 0,
+            creditAmount: isPayment ? 0 : Number(sl.amount || 0),
+            memo: sl.memo || voucherNarration
+          });
+        });
+
+        const primaryAcc = accounts.find(a => a.id === primaryBankCashAccountId);
+        convertedLines.push({
+          id: `primary-bank-cash-${Date.now()}`,
+          accountId: primaryBankCashAccountId,
+          accountCode: primaryAcc?.code || '',
+          accountName: primaryAcc?.name || '',
+          debitAmount: isPayment ? 0 : Number(singleEntryTotal),
+          creditAmount: isPayment ? Number(singleEntryTotal) : 0,
+          memo: voucherNarration
+        });
+
+        setVoucherLines(convertedLines);
+      }
+      setEntryMode('DOUBLE');
+    } else {
+      // Switch from DOUBLE to SINGLE
+      const isPayment = voucherType === 'BPV' || voucherType === 'CPV';
+      if (isPayment) {
+        const creditLine = voucherLines.find(l => (Number(l.creditAmount) || 0) > 0);
+        const debitLines = voucherLines.filter(l => (Number(l.debitAmount) || 0) > 0);
+        if (creditLine) {
+          setPrimaryBankCashAccountId(creditLine.accountId);
+        }
+        if (debitLines.length > 0) {
+          setSingleLines(debitLines.map((dl, i) => ({
+            id: String(dl.id || `sline-${i}`),
+            accountId: dl.accountId,
+            amount: Number(dl.debitAmount || 0),
+            memo: dl.memo || ''
+          })));
+        }
+      } else {
+        const debitLine = voucherLines.find(l => (Number(l.debitAmount) || 0) > 0);
+        const creditLines = voucherLines.filter(l => (Number(l.creditAmount) || 0) > 0);
+        if (debitLine) {
+          setPrimaryBankCashAccountId(debitLine.accountId);
+        }
+        if (creditLines.length > 0) {
+          setSingleLines(creditLines.map((cl, i) => ({
+            id: String(cl.id || `sline-${i}`),
+            accountId: cl.accountId,
+            amount: Number(cl.creditAmount || 0),
+            memo: cl.memo || ''
+          })));
+        }
+      }
+      setEntryMode('SINGLE');
+    }
+  };
+
+  // Double-Entry Voucher Line Helpers
   const handleAddVoucherLine = () => {
     const nextAcc = accounts[0] || { id: '', code: '', name: '' };
     setVoucherLines([
@@ -441,9 +631,81 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   // Create or Update multi-line Voucher with Zod validation & anti-double submission lock
   const handleCreateVoucher = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isVoucherBalanced) {
-      showMsg(`Voucher is out of balance by AED ${voucherDiff.toFixed(2)}. Debits must equal Credits!`, 'error');
-      return;
+
+    let finalLines: { accountId: string; debitAmount: number; creditAmount: number; memo: string }[] = [];
+    let finalTotalDebit = 0;
+    let finalTotalCredit = 0;
+
+    if (entryMode === 'SINGLE' && voucherType !== 'JV') {
+      if (!primaryBankCashAccountId) {
+        showMsg(`Please select a ${voucherType.startsWith('B') ? 'Bank' : 'Cash'} account from COA!`, 'error');
+        return;
+      }
+      if (singleLines.length === 0) {
+        showMsg('Please add at least one line item.', 'error');
+        return;
+      }
+      for (let i = 0; i < singleLines.length; i++) {
+        const line = singleLines[i];
+        if (!line.accountId) {
+          showMsg(`Please select an account for line item #${i + 1}.`, 'error');
+          return;
+        }
+        if ((Number(line.amount) || 0) <= 0) {
+          showMsg(`Amount on line item #${i + 1} must be greater than 0.`, 'error');
+          return;
+        }
+      }
+      if (singleEntryTotal <= 0) {
+        showMsg('Total voucher amount must be greater than 0.', 'error');
+        return;
+      }
+
+      const isPayment = voucherType === 'BPV' || voucherType === 'CPV';
+      if (isPayment) {
+        // Payment: Line items are Debited, Master Bank/Cash is Credited
+        finalLines = singleLines.map(l => ({
+          accountId: l.accountId,
+          debitAmount: Number(l.amount),
+          creditAmount: 0,
+          memo: l.memo || voucherNarration
+        }));
+        finalLines.push({
+          accountId: primaryBankCashAccountId,
+          debitAmount: 0,
+          creditAmount: Number(singleEntryTotal.toFixed(2)),
+          memo: voucherNarration
+        });
+      } else {
+        // Receipt: Line items are Credited, Master Bank/Cash is Debited
+        finalLines = singleLines.map(l => ({
+          accountId: l.accountId,
+          debitAmount: 0,
+          creditAmount: Number(l.amount),
+          memo: l.memo || voucherNarration
+        }));
+        finalLines.push({
+          accountId: primaryBankCashAccountId,
+          debitAmount: Number(singleEntryTotal.toFixed(2)),
+          creditAmount: 0,
+          memo: voucherNarration
+        });
+      }
+      finalTotalDebit = Number(singleEntryTotal.toFixed(2));
+      finalTotalCredit = Number(singleEntryTotal.toFixed(2));
+    } else {
+      if (!isVoucherBalanced) {
+        showMsg(`Voucher is out of balance by AED ${voucherDiff.toFixed(2)}. Debits must equal Credits!`, 'error');
+        return;
+      }
+      finalLines = voucherLines.map(l => ({
+        accountId: l.accountId,
+        debitAmount: Number(l.debitAmount) || 0,
+        creditAmount: Number(l.creditAmount) || 0,
+        memo: l.memo || voucherNarration
+      }));
+      finalTotalDebit = Number(totalDebitSum.toFixed(2));
+      finalTotalCredit = Number(totalCreditSum.toFixed(2));
     }
 
     const payload = {
@@ -452,15 +714,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       narration: voucherNarration,
       currency: 'AED' as const,
       exchangeRate: 1.0,
-      totalDebit: Number(totalDebitSum.toFixed(2)),
-      totalCredit: Number(totalCreditSum.toFixed(2)),
+      totalDebit: finalTotalDebit,
+      totalCredit: finalTotalCredit,
       status: 'POSTED' as const,
-      lines: voucherLines.map(l => ({
-        accountId: l.accountId,
-        debitAmount: Number(l.debitAmount) || 0,
-        creditAmount: Number(l.creditAmount) || 0,
-        memo: l.memo || voucherNarration
-      }))
+      lines: finalLines
     };
 
     // Client-side schema validation using Zod
@@ -483,7 +740,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           voucherNo: editingVoucherNo,
           status: 'POSTED'
         });
-        showMsg(`Voucher ${editingVoucherNo} updated successfully!`);
+        showMsg(`Voucher ${editingVoucherNo} updated successfully in PostgreSQL!`);
         setShowNewVoucherModal(false);
         setEditingVoucherId(null);
         setEditingVoucherNo('');
@@ -498,7 +755,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           isAuto: false
         });
 
-        showMsg(`Voucher ${voucher.voucherNo} posted successfully!`);
+        showMsg(`Voucher ${voucher.voucherNo} posted successfully to PostgreSQL General Ledger!`);
         setShowNewVoucherModal(false);
         releaseLock('finance-create-voucher');
         notifyMutation('FINANCE', 'VOUCHER', 'CREATE', voucher.voucherNo);
@@ -520,7 +777,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     }
     setEditingVoucherId(v.id);
     setEditingVoucherNo(v.voucherNo);
-    setVoucherType(v.type || 'JV');
+    const type = (v.type || 'JV') as string;
+    setVoucherType(type);
     setVoucherDate(v.date || new Date().toISOString().slice(0, 10));
     setVoucherNarration(v.narration || '');
 
@@ -534,14 +792,61 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       memo: l.memo || l.particulars || l.narration || ''
     }));
 
-    if (linesToSet.length >= 2) {
-      setVoucherLines(linesToSet);
+    if (type === 'JV') {
+      setEntryMode('DOUBLE');
+      if (linesToSet.length >= 2) {
+        setVoucherLines(linesToSet);
+      } else {
+        setVoucherLines([
+          { id: '1', accountId: accounts[0]?.id || '', accountCode: accounts[0]?.code || '', accountName: accounts[0]?.name || '', debitAmount: v.totalDebit || 0, creditAmount: 0, memo: v.narration || '' },
+          { id: '2', accountId: accounts[1]?.id || '', accountCode: accounts[1]?.code || '', accountName: accounts[1]?.name || '', debitAmount: 0, creditAmount: v.totalCredit || 0, memo: v.narration || '' }
+        ]);
+      }
+    } else if (type === 'BPV' || type === 'CPV') {
+      const creditLine = linesToSet.find(l => l.creditAmount > 0);
+      const debitLines = linesToSet.filter(l => l.debitAmount > 0);
+      if (creditLine && debitLines.length > 0) {
+        setEntryMode('SINGLE');
+        setPrimaryBankCashAccountId(creditLine.accountId);
+        setSingleLines(debitLines.map((dl, i) => ({
+          id: String(dl.id || `edit-sline-${i}`),
+          accountId: dl.accountId,
+          amount: dl.debitAmount,
+          memo: dl.memo || ''
+        })));
+        setVoucherLines(linesToSet);
+      } else {
+        setEntryMode('DOUBLE');
+        setVoucherLines(linesToSet.length >= 2 ? linesToSet : [
+          { id: '1', accountId: accounts[0]?.id || '', accountCode: accounts[0]?.code || '', accountName: accounts[0]?.name || '', debitAmount: v.totalDebit || 0, creditAmount: 0, memo: v.narration || '' },
+          { id: '2', accountId: accounts[1]?.id || '', accountCode: accounts[1]?.code || '', accountName: accounts[1]?.name || '', debitAmount: 0, creditAmount: v.totalCredit || 0, memo: v.narration || '' }
+        ]);
+      }
+    } else if (type === 'BRV' || type === 'CRV') {
+      const debitLine = linesToSet.find(l => l.debitAmount > 0);
+      const creditLines = linesToSet.filter(l => l.creditAmount > 0);
+      if (debitLine && creditLines.length > 0) {
+        setEntryMode('SINGLE');
+        setPrimaryBankCashAccountId(debitLine.accountId);
+        setSingleLines(creditLines.map((cl, i) => ({
+          id: String(cl.id || `edit-sline-${i}`),
+          accountId: cl.accountId,
+          amount: cl.creditAmount,
+          memo: cl.memo || ''
+        })));
+        setVoucherLines(linesToSet);
+      } else {
+        setEntryMode('DOUBLE');
+        setVoucherLines(linesToSet.length >= 2 ? linesToSet : [
+          { id: '1', accountId: accounts[0]?.id || '', accountCode: accounts[0]?.code || '', accountName: accounts[0]?.name || '', debitAmount: v.totalDebit || 0, creditAmount: 0, memo: v.narration || '' },
+          { id: '2', accountId: accounts[1]?.id || '', accountCode: accounts[1]?.code || '', accountName: accounts[1]?.name || '', debitAmount: 0, creditAmount: v.totalCredit || 0, memo: v.narration || '' }
+        ]);
+      }
     } else {
-      setVoucherLines([
-        { id: '1', accountId: accounts[0]?.id || '', accountCode: accounts[0]?.code || '', accountName: accounts[0]?.name || '', debitAmount: v.totalDebit || 0, creditAmount: 0, memo: v.narration || '' },
-        { id: '2', accountId: accounts[1]?.id || '', accountCode: accounts[1]?.code || '', accountName: accounts[1]?.name || '', debitAmount: 0, creditAmount: v.totalCredit || 0, memo: v.narration || '' }
-      ]);
+      setEntryMode('DOUBLE');
+      setVoucherLines(linesToSet);
     }
+
     setShowNewVoucherModal(true);
   };
 
@@ -1060,9 +1365,15 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   onClick={() => {
                     setEditingVoucherId(null);
                     setEditingVoucherNo('');
-                    setVoucherType('JV');
+                    setVoucherType('BPV');
+                    setEntryMode('SINGLE');
+                    const defaultBank = bankAccounts[0]?.id || (accounts.find(a => a.code.startsWith('112') || (a.name || '').toLowerCase().includes('bank'))?.id) || '';
+                    setPrimaryBankCashAccountId(defaultBank);
                     setVoucherDate(new Date().toISOString().slice(0, 10));
                     setVoucherNarration('');
+                    setSingleLines([
+                      { id: '1', accountId: '', amount: 0, memo: '' }
+                    ]);
                     setVoucherLines([
                       { id: '1', accountId: '', accountCode: '', accountName: '', debitAmount: 0, creditAmount: 0, memo: '' },
                       { id: '2', accountId: '', accountCode: '', accountName: '', debitAmount: 0, creditAmount: 0, memo: '' }
@@ -1072,7 +1383,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Create Double-Entry Voucher</span>
+                  <span>Create Accounting Voucher</span>
                 </button>
               </div>
 
@@ -2208,14 +2519,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   </label>
                   <select
                     value={voucherType}
-                    onChange={e => setVoucherType(e.target.value)}
+                    onChange={e => handleVoucherTypeChange(e.target.value)}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-amber-200 text-xs font-bold bg-[#fdfcf9] focus:ring-2 focus:ring-amber-500"
                   >
-                    <option value="JV">JV - Journal Voucher</option>
                     <option value="BPV">BPV - Bank Payment</option>
                     <option value="BRV">BRV - Bank Receipt</option>
                     <option value="CPV">CPV - Cash Payment</option>
                     <option value="CRV">CRV - Cash Receipt</option>
+                    <option value="JV">JV - Journal Voucher</option>
                   </select>
                 </div>
 
@@ -2234,14 +2545,38 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                    Currency
+                    Entry Mode
                   </label>
-                  <input
-                    type="text"
-                    disabled
-                    value="AED (Dirham)"
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs bg-slate-100 font-bold text-slate-600"
-                  />
+                  {voucherType === 'JV' ? (
+                    <div className="px-2.5 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                      <span>Double Entry Only</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => handleSwitchMode('SINGLE')}
+                        className={`flex-1 py-1 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                          entryMode === 'SINGLE'
+                            ? 'bg-amber-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Single Entry
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSwitchMode('DOUBLE')}
+                        className={`flex-1 py-1 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                          entryMode === 'DOUBLE'
+                            ? 'bg-amber-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Double Entry
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2253,109 +2588,237 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   type="text"
                   value={voucherNarration}
                   onChange={e => setVoucherNarration(e.target.value)}
-                  placeholder="e.g. Payment for customs duty, port clearance, or partner share"
+                  placeholder="e.g. Payment for customs duty, port clearance, partner share, or supplier payment"
                   required
                   className="w-full px-3 py-2 rounded-lg border border-amber-200 text-xs bg-[#fdfcf9] focus:ring-2 focus:ring-amber-500"
                 />
               </div>
 
-              {/* Multi-Line Debit & Credit Table */}
-              <div className="border border-amber-200 rounded-xl overflow-hidden">
-                <div className="bg-amber-50/70 p-2.5 flex items-center justify-between border-b border-amber-200 text-xs font-bold text-amber-950">
-                  <span>Double-Entry Account Line Items</span>
-                  <button
-                    type="button"
-                    onClick={handleAddVoucherLine}
-                    className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-bold uppercase flex items-center gap-1 cursor-pointer"
-                  >
-                    <Plus className="w-3 h-3" />
-                    <span>Add Line</span>
-                  </button>
-                </div>
+              {/* SINGLE ENTRY MODE UI */}
+              {entryMode === 'SINGLE' && voucherType !== 'JV' ? (
+                <div className="space-y-3">
+                  {/* Primary Bank/Cash Account Selector Header */}
+                  <div className="p-3 rounded-xl border-2 border-amber-300 bg-amber-50/50 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Landmark className="w-4 h-4 text-amber-700" />
+                        <label className="text-xs font-bold uppercase tracking-wider text-amber-950">
+                          {voucherType === 'BPV' && 'Paid From Bank Account (Credit Source) *'}
+                          {voucherType === 'CPV' && 'Paid From Cash Account (Credit Source) *'}
+                          {voucherType === 'BRV' && 'Received Into Bank Account (Debit Destination) *'}
+                          {voucherType === 'CRV' && 'Received Into Cash Account (Debit Destination) *'}
+                        </label>
+                      </div>
+                      {primaryBankCashAccountId && (
+                        <div className="text-[11px] font-mono font-bold text-slate-700 bg-white px-2 py-0.5 rounded border border-amber-200">
+                          Live Balance: <span className={primaryAccBalance >= 0 ? 'text-emerald-700 font-bold' : 'text-rose-700 font-bold'}>AED {primaryAccBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
+                    </div>
 
-                <div className="p-2 space-y-2 max-h-60 overflow-y-auto">
-                  {voucherLines.map((line, idx) => (
-                    <div key={line.id} className="grid grid-cols-12 gap-2 items-center bg-slate-50/80 p-2 rounded-lg border border-slate-200 text-xs">
-                      <div className="col-span-5">
-                        <SearchableSelect
-                          value={line.accountId}
-                          onChange={val => handleUpdateVoucherLine(idx, 'accountId', val)}
-                          options={accounts.map(a => ({
-                            value: a.id,
-                            label: `${a.code} - ${a.name}`,
-                            badge: a.classification,
-                            badgeColor: a.classification === 'ASSET' ? 'bg-blue-100 text-blue-900 border-blue-300' :
-                                        a.classification === 'LIABILITY' ? 'bg-rose-100 text-rose-900 border-rose-300' :
-                                        a.classification === 'EQUITY' ? 'bg-purple-100 text-purple-900 border-purple-300' :
-                                        a.classification === 'REVENUE' ? 'bg-emerald-100 text-emerald-900 border-emerald-300' :
-                                        'bg-amber-100 text-amber-900 border-amber-300',
-                            sublabel: a.sub_type || a.subType
-                          }))}
-                          placeholder="Select Account..."
-                          searchPlaceholder="Search code or account title..."
-                          className="w-full text-[11px] font-mono font-bold"
-                        />
+                    <SearchableSelect
+                      value={primaryBankCashAccountId}
+                      onChange={val => setPrimaryBankCashAccountId(val)}
+                      options={selectablePrimaryAccounts.map(a => ({
+                        value: a.id,
+                        label: `${a.code} - ${a.name}`,
+                        badge: a.sub_type || a.subType || a.classification,
+                        badgeColor: 'bg-amber-100 text-amber-900 border-amber-300',
+                        sublabel: `Balance: AED ${(Number(a.current_balance ?? a.currentBalance) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                      }))}
+                      placeholder={voucherType.startsWith('B') ? 'Select Bank Account from COA...' : 'Select Cash Account from COA...'}
+                      searchPlaceholder="Search bank or cash accounts from COA..."
+                      className="w-full text-xs font-mono font-bold"
+                    />
+                  </div>
+
+                  {/* Line Items Table */}
+                  <div className="border border-amber-200 rounded-xl overflow-hidden">
+                    <div className="bg-amber-50/70 p-2.5 flex items-center justify-between border-b border-amber-200 text-xs font-bold text-amber-950">
+                      <span>
+                        {voucherType === 'BPV' || voucherType === 'CPV' ? 'Payment Particulars (Debit Accounts)' : 'Receipt Particulars (Credit Accounts)'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleAddSingleLine}
+                        className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-bold uppercase flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Add Line</span>
+                      </button>
+                    </div>
+
+                    <div className="p-2 space-y-2 max-h-60 overflow-y-auto">
+                      {singleLines.map((line, idx) => (
+                        <div key={line.id} className="grid grid-cols-12 gap-2 items-center bg-slate-50/80 p-2 rounded-lg border border-slate-200 text-xs">
+                          <div className="col-span-5">
+                            <SearchableSelect
+                              value={line.accountId}
+                              onChange={val => handleUpdateSingleLine(idx, 'accountId', val)}
+                              options={accounts.map(a => ({
+                                value: a.id,
+                                label: `${a.code} - ${a.name}`,
+                                badge: a.classification,
+                                badgeColor: a.classification === 'ASSET' ? 'bg-blue-100 text-blue-900 border-blue-300' :
+                                            a.classification === 'LIABILITY' ? 'bg-rose-100 text-rose-900 border-rose-300' :
+                                            a.classification === 'EQUITY' ? 'bg-purple-100 text-purple-900 border-purple-300' :
+                                            a.classification === 'REVENUE' ? 'bg-emerald-100 text-emerald-900 border-emerald-300' :
+                                            'bg-amber-100 text-amber-900 border-amber-300',
+                                sublabel: a.sub_type || a.subType
+                              }))}
+                              placeholder="Select Account / Head / Party..."
+                              searchPlaceholder="Search account title or code..."
+                              className="w-full text-[11px] font-mono font-bold"
+                            />
+                          </div>
+
+                          <div className="col-span-3">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={line.amount || ''}
+                              onChange={e => handleUpdateSingleLine(idx, 'amount', parseFloat(e.target.value) || 0)}
+                              placeholder="Amount (AED)"
+                              className="w-full text-right p-1.5 border border-slate-300 rounded font-mono text-[11px] font-bold text-slate-900 bg-white"
+                            />
+                          </div>
+
+                          <div className="col-span-3">
+                            <input
+                              type="text"
+                              value={line.memo}
+                              onChange={e => handleUpdateSingleLine(idx, 'memo', e.target.value)}
+                              placeholder="Line memo (optional)"
+                              className="w-full p-1.5 border border-slate-300 rounded text-[11px] bg-white"
+                            />
+                          </div>
+
+                          <div className="col-span-1 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveSingleLine(idx)}
+                              className="p-1 rounded text-rose-600 hover:bg-rose-100 cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Single Entry Summary Bar */}
+                    <div className="bg-amber-100/70 p-3 border-t border-amber-200 flex flex-wrap items-center justify-between text-xs font-mono">
+                      <div>
+                        <span className="text-slate-600">Total Voucher Amount: </span>
+                        <strong className="text-slate-900 text-sm">AED {singleEntryTotal.toFixed(2)}</strong>
                       </div>
 
-                      <div className="col-span-3">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={line.debitAmount || ''}
-                          onChange={e => handleUpdateVoucherLine(idx, 'debitAmount', parseFloat(e.target.value) || 0)}
-                          placeholder="Debit (AED)"
-                          className="w-full text-right p-1.5 border border-slate-300 rounded font-mono text-[11px] font-bold text-slate-900 bg-white"
-                        />
-                      </div>
-
-                      <div className="col-span-3">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={line.creditAmount || ''}
-                          onChange={e => handleUpdateVoucherLine(idx, 'creditAmount', parseFloat(e.target.value) || 0)}
-                          placeholder="Credit (AED)"
-                          className="w-full text-right p-1.5 border border-slate-300 rounded font-mono text-[11px] font-bold text-slate-900 bg-white"
-                        />
-                      </div>
-
-                      <div className="col-span-1 text-center">
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveVoucherLine(idx)}
-                          className="p-1 rounded text-rose-600 hover:bg-rose-100"
-                        >
-                          ✕
-                        </button>
+                      <div className="flex items-center gap-1.5 text-[11px] text-slate-700">
+                        <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                        <span>Auto Double-Entry: 100% Balanced</span>
                       </div>
                     </div>
-                  ))}
-                </div>
-
-                {/* Balance Proof Summary Bar */}
-                <div className="bg-amber-100/70 p-3 border-t border-amber-200 flex flex-wrap items-center justify-between text-xs font-mono">
-                  <div>
-                    <span className="text-slate-600">Total Debit: </span>
-                    <strong className="text-slate-900">AED {totalDebitSum.toFixed(2)}</strong>
-                    <span className="mx-2 text-slate-400">|</span>
-                    <span className="text-slate-600">Total Credit: </span>
-                    <strong className="text-slate-900">AED {totalCreditSum.toFixed(2)}</strong>
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    {isVoucherBalanced ? (
-                      <span className="text-emerald-800 font-bold flex items-center gap-1">
-                        <ShieldCheck className="w-4 h-4" />
-                        <span>Balanced (0.00 AED Diff)</span>
-                      </span>
-                    ) : (
-                      <span className="text-rose-800 font-bold">
-                        Out of balance by AED {voucherDiff.toFixed(2)}
-                      </span>
-                    )}
                   </div>
                 </div>
-              </div>
+              ) : (
+                /* DOUBLE ENTRY MODE UI */
+                <div className="border border-amber-200 rounded-xl overflow-hidden">
+                  <div className="bg-amber-50/70 p-2.5 flex items-center justify-between border-b border-amber-200 text-xs font-bold text-amber-950">
+                    <span>Double-Entry Account Line Items</span>
+                    <button
+                      type="button"
+                      onClick={handleAddVoucherLine}
+                      className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-bold uppercase flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Add Line</span>
+                    </button>
+                  </div>
+
+                  <div className="p-2 space-y-2 max-h-60 overflow-y-auto">
+                    {voucherLines.map((line, idx) => (
+                      <div key={line.id} className="grid grid-cols-12 gap-2 items-center bg-slate-50/80 p-2 rounded-lg border border-slate-200 text-xs">
+                        <div className="col-span-5">
+                          <SearchableSelect
+                            value={line.accountId}
+                            onChange={val => handleUpdateVoucherLine(idx, 'accountId', val)}
+                            options={accounts.map(a => ({
+                              value: a.id,
+                              label: `${a.code} - ${a.name}`,
+                              badge: a.classification,
+                              badgeColor: a.classification === 'ASSET' ? 'bg-blue-100 text-blue-900 border-blue-300' :
+                                          a.classification === 'LIABILITY' ? 'bg-rose-100 text-rose-900 border-rose-300' :
+                                          a.classification === 'EQUITY' ? 'bg-purple-100 text-purple-900 border-purple-300' :
+                                          a.classification === 'REVENUE' ? 'bg-emerald-100 text-emerald-900 border-emerald-300' :
+                                          'bg-amber-100 text-amber-900 border-amber-300',
+                              sublabel: a.sub_type || a.subType
+                            }))}
+                            placeholder="Select Account..."
+                            searchPlaceholder="Search code or account title..."
+                            className="w-full text-[11px] font-mono font-bold"
+                          />
+                        </div>
+
+                        <div className="col-span-3">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={line.debitAmount || ''}
+                            onChange={e => handleUpdateVoucherLine(idx, 'debitAmount', parseFloat(e.target.value) || 0)}
+                            placeholder="Debit (AED)"
+                            className="w-full text-right p-1.5 border border-slate-300 rounded font-mono text-[11px] font-bold text-slate-900 bg-white"
+                          />
+                        </div>
+
+                        <div className="col-span-3">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={line.creditAmount || ''}
+                            onChange={e => handleUpdateVoucherLine(idx, 'creditAmount', parseFloat(e.target.value) || 0)}
+                            placeholder="Credit (AED)"
+                            className="w-full text-right p-1.5 border border-slate-300 rounded font-mono text-[11px] font-bold text-slate-900 bg-white"
+                          />
+                        </div>
+
+                        <div className="col-span-1 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveVoucherLine(idx)}
+                            className="p-1 rounded text-rose-600 hover:bg-rose-100 cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Balance Proof Summary Bar */}
+                  <div className="bg-amber-100/70 p-3 border-t border-amber-200 flex flex-wrap items-center justify-between text-xs font-mono">
+                    <div>
+                      <span className="text-slate-600">Total Debit: </span>
+                      <strong className="text-slate-900">AED {totalDebitSum.toFixed(2)}</strong>
+                      <span className="mx-2 text-slate-400">|</span>
+                      <span className="text-slate-600">Total Credit: </span>
+                      <strong className="text-slate-900">AED {totalCreditSum.toFixed(2)}</strong>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      {isVoucherBalanced ? (
+                        <span className="text-emerald-800 font-bold flex items-center gap-1">
+                          <ShieldCheck className="w-4 h-4" />
+                          <span>Balanced (0.00 AED Diff)</span>
+                        </span>
+                      ) : (
+                        <span className="text-rose-800 font-bold">
+                          Out of balance by AED {voucherDiff.toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-amber-100">
                 <button
@@ -2365,16 +2828,20 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     setEditingVoucherId(null);
                     setEditingVoucherNo('');
                   }}
-                  className="px-4 py-2 rounded-lg border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={!isVoucherBalanced || isSavingVoucher}
-                  className="px-5 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs hover:shadow transition-all disabled:opacity-50"
+                  disabled={
+                    (entryMode === 'SINGLE' && voucherType !== 'JV'
+                      ? singleEntryTotal <= 0 || !primaryBankCashAccountId || isSavingVoucher
+                      : !isVoucherBalanced || isSavingVoucher)
+                  }
+                  className="px-5 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs hover:shadow transition-all disabled:opacity-50 cursor-pointer"
                 >
-                  {isSavingVoucher ? 'Saving...' : editingVoucherId ? 'Update & Post Voucher' : 'Save & Post Voucher'}
+                  {isSavingVoucher ? 'Saving to SQL...' : editingVoucherId ? 'Update & Post Voucher' : 'Save & Post Voucher'}
                 </button>
               </div>
             </form>
