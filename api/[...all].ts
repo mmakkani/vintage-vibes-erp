@@ -20,14 +20,30 @@ const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_AN
 const supabaseAdmin = createClient(supaUrl, supaKey || 'anon-key');
 
 async function getPgClient(): Promise<Client | null> {
-  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
   try {
+    if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
+      dbUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+    }
+    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+    if (match) {
+      let [_, u, rawPwd, host, port, rest] = match;
+      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
+      dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+    }
     const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
     await client.connect();
     return client;
   } catch (err) {
-    console.warn('[Serverless PG Connect Notice]:', err);
-    return null;
+    try {
+      const fallbackUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+      const fallbackClient = new Client({ connectionString: fallbackUrl, ssl: { rejectUnauthorized: false } });
+      await fallbackClient.connect();
+      return fallbackClient;
+    } catch (fbErr) {
+      console.warn('[Serverless PG Connect Notice]:', fbErr);
+      return null;
+    }
   }
 }
 
