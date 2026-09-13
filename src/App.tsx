@@ -37,6 +37,7 @@ import { LiveOBSOverlayView } from './modules/marketing/components/LiveOBSOverla
 import { CompanyProfileService, SetupService, AuthService } from './services/index.ts';
 import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
 import { ModuleMaintenanceGuard } from './components/ModuleMaintenanceGuard.tsx';
+import { PWAUpdatePrompt } from './components/PWAUpdatePrompt.tsx';
 
 const VALID_TABS: ActiveTab[] = [
   'dashboard',
@@ -697,6 +698,7 @@ export default function App() {
     <>
       {renderViewContent()}
       {currentView !== 'live-overlay' && <IOSInstallBanner />}
+      <PWAUpdatePrompt />
     </>
   );
 }
