@@ -39,7 +39,9 @@ import {
   Repeat,
   Truck,
   Calendar,
-  RefreshCw
+  RefreshCw,
+  Edit3,
+  Trash2
 } from 'lucide-react';
 import { AccessDeniedNotice } from '../../../components/AccessDeniedNotice.tsx';
 import { ModuleMaintenanceGuard } from '../../../components/ModuleMaintenanceGuard.tsx';
@@ -213,6 +215,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
   // New Voucher Modal & Line Items
   const [showNewVoucherModal, setShowNewVoucherModal] = useState(false);
+  const [editingVoucherId, setEditingVoucherId] = useState<string | null>(null);
+  const [editingVoucherNo, setEditingVoucherNo] = useState<string>('');
   const [voucherType, setVoucherType] = useState<any>('JV');
   const [voucherNarration, setVoucherNarration] = useState('Vintage cargo port handling & customs duty adjustment');
   const [voucherDate, setVoucherDate] = useState(new Date().toISOString().slice(0, 10));
@@ -394,17 +398,37 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   };
 
   const handleUpdateVoucherLine = (idx: number, field: keyof NewVoucherLineItem, value: any) => {
-    const updated = [...voucherLines];
-    if (field === 'accountId') {
-      const acc = accounts.find(a => a.id === value);
-      if (acc) {
-        updated[idx].accountId = acc.id;
-        updated[idx].accountCode = acc.code;
-        updated[idx].accountName = acc.name;
+    const updated = voucherLines.map((l, i) => {
+      if (i !== idx) return l;
+      if (field === 'accountId') {
+        const acc = accounts.find(a => a.id === value);
+        return {
+          ...l,
+          accountId: acc ? acc.id : value,
+          accountCode: acc ? acc.code : l.accountCode,
+          accountName: acc ? acc.name : l.accountName
+        };
       }
-    } else {
-      (updated[idx] as any)[field] = value;
-    }
+      if (field === 'debitAmount') {
+        const num = parseFloat(value) || 0;
+        return {
+          ...l,
+          debitAmount: num,
+          // When amount is entered in Debit, automatically clear Credit on this line!
+          creditAmount: num > 0 ? 0 : l.creditAmount
+        };
+      }
+      if (field === 'creditAmount') {
+        const num = parseFloat(value) || 0;
+        return {
+          ...l,
+          creditAmount: num,
+          // When amount is entered in Credit, automatically clear Debit on this line!
+          debitAmount: num > 0 ? 0 : l.debitAmount
+        };
+      }
+      return { ...l, [field]: value };
+    });
     setVoucherLines(updated);
   };
 
@@ -414,7 +438,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const voucherDiff = Math.abs(Number((totalDebitSum - totalCreditSum).toFixed(2)));
   const isVoucherBalanced = voucherDiff === 0 && totalDebitSum > 0;
 
-  // Create multi-line Voucher with Zod validation & anti-double submission lock
+  // Create or Update multi-line Voucher with Zod validation & anti-double submission lock
   const handleCreateVoucher = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isVoucherBalanced) {
@@ -430,7 +454,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       exchangeRate: 1.0,
       totalDebit: Number(totalDebitSum.toFixed(2)),
       totalCredit: Number(totalCreditSum.toFixed(2)),
-      status: 'DRAFT' as const,
+      status: 'POSTED' as const,
       lines: voucherLines.map(l => ({
         accountId: l.accountId,
         debitAmount: Number(l.debitAmount) || 0,
@@ -453,22 +477,90 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
     setIsSavingVoucher(true);
     try {
-      const voucher = await FinanceService.addVoucher({
-        ...payload,
-        status: 'DRAFT'
-      });
+      if (editingVoucherId) {
+        await FinanceService.updateVoucher(editingVoucherId, {
+          ...payload,
+          voucherNo: editingVoucherNo,
+          status: 'POSTED'
+        });
+        showMsg(`Voucher ${editingVoucherNo} updated successfully!`);
+        setShowNewVoucherModal(false);
+        setEditingVoucherId(null);
+        setEditingVoucherNo('');
+        releaseLock('finance-create-voucher');
+        notifyMutation('FINANCE', 'VOUCHER', 'UPDATE', editingVoucherNo);
+        loadData();
+        onRefreshAll();
+      } else {
+        const voucher = await FinanceService.addVoucher({
+          ...payload,
+          status: 'POSTED',
+          isAuto: false
+        });
 
-      showMsg(`Voucher ${voucher.voucherNo} created as Draft successfully!`);
-      setShowNewVoucherModal(false);
+        showMsg(`Voucher ${voucher.voucherNo} posted successfully!`);
+        setShowNewVoucherModal(false);
+        releaseLock('finance-create-voucher');
+        notifyMutation('FINANCE', 'VOUCHER', 'CREATE', voucher.voucherNo);
+        loadData();
+        onRefreshAll();
+      }
+    } catch (err: any) {
       releaseLock('finance-create-voucher');
-      notifyMutation('FINANCE', 'VOUCHER', 'CREATE', voucher.voucherNo);
+      showMsg(err.message || 'Error saving voucher', 'error');
+    } finally {
+      setIsSavingVoucher(false);
+    }
+  };
+
+  const handleOpenEditVoucher = (v: Voucher) => {
+    if (v.isAuto || (v as any).is_auto || FinanceService.isAutoVoucher(v)) {
+      showMsg('Auto-generated system vouchers cannot be edited.', 'error');
+      return;
+    }
+    setEditingVoucherId(v.id);
+    setEditingVoucherNo(v.voucherNo);
+    setVoucherType(v.type || 'JV');
+    setVoucherDate(v.date || new Date().toISOString().slice(0, 10));
+    setVoucherNarration(v.narration || '');
+
+    const linesToSet = (v.lines && v.lines.length > 0 ? v.lines : (v.entries && v.entries.length > 0 ? v.entries : [])).map((l: any, i: number) => ({
+      id: String(l.id || `edit-line-${i}`),
+      accountId: l.accountId || l.account_id || '',
+      accountCode: l.accountCode || l.account_code || '',
+      accountName: l.accountName || l.account_name || '',
+      debitAmount: Number(l.debitAmount ?? l.debit ?? 0),
+      creditAmount: Number(l.creditAmount ?? l.credit ?? 0),
+      memo: l.memo || l.particulars || l.narration || ''
+    }));
+
+    if (linesToSet.length >= 2) {
+      setVoucherLines(linesToSet);
+    } else {
+      setVoucherLines([
+        { id: '1', accountId: accounts[0]?.id || '', accountCode: accounts[0]?.code || '', accountName: accounts[0]?.name || '', debitAmount: v.totalDebit || 0, creditAmount: 0, memo: v.narration || '' },
+        { id: '2', accountId: accounts[1]?.id || '', accountCode: accounts[1]?.code || '', accountName: accounts[1]?.name || '', debitAmount: 0, creditAmount: v.totalCredit || 0, memo: v.narration || '' }
+      ]);
+    }
+    setShowNewVoucherModal(true);
+  };
+
+  const handleDeleteVoucher = async (v: Voucher) => {
+    if (v.isAuto || (v as any).is_auto || FinanceService.isAutoVoucher(v)) {
+      showMsg('Auto-generated system vouchers cannot be removed or deleted.', 'error');
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to permanently delete manual voucher ${v.voucherNo}? All corresponding General Ledger entries will be removed.`)) {
+      return;
+    }
+    try {
+      await FinanceService.deleteVoucher(v.id);
+      showMsg(`Voucher ${v.voucherNo} deleted successfully!`);
+      notifyMutation('FINANCE', 'VOUCHER', 'DELETE', v.voucherNo);
       loadData();
       onRefreshAll();
     } catch (err: any) {
-      releaseLock('finance-create-voucher');
-      showMsg(err.message || 'Error creating voucher', 'error');
-    } finally {
-      setIsSavingVoucher(false);
+      showMsg(err?.message || 'Failed to delete voucher', 'error');
     }
   };
 
@@ -764,7 +856,19 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           {subTab === 'vouchers' && (!maintenanceModules?.vouchers || currentUserRole === 'ADMIN') && (
             <button
               type="button"
-              onClick={() => setShowNewVoucherModal(true)}
+              onClick={() => {
+                setEditingVoucherId(null);
+                setEditingVoucherNo('');
+                setVoucherNarration('Vintage cargo port handling & customs duty adjustment');
+                setVoucherDate(new Date().toISOString().slice(0, 10));
+                if (accounts.length >= 2) {
+                  setVoucherLines([
+                    { id: '1', accountId: accounts[0].id, accountCode: accounts[0].code, accountName: accounts[0].name, debitAmount: 0, creditAmount: 0, memo: '' },
+                    { id: '2', accountId: accounts[1].id, accountCode: accounts[1].code, accountName: accounts[1].name, debitAmount: 0, creditAmount: 0, memo: '' }
+                  ]);
+                }
+                setShowNewVoucherModal(true);
+              }}
               className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs hover:shadow transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -953,7 +1057,18 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 </span>
                 <button
                   type="button"
-                  onClick={() => setShowNewVoucherModal(true)}
+                  onClick={() => {
+                    setEditingVoucherId(null);
+                    setEditingVoucherNo('');
+                    setVoucherType('JV');
+                    setVoucherDate(new Date().toISOString().slice(0, 10));
+                    setVoucherNarration('');
+                    setVoucherLines([
+                      { id: '1', accountId: '', accountCode: '', accountName: '', debitAmount: 0, creditAmount: 0, memo: '' },
+                      { id: '2', accountId: '', accountCode: '', accountName: '', debitAmount: 0, creditAmount: 0, memo: '' }
+                    ]);
+                    setShowNewVoucherModal(true);
+                  }}
                   className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -976,60 +1091,96 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-mono">
-                    {(vouchers || []).map(v => (
-                      <tr key={v.id} className="hover:bg-amber-50/40 transition-colors">
-                        <td className="px-3.5 py-2 font-bold text-amber-900">{v.voucherNo}</td>
-                        <td className="px-3.5 py-2">
-                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">
-                            {v.type}
-                          </span>
-                        </td>
-                        <td className="px-3.5 py-2 text-slate-600">{v.date}</td>
-                        <td className="px-3.5 py-2 max-w-xs truncate text-slate-800" title={v.narration}>
-                          {v.narration}
-                        </td>
-                        <td className="px-3.5 py-2 text-right font-bold text-slate-900">
-                          {Number(v.totalDebit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-3.5 py-2 text-right font-bold text-slate-900">
-                          {Number(v.totalCredit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-3.5 py-2 text-center">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                              v.status === 'POSTED'
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                : 'bg-slate-100 text-slate-700'
-                            }`}
-                          >
-                            {v.status}
-                          </span>
-                        </td>
-                        <td className="px-3.5 py-2 text-right flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedVoucherForPrint(v);
-                              setIsPrintModalOpen(true);
-                            }}
-                            className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] uppercase tracking-wider inline-flex items-center gap-1 cursor-pointer"
-                          >
-                            <Printer className="w-3 h-3" />
-                            <span>Print</span>
-                          </button>
-                          {v.status === 'POSTED' && (
+                    {(vouchers || []).map(v => {
+                      const isAuto = Boolean(v.isAuto || (v as any).is_auto || FinanceService.isAutoVoucher(v));
+                      return (
+                        <tr key={v.id} className="hover:bg-amber-50/40 transition-colors">
+                          <td className="px-3.5 py-2 font-bold text-amber-900">
+                            <div className="flex items-center gap-1.5">
+                              <span>{v.voucherNo}</span>
+                              {isAuto ? (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-800 border border-purple-200" title="System Auto Generated (Locked)">
+                                  Auto
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200" title="Manual Posted Voucher">
+                                  Manual
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3.5 py-2">
+                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">
+                              {v.type}
+                            </span>
+                          </td>
+                          <td className="px-3.5 py-2 text-slate-600">{v.date}</td>
+                          <td className="px-3.5 py-2 max-w-xs truncate text-slate-800" title={v.narration}>
+                            {v.narration}
+                          </td>
+                          <td className="px-3.5 py-2 text-right font-bold text-slate-900">
+                            {Number(v.totalDebit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-3.5 py-2 text-right font-bold text-slate-900">
+                            {Number(v.totalCredit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-3.5 py-2 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                v.status === 'POSTED'
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                  : 'bg-slate-100 text-slate-700'
+                              }`}
+                            >
+                              {v.status}
+                            </span>
+                          </td>
+                          <td className="px-3.5 py-2 text-right flex items-center justify-end gap-1.5">
                             <button
                               type="button"
-                              onClick={() => handleUnpostVoucher(v.id)}
-                              className="px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-[10px] uppercase tracking-wider border border-amber-300 inline-flex items-center gap-1 cursor-pointer"
+                              onClick={() => setVoucherToPrint(v)}
+                              className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] uppercase tracking-wider inline-flex items-center gap-1 cursor-pointer"
+                              title="Print Voucher"
                             >
-                              <XCircle className="w-3 h-3" />
-                              <span>Unpost</span>
+                              <Printer className="w-3 h-3" />
+                              <span>Print</span>
                             </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                            {!isAuto && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditVoucher(v)}
+                                  className="px-2 py-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[10px] uppercase tracking-wider border border-blue-200 inline-flex items-center gap-1 cursor-pointer"
+                                  title="Edit Manual Voucher"
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                  <span>Edit</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteVoucher(v)}
+                                  className="px-2 py-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[10px] uppercase tracking-wider border border-rose-200 inline-flex items-center gap-1 cursor-pointer"
+                                  title="Delete Manual Voucher"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Delete</span>
+                                </button>
+                              </>
+                            )}
+                            {v.status === 'POSTED' && !isAuto && (
+                              <button
+                                type="button"
+                                onClick={() => handleUnpostVoucher(v.id)}
+                                className="px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-[10px] uppercase tracking-wider border border-amber-300 inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <XCircle className="w-3 h-3" />
+                                <span>Unpost</span>
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2028,13 +2179,21 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   <FileText className="w-4 h-4" />
                 </div>
                 <div>
-                  <h4 className="font-serif font-bold text-slate-900 text-sm">Post Accounting Voucher</h4>
-                  <p className="text-[11px] text-slate-500">Multi-row dual-entry debit and credit builder</p>
+                  <h4 className="font-serif font-bold text-slate-900 text-sm">
+                    {editingVoucherId ? `Edit Accounting Voucher (${editingVoucherNo})` : 'Post Accounting Voucher'}
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    {editingVoucherId ? 'Modify dual-entry debit and credit line items' : 'Multi-row dual-entry debit and credit builder'}
+                  </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setShowNewVoucherModal(false)}
+                onClick={() => {
+                  setShowNewVoucherModal(false);
+                  setEditingVoucherId(null);
+                  setEditingVoucherNo('');
+                }}
                 className="text-slate-400 hover:text-slate-700 font-bold"
               >
                 ✕
@@ -2201,7 +2360,11 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-amber-100">
                 <button
                   type="button"
-                  onClick={() => setShowNewVoucherModal(false)}
+                  onClick={() => {
+                    setShowNewVoucherModal(false);
+                    setEditingVoucherId(null);
+                    setEditingVoucherNo('');
+                  }}
                   className="px-4 py-2 rounded-lg border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50"
                 >
                   Cancel
@@ -2211,7 +2374,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   disabled={!isVoucherBalanced || isSavingVoucher}
                   className="px-5 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs hover:shadow transition-all disabled:opacity-50"
                 >
-                  {isSavingVoucher ? 'Saving...' : 'Save & Post Voucher'}
+                  {isSavingVoucher ? 'Saving...' : editingVoucherId ? 'Update & Post Voucher' : 'Save & Post Voucher'}
                 </button>
               </div>
             </form>

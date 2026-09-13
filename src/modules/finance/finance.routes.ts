@@ -74,6 +74,26 @@ financeRouter.post('/vouchers/:id/unpost', async (req, res) => {
   }
 });
 
+financeRouter.put('/vouchers/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const updated = await FinanceService.updateVoucher(id, req.body);
+    return res.json({ success: true, voucher: updated });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to update voucher' });
+  }
+});
+
+financeRouter.delete('/vouchers/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await FinanceService.deleteVoucher(id);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to delete voucher' });
+  }
+});
+
 financeRouter.get('/ledgers', async (req, res) => {
   const { accountId, partyId, startDate, endDate, search } = req.query as any;
   try {

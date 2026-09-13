@@ -202,8 +202,7 @@ export class FinanceService {
         ? row.date.slice(0, 10) 
         : (row.date ? new Date(row.date).toISOString().slice(0, 10) : (row.voucher_date || new Date().toISOString().slice(0, 10)));
 
-      const totalDebit = Number(row.total_debit ?? row.totalDebit ?? row.total_amount ?? 0);
-      const totalCredit = Number(row.total_credit ?? row.totalCredit ?? row.total_amount ?? 0);
+      const isAuto = Boolean(row.is_auto === true || row.isAuto === true || FinanceService.isAutoVoucher(row));
 
       return {
         id: row.id,
@@ -218,6 +217,7 @@ export class FinanceService {
         currency: row.currency || 'AED',
         exchangeRate: Number(row.exchange_rate || 1.0),
         createdBy: row.created_by || row.createdBy || 'System',
+        isAuto,
         entries: matchedEntries,
         lines: matchedEntries,
         createdAt: row.created_at
@@ -236,6 +236,7 @@ export class FinanceService {
     const totalCredit = Number(v.totalCredit || 0);
     const status = String(v.status || 'POSTED');
     const createdBy = String(v.createdBy || 'System');
+    const isAuto = Boolean(v.isAuto || v.is_auto || FinanceService.isAutoVoucher(v));
 
     const payload = {
       id,
@@ -251,7 +252,8 @@ export class FinanceService {
       total_credit: totalCredit,
       total_amount: totalDebit || totalCredit,
       status,
-      created_by: createdBy
+      created_by: createdBy,
+      is_auto: isAuto
     };
 
     // 1. Write parent data to financial_vouchers
@@ -376,6 +378,217 @@ export class FinanceService {
       this.clearCoaCache();
       await supabase.rpc('sync_coa_current_balances');
     } catch (_) {}
+  }
+
+  public static isAutoVoucher(v: any): boolean {
+    if (!v) return false;
+    if (v.is_auto === true || v.isAuto === true) return true;
+    const created = String(v.created_by || v.createdBy || '').toUpperCase();
+    if (created === 'SYSTEM') return true;
+    const ref = String(v.reference || v.reference_no || v.voucherNo || '').trim().toUpperCase();
+    if (
+      ref.startsWith('INV-') ||
+      ref.startsWith('PUR-') ||
+      ref.startsWith('PAYROLL-') ||
+      ref.startsWith('COD-') ||
+      ref.startsWith('BALE-') ||
+      ref.startsWith('TAX-') ||
+      ref.startsWith('PI-') ||
+      ref.startsWith('SI-') ||
+      ref.startsWith('COMM-') ||
+      ref.startsWith('SETTLE-')
+    ) {
+      return true;
+    }
+    const narr = String(v.narration || '').toLowerCase();
+    if (
+      narr.startsWith('[auto]') ||
+      narr.includes('auto-posted') ||
+      narr.includes('sales invoice') ||
+      narr.includes('commercial invoice') ||
+      narr.includes('payroll run') ||
+      narr.includes('bale intake')
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  public static async updateVoucher(id: string, v: any): Promise<Voucher> {
+    const cleanId = String(id);
+    const vouchersList = await this.getVouchers();
+    const existing = vouchersList.find(item => String(item.id) === cleanId || item.voucherNo === cleanId);
+    if (existing && this.isAutoVoucher(existing)) {
+      throw new Error('Auto-generated system vouchers cannot be edited.');
+    }
+
+    const voucherNo = String(v.voucherNo || existing?.voucherNo || `VCH-${Date.now().toString().slice(-6)}`);
+    const date = v.date || existing?.date || new Date().toISOString().slice(0, 10);
+    const type = String(v.type || existing?.type || 'JOURNAL');
+    const reference = String(v.reference || v.documentRef || existing?.reference || '');
+    const narration = String(v.narration || existing?.narration || '');
+    const totalDebit = Number(v.totalDebit || 0);
+    const totalCredit = Number(v.totalCredit || 0);
+    const status = String(v.status || existing?.status || 'POSTED');
+
+    const updatePayload = {
+      date,
+      voucher_date: date,
+      type,
+      voucher_type: type,
+      reference,
+      reference_no: reference,
+      narration,
+      total_debit: totalDebit,
+      total_credit: totalCredit,
+      total_amount: totalDebit || totalCredit,
+      status
+    };
+
+    try {
+      await supabase.from('financial_vouchers').update(updatePayload).eq('id', cleanId);
+    } catch (e) {
+      console.warn('financial_vouchers update error:', e);
+    }
+
+    try {
+      await supabase.from('vouchers').update(updatePayload).eq('id', cleanId);
+    } catch (e) {
+      console.warn('vouchers update error:', e);
+    }
+
+    const lines = v.lines || v.entries || [];
+    if (Array.isArray(lines) && lines.length > 0) {
+      // 1. Delete previous line items
+      try {
+        await supabase.from('voucher_entries').delete().eq('voucher_id', cleanId);
+      } catch {}
+      try {
+        await supabase.from('general_ledger').delete().eq('voucher_id', cleanId);
+      } catch {}
+      try {
+        await supabase.from('ledgers').delete().eq('voucher_id', cleanId);
+      } catch {}
+
+      // 2. Insert updated line items
+      const voucherEntriesRows = lines.map((l: any, idx: number) => {
+        const lineId = String(l.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ve-${cleanId}-${idx + 1}`));
+        const debit = Number(l.debitAmount ?? l.debit ?? 0);
+        const credit = Number(l.creditAmount ?? l.credit ?? 0);
+        const memo = l.memo || l.narration || narration;
+        return {
+          id: lineId,
+          voucher_id: cleanId,
+          voucher_no: voucherNo,
+          account_id: l.accountId || l.account_id ? String(l.accountId || l.account_id) : null,
+          account_code: String(l.accountCode || l.account_code || ''),
+          account_name: String(l.accountName || l.account_name || ''),
+          party_id: l.partyId || l.party_id ? String(l.partyId || l.party_id) : null,
+          party_name: l.partyName || l.party_name ? String(l.partyName || l.party_name) : null,
+          debit,
+          credit,
+          particulars: memo,
+          memo,
+          narration: memo,
+          date
+        };
+      });
+
+      const generalLedgerRows = lines.map((l: any, idx: number) => {
+        const debit = Number(l.debitAmount ?? l.debit ?? 0);
+        const credit = Number(l.creditAmount ?? l.credit ?? 0);
+        const memo = l.memo || l.narration || narration;
+        return {
+          id: String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `gl-${cleanId}-${idx + 1}`),
+          voucher_id: cleanId,
+          voucher_no: voucherNo,
+          account_id: l.accountId || l.account_id ? String(l.accountId || l.account_id) : null,
+          account_code: String(l.accountCode || l.account_code || ''),
+          account_name: String(l.accountName || l.account_name || ''),
+          party_id: l.partyId || l.party_id ? String(l.partyId || l.party_id) : null,
+          party_name: l.partyName || l.party_name ? String(l.partyName || l.party_name) : null,
+          date,
+          entry_date: date,
+          debit,
+          credit,
+          balance: debit - credit,
+          running_balance: debit - credit,
+          narration: memo,
+          description: memo
+        };
+      });
+
+      try {
+        await supabase.from('voucher_entries').insert(voucherEntriesRows);
+      } catch (err) {
+        console.warn('voucher_entries update insert warning:', err);
+      }
+      try {
+        await supabase.from('general_ledger').insert(generalLedgerRows);
+      } catch (err) {
+        console.warn('general_ledger update insert warning:', err);
+      }
+      try {
+        await supabase.from('ledgers').insert(generalLedgerRows);
+      } catch (err) {
+        console.warn('ledgers update insert warning:', err);
+      }
+    }
+
+    try {
+      this.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
+    } catch (_) {}
+
+    return {
+      id: cleanId,
+      voucherNo,
+      date,
+      type: type as any,
+      reference,
+      narration,
+      totalDebit,
+      totalCredit,
+      status: status as any,
+      currency: 'AED',
+      exchangeRate: 1.0,
+      createdBy: existing?.createdBy || 'Manual',
+      isAuto: false,
+      entries: lines,
+      lines
+    };
+  }
+
+  public static async deleteVoucher(id: string): Promise<boolean> {
+    const cleanId = String(id);
+    const vouchersList = await this.getVouchers();
+    const existing = vouchersList.find(item => String(item.id) === cleanId || item.voucherNo === cleanId);
+    if (existing && this.isAutoVoucher(existing)) {
+      throw new Error('Auto-generated system vouchers cannot be deleted.');
+    }
+
+    try {
+      await supabase.from('voucher_entries').delete().eq('voucher_id', cleanId);
+    } catch {}
+    try {
+      await supabase.from('general_ledger').delete().eq('voucher_id', cleanId);
+    } catch {}
+    try {
+      await supabase.from('ledgers').delete().eq('voucher_id', cleanId);
+    } catch {}
+    try {
+      await supabase.from('financial_vouchers').delete().eq('id', cleanId);
+    } catch {}
+    try {
+      await supabase.from('vouchers').delete().eq('id', cleanId);
+    } catch {}
+
+    try {
+      this.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
+    } catch (_) {}
+
+    return true;
   }
 
   // --- SQL DATABASE REPORTING RPCS ---

@@ -48,9 +48,14 @@ export interface Voucher {
   currency: CurrencyCode;
   exchangeRate: number;
   lines: VoucherLine[];
+  entries?: VoucherLine[];
   postedAt?: string;
   postedBy?: string;
   documentRef?: string;
+  reference?: string;
+  createdBy?: string;
+  isAuto?: boolean;
+  createdAt?: string;
 }
 
 export interface LedgerEntry {
