@@ -24,22 +24,23 @@ import { CompanyProfileService, SetupService, AuthService } from './services/ind
 import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
 import { ModuleMaintenanceGuard } from './components/ModuleMaintenanceGuard.tsx';
 import { PWAUpdatePrompt } from './components/PWAUpdatePrompt.tsx';
+import { lazyWithRetry } from './utils/lazyWithRetry.ts';
 
-// Code-Split Dynamic Views for 10x Load Speed
-const PurchaseView = React.lazy(() => import('./modules/purchase/components/PurchaseView.tsx').then(m => ({ default: m.PurchaseView })));
-const SalesView = React.lazy(() => import('./modules/sales/components/SalesView.tsx').then(m => ({ default: m.SalesView })));
-const FinanceView = React.lazy(() => import('./modules/finance/components/FinanceView.tsx').then(m => ({ default: m.FinanceView })));
-const PartiesView = React.lazy(() => import('./modules/parties/components/PartiesView.tsx').then(m => ({ default: m.PartiesView })));
-const HRView = React.lazy(() => import('./modules/hr/components/HRView.tsx').then(m => ({ default: m.HRView })));
-const SetupView = React.lazy(() => import('./modules/setup/components/SetupView.tsx').then(m => ({ default: m.SetupView })));
-const AuditView = React.lazy(() => import('./modules/audit/components/AuditView.tsx').then(m => ({ default: m.AuditView })));
-const AccessControlView = React.lazy(() => import('./modules/auth/components/AccessControlView.tsx').then(m => ({ default: m.AccessControlView })));
-const StorefrontView = React.lazy(() => import('./modules/ecommerce/StorefrontView.tsx').then(m => ({ default: m.StorefrontView })));
-const MobileLiveHostView = React.lazy(() => import('./modules/sales/components/MobileLiveHostView.tsx').then(m => ({ default: m.MobileLiveHostView })));
-const StaffMobileAppView = React.lazy(() => import('./modules/staff/StaffMobileAppView.tsx').then(m => ({ default: m.StaffMobileAppView })));
-const CounterSalePOSTerminal = React.lazy(() => import('./modules/sales/components/CounterSalePOSTerminal.tsx').then(m => ({ default: m.CounterSalePOSTerminal })));
-const MarketingAutomationView = React.lazy(() => import('./modules/marketing/components/MarketingAutomationView.tsx').then(m => ({ default: m.MarketingAutomationView })));
-const LiveOBSOverlayView = React.lazy(() => import('./modules/marketing/components/LiveOBSOverlayView.tsx').then(m => ({ default: m.LiveOBSOverlayView })));
+// Code-Split Dynamic Views for 10x Load Speed with Deployment Chunk Auto-Retry
+const PurchaseView = lazyWithRetry(() => import('./modules/purchase/components/PurchaseView.tsx').then(m => ({ default: m.PurchaseView })));
+const SalesView = lazyWithRetry(() => import('./modules/sales/components/SalesView.tsx').then(m => ({ default: m.SalesView })));
+const FinanceView = lazyWithRetry(() => import('./modules/finance/components/FinanceView.tsx').then(m => ({ default: m.FinanceView })));
+const PartiesView = lazyWithRetry(() => import('./modules/parties/components/PartiesView.tsx').then(m => ({ default: m.PartiesView })));
+const HRView = lazyWithRetry(() => import('./modules/hr/components/HRView.tsx').then(m => ({ default: m.HRView })));
+const SetupView = lazyWithRetry(() => import('./modules/setup/components/SetupView.tsx').then(m => ({ default: m.SetupView })));
+const AuditView = lazyWithRetry(() => import('./modules/audit/components/AuditView.tsx').then(m => ({ default: m.AuditView })));
+const AccessControlView = lazyWithRetry(() => import('./modules/auth/components/AccessControlView.tsx').then(m => ({ default: m.AccessControlView })));
+const StorefrontView = lazyWithRetry(() => import('./modules/ecommerce/StorefrontView.tsx').then(m => ({ default: m.StorefrontView })));
+const MobileLiveHostView = lazyWithRetry(() => import('./modules/sales/components/MobileLiveHostView.tsx').then(m => ({ default: m.MobileLiveHostView })));
+const StaffMobileAppView = lazyWithRetry(() => import('./modules/staff/StaffMobileAppView.tsx').then(m => ({ default: m.StaffMobileAppView })));
+const CounterSalePOSTerminal = lazyWithRetry(() => import('./modules/sales/components/CounterSalePOSTerminal.tsx').then(m => ({ default: m.CounterSalePOSTerminal })));
+const MarketingAutomationView = lazyWithRetry(() => import('./modules/marketing/components/MarketingAutomationView.tsx').then(m => ({ default: m.MarketingAutomationView })));
+const LiveOBSOverlayView = lazyWithRetry(() => import('./modules/marketing/components/LiveOBSOverlayView.tsx').then(m => ({ default: m.LiveOBSOverlayView })));
 
 const ModuleLoadingFallback: React.FC<{ name?: string }> = ({ name }) => (
   <div className="flex flex-col items-center justify-center py-24 px-4 min-h-[380px]">
