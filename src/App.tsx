@@ -20,7 +20,7 @@ import { AccessDeniedNotice } from './components/AccessDeniedNotice.tsx';
 import { GoldenCursorDust } from './components/GoldenCursorDust.tsx';
 import { useIdleTimer } from './hooks/useIdleTimer.ts';
 import { isTabAccessible, getAccessibleTabs } from './modules/auth/utils/permissionUtils.ts';
-import { CompanyProfileService, SetupService, AuthService } from './services/index.ts';
+import { CompanyProfileService, SetupService, AuthService, DeviceService } from './services/index.ts';
 import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
 import { ModuleMaintenanceGuard } from './components/ModuleMaintenanceGuard.tsx';
 import { PWAUpdatePrompt } from './components/PWAUpdatePrompt.tsx';
@@ -218,6 +218,11 @@ export default function App() {
     },
     isEnabled: isAuthenticated && !isExemptFromAutoLogout
   });
+
+  // Automatically register device telemetry & update client IP in PostgreSQL
+  useEffect(() => {
+    DeviceService.registerDevice().catch(() => {});
+  }, [isAuthenticated, currentView]);
 
   // Global state
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(() => {

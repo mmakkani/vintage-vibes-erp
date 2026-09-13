@@ -15,12 +15,14 @@ import {
   EyeOff,
   ShieldCheck,
   Lock,
-  Radio
+  Radio,
+  Smartphone
 } from 'lucide-react';
 import { MasterAdminPinModal } from '../../../components/MasterAdminPinModal.tsx';
 import { openAuthorityMatrixPopup } from '../utils/authorityPopup.ts';
 import { SecurityMasterPin } from '../../../utils/securityMasterPin.ts';
 import { AuthService } from '../../../services/authService.ts';
+import { DeviceManagementView } from './DeviceManagementView.tsx';
 
 interface AccessControlViewProps {
   onRefreshAll: () => void;
@@ -30,6 +32,7 @@ interface AccessControlViewProps {
 export const AccessControlView: React.FC<AccessControlViewProps> = ({ onRefreshAll, currentUserRole }) => {
   const [users, setUsers] = useState<User[]>([]);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [accessSubTab, setAccessSubTab] = useState<'operators' | 'devices'>('operators');
 
   // Active Admin Operator
   const [currentAdminUser] = useState<User>(() => {
@@ -305,11 +308,44 @@ export const AccessControlView: React.FC<AccessControlViewProps> = ({ onRefreshA
         </div>
       )}
 
-      {/* SECTION 1: SYSTEM OPERATORS MODERN CARDS GRID */}
-      <div className="bg-white rounded-2xl border border-amber-200/90 shadow-sm p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <Users className="w-4 h-4 text-amber-600" />
+      {/* Sub-Tab Navigation Bar */}
+      <div className="flex items-center gap-2 border-b border-amber-200/80 pb-2">
+        <button
+          type="button"
+          onClick={() => setAccessSubTab('operators')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+            accessSubTab === 'operators'
+              ? 'bg-amber-600 text-white shadow-sm'
+              : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          <span>Operator Accounts & Roles ({users.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setAccessSubTab('devices')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+            accessSubTab === 'devices'
+              ? 'bg-amber-600 text-white shadow-sm'
+              : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <Smartphone className="w-4 h-4" />
+          <span>📱 Registered Phones & SQL Telemetry</span>
+        </button>
+      </div>
+
+      {accessSubTab === 'devices' ? (
+        <DeviceManagementView />
+      ) : (
+        <>
+          {/* SECTION 1: SYSTEM OPERATORS MODERN CARDS GRID */}
+          <div className="bg-white rounded-2xl border border-amber-200/90 shadow-sm p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-amber-600" />
             <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider">
               System Operators ({users.length} registered accounts)
             </h4>
@@ -442,6 +478,8 @@ export const AccessControlView: React.FC<AccessControlViewProps> = ({ onRefreshA
         targetAction={targetUserForAuthority ? `Operator: @${targetUserForAuthority.username || targetUserForAuthority.name}` : undefined}
         adminUsername={currentAdminUser.username || 'admin'}
       />
+      </>
+      )}
 
       {/* Add / Edit Operator Credentials Modal */}
       {showAddModal && (

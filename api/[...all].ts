@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { Client } from 'pg';
 import { createClient } from '@supabase/supabase-js';
+import { DevicesController } from '../src/modules/devices/devices.controller.ts';
 
 const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
@@ -1852,6 +1853,26 @@ export default async function handler(req: any, res: any) {
       }
       const { data } = await supabaseAdmin.from('shop_masters').select('*').order('name');
       return res.status(200).json(data || []);
+    }
+
+    if (pathname.includes('/devices')) {
+      if (pathname.includes('/devices/register') && method === 'POST') {
+        return DevicesController.registerDevice(req, res);
+      }
+      if (pathname.includes('/devices/toggle-status') && method === 'POST') {
+        return DevicesController.toggleDeviceStatus(req, res);
+      }
+      if (pathname.includes('/devices/update-limit') && method === 'POST') {
+        return DevicesController.updateDeviceLimit(req, res);
+      }
+      if (method === 'DELETE') {
+        const parts = pathname.split('/');
+        req.params = { id: parts[parts.length - 1] };
+        return DevicesController.deleteDevice(req, res);
+      }
+      if (method === 'GET') {
+        return DevicesController.listDevices(req, res);
+      }
     }
 
     return res.status(200).json({
