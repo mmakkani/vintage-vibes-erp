@@ -251,13 +251,19 @@ marketingRouter.post('/whatsapp/generate-qr', async (req, res) => {
 });
 
 // Request pairing code for phone number
-marketingRouter.post('/whatsapp/request-pairing-code', (req, res) => {
+marketingRouter.post('/whatsapp/request-pairing-code', async (req, res) => {
   const { userId, phoneNumber } = req.body;
   if (!userId || !phoneNumber) {
     return res.status(400).json({ error: 'userId and phoneNumber are required' });
   }
-  const session = marketingService.requestPhonePairingCode(userId, phoneNumber);
-  return res.json(session);
+  try {
+    const session = await marketingService.requestPhonePairingCodeAsync(userId, phoneNumber);
+    return res.json(session);
+  } catch (err: any) {
+    console.warn('[Marketing Route] Error requesting pairing code:', err?.message);
+    const session = marketingService.requestPhonePairingCode(userId, phoneNumber);
+    return res.json(session);
+  }
 });
 
 // Verify strict 8-character pairing code entered by operator
