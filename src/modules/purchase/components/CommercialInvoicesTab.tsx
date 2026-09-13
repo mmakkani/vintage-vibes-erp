@@ -417,9 +417,10 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                 <th className="px-4 py-3">Invoice No.</th>
                 <th className="px-4 py-3">Date</th>
                 <th className="px-4 py-3">Supplier & Factory</th>
-                <th className="px-4 py-3">Shipping Container</th>
-                <th className="px-4 py-3">B/L Reference</th>
-                <th className="px-4 py-3">Total Amount</th>
+                <th className="px-4 py-3">Container / B/L</th>
+                <th className="px-4 py-3 text-right">Gross Total</th>
+                <th className="px-4 py-3 text-right">Deductions</th>
+                <th className="px-4 py-3 text-right">Net Payable</th>
                 <th className="px-4 py-3">Sorting Status</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
@@ -427,7 +428,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
             <tbody className="divide-y divide-slate-100 font-medium">
               {filteredInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-slate-400">
+                  <td colSpan={9} className="px-4 py-12 text-center text-slate-400">
                     No commercial invoices registered. Click "New Commercial Invoice" to record one!
                   </td>
                 </tr>
@@ -446,6 +447,11 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                   );
                   const isSortingStarted = sortedPiecesCount > 0 || sortedWeightKg > 0;
 
+                  const invGross = Number(inv.grossAmount || inv.subTotal || inv.totalAmount || 0);
+                  const invDeduction = Number(inv.deductionAmount || inv.discountAmount || 0);
+                  const invNet = Number(inv.netAmount || inv.totalAmount || 0);
+                  const currSymbol = (inv.currency || 'AED') === 'USD' ? '$' : (inv.currency || 'AED');
+
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="px-4 py-3 font-mono font-bold text-indigo-600">
@@ -461,14 +467,31 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                         )}
                       </td>
                       <td className="px-4 py-3 font-mono text-slate-700">
-                        {inv.containerNo || 'N/A'}
+                        <div className="font-semibold">{inv.containerNo || 'No Container'}</div>
+                        {inv.blAirwayBillNo && (
+                          <div className="text-[10px] text-slate-400">B/L: {inv.blAirwayBillNo}</div>
+                        )}
                       </td>
-                      <td className="px-4 py-3 font-mono text-slate-700">
-                        {inv.blAirwayBillNo || 'N/A'}
-                      </td>
-                      <td className="px-4 py-3 font-mono font-bold text-slate-900">
+                      {/* Gross Total */}
+                      <td className="px-4 py-3 font-mono text-slate-800 text-right font-semibold">
                         <div>
-                          {(inv.currency || 'AED') === 'USD' ? '$' : (inv.currency || 'AED')} {Number(inv.totalAmount || 0).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                          {currSymbol} {invGross.toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                        </div>
+                      </td>
+                      {/* Deductions */}
+                      <td className="px-4 py-3 font-mono text-right">
+                        {invDeduction > 0 ? (
+                          <span className="text-rose-600 font-bold">
+                            -{currSymbol} {invDeduction.toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-[11px]">0.00</span>
+                        )}
+                      </td>
+                      {/* Net Total Payable */}
+                      <td className="px-4 py-3 font-mono font-bold text-slate-900 text-right">
+                        <div className="text-indigo-900 font-black">
+                          {currSymbol} {invNet.toLocaleString('en-AE', { minimumFractionDigits: 2 })}
                         </div>
                         {(inv.currency || 'AED').toUpperCase() !== 'AED' && (
                           <div className="text-[10px] text-indigo-700 font-bold tracking-tight">

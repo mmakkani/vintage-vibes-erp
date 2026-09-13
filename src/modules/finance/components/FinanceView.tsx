@@ -1608,9 +1608,21 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                                 type="button"
                                 onClick={() => handleUnpostVoucher(v.id)}
                                 className="px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-[10px] uppercase tracking-wider border border-amber-300 inline-flex items-center gap-1 cursor-pointer"
+                                title="Unpost Voucher (Reverses General Ledger impact to DRAFT)"
                               >
-                                <XCircle className="w-3 h-3" />
+                                <XCircle className="w-3 h-3 text-amber-700" />
                                 <span>Unpost</span>
+                              </button>
+                            )}
+                            {v.status !== 'POSTED' && !isAuto && (
+                              <button
+                                type="button"
+                                onClick={() => handlePostVoucher(v.id)}
+                                className="px-2 py-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-[10px] uppercase tracking-wider border border-emerald-300 inline-flex items-center gap-1 cursor-pointer"
+                                title="Post Voucher to General Ledger"
+                              >
+                                <CheckCircle className="w-3 h-3 text-emerald-600" />
+                                <span>Post</span>
                               </button>
                             )}
                           </td>

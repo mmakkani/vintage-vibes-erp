@@ -3,35 +3,56 @@ import { Party, PartyKhataLog } from '../modules/parties/parties.types.ts';
 
 export class PartiesService {
   public static async getParties(): Promise<Party[]> {
-    const { data, error } = await supabase
-      .from('parties')
-      .select('*')
-      .order('name');
+    const [partiesRes, liveBalancesRes] = await Promise.all([
+      supabase.from('parties').select('*').order('name'),
+      supabase.from('view_coa_live_balances').select('party_id, account_id, current_balance')
+    ]);
 
-    if (error) {
-      console.error('Supabase error on parties:', error);
-      throw new Error(error.message || 'Database error occurred reading parties');
+    if (partiesRes.error) {
+      console.error('Supabase error on parties:', partiesRes.error);
+      throw new Error(partiesRes.error.message || 'Database error occurred reading parties');
     }
 
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      code: row.code,
-      name: row.name,
-      type: row.type || 'CLIENT',
-      contactPerson: row.contact_person || row.contactPerson || '',
-      phone: row.phone || '',
-      email: row.email || '',
-      address: row.address || '',
-      trnNo: row.trn_no || row.trnNo || '',
-      creditLimit: Number(row.credit_limit ?? row.creditLimit ?? 0),
-      currentBalance: Number(row.current_balance ?? row.currentBalance ?? 0),
-      currency: row.currency || 'AED',
-      isActive: row.is_active !== false && row.isActive !== false,
-      accountMap: row.account_map || row.accountMap || {},
-      coaAccountId: row.coa_account_id,
-      coa_account_id: row.coa_account_id,
-      createdAt: row.created_at || new Date().toISOString()
-    }));
+    const liveBalancesMap = new Map<string, number>();
+    if (liveBalancesRes.data) {
+      liveBalancesRes.data.forEach((row: any) => {
+        if (row.party_id) {
+          liveBalancesMap.set(String(row.party_id), Number(row.current_balance || 0));
+        }
+        if (row.account_id) {
+          liveBalancesMap.set(String(row.account_id), Number(row.current_balance || 0));
+        }
+      });
+    }
+
+    return (partiesRes.data || []).map((row: any) => {
+      // Prioritize real-time live balance from PostgreSQL view_coa_live_balances
+      const liveBal = liveBalancesMap.has(String(row.id))
+        ? liveBalancesMap.get(String(row.id))!
+        : (row.coa_account_id && liveBalancesMap.has(String(row.coa_account_id))
+          ? liveBalancesMap.get(String(row.coa_account_id))!
+          : Number(row.current_balance ?? row.currentBalance ?? 0));
+
+      return {
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        type: row.type || 'CLIENT',
+        contactPerson: row.contact_person || row.contactPerson || '',
+        phone: row.phone || '',
+        email: row.email || '',
+        address: row.address || '',
+        trnNo: row.trn_no || row.trnNo || '',
+        creditLimit: Number(row.credit_limit ?? row.creditLimit ?? 0),
+        currentBalance: Number(liveBal.toFixed(2)),
+        currency: row.currency || 'AED',
+        isActive: row.is_active !== false && row.isActive !== false,
+        accountMap: row.account_map || row.accountMap || {},
+        coaAccountId: row.coa_account_id,
+        coa_account_id: row.coa_account_id,
+        createdAt: row.created_at || new Date().toISOString()
+      };
+    });
   }
 
   public static async ensurePartyCoaAccount(party: {
@@ -237,29 +258,63 @@ export class PartiesService {
   }
 
   // --- Khata Logs ---
-  public static async getKhataLogs(partyId?: string): Promise<PartyKhataLog[]> {
-    let query = supabase.from('party_khata_logs').select('*').order('date', { ascending: false });
-    if (partyId) {
-      query = query.eq('party_id', partyId);
+  public static async getKhataLogs(partyId?: string): Promise<any[]> {
+    if (!partyId) return [];
+
+    // 1. Fetch from party_khata_logs
+    const { data: logs } = await supabase
+      .from('party_khata_logs')
+      .select('*')
+      .eq('party_id', partyId)
+      .order('date', { ascending: true });
+
+    if (logs && logs.length > 0) {
+      return logs.map((row: any) => ({
+        id: row.id,
+        partyId: row.party_id,
+        date: String(row.date || '').slice(0, 10),
+        docRef: row.reference || 'REF',
+        description: row.notes || 'Khata Transaction',
+        debit: Number(row.debit || 0),
+        credit: Number(row.credit || 0),
+        balance: Number(row.running_balance || 0)
+      }));
     }
 
-    const { data, error } = await query;
-    if (error) {
-      console.error('Supabase error on party_khata_logs:', error);
-      throw new Error(error.message || 'Database error occurred reading Khata logs');
-    }
+    // 2. Direct SQL Ledger Fallback for party transactions
+    try {
+      const { data: partyRow } = await supabase.from('parties').select('code, coa_account_id').eq('id', partyId).maybeSingle();
+      const cleanCode = (partyRow?.code || '').replace(/[^A-Za-z0-9]/g, '');
+      const accountCode = `2110-${cleanCode}`;
+      const accountId = partyRow?.coa_account_id || `acc-${partyId}`;
 
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      partyId: row.party_id || row.partyId,
-      date: row.date,
-      reference: row.reference || '',
-      debit: Number(row.debit || 0),
-      credit: Number(row.credit || 0),
-      runningBalance: Number(row.running_balance ?? row.runningBalance ?? 0),
-      notes: row.notes || '',
-      createdAt: row.created_at
-    }));
+      const { data: glEntries } = await supabase
+        .from('general_ledger')
+        .select('*')
+        .or(`account_id.eq.${accountId},account_code.eq.${accountCode},account_code.eq.1130-${cleanCode}`)
+        .order('entry_date', { ascending: true });
+
+      if (glEntries && glEntries.length > 0) {
+        let runBal = 0;
+        return glEntries.map((row: any) => {
+          const dr = Number(row.debit || 0);
+          const cr = Number(row.credit || 0);
+          runBal += (dr - cr);
+          return {
+            id: row.id,
+            partyId,
+            date: String(row.entry_date || row.created_at || '').slice(0, 10),
+            docRef: row.voucher_no || row.reference || 'GL',
+            description: row.narration || row.memo || 'General Ledger Entry',
+            debit: dr,
+            credit: cr,
+            balance: runBal
+          };
+        });
+      }
+    } catch {}
+
+    return [];
   }
 
   public static async addKhataLog(log: Partial<PartyKhataLog>): Promise<PartyKhataLog> {

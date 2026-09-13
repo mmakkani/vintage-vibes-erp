@@ -402,12 +402,45 @@ export class FinanceService {
 
   public static async updateVoucherStatus(id: string, status: string): Promise<void> {
     const cleanId = String(id);
+    const vouchersList = await this.getVouchers();
+    const existing = vouchersList.find(item => String(item.id) === cleanId || item.voucherNo === cleanId);
+    const vNo = existing?.voucherNo || cleanId;
+
     try {
-      await supabase.from('financial_vouchers').update({ status }).eq('id', cleanId);
+      await supabase.from('financial_vouchers').update({ status }).or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
     try {
-      await supabase.from('vouchers').update({ status }).eq('id', cleanId);
+      await supabase.from('vouchers').update({ status }).or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
+
+    if (status === 'DRAFT' || status === 'UNPOSTED') {
+      // When unposted, remove GL entries so live ledger and trial balance exclude this voucher
+      try {
+        await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+      } catch {}
+      try {
+        await supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+      } catch {}
+    } else if (status === 'POSTED' && existing) {
+      // When posted, ensure GL entries exist for all lines
+      const glRows = (existing.lines || existing.entries || []).map((l: any, i: number) => ({
+        id: `gl-${existing.id}-${i}-${Date.now()}`,
+        voucher_id: existing.id,
+        voucher_no: existing.voucherNo,
+        entry_date: existing.date,
+        account_id: l.accountId || l.account_id,
+        account_code: l.accountCode || l.account_code,
+        narration: l.memo || existing.narration || '',
+        debit: Number(l.debitAmount ?? l.debit ?? 0),
+        credit: Number(l.creditAmount ?? l.credit ?? 0),
+        status: 'POSTED'
+      }));
+      if (glRows.length > 0) {
+        try { await supabase.from('general_ledger').insert(glRows); } catch {}
+        try { await supabase.from('ledgers').insert(glRows); } catch {}
+      }
+    }
+
     try {
       this.clearCoaCache();
       await supabase.rpc('sync_coa_current_balances');
@@ -416,32 +449,31 @@ export class FinanceService {
 
   public static isAutoVoucher(v: any): boolean {
     if (!v) return false;
-    if (v.is_auto === true || v.isAuto === true) return true;
-    const created = String(v.created_by || v.createdBy || '').toUpperCase();
-    if (created === 'SYSTEM') return true;
-    const ref = String(v.reference || v.reference_no || v.voucherNo || '').trim().toUpperCase();
+    // Only lock as auto if it is an automated upstream document (PINV, INV, PAYROLL)
+    if (v.is_auto === true || v.isAuto === true) {
+      const vNo = String(v.voucher_no || v.voucherNo || '').toUpperCase();
+      if (vNo.startsWith('VCH-') || vNo.startsWith('BPV-') || vNo.startsWith('CPV-') || vNo.startsWith('BRV-') || vNo.startsWith('CRV-')) {
+        return false; // Manual voucher created by user
+      }
+      return true;
+    }
+    const ref = String(v.reference || v.reference_no || '').trim().toUpperCase();
     if (
+      ref.startsWith('PINV-') ||
       ref.startsWith('INV-') ||
-      ref.startsWith('PUR-') ||
       ref.startsWith('PAYROLL-') ||
       ref.startsWith('COD-') ||
       ref.startsWith('BALE-') ||
       ref.startsWith('TAX-') ||
-      ref.startsWith('PI-') ||
-      ref.startsWith('SI-') ||
-      ref.startsWith('COMM-') ||
-      ref.startsWith('SETTLE-')
+      ref.startsWith('COMM-')
     ) {
       return true;
     }
     const narr = String(v.narration || '').toLowerCase();
     if (
       narr.startsWith('[auto]') ||
-      narr.includes('auto-posted') ||
-      narr.includes('sales invoice') ||
-      narr.includes('commercial invoice') ||
-      narr.includes('payroll run') ||
-      narr.includes('bale intake')
+      narr.includes('commercial purchase invoice posted') ||
+      narr.includes('commercial sales invoice posted')
     ) {
       return true;
     }
@@ -629,23 +661,27 @@ export class FinanceService {
     const vouchersList = await this.getVouchers();
     const existing = vouchersList.find(item => String(item.id) === cleanId || item.voucherNo === cleanId);
     if (existing && this.isAutoVoucher(existing)) {
-      throw new Error('Auto-generated system vouchers cannot be deleted.');
+      throw new Error('Auto-generated system vouchers cannot be deleted directly. Delete the source invoice to remove its voucher.');
     }
+    const vNo = existing?.voucherNo || cleanId;
 
     try {
-      await supabase.from('voucher_entries').delete().eq('voucher_id', cleanId);
+      await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
     try {
-      await supabase.from('general_ledger').delete().eq('voucher_id', cleanId);
+      await supabase.from('financial_voucher_lines').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
     try {
-      await supabase.from('ledgers').delete().eq('voucher_id', cleanId);
+      await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
     try {
-      await supabase.from('financial_vouchers').delete().eq('id', cleanId);
+      await supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
     try {
-      await supabase.from('vouchers').delete().eq('id', cleanId);
+      await supabase.from('financial_vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
+    } catch {}
+    try {
+      await supabase.from('vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
 
     try {

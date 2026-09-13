@@ -170,6 +170,10 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
   const totalGrossKg = useMemo(() => items.reduce((acc, i) => acc + (i.grossWeightKg || 0), 0), [items]);
   const totalBales = useMemo(() => items.reduce((acc, i) => acc + (i.quantityBales || 0), 0), [items]);
 
+  const docGross = Number(invoice?.grossAmount || (currency === 'USD' ? totalUsd : totalAed));
+  const docDeduction = Number(invoice?.deductionAmount || (invoice as any)?.discountAmount || 0);
+  const docNet = Number(invoice?.netAmount || invoice?.totalAmount || (currency === 'USD' ? totalUsd : totalAed));
+
   const handlePrint = () => {
     openCommercialInvoiceA4PrintWindow({
       docNo,
@@ -464,6 +468,28 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
                 </tr>
               </tfoot>
             </table>
+          </div>
+
+          {/* Financial Breakdown: Gross, Deductions, Net */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-amber-50/80 border border-amber-200 rounded-lg mb-4 text-xs">
+            <div className="flex flex-col">
+              <span className="text-[10px] uppercase font-bold text-slate-500">Gross Goods & Charges</span>
+              <span className="font-mono font-bold text-slate-800 text-sm">
+                {currency === 'USD' ? '$' : 'AED'} {docGross.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] uppercase font-bold text-rose-600">Total Deductions / Discounts</span>
+              <span className="font-mono font-bold text-rose-700 text-sm">
+                {docDeduction > 0 ? `-${currency === 'USD' ? '$' : 'AED'} ${docDeduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '0.00'}
+              </span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] uppercase font-bold text-indigo-900">Net Commercial Value</span>
+              <span className="font-mono font-black text-indigo-900 text-sm">
+                {currency === 'USD' ? '$' : 'AED'} {docNet.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </span>
+            </div>
           </div>
 
           {/* Amount In Words & Declaration */}

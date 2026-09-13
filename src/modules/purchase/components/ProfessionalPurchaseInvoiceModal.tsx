@@ -171,6 +171,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
   const [freightAmount, setFreightAmount] = useState<number>(0);
   const [customsDutyAmount, setCustomsDutyAmount] = useState<number>(0);
   const [terminalHandlingAmount, setTerminalHandlingAmount] = useState<number>(0);
+  const [deductionAmount, setDeductionAmount] = useState<number>(0);
   const [vatRatePercent, setVatRatePercent] = useState<number>(5);
   const [notes, setNotes] = useState('');
 
@@ -183,6 +184,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
     if (data.freightAmount) setFreightAmount(data.freightAmount);
     if (data.customsDutyAmount) setCustomsDutyAmount(data.customsDutyAmount);
     if (data.terminalHandlingAmount) setTerminalHandlingAmount(data.terminalHandlingAmount);
+    if (data.deductionAmount) setDeductionAmount(Number(data.deductionAmount) || 0);
     if (data.notes) setNotes(data.notes);
 
     if (data.supplierName) {
@@ -242,6 +244,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       setFreightAmount(editingInvoice.freightAmount || 0);
       setCustomsDutyAmount(editingInvoice.customsDutyAmount || 0);
       setTerminalHandlingAmount(editingInvoice.terminalHandlingAmount || 0);
+      setDeductionAmount(Number((editingInvoice as any)?.deductionAmount || (editingInvoice as any)?.deduction_amount || (editingInvoice as any)?.discountAmount || (editingInvoice as any)?.discount_amount || 0));
       setContainerNo(editingInvoice.containerNo || '');
       setBlAirwayBillNo(editingInvoice.blAirwayBillNo || '');
       setPortOfEntry(editingInvoice.portOfEntry || 'Jebel Ali Port (AEJEA), Dubai');
@@ -346,6 +349,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
     freightAmount,
     customsDutyAmount,
     terminalHandlingAmount,
+    deductionAmount,
     vatRatePercent,
     notes,
     lines
@@ -377,6 +381,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       if (saved.freightAmount !== undefined) setFreightAmount(saved.freightAmount);
       if (saved.customsDutyAmount !== undefined) setCustomsDutyAmount(saved.customsDutyAmount);
       if (saved.terminalHandlingAmount !== undefined) setTerminalHandlingAmount(saved.terminalHandlingAmount);
+      if (saved.deductionAmount !== undefined) setDeductionAmount(Number(saved.deductionAmount) || 0);
       if (saved.vatRatePercent !== undefined) setVatRatePercent(saved.vatRatePercent);
       if (saved.notes) setNotes(saved.notes);
       if (saved.lines && saved.lines.length > 0) {
@@ -431,11 +436,15 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
   const totalGrossWeightKg = lines.reduce((sum, l) => sum + (Number(l.totalWeight) || 0), 0);
   const itemsSubTotal = lines.reduce((sum, l) => sum + (Number(l.lineTotal) || 0), 0);
 
-  // Taxable Base = items subtotal + freight + terminal handling
-  const taxableBase = itemsSubTotal + freightAmount + terminalHandlingAmount;
+  // Gross Goods & Landed Total before deductions
+  const grossAmount = Number((itemsSubTotal + freightAmount + customsDutyAmount + terminalHandlingAmount).toFixed(2));
+  // Goods net of deductions/discounts
+  const netItemsSubTotal = Math.max(0, itemsSubTotal - deductionAmount);
+  // Taxable Base = netItemsSubTotal + freight + terminal handling
+  const taxableBase = Math.max(0, netItemsSubTotal + freightAmount + terminalHandlingAmount);
   // Apply VAT: if checked, calculate 5% (or vatRatePercent); if unchecked, 0.00 without calculate
   const vatAmount = applyVat ? Number(((taxableBase * vatRatePercent) / 100).toFixed(2)) : 0;
-  const grandTotal = Number((itemsSubTotal + freightAmount + customsDutyAmount + terminalHandlingAmount + vatAmount).toFixed(2));
+  const grandTotal = Number((netItemsSubTotal + freightAmount + customsDutyAmount + terminalHandlingAmount + vatAmount).toFixed(2));
   const grandTotalAed = currency === 'AED' ? grandTotal : Number((grandTotal * exchangeRate).toFixed(2));
 
   // Line item handlers
@@ -541,6 +550,10 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       currency,
       exchangeRate,
       subTotal: itemsSubTotal,
+      grossAmount,
+      deductionAmount,
+      discountAmount: deductionAmount,
+      netAmount: grandTotal,
       applyVat,
       freightAmount,
       customsDutyAmount,
@@ -591,6 +604,14 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
         exchangeRate,
         subtotal: itemsSubTotal,
         subTotal: itemsSubTotal,
+        gross_amount: grossAmount,
+        grossAmount,
+        deduction_amount: deductionAmount,
+        deductionAmount,
+        discount_amount: deductionAmount,
+        discountAmount: deductionAmount,
+        net_amount: grandTotal,
+        netAmount: grandTotal,
         tax_amount: vatAmount,
         vatAmount,
         total_amount: grandTotal,
@@ -624,6 +645,10 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
           currency,
           exchange_rate: exchangeRate,
           subtotal: itemsSubTotal,
+          gross_amount: grossAmount,
+          deduction_amount: deductionAmount,
+          discount_amount: deductionAmount,
+          net_amount: grandTotal,
           tax_amount: vatAmount,
           total_amount: grandTotal,
           total_weight_kg: totalGrossWeightKg,
@@ -707,6 +732,10 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
         currency,
         exchangeRate,
         subTotal: itemsSubTotal,
+        grossAmount,
+        deductionAmount,
+        discountAmount: deductionAmount,
+        netAmount: grandTotal,
         applyVat,
         freightAmount,
         customsDutyAmount,
@@ -1277,7 +1306,32 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
                   </div>
                 </div>
 
-                <div className="flex justify-between items-center text-slate-600 pt-1.5 border-t border-slate-200">
+                <div className="flex justify-between items-center text-slate-800 font-bold pt-1 border-t border-slate-200">
+                  <span>Gross Total (Before Deductions):</span>
+                  <span className="font-mono text-slate-900">
+                    {currency} {grossAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between text-rose-700">
+                  <span className="flex items-center gap-1 font-semibold">
+                    <span>Less: Total Deductions / Discount:</span>
+                  </span>
+                  <div className="flex items-center gap-1 w-32">
+                    <span className="text-[10px] font-mono text-rose-700">-{currency}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={deductionAmount || ''}
+                      placeholder="0.00"
+                      onChange={e => setDeductionAmount(Math.max(0, Number(e.target.value) || 0))}
+                      className="w-full bg-white border border-rose-300 rounded px-1.5 py-0.5 text-xs font-mono font-bold text-right text-rose-700 focus:ring-1 focus:ring-rose-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center text-slate-600 pt-1 border-t border-dashed border-slate-200">
                   <div className="flex items-center gap-1.5">
                     <input
                       type="checkbox"
@@ -1299,7 +1353,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
 
                 <div className="pt-2 border-t-2 border-slate-800 flex justify-between items-baseline">
                   <div>
-                    <span className="font-bold text-sm text-slate-900 block">Total Payable:</span>
+                    <span className="font-bold text-sm text-slate-900 block">Total Payable (Net):</span>
                     {currency !== 'AED' && (
                       <span className="text-[10px] text-slate-500 block font-mono">
                         Base: AED {grandTotalAed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}

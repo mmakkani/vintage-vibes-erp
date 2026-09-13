@@ -42,6 +42,8 @@ export interface PurchaseInvoice {
   totalBalesCount?: number;
   totalGrossWeightKg?: number;
   grossAmount?: number;
+  deductionAmount?: number;
+  discountAmount?: number;
   netAmount?: number;
   grandTotalAed?: number;
 }

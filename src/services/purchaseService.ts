@@ -99,6 +99,10 @@ export class PurchaseService {
         convertedToInward: Boolean(row.converted_to_inward || row.convertedToInward),
         items,
         totalBalesCount: items.reduce((acc: number, it: any) => acc + (Number(it.packageCount) || 1), 0),
+        grossAmount: Number(row.gross_amount ?? row.subtotal ?? totalAmount),
+        deductionAmount: Number(row.deduction_amount ?? row.discount_amount ?? 0),
+        discountAmount: Number(row.discount_amount ?? row.deduction_amount ?? 0),
+        netAmount: Number(row.net_amount ?? totalAmount),
         createdAt: row.created_at,
         created_at: row.created_at
       } as PurchaseInvoice;
@@ -340,6 +344,10 @@ export class PurchaseService {
       currency: inv.currency || 'AED',
       exchange_rate: Number(inv.exchangeRate || 1),
       subtotal: Number(inv.subtotal || (inv as any).subTotal || 0),
+      gross_amount: Number(inv.grossAmount || (inv as any).subtotal || (inv as any).subTotal || inv.totalAmount || 0),
+      deduction_amount: Number(inv.deductionAmount || inv.discountAmount || 0),
+      discount_amount: Number(inv.discountAmount || inv.deductionAmount || 0),
+      net_amount: Number(inv.netAmount || inv.totalAmount || 0),
       tax_amount: Number(inv.taxAmount || inv.vatAmount || 0),
       total_amount: Number(inv.totalAmount || 0),
       total_weight_kg: Number(inv.totalWeightKg || (inv as any).totalGrossWeightKg || 0),
@@ -371,6 +379,10 @@ export class PurchaseService {
       exchangeRate: Number(data.exchange_rate),
       subtotal: Number(data.subtotal),
       subTotal: Number(data.subtotal),
+      grossAmount: Number(data.gross_amount ?? data.subtotal ?? data.total_amount),
+      deductionAmount: Number(data.deduction_amount ?? data.discount_amount ?? 0),
+      discountAmount: Number(data.discount_amount ?? data.deduction_amount ?? 0),
+      netAmount: Number(data.net_amount ?? data.total_amount),
       taxAmount: Number(data.tax_amount),
       vatAmount: Number(data.tax_amount),
       totalAmount: Number(data.total_amount),
@@ -382,7 +394,16 @@ export class PurchaseService {
   }
 
   public static async deletePurchaseInvoice(invoiceId: string): Promise<void> {
-    // 1. Delete associated manifest line items first
+    // 0. Fetch invoice first to get invoice_no and supplier info
+    const { data: invRow } = await supabase
+      .from('purchase_invoices')
+      .select('id, invoice_no, supplier_id, supplier_name')
+      .eq('id', String(invoiceId))
+      .maybeSingle();
+
+    const invoiceNo = invRow?.invoice_no;
+
+    // 1. Delete associated manifest line items
     const { error: itemsError } = await supabase
       .from('purchase_invoice_items')
       .delete()
@@ -393,9 +414,43 @@ export class PurchaseService {
     await supabase
       .from('inward_gate_passes')
       .delete()
-      .eq('purchase_invoice_id', String(invoiceId));
+      .or(`purchase_invoice_id.eq.${String(invoiceId)}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
 
-    // 3. Delete the invoice record
+    // 3. Delete any auto-generated vouchers and general ledger entries tied to this invoice
+    if (invoiceNo) {
+      try {
+        // Find matching vouchers in financial_vouchers
+        const { data: matchedVouchers } = await supabase
+          .from('financial_vouchers')
+          .select('id, voucher_no')
+          .or(`reference.eq.PINV-${invoiceNo},reference.eq.INWARD-${invoiceNo},reference.eq.PUR-${invoiceNo},reference.eq.${invoiceNo},narration.ilike.%${invoiceNo}%`);
+
+        if (matchedVouchers && matchedVouchers.length > 0) {
+          for (const mv of matchedVouchers) {
+            await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+            await supabase.from('financial_voucher_lines').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+            await supabase.from('general_ledger').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+            await supabase.from('ledgers').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+            await supabase.from('financial_vouchers').delete().eq('id', mv.id);
+            await supabase.from('vouchers').delete().eq('id', mv.id);
+          }
+        }
+      } catch (vErr) {
+        console.warn('Warning deleting auto vouchers for invoice:', vErr);
+      }
+
+      // Delete party_khata_logs for this invoice
+      try {
+        await supabase
+          .from('party_khata_logs')
+          .delete()
+          .or(`reference.eq.${invoiceNo},notes.ilike.%${invoiceNo}%`);
+      } catch (kErr) {
+        console.warn('Warning deleting party khata logs for invoice:', kErr);
+      }
+    }
+
+    // 4. Delete the invoice record
     const { error: invoiceError } = await supabase
       .from('purchase_invoices')
       .delete()
@@ -404,6 +459,12 @@ export class PurchaseService {
       console.error("Failed to delete invoice:", invoiceError);
       throw new Error(invoiceError.message || 'Failed to delete invoice');
     }
+
+    // 5. Refresh COA and Party Live Balances in SQL
+    try {
+      FinanceService.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
+    } catch (_) {}
   }
 
   // --- Inward Gate Passes (Bales / Consignments) ---
