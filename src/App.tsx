@@ -552,8 +552,8 @@ export default function App() {
 
         {/* Full-Width Main Content Area - Unconstrained Edge-to-Edge Data Density */}
         <main id="main-content" className="flex-1 w-full max-w-none px-3 sm:px-6 lg:px-8 py-3.5 sm:py-4 text-left">
-          {/* Top-Level KPI Summary Dashboard above tab content (Hidden on Sales/Live view or if user has no dashboard permission to protect company secrets) */}
-          {activeTab !== 'sales' && isTabAccessible('dashboard', currentUser) && (
+          {/* Top-Level KPI Summary Dashboard - Only visible on the main Executive Dashboard */}
+          {activeTab === 'dashboard' && isTabAccessible('dashboard', currentUser) && (
             <ErrorBoundary sectionName="KPI Dashboard Bar">
               <DashboardKPIs
                 activeTab={activeTab}
