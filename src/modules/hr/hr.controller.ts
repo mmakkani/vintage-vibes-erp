@@ -137,7 +137,7 @@ export class HRController {
     const configured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5);
     return {
       configured,
-      model: 'gemini-2.0-flash'
+      model: 'gemini-3.6-flash'
     };
   }
 
@@ -247,7 +247,7 @@ MANDATORY RULES:
         parts.push({ text: promptText });
 
         let response: any = null;
-        const candidateModels = ['gemini-2.0-flash'];
+        const candidateModels = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
         let lastModelErr: any = null;
         for (const m of candidateModels) {
           try {

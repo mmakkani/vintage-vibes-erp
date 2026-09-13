@@ -74,18 +74,18 @@ MANDATORY RULES:
      * Gender ('MALE' or 'FEMALE')
      * Date of Issue (YYYY-MM-DD)
      * Date of Expiry (YYYY-MM-DD)
-   - For UAE Residency Visa / Card:
-     * File Number / Residency Number (e.g. 301/2024/7/93764 or 201/2023/XXXXXXX)
-     * Unified Number / UID No (e.g. 784198573523622 or 9 digits)
+    - For UAE Residency Visa / Card:
+     * File Number / Residency Number (e.g. 201/2024/XXXXXXX)
+     * Unified Number / UID No (e.g. 123456789 or 15 digits)
      * Full Name in English and Arabic
-     * Profession / Designation (as printed on visa, e.g. CHIEF OPERATIONS OFFICER / المدير التنفيذي للعمليات)
-     * Sponsor / Employer Name (e.g. HFZA GOLDTEX FZC)
+     * Profession / Designation (as printed on visa, e.g. Operations Manager / مدير العمليات)
+     * Sponsor / Employer Name
      * Issue Date (YYYY-MM-DD)
      * Expiry Date (YYYY-MM-DD)
 
 3. Return ONLY a pure JSON object matching this schema without any markdown formatting or commentary:
 {
-  "documentType": "RESIDENCY_VISA",
+  "documentType": "EMIRATES_ID",
   "name": "Full Name in English",
   "nameArabic": "الاسم بالعربية",
   "emiratesId": "784-YYYY-XXXXXXX-X",
@@ -94,14 +94,14 @@ MANDATORY RULES:
   "gender": "MALE",
   "nationality": "United Arab Emirates",
   "emiratesIdExpiry": "YYYY-MM-DD",
-  "passportNo": "AA0306605",
+  "passportNo": "A12345678",
   "passportCountry": "United Arab Emirates",
   "passportIssueDate": "YYYY-MM-DD",
   "passportExpiry": "YYYY-MM-DD",
-  "residencyCardNo": "301/2024/7/93764",
-  "uidNo": "784198573523622",
-  "residencyProfession": "CHIEF OPERATIONS OFFICER",
-  "residencySponsor": "HFZA GOLDTEX FZC",
+  "residencyCardNo": "201/2024/7654321",
+  "uidNo": "123456789",
+  "residencyProfession": "Designation",
+  "residencySponsor": "EMPLOYER NAME",
   "residencyIssueDate": "YYYY-MM-DD",
   "residencyExpiryDate": "YYYY-MM-DD",
   "confidence": 0.98
@@ -116,8 +116,8 @@ export async function validateGeminiApiKey(apiKey: string): Promise<{ valid: boo
   }
 
   const cleanKey = apiKey.trim();
-  // Universally supported active production Google Gemini model
-  const models = ['gemini-2.0-flash'];
+  // Universally supported active production Google Gemini models
+  const models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
   let lastError = '';
 
   for (const model of models) {
@@ -163,7 +163,7 @@ export async function validateGeminiApiKey(apiKey: string): Promise<{ valid: boo
  * Executes direct Gemini Vision API call from browser
  */
 async function callGeminiVisionApi(apiKey: string, parts: any[]): Promise<any> {
-  const models = ['gemini-2.0-flash'];
+  const models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
   let lastError: any = null;
 
   for (const model of models) {
@@ -212,87 +212,6 @@ async function callGeminiVisionApi(apiKey: string, parts: any[]): Promise<any> {
 }
 
 /**
- * Intelligent UAE Legal Document Fallback Recognizer
- * Ensures that if an API key is invalid or offline, high-accuracy UAE documents
- * (such as Murtaza Makkani's Residence Visa or standard Emirates IDs) are still parsed accurately.
- */
-function getUaeDocumentFallback(documentType: string, imageBase64: string): AIOCRScanResult {
-  if (documentType === 'PASSPORT') {
-    return {
-      success: true,
-      documentType: 'PASSPORT',
-      name: 'MURTAZA MAKKANI ASIF HUSSAIN',
-      nameArabic: 'مرتضى مكاني عاصف حسين',
-      dob: '1985-12-20',
-      gender: 'MALE',
-      nationality: 'Pakistan',
-      passportNo: 'AA0306605',
-      passportCountry: 'Pakistan',
-      passportIssueDate: '2025-06-12',
-      passportExpiry: '2035-06-12',
-      confidence: 0.99,
-      source: 'DEMO_PRESET_PARSER',
-      notes: 'ICAO Doc 9303 MRZ Verified (Passport: AA0306605 • Valid 2025-2035)'
-    };
-  }
-
-  if (documentType === 'RESIDENCY_VISA') {
-    return {
-      success: true,
-      documentType: 'RESIDENCY_VISA',
-      name: 'MURTAZA MAKKANI ASIF HUSSAIN',
-      nameArabic: 'مرتضى مكاني عاصف حسين',
-      dob: '1985-12-20',
-      gender: 'MALE',
-      nationality: 'Pakistan',
-      emiratesId: '784-1985-7352362-2',
-      idCardNo: '141988738',
-      emiratesIdExpiry: '2026-12-18',
-      passportNo: 'AA0306605',
-      passportCountry: 'Pakistan',
-      passportIssueDate: '2025-06-12',
-      passportExpiry: '2035-06-12',
-      residencyCardNo: '301/2024/7/93764',
-      uidNo: '784198573523622',
-      residencyProfession: 'CHIEF OPERATIONS OFFICER',
-      residencySponsor: 'HFZA GOLDTEX FZC',
-      residencyIssueDate: '2024-12-19',
-      residencyExpiryDate: '2026-12-18',
-      confidence: 0.99,
-      source: 'DEMO_PRESET_PARSER',
-      notes: 'UAE ICP Residency Database Verified (File: 301/2024/7/93764 • Exp: 2026-12-18)'
-    };
-  }
-
-  // EMIRATES_ID default
-  return {
-    success: true,
-    documentType: 'EMIRATES_ID',
-    name: 'MURTAZA MAKKANI ASIF HUSSAIN',
-    nameArabic: 'مرتضى مكاني عاصف حسين',
-    dob: '1985-12-20',
-    gender: 'MALE',
-    nationality: 'Pakistan',
-    emiratesId: '784-1985-7352362-2',
-    idCardNo: '141988738',
-    emiratesIdExpiry: '2026-12-18',
-    passportNo: 'AA0306605',
-    passportCountry: 'Pakistan',
-    passportIssueDate: '2025-06-12',
-    passportExpiry: '2035-06-12',
-    residencyCardNo: '301/2024/7/93764',
-    uidNo: '784198573523622',
-    residencyProfession: 'CHIEF OPERATIONS OFFICER',
-    residencySponsor: 'HFZA GOLDTEX FZC',
-    residencyIssueDate: '2024-12-19',
-    residencyExpiryDate: '2026-12-18',
-    confidence: 0.99,
-    source: 'DEMO_PRESET_PARSER',
-    notes: 'UAE Federal Authority for Identity (ICP) Standard Match (Card: 141988738)'
-  };
-}
-
-/**
  * Main OCR Scan execution function
  */
 export async function executeDocumentOcr(payload: AIOCRScanPayload): Promise<AIOCRScanResult> {
@@ -310,64 +229,59 @@ export async function executeDocumentOcr(payload: AIOCRScanPayload): Promise<AIO
     throw new Error('Please upload or snap a photo of the document before scanning.');
   }
 
-  // 1. If API Key is provided, perform live Gemini Vision neural extraction
-  if (apiKey) {
-    const parts: any[] = [];
-    parts.push({
-      inline_data: {
-        mime_type: detectMime(imageBase64),
-        data: cleanBase64(imageBase64)
-      }
-    });
-
-    if (secondaryImageBase64 && secondaryImageBase64.trim().length > 100) {
-      parts.push({
-        inline_data: {
-          mime_type: detectMime(secondaryImageBase64),
-          data: cleanBase64(secondaryImageBase64)
-        }
-      });
-    }
-
-    parts.push({ text: OCR_PROMPT });
-
-    try {
-      const parsed = await callGeminiVisionApi(apiKey, parts);
-
-      return {
-        success: true,
-        documentType: parsed.documentType || (documentType !== 'AUTO_DETECT' ? documentType : 'RESIDENCY_VISA'),
-        name: parsed.name || '',
-        nameArabic: parsed.nameArabic || '',
-        emiratesId: parsed.emiratesId || '',
-        idCardNo: parsed.idCardNo || '',
-        dob: parsed.dob || '',
-        gender: parsed.gender === 'FEMALE' ? 'FEMALE' : 'MALE',
-        nationality: parsed.nationality || 'United Arab Emirates',
-        emiratesIdExpiry: parsed.emiratesIdExpiry || '',
-        passportNo: parsed.passportNo || '',
-        passportCountry: parsed.passportCountry || '',
-        passportIssueDate: parsed.passportIssueDate || '',
-        passportExpiry: parsed.passportExpiry || '',
-        residencyCardNo: parsed.residencyCardNo || '',
-        uidNo: parsed.uidNo || '',
-        residencyProfession: parsed.residencyProfession || '',
-        residencySponsor: parsed.residencySponsor || '',
-        residencyIssueDate: parsed.residencyIssueDate || '',
-        residencyExpiryDate: parsed.residencyExpiryDate || '',
-        confidence: Number(parsed.confidence) || 0.98,
-        source: 'GEMINI_AI_VISION',
-        notes: 'Extracted directly via Google Gemini 2.5 Flash Vision'
-      };
-    } catch (apiErr: any) {
-      console.warn('[Gemini Direct OCR Failed, using intelligent fallback]:', apiErr.message);
-      // Fallback seamlessly so user is never blocked
-      const fallback = getUaeDocumentFallback(documentType, imageBase64);
-      fallback.notes = `Extracted via UAE OCR Engine (${apiErr.message})`;
-      return fallback;
-    }
+  if (!apiKey) {
+    throw new Error('Google Gemini API Key is required for live document OCR. Please click "Setup API Key" to configure your API key.');
   }
 
-  // 2. If no API key provided, use intelligent UAE Document OCR Engine
-  return getUaeDocumentFallback(documentType, imageBase64);
+  const parts: any[] = [];
+  parts.push({
+    inline_data: {
+      mime_type: detectMime(imageBase64),
+      data: cleanBase64(imageBase64)
+    }
+  });
+
+  if (secondaryImageBase64 && secondaryImageBase64.trim().length > 100) {
+    parts.push({
+      inline_data: {
+        mime_type: detectMime(secondaryImageBase64),
+        data: cleanBase64(secondaryImageBase64)
+      }
+    });
+  }
+
+  parts.push({ text: OCR_PROMPT });
+
+  try {
+    const parsed = await callGeminiVisionApi(apiKey, parts);
+
+    return {
+      success: true,
+      documentType: parsed.documentType || (documentType !== 'AUTO_DETECT' ? documentType : 'RESIDENCY_VISA'),
+      name: parsed.name || '',
+      nameArabic: parsed.nameArabic || '',
+      emiratesId: parsed.emiratesId || '',
+      idCardNo: parsed.idCardNo || '',
+      dob: parsed.dob || '',
+      gender: parsed.gender === 'FEMALE' ? 'FEMALE' : 'MALE',
+      nationality: parsed.nationality || 'United Arab Emirates',
+      emiratesIdExpiry: parsed.emiratesIdExpiry || '',
+      passportNo: parsed.passportNo || '',
+      passportCountry: parsed.passportCountry || '',
+      passportIssueDate: parsed.passportIssueDate || '',
+      passportExpiry: parsed.passportExpiry || '',
+      residencyCardNo: parsed.residencyCardNo || '',
+      uidNo: parsed.uidNo || '',
+      residencyProfession: parsed.residencyProfession || '',
+      residencySponsor: parsed.residencySponsor || '',
+      residencyIssueDate: parsed.residencyIssueDate || '',
+      residencyExpiryDate: parsed.residencyExpiryDate || '',
+      confidence: Number(parsed.confidence) || 0.98,
+      source: 'GEMINI_AI_VISION',
+      notes: 'Extracted directly via Google Gemini 3.6 Flash Vision'
+    };
+  } catch (apiErr: any) {
+    console.error('[Gemini Direct OCR Failed]:', apiErr?.message);
+    throw new Error(apiErr?.message || 'Gemini Vision AI OCR extraction failed. Please check your API key or ensure the document image is clear.');
+  }
 }

@@ -208,7 +208,7 @@ Only output pure JSON without markdown codeblocks or commentary.`
       });
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-3.6-flash',
         contents: { parts }
       });
 
@@ -243,7 +243,7 @@ Only output pure JSON without markdown codeblocks or commentary.`
         grailNotes: result.grailNotes || 'Verified vintage appraisal by Gemini Vision.',
         collectorTipsUrdu: result.collectorTipsUrdu || (isGrail ? 'Yeh high-value vintage piece hai. Aam sasti shirts kay sath na bechein!' : 'Authentic vintage piece.'),
         style: result.style || result.garmentTitle || 'Vintage Apparel',
-        notes: `Gemini 2.0 Flash Appraisal (${result.era || 'Vintage'})`
+        notes: `Gemini 3.6 Flash Appraisal (${result.era || 'Vintage'})`
       };
     } catch (err: any) {
       console.warn('Gemini OCR Vision call failed:', err?.message);
@@ -318,7 +318,7 @@ Only output pure JSON. No markdown codeblocks, no commentary. Context hint: ${te
       });
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-3.6-flash',
         contents: { parts }
       });
 
