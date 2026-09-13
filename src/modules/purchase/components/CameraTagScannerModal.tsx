@@ -557,74 +557,100 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                 )}
 
                 {!cameraActive && !capturedImage && (
-                  <div className="p-6 text-center text-slate-300 space-y-3 w-full max-w-md">
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-6 text-center text-slate-300 space-y-3 w-full max-w-lg cursor-pointer hover:bg-slate-900/40 transition rounded-xl"
+                  >
                     {isPermissionDenied ? (
-                      <div className="bg-rose-950/40 border border-rose-500/40 rounded-xl p-4 text-left space-y-2.5">
-                        <div className="flex items-center gap-2 text-rose-400 font-bold text-xs">
-                          <ShieldAlert className="w-4 h-4" />
-                          <span>Camera Access Blocked in Browser</span>
+                      <div className="bg-slate-900/90 border-2 border-amber-500/40 rounded-2xl p-5 text-center space-y-3 shadow-2xl">
+                        <div className="w-12 h-12 rounded-full bg-amber-500/20 border border-amber-400/50 flex items-center justify-center mx-auto text-amber-300 shadow-inner">
+                          <UploadCloud className="w-6 h-6 animate-pulse" />
                         </div>
-                        <p className="text-[11px] text-slate-300">
-                          Click the <strong>🔒 lock icon</strong> next to the URL at the top of your browser, set <strong>Camera</strong> to <strong>Allow</strong>, then tap Retry below.
-                        </p>
-                        <div className="flex flex-wrap items-center gap-2 pt-1">
-                          <button
-                            type="button"
-                            onClick={startCamera}
-                            className="btn-3d btn-3d-indigo text-xs py-1 px-3 flex items-center gap-1.5"
-                          >
-                            <RotateCw className="w-3 h-3" />
-                            <span>Retry Live Camera</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => nativeCameraInputRef.current?.click()}
-                            className="btn-3d btn-3d-emerald text-xs py-1 px-3 flex items-center gap-1.5"
-                          >
-                            <Smartphone className="w-3 h-3" />
-                            <span>Phone Camera</span>
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <Tag className="w-10 h-10 mx-auto text-amber-400 opacity-70" />
                         <div>
-                          <h4 className="text-sm font-bold text-white">Vintage Grail Camera Standby</h4>
-                          <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
-                            {cameraError || 'Use live camera, phone snap, or upload a photo of the clothing tag or graphic.'}
+                          <h4 className="text-sm font-extrabold text-white">
+                            Webcam Restricted — Use Upload or Phone Snap
+                          </h4>
+                          <p className="text-xs text-amber-200/80 max-w-sm mx-auto mt-1">
+                            Direct webcam is blocked in browser permissions. You can snap with your phone camera or upload any tag photo below.
                           </p>
                         </div>
 
-                        <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                        <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2" onClick={e => e.stopPropagation()}>
                           <button
                             type="button"
-                            onClick={startCamera}
-                            className="btn-3d btn-3d-amber text-xs py-1.5 px-4 cursor-pointer inline-flex items-center gap-1.5 text-slate-950 font-bold"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="btn-3d btn-3d-amber text-xs py-2 px-4 cursor-pointer font-black text-slate-950 flex items-center gap-1.5 shadow-lg"
                           >
-                            <RefreshCw className="w-3.5 h-3.5" />
-                            <span>Turn On Camera</span>
+                            <UploadCloud className="w-4 h-4 text-slate-950" />
+                            <span>📁 Upload Tag Photo</span>
                           </button>
 
                           <button
                             type="button"
                             onClick={() => nativeCameraInputRef.current?.click()}
-                            className="btn-3d btn-3d-emerald text-xs py-1.5 px-3.5 cursor-pointer inline-flex items-center gap-1.5 font-bold"
+                            className="btn-3d btn-3d-emerald text-xs py-2 px-3.5 cursor-pointer font-bold flex items-center gap-1.5"
                           >
-                            <Smartphone className="w-3.5 h-3.5" />
-                            <span>Phone Camera</span>
+                            <Smartphone className="w-4 h-4 text-emerald-300" />
+                            <span>📱 Phone Camera</span>
                           </button>
 
                           <button
                             type="button"
-                            onClick={() => fileInputRef.current?.click()}
-                            className="btn-3d btn-3d-slate text-xs py-1.5 px-3 cursor-pointer inline-flex items-center gap-1.5"
+                            onClick={startCamera}
+                            className="btn-3d btn-3d-slate text-xs py-2 px-3 flex items-center gap-1.5 text-slate-300 hover:text-white"
                           >
-                            <UploadCloud className="w-3.5 h-3.5 text-amber-400" />
-                            <span>Upload File</span>
+                            <RotateCw className="w-3.5 h-3.5" />
+                            <span>Retry Webcam</span>
                           </button>
                         </div>
-                      </>
+                        <p className="text-[10px] text-slate-400 pt-1">
+                          💡 Or tap anywhere in this box to select a photo from your computer/gallery
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="w-14 h-14 rounded-full bg-amber-500/20 border border-amber-400/50 flex items-center justify-center mx-auto text-amber-300 shadow-inner">
+                          <Tag className="w-7 h-7 opacity-90" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-extrabold text-white">AI Vintage Tag Scanner Ready</h4>
+                          <p className="text-xs text-slate-400 max-w-sm mx-auto mt-1">
+                            Tap to upload a photo of the garment neck tag, or turn on the live camera.
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2" onClick={e => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="btn-3d btn-3d-amber text-xs py-2 px-4.5 cursor-pointer inline-flex items-center gap-1.5 text-slate-950 font-black shadow-lg"
+                          >
+                            <UploadCloud className="w-4 h-4 text-slate-950" />
+                            <span>📁 Upload Tag Photo</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => nativeCameraInputRef.current?.click()}
+                            className="btn-3d btn-3d-emerald text-xs py-2 px-3.5 cursor-pointer inline-flex items-center gap-1.5 font-bold"
+                          >
+                            <Smartphone className="w-4 h-4 text-emerald-300" />
+                            <span>📱 Phone Camera</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={startCamera}
+                            className="btn-3d btn-3d-slate text-xs py-2 px-3.5 cursor-pointer inline-flex items-center gap-1.5 text-slate-300 hover:text-white"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            <span>Turn On Webcam</span>
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-500 pt-1 font-mono">
+                          Supports JPG, PNG, WEBP (Auto-compressed)
+                        </p>
+                      </div>
                     )}
                   </div>
                 )}

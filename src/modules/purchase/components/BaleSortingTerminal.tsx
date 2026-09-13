@@ -183,22 +183,45 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     ];
   }, [labelsList]);
 
+  // Real database bales list state (with auto-fetch from database API if allBales is empty)
+  const [internalBales, setInternalBales] = useState<InwardGatePass[]>(allBales || []);
+  const effectiveBales = useMemo(() => {
+    return (allBales && allBales.length > 0) ? allBales : internalBales;
+  }, [allBales, internalBales]);
+
+  // If effectiveBales is empty, auto-fetch from database API
+  useEffect(() => {
+    if (allBales && allBales.length > 0) {
+      setInternalBales(allBales);
+    } else {
+      fetch('/api/purchase/gate-passes')
+        .then(r => r.json())
+        .then(data => {
+          if (Array.isArray(data) && data.length > 0) {
+            setInternalBales(data);
+            setSelectedBaleId(prev => prev || data[0].id);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [allBales]);
+
   // Active selected bale (either passed in or selected from dropdown/scanner)
   const [selectedBaleId, setSelectedBaleId] = useState<string>(initialBale?.id || allBales[0]?.id || '');
   const [baleBarcodeScanInput, setBaleBarcodeScanInput] = useState('');
 
-  // Update selected bale if initialBale changes
+  // Update selected bale if initialBale changes or effectiveBales loads
   useEffect(() => {
     if (initialBale?.id) {
       setSelectedBaleId(initialBale.id);
-    } else if (!selectedBaleId && allBales.length > 0) {
-      setSelectedBaleId(allBales[0].id);
+    } else if (!selectedBaleId && effectiveBales.length > 0) {
+      setSelectedBaleId(effectiveBales[0].id);
     }
-  }, [initialBale, allBales]);
+  }, [initialBale, effectiveBales, selectedBaleId]);
 
   const activeBale = useMemo(() => {
-    return allBales.find(b => b.id === selectedBaleId) || initialBale || allBales[0] || null;
-  }, [allBales, selectedBaleId, initialBale]);
+    return effectiveBales.find(b => b.id === selectedBaleId) || initialBale || (effectiveBales.length > 0 ? effectiveBales[0] : null);
+  }, [effectiveBales, selectedBaleId, initialBale]);
 
   // Session pieces state synced with Supabase public.bale_sorted_pieces
   const [pieces, setPieces] = useState<any[]>(() => (activeBale?.pieces as any[]) || []);
@@ -366,13 +389,23 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
   // Real-Time HUD Statistics (Live Gram Depletion & Session Metrics)
   const hudStats = useMemo(() => {
-    const totalKg = Number(activeBale?.totalBaleWeight) || 50;
-    const totalGrams = Math.round(totalKg * 1000) || 50000;
+    if (!activeBale) {
+      return {
+        totalGrams: 0,
+        sortedGrams: 0,
+        remainingGrams: 0,
+        piecesCount: 0,
+        progressPercent: 0,
+        isCompleted: false
+      };
+    }
+    const totalKg = Number(activeBale.totalBaleWeight) || 0;
+    const totalGrams = Math.round(totalKg * 1000);
     const sortedGrams = pieces.reduce((sum, p) => sum + (Number(p.weight_grams ?? p.weightGrams) || 0), 0);
     const remainingGrams = Math.max(0, totalGrams - sortedGrams);
     const piecesCount = pieces.length;
     const progressPercent = totalGrams > 0 ? Math.min(100, Math.round((sortedGrams / totalGrams) * 100)) : 0;
-    const isCompleted = isTerminalFinalized || progressPercent >= 100 || activeBale?.status === 'COMPLETED' || activeBale?.sortingStatus === 'FULLY_SORTED';
+    const isCompleted = isTerminalFinalized || progressPercent >= 100 || activeBale.status === 'COMPLETED' || activeBale.sortingStatus === 'FULLY_SORTED';
 
     return {
       totalGrams,
@@ -388,7 +421,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const { activeBalesList, completedBalesList } = useMemo(() => {
     const active: InwardGatePass[] = [];
     const completed: InwardGatePass[] = [];
-    (allBales || []).forEach(b => {
+    (effectiveBales || []).forEach(b => {
       const isDone = b.status === 'COMPLETED' ||
                      b.sortingStatus === 'FULLY_SORTED' ||
                      (b.brokenDownWeight > 0 && (b.remainingWeight !== undefined && b.remainingWeight <= 0));
@@ -396,7 +429,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       else active.push(b);
     });
     return { activeBalesList: active, completedBalesList: completed };
-  }, [allBales]);
+  }, [effectiveBales]);
 
   // Auto-generated Next Piece Barcode Preview (${activeBaleId || 'BAL-01'}-P0001)
   const nextPieceBarcode = useMemo(() => {
@@ -1008,25 +1041,23 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-      <div className="bg-slate-900 border-2 border-indigo-500/40 rounded-2xl shadow-2xl max-w-7xl w-full max-h-[96vh] flex flex-col overflow-hidden text-slate-100 animate-in fade-in zoom-in-95 duration-150">
-        {/* MODAL TOP CONTROL BAR */}
-        <div className="bg-slate-950 px-5 py-3.5 border-b border-slate-800 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/30">
-              <Scale className="w-5 h-5" />
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-slate-900 border-2 border-indigo-500/50 rounded-2xl shadow-2xl w-full max-w-7xl max-h-[96vh] flex flex-col overflow-hidden">
+        {/* TOP STATUS BAR */}
+        <div className="bg-slate-950 px-5 py-3 border-b border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center">
+              <Scale className="w-4 h-4 text-indigo-400" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="font-extrabold text-sm uppercase tracking-wider text-white flex items-center gap-2">
-                  <span>High-Speed Bale Sorting Terminal</span>
-                  <span className="bg-indigo-500/30 text-indigo-300 border border-indigo-400/40 text-[10px] px-2 py-0.5 rounded-full font-mono">
-                    Piece Stream Engine
-                  </span>
-                </h2>
-              </div>
+              <h2 className="text-sm font-bold text-white tracking-tight flex items-center gap-2">
+                <span>Bale Sorting & Individual Piece Breakdown Terminal</span>
+                <span className="bg-emerald-500/20 text-emerald-300 text-[10px] font-mono px-2 py-0.5 rounded-full border border-emerald-500/30 font-semibold">
+                  LIVE SPEED-SORT ENGINE
+                </span>
+              </h2>
               <p className="text-[11px] text-slate-400">
-                Continuous keyboard data entry, instant gram depletion & 4"x2" thermal tagging
+                Continuous weight depletion scale, dual barcode generation & studio 3-angle cataloger
               </p>
             </div>
           </div>
@@ -1034,19 +1065,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleOpenDedicatedPopout}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
-              title="Open terminal in a separate dedicated window for dual-screen setups"
-            >
-              <ExternalLink className="w-3.5 h-3.5 text-indigo-400" />
-              <span className="hidden sm:inline">Popout Window</span>
-            </button>
-
-            <button
-              type="button"
               onClick={onClose}
-              className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-white transition-colors flex items-center justify-center cursor-pointer"
-              title="Close Terminal"
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -1113,23 +1133,29 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                     }
                   }, 50);
                 }}
-                className="bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-200 px-3 py-1.5 focus:outline-hidden focus:border-indigo-400 cursor-pointer font-medium max-w-[220px]"
+                className="bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-200 px-3 py-1.5 focus:outline-hidden focus:border-indigo-400 cursor-pointer font-medium min-w-[240px] max-w-[340px]"
               >
-                <optgroup label="⚡ Active / In-Progress Bales">
-                  {activeBalesList.map(b => (
-                    <option key={b.id} value={b.id}>
-                      {b.baleCode || b.gatePassNo} - {b.baleCategory || 'Mix'} ({b.totalBaleWeight}kg)
-                    </option>
-                  ))}
-                </optgroup>
-                {completedBalesList.length > 0 && (
-                  <optgroup label="🔒 Completed Bales (Closed)">
-                    {completedBalesList.map(b => (
-                      <option key={b.id} value={b.id}>
-                        🔒 {b.baleCode || b.gatePassNo} - COMPLETED ({b.pieces?.length || b.pieceCount || 0} pcs)
-                      </option>
-                    ))}
-                  </optgroup>
+                {effectiveBales.length === 0 ? (
+                  <option value="">-- No Bales in Database (Click + New Bale) --</option>
+                ) : (
+                  <>
+                    <optgroup label="⚡ Active / In-Progress Bales">
+                      {activeBalesList.map(b => (
+                        <option key={b.id} value={b.id}>
+                          {b.baleCode || b.gatePassNo} - {b.baleCategory || 'Mix'} ({b.totalBaleWeight}kg)
+                        </option>
+                      ))}
+                    </optgroup>
+                    {completedBalesList.length > 0 && (
+                      <optgroup label="🔒 Completed Bales (Closed)">
+                        {completedBalesList.map(b => (
+                          <option key={b.id} value={b.id}>
+                            🔒 {b.baleCode || b.gatePassNo} - COMPLETED ({b.pieces?.length || b.pieceCount || 0} pcs)
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </>
                 )}
               </select>
 

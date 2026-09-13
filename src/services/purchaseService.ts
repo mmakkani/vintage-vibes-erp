@@ -469,14 +469,39 @@ export class PurchaseService {
 
   // --- Inward Gate Passes (Bales / Consignments) ---
   public static async getInwardGatePasses(): Promise<InwardGatePass[]> {
-    const { data, error } = await supabase
-      .from('inward_gate_passes')
-      .select('*')
-      .order('created_at', { ascending: false });
+    let data: any[] | null = null;
+    try {
+      const res = await supabase
+        .from('inward_gate_passes')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!res.error && res.data && res.data.length > 0) {
+        data = res.data;
+      }
+    } catch (_) {}
 
-    if (error) {
-      console.error('Supabase error on inward_gate_passes:', error);
-      throw new Error(error.message || 'Database error occurred reading inward gate passes');
+    // If Supabase REST did not return bales (e.g. invalid anon key or offline), query server endpoint
+    if (!data || data.length === 0) {
+      try {
+        const apiRes = await fetch('/api/purchase/gate-passes');
+        if (apiRes.ok) {
+          const apiList = await apiRes.json();
+          if (Array.isArray(apiList) && apiList.length > 0) {
+            return apiList;
+          }
+        }
+      } catch (_) {}
+
+      // Check localStorage cache
+      try {
+        const cached = localStorage.getItem('vintage_bales_cache');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch (_) {}
+
+      return [];
     }
 
     return (data || []).map((row: any) => {

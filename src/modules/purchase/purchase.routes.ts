@@ -131,11 +131,47 @@ purchaseRouter.post(['/invoices/:id/convert-inward', '/invoices/:id/convert-to-g
 
 purchaseRouter.get(['/gate-passes', '/bales', '/'], async (req, res) => {
   try {
-    const list = await PurchaseService.getInwardGatePasses();
-    return res.json(list);
-  } catch (_) {
-    return res.json(PurchaseController.getInwardGatePasses());
+    const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+    if (dbUrl && !dbUrl.includes('placeholder')) {
+      const { Client } = await import('pg');
+      const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+      await client.connect();
+      const q = await client.query('SELECT * FROM inward_gate_passes ORDER BY created_at DESC;');
+      await client.end();
+      if (q.rows && q.rows.length > 0) {
+        const mapped = q.rows.map((row: any) => ({
+          id: String(row.id),
+          passNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
+          gatePassNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
+          baleCode: row.bale_code || row.bale_tag_no || `BAL-${String(row.id).slice(-6)}`,
+          baleCategory: row.bale_category || 'Vintage Mixed Bales',
+          purchaseInvoiceId: row.purchase_invoice_id || '',
+          purchaseInvoiceNo: row.purchase_invoice_no || '',
+          supplierName: row.supplier_name || 'Trade Supplier',
+          date: (row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString()).slice(0, 10),
+          status: row.status || 'UNOPENED',
+          sortingStatus: row.status || 'UNOPENED',
+          totalBaleCost: Number(row.total_bale_cost ?? row.cost_price ?? 0),
+          totalBaleWeight: Number(row.total_bale_weight ?? row.weight_kg ?? 0),
+          costPerGram: Number(row.cost_per_gram ?? 0),
+          brokenDownWeight: Number(row.broken_down_weight ?? 0),
+          remainingWeight: Math.max(0, Number(row.total_bale_weight ?? row.weight_kg ?? 0) - Number(row.broken_down_weight ?? 0)),
+          pieceCount: Number(row.piece_count ?? 0),
+          pieces: Array.isArray(row.pieces) ? row.pieces : []
+        }));
+        return res.json(mapped);
+      }
+    }
+  } catch (err: any) {
+    console.warn('Postgres direct query notice on /gate-passes:', err?.message);
   }
+
+  try {
+    const list = await PurchaseService.getInwardGatePasses();
+    if (list && list.length > 0) return res.json(list);
+  } catch (_) {}
+
+  return res.json(PurchaseController.getInwardGatePasses());
 });
 
 purchaseRouter.post(['/gate-passes/bale-inward', '/bales/inward', '/bales'], async (req, res) => {
