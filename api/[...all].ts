@@ -8,6 +8,18 @@ const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'ht
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabaseAdmin = createClient(supaUrl, supaKey || 'anon-key');
 
+async function getPgClient(): Promise<Client | null> {
+  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  try {
+    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+    await client.connect();
+    return client;
+  } catch (err) {
+    console.warn('[Serverless PG Connect Notice]:', err);
+    return null;
+  }
+}
+
 // ============================================================================
 // VINTAGE VIBES ERP - UNIFIED VERCEL SERVERLESS GATEWAY
 // Handles all /api/* routes reliably on AWS Lambda / Vercel Serverless
@@ -1481,13 +1493,211 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // Lists for dropdowns
-    if (pathname.includes('/purchase/pieces') || pathname.includes('/purchase/gate-passes') || pathname.includes('/parties')) {
-      return res.status(200).json([]);
+    // 1. Parties Master Khata Endpoint
+    if (pathname.includes('/parties')) {
+      if (method === 'GET') {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const q = await client.query('SELECT * FROM parties ORDER BY name ASC;');
+            await client.end();
+            if (q.rows && q.rows.length > 0) {
+              const mapped = q.rows.map(r => ({
+                id: String(r.id),
+                code: r.code || `P-${String(r.id).slice(-4)}`,
+                name: r.name,
+                type: (r.type || 'CLIENT').toUpperCase(),
+                contactPerson: r.contact_person || '',
+                phone: r.phone || '',
+                email: r.email || '',
+                address: r.address || '',
+                trnNo: r.trn_no || '',
+                creditLimit: Number(r.credit_limit ?? 0),
+                currentBalance: Number(r.current_balance ?? 0),
+                currency: r.currency || 'AED',
+                isActive: r.is_active !== false,
+                accountMap: r.account_map || {},
+                coaAccountId: r.coa_account_id,
+                createdAt: r.created_at || new Date().toISOString()
+              }));
+              return res.status(200).json(mapped);
+            }
+          } catch (e) {
+            try { await client.end(); } catch (_) {}
+          }
+        }
+
+        const { data } = await supabaseAdmin.from('parties').select('*').order('name');
+        return res.status(200).json(data || []);
+      }
     }
 
-    if (pathname.includes('/setup/')) {
-      return res.status(200).json([]);
+    // 2. Gate Passes & Consignment Bales
+    if (pathname.includes('/purchase/gate-passes') || pathname.includes('/bales')) {
+      if (method === 'GET') {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const q = await client.query('SELECT * FROM inward_gate_passes ORDER BY created_at DESC;');
+            await client.end();
+            if (q.rows && q.rows.length > 0) {
+              const mapped = q.rows.map((row: any) => ({
+                id: String(row.id),
+                passNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
+                gatePassNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
+                baleCode: row.bale_code || row.bale_tag_no || `BAL-${String(row.id).slice(-6)}`,
+                baleCategory: row.bale_category || 'Vintage Mixed Bales',
+                purchaseInvoiceId: row.purchase_invoice_id || '',
+                purchaseInvoiceNo: row.purchase_invoice_no || '',
+                supplierName: row.supplier_name || 'Trade Supplier',
+                date: (row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString()).slice(0, 10),
+                status: row.status || 'UNOPENED',
+                sortingStatus: row.status || 'UNOPENED',
+                totalBaleCost: Number(row.total_bale_cost ?? row.cost_price ?? 0),
+                totalBaleWeight: Number(row.total_bale_weight ?? row.weight_kg ?? 0),
+                costPerGram: Number(row.cost_per_gram ?? 0),
+                brokenDownWeight: Number(row.broken_down_weight ?? 0),
+                remainingWeight: Math.max(0, Number(row.total_bale_weight ?? row.weight_kg ?? 0) - Number(row.broken_down_weight ?? 0)),
+                pieceCount: Number(row.piece_count ?? 0),
+                pieces: Array.isArray(row.pieces) ? row.pieces : []
+              }));
+              return res.status(200).json(mapped);
+            }
+          } catch (e) {
+            try { await client.end(); } catch (_) {}
+          }
+        }
+
+        const { data } = await supabaseAdmin.from('inward_gate_passes').select('*').order('created_at', { ascending: false });
+        return res.status(200).json(data || []);
+      }
+    }
+
+    // 3. Factory Bale Presets Catalog
+    if (pathname.includes('/purchase/bale-presets') || pathname.includes('/purchase/presets')) {
+      if (method === 'GET') {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const q = await client.query('SELECT * FROM bale_presets ORDER BY name ASC;');
+            await client.end();
+            if (q.rows && q.rows.length > 0) {
+              const mapped = q.rows.map((r: any) => ({
+                id: String(r.id),
+                code: r.item_code || r.code || `BALE-${r.id}`,
+                name: r.name,
+                category: r.category || 'Apparel',
+                uom: r.uom || 'BALES',
+                targetUom: r.uom || 'BALES',
+                stdWeight: Number(r.std_weight ?? 45),
+                weightKg: Number(r.std_weight ?? 45),
+                basePrice: Number(r.base_rate ?? 0),
+                baseRate: Number(r.base_rate ?? 0),
+                status: 'POSTED',
+                isActive: true
+              }));
+              return res.status(200).json(mapped);
+            }
+          } catch (e) {
+            try { await client.end(); } catch (_) {}
+          }
+        }
+
+        const { data } = await supabaseAdmin.from('bale_presets').select('*').order('name');
+        return res.status(200).json(data || []);
+      }
+    }
+
+    // 4. Inventory Sorted Pieces
+    if (pathname.includes('/purchase/pieces') || pathname.includes('/purchase/inventory')) {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const q = await client.query('SELECT * FROM inventory_pieces ORDER BY created_at DESC LIMIT 500;');
+          await client.end();
+          if (q.rows && q.rows.length > 0) return res.status(200).json(q.rows);
+        } catch (e) {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      const { data } = await supabaseAdmin.from('inventory_pieces').select('*').order('created_at', { ascending: false }).limit(500);
+      return res.status(200).json(data || []);
+    }
+
+    // 5. Setup Master Catalogs (Categories, Labels, Sizes, Brands, Shops)
+    if (pathname.includes('/setup/categories')) {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const q = await client.query('SELECT * FROM category_masters ORDER BY name ASC;');
+          await client.end();
+          if (q.rows && q.rows.length > 0) return res.status(200).json(q.rows);
+        } catch (e) {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      const { data } = await supabaseAdmin.from('category_masters').select('*').order('name');
+      return res.status(200).json(data || []);
+    }
+
+    if (pathname.includes('/setup/labels')) {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const q = await client.query('SELECT * FROM label_grades ORDER BY grade_name ASC;');
+          await client.end();
+          if (q.rows && q.rows.length > 0) return res.status(200).json(q.rows);
+        } catch (e) {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      const { data } = await supabaseAdmin.from('label_grades').select('*').order('grade_name');
+      return res.status(200).json(data || []);
+    }
+
+    if (pathname.includes('/setup/sizes')) {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const q = await client.query('SELECT * FROM sizes ORDER BY sort_order ASC;');
+          await client.end();
+          if (q.rows && q.rows.length > 0) return res.status(200).json(q.rows);
+        } catch (e) {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      const { data } = await supabaseAdmin.from('sizes').select('*').order('sort_order');
+      return res.status(200).json(data || []);
+    }
+
+    if (pathname.includes('/setup/brands')) {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const q = await client.query('SELECT * FROM brand_masters ORDER BY name ASC;');
+          await client.end();
+          if (q.rows && q.rows.length > 0) return res.status(200).json(q.rows);
+        } catch (e) {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      const { data } = await supabaseAdmin.from('brand_masters').select('*').order('name');
+      return res.status(200).json(data || []);
+    }
+
+    if (pathname.includes('/setup/shops')) {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const q = await client.query('SELECT * FROM shop_masters ORDER BY name ASC;');
+          await client.end();
+          if (q.rows && q.rows.length > 0) return res.status(200).json(q.rows);
+        } catch (e) {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      const { data } = await supabaseAdmin.from('shop_masters').select('*').order('name');
+      return res.status(200).json(data || []);
     }
 
     return res.status(200).json({
