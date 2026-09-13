@@ -19,8 +19,10 @@ import {
   Building2,
   AlertCircle,
   Printer,
-  Tag
+  Tag,
+  Trash2
 } from 'lucide-react';
+import { PurchaseService } from '../../../services/purchaseService.ts';
 
 interface BaleMasterRegistryProps {
   bales: InwardGatePass[];
@@ -120,6 +122,20 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
       totalCount: filteredBales.length
     }));
     openBatchBaleThermalTagsPrintWindow(tags);
+  };
+
+  const handleDeleteBale = async (bale: InwardGatePass) => {
+    const baleTitle = bale.baleCode || bale.gatePassNo;
+    if (!window.confirm(`Are you sure you want to permanently delete Bale "${baleTitle}"? All sorted garment pieces, sessions, and associated inward vouchers will be purged from SQL.`)) {
+      return;
+    }
+    try {
+      await PurchaseService.deleteInwardGatePass(bale.id);
+      alert(`Bale ${baleTitle} deleted successfully from SQL.`);
+      onRefresh();
+    } catch (err: any) {
+      alert(`Failed to delete bale: ${err?.message || 'Error'}`);
+    }
   };
 
   const handleCreateBale = async (e: React.FormEvent) => {
@@ -536,6 +552,14 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                           >
                             <Scale className="w-3.5 h-3.5" />
                             Open Terminal
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteBale(bale)}
+                            className="p-1.5 hover:bg-rose-50 text-rose-600 rounded cursor-pointer transition-colors border border-rose-200"
+                            title="Delete Bale & Remove from SQL"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>

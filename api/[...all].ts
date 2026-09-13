@@ -1377,6 +1377,33 @@ export default async function handler(req: any, res: any) {
           console.warn('Error querying vouchers in serverless gateway:', e?.message);
         }
       }
+      if (method === 'DELETE') {
+        const vId = pathname.split('/').pop();
+        if (vId) {
+          const client = await getPgClient();
+          if (client) {
+            try {
+              await client.query('DELETE FROM voucher_entries WHERE voucher_id = $1 OR voucher_no = $1;', [vId]);
+              await client.query('DELETE FROM general_ledger WHERE voucher_id = $1 OR voucher_no = $1;', [vId]);
+              await client.query('DELETE FROM ledgers WHERE voucher_id = $1 OR voucher_no = $1;', [vId]);
+              await client.query('DELETE FROM financial_vouchers WHERE id = $1 OR voucher_no = $1;', [vId]);
+              await client.query('DELETE FROM vouchers WHERE id = $1 OR voucher_no = $1;', [vId]);
+              try { await client.query('SELECT sync_coa_current_balances();'); } catch (_) {}
+              await client.end();
+              return res.status(200).json({ success: true, message: 'Voucher and general ledger deleted from SQL' });
+            } catch (e) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          await supabaseAdmin.from('voucher_entries').delete().or(`voucher_id.eq.${vId},voucher_no.eq.${vId}`);
+          await supabaseAdmin.from('general_ledger').delete().or(`voucher_id.eq.${vId},voucher_no.eq.${vId}`);
+          await supabaseAdmin.from('ledgers').delete().or(`voucher_id.eq.${vId},voucher_no.eq.${vId}`);
+          await supabaseAdmin.from('financial_vouchers').delete().or(`id.eq.${vId},voucher_no.eq.${vId}`);
+          await supabaseAdmin.from('vouchers').delete().or(`id.eq.${vId},voucher_no.eq.${vId}`);
+          try { await supabaseAdmin.rpc('sync_coa_current_balances'); } catch (_) {}
+          return res.status(200).json({ success: true });
+        }
+      }
       return res.status(200).json([]);
     }
 
@@ -1588,6 +1615,73 @@ export default async function handler(req: any, res: any) {
           return res.status(500).json({ success: false, error: error.message, code: error.code, details: error.details });
         }
         return res.status(200).json({ success: true, invoice: data?.[0] || body });
+      }
+      if (method === 'DELETE') {
+        const invId = pathname.split('/').pop();
+        if (invId) {
+          try {
+            const { data: invRow } = await supabaseAdmin
+              .from('purchase_invoices')
+              .select('id, invoice_no')
+              .eq('id', invId)
+              .maybeSingle();
+
+            const invoiceNo = invRow?.invoice_no;
+            const cleanInvNo = (invoiceNo || '').replace(/[^a-zA-Z0-9]/g, '');
+
+            await supabaseAdmin.from('purchase_invoice_items').delete().eq('invoice_id', invId);
+
+            const { data: passes } = await supabaseAdmin
+              .from('inward_gate_passes')
+              .select('id')
+              .or(`purchase_invoice_id.eq.${invId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+
+            if (passes && passes.length > 0) {
+              for (const p of passes) {
+                await supabaseAdmin.from('bale_sorted_pieces').delete().eq('bale_id', p.id);
+                await supabaseAdmin.from('bale_sessions').delete().eq('bale_id', p.id);
+                await supabaseAdmin.from('inventory_pieces').delete().eq('gate_pass_id', p.id);
+              }
+              await supabaseAdmin.from('inward_gate_passes').delete().or(`purchase_invoice_id.eq.${invId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+            }
+
+            if (invoiceNo) {
+              const { data: fvList } = await supabaseAdmin
+                .from('financial_vouchers')
+                .select('id, voucher_no, reference, narration');
+
+              const matchedVchs: { id: string; voucher_no: string }[] = [];
+              if (fvList) {
+                for (const v of fvList) {
+                  const target = invoiceNo.toUpperCase();
+                  const targetClean = cleanInvNo.toUpperCase();
+                  const vRef = String(v.reference || '').toUpperCase();
+                  const vNo = String(v.voucher_no || '').toUpperCase();
+                  const vNarr = String(v.narration || '').toUpperCase();
+                  if (vRef.includes(target) || vNarr.includes(target) || (targetClean && vNo.includes(targetClean))) {
+                    matchedVchs.push({ id: String(v.id), voucher_no: String(v.voucher_no) });
+                  }
+                }
+              }
+
+              for (const mv of matchedVchs) {
+                await supabaseAdmin.from('voucher_entries').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+                await supabaseAdmin.from('general_ledger').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+                await supabaseAdmin.from('ledgers').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+                await supabaseAdmin.from('financial_vouchers').delete().eq('id', mv.id);
+                await supabaseAdmin.from('vouchers').delete().eq('id', mv.id);
+              }
+
+              await supabaseAdmin.from('party_khata_logs').delete().or(`reference.eq.${invoiceNo},notes.ilike.%${invoiceNo}%`);
+            }
+
+            await supabaseAdmin.from('purchase_invoices').delete().eq('id', invId);
+            try { await supabaseAdmin.rpc('sync_coa_current_balances'); } catch (_) {}
+            return res.status(200).json({ success: true, message: 'Invoice and financial vouchers cascade deleted from SQL' });
+          } catch (e: any) {
+            return res.status(500).json({ success: false, error: e?.message || 'Failed to delete invoice' });
+          }
+        }
       }
     }
 

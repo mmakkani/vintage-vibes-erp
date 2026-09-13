@@ -656,14 +656,21 @@ export class FinanceService {
     };
   }
 
-  public static async deleteVoucher(id: string): Promise<boolean> {
+  public static async deleteVoucher(id: string, force: boolean = true): Promise<boolean> {
     const cleanId = String(id);
-    const vouchersList = await this.getVouchers();
-    const existing = vouchersList.find(item => String(item.id) === cleanId || item.voucherNo === cleanId);
-    if (existing && this.isAutoVoucher(existing)) {
-      throw new Error('Auto-generated system vouchers cannot be deleted directly. Delete the source invoice to remove its voucher.');
-    }
-    const vNo = existing?.voucherNo || cleanId;
+    let vNo = cleanId;
+    try {
+      const vouchersList = await this.getVouchers();
+      const existing = vouchersList.find(item => String(item.id) === cleanId || item.voucherNo === cleanId);
+      if (existing?.voucherNo) {
+        vNo = existing.voucherNo;
+      }
+    } catch (_) {}
+
+    // Call serverless endpoint if available
+    try {
+      fetch(`/api/finance/vouchers/${cleanId}`, { method: 'DELETE' }).catch(() => {});
+    } catch (_) {}
 
     try {
       await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);

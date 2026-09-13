@@ -244,10 +244,10 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   };
 
   const handleUnpostInvoice = async (invId: string) => {
-    if (!window.confirm("Are you sure you want to unpost this invoice back to DRAFT?")) return;
+    if (!window.confirm("Are you sure you want to unpost this invoice back to DRAFT? Auto-generated financial vouchers and ledger entries will be removed from SQL.")) return;
     try {
       await PurchaseService.unpostPurchaseInvoice(invId);
-      setToastMessage("Purchase invoice unposted to DRAFT");
+      setToastMessage("Purchase invoice unposted to DRAFT and vouchers removed from SQL");
       onRefresh();
     } catch (e: any) {
       alert("Failed to unpost invoice: " + (e?.message || 'Error'));
@@ -290,48 +290,22 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   // 3. FIX DELETE BUTTON (Cascading Delete Handler)
   const handleDeleteInvoice = async (invoiceId: string, invoiceNo?: string) => {
     // a) Confirmation prompt:
-    if (!window.confirm("Are you sure you want to permanently delete this purchase invoice?")) return;
+    if (!window.confirm("Are you sure you want to permanently delete this purchase invoice? All associated bales, sorting sessions, and auto-generated accounting vouchers will be completely removed from the SQL database.")) return;
 
     try {
-      // b) Delete associated manifest line items first:
-      const { error: itemsError } = await supabase
-        .from('purchase_invoice_items')
-        .delete()
-        .eq('invoice_id', String(invoiceId));
-      if (itemsError) console.warn("Items delete warning:", itemsError);
+      // b) Perform complete SQL cascade delete via PurchaseService
+      await PurchaseService.deletePurchaseInvoice(String(invoiceId), invoiceNo);
 
-      // Also clean up any unopened inward gate pass bales associated with this invoice:
-      try {
-        await supabase
-          .from('inward_gate_passes')
-          .delete()
-          .or(`purchase_invoice_id.eq.${invoiceId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
-      } catch (gateErr) {
-        console.warn("Gate passes delete warning:", gateErr);
-      }
-
-      // c) Delete the invoice record:
-      const { error: invoiceError } = await supabase
-        .from('purchase_invoices')
-        .delete()
-        .eq('id', String(invoiceId));
-
-      if (invoiceError) {
-        console.error("Failed to delete invoice:", invoiceError);
-        alert("Delete failed: " + invoiceError.message);
-        return;
-      }
-
-      // d) Immediately remove the deleted invoice from React state:
+      // c) Immediately remove the deleted invoice from React state:
       setInvoicesList(prev => prev.filter(inv => String(inv.id) !== String(invoiceId)));
       if (onDeleteInvoice) {
         onDeleteInvoice(String(invoiceId));
       }
 
-      setToastMessage("Purchase invoice deleted successfully");
+      setToastMessage("Purchase invoice and auto-vouchers deleted successfully from SQL");
       try {
         if (typeof (window as any).toast !== 'undefined') {
-          (window as any).toast.success("Purchase invoice deleted successfully");
+          (window as any).toast.success("Purchase invoice & vouchers deleted successfully");
         }
       } catch {}
 

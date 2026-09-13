@@ -110,13 +110,25 @@ export class PurchaseService {
   }
 
   public static async unpostPurchaseInvoice(invoiceId: string): Promise<void> {
+    const { data: invRow } = await supabase
+      .from('purchase_invoices')
+      .select('id, invoice_no')
+      .eq('id', String(invoiceId))
+      .maybeSingle();
+
+    const invoiceNo = invRow?.invoice_no;
+
     const { error } = await supabase
       .from('purchase_invoices')
-      .update({ status: 'DRAFT' })
+      .update({ status: 'DRAFT', converted_to_inward: false })
       .eq('id', String(invoiceId));
     if (error) {
       console.error('Supabase error unposting purchase invoice:', error);
       throw new Error(error.message || 'Failed to unpost purchase invoice');
+    }
+
+    if (invoiceNo) {
+      await this.deleteInvoiceFinancialVouchers(invoiceNo);
     }
   }
 
@@ -393,64 +405,173 @@ export class PurchaseService {
     } as PurchaseInvoice;
   }
 
-  public static async deletePurchaseInvoice(invoiceId: string): Promise<void> {
-    // 0. Fetch invoice first to get invoice_no and supplier info
-    const { data: invRow } = await supabase
-      .from('purchase_invoices')
-      .select('id, invoice_no, supplier_id, supplier_name')
-      .eq('id', String(invoiceId))
-      .maybeSingle();
+  public static async deleteInvoiceFinancialVouchers(invoiceNo: string): Promise<void> {
+    if (!invoiceNo || !invoiceNo.trim()) return;
+    const cleanInvNo = invoiceNo.replace(/[^a-zA-Z0-9]/g, '');
 
-    const invoiceNo = invRow?.invoice_no;
+    try {
+      // 1. Fetch matching vouchers from financial_vouchers
+      const { data: fvList } = await supabase
+        .from('financial_vouchers')
+        .select('id, voucher_no, reference, narration');
 
-    // 1. Delete associated manifest line items
-    const { error: itemsError } = await supabase
-      .from('purchase_invoice_items')
-      .delete()
-      .eq('invoice_id', String(invoiceId));
-    if (itemsError) console.warn("Items delete warning:", itemsError);
+      const matchedVouchers: { id: string; voucher_no: string }[] = [];
+      if (fvList && fvList.length > 0) {
+        for (const v of fvList) {
+          const vRef = String(v.reference || '').toUpperCase();
+          const vNo = String(v.voucher_no || '').toUpperCase();
+          const vNarr = String(v.narration || '').toUpperCase();
+          const target = invoiceNo.toUpperCase();
+          const targetClean = cleanInvNo.toUpperCase();
 
-    // 2. Delete associated unopened inward gate pass bales
-    await supabase
-      .from('inward_gate_passes')
-      .delete()
-      .or(`purchase_invoice_id.eq.${String(invoiceId)}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
-
-    // 3. Delete any auto-generated vouchers and general ledger entries tied to this invoice
-    if (invoiceNo) {
-      try {
-        // Find matching vouchers in financial_vouchers
-        const { data: matchedVouchers } = await supabase
-          .from('financial_vouchers')
-          .select('id, voucher_no')
-          .or(`reference.eq.PINV-${invoiceNo},reference.eq.INWARD-${invoiceNo},reference.eq.PUR-${invoiceNo},reference.eq.${invoiceNo},narration.ilike.%${invoiceNo}%`);
-
-        if (matchedVouchers && matchedVouchers.length > 0) {
-          for (const mv of matchedVouchers) {
-            await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-            await supabase.from('financial_voucher_lines').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-            await supabase.from('general_ledger').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-            await supabase.from('ledgers').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-            await supabase.from('financial_vouchers').delete().eq('id', mv.id);
-            await supabase.from('vouchers').delete().eq('id', mv.id);
+          if (
+            vRef.includes(target) ||
+            vNarr.includes(target) ||
+            (targetClean && vNo.includes(targetClean)) ||
+            vRef === `PINV-${target}` ||
+            vRef === `INWARD-${target}` ||
+            vRef === `PUR-${target}`
+          ) {
+            matchedVouchers.push({ id: String(v.id), voucher_no: String(v.voucher_no) });
           }
         }
-      } catch (vErr) {
-        console.warn('Warning deleting auto vouchers for invoice:', vErr);
       }
 
-      // Delete party_khata_logs for this invoice
+      // 2. Also check table 'vouchers'
+      try {
+        const { data: vList } = await supabase
+          .from('vouchers')
+          .select('id, voucher_no, reference, narration');
+        if (vList && vList.length > 0) {
+          for (const v of vList) {
+            const vRef = String(v.reference || '').toUpperCase();
+            const vNo = String(v.voucher_no || '').toUpperCase();
+            const vNarr = String(v.narration || '').toUpperCase();
+            const target = invoiceNo.toUpperCase();
+            const targetClean = cleanInvNo.toUpperCase();
+
+            if (
+              vRef.includes(target) ||
+              vNarr.includes(target) ||
+              (targetClean && vNo.includes(targetClean)) ||
+              vRef === `PINV-${target}` ||
+              vRef === `INWARD-${target}` ||
+              vRef === `PUR-${target}`
+            ) {
+              if (!matchedVouchers.some(m => m.id === String(v.id))) {
+                matchedVouchers.push({ id: String(v.id), voucher_no: String(v.voucher_no) });
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
+      // 3. Cascade delete all entries and general ledger lines for each matched voucher
+      for (const mv of matchedVouchers) {
+        const cleanId = mv.id;
+        const vNo = mv.voucher_no;
+
+        try {
+          await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
+        try {
+          await supabase.from('financial_voucher_lines').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
+        try {
+          await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
+        try {
+          await supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
+        try {
+          await supabase.from('financial_vouchers').delete().eq('id', cleanId);
+        } catch (_) {}
+        try {
+          await supabase.from('vouchers').delete().eq('id', cleanId);
+        } catch (_) {}
+      }
+
+      // 4. Delete party_khata_logs for this invoice
       try {
         await supabase
           .from('party_khata_logs')
           .delete()
           .or(`reference.eq.${invoiceNo},notes.ilike.%${invoiceNo}%`);
-      } catch (kErr) {
-        console.warn('Warning deleting party khata logs for invoice:', kErr);
+      } catch (_) {}
+
+      // 5. Reconcile COA in SQL
+      try {
+        FinanceService.clearCoaCache();
+        await supabase.rpc('sync_coa_current_balances');
+      } catch (_) {}
+
+      // 6. If zero invoices and zero bales remain, reset stock & supplier COA accounts to 0
+      try {
+        const { count: invCount } = await supabase.from('purchase_invoices').select('id', { count: 'exact', head: true });
+        const { count: baleCount } = await supabase.from('inward_gate_passes').select('id', { count: 'exact', head: true });
+        if (Number(invCount || 0) === 0 && Number(baleCount || 0) === 0) {
+          await supabase.from('coa_accounts').update({ current_balance: 0 }).in('code', ['1140-00', '1150-00', '2110-00']);
+        }
+      } catch (_) {}
+    } catch (err) {
+      console.warn('Error in deleteInvoiceFinancialVouchers:', err);
+    }
+  }
+
+  public static async deletePurchaseInvoice(invoiceId: string, explicitInvoiceNo?: string): Promise<void> {
+    // 0. Fetch invoice first to get invoice_no and supplier info
+    let invoiceNo = explicitInvoiceNo;
+    try {
+      const { data: invRow } = await supabase
+        .from('purchase_invoices')
+        .select('id, invoice_no, supplier_id, supplier_name')
+        .eq('id', String(invoiceId))
+        .maybeSingle();
+
+      if (invRow?.invoice_no) {
+        invoiceNo = invRow.invoice_no;
       }
+    } catch (_) {}
+
+    // 1. Delete associated manifest line items
+    try {
+      await supabase
+        .from('purchase_invoice_items')
+        .delete()
+        .eq('invoice_id', String(invoiceId));
+    } catch (itemsError) {
+      console.warn("Items delete warning:", itemsError);
     }
 
-    // 4. Delete the invoice record
+    // 2. Delete associated inward gate pass bales and their sorting/inventory breakdown
+    try {
+      const { data: passes } = await supabase
+        .from('inward_gate_passes')
+        .select('id')
+        .or(`purchase_invoice_id.eq.${String(invoiceId)}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+
+      if (passes && passes.length > 0) {
+        for (const p of passes) {
+          await supabase.from('bale_sorted_pieces').delete().eq('bale_id', p.id);
+          await supabase.from('bale_sessions').delete().eq('bale_id', p.id);
+          await supabase.from('inventory_pieces').delete().eq('gate_pass_id', p.id);
+        }
+      }
+
+      await supabase
+        .from('inward_gate_passes')
+        .delete()
+        .or(`purchase_invoice_id.eq.${String(invoiceId)}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+    } catch (gateErr) {
+      console.warn("Inward passes delete warning:", gateErr);
+    }
+
+    // 3. Delete any auto-generated vouchers and general ledger entries tied to this invoice
+    if (invoiceNo) {
+      await this.deleteInvoiceFinancialVouchers(invoiceNo);
+    }
+
+    // 4. Delete the invoice record from purchase_invoices
     const { error: invoiceError } = await supabase
       .from('purchase_invoices')
       .delete()
@@ -460,7 +581,86 @@ export class PurchaseService {
       throw new Error(invoiceError.message || 'Failed to delete invoice');
     }
 
-    // 5. Refresh COA and Party Live Balances in SQL
+    // 5. Final COA cache and live balance refresh
+    try {
+      FinanceService.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
+    } catch (_) {}
+  }
+
+  public static async deleteInwardGatePass(gatePassId: string): Promise<void> {
+    const cleanId = String(gatePassId);
+    let invoiceNo: string | undefined;
+    let invoiceId: string | undefined;
+
+    try {
+      const { data: row } = await supabase
+        .from('inward_gate_passes')
+        .select('id, purchase_invoice_id, purchase_invoice_no')
+        .eq('id', cleanId)
+        .maybeSingle();
+
+      if (row) {
+        invoiceNo = row.purchase_invoice_no;
+        invoiceId = row.purchase_invoice_id;
+      }
+    } catch (_) {}
+
+    // 1. Delete pieces and sessions associated with this bale
+    try {
+      await supabase.from('bale_sorted_pieces').delete().eq('bale_id', cleanId);
+    } catch (_) {}
+    try {
+      await supabase.from('bale_sessions').delete().eq('bale_id', cleanId);
+    } catch (_) {}
+    try {
+      await supabase.from('inventory_pieces').delete().eq('gate_pass_id', cleanId);
+    } catch (_) {}
+
+    // 2. Delete the inward gate pass itself
+    const { error: igpErr } = await supabase
+      .from('inward_gate_passes')
+      .delete()
+      .eq('id', cleanId);
+
+    if (igpErr) {
+      console.error('Failed to delete inward gate pass:', igpErr);
+      throw new Error(igpErr.message || 'Failed to delete inward gate pass');
+    }
+
+    // 3. If no more bales exist for this invoice, delete inward voucher and reset converted status
+    if (invoiceNo || invoiceId) {
+      try {
+        const { count: remainingBales } = await supabase
+          .from('inward_gate_passes')
+          .select('id', { count: 'exact', head: true })
+          .or(`purchase_invoice_id.eq.${invoiceId || 'none'}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+
+        if (Number(remainingBales || 0) === 0) {
+          if (invoiceId) {
+            await supabase.from('purchase_invoices').update({ converted_to_inward: false }).eq('id', invoiceId);
+          }
+          if (invoiceNo) {
+            // Delete inward transfer vouchers specifically
+            const { data: inwVchs } = await supabase
+              .from('financial_vouchers')
+              .select('id, voucher_no')
+              .or(`reference.eq.INWARD-${invoiceNo},voucher_no.ilike.%JV-INW%`);
+
+            if (inwVchs && inwVchs.length > 0) {
+              for (const iv of inwVchs) {
+                await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
+                await supabase.from('general_ledger').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
+                await supabase.from('financial_vouchers').delete().eq('id', iv.id);
+                await supabase.from('vouchers').delete().eq('id', iv.id);
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 4. Reconcile COA in SQL
     try {
       FinanceService.clearCoaCache();
       await supabase.rpc('sync_coa_current_balances');
