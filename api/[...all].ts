@@ -117,7 +117,7 @@ let whatsappGatewayConfig = {
     autoReconnect: true,
     browserName: 'Vintage Vibes ERP (Production)',
     status: 'READY' as 'READY' | 'PAIRING' | 'CONNECTED' | 'DISCONNECTED',
-    workerBridgeUrl: process.env.WHATSAPP_WORKER_BRIDGE_URL || ''
+    workerBridgeUrl: process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || ''
   },
   metaCloudConfig: {
     enabled: true,
@@ -331,6 +331,21 @@ export default async function handler(req: any, res: any) {
     // 1. WhatsApp Session
     if ((pathname.endsWith('/whatsapp/session') || pathname.endsWith('/whatsapp/status')) && method === 'GET') {
       const session = getOrCreateSession(userId, userName);
+      const bridgeUrl = whatsappGatewayConfig.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL;
+      if (bridgeUrl) {
+        try {
+          const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/status`, { signal: AbortSignal.timeout(3000) });
+          if (bRes.ok) {
+            const bData = await bRes.json();
+            session.isConnected = Boolean(bData.isConnected);
+            if (bData.phoneNumber) session.phoneNumber = bData.phoneNumber;
+            if (bData.status) session.status = bData.status;
+            if (bData.pairingCode) session.pairingCode = bData.pairingCode;
+            if (bData.qrCodeDataUrl) session.qrCodeDataUrl = bData.qrCodeDataUrl;
+            if (bData.lastActive) session.lastActive = bData.lastActive;
+          }
+        } catch (_) {}
+      }
       return res.status(200).json(session);
     }
 
@@ -338,13 +353,31 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json(Array.from(sessionsMap.values()));
     }
 
-    // 2. Generate Multi-Device QR Code (Tab 2)
+    // 2. Generate Multi-Device QR Code (Tab 4 / QR)
     if ((pathname.endsWith('/whatsapp/generate-qr') || pathname.endsWith('/whatsapp/qr')) && method === 'POST') {
       const uId = body.userId || userId;
       const uName = body.userName || userName;
       const session = getOrCreateSession(uId, uName);
+      const bridgeUrl = whatsappGatewayConfig.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL;
 
-      // Multi-device WhatsApp Web handshake payload
+      if (bridgeUrl) {
+        try {
+          const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/qr`, { signal: AbortSignal.timeout(4000) });
+          if (bRes.ok) {
+            const bData = await bRes.json();
+            if (bData.qrCodeDataUrl || bData.qr) {
+              session.qrCodeDataUrl = bData.qrCodeDataUrl || bData.qr;
+              session.status = 'PAIRING';
+              session.pairingStatus = 'AWAITING_CODE_ENTRY';
+              session.lastActive = 'Live Worker QR Ready for Scan';
+              sessionsMap.set(uId, session);
+              return res.status(200).json(session);
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Multi-device WhatsApp Web handshake payload fallback
       const noiseToken = Math.random().toString(36).substring(2, 10);
       const secretKey = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
       const rawQrData = `2@${noiseToken},${secretKey},VintageVibes_${uId}`;
@@ -352,7 +385,7 @@ export default async function handler(req: any, res: any) {
       session.isConnected = false;
       session.status = 'PAIRING';
       session.pairingStatus = 'AWAITING_CODE_ENTRY';
-      session.qrCodeDataUrl = rawQrData; // Rendered by <QRCodeSVG value={qrString} />
+      session.qrCodeDataUrl = rawQrData;
       session.lastActive = 'Live QR Ready for Scan';
 
       sessionsMap.set(uId, session);
@@ -361,7 +394,7 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json(session);
     }
 
-    // 3. Request 8-Digit Pairing Code (Tab 1)
+    // 3. Request 8-Digit Pairing Code (Tab 3 / Pairing)
     if ((pathname.endsWith('/whatsapp/request-pairing-code') || pathname.endsWith('/whatsapp/pair')) && method === 'POST') {
       const uId = body.userId || userId;
       const rawPhone = (body.phoneNumber || '').toString();
@@ -375,6 +408,32 @@ export default async function handler(req: any, res: any) {
       }
 
       const session = getOrCreateSession(uId);
+      const bridgeUrl = whatsappGatewayConfig.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL;
+
+      if (bridgeUrl) {
+        try {
+          const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/pair`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phoneNumber: cleanDigits }),
+            signal: AbortSignal.timeout(6000)
+          });
+          if (bRes.ok) {
+            const bData = await bRes.json();
+            if (bData.pairingCode) {
+              session.phoneNumber = `+${cleanDigits}`;
+              session.pairingCode = bData.pairingCode;
+              session.pairingCodeRequestedAt = new Date().toISOString();
+              session.pairingStatus = 'AWAITING_CODE_ENTRY';
+              session.status = 'PAIRING';
+              session.lastActive = `Worker Pairing Code: ${bData.pairingCode}`;
+              sessionsMap.set(uId, session);
+              return res.status(200).json(session);
+            }
+          }
+        } catch (_) {}
+      }
+
       const code = generatePairingCode();
 
       session.phoneNumber = `+${cleanDigits}`;
@@ -451,6 +510,18 @@ export default async function handler(req: any, res: any) {
     if (pathname.endsWith('/whatsapp/disconnect-device') && method === 'POST') {
       const uId = body.userId || userId;
       const session = getOrCreateSession(uId);
+      const bridgeUrl = whatsappGatewayConfig.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL;
+
+      if (bridgeUrl) {
+        try {
+          fetch(`${bridgeUrl.replace(/\/$/, '')}/disconnect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(3000)
+          }).catch(() => {});
+        } catch (_) {}
+      }
+
       session.isConnected = false;
       session.status = 'DISCONNECTED';
       session.pairingStatus = 'IDLE';

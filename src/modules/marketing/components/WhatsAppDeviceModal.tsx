@@ -43,7 +43,8 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [manualPhone, setManualPhone] = useState<string>('');
   const [phoneModel, setPhoneModel] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'pairingCode' | 'qr' | 'metaCloud' | 'workerBridge'>('pairingCode');
+  // Meta Cloud API is primary & recommended for Vercel serverless deployments
+  const [activeTab, setActiveTab] = useState<'metaCloud' | 'workerBridge' | 'pairingCode' | 'qr'>('metaCloud');
   const [pairingCodeInput, setPairingCodeInput] = useState<string>('');
   const [isRequestingCode, setIsRequestingCode] = useState<boolean>(false);
   const [isVerifyingCode, setIsVerifyingCode] = useState<boolean>(false);
@@ -61,8 +62,9 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
   const [metaTestPhone, setMetaTestPhone] = useState<string>('');
   const [metaTestMsg, setMetaTestMsg] = useState<string | null>(null);
 
-  // Worker Bridge State
-  const [bridgeUrl, setBridgeUrl] = useState<string>('');
+  // Worker Bridge State (supports VITE_WHATSAPP_WORKER_URL)
+  const envWorkerUrl = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_WHATSAPP_WORKER_URL) || '';
+  const [bridgeUrl, setBridgeUrl] = useState<string>(envWorkerUrl);
   const [isSavingBridge, setIsSavingBridge] = useState<boolean>(false);
   const [isTestingBridge, setIsTestingBridge] = useState<boolean>(false);
   const [bridgeTestResult, setBridgeTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
@@ -92,6 +94,8 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
         }
         if (cfg.baileysConfig?.workerBridgeUrl) {
           setBridgeUrl(cfg.baileysConfig.workerBridgeUrl);
+        } else if (envWorkerUrl && !bridgeUrl) {
+          setBridgeUrl(envWorkerUrl);
         }
       }
     } catch (err) {
@@ -587,6 +591,31 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
               <div className="flex items-center gap-1.5 border-b border-slate-200 pb-2 text-xs overflow-x-auto">
                 <button
                   type="button"
+                  onClick={() => setActiveTab('metaCloud')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                    activeTab === 'metaCloud'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Cloud className="w-3.5 h-3.5" />
+                  <span>1. Meta Cloud API (Vercel Recommended)</span>
+                  <span className="text-[9px] px-1 py-0.2 bg-amber-400 text-slate-950 font-extrabold rounded">★ 100% Reliable</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('workerBridge')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                    activeTab === 'workerBridge'
+                      ? 'bg-purple-700 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Server className="w-3.5 h-3.5" />
+                  <span>2. Worker Bridge (Railway / Render)</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => setActiveTab('pairingCode')}
                   className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
                     activeTab === 'pairingCode'
@@ -595,7 +624,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                   }`}
                 >
                   <Key className="w-3.5 h-3.5" />
-                  <span>1. Pairing Code (Strict)</span>
+                  <span>3. Pairing Code (Local / VPS)</span>
                 </button>
                 <button
                   type="button"
@@ -610,32 +639,27 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                   }`}
                 >
                   <QrCode className="w-3.5 h-3.5" />
-                  <span>2. Scan WhatsApp QR</span>
+                  <span>4. Scan WhatsApp QR (Local / VPS)</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('metaCloud')}
-                  className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                    activeTab === 'metaCloud'
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  <Cloud className="w-3.5 h-3.5" />
-                  <span>3. Meta Cloud API (Vercel)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('workerBridge')}
-                  className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                    activeTab === 'workerBridge'
-                      ? 'bg-purple-700 text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  <Server className="w-3.5 h-3.5" />
-                  <span>4. Worker Bridge (Railway)</span>
-                </button>
+              </div>
+
+              {/* Vercel Cloud Serverless Advisory Notice */}
+              <div className="p-3 bg-amber-50/90 border border-amber-300/80 rounded-xl text-xs text-amber-950 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                  <strong className="text-amber-900 font-bold">Vercel Serverless WebSocket Architecture Notice:</strong>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 font-extrabold uppercase">
+                    Vercel Limitation
+                  </span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-amber-900">
+                  Vercel serverless functions terminate execution immediately after response, severing persistent WebSockets. Because of this, scanning QR directly on Vercel causes mobile cameras to exit or report <span className="font-mono bg-amber-100 px-1 rounded font-bold">"Invalid QR code"</span>.
+                </p>
+                <div className="text-[11px] text-amber-800 bg-white/70 p-2 rounded-lg border border-amber-200 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>💡 <strong>Two Guaranteed Solutions:</strong></span>
+                  <span><strong>1.</strong> Use <strong>Tab 1 (Meta Cloud API)</strong> — 100% reliable REST with zero WebSocket drops.</span>
+                  <span><strong>2.</strong> Or run the included <code className="bg-amber-100 px-1 font-bold rounded">worker/whatsapp-bridge.js</code> on Railway/Render and enter the URL in <strong>Tab 2 (Worker Bridge)</strong>.</span>
+                </div>
               </div>
 
               {/* Status & Error Banners */}
@@ -827,11 +851,30 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                         </li>
                       </ol>
 
-                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[10px] text-amber-900 flex items-start gap-1.5">
-                        <HelpCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                        <span>
-                          <strong>Camera Crash Prevention:</strong> If camera exits or crashes, use <strong>Tab 1 (Pairing Code)</strong> or <strong>Tab 3 (Meta Cloud API)</strong> which work 100% reliably on Vercel without WebSockets.
-                        </span>
+                      <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl text-[11px] text-rose-950 space-y-2">
+                        <div className="flex items-center gap-1.5 font-bold text-rose-900">
+                          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                          <span>Vercel Camera Crash / "Invalid QR" Prevention</span>
+                        </div>
+                        <p className="text-rose-800 leading-relaxed text-[10px]">
+                          Vercel serverless kills background WebSockets upon response. Scanning this QR without an always-on host causes the phone camera to close or report "Invalid QR code".
+                        </p>
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('metaCloud')}
+                            className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-lg transition text-center shadow-xs cursor-pointer"
+                          >
+                            Use Tab 1 (Meta Cloud API - Recommended) →
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('workerBridge')}
+                            className="px-2.5 py-1.5 bg-purple-700 hover:bg-purple-800 text-white font-bold text-[10px] rounded-lg transition text-center shadow-xs cursor-pointer"
+                          >
+                            Set Tab 2 (Worker Bridge URL) →
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>

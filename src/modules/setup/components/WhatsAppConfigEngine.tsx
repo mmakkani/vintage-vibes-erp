@@ -189,22 +189,22 @@ export const WhatsAppConfigEngine: React.FC<WhatsAppConfigEngineProps> = ({ onSa
                     />
                     <div>
                       <span className="font-bold text-sm text-slate-900 block">
-                        Option 1: Direct Web Multi-Device Socket
+                        Option 1: Direct Web Multi-Device Socket (Baileys)
                       </span>
                       <span className="text-[11px] text-emerald-800 font-medium">
-                        Standard WhatsApp Web QR & Multi-User Phone Linking
+                        Standard WhatsApp Web QR & Multi-User Phone Linking (Requires Persistent Host)
                       </span>
                     </div>
                   </div>
-                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-mono text-[10px] font-bold border border-emerald-300">
-                    Recommended
+                  <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-mono text-[10px] font-bold border border-amber-300">
+                    VPS / Railway
                   </span>
                 </div>
 
                 <ul className="text-[11px] text-slate-600 space-y-1 list-disc list-inside bg-white/70 p-2.5 rounded-lg border border-emerald-200/60">
-                  <li>Har operator apne personal ya work phone ke <strong>Linked Devices</strong> se scan karega.</li>
+                  <li>Har operator apne phone ke <strong>Linked Devices</strong> se scan karega.</li>
+                  <li><strong>Serverless Note</strong>: Vercel par persistent worker bridge (Railway/Render) required hai.</li>
                   <li><strong>100% Free</strong>: Meta per-message billing charges zero hain.</li>
-                  <li>Voice Notes (.opus / .ogg) mic format mein send hotay hain.</li>
                   <li>Phone par proper 8-character pairing code verify hota hai.</li>
                 </ul>
               </label>
@@ -231,20 +231,20 @@ export const WhatsAppConfigEngine: React.FC<WhatsAppConfigEngineProps> = ({ onSa
                         Option 2: Official Meta Business Cloud API
                       </span>
                       <span className="text-[11px] text-blue-800 font-medium">
-                        Direct Facebook Developers & WABA Enterprise API
+                        Direct Facebook Developers & WABA Enterprise API (100% Vercel Safe)
                       </span>
                     </div>
                   </div>
-                  <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-mono text-[10px] font-bold border border-blue-300">
-                    Enterprise
+                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 font-mono text-[10px] font-bold border border-emerald-300">
+                    ★ Vercel Recommended
                   </span>
                 </div>
 
                 <ul className="text-[11px] text-slate-600 space-y-1 list-disc list-inside bg-white/70 p-2.5 rounded-lg border border-blue-200/60">
-                  <li>Meta Developer console key aur Phone Number ID se connect hota hai.</li>
+                  <li><strong>100% Serverless Ready</strong>: HTTPS REST requests, zero WebSocket drops on Vercel.</li>
+                  <li>Meta Developer console key aur Phone Number ID se instant connect hota hai.</li>
                   <li>Zero phone battery reliance, server to server 99.9% uptime.</li>
                   <li>Official Green Tick verification support.</li>
-                  <li>Per-message charges applicable as per Meta country policy.</li>
                 </ul>
               </label>
             </div>
