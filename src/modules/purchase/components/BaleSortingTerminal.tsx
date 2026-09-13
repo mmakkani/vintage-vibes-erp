@@ -1136,7 +1136,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 className="bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-200 px-3 py-1.5 focus:outline-hidden focus:border-indigo-400 cursor-pointer font-medium min-w-[240px] max-w-[340px]"
               >
                 {effectiveBales.length === 0 ? (
-                  <option value="">-- No Bales in Database (Click + New Bale) --</option>
+                  <option value="">[ ] -- No Bales (Create via Purchase Invoice or + New Bale) --</option>
                 ) : (
                   <>
                     <optgroup label="⚡ Active / In-Progress Bales">
