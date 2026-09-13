@@ -256,7 +256,10 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
               type="button"
               whileHover={{ scale: 1.03, y: -1 }}
               whileTap={{ scale: 0.97 }}
-              onClick={() => onNavigateTab('ledger')}
+              onClick={() => {
+                try { localStorage.setItem('vintage_finance_subtab', 'ledger'); } catch {}
+                onNavigateTab('finance');
+              }}
               className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 text-xs font-bold uppercase tracking-wider shadow-xs hover:shadow transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Receipt className="w-4 h-4" />
@@ -585,7 +588,10 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
                 whileHover={{ scale: 1.03, y: -2 }}
                 whileTap={{ scale: 0.98 }}
                 transition={{ duration: 0.15 }}
-                onClick={() => onNavigateTab('ledger')}
+                onClick={() => {
+                  try { localStorage.setItem('vintage_finance_subtab', 'ledger'); } catch {}
+                  onNavigateTab('finance');
+                }}
                 className="p-3 rounded-xl border border-slate-200 hover:border-amber-400 bg-slate-50/60 hover:bg-amber-50/40 text-left transition-all group cursor-pointer shadow-2xs"
               >
                 <Receipt className="w-4 h-4 text-amber-700 mb-1 group-hover:scale-110 transition-transform" />

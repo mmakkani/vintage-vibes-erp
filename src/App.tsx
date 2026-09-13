@@ -72,11 +72,13 @@ export default function App() {
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get('tab') as ActiveTab;
       if (tabParam && VALID_TABS.includes(tabParam)) {
+        if (tabParam === 'ledger') return 'finance';
         return tabParam;
       }
       // 2. Check localStorage for page refresh persistence
       const savedTab = localStorage.getItem('vintage_erp_active_tab') as ActiveTab;
       if (savedTab && VALID_TABS.includes(savedTab)) {
+        if (savedTab === 'ledger') return 'finance';
         return savedTab;
       }
     } catch {}
@@ -84,11 +86,17 @@ export default function App() {
   });
 
   const setActiveTab = (tab: ActiveTab) => {
-    setActiveTabState(tab);
+    const targetTab = tab === 'ledger' ? 'finance' : tab;
+    if (tab === 'ledger') {
+      try {
+        localStorage.setItem('vintage_finance_subtab', 'ledger');
+      } catch {}
+    }
+    setActiveTabState(targetTab);
     try {
-      localStorage.setItem('vintage_erp_active_tab', tab);
+      localStorage.setItem('vintage_erp_active_tab', targetTab);
       const url = new URL(window.location.href);
-      url.searchParams.set('tab', tab);
+      url.searchParams.set('tab', targetTab);
       window.history.replaceState({}, '', url.toString());
     } catch {}
   };

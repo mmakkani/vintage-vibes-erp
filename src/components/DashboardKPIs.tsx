@@ -345,7 +345,10 @@ export const DashboardKPIs: React.FC<DashboardKPIsProps> = ({
               id="pending-badge-unposted-vouchers"
               whileHover={{ scale: 1.01, y: -1 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => onNavigateTab && onNavigateTab('ledger')}
+              onClick={() => {
+                try { localStorage.setItem('vintage_finance_subtab', 'vouchers'); } catch {}
+                if (onNavigateTab) onNavigateTab('finance');
+              }}
               className={`p-2 rounded-lg text-left transition-all border cursor-pointer ${
                 (kpis.unpostedVouchersCount ?? 0) > 0
                   ? 'bg-amber-50/90 border-amber-300 hover:border-amber-500 hover:bg-amber-100/80'
