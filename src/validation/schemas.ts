@@ -9,6 +9,8 @@ export const VoucherLineSchema = z.object({
   creditAccId: z.string().optional().nullable(),
   debitAmount: z.number().min(0, 'Debit amount must be non-negative'),
   creditAmount: z.number().min(0, 'Credit amount must be non-negative'),
+  foreignDebit: z.number().optional(),
+  foreignCredit: z.number().optional(),
   memo: z.string().optional().nullable()
 });
 
@@ -17,8 +19,12 @@ export const VoucherInputSchema = z.object({
   type: z.enum(['JV', 'BRV', 'BPV', 'CRV', 'CPV']),
   date: z.string().min(1, 'Voucher posting date is required'),
   narration: z.string().trim().min(3, 'Narration must be at least 3 characters long for audit compliance'),
-  currency: z.enum(['AED', 'USD', 'PKR']).default('AED'),
-  exchangeRate: z.number().positive('Exchange rate must be strictly positive (> 0)'),
+  currency: z.string().min(2, 'Currency must be specified').default('AED'),
+  exchangeRate: z.number().positive('Exchange rate must be strictly positive (> 0)').default(1.0),
+  baseCurrency: z.string().optional().default('AED'),
+  foreignTotalAmount: z.number().optional(),
+  foreignTotalDebit: z.number().optional(),
+  foreignTotalCredit: z.number().optional(),
   totalDebit: z.number().min(0, 'Total debit must be non-negative'),
   totalCredit: z.number().min(0, 'Total credit must be non-negative'),
   status: z.enum(['DRAFT', 'POSTED', 'UNPOSTED']).optional().default('DRAFT'),

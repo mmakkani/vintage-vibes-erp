@@ -214,8 +214,10 @@ export class FinanceService {
         totalDebit: Number(row.total_debit ?? row.totalDebit ?? (matchedEntries.reduce((acc: number, e: any) => acc + (Number(e.debit) || 0), 0)) ?? 0),
         totalCredit: Number(row.total_credit ?? row.totalCredit ?? (matchedEntries.reduce((acc: number, e: any) => acc + (Number(e.credit) || 0), 0)) ?? 0),
         status: row.status || 'POSTED',
-        currency: row.currency || 'AED',
+        currency: (row.currency || 'AED').toUpperCase(),
         exchangeRate: Number(row.exchange_rate || 1.0),
+        baseCurrency: (row.base_currency || 'AED').toUpperCase(),
+        foreignTotalAmount: Number(row.foreign_total_amount || 0),
         createdBy: row.created_by || row.createdBy || 'System',
         isAuto,
         entries: matchedEntries,
@@ -238,6 +240,13 @@ export class FinanceService {
     const createdBy = String(v.createdBy || 'System');
     const isAuto = Boolean(v.isAuto || v.is_auto || FinanceService.isAutoVoucher(v));
 
+    const currency = String(v.currency || 'AED').toUpperCase();
+    const exchangeRate = Number(v.exchangeRate ?? v.exchange_rate ?? 1.0);
+    const baseCurrency = String(v.baseCurrency || v.base_currency || 'AED').toUpperCase();
+    const foreignTotalAmount = Number(
+      v.foreignTotalAmount ?? v.foreign_total_amount ?? (currency === 'AED' ? totalDebit : (totalDebit / (exchangeRate || 1.0)))
+    );
+
     const payload = {
       id,
       voucher_no: voucherNo,
@@ -251,6 +260,10 @@ export class FinanceService {
       total_debit: totalDebit,
       total_credit: totalCredit,
       total_amount: totalDebit || totalCredit,
+      currency,
+      exchange_rate: exchangeRate,
+      base_currency: baseCurrency,
+      foreign_total_amount: foreignTotalAmount,
       status,
       created_by: createdBy,
       is_auto: isAuto
@@ -279,6 +292,8 @@ export class FinanceService {
         const lineId = String(l.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ve-${id}-${idx + 1}`));
         const debit = Number(l.debitAmount ?? l.debit ?? 0);
         const credit = Number(l.creditAmount ?? l.credit ?? 0);
+        const foreignDebit = Number(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
+        const foreignCredit = Number(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
         const memo = l.memo || l.narration || narration;
         return {
           id: lineId,
@@ -291,6 +306,10 @@ export class FinanceService {
           party_name: l.partyName || l.party_name ? String(l.partyName || l.party_name) : null,
           debit,
           credit,
+          currency,
+          exchange_rate: exchangeRate,
+          foreign_debit: foreignDebit,
+          foreign_credit: foreignCredit,
           particulars: memo,
           memo,
           narration: memo,
@@ -301,6 +320,8 @@ export class FinanceService {
       const generalLedgerRows = lines.map((l: any, idx: number) => {
         const debit = Number(l.debitAmount ?? l.debit ?? 0);
         const credit = Number(l.creditAmount ?? l.credit ?? 0);
+        const foreignDebit = Number(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
+        const foreignCredit = Number(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
         const memo = l.memo || l.narration || narration;
         return {
           id: String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `gl-${id}-${idx + 1}`),
@@ -315,6 +336,10 @@ export class FinanceService {
           entry_date: date,
           debit,
           credit,
+          currency,
+          exchange_rate: exchangeRate,
+          foreign_debit: foreignDebit,
+          foreign_credit: foreignCredit,
           balance: debit - credit,
           running_balance: debit - credit,
           narration: memo,
@@ -358,8 +383,10 @@ export class FinanceService {
       totalDebit,
       totalCredit,
       status: status as any,
-      currency: 'AED',
-      exchangeRate: 1.0,
+      currency: currency as any,
+      exchangeRate,
+      baseCurrency,
+      foreignTotalAmount,
       createdBy,
       entries: lines,
       lines
@@ -431,6 +458,13 @@ export class FinanceService {
     const totalCredit = Number(v.totalCredit || 0);
     const status = String(v.status || existing?.status || 'POSTED');
 
+    const currency = String(v.currency || existing?.currency || 'AED').toUpperCase();
+    const exchangeRate = Number(v.exchangeRate ?? v.exchange_rate ?? existing?.exchangeRate ?? 1.0);
+    const baseCurrency = String(v.baseCurrency || v.base_currency || existing?.baseCurrency || 'AED').toUpperCase();
+    const foreignTotalAmount = Number(
+      v.foreignTotalAmount ?? v.foreign_total_amount ?? (currency === 'AED' ? totalDebit : (totalDebit / (exchangeRate || 1.0)))
+    );
+
     const updatePayload = {
       date,
       voucher_date: date,
@@ -442,6 +476,10 @@ export class FinanceService {
       total_debit: totalDebit,
       total_credit: totalCredit,
       total_amount: totalDebit || totalCredit,
+      currency,
+      exchange_rate: exchangeRate,
+      base_currency: baseCurrency,
+      foreign_total_amount: foreignTotalAmount,
       status
     };
 
@@ -475,6 +513,8 @@ export class FinanceService {
         const lineId = String(l.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ve-${cleanId}-${idx + 1}`));
         const debit = Number(l.debitAmount ?? l.debit ?? 0);
         const credit = Number(l.creditAmount ?? l.credit ?? 0);
+        const foreignDebit = Number(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
+        const foreignCredit = Number(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
         const memo = l.memo || l.narration || narration;
         return {
           id: lineId,
@@ -487,6 +527,10 @@ export class FinanceService {
           party_name: l.partyName || l.party_name ? String(l.partyName || l.party_name) : null,
           debit,
           credit,
+          currency,
+          exchange_rate: exchangeRate,
+          foreign_debit: foreignDebit,
+          foreign_credit: foreignCredit,
           particulars: memo,
           memo,
           narration: memo,
@@ -497,6 +541,8 @@ export class FinanceService {
       const generalLedgerRows = lines.map((l: any, idx: number) => {
         const debit = Number(l.debitAmount ?? l.debit ?? 0);
         const credit = Number(l.creditAmount ?? l.credit ?? 0);
+        const foreignDebit = Number(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
+        const foreignCredit = Number(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
         const memo = l.memo || l.narration || narration;
         return {
           id: String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `gl-${cleanId}-${idx + 1}`),
@@ -511,6 +557,10 @@ export class FinanceService {
           entry_date: date,
           debit,
           credit,
+          currency,
+          exchange_rate: exchangeRate,
+          foreign_debit: foreignDebit,
+          foreign_credit: foreignCredit,
           balance: debit - credit,
           running_balance: debit - credit,
           narration: memo,
@@ -550,8 +600,10 @@ export class FinanceService {
       totalDebit,
       totalCredit,
       status: status as any,
-      currency: 'AED',
-      exchangeRate: 1.0,
+      currency: currency as any,
+      exchangeRate,
+      baseCurrency,
+      foreignTotalAmount,
       createdBy: existing?.createdBy || 'Manual',
       isAuto: false,
       entries: lines,

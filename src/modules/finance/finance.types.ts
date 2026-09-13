@@ -32,6 +32,10 @@ export interface VoucherLine {
   accountName: string;
   debitAmount: number;
   creditAmount: number;
+  foreignDebit?: number;
+  foreignCredit?: number;
+  currency?: string;
+  exchangeRate?: number;
   memo?: string;
   narration?: string;
 }
@@ -47,6 +51,10 @@ export interface Voucher {
   totalCredit: number;
   currency: CurrencyCode;
   exchangeRate: number;
+  baseCurrency?: string;
+  foreignTotalAmount?: number;
+  foreignTotalDebit?: number;
+  foreignTotalCredit?: number;
   lines: VoucherLine[];
   entries?: VoucherLine[];
   postedAt?: string;

@@ -236,7 +236,33 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     { id: '1', accountId: '', accountCode: '', accountName: '', debitAmount: 0, creditAmount: 0, memo: '' },
     { id: '2', accountId: '', accountCode: '', accountName: '', debitAmount: 0, creditAmount: 0, memo: '' }
   ]);
+  const [voucherCurrency, setVoucherCurrency] = useState<string>('AED');
+  const [voucherExchangeRate, setVoucherExchangeRate] = useState<number>(1.0);
   const [isSavingVoucher, setIsSavingVoucher] = useState(false);
+
+  const CURRENCY_LIST = [
+    { code: 'AED', name: 'AED - UAE Dirham (Base)', defaultRate: 1.0 },
+    { code: 'USD', name: 'USD - US Dollar', defaultRate: 3.6725 },
+    { code: 'EUR', name: 'EUR - Euro', defaultRate: 4.0 },
+    { code: 'GBP', name: 'GBP - British Pound', defaultRate: 4.7 },
+    { code: 'SAR', name: 'SAR - Saudi Riyal', defaultRate: 0.98 },
+    { code: 'OMR', name: 'OMR - Omani Rial', defaultRate: 9.54 },
+    { code: 'PKR', name: 'PKR - Pakistani Rupee', defaultRate: 0.013 },
+    { code: 'INR', name: 'INR - Indian Rupee', defaultRate: 0.043 },
+    { code: 'CNY', name: 'CNY - Chinese Yuan', defaultRate: 0.51 }
+  ];
+
+  const handleCurrencyChange = (newCurr: string) => {
+    setVoucherCurrency(newCurr);
+    if (newCurr === 'AED') {
+      setVoucherExchangeRate(1.0);
+    } else {
+      const found = CURRENCY_LIST.find(c => c.code === newCurr);
+      if (found && (voucherExchangeRate === 1.0 || !voucherExchangeRate)) {
+        setVoucherExchangeRate(found.defaultRate);
+      }
+    }
+  };
 
   // Auto-detect Bank & Cash accounts directly from COA (SQL)
   const bankAccounts = useMemo(() => {
@@ -636,6 +662,9 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     let finalTotalDebit = 0;
     let finalTotalCredit = 0;
 
+    const rate = Number(voucherExchangeRate) > 0 ? Number(voucherExchangeRate) : 1.0;
+    const isForeign = voucherCurrency !== 'AED';
+
     if (entryMode === 'SINGLE' && voucherType !== 'JV') {
       if (!primaryBankCashAccountId) {
         showMsg(`Please select a ${voucherType.startsWith('B') ? 'Bank' : 'Cash'} account from COA!`, 'error');
@@ -664,56 +693,86 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       const isPayment = voucherType === 'BPV' || voucherType === 'CPV';
       if (isPayment) {
         // Payment: Line items are Debited, Master Bank/Cash is Credited
-        finalLines = singleLines.map(l => ({
-          accountId: l.accountId,
-          debitAmount: Number(l.amount),
-          creditAmount: 0,
-          memo: l.memo || voucherNarration
-        }));
+        finalLines = singleLines.map(l => {
+          const enteredAmt = Number(l.amount) || 0;
+          const baseAmt = isForeign ? Number((enteredAmt * rate).toFixed(2)) : enteredAmt;
+          return {
+            accountId: l.accountId,
+            debitAmount: baseAmt,
+            creditAmount: 0,
+            foreignDebit: isForeign ? enteredAmt : undefined,
+            foreignCredit: undefined,
+            memo: l.memo || voucherNarration
+          };
+        });
+        const totalBase = isForeign ? Number((singleEntryTotal * rate).toFixed(2)) : Number(singleEntryTotal.toFixed(2));
         finalLines.push({
           accountId: primaryBankCashAccountId,
           debitAmount: 0,
-          creditAmount: Number(singleEntryTotal.toFixed(2)),
+          creditAmount: totalBase,
+          foreignDebit: undefined,
+          foreignCredit: isForeign ? Number(singleEntryTotal.toFixed(2)) : undefined,
           memo: voucherNarration
         });
       } else {
         // Receipt: Line items are Credited, Master Bank/Cash is Debited
-        finalLines = singleLines.map(l => ({
-          accountId: l.accountId,
-          debitAmount: 0,
-          creditAmount: Number(l.amount),
-          memo: l.memo || voucherNarration
-        }));
+        finalLines = singleLines.map(l => {
+          const enteredAmt = Number(l.amount) || 0;
+          const baseAmt = isForeign ? Number((enteredAmt * rate).toFixed(2)) : enteredAmt;
+          return {
+            accountId: l.accountId,
+            debitAmount: 0,
+            creditAmount: baseAmt,
+            foreignDebit: undefined,
+            foreignCredit: isForeign ? enteredAmt : undefined,
+            memo: l.memo || voucherNarration
+          };
+        });
+        const totalBase = isForeign ? Number((singleEntryTotal * rate).toFixed(2)) : Number(singleEntryTotal.toFixed(2));
         finalLines.push({
           accountId: primaryBankCashAccountId,
-          debitAmount: Number(singleEntryTotal.toFixed(2)),
+          debitAmount: totalBase,
           creditAmount: 0,
+          foreignDebit: isForeign ? Number(singleEntryTotal.toFixed(2)) : undefined,
+          foreignCredit: undefined,
           memo: voucherNarration
         });
       }
-      finalTotalDebit = Number(singleEntryTotal.toFixed(2));
-      finalTotalCredit = Number(singleEntryTotal.toFixed(2));
+      finalTotalDebit = isForeign ? Number((singleEntryTotal * rate).toFixed(2)) : Number(singleEntryTotal.toFixed(2));
+      finalTotalCredit = isForeign ? Number((singleEntryTotal * rate).toFixed(2)) : Number(singleEntryTotal.toFixed(2));
     } else {
       if (!isVoucherBalanced) {
-        showMsg(`Voucher is out of balance by AED ${voucherDiff.toFixed(2)}. Debits must equal Credits!`, 'error');
+        showMsg(`Voucher is out of balance by ${voucherCurrency} ${voucherDiff.toFixed(2)}. Debits must equal Credits!`, 'error');
         return;
       }
-      finalLines = voucherLines.map(l => ({
-        accountId: l.accountId,
-        debitAmount: Number(l.debitAmount) || 0,
-        creditAmount: Number(l.creditAmount) || 0,
-        memo: l.memo || voucherNarration
-      }));
-      finalTotalDebit = Number(totalDebitSum.toFixed(2));
-      finalTotalCredit = Number(totalCreditSum.toFixed(2));
+      finalLines = voucherLines.map(l => {
+        const debEntered = Number(l.debitAmount) || 0;
+        const credEntered = Number(l.creditAmount) || 0;
+        const debBase = isForeign ? Number((debEntered * rate).toFixed(2)) : debEntered;
+        const credBase = isForeign ? Number((credEntered * rate).toFixed(2)) : credEntered;
+        return {
+          accountId: l.accountId,
+          debitAmount: debBase,
+          creditAmount: credBase,
+          foreignDebit: isForeign && debEntered > 0 ? debEntered : undefined,
+          foreignCredit: isForeign && credEntered > 0 ? credEntered : undefined,
+          memo: l.memo || voucherNarration
+        };
+      });
+      finalTotalDebit = isForeign ? Number((totalDebitSum * rate).toFixed(2)) : Number(totalDebitSum.toFixed(2));
+      finalTotalCredit = isForeign ? Number((totalCreditSum * rate).toFixed(2)) : Number(totalCreditSum.toFixed(2));
     }
 
     const payload = {
       type: voucherType,
       date: voucherDate,
       narration: voucherNarration,
-      currency: 'AED' as const,
-      exchangeRate: 1.0,
+      currency: voucherCurrency,
+      exchangeRate: rate,
+      baseCurrency: 'AED',
+      foreignTotalAmount: isForeign ? (entryMode === 'SINGLE' && voucherType !== 'JV' ? Number(singleEntryTotal.toFixed(2)) : Number(totalDebitSum.toFixed(2))) : undefined,
+      foreignTotalDebit: isForeign ? (entryMode === 'SINGLE' && voucherType !== 'JV' ? Number(singleEntryTotal.toFixed(2)) : Number(totalDebitSum.toFixed(2))) : undefined,
+      foreignTotalCredit: isForeign ? (entryMode === 'SINGLE' && voucherType !== 'JV' ? Number(singleEntryTotal.toFixed(2)) : Number(totalCreditSum.toFixed(2))) : undefined,
       totalDebit: finalTotalDebit,
       totalCredit: finalTotalCredit,
       status: 'POSTED' as const,
@@ -781,16 +840,25 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     setVoucherType(type);
     setVoucherDate(v.date || new Date().toISOString().slice(0, 10));
     setVoucherNarration(v.narration || '');
+    setVoucherCurrency(v.currency || 'AED');
+    setVoucherExchangeRate(Number(v.exchangeRate) > 0 ? Number(v.exchangeRate) : 1.0);
 
-    const linesToSet = (v.lines && v.lines.length > 0 ? v.lines : (v.entries && v.entries.length > 0 ? v.entries : [])).map((l: any, i: number) => ({
-      id: String(l.id || `edit-line-${i}`),
-      accountId: l.accountId || l.account_id || '',
-      accountCode: l.accountCode || l.account_code || '',
-      accountName: l.accountName || l.account_name || '',
-      debitAmount: Number(l.debitAmount ?? l.debit ?? 0),
-      creditAmount: Number(l.creditAmount ?? l.credit ?? 0),
-      memo: l.memo || l.particulars || l.narration || ''
-    }));
+    const isForeign = (v.currency && v.currency !== 'AED');
+    const linesToSet = (v.lines && v.lines.length > 0 ? v.lines : (v.entries && v.entries.length > 0 ? v.entries : [])).map((l: any, i: number) => {
+      const foreignDeb = Number(l.foreignDebit ?? l.foreign_debit ?? 0);
+      const foreignCred = Number(l.foreignCredit ?? l.foreign_credit ?? 0);
+      const debAmt = (isForeign && foreignDeb > 0) ? foreignDeb : Number(l.debitAmount ?? l.debit ?? 0);
+      const credAmt = (isForeign && foreignCred > 0) ? foreignCred : Number(l.creditAmount ?? l.credit ?? 0);
+      return {
+        id: String(l.id || `edit-line-${i}`),
+        accountId: l.accountId || l.account_id || '',
+        accountCode: l.accountCode || l.account_code || '',
+        accountName: l.accountName || l.account_name || '',
+        debitAmount: debAmt,
+        creditAmount: credAmt,
+        memo: l.memo || l.particulars || l.narration || ''
+      };
+    });
 
     if (type === 'JV') {
       setEntryMode('DOUBLE');
@@ -1371,6 +1439,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     setPrimaryBankCashAccountId(defaultBank);
                     setVoucherDate(new Date().toISOString().slice(0, 10));
                     setVoucherNarration('');
+                    setVoucherCurrency('AED');
+                    setVoucherExchangeRate(1.0);
                     setSingleLines([
                       { id: '1', accountId: '', amount: 0, memo: '' }
                     ]);
@@ -1421,19 +1491,36 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                             </div>
                           </td>
                           <td className="px-3.5 py-2">
-                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">
-                              {v.type}
-                            </span>
+                            <div className="flex items-center gap-1">
+                              <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">
+                                {v.type}
+                              </span>
+                              {v.currency && v.currency !== 'AED' && (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-blue-100 text-blue-800 border border-blue-200" title={`Foreign Currency: ${v.currency} @ ${v.exchangeRate}`}>
+                                  {v.currency}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-3.5 py-2 text-slate-600">{v.date}</td>
                           <td className="px-3.5 py-2 max-w-xs truncate text-slate-800" title={v.narration}>
                             {v.narration}
                           </td>
                           <td className="px-3.5 py-2 text-right font-bold text-slate-900">
-                            {Number(v.totalDebit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            <div>{Number(v.totalDebit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                            {v.currency && v.currency !== 'AED' && (
+                              <div className="text-[10px] font-normal text-blue-600">
+                                {v.currency} {Number(v.foreignTotalDebit ?? v.foreignTotalAmount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3.5 py-2 text-right font-bold text-slate-900">
-                            {Number(v.totalCredit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            <div>{Number(v.totalCredit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                            {v.currency && v.currency !== 'AED' && (
+                              <div className="text-[10px] font-normal text-blue-600">
+                                {v.currency} {Number(v.foreignTotalCredit ?? v.foreignTotalAmount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3.5 py-2 text-center">
                             <span
@@ -2422,9 +2509,11 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     onChange={e => setNewAccCurrency(e.target.value)}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-amber-200 text-xs bg-[#fdfcf9] focus:ring-2 focus:ring-amber-500"
                   >
-                    <option value="AED">AED (Dirham)</option>
-                    <option value="USD">USD (US Dollar)</option>
-                    <option value="EUR">EUR (Euro)</option>
+                    {CURRENCY_LIST.map(curr => (
+                      <option key={curr.code} value={curr.code}>
+                        {curr.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -2512,7 +2601,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
             </div>
 
             <form onSubmit={handleCreateVoucher} className="space-y-4">
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
                     Voucher Type *
@@ -2545,10 +2634,46 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                    Currency *
+                  </label>
+                  <select
+                    value={voucherCurrency}
+                    onChange={e => handleCurrencyChange(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-amber-200 text-xs font-bold bg-[#fdfcf9] focus:ring-2 focus:ring-amber-500 text-amber-900"
+                  >
+                    {CURRENCY_LIST.map(curr => (
+                      <option key={curr.code} value={curr.code}>
+                        {curr.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                    Rate (1 {voucherCurrency} = AED)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    min="0.0001"
+                    disabled={voucherCurrency === 'AED'}
+                    value={voucherCurrency === 'AED' ? '1.0000' : voucherExchangeRate}
+                    onChange={e => setVoucherExchangeRate(parseFloat(e.target.value) || 1.0)}
+                    className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-mono font-bold ${
+                      voucherCurrency === 'AED'
+                        ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
+                        : 'bg-[#fdfcf9] border-amber-300 text-amber-900 focus:ring-2 focus:ring-amber-500'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
                     Entry Mode
                   </label>
                   {voucherType === 'JV' ? (
-                    <div className="px-2.5 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                    <div className="px-2.5 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-[11px] font-bold text-slate-600 flex items-center justify-center">
                       <span>Double Entry Only</span>
                     </div>
                   ) : (
@@ -2562,7 +2687,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        Single Entry
+                        Single
                       </button>
                       <button
                         type="button"
@@ -2573,7 +2698,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        Double Entry
+                        Double
                       </button>
                     </div>
                   )}
@@ -2678,9 +2803,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                               step="0.01"
                               value={line.amount || ''}
                               onChange={e => handleUpdateSingleLine(idx, 'amount', parseFloat(e.target.value) || 0)}
-                              placeholder="Amount (AED)"
+                              placeholder={`Amount (${voucherCurrency})`}
                               className="w-full text-right p-1.5 border border-slate-300 rounded font-mono text-[11px] font-bold text-slate-900 bg-white"
                             />
+                            {voucherCurrency !== 'AED' && (Number(line.amount) || 0) > 0 && (
+                              <div className="text-[10px] text-right text-slate-500 font-mono">
+                                ≈ AED {((Number(line.amount) || 0) * (Number(voucherExchangeRate) || 1)).toFixed(2)}
+                              </div>
+                            )}
                           </div>
 
                           <div className="col-span-3">
@@ -2710,7 +2840,12 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     <div className="bg-amber-100/70 p-3 border-t border-amber-200 flex flex-wrap items-center justify-between text-xs font-mono">
                       <div>
                         <span className="text-slate-600">Total Voucher Amount: </span>
-                        <strong className="text-slate-900 text-sm">AED {singleEntryTotal.toFixed(2)}</strong>
+                        <strong className="text-slate-900 text-sm">{voucherCurrency} {singleEntryTotal.toFixed(2)}</strong>
+                        {voucherCurrency !== 'AED' && (
+                          <span className="ml-2 text-xs font-bold text-blue-900 bg-blue-100 px-2 py-0.5 rounded border border-blue-300">
+                            ≈ AED {(singleEntryTotal * (Number(voucherExchangeRate) || 1)).toFixed(2)}
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1.5 text-[11px] text-slate-700">
@@ -2724,7 +2859,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 /* DOUBLE ENTRY MODE UI */
                 <div className="border border-amber-200 rounded-xl overflow-hidden">
                   <div className="bg-amber-50/70 p-2.5 flex items-center justify-between border-b border-amber-200 text-xs font-bold text-amber-950">
-                    <span>Double-Entry Account Line Items</span>
+                    <span>Double-Entry Account Line Items ({voucherCurrency})</span>
                     <button
                       type="button"
                       onClick={handleAddVoucherLine}
@@ -2765,9 +2900,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                             step="0.01"
                             value={line.debitAmount || ''}
                             onChange={e => handleUpdateVoucherLine(idx, 'debitAmount', parseFloat(e.target.value) || 0)}
-                            placeholder="Debit (AED)"
+                            placeholder={`Debit (${voucherCurrency})`}
                             className="w-full text-right p-1.5 border border-slate-300 rounded font-mono text-[11px] font-bold text-slate-900 bg-white"
                           />
+                          {voucherCurrency !== 'AED' && (Number(line.debitAmount) || 0) > 0 && (
+                            <div className="text-[10px] text-right text-slate-500 font-mono">
+                              ≈ AED {((Number(line.debitAmount) || 0) * (Number(voucherExchangeRate) || 1)).toFixed(2)}
+                            </div>
+                          )}
                         </div>
 
                         <div className="col-span-3">
@@ -2776,9 +2916,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                             step="0.01"
                             value={line.creditAmount || ''}
                             onChange={e => handleUpdateVoucherLine(idx, 'creditAmount', parseFloat(e.target.value) || 0)}
-                            placeholder="Credit (AED)"
+                            placeholder={`Credit (${voucherCurrency})`}
                             className="w-full text-right p-1.5 border border-slate-300 rounded font-mono text-[11px] font-bold text-slate-900 bg-white"
                           />
+                          {voucherCurrency !== 'AED' && (Number(line.creditAmount) || 0) > 0 && (
+                            <div className="text-[10px] text-right text-slate-500 font-mono">
+                              ≈ AED {((Number(line.creditAmount) || 0) * (Number(voucherExchangeRate) || 1)).toFixed(2)}
+                            </div>
+                          )}
                         </div>
 
                         <div className="col-span-1 text-center">
@@ -2798,21 +2943,26 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   <div className="bg-amber-100/70 p-3 border-t border-amber-200 flex flex-wrap items-center justify-between text-xs font-mono">
                     <div>
                       <span className="text-slate-600">Total Debit: </span>
-                      <strong className="text-slate-900">AED {totalDebitSum.toFixed(2)}</strong>
+                      <strong className="text-slate-900">{voucherCurrency} {totalDebitSum.toFixed(2)}</strong>
                       <span className="mx-2 text-slate-400">|</span>
                       <span className="text-slate-600">Total Credit: </span>
-                      <strong className="text-slate-900">AED {totalCreditSum.toFixed(2)}</strong>
+                      <strong className="text-slate-900">{voucherCurrency} {totalCreditSum.toFixed(2)}</strong>
+                      {voucherCurrency !== 'AED' && (
+                        <span className="ml-2 text-xs font-bold text-blue-900 bg-blue-100 px-2 py-0.5 rounded border border-blue-300">
+                          ≈ AED {(totalDebitSum * (Number(voucherExchangeRate) || 1)).toFixed(2)} Base
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1.5">
                       {isVoucherBalanced ? (
                         <span className="text-emerald-800 font-bold flex items-center gap-1">
                           <ShieldCheck className="w-4 h-4" />
-                          <span>Balanced (0.00 AED Diff)</span>
+                          <span>Balanced (0.00 {voucherCurrency} Diff)</span>
                         </span>
                       ) : (
                         <span className="text-rose-800 font-bold">
-                          Out of balance by AED {voucherDiff.toFixed(2)}
+                          Out of balance by {voucherCurrency} {voucherDiff.toFixed(2)}
                         </span>
                       )}
                     </div>
