@@ -18,7 +18,7 @@ export const VoucherInputSchema = z.object({
   voucherNo: z.string().optional(),
   type: z.enum(['JV', 'BRV', 'BPV', 'CRV', 'CPV']),
   date: z.string().min(1, 'Voucher posting date is required'),
-  narration: z.string().trim().min(3, 'Narration must be at least 3 characters long for audit compliance'),
+  narration: z.string().optional().nullable().default(null),
   currency: z.string().min(2, 'Currency must be specified').default('AED'),
   exchangeRate: z.number().positive('Exchange rate must be strictly positive (> 0)').default(1.0),
   baseCurrency: z.string().optional().default('AED'),

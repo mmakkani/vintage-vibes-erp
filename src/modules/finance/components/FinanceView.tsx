@@ -766,7 +766,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     const payload = {
       type: voucherType,
       date: voucherDate,
-      narration: voucherNarration,
+      narration: voucherNarration?.trim() ? voucherNarration.trim() : null,
       currency: voucherCurrency,
       exchangeRate: rate,
       baseCurrency: 'AED',
@@ -2707,14 +2707,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                  Narration / Particulars *
+                  Narration / Particulars (Optional)
                 </label>
                 <input
                   type="text"
                   value={voucherNarration}
                   onChange={e => setVoucherNarration(e.target.value)}
-                  placeholder="e.g. Payment for customs duty, port clearance, partner share, or supplier payment"
-                  required
+                  placeholder="e.g. Payment for customs duty, port clearance, partner share, or supplier payment (optional)"
                   className="w-full px-3 py-2 rounded-lg border border-amber-200 text-xs bg-[#fdfcf9] focus:ring-2 focus:ring-amber-500"
                 />
               </div>
