@@ -11,9 +11,17 @@ import {
   Tag,
   ArrowRight,
   Smartphone,
-  ShieldAlert
+  ShieldAlert,
+  Crown,
+  DollarSign,
+  Flame,
+  ShieldCheck,
+  HelpCircle,
+  Key
 } from 'lucide-react';
 import { compressImage } from '../../../utils/imageCompressor.ts';
+import { analyzeVintageGarment, VintageValuationResult } from '../../../utils/geminiVintageValuation.ts';
+import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 
 export interface ExtractedTagData {
   brand: string;
@@ -23,6 +31,21 @@ export interface ExtractedTagData {
   confidence: number;
   notes?: string;
   tagImageUrl?: string;
+  // AI Grail & Vintage Value Hunter Fields
+  garmentTitle?: string;
+  category?: string;
+  era?: string;
+  stitchType?: string;
+  tagType?: string;
+  rarityTier?: 'GRAIL' | 'HIGH_VALUE' | 'RARE_COLLECTIBLE' | 'CREAM' | 'GRADE_A' | 'STANDARD';
+  isGrail?: boolean;
+  estimatedMarketValueAed?: number;
+  estimatedMarketValueUsd?: number;
+  recommendedRetailPriceAed?: number;
+  suggestedQualityGrade?: string;
+  grailNotes?: string;
+  collectorTipsUrdu?: string;
+  source?: 'GEMINI_AI_VISION' | 'HEURISTIC_VINTAGE_ENGINE';
 }
 
 interface CameraTagScannerModalProps {
@@ -44,6 +67,13 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
   const [extractedData, setExtractedData] = useState<ExtractedTagData | null>(null);
   const [tagOcrError, setTagOcrError] = useState<string | null>(null);
   const [isPermissionDenied, setIsPermissionDenied] = useState(false);
+
+  // Quick API Key Config
+  const [showApiKeyDrawer, setShowApiKeyDrawer] = useState(false);
+  const [geminiApiKeyInput, setGeminiApiKeyInput] = useState<string>(() => {
+    return (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_api_key') || '') : '');
+  });
+  const [keySavedToast, setKeySavedToast] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -142,7 +172,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
   useEffect(() => {
     if (cameraActive && streamRef.current && videoRef.current) {
       videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play().catch(e => {
+      videoRef.current.play().catch(() => {
         if (videoRef.current) {
           videoRef.current.muted = true;
           videoRef.current.play().catch(() => {});
@@ -159,6 +189,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
       setCapturedImage(null);
       setExtractedData(null);
       setTagOcrError(null);
+      setShowApiKeyDrawer(false);
     }
     return () => {
       stopCamera();
@@ -225,46 +256,72 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
   const processTagOcr = async (imageBase64?: string) => {
     setIsScanning(true);
     setTagOcrError(null);
-    setScanStep('Aligning garment tag view & enhancing contrast...');
+    setScanStep('🔍 Aligning garment tag & care label typography...');
 
     try {
-      setTimeout(() => setScanStep('Gemini Flash Vision analyzing brand typography & care label...'), 600);
-      setTimeout(() => setScanStep('Extracting Brand, Size, Country of Origin & Vintage Style...'), 1200);
+      setTimeout(() => setScanStep('🧵 Inspecting hems: Single-Stitch (Vintage) vs Double-Stitch...'), 500);
+      setTimeout(() => setScanStep('🤖 Gemini Flash Vision verifying brand lineage & tag era...'), 1000);
+      setTimeout(() => setScanStep('💎 Cross-referencing global resale market values (Grailed / eBay)...'), 1500);
+      setTimeout(() => setScanStep('🎯 Calculating protected Dubai boutique retail price tag...'), 2000);
 
       const targetImage = imageBase64 || capturedImage || '';
       if (!targetImage) {
         throw new Error('No tag image captured or uploaded.');
       }
 
-      const res = await fetch('/api/purchase/ai-ocr-scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: targetImage
-        })
+      const valuation: VintageValuationResult = await analyzeVintageGarment({
+        imageBase64: targetImage,
+        apiKey: geminiApiKeyInput.trim()
       });
 
-      const data = await res.json();
-      if (res.ok && data && (data.brand || data.size || data.countryOfOrigin || data.style)) {
+      if (valuation.success) {
+        if (valuation.isGrail) {
+          luxuryAudio.playCashRegisterSound();
+        } else {
+          luxuryAudio.playSuccessChime();
+        }
+
         setExtractedData({
-          brand: data.brand || '',
-          size: data.size || '',
-          countryOfOrigin: data.countryOfOrigin || '',
-          style: data.style || '',
-          confidence: data.confidence || 0.94,
-          notes: data.notes || 'Extracted via Multimodal Tag OCR',
-          tagImageUrl: targetImage
+          brand: valuation.brand || '',
+          size: valuation.size || '',
+          countryOfOrigin: valuation.countryOfOrigin || '',
+          style: valuation.style || valuation.garmentTitle || '',
+          confidence: valuation.confidence || 0.95,
+          notes: valuation.grailNotes || 'Appraised via Gemini Vision',
+          tagImageUrl: targetImage,
+          garmentTitle: valuation.garmentTitle,
+          category: valuation.category,
+          era: valuation.era,
+          stitchType: valuation.stitchType,
+          tagType: valuation.tagType,
+          rarityTier: valuation.rarityTier,
+          isGrail: valuation.isGrail,
+          estimatedMarketValueAed: valuation.estimatedMarketValueAed,
+          estimatedMarketValueUsd: valuation.estimatedMarketValueUsd,
+          recommendedRetailPriceAed: valuation.recommendedRetailPriceAed,
+          suggestedQualityGrade: valuation.suggestedQualityGrade,
+          grailNotes: valuation.grailNotes,
+          collectorTipsUrdu: valuation.collectorTipsUrdu,
+          source: valuation.source
         });
       } else {
-        throw new Error(data?.error || 'No readable apparel tag text detected.');
+        throw new Error(valuation.error || 'Could not identify vintage apparel details.');
       }
     } catch (err: any) {
-      console.warn('Tag OCR failed:', err);
+      console.warn('Tag appraisal failed:', err);
       setExtractedData(null);
-      setTagOcrError(err?.message || 'Garment tag OCR failed. Please ensure adequate lighting or upload a clearer photo.');
+      setTagOcrError(err?.message || 'Garment appraisal failed. Please ensure the tag or graphic is well-lit and clearly centered.');
     } finally {
       setIsScanning(false);
       setScanStep('');
+    }
+  };
+
+  const handleSaveApiKey = () => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('vintage_gemini_api_key', geminiApiKeyInput.trim());
+      setKeySavedToast(true);
+      setTimeout(() => setKeySavedToast(false), 2500);
     }
   };
 
@@ -278,34 +335,85 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-      <div className="bg-white rounded-2xl border-2 border-indigo-400 shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[92vh]">
-        {/* Header */}
-        <div className="bg-indigo-600 p-4 text-white flex items-center justify-between">
+    <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+      <div className="bg-white rounded-2xl border-2 border-amber-500/80 shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[92vh]">
+        {/* Header - High-end Vintage Grail Theme */}
+        <div className="bg-gradient-to-r from-slate-950 via-indigo-950 to-amber-950 p-4 text-white flex items-center justify-between border-b border-amber-500/40">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
-              <Camera className="w-4 h-4 text-white" />
+            <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-400/50 flex items-center justify-center shadow-inner">
+              <Crown className="w-5 h-5 text-amber-300 animate-pulse" />
             </div>
             <div>
-              <h3 className="font-bold text-sm tracking-tight text-white flex items-center gap-2">
-                <span>AI Garment Tag & Care Label Scanner</span>
-                <span className="bg-indigo-400/50 text-[10px] px-2 py-0.5 rounded-full font-mono uppercase tracking-wider font-semibold">
-                  OCR Engine
+              <h3 className="font-extrabold text-sm tracking-tight text-white flex items-center gap-2">
+                <span>AI Grail & Vintage Value Hunter</span>
+                <span className="bg-amber-400/30 text-amber-200 border border-amber-400/40 text-[10px] px-2 py-0.5 rounded-full font-mono uppercase tracking-wider font-bold">
+                  Gemini Vision 2.0
                 </span>
               </h3>
-              <p className="text-xs text-indigo-100">
-                Point camera at garment neck tag or care label to auto-fill Brand, Size & Origin
+              <p className="text-[11px] text-amber-200/80">
+                Detects Single-Stitch, Era & True Market Value (AED) to prevent AED 50 underpricing
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/25 flex items-center justify-center text-white cursor-pointer transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setShowApiKeyDrawer(!showApiKeyDrawer)}
+              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-amber-200 text-xs font-mono flex items-center gap-1 cursor-pointer transition-colors"
+              title="Configure Google Gemini API Key"
+            >
+              <Key className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">API Key</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/25 flex items-center justify-center text-white cursor-pointer transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
+
+        {/* API KEY DRAWER (OPTIONAL) */}
+        {showApiKeyDrawer && (
+          <div className="bg-slate-900 border-b border-amber-500/30 p-3 text-white text-xs space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                <Key className="w-3.5 h-3.5" /> Google Gemini API Key:
+              </span>
+              <a
+                href="https://aistudio.google.com/app/apikey"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[10px] text-indigo-400 hover:underline"
+              >
+                Get Free Key from AI Studio ↗
+              </a>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                placeholder="AIzaSy..."
+                value={geminiApiKeyInput}
+                onChange={e => setGeminiApiKeyInput(e.target.value)}
+                className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white font-mono"
+              />
+              <button
+                type="button"
+                onClick={handleSaveApiKey}
+                className="btn-3d btn-3d-amber text-xs py-1 px-3"
+              >
+                Save
+              </button>
+            </div>
+            {keySavedToast && (
+              <p className="text-[11px] text-emerald-400 font-semibold">
+                ✓ Gemini API Key saved to browser!
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Hidden Canvas */}
         <canvas ref={canvasRef} className="hidden" />
@@ -315,13 +423,13 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
           {/* MODE SELECTOR & CONTROLS */}
           <div className="bg-slate-100 p-2.5 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">Tag Scan Mode:</span>
+              <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">Scanner Input:</span>
               <button
                 type="button"
                 onClick={startCamera}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                   cameraActive && !capturedImage
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-amber-600 text-white shadow-sm'
                     : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
                 }`}
               >
@@ -331,19 +439,21 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
 
               <button
                 type="button"
+                onClick={() => nativeCameraInputRef.current?.click()}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-800 border border-slate-300 hover:border-emerald-500 hover:bg-emerald-50/50 flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+              >
+                <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Snap (Phone)</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-800 border border-slate-300 hover:border-indigo-500 hover:bg-indigo-50/50 flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
               >
                 <UploadCloud className="w-3.5 h-3.5 text-indigo-600" />
-                <span>Upload Tag Photo</span>
+                <span>Upload Photo</span>
               </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
             </div>
 
             {capturedImage && (
@@ -368,7 +478,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
             <div className="p-3 bg-red-50 border border-red-300 rounded-xl text-red-800 text-xs flex items-center gap-2.5">
               <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
               <div className="flex-1">
-                <strong>Tag Scan Error:</strong> {tagOcrError}
+                <strong>Appraisal Notice:</strong> {tagOcrError}
               </div>
               <button
                 type="button"
@@ -383,7 +493,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
           {/* CAMERA VIEWFINDER OR PREVIEW */}
           {!extractedData && (
             <div className="space-y-4">
-              <div className="relative bg-slate-900 rounded-xl overflow-hidden aspect-video max-h-[380px] flex items-center justify-center border-2 border-slate-700 shadow-inner">
+              <div className="relative bg-slate-950 rounded-xl overflow-hidden aspect-video max-h-[380px] flex items-center justify-center border-2 border-slate-800 shadow-2xl">
                 {/* Persistent Video Element */}
                 <video
                   ref={videoRef}
@@ -395,18 +505,18 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
 
                 {cameraActive && !capturedImage && (
                   <>
-                    {/* Viewfinder Frame Guide */}
-                    <div className="absolute inset-10 border-2 border-indigo-400/80 rounded-lg pointer-events-none flex flex-col justify-between p-3">
-                      <div className="flex justify-between text-indigo-300 font-mono text-[10px] font-bold">
-                        <span>[ BRAND LABEL ]</span>
-                        <span>[ SIZE TAG ]</span>
+                    {/* Viewfinder Frame Guide Specialized for Vintage Tags & Single Stitch */}
+                    <div className="absolute inset-8 border-2 border-dashed border-amber-400/80 rounded-xl pointer-events-none flex flex-col justify-between p-3">
+                      <div className="flex justify-between text-amber-300 font-mono text-[10px] font-bold">
+                        <span>[ BRAND & TAG ERA ]</span>
+                        <span>[ SINGLE-STITCH HEM ]</span>
                       </div>
-                      <div className="text-center text-indigo-200 text-xs bg-slate-900/60 py-1 px-3 rounded-full mx-auto backdrop-blur-xs font-semibold">
-                        Align apparel tag or wash label within box
+                      <div className="text-center text-amber-200 text-xs bg-slate-950/80 py-1.5 px-4 rounded-full mx-auto backdrop-blur-sm border border-amber-400/40 font-semibold shadow-lg">
+                        🎯 Point camera at neck tag, wash label, or sleeve hem
                       </div>
-                      <div className="flex justify-between text-indigo-300 font-mono text-[10px] font-bold">
-                        <span>[ FABRIC CARE ]</span>
-                        <span>[ MADE IN ]</span>
+                      <div className="flex justify-between text-amber-300 font-mono text-[10px] font-bold">
+                        <span>[ FABRIC DISTRESSING ]</span>
+                        <span>[ GRAPHIC COPYRIGHT YEAR ]</span>
                       </div>
                     </div>
 
@@ -415,10 +525,10 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                       <button
                         type="button"
                         onClick={capturePhoto}
-                        className="btn-3d btn-3d-indigo flex items-center gap-2 text-xs py-2 px-6 rounded-full cursor-pointer shadow-xl font-bold"
+                        className="btn-3d btn-3d-amber flex items-center gap-2 text-xs py-2.5 px-7 rounded-full cursor-pointer shadow-2xl font-extrabold text-slate-950"
                       >
-                        <Camera className="w-4 h-4" />
-                        <span>Snap Tag Photo</span>
+                        <Sparkles className="w-4 h-4 text-slate-950 animate-spin" />
+                        <span>Appraise Garment with Gemini</span>
                       </button>
                     </div>
                   </>
@@ -432,13 +542,15 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                       className="max-h-[340px] w-auto object-contain"
                     />
                     {isScanning && (
-                      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-center space-y-3">
-                        <div className="w-10 h-10 rounded-full border-4 border-indigo-400 border-t-transparent animate-spin" />
-                        <div className="text-sm font-bold text-white flex items-center gap-1.5">
-                          <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
-                          <span>AI Multimodal Reading Tag...</span>
+                      <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center space-y-3">
+                        <div className="w-12 h-12 rounded-full border-4 border-amber-400 border-t-transparent animate-spin shadow-lg shadow-amber-500/50" />
+                        <div className="text-base font-extrabold text-white flex items-center gap-2">
+                          <Crown className="w-5 h-5 text-amber-400 animate-bounce" />
+                          <span>Gemini Vision Scanning Vintage Grail...</span>
                         </div>
-                        <p className="text-xs text-indigo-200 font-mono">{scanStep}</p>
+                        <p className="text-xs text-amber-300 font-mono bg-slate-900/80 px-4 py-1.5 rounded-full border border-amber-500/30">
+                          {scanStep}
+                        </p>
                       </div>
                     )}
                   </div>
@@ -476,11 +588,11 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                       </div>
                     ) : (
                       <>
-                        <Tag className="w-10 h-10 mx-auto text-indigo-400 opacity-60" />
+                        <Tag className="w-10 h-10 mx-auto text-amber-400 opacity-70" />
                         <div>
-                          <h4 className="text-sm font-bold text-white">Tag Camera Standby</h4>
+                          <h4 className="text-sm font-bold text-white">Vintage Grail Camera Standby</h4>
                           <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
-                            {cameraError || 'Use live camera or upload a clear photo of the clothing tag.'}
+                            {cameraError || 'Use live camera, phone snap, or upload a photo of the clothing tag or graphic.'}
                           </p>
                         </div>
 
@@ -488,7 +600,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                           <button
                             type="button"
                             onClick={startCamera}
-                            className="btn-3d btn-3d-indigo text-xs py-1.5 px-3.5 cursor-pointer inline-flex items-center gap-1.5"
+                            className="btn-3d btn-3d-amber text-xs py-1.5 px-4 cursor-pointer inline-flex items-center gap-1.5 text-slate-950 font-bold"
                           >
                             <RefreshCw className="w-3.5 h-3.5" />
                             <span>Turn On Camera</span>
@@ -497,7 +609,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                           <button
                             type="button"
                             onClick={() => nativeCameraInputRef.current?.click()}
-                            className="btn-3d btn-3d-emerald text-xs py-1.5 px-3.5 cursor-pointer inline-flex items-center gap-1.5"
+                            className="btn-3d btn-3d-emerald text-xs py-1.5 px-3.5 cursor-pointer inline-flex items-center gap-1.5 font-bold"
                           >
                             <Smartphone className="w-3.5 h-3.5" />
                             <span>Phone Camera</span>
@@ -508,7 +620,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                             onClick={() => fileInputRef.current?.click()}
                             className="btn-3d btn-3d-slate text-xs py-1.5 px-3 cursor-pointer inline-flex items-center gap-1.5"
                           >
-                            <UploadCloud className="w-3.5 h-3.5 text-indigo-400" />
+                            <UploadCloud className="w-3.5 h-3.5 text-amber-400" />
                             <span>Upload File</span>
                           </button>
                         </div>
@@ -520,53 +632,165 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
             </div>
           )}
 
-          {/* EXTRACTED RESULTS REVIEW & EDIT */}
+          {/* EXTRACTED RESULTS REVIEW & EDIT (HIGH-VALUE VINTAGE APPRAISAL CARD) */}
           {extractedData && (
             <div className="space-y-4 animate-in fade-in duration-200">
-              <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-3.5 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                  <div>
-                    <h4 className="text-xs font-bold text-emerald-900">
-                      Tag Decoded Successfully ({Math.round(extractedData.confidence * 100)}% Confidence)
+              {/* VINTAGE GRAIL HERO BANNER */}
+              <div className={`p-4 rounded-2xl border-2 shadow-xl ${
+                extractedData.isGrail
+                  ? 'bg-gradient-to-r from-amber-500/15 via-yellow-500/10 to-amber-600/15 border-amber-500 ring-2 ring-amber-500/20'
+                  : 'bg-emerald-50 border-emerald-300'
+              }`}>
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-amber-500/20">
+                  <div className="flex items-center gap-2">
+                    {extractedData.isGrail ? (
+                      <span className="px-2.5 py-1 bg-amber-500 text-slate-950 font-extrabold text-xs rounded-full flex items-center gap-1 shadow-md">
+                        <Crown className="w-3.5 h-3.5" />
+                        <span>👑 VINTAGE GRAIL PIECE</span>
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-1 bg-emerald-600 text-white font-extrabold text-xs rounded-full flex items-center gap-1 shadow-md">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>AUTHENTIC VINTAGE</span>
+                      </span>
+                    )}
+
+                    <span className="text-[11px] font-mono text-slate-600 bg-white/80 px-2 py-0.5 rounded border border-slate-300">
+                      {extractedData.stitchType || 'Single Stitch'}
+                    </span>
+                    <span className="text-[11px] font-mono text-slate-600 bg-white/80 px-2 py-0.5 rounded border border-slate-300">
+                      {extractedData.era || '1990s'}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtractedData(null);
+                      setCapturedImage(null);
+                      startCamera();
+                    }}
+                    className="btn-3d btn-3d-slate text-[11px] py-1 px-2.5 cursor-pointer inline-flex items-center gap-1"
+                  >
+                    <RotateCw className="w-3 h-3" />
+                    <span>Scan Next Piece</span>
+                  </button>
+                </div>
+
+                {/* Garment Title & High-Speed Market Valuation HUD */}
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+                  <div className="sm:col-span-7 space-y-1">
+                    <h4 className="text-base font-extrabold text-slate-950 tracking-tight">
+                      {extractedData.garmentTitle || extractedData.brand}
                     </h4>
-                    <p className="text-[11px] text-emerald-700">{extractedData.notes}</p>
+                    <p className="text-xs text-slate-600 flex items-center gap-1">
+                      <Tag className="w-3 h-3 text-amber-600" />
+                      <span>Tag: <strong>{extractedData.tagType || extractedData.brand}</strong> ({extractedData.countryOfOrigin})</span>
+                    </p>
+                  </div>
+
+                  {/* Dual Market Value Badge */}
+                  <div className="sm:col-span-5 bg-white/90 p-2.5 rounded-xl border border-amber-300 shadow-sm flex items-center justify-between">
+                    <div>
+                      <span className="block text-[9px] uppercase tracking-wider font-extrabold text-slate-500">
+                        Global Resale Market
+                      </span>
+                      <span className="text-sm font-black text-slate-800">
+                        AED {extractedData.estimatedMarketValueAed || 850}
+                      </span>
+                      <span className="text-[10px] text-slate-500 block font-mono">
+                        (~${extractedData.estimatedMarketValueUsd || 230} USD)
+                      </span>
+                    </div>
+
+                    <div className="text-right border-l pl-3 border-slate-200">
+                      <span className="block text-[9px] uppercase tracking-wider font-extrabold text-emerald-700">
+                        Recommended Tag
+                      </span>
+                      <span className="text-base font-black text-emerald-600">
+                        AED {extractedData.recommendedRetailPriceAed || 750}
+                      </span>
+                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.2 rounded inline-block">
+                        PROFIT LOCKED
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExtractedData(null);
-                    setCapturedImage(null);
-                    startCamera();
-                  }}
-                  className="btn-3d btn-3d-slate text-[11px] py-1 px-2.5 cursor-pointer inline-flex items-center gap-1"
-                >
-                  <RotateCw className="w-3 h-3" />
-                  <span>Rescan</span>
-                </button>
+                {/* Warehouse Sorting Guidance Box (Roman Urdu & English to prevent underpricing loss) */}
+                {extractedData.collectorTipsUrdu && (
+                  <div className="mt-3 bg-amber-500/15 border border-amber-500/40 rounded-xl p-2.5 flex items-start gap-2">
+                    <Flame className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="text-xs text-amber-950 leading-relaxed">
+                      <strong>⚠️ Sorting Staff Guidance (Khatarnaak Nuqsaan Se Bachaao):</strong>{' '}
+                      {extractedData.collectorTipsUrdu}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Extracted Fields */}
+              {/* Editable Fields (Pre-Filled by AI) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase">Extracted Brand</label>
+                <div className="sm:col-span-2">
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase">Garment Title & Edition</label>
                   <input
                     type="text"
-                    value={extractedData.brand}
-                    onChange={e => setExtractedData({ ...extractedData, brand: e.target.value })}
+                    value={extractedData.garmentTitle || extractedData.brand}
+                    onChange={e => setExtractedData({ ...extractedData, garmentTitle: e.target.value, brand: e.target.value })}
                     className="w-full mt-1 bg-white border border-slate-300 rounded p-1.5 text-xs font-bold text-slate-900"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase">Extracted Size</label>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase">Recommended Selling Price (AED)</label>
+                  <div className="relative mt-1">
+                    <span className="absolute inset-y-0 left-0 pl-2 flex items-center text-xs font-bold text-slate-400">AED</span>
+                    <input
+                      type="number"
+                      value={extractedData.recommendedRetailPriceAed || 750}
+                      onChange={e => setExtractedData({ ...extractedData, recommendedRetailPriceAed: Number(e.target.value) })}
+                      className="w-full pl-10 bg-white border-2 border-emerald-400 rounded p-1.5 text-xs font-extrabold text-emerald-700 font-mono shadow-xs"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase">Category</label>
+                  <input
+                    type="text"
+                    value={extractedData.category || 'Graphic T-Shirts & Band Tees'}
+                    onChange={e => setExtractedData({ ...extractedData, category: e.target.value })}
+                    className="w-full mt-1 bg-white border border-slate-300 rounded p-1.5 text-xs font-bold text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase">Size</label>
                   <input
                     type="text"
                     value={extractedData.size}
                     onChange={e => setExtractedData({ ...extractedData, size: e.target.value })}
                     className="w-full mt-1 bg-white border border-slate-300 rounded p-1.5 text-xs font-mono font-bold text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase">Boutique Quality Grade</label>
+                  <input
+                    type="text"
+                    value={extractedData.suggestedQualityGrade || 'Super Cream (Mint / Luxury Vintage)'}
+                    onChange={e => setExtractedData({ ...extractedData, suggestedQualityGrade: e.target.value })}
+                    className="w-full mt-1 bg-white border border-slate-300 rounded p-1.5 text-xs font-bold text-amber-700"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase">Stitch Construction</label>
+                  <input
+                    type="text"
+                    value={extractedData.stitchType || 'Single Stitch'}
+                    onChange={e => setExtractedData({ ...extractedData, stitchType: e.target.value })}
+                    className="w-full mt-1 bg-white border border-slate-300 rounded p-1.5 text-xs font-bold text-slate-900"
                   />
                 </div>
 
@@ -577,16 +801,6 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                     value={extractedData.countryOfOrigin}
                     onChange={e => setExtractedData({ ...extractedData, countryOfOrigin: e.target.value })}
                     className="w-full mt-1 bg-white border border-slate-300 rounded p-1.5 text-xs font-bold text-slate-900"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase">Garment Style / Tag Detail</label>
-                  <input
-                    type="text"
-                    value={extractedData.style}
-                    onChange={e => setExtractedData({ ...extractedData, style: e.target.value })}
-                    className="w-full mt-1 bg-white border border-slate-300 rounded p-1.5 text-xs font-medium text-slate-900"
                   />
                 </div>
               </div>
@@ -608,11 +822,11 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
             <button
               type="button"
               onClick={handleApply}
-              className="btn-3d btn-3d-indigo text-xs py-2 px-6 cursor-pointer font-bold flex items-center gap-1.5"
+              className="btn-3d btn-3d-amber text-xs py-2.5 px-6 cursor-pointer font-extrabold flex items-center gap-2 text-slate-950 shadow-xl"
             >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Apply to Garment Piece</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              <Crown className="w-4 h-4 text-slate-950" />
+              <span>Apply Grail Appraisal to Piece (AED {extractedData.recommendedRetailPriceAed || 750})</span>
+              <ArrowRight className="w-4 h-4 text-slate-950" />
             </button>
           )}
         </div>

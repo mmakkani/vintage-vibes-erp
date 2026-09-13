@@ -238,7 +238,8 @@ purchaseRouter.get('/pieces', async (req, res) => {
 purchaseRouter.post('/ai-ocr-scan', async (req, res) => {
   try {
     const { imageBase64, textPrompt } = req.body;
-    const result = await PurchaseController.scanGarmentTagWithAI(imageBase64, textPrompt);
+    const apiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
+    const result = await PurchaseController.scanGarmentTagWithAI(imageBase64, textPrompt, apiKey);
     return res.json(result);
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'OCR Processing failed' });

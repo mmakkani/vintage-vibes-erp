@@ -441,6 +441,13 @@ export async function safeFetchJson<T = any>(
         return scanRes as any;
       }
 
+      // Purchase & Sorting Vintage Appraisal (AI Grail Hunter)
+      if (url.includes('/api/purchase/ai-ocr-scan')) {
+        const { analyzeVintageGarment } = await import('./geminiVintageValuation.ts');
+        const valuationRes = await analyzeVintageGarment(bodyData);
+        return valuationRes as any;
+      }
+
       // Enterprise Audit Log Mutation (POST /api/audit, /api/audit/log)
       if (url.includes('/api/audit') || url.includes('/audit/log')) {
         await AuditService.addAuditLog(bodyData);

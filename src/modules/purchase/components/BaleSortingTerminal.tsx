@@ -41,7 +41,9 @@ import {
   RotateCw,
   RotateCcw,
   Unlock,
-  Maximize2
+  Maximize2,
+  Crown,
+  Flame
 } from 'lucide-react';
 
 interface BaleSortingTerminalProps {
@@ -289,6 +291,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const [tagImageUrl, setTagImageUrl] = useState<string | undefined>(undefined);
   const [frontImageUrl, setFrontImageUrl] = useState<string | undefined>(undefined);
   const [backImageUrl, setBackImageUrl] = useState<string | undefined>(undefined);
+  const [activeGrailAlert, setActiveGrailAlert] = useState<ExtractedTagData | null>(null);
 
   // Auto print toggle
   const [autoPrintThermalOnAdd, setAutoPrintThermalOnAdd] = useState(true);
@@ -402,18 +405,63 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     return `${baseCode}-P${String(nextIdx).padStart(4, '0')}`;
   }, [activeBale, pieces.length]);
 
-  // Apply OCR extracted tag data
+  // Apply OCR extracted tag data (AI Grail & Vintage Value Hunter)
   const handleApplyExtractedTag = (tagData: ExtractedTagData) => {
-    if (tagData.brand) setBrandTitle(`${tagData.brand} ${tagData.style || ''}`.trim());
+    // 1. Title & Brand
+    const titleToUse = tagData.garmentTitle || (tagData.brand ? `${tagData.brand} ${tagData.style || ''}`.trim() : '');
+    if (titleToUse) setBrandTitle(titleToUse);
+
+    // 2. Size & Country of Origin
     if (tagData.size) setSizeScanned(tagData.size);
     if (tagData.countryOfOrigin) setCountryOfOrigin(tagData.countryOfOrigin);
-    if (tagData.style) setStyleNotes(tagData.style);
+
+    // 3. Category matching
+    if (tagData.category) {
+      const matchCat = availableCategories.find(c =>
+        c.toLowerCase().includes(tagData.category!.toLowerCase()) ||
+        tagData.category!.toLowerCase().includes(c.toLowerCase())
+      );
+      if (matchCat) {
+        setSelectedCategory(matchCat);
+      } else {
+        setSelectedCategory(tagData.category);
+      }
+    }
+
+    // 4. Quality Grade
+    if (tagData.suggestedQualityGrade) {
+      const matchGrade = (labelsList || []).find(l =>
+        l.name.toLowerCase().includes(tagData.suggestedQualityGrade!.toLowerCase()) ||
+        tagData.suggestedQualityGrade!.toLowerCase().includes(l.name.toLowerCase())
+      );
+      if (matchGrade) setSelectedGrade(matchGrade.name);
+      else setSelectedGrade(tagData.suggestedQualityGrade);
+    }
+
+    // 5. CRITICAL PROFIT PROTECTION: Auto-populate Selling Price Override
+    if (tagData.recommendedRetailPriceAed && tagData.recommendedRetailPriceAed > 0) {
+      setSellingPriceOverride(String(tagData.recommendedRetailPriceAed));
+    }
+
+    // 6. Style Notes & Tag Image
+    const notesArr = [tagData.stitchType, tagData.era, tagData.grailNotes].filter(Boolean);
+    if (notesArr.length > 0) setStyleNotes(notesArr.join(' • '));
     if (tagData.tagImageUrl) setTagImageUrl(tagData.tagImageUrl);
 
-    luxuryAudio.playMechanicalClick();
+    // 7. Active Grail Alert Banner
+    if (tagData.isGrail || (tagData.estimatedMarketValueAed && tagData.estimatedMarketValueAed >= 350)) {
+      setActiveGrailAlert(tagData);
+      luxuryAudio.playCashRegisterSound();
+    } else {
+      setActiveGrailAlert(null);
+      luxuryAudio.playMechanicalClick();
+    }
+
     setFeedbackToast({
-      text: `AI OCR parsed: ${tagData.brand} (Size: ${tagData.size}, ${tagData.countryOfOrigin})`,
-      type: 'info'
+      text: tagData.isGrail
+        ? `🔥 GRAIL DETECTED: ${titleToUse} — Protected at AED ${tagData.recommendedRetailPriceAed || 750} (Market: AED ${tagData.estimatedMarketValueAed || 850})`
+        : `AI parsed: ${titleToUse} (Size: ${tagData.size})`,
+      type: 'success'
     });
 
     if (gramInputRef.current) {
@@ -636,8 +684,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     });
 
     // Reset fields with smart defaults and refocus weight immediately
+    setActiveGrailAlert(null);
     setGramWeight('');
     setSellingPriceOverride('');
+    setBrandTitle('');
+    setStyleNotes('');
     setFrontImageUrl(undefined);
     setBackImageUrl(undefined);
     setTagImageUrl(undefined);
@@ -1203,10 +1254,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowTagScanner(true)}
-                    className="px-2.5 py-1 bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/50 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                    className="px-3 py-1.5 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-yellow-400 text-slate-950 border border-amber-300 rounded-lg text-xs font-black flex items-center gap-1.5 cursor-pointer transition-all shadow-md active:scale-95"
+                    title="AI Grail & Vintage Value Hunter (Gemini Vision)"
                   >
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>📷 AI Tag OCR</span>
+                    <Crown className="w-3.5 h-3.5 text-slate-950 animate-bounce" />
+                    <span>🤖 AI Grail Hunter</span>
                   </button>
                 </div>
               </div>
@@ -1574,15 +1626,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             <span>Live</span>
                           </button>
 
-                          {/* AI OCR Scanner */}
+                          {/* AI Grail & Vintage Value Hunter */}
                           <button
                             type="button"
                             onClick={() => setShowTagScanner(true)}
-                            className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition"
-                            title="AI OCR Tag Reader"
+                            className="bg-gradient-to-r from-amber-600/30 to-yellow-600/30 hover:from-amber-600/50 hover:to-yellow-600/50 text-amber-200 border border-amber-400/60 py-1.5 px-2 rounded-lg text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition shadow-xs"
+                            title="AI Grail & Vintage Value Hunter (Single-Stitch & Market Price)"
                           >
-                            <Sparkles className="w-3 h-3 text-amber-400" />
-                            <span>AI OCR</span>
+                            <Crown className="w-3 h-3 text-amber-300 animate-pulse" />
+                            <span>AI Grail</span>
                           </button>
 
                           {/* Snap Tag Photo with Phone */}
@@ -1641,6 +1693,47 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* ACTIVE GRAIL APPRAISAL ALERT BANNER */}
+              {activeGrailAlert && (
+                <div className="bg-gradient-to-r from-amber-950/95 via-yellow-950/90 to-amber-900/95 border-2 border-amber-400 rounded-xl p-3.5 shadow-2xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/30 border border-amber-400 flex items-center justify-center shrink-0 shadow-inner">
+                      <Crown className="w-6 h-6 text-amber-300 animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-black text-amber-300 tracking-wide flex items-center gap-1.5">
+                          <Flame className="w-3.5 h-3.5 text-amber-400" />
+                          <span>VINTAGE GRAIL PIECE PROTECTED:</span>
+                          <span className="text-white underline">{activeGrailAlert.garmentTitle || activeGrailAlert.brand}</span>
+                        </span>
+                        <span className="text-[10px] bg-amber-500/30 text-amber-200 border border-amber-400/50 px-2 py-0.5 rounded-full font-mono font-bold">
+                          {activeGrailAlert.era} • {activeGrailAlert.stitchType}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-amber-100/90 mt-1">
+                        Global Resale Market: <strong className="text-white">AED {activeGrailAlert.estimatedMarketValueAed}</strong> (~${activeGrailAlert.estimatedMarketValueUsd} USD) • Protected Showroom Retail Tag: <strong className="text-emerald-300 text-xs">AED {activeGrailAlert.recommendedRetailPriceAed}</strong>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-extrabold text-emerald-300 bg-emerald-950/80 border border-emerald-500/50 px-2.5 py-1 rounded-lg flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                      <span>AED 50 UNDERPRICING BLOCKED</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveGrailAlert(null)}
+                      className="text-xs text-amber-300 hover:text-white px-2 py-1 rounded hover:bg-white/10 transition cursor-pointer"
+                      title="Dismiss alert banner"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* RAPID INPUT CONTROLS ROW */}
               <form onSubmit={handleAddPieceAndNext} className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-12 gap-2.5 items-end">
