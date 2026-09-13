@@ -11,10 +11,29 @@ export class PartiesService {
         if (apiRes && apiRes.ok) {
           const list = await apiRes.json();
           if (Array.isArray(list) && list.length > 0) {
+            const normalized = list.map((r: any) => ({
+              id: r.id,
+              code: r.code || `P-${r.id}`,
+              name: r.name || 'Unnamed Party',
+              type: (r.type || 'CLIENT').toUpperCase(),
+              contactPerson: r.contactPerson || r.contact_person || '',
+              phone: r.phone || '',
+              email: r.email || '',
+              address: r.address || '',
+              trnNo: r.trnNo || r.trn_no || '',
+              creditLimit: Number(r.creditLimit ?? r.credit_limit ?? 0),
+              currentBalance: Number(r.currentBalance ?? r.current_balance ?? 0),
+              currency: r.currency || 'AED',
+              isActive: r.isActive !== false && r.is_active !== false,
+              accountMap: r.accountMap || r.account_map || {},
+              coaAccountId: r.coaAccountId || r.coa_account_id,
+              coa_account_id: r.coaAccountId || r.coa_account_id,
+              createdAt: r.createdAt || r.created_at || new Date().toISOString()
+            }));
             try {
-              localStorage.setItem('vibe_cached_parties', JSON.stringify(list));
+              localStorage.setItem('vibe_cached_parties', JSON.stringify(normalized));
             } catch {}
-            return list;
+            return normalized;
           }
         }
       } catch (_) {}
@@ -81,7 +100,13 @@ export class PartiesService {
       const cached = localStorage.getItem('vibe_cached_parties');
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((r: any) => ({
+            ...r,
+            creditLimit: Number(r.creditLimit ?? r.credit_limit ?? 0),
+            currentBalance: Number(r.currentBalance ?? r.current_balance ?? 0)
+          }));
+        }
       }
     } catch {}
 

@@ -66,11 +66,16 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   const loadParties = async () => {
     try {
       const data = await PartiesService.getParties();
-      setParties(data);
-      if (data.length > 0 && !selectedParty) {
-        selectParty(data[0]);
+      const safeData = (Array.isArray(data) ? data : []).map((p: any) => ({
+        ...p,
+        currentBalance: Number(p.currentBalance ?? p.current_balance ?? 0),
+        creditLimit: Number(p.creditLimit ?? p.credit_limit ?? 0)
+      }));
+      setParties(safeData);
+      if (safeData.length > 0 && !selectedParty) {
+        selectParty(safeData[0]);
       } else if (selectedParty) {
-        const updated = data.find((p: Party) => p.id === selectedParty.id);
+        const updated = safeData.find((p: Party) => p.id === selectedParty.id);
         if (updated) setSelectedParty(updated);
       }
     } catch (err: any) {
@@ -239,15 +244,15 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   <div className="text-right">
                     <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Khata Balance</div>
                     <div className={`font-mono font-bold text-xs ${
-                      party.currentBalance > 0
+                      Number(party.currentBalance || (party as any).current_balance || 0) > 0
                         ? 'text-emerald-700'
-                        : party.currentBalance < 0
+                        : Number(party.currentBalance || (party as any).current_balance || 0) < 0
                         ? 'text-rose-700'
                         : 'text-slate-600'
                     }`}>
-                      AED {Math.abs(party.currentBalance).toLocaleString()}
+                      AED {Math.abs(Number(party.currentBalance ?? (party as any).current_balance ?? 0)).toLocaleString()}
                       <span className="text-[10px] font-sans font-normal ml-1">
-                        {party.currentBalance > 0 ? '(Rec)' : party.currentBalance < 0 ? '(Pay)' : '(Nil)'}
+                        {Number(party.currentBalance || (party as any).current_balance || 0) > 0 ? '(Rec)' : Number(party.currentBalance || (party as any).current_balance || 0) < 0 ? '(Pay)' : '(Nil)'}
                       </span>
                     </div>
                   </div>
@@ -271,10 +276,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   <span className="flex items-center gap-1">
                     <span className="text-emerald-600 font-bold">✓ COA:</span>
                     <span className="font-bold text-slate-800">
-                      {party.accountMap?.payableAccountId || party.accountMap?.receivableAccountId || party.coaAccountId || (party.type === 'SUPPLIER' ? `2110-${party.code.replace(/[^A-Za-z0-9]/g, '')}` : `1130-${party.code.replace(/[^A-Za-z0-9]/g, '')}`)}
+                      {party.accountMap?.payableAccountId || party.accountMap?.receivableAccountId || party.coaAccountId || (party.type === 'SUPPLIER' ? `2110-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : `1130-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}`)}
                     </span>
                   </span>
-                  <span>Limit: AED {party.creditLimit.toLocaleString()}</span>
+                  <span>Limit: AED {Number(party.creditLimit ?? (party as any).credit_limit ?? 0).toLocaleString()}</span>
                 </div>
               </div>
             );
@@ -337,11 +342,11 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current Ledger Net Balance</div>
                   <div className={`text-base font-mono font-bold mt-0.5 ${
-                    selectedParty.currentBalance > 0 ? 'text-emerald-700' : selectedParty.currentBalance < 0 ? 'text-rose-700' : 'text-slate-700'
+                    Number(selectedParty.currentBalance || (selectedParty as any).current_balance || 0) > 0 ? 'text-emerald-700' : Number(selectedParty.currentBalance || (selectedParty as any).current_balance || 0) < 0 ? 'text-rose-700' : 'text-slate-700'
                   }`}>
-                    AED {Math.abs(selectedParty.currentBalance).toLocaleString()}
+                    AED {Math.abs(Number(selectedParty.currentBalance ?? (selectedParty as any).current_balance ?? 0)).toLocaleString()}
                     <span className="text-[10px] font-sans font-normal ml-1">
-                      {selectedParty.currentBalance > 0 ? 'Customer Owes Us (Dr)' : selectedParty.currentBalance < 0 ? 'We Owe Supplier (Cr)' : 'Settled'}
+                      {Number(selectedParty.currentBalance || (selectedParty as any).current_balance || 0) > 0 ? 'Customer Owes Us (Dr)' : Number(selectedParty.currentBalance || (selectedParty as any).current_balance || 0) < 0 ? 'We Owe Supplier (Cr)' : 'Settled'}
                     </span>
                   </div>
                 </div>
@@ -349,7 +354,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Credit Facility</div>
                   <div className="text-base font-mono font-bold text-slate-800 mt-0.5">
-                    AED {selectedParty.creditLimit.toLocaleString()}
+                    AED {Number(selectedParty.creditLimit ?? (selectedParty as any).credit_limit ?? 0).toLocaleString()}
                   </div>
                 </div>
               </div>
@@ -381,13 +386,13 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                           <td className="px-3 py-1.5 font-bold text-blue-900">{log.docRef}</td>
                           <td className="px-3 py-1.5 font-sans text-slate-700 max-w-xs truncate">{log.description}</td>
                           <td className="px-3 py-1.5 text-right font-semibold text-emerald-700">
-                            {log.debit > 0 ? `AED ${log.debit.toLocaleString()}` : '-'}
+                            {Number(log.debit || 0) > 0 ? `AED ${Number(log.debit || 0).toLocaleString()}` : '-'}
                           </td>
                           <td className="px-3 py-1.5 text-right font-semibold text-rose-700">
-                            {log.credit > 0 ? `AED ${log.credit.toLocaleString()}` : '-'}
+                            {Number(log.credit || 0) > 0 ? `AED ${Number(log.credit || 0).toLocaleString()}` : '-'}
                           </td>
                           <td className="px-3 py-1.5 text-right font-bold text-slate-900">
-                            AED {log.balance.toLocaleString()}
+                            AED {Number(log.balance ?? (log as any).running_balance ?? (log as any).runningBalance ?? 0).toLocaleString()}
                           </td>
                         </tr>
                       ))

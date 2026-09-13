@@ -1417,7 +1417,24 @@ export default async function handler(req: any, res: any) {
       try {
         const { data } = await supabaseAdmin.from('parties').select('*').order('name');
         if (data && data.length > 0) {
-          return res.status(200).json(data);
+          return res.status(200).json(data.map((r: any) => ({
+            id: r.id,
+            code: r.code,
+            name: r.name,
+            type: (r.type || 'CLIENT').toUpperCase(),
+            contactPerson: r.contact_person || r.contactPerson || '',
+            phone: r.phone || '',
+            email: r.email || '',
+            address: r.address || '',
+            trnNo: r.trn_no || r.trnNo || '',
+            creditLimit: Number(r.credit_limit ?? r.creditLimit ?? 0),
+            currentBalance: Number(r.current_balance ?? r.currentBalance ?? 0),
+            currency: r.currency || 'AED',
+            isActive: r.is_active !== false && r.isActive !== false,
+            accountMap: r.account_map || r.accountMap || {},
+            coaAccountId: r.coa_account_id || r.coaAccountId,
+            createdAt: r.created_at
+          })));
         }
       } catch (_) {}
 
