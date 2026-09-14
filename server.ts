@@ -20,6 +20,7 @@ import { SetupController } from './src/modules/setup/setup.controller.ts';
 import { devicesRouter } from './src/modules/devices/devices.routes.ts';
 import { presenceRouter } from './src/modules/presence/presence.routes.ts';
 import { eventHub } from './src/server/events.ts';
+import { BotDetector } from './src/server/botDetector.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 // Global resilience: catch unhandled exceptions (such as Baileys websocket or undici fetch disconnects)
@@ -50,6 +51,21 @@ async function startServer() {
     res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, ngrok-skip-browser-warning');
     if (req.method === 'OPTIONS') {
       return res.sendStatus(200);
+    }
+    next();
+  });
+
+  // Automated Bad Bot Detection & Real-time Auto-Block Security Shield
+  app.use((req, res, next) => {
+    const analysis = BotDetector.analyze(req);
+    if (analysis.isBadBot) {
+      return res.status(403).json({
+        success: false,
+        blocked: true,
+        error: 'Access Denied: Bad Bot Activity Detected & Blocked',
+        reason: analysis.reason,
+        botName: analysis.botName
+      });
     }
     next();
   });

@@ -64,6 +64,244 @@ async function getPgClient(): Promise<Client | null> {
 }
 
 // ============================================================================
+// AUTOMATED BAD BOT DETECTION & AUTO-BLOCK SHIELD ENGINE
+// ============================================================================
+
+export type BotClassification = 'HUMAN' | 'VERIFIED_BOT' | 'BAD_BOT';
+
+export interface BotAnalysisResult {
+  isBadBot: boolean;
+  isVerifiedBot: boolean;
+  classification: BotClassification;
+  botName: string;
+  reason?: string;
+  threatLevel: 'NONE' | 'LOW' | 'CRITICAL';
+}
+
+const VERIFIED_BOT_PATTERNS = [
+  { pattern: /googlebot/i, name: 'Googlebot' },
+  { pattern: /bingbot/i, name: 'Bingbot' },
+  { pattern: /baiduspider/i, name: 'Baidu Spider' },
+  { pattern: /yandexbot/i, name: 'Yandex Bot' },
+  { pattern: /duckduckbot/i, name: 'DuckDuckGo Bot' },
+  { pattern: /slurp/i, name: 'Yahoo Slurp' },
+  { pattern: /facebookexternalhit/i, name: 'Facebook Meta Bot' },
+  { pattern: /facebot/i, name: 'Facebook Facebot' },
+  { pattern: /twitterbot/i, name: 'Twitter / X Bot' },
+  { pattern: /linkedinbot/i, name: 'LinkedIn Bot' },
+  { pattern: /pinterestbot/i, name: 'Pinterest Bot' },
+  { pattern: /applebot/i, name: 'Applebot' },
+  { pattern: /vercel(-screenshot|bot)?/i, name: 'Vercel Deployment / Ping' },
+  { pattern: /uptimerobot/i, name: 'UptimeRobot Monitor' },
+  { pattern: /pingdom/i, name: 'Pingdom Health Probe' }
+];
+
+const BAD_BOT_PATTERNS = [
+  { pattern: /python-requests/i, name: 'Python Requests Scraper', reason: 'Automated Python HTTP scraper' },
+  { pattern: /aiohttp/i, name: 'AIOHTTP Scraper', reason: 'Asynchronous Python scraper' },
+  { pattern: /urllib/i, name: 'Python urllib Crawler', reason: 'Standard Python automated crawler' },
+  { pattern: /curl\//i, name: 'cURL Command Utility', reason: 'Automated terminal cURL request' },
+  { pattern: /wget\//i, name: 'Wget Downloader', reason: 'Automated terminal Wget scraper' },
+  { pattern: /httpie/i, name: 'HTTPie CLI', reason: 'Automated command-line client' },
+  { pattern: /scrapy/i, name: 'Scrapy Crawler Engine', reason: 'Aggressive distributed web scraper' },
+  { pattern: /puppeteer/i, name: 'Puppeteer Headless Browser', reason: 'Headless Chrome browser automation' },
+  { pattern: /playwright/i, name: 'Playwright Automation', reason: 'Headless multi-browser test driver' },
+  { pattern: /selenium/i, name: 'Selenium WebDriver', reason: 'Automated browser control tool' },
+  { pattern: /webdriver/i, name: 'Generic WebDriver', reason: 'Automated browser driver signature' },
+  { pattern: /phantomjs/i, name: 'PhantomJS Headless', reason: 'Headless WebKit automation script' },
+  { pattern: /headlesschrome/i, name: 'Headless Chrome', reason: 'Browser running without graphical display' },
+  { pattern: /go-http-client/i, name: 'Go HTTP Client', reason: 'Golang automated scraper script' },
+  { pattern: /java\//i, name: 'Java HTTP Client', reason: 'Java automated crawling agent' },
+  { pattern: /apache-httpclient/i, name: 'Apache HttpClient', reason: 'Automated Java crawler framework' },
+  { pattern: /okhttp/i, name: 'OkHttp Client', reason: 'Automated OkHttp bot' },
+  { pattern: /libwww-perl/i, name: 'Perl Libwww', reason: 'Perl automated scraping bot' },
+  { pattern: /zgrab/i, name: 'ZGrab Banner Grabber', reason: 'Vulnerability network scanner' },
+  { pattern: /sqlmap/i, name: 'SQLMap Exploitation Tool', reason: 'Automated SQL Injection attack framework' },
+  { pattern: /nikto/i, name: 'Nikto Web Scanner', reason: 'Vulnerability exploit scanner' },
+  { pattern: /masscan/i, name: 'Masscan Port Scanner', reason: 'High-speed network exploit tool' },
+  { pattern: /nmap/i, name: 'Nmap Security Scanner', reason: 'Port scan & banner probe' },
+  { pattern: /dirbuster|gobuster/i, name: 'Path Enumerator', reason: 'Brute-force directory traversal tool' },
+  { pattern: /censys|shodan/i, name: 'Internet Asset Scanner', reason: 'Automated IoT reconnaissance crawler' },
+  { pattern: /acunetix|nessus|qualys/i, name: 'Security Vulnerability Scanner', reason: 'Automated penetration scan tool' }
+];
+
+const SENSITIVE_PROBE_PATHS = [
+  '/.env', '/.git', '/.aws', '/.vscode', '/.ds_store', '/wp-admin', '/wp-login.php',
+  '/wp-content', '/xmlrpc.php', '/phpmyadmin', '/pma', '/config.json', '/server-status',
+  '/actuator', '/solr', '/eval-stdin.php', '/backup.sql', '/dump.sql', '/database.sql',
+  '/etc/passwd', '/web.config', '/.svn', '/phpinfo.php'
+];
+
+const ipBurstMap = new Map<string, number[]>();
+
+function analyzeBotRequest(req: any, explicitPath?: string, explicitUa?: string): BotAnalysisResult {
+  const rawUa = (
+    explicitUa ||
+    req.headers?.['user-agent'] ||
+    req.headers?.['User-Agent'] ||
+    ''
+  ).toString().trim();
+
+  const normalizedPath = (
+    explicitPath ||
+    req.originalUrl ||
+    req.url ||
+    ''
+  ).toString().toLowerCase();
+
+  // 1. Sensitive path probes
+  for (const probe of SENSITIVE_PROBE_PATHS) {
+    if (normalizedPath.includes(probe)) {
+      return {
+        isBadBot: true,
+        isVerifiedBot: false,
+        classification: 'BAD_BOT',
+        botName: 'Exploit Scanner / Probe',
+        reason: `Targeting sensitive exploit path (${probe})`,
+        threatLevel: 'CRITICAL'
+      };
+    }
+  }
+
+  // 2. Non-existent PHP / CMS probes on React SPA
+  if (normalizedPath.endsWith('.php') || normalizedPath.includes('/wp-') || normalizedPath.includes('/cgi-bin/')) {
+    return {
+      isBadBot: true,
+      isVerifiedBot: false,
+      classification: 'BAD_BOT',
+      botName: 'CMS Exploit Scanner',
+      reason: 'Probing nonexistent PHP / WordPress vectors on React SPA',
+      threatLevel: 'CRITICAL'
+    };
+  }
+
+  // 3. Blank or suspicious short User-Agent
+  if (!rawUa || rawUa.length < 6 || /^(bot|spider|test|crawler|check|monitor|-)$/i.test(rawUa)) {
+    return {
+      isBadBot: true,
+      isVerifiedBot: false,
+      classification: 'BAD_BOT',
+      botName: 'Anomaly / Blank User-Agent',
+      reason: 'Missing or forged User-Agent header string',
+      threatLevel: 'CRITICAL'
+    };
+  }
+
+  // 4. Verified Search Engine Bots
+  for (const v of VERIFIED_BOT_PATTERNS) {
+    if (v.pattern.test(rawUa)) {
+      return {
+        isBadBot: false,
+        isVerifiedBot: true,
+        classification: 'VERIFIED_BOT',
+        botName: v.name,
+        reason: 'Verified Search Engine Indexer / Uptime Monitor',
+        threatLevel: 'NONE'
+      };
+    }
+  }
+
+  // 5. Bad Bot Patterns
+  for (const b of BAD_BOT_PATTERNS) {
+    if (b.pattern.test(rawUa)) {
+      return {
+        isBadBot: true,
+        isVerifiedBot: false,
+        classification: 'BAD_BOT',
+        botName: b.name,
+        reason: b.reason,
+        threatLevel: 'CRITICAL'
+      };
+    }
+  }
+
+  // 6. Rapid Loop Burst Analysis
+  const ip = getClientIp(req);
+  const now = Date.now();
+  if (ip && ip !== '127.0.0.1') {
+    const timestamps = ipBurstMap.get(ip) || [];
+    const recent = timestamps.filter(t => now - t < 5000);
+    recent.push(now);
+    ipBurstMap.set(ip, recent);
+    if (recent.length > 35) {
+      return {
+        isBadBot: true,
+        isVerifiedBot: false,
+        classification: 'BAD_BOT',
+        botName: 'Rapid Query Loop / Flooder',
+        reason: `High frequency request burst (${recent.length} reqs / 5s)`,
+        threatLevel: 'CRITICAL'
+      };
+    }
+  }
+
+  return {
+    isBadBot: false,
+    isVerifiedBot: false,
+    classification: 'HUMAN',
+    botName: 'Human User / Browser',
+    threatLevel: 'NONE'
+  };
+}
+
+async function recordBotHit(botAnalysis: BotAnalysisResult, req: any, explicitPath?: string) {
+  const ip = getClientIp(req);
+  const loc = getClientLocation(req);
+  const rawUa = (req.headers?.['user-agent'] || '').toString();
+  const hexHash = Buffer.from(ip + '-' + (botAnalysis.botName || 'bot')).toString('hex').slice(0, 16);
+  const deviceId = `bot-${hexHash}`;
+  const status = botAnalysis.isBadBot ? 'BLOCKED' : 'ACTIVE';
+  const botType = botAnalysis.classification;
+  const username = botAnalysis.isBadBot
+    ? `[BAD BOT] ${botAnalysis.botName}`
+    : `${botAnalysis.botName} (Verified Bot)`;
+  const deviceType = botAnalysis.isBadBot ? 'Bad Bot / Exploit Scanner' : 'Search Crawler';
+  const deviceModel = botAnalysis.botName;
+  const reason = botAnalysis.reason || (botAnalysis.isBadBot ? 'Suspicious automated crawler' : 'Verified Indexer');
+
+  const client = await getPgClient();
+  if (client) {
+    try {
+      await client.query(`
+        INSERT INTO device_installations (
+          device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit, city, country, last_active_at
+        ) VALUES ($1, null, $2, $3, $4, $5, $6, false, $7, $8, $9, 0, $10, $11, NOW())
+        ON CONFLICT (device_id) DO UPDATE
+        SET last_active_at = NOW(),
+            ip_address = EXCLUDED.ip_address,
+            install_status = $7,
+            bot_type = $8,
+            block_reason = EXCLUDED.block_reason,
+            city = COALESCE(NULLIF(EXCLUDED.city, ''), device_installations.city),
+            country = COALESCE(NULLIF(EXCLUDED.country, ''), device_installations.country);
+      `, [deviceId, username, ip, deviceType, deviceModel, rawUa, status, botType, reason, loc.city, loc.country]);
+      await client.end();
+    } catch (e) {
+      try { await client.end(); } catch (_) {}
+    }
+  } else {
+    try {
+      await supabaseAdmin.from('device_installations').upsert({
+        device_id: deviceId,
+        username,
+        ip_address: ip,
+        device_type: deviceType,
+        device_model: deviceModel,
+        user_agent: rawUa,
+        is_standalone: false,
+        install_status: status,
+        bot_type: botType,
+        block_reason: reason,
+        max_devices_limit: 0,
+        city: loc.city,
+        country: loc.country,
+        last_active_at: new Date().toISOString()
+      }, { onConflict: 'device_id' });
+    } catch (_) {}
+  }
+}
+
+// ============================================================================
 // VINTAGE VIBES ERP - UNIFIED VERCEL SERVERLESS GATEWAY
 // Handles all /api/* routes reliably on AWS Lambda / Vercel Serverless
 // ============================================================================
@@ -367,6 +605,26 @@ export default async function handler(req: any, res: any) {
   const userName = parsedUrl.searchParams.get('userName') || req.query?.userName || body.userName || 'Sales & Marketing Operator';
 
   try {
+    // ========================================================================
+    // AUTOMATED BAD BOT DETECTION & AUTO-BLOCK SHIELD
+    // ========================================================================
+    const botCheck = analyzeBotRequest(req, pathname);
+    if (botCheck.isBadBot) {
+      await recordBotHit(botCheck, req, pathname);
+      return res.status(403).json({
+        success: false,
+        blocked: true,
+        error: 'Access Denied: Bad Bot Activity Neutralized & Blocked',
+        reason: botCheck.reason,
+        botName: botCheck.botName,
+        ip: getClientIp(req)
+      });
+    }
+
+    if (botCheck.isVerifiedBot) {
+      recordBotHit(botCheck, req, pathname).catch(() => {});
+    }
+
     // ========================================================================
     // WHATSAPP BROADCASTER & PAIRING ENDPOINTS
     // ========================================================================
@@ -1914,14 +2172,28 @@ export default async function handler(req: any, res: any) {
       if (pathname.includes('/devices/register') && method === 'POST') {
         const { deviceId, userId, username, deviceType, deviceModel, userAgent, isStandalone } = body || {};
         if (!deviceId) return res.status(400).json({ success: false, error: 'Device ID is required' });
+        
+        // Automated Bad Bot Detection on Registration
+        const botCheck = analyzeBotRequest(req, pathname, userAgent);
+        const isBad = botCheck.isBadBot;
+        const isVerified = botCheck.isVerifiedBot;
+        const botType = isBad ? 'BAD_BOT' : (isVerified ? 'VERIFIED_BOT' : 'HUMAN');
+        const installStatus = isBad ? 'BLOCKED' : 'ACTIVE';
+        const blockReason = isBad ? botCheck.reason : null;
+
         const client = await getPgClient();
         if (client) {
           try {
             const existing = await client.query('SELECT * FROM device_installations WHERE device_id = $1 LIMIT 1;', [deviceId]);
             if (existing.rows && existing.rows.length > 0) {
-              if (existing.rows[0].install_status === 'BLOCKED') {
+              if (existing.rows[0].install_status === 'BLOCKED' || isBad) {
+                await client.query(`
+                  UPDATE device_installations
+                  SET last_active_at = NOW(), install_status = 'BLOCKED', bot_type = 'BAD_BOT', block_reason = COALESCE($1, block_reason)
+                  WHERE device_id = $2;
+                `, [blockReason || 'Neutralized bad bot activity', deviceId]);
                 await client.end();
-                return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator.' });
+                return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator / Automated Security Shield.', reason: blockReason || existing.rows[0].block_reason });
               }
               const updated = await client.query(`
                 UPDATE device_installations
@@ -1932,14 +2204,25 @@ export default async function handler(req: any, res: any) {
                     device_model = COALESCE(NULLIF($6, ''), device_model),
                     user_agent = COALESCE(NULLIF($7, ''), user_agent),
                     city = COALESCE(NULLIF($9, ''), city),
-                    country = COALESCE(NULLIF($10, ''), country)
+                    country = COALESCE(NULLIF($10, ''), country),
+                    bot_type = $11
                 WHERE device_id = $8 RETURNING *;
-              `, [ip, Boolean(isStandalone), username || null, userId || null, deviceType || null, deviceModel || null, userAgent || null, deviceId, loc.city, loc.country]);
+              `, [ip, Boolean(isStandalone), username || null, userId || null, deviceType || null, deviceModel || null, userAgent || null, deviceId, loc.city, loc.country, botType]);
               await client.end();
               return res.status(200).json({ success: true, device: updated.rows[0], ip, city: loc.city, country: loc.country });
             }
             const cleanUser = (username || '').trim();
             const maxLimit = 2;
+
+            if (isBad) {
+              const inserted = await client.query(`
+                INSERT INTO device_installations (device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit, city, country)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'BLOCKED', 'BAD_BOT', $9, 0, $10, $11) RETURNING *;
+              `, [deviceId, userId || null, `[BAD BOT] ${cleanUser || botCheck.botName}`, ip, deviceType || 'Bad Bot / Scanner', deviceModel || botCheck.botName, userAgent || '', Boolean(isStandalone), blockReason, loc.city, loc.country]);
+              await client.end();
+              return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator / Automated Security Shield.', reason: blockReason, device: inserted.rows[0] });
+            }
+
             if (cleanUser && cleanUser !== 'Guest / Visitor' && cleanUser !== 'guest') {
               const userCountRes = await client.query("SELECT COUNT(*) AS count FROM device_installations WHERE username = $1 AND install_status = 'ACTIVE';", [cleanUser]);
               const activeCount = parseInt(userCountRes.rows[0]?.count || '0', 10);
@@ -1949,9 +2232,9 @@ export default async function handler(req: any, res: any) {
               }
             }
             const inserted = await client.query(`
-              INSERT INTO device_installations (device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, max_devices_limit, city, country)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ACTIVE', $9, $10, $11) RETURNING *;
-            `, [deviceId, userId || null, cleanUser || 'Guest / Visitor', ip, deviceType || 'Unknown', deviceModel || 'Unknown Device', userAgent || '', Boolean(isStandalone), maxLimit, loc.city, loc.country]);
+              INSERT INTO device_installations (device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit, city, country)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *;
+            `, [deviceId, userId || null, cleanUser || 'Guest / Visitor', ip, deviceType || 'Unknown', deviceModel || 'Unknown Device', userAgent || '', Boolean(isStandalone), installStatus, botType, blockReason, maxLimit, loc.city, loc.country]);
             await client.end();
             return res.status(201).json({ success: true, device: inserted.rows[0], ip, city: loc.city, country: loc.country });
           } catch (err: any) {
@@ -1962,11 +2245,12 @@ export default async function handler(req: any, res: any) {
         try {
           const { data: existing } = await supabaseAdmin.from('device_installations').select('*').eq('device_id', deviceId).maybeSingle();
           if (existing) {
-            if (existing.install_status === 'BLOCKED') return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked.' });
-            const { data: updated } = await supabaseAdmin.from('device_installations').update({ ip_address: ip, is_standalone: Boolean(isStandalone), last_active_at: new Date().toISOString(), username: username || existing.username, city: loc.city, country: loc.country }).eq('device_id', deviceId).select().single();
+            if (existing.install_status === 'BLOCKED' || isBad) return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator / Automated Security Shield.', reason: blockReason || existing.block_reason });
+            const { data: updated } = await supabaseAdmin.from('device_installations').update({ ip_address: ip, is_standalone: Boolean(isStandalone), last_active_at: new Date().toISOString(), username: username || existing.username, city: loc.city, country: loc.country, bot_type: botType }).eq('device_id', deviceId).select().single();
             return res.status(200).json({ success: true, device: updated, ip, city: loc.city, country: loc.country });
           }
-          const { data: ins } = await supabaseAdmin.from('device_installations').insert({ device_id: deviceId, user_id: userId || null, username: username || 'Guest / Visitor', ip_address: ip, device_type: deviceType || 'Unknown', device_model: deviceModel || 'Unknown', user_agent: userAgent || '', is_standalone: Boolean(isStandalone), install_status: 'ACTIVE', max_devices_limit: 2, city: loc.city, country: loc.country }).select().single();
+          const { data: ins } = await supabaseAdmin.from('device_installations').insert({ device_id: deviceId, user_id: userId || null, username: isBad ? `[BAD BOT] ${username || botCheck.botName}` : (username || 'Guest / Visitor'), ip_address: ip, device_type: deviceType || (isBad ? 'Bad Bot' : 'Unknown'), device_model: deviceModel || (isBad ? botCheck.botName : 'Unknown'), user_agent: userAgent || '', is_standalone: Boolean(isStandalone), install_status: installStatus, bot_type: botType, block_reason: blockReason, max_devices_limit: isBad ? 0 : 2, city: loc.city, country: loc.country }).select().single();
+          if (isBad) return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator / Automated Security Shield.', reason: blockReason, device: ins });
           return res.status(201).json({ success: true, device: ins, ip, city: loc.city, country: loc.country });
         } catch (err: any) {
           return res.status(500).json({ success: false, error: err?.message });

@@ -1,5 +1,6 @@
 import { Client } from 'pg';
 import { createClient } from '@supabase/supabase-js';
+import { BotDetector } from '../../server/botDetector.ts';
 
 const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
@@ -46,6 +47,14 @@ export const DevicesController = {
       return res.status(400).json({ success: false, error: 'Device ID is required' });
     }
 
+    // Automated Bad Bot Detection
+    const botAnalysis = BotDetector.analyze(req);
+    const isBad = botAnalysis.isBadBot;
+    const isVerified = botAnalysis.isVerifiedBot;
+    const botType = isBad ? 'BAD_BOT' : (isVerified ? 'VERIFIED_BOT' : 'HUMAN');
+    const installStatus = isBad ? 'BLOCKED' : 'ACTIVE';
+    const blockReason = isBad ? botAnalysis.reason : null;
+
     const client = await getPgClient();
     if (client) {
       try {
@@ -57,12 +66,18 @@ export const DevicesController = {
 
         if (existing.rows && existing.rows.length > 0) {
           const row = existing.rows[0];
-          if (row.install_status === 'BLOCKED') {
+          if (row.install_status === 'BLOCKED' || isBad) {
+            await client.query(`
+              UPDATE device_installations
+              SET last_active_at = NOW(), install_status = 'BLOCKED', bot_type = 'BAD_BOT', block_reason = COALESCE($1, block_reason)
+              WHERE device_id = $2;
+            `, [blockReason || 'Blocked by Automated Security', deviceId]);
             await client.end();
             return res.status(403).json({
               success: false,
               blocked: true,
-              message: 'This device is blocked by Administrator.'
+              message: 'This device is blocked by Administrator / Automated Security.',
+              reason: blockReason || row.block_reason
             });
           }
 
@@ -75,7 +90,8 @@ export const DevicesController = {
                 user_id = COALESCE(NULLIF($4, ''), user_id),
                 device_type = COALESCE(NULLIF($5, ''), device_type),
                 device_model = COALESCE(NULLIF($6, ''), device_model),
-                user_agent = COALESCE(NULLIF($7, ''), user_agent)
+                user_agent = COALESCE(NULLIF($7, ''), user_agent),
+                bot_type = $9
             WHERE device_id = $8
             RETURNING *;
           `;
@@ -87,7 +103,8 @@ export const DevicesController = {
             deviceType || null,
             deviceModel || null,
             userAgent || null,
-            deviceId
+            deviceId,
+            botType
           ]);
           await client.end();
           return res.status(200).json({
@@ -101,6 +118,33 @@ export const DevicesController = {
         // 2. New Device Registration - Enforce Device Limit per Operator
         const cleanUser = (username || '').trim();
         const maxLimit = 2; // Default maximum authorized devices per operator
+
+        if (isBad) {
+          const inserted = await client.query(`
+            INSERT INTO device_installations (
+              device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'BLOCKED', 'BAD_BOT', $9, 0)
+            RETURNING *;
+          `, [
+            deviceId,
+            userId || null,
+            `[BAD BOT] ${cleanUser || botAnalysis.botName}`,
+            ip,
+            deviceType || 'Bad Bot / Scanner',
+            deviceModel || botAnalysis.botName,
+            userAgent || '',
+            Boolean(isStandalone),
+            blockReason
+          ]);
+          await client.end();
+          return res.status(403).json({
+            success: false,
+            blocked: true,
+            message: 'This device is blocked by Administrator / Automated Security.',
+            reason: blockReason,
+            device: inserted.rows[0]
+          });
+        }
 
         if (cleanUser && cleanUser !== 'Guest / Visitor' && cleanUser !== 'guest') {
           const userCountRes = await client.query(
@@ -121,8 +165,8 @@ export const DevicesController = {
         // 3. Insert New Device
         const insertQuery = `
           INSERT INTO device_installations (
-            device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, max_devices_limit
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ACTIVE', $9)
+            device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           RETURNING *;
         `;
         const inserted = await client.query(insertQuery, [
@@ -134,6 +178,9 @@ export const DevicesController = {
           deviceModel || 'Unknown Device',
           userAgent || '',
           Boolean(isStandalone),
+          installStatus,
+          botType,
+          blockReason,
           maxLimit
         ]);
         await client.end();
@@ -160,8 +207,17 @@ export const DevicesController = {
         .maybeSingle();
 
       if (existing) {
-        if (existing.install_status === 'BLOCKED') {
-          return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator.' });
+        if (existing.install_status === 'BLOCKED' || isBad) {
+          await supabaseAdmin
+            .from('device_installations')
+            .update({
+              install_status: 'BLOCKED',
+              bot_type: 'BAD_BOT',
+              block_reason: blockReason || existing.block_reason || 'Blocked by Automated Security',
+              last_active_at: new Date().toISOString()
+            })
+            .eq('device_id', deviceId);
+          return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator / Automated Security.', reason: blockReason || existing.block_reason });
         }
         const { data: updated } = await supabaseAdmin
           .from('device_installations')
@@ -169,7 +225,8 @@ export const DevicesController = {
             ip_address: ip,
             is_standalone: Boolean(isStandalone),
             last_active_at: new Date().toISOString(),
-            username: username || existing.username
+            username: username || existing.username,
+            bot_type: botType
           })
           .eq('device_id', deviceId)
           .select()
@@ -183,19 +240,24 @@ export const DevicesController = {
         .insert({
           device_id: deviceId,
           user_id: userId || null,
-          username: username || 'Guest / Visitor',
+          username: isBad ? `[BAD BOT] ${username || botAnalysis.botName}` : (username || 'Guest / Visitor'),
           ip_address: ip,
-          device_type: deviceType || 'Unknown',
-          device_model: deviceModel || 'Unknown Device',
+          device_type: deviceType || (isBad ? 'Bad Bot / Scanner' : 'Unknown'),
+          device_model: deviceModel || (isBad ? botAnalysis.botName : 'Unknown Device'),
           user_agent: userAgent || '',
           is_standalone: Boolean(isStandalone),
-          install_status: 'ACTIVE',
-          max_devices_limit: 2
+          install_status: installStatus,
+          bot_type: botType,
+          block_reason: blockReason,
+          max_devices_limit: isBad ? 0 : 2
         })
         .select()
         .single();
 
       if (insErr) throw insErr;
+      if (isBad) {
+        return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator / Automated Security.', reason: blockReason, device: inserted });
+      }
       return res.status(201).json({ success: true, device: inserted, ip });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err?.message || 'Supabase error' });

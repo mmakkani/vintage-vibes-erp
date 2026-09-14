@@ -16,6 +16,8 @@ export interface DeviceInstallation {
   user_agent: string;
   is_standalone: boolean;
   install_status: 'ACTIVE' | 'BLOCKED' | 'PENDING';
+  bot_type?: 'HUMAN' | 'VERIFIED_BOT' | 'BAD_BOT';
+  block_reason?: string;
   max_devices_limit: number;
   registered_at?: string;
   last_active_at?: string;
