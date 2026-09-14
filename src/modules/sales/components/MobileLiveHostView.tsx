@@ -38,11 +38,15 @@ import {
   Check,
   ShieldCheck,
   KeyRound,
+  Key,
   ExternalLink,
   Phone,
   Smartphone,
   Globe,
-  Shield
+  Shield,
+  QrCode,
+  Clock,
+  Sparkles
 } from 'lucide-react';
 
 interface MobileLiveHostViewProps {
@@ -85,6 +89,20 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [isSubmittingOtp, setIsSubmittingOtp] = useState<Record<string, boolean>>({});
   const [isAuthenticatingChannel, setIsAuthenticatingChannel] = useState<Record<string, boolean>>({});
   const [channelFeedback, setChannelFeedback] = useState<{ platform: string; message: string; isError?: boolean } | null>(null);
+  const [channelAuthModes, setChannelAuthModes] = useState<Record<string, 'CREDENTIALS' | 'QR_SCAN'>>({});
+  const [channelQrData, setChannelQrData] = useState<
+    Record<
+      string,
+      {
+        qrDataUrl?: string;
+        qrRawUrl?: string;
+        token?: string;
+        secondsRemaining?: number;
+        status?: 'WAITING_SCAN' | 'LOGGED_IN' | 'EXPIRED';
+        isGenerating?: boolean;
+      }
+    >
+  >({});
 
   // WhatsApp 1-Click Dispatch Hub
   const [showWhatsAppModal, setShowWhatsAppModal] = useState<boolean>(false);
@@ -584,6 +602,136 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       setIsSubmittingOtp(prev => ({ ...prev, [platform]: false }));
     }
   };
+
+  // Generate Live QR Code for Instant Mobile Login
+  const handleGenerateChannelQr = async (platform: string) => {
+    setChannelQrData(prev => ({
+      ...prev,
+      [platform]: { ...prev[platform], isGenerating: true }
+    }));
+    try {
+      const res = await LiveStreamService.generateChannelLoginQr(currentBoothId, platform);
+      if (res.success && res.qrDataUrl) {
+        setChannelQrData(prev => ({
+          ...prev,
+          [platform]: {
+            isGenerating: false,
+            qrDataUrl: res.qrDataUrl,
+            qrRawUrl: res.qrRawUrl,
+            token: res.token,
+            secondsRemaining: res.expiresInSeconds || 120,
+            status: 'WAITING_SCAN'
+          }
+        }));
+        setChannelFeedback({
+          platform,
+          message: `📱 Live ${platform.toUpperCase()} login QR generated! Point your mobile app camera to scan.`,
+          isError: false
+        });
+      } else {
+        setChannelQrData(prev => ({
+          ...prev,
+          [platform]: { ...prev[platform], isGenerating: false }
+        }));
+        setChannelFeedback({
+          platform,
+          message: res.error || 'Failed to generate QR code.',
+          isError: true
+        });
+      }
+    } catch (err: any) {
+      setChannelQrData(prev => ({
+        ...prev,
+        [platform]: { ...prev[platform], isGenerating: false }
+      }));
+      setChannelFeedback({
+        platform,
+        message: err?.message || 'Error communicating with live worker.',
+        isError: true
+      });
+    }
+  };
+
+  // Simulate Instant Mobile QR Approval (Dev & Fallback)
+  const handleSimulateChannelQrApproval = async (platform: string) => {
+    const token = channelQrData[platform]?.token;
+    try {
+      await LiveStreamService.simulateChannelQrApproval(currentBoothId, platform, token);
+      setChannelQrData(prev => ({
+        ...prev,
+        [platform]: {
+          ...prev[platform],
+          status: 'LOGGED_IN',
+          secondsRemaining: 0
+        }
+      }));
+      const updated = await LiveStreamService.getBoothSocialChannels(currentBoothId);
+      setSocialChannels(updated);
+      setChannelFeedback({
+        platform,
+        message: `🟢 ${platform.toUpperCase()} authorized via mobile scan approval!`,
+        isError: false
+      });
+    } catch (err: any) {
+      setChannelFeedback({
+        platform,
+        message: err?.message || 'Error simulating mobile QR approval.',
+        isError: true
+      });
+    }
+  };
+
+  // QR Code Real-Time Polling Listener
+  useEffect(() => {
+    if (!showChannelModal) return;
+    const activeQrs = Object.entries(channelQrData).filter(
+      ([plat, data]) =>
+        channelAuthModes[plat] === 'QR_SCAN' &&
+        data.token &&
+        data.status === 'WAITING_SCAN' &&
+        (data.secondsRemaining || 0) > 0
+    );
+
+    if (activeQrs.length === 0) return;
+
+    const interval = setInterval(async () => {
+      for (const [plat, data] of activeQrs) {
+        if (!data.token) continue;
+        try {
+          const res = await LiveStreamService.getChannelLoginQrStatus(currentBoothId, plat, data.token);
+          if (res.status === 'LOGGED_IN') {
+            setChannelQrData(prev => ({
+              ...prev,
+              [plat]: { ...prev[plat], status: 'LOGGED_IN', secondsRemaining: 0 }
+            }));
+            const updated = await LiveStreamService.getBoothSocialChannels(currentBoothId);
+            setSocialChannels(updated);
+            setChannelFeedback({
+              platform: plat,
+              message: `🎉 ${plat.toUpperCase()} authorized via mobile app scan! Session cookies persisted.`,
+              isError: false
+            });
+          } else if (res.status === 'EXPIRED') {
+            setChannelQrData(prev => ({
+              ...prev,
+              [plat]: { ...prev[plat], status: 'EXPIRED', secondsRemaining: 0 }
+            }));
+          } else {
+            setChannelQrData(prev => ({
+              ...prev,
+              [plat]: {
+                ...prev[plat],
+                status: res.status,
+                secondsRemaining: res.secondsRemaining !== undefined ? res.secondsRemaining : Math.max(0, (prev[plat]?.secondsRemaining || 120) - 2)
+              }
+            }));
+          }
+        } catch (_) {}
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [channelQrData, channelAuthModes, showChannelModal, currentBoothId]);
 
   // Headless Stream Broadcast Toggle across all platforms
   const handleToggleHeadlessBroadcast = async () => {
@@ -1385,6 +1533,8 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 const isWaitingOtp = ch.auth_status === 'WAITING_OTP';
                 const isAuthenticating = isAuthenticatingChannel[ch.platform];
                 const isSubmitting = isSubmittingOtp[ch.platform];
+                const authMode = channelAuthModes[ch.platform] || 'CREDENTIALS';
+                const qr = channelQrData[ch.platform] || {};
 
                 return (
                   <div
@@ -1435,64 +1585,266 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                       </span>
                     </div>
 
-                    {/* 2FA OTP Challenge Interactive Form */}
-                    {isWaitingOtp && (
-                      <div className="my-2 p-2.5 rounded-lg bg-amber-900/30 border border-amber-400/60 space-y-2">
-                        <div className="flex items-center gap-1.5 text-amber-300 text-[11px] font-bold">
-                          <KeyRound className="w-3.5 h-3.5" />
-                          <span>Enter 2-Factor Authentication Code:</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            maxLength={8}
-                            placeholder="e.g. 849201"
-                            value={otpInputs[ch.platform] || ''}
-                            onChange={e =>
-                              setOtpInputs(prev => ({ ...prev, [ch.platform]: e.target.value }))
-                            }
-                            onKeyDown={e => e.key === 'Enter' && handleSubmitOtp(ch.platform)}
-                            className="flex-1 bg-black/80 border border-amber-400 rounded-lg px-2.5 py-1 text-sm font-mono text-amber-300 tracking-widest placeholder-slate-500 focus:outline-hidden"
-                          />
+                    {/* Dual Auth Mode Switcher */}
+                    <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-950/80 rounded-lg border border-white/10 mb-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setChannelAuthModes(prev => ({ ...prev, [ch.platform]: 'CREDENTIALS' }))}
+                        className={`py-1.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                          authMode === 'CREDENTIALS'
+                            ? 'bg-white/20 text-white shadow-xs border border-white/20'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <Key className="w-3 h-3 text-amber-400" />
+                        <span>Credentials & OTP</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setChannelAuthModes(prev => ({ ...prev, [ch.platform]: 'QR_SCAN' }));
+                          if (!qr.qrDataUrl && !isLoggedIn) {
+                            handleGenerateChannelQr(ch.platform);
+                          }
+                        }}
+                        className={`py-1.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                          authMode === 'QR_SCAN'
+                            ? 'bg-white/20 text-white shadow-xs border border-white/20'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <QrCode className="w-3 h-3 text-emerald-400" />
+                        <span>Instant QR Scan</span>
+                        <span className="px-1 py-0.2 rounded text-[8px] bg-emerald-500/30 text-emerald-300 font-black">
+                          FAST
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* MODE A: CREDENTIALS & OTP */}
+                    {authMode === 'CREDENTIALS' && (
+                      <div className="space-y-2">
+                        {/* 2FA OTP Challenge Interactive Form */}
+                        {isWaitingOtp && (
+                          <div className="my-2 p-2.5 rounded-lg bg-amber-900/30 border border-amber-400/60 space-y-2">
+                            <div className="flex items-center gap-1.5 text-amber-300 text-[11px] font-bold">
+                              <KeyRound className="w-3.5 h-3.5" />
+                              <span>Enter 2-Factor Authentication Code:</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                maxLength={8}
+                                placeholder="e.g. 849201"
+                                value={otpInputs[ch.platform] || ''}
+                                onChange={e =>
+                                  setOtpInputs(prev => ({ ...prev, [ch.platform]: e.target.value }))
+                                }
+                                onKeyDown={e => e.key === 'Enter' && handleSubmitOtp(ch.platform)}
+                                className="flex-1 bg-black/80 border border-amber-400 rounded-lg px-2.5 py-1 text-sm font-mono text-amber-300 tracking-widest placeholder-slate-500 focus:outline-hidden"
+                              />
+                              <button
+                                onClick={() => handleSubmitOtp(ch.platform)}
+                                disabled={isSubmitting}
+                                className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-lg cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                              >
+                                {isSubmitting ? 'Verifying...' : 'Verify OTP'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Metadata & Actions */}
+                        <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-white/5">
+                          <div className="flex items-center gap-2 font-mono">
+                            <span>
+                              {ch.session_cookies && ch.session_cookies.length > 0
+                                ? '💾 Cookie State Cached'
+                                : 'No Saved Session'}
+                            </span>
+                            {ch.proxy_url && (
+                              <span className="text-slate-500 truncate max-w-[110px]">
+                                Proxy: {ch.proxy_url}
+                              </span>
+                            )}
+                          </div>
+
                           <button
-                            onClick={() => handleSubmitOtp(ch.platform)}
-                            disabled={isSubmitting}
-                            className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-lg cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                            onClick={() => handleAuthenticatePlatform(ch.platform)}
+                            disabled={isAuthenticating}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-white font-bold cursor-pointer transition-all active:scale-95 disabled:opacity-50"
                           >
-                            {isSubmitting ? 'Verifying...' : 'Verify OTP'}
+                            {isAuthenticating ? (
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <ShieldCheck className="w-3 h-3" />
+                            )}
+                            {isLoggedIn ? 'Re-Sync Session' : 'Authenticate'}
                           </button>
                         </div>
                       </div>
                     )}
 
-                    {/* Metadata & Actions */}
-                    <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-white/5">
-                      <div className="flex items-center gap-2 font-mono">
-                        <span>
-                          {ch.session_cookies && ch.session_cookies.length > 0
-                            ? '💾 Cookie State Cached'
-                            : 'No Saved Session'}
-                        </span>
-                        {ch.proxy_url && (
-                          <span className="text-slate-500 truncate max-w-[120px]">
-                            Proxy: {ch.proxy_url}
-                          </span>
+                    {/* MODE B: INSTANT MOBILE QR SCAN */}
+                    {authMode === 'QR_SCAN' && (
+                      <div className="space-y-3 pt-1">
+                        {isLoggedIn ? (
+                          <div className="p-3 bg-emerald-950/40 border border-emerald-500/40 rounded-xl flex flex-col items-center text-center space-y-1.5">
+                            <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                              <CheckCircle2 className="w-5 h-5" />
+                            </div>
+                            <span className="text-xs font-bold text-emerald-200 uppercase">
+                              {ch.platform} Session Verified & Active
+                            </span>
+                            <p className="text-[10px] text-emerald-300/80">
+                              Authenticated via mobile QR scan. Session cookies are persisted for background comment scraping and live streaming.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => handleGenerateChannelQr(ch.platform)}
+                              className="mt-1 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold cursor-pointer"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              <span>Re-Authenticate with New QR</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col sm:flex-row items-center gap-3 bg-slate-950/70 p-3 rounded-xl border border-white/10">
+                            {/* High-Contrast Scan-Ready QR Container */}
+                            <div className="shrink-0 flex flex-col items-center">
+                              <div className="relative p-2.5 bg-white rounded-xl border-2 border-slate-900 shadow-xl flex items-center justify-center">
+                                {qr.qrDataUrl ? (
+                                  <img
+                                    src={qr.qrDataUrl}
+                                    alt={`${ch.platform} Login QR`}
+                                    className="w-36 h-36 rounded-md object-contain"
+                                  />
+                                ) : (
+                                  <div className="w-36 h-36 rounded-md bg-slate-100 flex flex-col items-center justify-center text-slate-500 gap-1.5 text-center p-2">
+                                    {qr.isGenerating ? (
+                                      <>
+                                        <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
+                                        <span className="text-[10px] font-bold text-slate-700">Generating live QR...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <QrCode className="w-8 h-8 text-slate-400" />
+                                        <span className="text-[10px] text-slate-600 font-medium">Tap button to generate QR</span>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                                {qr.status === 'EXPIRED' && (
+                                  <div className="absolute inset-0 bg-slate-950/85 rounded-xl backdrop-blur-xs flex flex-col items-center justify-center p-2 text-center">
+                                    <Clock className="w-5 h-5 text-amber-400 mb-1" />
+                                    <span className="font-bold text-white text-[11px]">QR Expired</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleGenerateChannelQr(ch.platform)}
+                                      className="mt-1.5 px-2.5 py-1 rounded bg-amber-400 hover:bg-amber-300 text-slate-950 text-[10px] font-black uppercase cursor-pointer"
+                                    >
+                                      Refresh QR
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Countdown Progress Bar */}
+                              {qr.qrDataUrl && qr.status !== 'EXPIRED' && (
+                                <div className="w-full mt-2 space-y-1">
+                                  <div className="flex items-center justify-between text-[9px] font-mono font-bold text-slate-300">
+                                    <span className="flex items-center gap-1">
+                                      <Clock className="w-2.5 h-2.5 text-emerald-400" />
+                                      <span>Expires:</span>
+                                    </span>
+                                    <span className="text-amber-300 font-black">
+                                      {Math.floor((qr.secondsRemaining || 0) / 60)}:
+                                      {String((qr.secondsRemaining || 0) % 60).padStart(2, '0')}
+                                    </span>
+                                  </div>
+                                  <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-gradient-to-r from-emerald-400 to-cyan-400 transition-all duration-1000"
+                                      style={{ width: `${Math.min(100, ((qr.secondsRemaining || 0) / 120) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Mobile Instructions & Action Buttons */}
+                            <div className="flex-1 space-y-2 text-left w-full">
+                              <div className="flex items-center gap-1 text-[11px] font-bold text-emerald-300 uppercase">
+                                <Smartphone className="w-3.5 h-3.5" />
+                                <span>Scan with Mobile App</span>
+                              </div>
+
+                              <div className="p-2 rounded-lg bg-black/50 border border-white/5 text-[10px] text-slate-300 space-y-1">
+                                {ch.platform.toLowerCase() === 'tiktok' && (
+                                  <>
+                                    <p>1. Open <strong>TikTok</strong> app on phone.</p>
+                                    <p>2. Tap <strong>Profile</strong> ➔ <strong>Menu (≡)</strong> ➔ <strong>My QR Code</strong>.</p>
+                                    <p>3. Tap <strong>Scan icon</strong> (top right) & scan this code.</p>
+                                    <p>4. Tap <strong>"Confirm Login"</strong>.</p>
+                                  </>
+                                )}
+                                {ch.platform.toLowerCase() === 'instagram' && (
+                                  <>
+                                    <p>1. Open <strong>Instagram</strong> app on phone.</p>
+                                    <p>2. Tap <strong>Settings & Privacy</strong> ➔ <strong>QR Code</strong>.</p>
+                                    <p>3. Tap <strong>Scan QR Code</strong> and scan the screen.</p>
+                                    <p>4. Confirm studio login.</p>
+                                  </>
+                                )}
+                                {(ch.platform.toLowerCase() === 'facebook' || ch.platform.toLowerCase() === 'fb') && (
+                                  <>
+                                    <p>1. Open <strong>Facebook</strong> on phone.</p>
+                                    <p>2. Menu (≡) ➔ Settings ➔ Security ➔ Code Generator / QR.</p>
+                                    <p>3. Scan and confirm authorization.</p>
+                                  </>
+                                )}
+                                {ch.platform.toLowerCase() === 'youtube' && (
+                                  <>
+                                    <p>1. Open <strong>YouTube / Google</strong> app on phone.</p>
+                                    <p>2. Tap <strong>Account</strong> ➔ <strong>Sign In</strong>.</p>
+                                    <p>3. Point camera at QR code and approve login.</p>
+                                  </>
+                                )}
+                                {!['tiktok', 'instagram', 'facebook', 'fb', 'youtube'].includes(ch.platform.toLowerCase()) && (
+                                  <>
+                                    <p>1. Open your phone camera or app.</p>
+                                    <p>2. Scan this QR code to authorize studio stream session.</p>
+                                  </>
+                                )}
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleGenerateChannelQr(ch.platform)}
+                                  disabled={qr.isGenerating}
+                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer transition active:scale-95 shadow-xs"
+                                >
+                                  <RefreshCw className={`w-3 h-3 ${qr.isGenerating ? 'animate-spin' : ''}`} />
+                                  <span>{qr.qrDataUrl ? 'Refresh QR' : 'Generate QR'}</span>
+                                </button>
+
+                                {qr.qrDataUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSimulateChannelQrApproval(ch.platform)}
+                                    className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-emerald-300 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer transition active:scale-95"
+                                  >
+                                    <Sparkles className="w-3 h-3 text-emerald-400" />
+                                    <span>Simulate Approval</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
                         )}
                       </div>
-
-                      <button
-                        onClick={() => handleAuthenticatePlatform(ch.platform)}
-                        disabled={isAuthenticating}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-white font-medium cursor-pointer transition-all active:scale-95 disabled:opacity-50"
-                      >
-                        {isAuthenticating ? (
-                          <RefreshCw className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <ShieldCheck className="w-3 h-3" />
-                        )}
-                        {isLoggedIn ? 'Re-Sync Session' : 'Authenticate'}
-                      </button>
-                    </div>
+                    )}
                   </div>
                 );
               })}

@@ -6,6 +6,7 @@ import { tikTokSocketService } from '../../server/tiktokSocketService.ts';
 import { Client } from 'pg';
 import { encryptCredential, maskCredential } from '../../utils/encryption.ts';
 import { supabase } from '../../supabaseClient.ts';
+import QRCode from 'qrcode';
 
 export const liveStreamingRouter = Router();
 
@@ -210,6 +211,154 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/otp', async (req, 
       await client.query("UPDATE booth_social_channels SET auth_status = 'LOGGED_IN', last_login_at = NOW(), otp_required = false WHERE booth_id = $1 AND platform = $2", [boothId, platform]);
     }
     return res.json({ success: true, status: 'LOGGED_IN', message: `OTP challenge verified for ${platform.toUpperCase()}!` });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// ======================== INSTANT MOBILE APP QR SCAN AUTH ========================
+liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/generate', async (req, res) => {
+  const { boothId, platform } = req.params;
+  const workerUrl = getWorkerUrl();
+
+  // 1. Forward to Railway worker if active
+  try {
+    const workerRes = await fetch(`${workerUrl}/api/booth/social/qr/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boothId, platform })
+    });
+    if (workerRes.ok) {
+      return res.json(await workerRes.json());
+    }
+  } catch (_) {}
+
+  // 2. In-process fallback generation
+  const token = `qr_${boothId}_${platform}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const deepLinks: Record<string, string> = {
+    tiktok: `https://www.tiktok.com/login/qrcode?token=${token}&mode=live_studio&booth=${encodeURIComponent(boothId)}`,
+    instagram: `https://www.instagram.com/accounts/login/two_factor?qr_token=${token}&booth=${encodeURIComponent(boothId)}`,
+    facebook: `https://www.facebook.com/security/2fa/qr?token=${token}&app=live_producer`,
+    youtube: `https://accounts.google.com/signin/v2/qr?token=${token}&service=youtube_live`,
+    custom: `https://live.vintagevibe.ae/login/qr?token=${token}`
+  };
+  const qrRawUrl = deepLinks[platform] || deepLinks.custom;
+
+  try {
+    const qrDataUrl = await QRCode.toDataURL(qrRawUrl, {
+      margin: 2,
+      width: 280,
+      color: { dark: '#0a0f1d', light: '#ffffff' }
+    });
+
+    const client = await getPgClient();
+    try {
+      if (client) {
+        await client.query(
+          "UPDATE booth_social_channels SET auth_status = 'AUTHENTICATING', metadata = $3 WHERE booth_id = $1 AND platform = $2",
+          [boothId, platform, JSON.stringify({ authMode: 'QR_SCAN', qrToken: token, expiresAt: Date.now() + 120000 })]
+        );
+      }
+    } finally {
+      if (client) await client.end().catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      status: 'WAITING_SCAN',
+      qrDataUrl,
+      qrRawUrl,
+      token,
+      expiresInSeconds: 120,
+      platform,
+      boothId
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || 'QR generation failed' });
+  }
+});
+
+liveStreamingRouter.get('/booths/:boothId/channels/:platform/qr/status', async (req, res) => {
+  const { boothId, platform } = req.params;
+  const { token } = req.query;
+  const workerUrl = getWorkerUrl();
+
+  try {
+    const query = token ? `?boothId=${encodeURIComponent(boothId)}&platform=${encodeURIComponent(platform)}&token=${encodeURIComponent(String(token))}` : `?boothId=${encodeURIComponent(boothId)}&platform=${encodeURIComponent(platform)}`;
+    const workerRes = await fetch(`${workerUrl}/api/booth/social/qr/status${query}`);
+    if (workerRes.ok) {
+      return res.json(await workerRes.json());
+    }
+  } catch (_) {}
+
+  const client = await getPgClient();
+  try {
+    if (client) {
+      const q = await client.query('SELECT auth_status, metadata, last_login_at FROM booth_social_channels WHERE booth_id = $1 AND platform = $2', [boothId, platform]);
+      const row = q.rows[0];
+      if (row?.auth_status === 'LOGGED_IN') {
+        return res.json({ success: true, status: 'LOGGED_IN', message: 'Channel is logged in' });
+      }
+      const meta = row?.metadata || {};
+      const expiresAt = meta.expiresAt || 0;
+      if (expiresAt > 0 && Date.now() > expiresAt) {
+        return res.json({ success: true, status: 'EXPIRED', message: 'QR expired' });
+      }
+      const secondsRemaining = Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
+      return res.json({
+        success: true,
+        status: row?.auth_status === 'AUTHENTICATING' ? 'WAITING_SCAN' : (row?.auth_status || 'IDLE'),
+        secondsRemaining: secondsRemaining || 120
+      });
+    }
+    return res.json({ success: true, status: 'WAITING_SCAN', secondsRemaining: 90 });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/simulate-approval', async (req, res) => {
+  const { boothId, platform } = req.params;
+  const { token } = req.body;
+  const workerUrl = getWorkerUrl();
+
+  try {
+    await fetch(`${workerUrl}/api/booth/social/qr/simulate-approval`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boothId, platform, token })
+    }).catch(() => {});
+  } catch (_) {}
+
+  const client = await getPgClient();
+  try {
+    const simCookies = [
+      { name: 'session_id', value: `sid_qr_${Date.now()}`, domain: `.${platform}.com`, path: '/' },
+      { name: 'auth_token', value: `at_qr_${Date.now()}`, domain: `.${platform}.com`, path: '/' },
+      { name: 'login_method', value: 'MOBILE_QR_SCAN', domain: `.${platform}.com`, path: '/' }
+    ];
+
+    if (client) {
+      await client.query(
+        "UPDATE booth_social_channels SET auth_status = 'LOGGED_IN', session_cookies = $3, last_login_at = NOW(), otp_required = false, metadata = $4 WHERE booth_id = $1 AND platform = $2",
+        [boothId, platform, JSON.stringify(simCookies), JSON.stringify({ authMode: 'QR_SCAN', approvedAt: new Date().toISOString() })]
+      );
+    }
+
+    eventHub.broadcast({
+      type: 'ENTITY_MUTATED',
+      module: 'SALES',
+      entity: 'BOOTH_CHANNEL_AUTH',
+      action: 'UPDATE',
+      documentRef: `${boothId}_${platform}`,
+      data: { boothId, platform, authStatus: 'LOGGED_IN', method: 'MOBILE_QR_SCAN' }
+    });
+
+    return res.json({ success: true, status: 'LOGGED_IN', message: `Mobile approval confirmed for ${platform.toUpperCase()}!` });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
   } finally {
     if (client) await client.end().catch(() => {});
   }

@@ -124,6 +124,56 @@ export class LiveStreamService {
     return res.json();
   }
 
+  public static async generateChannelLoginQr(
+    boothId: string,
+    platform: string
+  ): Promise<{
+    success: boolean;
+    qrDataUrl?: string;
+    qrRawUrl?: string;
+    token?: string;
+    expiresInSeconds?: number;
+    status?: string;
+    error?: string;
+  }> {
+    const res = await fetch(`/api/live/booths/${boothId}/channels/${platform}/qr/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    return res.json();
+  }
+
+  public static async getChannelLoginQrStatus(
+    boothId: string,
+    platform: string,
+    token?: string
+  ): Promise<{
+    success: boolean;
+    status: 'WAITING_SCAN' | 'SCANNED' | 'LOGGED_IN' | 'EXPIRED' | 'IDLE';
+    message?: string;
+    secondsRemaining?: number;
+    token?: string;
+    error?: string;
+  }> {
+    const query = token ? `?token=${encodeURIComponent(token)}` : '';
+    const res = await fetch(`/api/live/booths/${boothId}/channels/${platform}/qr/status${query}`);
+    return res.json();
+  }
+
+  public static async simulateChannelQrApproval(
+    boothId: string,
+    platform: string,
+    token?: string
+  ): Promise<{ success: boolean; status: string; message?: string }> {
+    const res = await fetch(`/api/live/booths/${boothId}/channels/${platform}/qr/simulate-approval`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    return res.json();
+  }
+
   public static async startHeadlessStream(
     boothId: string,
     payload: { streamFeedUrl?: string; resolution?: string } = {}
