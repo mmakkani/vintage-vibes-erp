@@ -2630,6 +2630,204 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    // ==================== GOOGLE GEMINI AI CONFIG (SQL PERSISTENT) ====================
+    if (pathname.includes('/gemini-key') || pathname.includes('/setup/gemini-key')) {
+      if (pathname.includes('/test') && method === 'POST') {
+        let keyToTest = (body?.apiKey || '').trim();
+        const selectedModel = (body?.model || 'gemini-3.6').trim();
+
+        if (!keyToTest) {
+          const client = await getPgClient();
+          if (client) {
+            try {
+              const dbRes = await client.query("SELECT api_key FROM gemini_api_config WHERE id = 'default' LIMIT 1;");
+              if (dbRes.rows && dbRes.rows.length > 0) {
+                keyToTest = dbRes.rows[0].api_key;
+              }
+              await client.end();
+            } catch (e) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          if (!keyToTest) keyToTest = (process.env.GEMINI_API_KEY || '').trim();
+        }
+
+        if (!keyToTest || keyToTest.length < 8) {
+          return res.status(400).json({ success: false, valid: false, error: 'No valid Gemini API key found to test.' });
+        }
+
+        try {
+          const testModels = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-3.6'];
+          let pingSuccess = false;
+          let pingModel = 'gemini-2.5-flash';
+          let pingErr = '';
+
+          for (const m of testModels) {
+            try {
+              const pingUrl = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${keyToTest}`;
+              const pingRes = await fetch(pingUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'OK' }] }] })
+              });
+              if (pingRes.ok) {
+                pingSuccess = true;
+                pingModel = m;
+                break;
+              }
+              const errData = await pingRes.json().catch(() => ({}));
+              pingErr = errData?.error?.message || '';
+            } catch (e: any) {
+              pingErr = e?.message || '';
+            }
+          }
+
+          if (pingSuccess) {
+            return res.status(200).json({
+              success: true,
+              valid: true,
+              model: selectedModel || pingModel,
+              message: `Successfully connected to Google Gemini AI (${pingModel})!`
+            });
+          }
+
+          return res.status(400).json({
+            success: false,
+            valid: false,
+            error: pingErr || 'Failed to authenticate with Google Gemini API.'
+          });
+        } catch (err: any) {
+          return res.status(500).json({ success: false, valid: false, error: err?.message || 'Network error connecting to Google AI' });
+        }
+      }
+
+      if (method === 'GET') {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            await client.query(`
+              CREATE TABLE IF NOT EXISTS gemini_api_config (
+                id VARCHAR(64) PRIMARY KEY,
+                api_key TEXT NOT NULL,
+                model VARCHAR(64) DEFAULT 'gemini-3.6',
+                status VARCHAR(64) DEFAULT 'ACTIVE',
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+              );
+            `);
+            const dbRes = await client.query("SELECT id, api_key, model, status, updated_at FROM gemini_api_config WHERE id = 'default' LIMIT 1;");
+            await client.end();
+            if (dbRes.rows && dbRes.rows.length > 0 && dbRes.rows[0].api_key) {
+              const row = dbRes.rows[0];
+              return res.status(200).json({
+                success: true,
+                apiKey: row.api_key,
+                model: row.model || 'gemini-3.6',
+                status: row.status || 'ACTIVE',
+                updatedAt: row.updated_at,
+                configured: true
+              });
+            }
+          } catch (dbErr) {
+            try { await client.end(); } catch (_) {}
+            console.warn('[Serverless Gemini Select Warning]:', dbErr);
+          }
+        }
+        const envKey = (process.env.GEMINI_API_KEY || '').trim();
+        return res.status(200).json({
+          success: true,
+          apiKey: envKey,
+          model: 'gemini-3.6',
+          configured: Boolean(envKey)
+        });
+      }
+
+      if (method === 'PUT' || method === 'POST') {
+        const { apiKey, model } = body || {};
+        if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 8) {
+          return res.status(400).json({ success: false, error: 'API key must be at least 8 characters' });
+        }
+        const cleanKey = apiKey.trim();
+        const selectedModel = (model || 'gemini-3.6').trim();
+
+        const client = await getPgClient();
+        let savedRecord = null;
+        if (client) {
+          try {
+            await client.query(`
+              CREATE TABLE IF NOT EXISTS gemini_api_config (
+                id VARCHAR(64) PRIMARY KEY,
+                api_key TEXT NOT NULL,
+                model VARCHAR(64) DEFAULT 'gemini-3.6',
+                status VARCHAR(64) DEFAULT 'ACTIVE',
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+              );
+            `);
+            const upsertResult = await client.query(`
+              INSERT INTO gemini_api_config (id, api_key, model, status, updated_at)
+              VALUES ('default', $1, $2, 'ACTIVE', NOW())
+              ON CONFLICT (id) DO UPDATE
+              SET api_key = EXCLUDED.api_key,
+                  model = COALESCE(EXCLUDED.model, gemini_api_config.model),
+                  status = 'ACTIVE',
+                  updated_at = NOW()
+              RETURNING id, api_key, model, status, updated_at;
+            `, [cleanKey, selectedModel]);
+            if (upsertResult.rows && upsertResult.rows.length > 0) {
+              savedRecord = upsertResult.rows[0];
+            }
+            await client.end();
+          } catch (upsertErr) {
+            try { await client.end(); } catch (_) {}
+            console.error('[Serverless Gemini UPSERT Error]:', upsertErr);
+          }
+        }
+
+        process.env.GEMINI_API_KEY = cleanKey;
+
+        if (savedRecord) {
+          return res.status(200).json({
+            success: true,
+            message: '✓ Gemini API Key successfully saved and persisted in PostgreSQL database (gemini_api_config)!',
+            apiKey: savedRecord.api_key,
+            model: savedRecord.model,
+            status: savedRecord.status,
+            updatedAt: savedRecord.updated_at,
+            configured: true
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: '✓ Gemini API Key updated in runtime environment.',
+          apiKey: cleanKey,
+          model: selectedModel,
+          configured: true
+        });
+      }
+    }
+
+    if (pathname.includes('/hr/ocr/status') && method === 'GET') {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const q = await client.query("SELECT api_key, model FROM gemini_api_config WHERE id = 'default' LIMIT 1;");
+          await client.end();
+          if (q.rows && q.rows.length > 0 && q.rows[0].api_key) {
+            return res.status(200).json({
+              configured: true,
+              model: q.rows[0].model || 'gemini-3.6'
+            });
+          }
+        } catch (_) {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      return res.status(200).json({
+        configured: Boolean(process.env.GEMINI_API_KEY),
+        model: 'gemini-3.6'
+      });
+    }
+
     return res.status(200).json({
       success: true,
       message: 'Vintage Vibe ERP Serverless Gateway',
