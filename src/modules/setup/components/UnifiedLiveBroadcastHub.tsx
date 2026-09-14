@@ -26,7 +26,9 @@ import {
   Square,
   Globe,
   QrCode,
-  Clock
+  Clock,
+  AlertCircle,
+  Zap
 } from 'lucide-react';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { LiveStreamService } from '../../../services/liveStreamService.ts';
