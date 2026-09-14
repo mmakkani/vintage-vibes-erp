@@ -75,6 +75,20 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
   });
   const [keySavedToast, setKeySavedToast] = useState(false);
 
+  useEffect(() => {
+    fetch('/api/setup/gemini-key')
+      .then(r => (r.ok ? r.json() : null))
+      .then(res => {
+        if (res && res.success && res.apiKey) {
+          setGeminiApiKeyInput(res.apiKey);
+          try {
+            localStorage.setItem('vintage_gemini_api_key', res.apiKey);
+          } catch {}
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -318,10 +332,18 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
   };
 
   const handleSaveApiKey = () => {
+    const trimmed = geminiApiKeyInput.trim();
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('vintage_gemini_api_key', geminiApiKeyInput.trim());
+      localStorage.setItem('vintage_gemini_api_key', trimmed);
       setKeySavedToast(true);
       setTimeout(() => setKeySavedToast(false), 2500);
+    }
+    if (trimmed) {
+      fetch('/api/setup/gemini-key', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: trimmed })
+      }).catch(err => console.warn('Could not sync Gemini key to SQL:', err));
     }
   };
 

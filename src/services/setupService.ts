@@ -842,4 +842,56 @@ export class SetupService {
         updated_at: new Date().toISOString()
       });
   }
+
+  // --- Google Gemini AI API Key Config ---
+  public static async getGeminiApiConfig(): Promise<{ apiKey: string; model: string; configured: boolean }> {
+    const { data, error } = await supabase
+      .from('gemini_api_config')
+      .select('*')
+      .eq('id', 'default')
+      .maybeSingle();
+
+    if (!error && data && data.api_key) {
+      return {
+        apiKey: data.api_key,
+        model: data.model || 'gemini-2.5-flash',
+        configured: true
+      };
+    }
+
+    const envKey = (process.env.GEMINI_API_KEY || '').trim();
+    if (envKey) {
+      return {
+        apiKey: envKey,
+        model: 'gemini-2.5-flash',
+        configured: true
+      };
+    }
+
+    return {
+      apiKey: '',
+      model: 'gemini-2.5-flash',
+      configured: false
+    };
+  }
+
+  public static async updateGeminiApiKey(apiKey: string, model: string = 'gemini-2.5-flash'): Promise<void> {
+    const trimmed = apiKey.trim();
+    const { error } = await supabase
+      .from('gemini_api_config')
+      .upsert({
+        id: 'default',
+        api_key: trimmed,
+        model: model || 'gemini-2.5-flash',
+        status: 'ACTIVE',
+        updated_at: new Date().toISOString()
+      });
+
+    if (error) {
+      console.error('Supabase error saving gemini_api_config:', error);
+      throw new Error(error.message || 'Failed to save Gemini API key in SQL database');
+    }
+
+    process.env.GEMINI_API_KEY = trimmed;
+  }
 }

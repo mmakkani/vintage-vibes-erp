@@ -516,6 +516,29 @@ setupRouter.put('/master-pin', async (req, res) => {
   }
 });
 
+// Google Gemini Vision / OCR API Key Config (SQL Persistent)
+setupRouter.get('/gemini-key', async (req, res) => {
+  try {
+    const config = await SetupService.getGeminiApiConfig();
+    return res.json({ success: true, ...config });
+  } catch (_) {
+    return res.json({ success: true, apiKey: process.env.GEMINI_API_KEY || '', model: 'gemini-2.5-flash', configured: Boolean(process.env.GEMINI_API_KEY) });
+  }
+});
+
+setupRouter.put('/gemini-key', async (req, res) => {
+  const { apiKey, model } = req.body;
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 8) {
+    return res.status(400).json({ success: false, error: 'API key must be at least 8 characters' });
+  }
+  try {
+    await SetupService.updateGeminiApiKey(apiKey.trim(), model);
+    return res.json({ success: true, apiKey: apiKey.trim(), model: model || 'gemini-2.5-flash', configured: true });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // Top-level Dashboard KPIs
 setupRouter.get('/dashboard-kpis', (req, res) => {
   return res.json(SetupController.getDashboardKPIs());

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { HRController } from './hr.controller.ts';
 import { HrService } from '../../services/hrService.ts';
+import { SetupService } from '../../services/setupService.ts';
 
 export const hrRouter = Router();
 
@@ -294,17 +295,34 @@ hrRouter.delete('/loans/:id', async (req, res) => {
 });
 
 // AI OCR Document Scanning Endpoints
-hrRouter.get('/ocr/status', (req, res) => {
-  return res.json(HRController.getOcrConfigStatus());
+hrRouter.get('/ocr/status', async (req, res) => {
+  const status = HRController.getOcrConfigStatus();
+  if (status.configured) return res.json(status);
+  try {
+    const config = await SetupService.getGeminiApiConfig();
+    if (config.configured) {
+      return res.json({ configured: true, model: config.model || 'gemini-2.5-flash' });
+    }
+  } catch (_) {}
+  return res.json(status);
 });
 
 hrRouter.post('/ocr/scan', async (req, res) => {
   try {
     const { documentType, imageBase64, secondaryImageBase64, apiKey } = req.body;
     const headerKey = req.headers['x-gemini-api-key'] as string;
-    const effectiveApiKey = (apiKey && typeof apiKey === 'string' && apiKey.trim())
+    let effectiveApiKey = (apiKey && typeof apiKey === 'string' && apiKey.trim())
       ? apiKey.trim()
       : (headerKey && headerKey.trim() ? headerKey.trim() : undefined);
+
+    if (!effectiveApiKey) {
+      try {
+        const config = await SetupService.getGeminiApiConfig();
+        if (config.configured && config.apiKey) {
+          effectiveApiKey = config.apiKey;
+        }
+      } catch (_) {}
+    }
 
     const result = await HRController.performAIOCRScan({
       documentType: documentType || 'AUTO_DETECT',

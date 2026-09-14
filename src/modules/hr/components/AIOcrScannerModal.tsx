@@ -111,8 +111,30 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
 
   useEffect(() => {
     const saved = localStorage.getItem('vintage_gemini_api_key') || '';
-    setStoredApiKey(saved);
-    setApiKeyInput(saved);
+    if (saved) {
+      setStoredApiKey(saved);
+      setApiKeyInput(saved);
+    }
+
+    // Load API key from PostgreSQL database
+    fetch('/api/setup/gemini-key')
+      .then(r => (r.ok ? r.json() : null))
+      .then(res => {
+        if (res && res.success && res.apiKey) {
+          setStoredApiKey(res.apiKey);
+          setApiKeyInput(res.apiKey);
+          localStorage.setItem('vintage_gemini_api_key', res.apiKey);
+          setServerKeyConfigured(true);
+        } else if (saved) {
+          // If browser has a saved key, automatically sync it to PostgreSQL
+          fetch('/api/setup/gemini-key', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apiKey: saved })
+          }).catch(() => {});
+        }
+      })
+      .catch(() => {});
 
     // Check server status
     fetch('/api/hr/ocr/status')
@@ -130,6 +152,20 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
     localStorage.setItem('vintage_gemini_api_key', trimmed);
     setStoredApiKey(trimmed);
     setShowKeyModal(false);
+
+    // Persist to PostgreSQL database table gemini_api_config
+    fetch('/api/setup/gemini-key', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey: trimmed })
+    })
+      .then(r => r.json())
+      .then(res => {
+        if (res?.success) {
+          setServerKeyConfigured(true);
+        }
+      })
+      .catch(err => console.warn('Failed to sync Gemini API key to SQL:', err));
   };
 
   const handleTestApiKey = async () => {
@@ -143,9 +179,16 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
       const res = await validateGeminiApiKey(apiKeyInput.trim());
       if (res.valid) {
         setKeyTestResult({ valid: true, message: `Connected to ${res.model}! Key is verified and ready for live extraction.` });
-        // Also auto-save valid key
+        // Also auto-save valid key to browser and PostgreSQL
         localStorage.setItem('vintage_gemini_api_key', apiKeyInput.trim());
         setStoredApiKey(apiKeyInput.trim());
+        setServerKeyConfigured(true);
+
+        fetch('/api/setup/gemini-key', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey: apiKeyInput.trim(), model: res.model })
+        }).catch(err => console.warn('Failed to sync verified Gemini key to SQL:', err));
       } else {
         setKeyTestResult({ valid: false, message: res.error || 'Invalid API key.' });
       }
