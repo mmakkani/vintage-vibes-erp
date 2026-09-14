@@ -9,6 +9,7 @@ import { HrService } from '../../../services/hrService.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import { executeDocumentOcr, validateGeminiApiKey } from '../../../utils/geminiOcrService.ts';
 import { LiveAIOcrCamera } from './LiveAIOcrCamera.tsx';
+import { DocumentCropModal } from './DocumentCropModal.tsx';
 
 interface AIOcrScannerModalProps {
   isOpen: boolean;
@@ -84,6 +85,22 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
   // Auto-cropping status per image field
   const [isCropping, setIsCropping] = useState<Record<string, boolean>>({});
   const [isAutoCropped, setIsAutoCropped] = useState<Record<string, boolean>>({});
+  const [rawImages, setRawImages] = useState<Record<string, string>>({});
+
+  // Precision Crop Modal State
+  const [cropModalState, setCropModalState] = useState<{
+    isOpen: boolean;
+    imageUrl: string;
+    fieldKey: string;
+    setter: (val: string) => void;
+    docType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA';
+  }>({
+    isOpen: false,
+    imageUrl: '',
+    fieldKey: '',
+    setter: () => {},
+    docType: 'EMIRATES_ID'
+  });
 
   // Live Camera state
   const [showLiveCamera, setShowLiveCamera] = useState(false);
@@ -222,12 +239,15 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
     setShowLiveCamera(false);
     if (docMode === 'EMIRATES_ID') {
       setFrontImage(capturedImg);
+      setRawImages(prev => ({ ...prev, front: capturedImg }));
       result.idFrontImageUrl = capturedImg;
     } else if (docMode === 'PASSPORT') {
       setPassportImage(capturedImg);
+      setRawImages(prev => ({ ...prev, passport: capturedImg }));
       result.passportImageUrl = capturedImg;
     } else {
       setResidencyImage(capturedImg);
+      setRawImages(prev => ({ ...prev, residency: capturedImg }));
       result.residencyImageUrl = capturedImg;
     }
     setScanResult(result);
@@ -235,8 +255,8 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
   };
 
   /**
-   * Reads the uploaded file and immediately executes automatic edge-detection,
-   * background stripping, and card normalization.
+   * Reads the uploaded file, preserves original uncropped raw image,
+   * and executes high-precision automatic edge-detection & background stripping.
    */
   const handleFileChange = (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -250,6 +270,7 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
       reader.onloadend = async () => {
         if (typeof reader.result === 'string') {
           const raw = reader.result;
+          setRawImages(prev => ({ ...prev, [fieldKey]: raw }));
           setIsCropping(prev => ({ ...prev, [fieldKey]: true }));
           try {
             const { croppedImageUrl } = await autoCropAndResizeDocument(raw, { docType });
@@ -267,25 +288,23 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
   };
 
   /**
-   * Re-run auto-crop and clean borders on an existing image
+   * Opens the interactive Re-Crop modal with magnetic edge-snapping
    */
-  const handleReCrop = async (
+  const handleOpenReCrop = (
     currentImg: string,
     setter: (val: string) => void,
     fieldKey: string,
     docType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA' = 'EMIRATES_ID'
   ) => {
-    if (!currentImg) return;
-    setIsCropping(prev => ({ ...prev, [fieldKey]: true }));
-    try {
-      const { croppedImageUrl } = await autoCropAndResizeDocument(currentImg, { docType });
-      setter(croppedImageUrl);
-      setIsAutoCropped(prev => ({ ...prev, [fieldKey]: true }));
-    } catch (_) {
-      // ignore
-    } finally {
-      setIsCropping(prev => ({ ...prev, [fieldKey]: false }));
-    }
+    const rawToCrop = rawImages[fieldKey] || currentImg;
+    if (!rawToCrop) return;
+    setCropModalState({
+      isOpen: true,
+      imageUrl: rawToCrop,
+      fieldKey,
+      setter,
+      docType
+    });
   };
 
   const handleLoadSampleData = () => {
@@ -647,9 +666,9 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     {frontImage && (
                       <button
                         type="button"
-                        onClick={() => handleReCrop(frontImage, setFrontImage, 'front', 'EMIRATES_ID')}
+                        onClick={() => handleOpenReCrop(frontImage, setFrontImage, 'front', 'EMIRATES_ID')}
                         className="px-2.5 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1"
-                        title="Re-run auto-crop boundary detection"
+                        title="Fine-tune card crop with magnetic edge snapping"
                       >
                         <Crop className="w-3 h-3" />
                         <span>Re-Crop</span>
@@ -730,9 +749,9 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                     {backImage && (
                       <button
                         type="button"
-                        onClick={() => handleReCrop(backImage, setBackImage, 'back', 'EMIRATES_ID')}
+                        onClick={() => handleOpenReCrop(backImage, setBackImage, 'back', 'EMIRATES_ID')}
                         className="px-2.5 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1"
-                        title="Re-run auto-crop boundary detection"
+                        title="Fine-tune card crop with magnetic edge snapping"
                       >
                         <Crop className="w-3 h-3" />
                         <span>Re-Crop</span>
@@ -826,8 +845,9 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                   {passportImage && (
                     <button
                       type="button"
-                      onClick={() => handleReCrop(passportImage, setPassportImage, 'passport', 'PASSPORT')}
+                      onClick={() => handleOpenReCrop(passportImage, setPassportImage, 'passport', 'PASSPORT')}
                       className="px-2.5 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1"
+                      title="Fine-tune passport crop with magnetic edge snapping"
                     >
                       <Crop className="w-3 h-3" />
                       <span>Re-Crop</span>
@@ -920,8 +940,9 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                   {residencyImage && (
                     <button
                       type="button"
-                      onClick={() => handleReCrop(residencyImage, setResidencyImage, 'residency', 'RESIDENCY_VISA')}
+                      onClick={() => handleOpenReCrop(residencyImage, setResidencyImage, 'residency', 'RESIDENCY_VISA')}
                       className="px-2.5 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1"
+                      title="Fine-tune residency crop with magnetic edge snapping"
                     >
                       <Crop className="w-3 h-3" />
                       <span>Re-Crop</span>
@@ -1392,6 +1413,20 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
           defaultDocType={liveCameraTargetDoc}
           apiKey={storedApiKey || undefined}
           onScanComplete={handleLiveCameraComplete}
+        />
+      )}
+
+      {/* ======================= PRECISION RE-CROP MODAL ======================= */}
+      {cropModalState.isOpen && (
+        <DocumentCropModal
+          isOpen={cropModalState.isOpen}
+          onClose={() => setCropModalState(prev => ({ ...prev, isOpen: false }))}
+          imageUrl={cropModalState.imageUrl}
+          docType={cropModalState.docType}
+          onApplyCrop={(croppedUrl) => {
+            cropModalState.setter(croppedUrl);
+            setIsAutoCropped(prev => ({ ...prev, [cropModalState.fieldKey]: true }));
+          }}
         />
       )}
     </div>

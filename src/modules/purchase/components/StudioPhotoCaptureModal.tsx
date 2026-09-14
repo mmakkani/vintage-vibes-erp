@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { compressImage } from '../../../utils/imageCompressor.ts';
+import { autoCropGarment } from '../../../utils/garmentCropper.ts';
 
 export type PhotoSlot = 'front' | 'back' | 'tag';
 
@@ -63,6 +64,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const silhouetteGuideRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
@@ -300,7 +302,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     startCamera(devId);
   };
 
-  // Capture frame from live video element
+  // Capture frame from live video element with silhouette framing & garment isolation
   const capturePhoto = async () => {
     if (!videoRef.current || !canvasRef.current) return;
 
@@ -317,8 +319,51 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
+    const vw = video.videoWidth || 1280;
+    const vh = video.videoHeight || 720;
+
+    let cropX = 0;
+    let cropY = 0;
+    let cropW = vw;
+    let cropH = vh;
+
+    // If silhouette guide is visible, map its bounding box to the video feed
+    if (silhouetteGuideRef.current && showSilhouette) {
+      const guideRect = silhouetteGuideRef.current.getBoundingClientRect();
+      const videoRect = video.getBoundingClientRect();
+
+      const videoAspect = vw / vh;
+      const containerAspect = videoRect.width / videoRect.height;
+
+      let renderedW = videoRect.width;
+      let renderedH = videoRect.height;
+      let clipX = 0;
+      let clipY = 0;
+
+      if (containerAspect > videoAspect) {
+        renderedH = videoRect.width / videoAspect;
+        clipY = (renderedH - videoRect.height) / 2;
+      } else {
+        renderedW = videoRect.height * videoAspect;
+        clipX = (renderedW - videoRect.width) / 2;
+      }
+
+      const scaleToNatural = vw / renderedW;
+      const guideBoxX = (guideRect.left - videoRect.left) + clipX;
+      const guideBoxY = (guideRect.top - videoRect.top) + clipY;
+
+      // Add a slight 5% comfort padding around the silhouette box
+      const padW = guideRect.width * 0.05;
+      const padH = guideRect.height * 0.05;
+
+      cropX = Math.max(0, Math.min(vw - 50, Math.round((guideBoxX - padW) * scaleToNatural)));
+      cropY = Math.max(0, Math.min(vh - 50, Math.round((guideBoxY - padH) * scaleToNatural)));
+      cropW = Math.max(50, Math.min(vw - cropX, Math.round((guideRect.width + padW * 2) * scaleToNatural)));
+      cropH = Math.max(50, Math.min(vh - cropY, Math.round((guideRect.height + padH * 2) * scaleToNatural)));
+    }
+
+    canvas.width = cropW;
+    canvas.height = cropH;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -329,12 +374,24 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       ctx.scale(-1, 1);
     }
 
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
     const rawDataUrl = canvas.toDataURL('image/jpeg', 0.90);
 
     setIsProcessing(true);
     try {
-      const compressed = await compressImage(rawDataUrl, 1280, 0.85);
+      // 1. Isolate the garment / t-shirt from holding hands and background
+      let processedUrl = rawDataUrl;
+      try {
+        const isolated = await autoCropGarment(rawDataUrl);
+        if (isolated && isolated.didCrop) {
+          processedUrl = isolated.croppedImageUrl;
+        }
+      } catch (e) {
+        console.warn('Garment auto-crop skipped:', e);
+      }
+
+      // 2. Compress and save
+      const compressed = await compressImage(processedUrl, 1280, 0.85);
       applyPhotoToCurrentSlot(compressed);
     } catch (e) {
       applyPhotoToCurrentSlot(rawDataUrl);
@@ -362,14 +419,23 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // File input handler with automatic studio compression
+  // File input handler with automatic studio compression and garment isolation
   const handleNativeFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setIsProcessing(true);
       try {
         const compressed = await compressImage(file, 1280, 0.85);
-        applyPhotoToCurrentSlot(compressed);
+        // Smart garment isolation on uploaded photos
+        let finalPhoto = compressed;
+        try {
+          const isolated = await autoCropGarment(compressed);
+          if (isolated && isolated.didCrop) {
+            finalPhoto = isolated.croppedImageUrl;
+          }
+        } catch (_) {}
+
+        applyPhotoToCurrentSlot(finalPhoto);
         try {
           luxuryAudio.playMechanicalClick();
         } catch {}
@@ -378,8 +444,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       } finally {
         setIsProcessing(false);
       }
+      if (e.target) e.target.value = '';
     }
-    e.target.value = '';
   };
 
   // Drag and drop handler for desktop users
@@ -616,7 +682,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           {/* Garment Silhouette / Guide Outline Overlay (Active when camera is live) */}
           {cameraActive && showSilhouette && (
             <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-4 z-20">
-              <div className="w-52 h-68 sm:w-60 sm:h-76 border-2 border-dashed border-white/40 rounded-3xl relative flex items-center justify-center">
+              <div ref={silhouetteGuideRef} className="w-52 h-68 sm:w-60 sm:h-76 border-2 border-dashed border-white/40 rounded-3xl relative flex items-center justify-center">
                 <div className="absolute top-2 left-1/2 -translate-x-1/2 text-[10px] font-bold text-white/90 tracking-wider uppercase bg-black/70 px-3 py-0.5 rounded-full border border-white/20 backdrop-blur-sm whitespace-nowrap">
                   {currentSlot === 'front' ? '👔 FRONT CHEST' : currentSlot === 'back' ? '🧥 BACK VIEW' : '🏷️ TAG / COLLAR'}
                 </div>

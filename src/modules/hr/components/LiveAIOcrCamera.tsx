@@ -4,6 +4,7 @@ import {
   FlipHorizontal, Zap, ShieldCheck, FileText, CheckCircle2, ChevronRight 
 } from 'lucide-react';
 import { executeDocumentOcr, AIOCRScanResult } from '../../../utils/geminiOcrService.ts';
+import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 
 interface LiveAIOcrCameraProps {
   isOpen: boolean;
@@ -30,6 +31,7 @@ export const LiveAIOcrCamera: React.FC<LiveAIOcrCameraProps> = ({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const targetGuideRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   // Aspect ratio standards
@@ -159,23 +161,57 @@ export const LiveAIOcrCamera: React.FC<LiveAIOcrCameraProps> = ({
 
       const vw = video.videoWidth;
       const vh = video.videoHeight;
-
-      // Calculate the centered card bounding box within the video frame
-      // Guide box occupies ~80% of width or height
       const targetRatio = docType === 'EMIRATES_ID' ? (85.6 / 53.98) : docType === 'PASSPORT' ? 1.42 : 1.414;
-      
-      let cropW = Math.round(vw * 0.82);
-      let cropH = Math.round(cropW / targetRatio);
 
-      if (cropH > vh * 0.82) {
-        cropH = Math.round(vh * 0.82);
-        cropW = Math.round(cropH * targetRatio);
+      let cropX = 0;
+      let cropY = 0;
+      let cropW = vw;
+      let cropH = vh;
+
+      // Accurately map the onscreen guide overlay to the underlying video stream pixels
+      if (targetGuideRef.current) {
+        const guideRect = targetGuideRef.current.getBoundingClientRect();
+        const videoRect = video.getBoundingClientRect();
+
+        const videoAspect = vw / vh;
+        const containerAspect = videoRect.width / videoRect.height;
+
+        let renderedW = videoRect.width;
+        let renderedH = videoRect.height;
+        let clipX = 0;
+        let clipY = 0;
+
+        if (containerAspect > videoAspect) {
+          // Container is wider than video: video scaled by width, clipped top/bottom
+          renderedH = videoRect.width / videoAspect;
+          clipY = (renderedH - videoRect.height) / 2;
+        } else {
+          // Container is taller than video: video scaled by height, clipped left/right
+          renderedW = videoRect.height * videoAspect;
+          clipX = (renderedW - videoRect.width) / 2;
+        }
+
+        const scaleToNatural = vw / renderedW;
+        const guideBoxX = (guideRect.left - videoRect.left) + clipX;
+        const guideBoxY = (guideRect.top - videoRect.top) + clipY;
+
+        cropX = Math.max(0, Math.min(vw - 50, Math.round(guideBoxX * scaleToNatural)));
+        cropY = Math.max(0, Math.min(vh - 50, Math.round(guideBoxY * scaleToNatural)));
+        cropW = Math.max(50, Math.min(vw - cropX, Math.round(guideRect.width * scaleToNatural)));
+        cropH = Math.max(50, Math.min(vh - cropY, Math.round(guideRect.height * scaleToNatural)));
+      } else {
+        // Centered fallback calculation
+        cropW = Math.round(vw * 0.82);
+        cropH = Math.round(cropW / targetRatio);
+        if (cropH > vh * 0.82) {
+          cropH = Math.round(vh * 0.82);
+          cropW = Math.round(cropH * targetRatio);
+        }
+        cropX = Math.round((vw - cropW) / 2);
+        cropY = Math.round((vh - cropH) / 2);
       }
 
-      const cropX = Math.round((vw - cropW) / 2);
-      const cropY = Math.round((vh - cropH) / 2);
-
-      // Render to canvas at standard high-resolution (1200px width)
+      // Render to canvas at standard high-resolution
       const outW = 1200;
       const outH = Math.round(outW / targetRatio);
 
@@ -188,24 +224,27 @@ export const LiveAIOcrCamera: React.FC<LiveAIOcrCameraProps> = ({
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
 
-      // Draw ONLY the card region from video stream (eliminates room, table, hands)
+      // Draw ONLY the exact card region seen inside the target viewfinder
       ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, outW, outH);
 
-      // Contrast enhancement for clear MRZ & legal text extraction
-      try {
-        const imgData = ctx.getImageData(0, 0, outW, outH);
-        const d = imgData.data;
-        const contrast = 1.06;
-        const intercept = 128 * (1 - contrast);
-        for (let i = 0; i < d.length; i += 4) {
-          d[i] = Math.min(255, Math.max(0, d[i] * contrast + intercept));
-          d[i + 1] = Math.min(255, Math.max(0, d[i + 1] * contrast + intercept));
-          d[i + 2] = Math.min(255, Math.max(0, d[i + 2] * contrast + intercept));
-        }
-        ctx.putImageData(imgData, 0, 0);
-      } catch (_) {}
+      const initialRawCapture = canvas.toDataURL('image/jpeg', 0.94);
 
-      const capturedBase64 = canvas.toDataURL('image/jpeg', 0.94);
+      // Fine-tune with intelligent card edge isolation (removes holding fingers & table edges)
+      setProcessingStatus('Refining card borders and removing finger noise...');
+      let finalCardImage = initialRawCapture;
+      try {
+        const cropRes = await autoCropAndResizeDocument(initialRawCapture, {
+          docType,
+          targetWidth: outW,
+          targetHeight: outH,
+          enhanceContrast: true
+        });
+        if (cropRes && cropRes.didCrop) {
+          finalCardImage = cropRes.croppedImageUrl;
+        }
+      } catch (cropErr) {
+        console.warn('Micro edge refinement skipped, using frame capture:', cropErr);
+      }
 
       setProcessingStatus('Extracting legal zones with Gemini AI Vision...');
 
@@ -214,12 +253,12 @@ export const LiveAIOcrCamera: React.FC<LiveAIOcrCameraProps> = ({
       
       const scanResult = await executeDocumentOcr({
         documentType: docType,
-        imageBase64: capturedBase64,
+        imageBase64: finalCardImage,
         apiKey: activeKey
       });
 
       stopCamera();
-      onScanComplete(scanResult, capturedBase64);
+      onScanComplete(scanResult, finalCardImage);
     } catch (err: any) {
       console.error('Capture & Scan Error:', err);
       setCameraError(err?.message || 'Failed to scan document frame. Please try again.');
@@ -338,29 +377,47 @@ export const LiveAIOcrCamera: React.FC<LiveAIOcrCameraProps> = ({
           {/* Center Card Alignment Target Box with Animated Laser Scanner */}
           {!cameraError && (
             <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-4 z-10">
-              <div className={`w-[88%] sm:w-[82%] max-w-lg ${aspectClass} relative rounded-xl border-2 border-dashed border-blue-400/80 shadow-[0_0_0_9999px_rgba(10,15,30,0.65)] transition-all duration-300 flex flex-col justify-between p-3`}>
+              <div 
+                ref={targetGuideRef}
+                className={`w-[88%] sm:w-[82%] max-w-lg ${aspectClass} relative rounded-2xl border-2 border-blue-400/90 shadow-[0_0_0_9999px_rgba(5,10,20,0.75)] transition-all duration-300 flex flex-col justify-between p-3.5 bg-blue-950/10 backdrop-blur-[1px]`}
+              >
                 
-                {/* 4 Corner Reticles */}
-                <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-amber-400 rounded-tl-lg"></div>
-                <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-amber-400 rounded-tr-lg"></div>
-                <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-amber-400 rounded-bl-lg"></div>
-                <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-amber-400 rounded-br-lg"></div>
+                {/* 4 Corner Reticles (Golden High-Visibility) */}
+                <div className="absolute -top-1.5 -left-1.5 w-7 h-7 border-t-4 border-l-4 border-amber-400 rounded-tl-xl shadow-[0_0_8px_#f59e0b]"></div>
+                <div className="absolute -top-1.5 -right-1.5 w-7 h-7 border-t-4 border-r-4 border-amber-400 rounded-tr-xl shadow-[0_0_8px_#f59e0b]"></div>
+                <div className="absolute -bottom-1.5 -left-1.5 w-7 h-7 border-b-4 border-l-4 border-amber-400 rounded-bl-xl shadow-[0_0_8px_#f59e0b]"></div>
+                <div className="absolute -bottom-1.5 -right-1.5 w-7 h-7 border-b-4 border-r-4 border-amber-400 rounded-br-xl shadow-[0_0_8px_#f59e0b]"></div>
+
+                {/* Subtle Card Silhouette Outline */}
+                <div className="absolute inset-4 rounded-xl border border-white/15 pointer-events-none flex items-center justify-between p-4 opacity-40">
+                  <div className="w-16 h-20 rounded-lg border border-dashed border-white/40 flex items-center justify-center text-[9px] text-white/60 font-mono">
+                    PHOTO
+                  </div>
+                  <div className="flex-1 px-4 space-y-2">
+                    <div className="h-2 w-3/4 bg-white/20 rounded"></div>
+                    <div className="h-2 w-1/2 bg-white/20 rounded"></div>
+                    <div className="h-2 w-2/3 bg-white/20 rounded"></div>
+                  </div>
+                  <div className="w-10 h-10 rounded-full border border-dashed border-amber-400/50 flex items-center justify-center text-[8px] text-amber-300/60 font-mono">
+                    EMBLEM
+                  </div>
+                </div>
 
                 {/* Laser Scanning Bar Animation */}
-                <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_12px_#06b6d4] animate-bounce top-1/2 -translate-y-1/2 pointer-events-none"></div>
+                <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_#06b6d4] animate-bounce top-1/2 -translate-y-1/2 pointer-events-none"></div>
 
                 {/* Target Header Guide */}
-                <div className="text-center">
-                  <span className="bg-slate-900/85 backdrop-blur-xs text-white text-[10px] font-bold px-3 py-1 rounded-full border border-blue-500/40 shadow-md inline-flex items-center gap-1.5">
-                    <Sparkles className="w-3 h-3 text-amber-400" />
-                    <span>Fit {docTitles[docType]} Inside Box</span>
+                <div className="text-center z-10">
+                  <span className="bg-slate-900/90 backdrop-blur-sm text-white text-[11px] font-bold px-3 py-1 rounded-full border border-blue-500/50 shadow-lg inline-flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Align {docTitles[docType]} Card Inside Reticles</span>
                   </span>
                 </div>
 
                 {/* Target Footer Guide */}
-                <div className="text-center">
-                  <span className="bg-slate-900/80 backdrop-blur-xs text-slate-300 text-[9px] font-medium px-2.5 py-0.5 rounded-full border border-slate-700">
-                    Background outside this frame is automatically removed
+                <div className="text-center z-10">
+                  <span className="bg-slate-900/85 backdrop-blur-sm text-slate-300 text-[9px] font-medium px-2.5 py-0.5 rounded-full border border-slate-700 shadow-sm">
+                    Surrounding table, hands & clothes outside this frame are removed
                   </span>
                 </div>
               </div>

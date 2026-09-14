@@ -22,6 +22,7 @@ import {
 import { compressImage } from '../../../utils/imageCompressor.ts';
 import { analyzeVintageGarment, VintageValuationResult } from '../../../utils/geminiVintageValuation.ts';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
+import { autoCropGarment } from '../../../utils/garmentCropper.ts';
 
 export interface ExtractedTagData {
   brand: string;
@@ -91,6 +92,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const viewfinderRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -210,7 +212,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
     };
   }, [isOpen]);
 
-  const capturePhoto = () => {
+  const capturePhoto = async () => {
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -220,11 +222,50 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
       return;
     }
 
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+
+    let cropX = 0;
+    let cropY = 0;
+    let cropW = vw;
+    let cropH = vh;
+
+    // Tightly crop to the visible viewfinder frame, stripping the surrounding floor & table
+    if (viewfinderRef.current) {
+      const guideRect = viewfinderRef.current.getBoundingClientRect();
+      const videoRect = video.getBoundingClientRect();
+
+      const videoAspect = vw / vh;
+      const containerAspect = videoRect.width / videoRect.height;
+
+      let renderedW = videoRect.width;
+      let renderedH = videoRect.height;
+      let clipX = 0;
+      let clipY = 0;
+
+      if (containerAspect > videoAspect) {
+        renderedH = videoRect.width / videoAspect;
+        clipY = (renderedH - videoRect.height) / 2;
+      } else {
+        renderedW = videoRect.height * videoAspect;
+        clipX = (renderedW - videoRect.width) / 2;
+      }
+
+      const scaleToNatural = vw / renderedW;
+      const guideBoxX = (guideRect.left - videoRect.left) + clipX;
+      const guideBoxY = (guideRect.top - videoRect.top) + clipY;
+
+      cropX = Math.max(0, Math.min(vw - 50, Math.round(guideBoxX * scaleToNatural)));
+      cropY = Math.max(0, Math.min(vh - 50, Math.round(guideBoxY * scaleToNatural)));
+      cropW = Math.max(50, Math.min(vw - cropX, Math.round(guideRect.width * scaleToNatural)));
+      cropH = Math.max(50, Math.min(vh - cropY, Math.round(guideRect.height * scaleToNatural)));
+    }
+
+    canvas.width = cropW;
+    canvas.height = cropH;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
 
       // Check luminance to ensure not completely black/blank frame
       try {
@@ -243,14 +284,26 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
         console.warn('Could not inspect frame brightness:', err);
       }
 
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      setCapturedImage(dataUrl);
+      const rawDataUrl = canvas.toDataURL('image/jpeg', 0.90);
       stopCamera();
-      processTagOcr(dataUrl);
+
+      // Smart apparel isolation: filters out holding hands/fingers and background sorting clutter
+      let isolatedImageUrl = rawDataUrl;
+      try {
+        const cropRes = await autoCropGarment(rawDataUrl);
+        if (cropRes && cropRes.didCrop) {
+          isolatedImageUrl = cropRes.croppedImageUrl;
+        }
+      } catch (e) {
+        console.warn('Garment auto-crop skipped:', e);
+      }
+
+      setCapturedImage(isolatedImageUrl);
+      processTagOcr(isolatedImageUrl);
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 15 * 1024 * 1024) {
@@ -258,11 +311,23 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       const dataUrl = reader.result as string;
-      setCapturedImage(dataUrl);
       stopCamera();
-      processTagOcr(dataUrl);
+
+      // Smart garment isolation on uploaded image
+      let isolatedImageUrl = dataUrl;
+      try {
+        const cropRes = await autoCropGarment(dataUrl);
+        if (cropRes && cropRes.didCrop) {
+          isolatedImageUrl = cropRes.croppedImageUrl;
+        }
+      } catch (e) {
+        console.warn('Garment auto-crop skipped on upload:', e);
+      }
+
+      setCapturedImage(isolatedImageUrl);
+      processTagOcr(isolatedImageUrl);
     };
     reader.readAsDataURL(file);
   };
@@ -551,7 +616,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                 {cameraActive && !capturedImage && (
                   <>
                     {/* Viewfinder Frame Guide Specialized for Vintage Tags & Single Stitch */}
-                    <div className="absolute inset-8 border-2 border-dashed border-amber-400/80 rounded-xl pointer-events-none flex flex-col justify-between p-3">
+                    <div ref={viewfinderRef} className="absolute inset-8 border-2 border-dashed border-amber-400/80 rounded-xl pointer-events-none flex flex-col justify-between p-3">
                       <div className="flex justify-between text-amber-300 font-mono text-[10px] font-bold">
                         <span>[ BRAND & TAG ERA ]</span>
                         <span>[ SINGLE-STITCH HEM ]</span>
