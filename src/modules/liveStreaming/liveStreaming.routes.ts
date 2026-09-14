@@ -219,62 +219,78 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/otp', async (req, 
 // ======================== INSTANT MOBILE APP QR SCAN AUTH ========================
 liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/generate', async (req, res) => {
   const { boothId, platform } = req.params;
+  const isFallbackRequested = req.query.fallback === 'true' || req.body.fallback === true;
   const workerUrl = getWorkerUrl();
 
-  // 1. Forward to Railway worker if active
+  console.log(`[liveStreaming.routes] 🚀 fetchLoginQR request: boothId=${boothId}, platform=${platform}, fallback=${isFallbackRequested}`);
+
+  // 1. If fallback requested, generate in-process deep-link QR directly
+  if (isFallbackRequested) {
+    console.log(`[liveStreaming.routes] ⚡ In-process fallback requested for ${platform}, generating high-contrast QR...`);
+    const token = `qr_${boothId}_${platform}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const deepLinks: Record<string, string> = {
+      tiktok: `https://www.tiktok.com/login/qrcode?token=${token}&mode=live_studio&booth=${encodeURIComponent(boothId)}`,
+      instagram: `https://www.instagram.com/accounts/login/two_factor?qr_token=${token}&booth=${encodeURIComponent(boothId)}`,
+      facebook: `https://www.facebook.com/security/2fa/qr?token=${token}&app=live_producer`,
+      youtube: `https://accounts.google.com/signin/v2/qr?token=${token}&service=youtube_live`,
+      custom: `https://live.vintagevibe.ae/login/qr?token=${token}`
+    };
+    const qrRawUrl = deepLinks[platform] || deepLinks.custom;
+
+    try {
+      const qrDataUrl = await QRCode.toDataURL(qrRawUrl, {
+        margin: 2,
+        width: 280,
+        color: { dark: '#0a0f1d', light: '#ffffff' }
+      });
+
+      return res.json({
+        success: true,
+        status: 'WAITING_SCAN',
+        qrDataUrl,
+        qrRawUrl,
+        token,
+        expiresInSeconds: 120,
+        platform,
+        boothId,
+        isFallback: true
+      });
+    } catch (genErr: any) {
+      console.error(`[liveStreaming.routes] ❌ Fallback QR generation failed:`, genErr);
+      return res.status(500).json({ success: false, error: genErr.message });
+    }
+  }
+
+  // 2. Forward to Railway headless worker
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 35000); // 35s timeout for Puppeteer launch & navigation
+
   try {
+    console.log(`[liveStreaming.routes] 📡 Forwarding fetchLoginQR to worker at: ${workerUrl}/api/booth/social/qr/generate`);
     const workerRes = await fetch(`${workerUrl}/api/booth/social/qr/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ boothId, platform })
+      body: JSON.stringify({ boothId, platform, fallback: false }),
+      signal: controller.signal
     });
-    if (workerRes.ok) {
-      return res.json(await workerRes.json());
+    clearTimeout(timeoutId);
+
+    const workerData = await workerRes.json().catch(() => ({ success: false, error: 'Invalid JSON response from worker' }));
+
+    if (workerRes.ok && workerData.success && workerData.qrDataUrl) {
+      console.log(`[liveStreaming.routes] ✅ Worker returned valid base64 QR image for ${platform} (size: ${workerData.qrDataUrl.length} chars)`);
+      return res.json(workerData);
+    } else {
+      console.error(`[liveStreaming.routes] ❌ Worker returned failure for ${platform}:`, workerData.error || workerRes.statusText);
+      return res.status(workerRes.status || 500).json(workerData);
     }
-  } catch (_) {}
-
-  // 2. In-process fallback generation
-  const token = `qr_${boothId}_${platform}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-  const deepLinks: Record<string, string> = {
-    tiktok: `https://www.tiktok.com/login/qrcode?token=${token}&mode=live_studio&booth=${encodeURIComponent(boothId)}`,
-    instagram: `https://www.instagram.com/accounts/login/two_factor?qr_token=${token}&booth=${encodeURIComponent(boothId)}`,
-    facebook: `https://www.facebook.com/security/2fa/qr?token=${token}&app=live_producer`,
-    youtube: `https://accounts.google.com/signin/v2/qr?token=${token}&service=youtube_live`,
-    custom: `https://live.vintagevibe.ae/login/qr?token=${token}`
-  };
-  const qrRawUrl = deepLinks[platform] || deepLinks.custom;
-
-  try {
-    const qrDataUrl = await QRCode.toDataURL(qrRawUrl, {
-      margin: 2,
-      width: 280,
-      color: { dark: '#0a0f1d', light: '#ffffff' }
-    });
-
-    const client = await getPgClient();
-    try {
-      if (client) {
-        await client.query(
-          "UPDATE booth_social_channels SET auth_status = 'AUTHENTICATING', metadata = $3 WHERE booth_id = $1 AND platform = $2",
-          [boothId, platform, JSON.stringify({ authMode: 'QR_SCAN', qrToken: token, expiresAt: Date.now() + 120000 })]
-        );
-      }
-    } finally {
-      if (client) await client.end().catch(() => {});
-    }
-
-    return res.json({
-      success: true,
-      status: 'WAITING_SCAN',
-      qrDataUrl,
-      qrRawUrl,
-      token,
-      expiresInSeconds: 120,
-      platform,
-      boothId
-    });
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message || 'QR generation failed' });
+    clearTimeout(timeoutId);
+    console.error(`[liveStreaming.routes] ❌ Failed to communicate with worker (${workerUrl}):`, err.message || err);
+    return res.status(502).json({
+      success: false,
+      error: `Worker connection error (${workerUrl}): ${err.message || 'Worker unreachable'}. Please ensure headless worker is active or use Fallback QR.`
+    });
   }
 });
 

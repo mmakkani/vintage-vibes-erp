@@ -100,6 +100,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         secondsRemaining?: number;
         status?: 'WAITING_SCAN' | 'LOGGED_IN' | 'EXPIRED';
         isGenerating?: boolean;
+        qrError?: string;
       }
     >
   >({});
@@ -604,14 +605,18 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   };
 
   // Generate Live QR Code for Instant Mobile Login
-  const handleGenerateChannelQr = async (platform: string) => {
+  const handleGenerateChannelQr = async (platform: string, fallback = false) => {
+    console.log(`[MobileLiveHostView] 🚀 fetchLoginQR started for platform: ${platform}, booth: ${currentBoothId}, fallback: ${fallback}`);
     setChannelQrData(prev => ({
       ...prev,
-      [platform]: { ...prev[platform], isGenerating: true }
+      [platform]: { ...prev[platform], isGenerating: true, qrError: undefined }
     }));
     try {
-      const res = await LiveStreamService.generateChannelLoginQr(currentBoothId, platform);
-      if (res.success && res.qrDataUrl) {
+      const res = await LiveStreamService.fetchLoginQR(currentBoothId, platform, fallback);
+      const isValidBase64Image = res.success && res.qrDataUrl && (res.qrDataUrl.startsWith('data:image/') || res.qrDataUrl.length > 50);
+
+      if (isValidBase64Image) {
+        console.log(`[MobileLiveHostView] ✅ fetchLoginQR succeeded for ${platform} (image size: ${res.qrDataUrl!.length})`);
         setChannelQrData(prev => ({
           ...prev,
           [platform]: {
@@ -620,7 +625,8 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             qrRawUrl: res.qrRawUrl,
             token: res.token,
             secondsRemaining: res.expiresInSeconds || 120,
-            status: 'WAITING_SCAN'
+            status: 'WAITING_SCAN',
+            qrError: undefined
           }
         }));
         setChannelFeedback({
@@ -629,24 +635,28 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           isError: false
         });
       } else {
+        const errorMsg = res.error || 'Worker failed to return a valid base64 QR image.';
+        console.error(`[MobileLiveHostView] ❌ fetchLoginQR failed for ${platform}:`, errorMsg);
         setChannelQrData(prev => ({
           ...prev,
-          [platform]: { ...prev[platform], isGenerating: false }
+          [platform]: { ...prev[platform], isGenerating: false, qrError: errorMsg }
         }));
         setChannelFeedback({
           platform,
-          message: res.error || 'Failed to generate QR code.',
+          message: errorMsg,
           isError: true
         });
       }
     } catch (err: any) {
+      const errorMsg = err?.message || 'Error communicating with live worker.';
+      console.error(`[MobileLiveHostView] ❌ fetchLoginQR exception for ${platform}:`, err);
       setChannelQrData(prev => ({
         ...prev,
-        [platform]: { ...prev[platform], isGenerating: false }
+        [platform]: { ...prev[platform], isGenerating: false, qrError: errorMsg }
       }));
       setChannelFeedback({
         platform,
-        message: err?.message || 'Error communicating with live worker.',
+        message: errorMsg,
         isError: true
       });
     }
@@ -1688,6 +1698,38 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                     {/* MODE B: INSTANT MOBILE QR SCAN */}
                     {authMode === 'QR_SCAN' && (
                       <div className="space-y-3 pt-1">
+                        {/* Prominent Error Banner if QR Fetch / Puppeteer Extraction Failed */}
+                        {qr.qrError && (
+                          <div className="p-2.5 bg-rose-950/80 border border-rose-500/50 rounded-xl flex items-start gap-2 text-rose-200 text-xs">
+                            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                              <div className="font-bold uppercase text-[9px] text-rose-300 tracking-wider">
+                                QR Extraction Failure
+                              </div>
+                              <p className="text-[10px] text-rose-200 font-mono mt-0.5 break-all">
+                                {qr.qrError}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleGenerateChannelQr(ch.platform)}
+                                className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[9px] uppercase cursor-pointer"
+                              >
+                                Retry
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleGenerateChannelQr(ch.platform, true)}
+                                className="px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-white font-bold text-[9px] uppercase cursor-pointer"
+                                title="Use instant deep-link QR fallback"
+                              >
+                                Fallback
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
                         {isLoggedIn ? (
                           <div className="p-3 bg-emerald-950/40 border border-emerald-500/40 rounded-xl flex flex-col items-center text-center space-y-1.5">
                             <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
@@ -1724,7 +1766,13 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                                     {qr.isGenerating ? (
                                       <>
                                         <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
-                                        <span className="text-[10px] font-bold text-slate-700">Generating live QR...</span>
+                                        <span className="text-[10px] font-bold text-slate-700">Connecting to worker...</span>
+                                        <span className="text-[9px] text-slate-500">Extracting live QR...</span>
+                                      </>
+                                    ) : qr.qrError ? (
+                                      <>
+                                        <AlertCircle className="w-6 h-6 text-rose-500" />
+                                        <span className="text-[9px] font-bold text-rose-700">Extraction Failed</span>
                                       </>
                                     ) : (
                                       <>
@@ -1826,8 +1874,21 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                                   className="px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer transition active:scale-95 shadow-xs"
                                 >
                                   <RefreshCw className={`w-3 h-3 ${qr.isGenerating ? 'animate-spin' : ''}`} />
-                                  <span>{qr.qrDataUrl ? 'Refresh QR' : 'Generate QR'}</span>
+                                  <span>{qr.isGenerating ? 'Fetching QR...' : qr.qrDataUrl ? 'Refresh QR' : 'Generate QR'}</span>
                                 </button>
+
+                                {qr.qrError && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleGenerateChannelQr(ch.platform, true)}
+                                    disabled={qr.isGenerating}
+                                    className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold text-[9px] uppercase tracking-wider flex items-center gap-1 cursor-pointer transition active:scale-95"
+                                    title="Generate deep-link fallback QR"
+                                  >
+                                    <Zap className="w-3 h-3 text-amber-400" />
+                                    <span>Fallback QR</span>
+                                  </button>
+                                )}
 
                                 {qr.qrDataUrl && (
                                   <button

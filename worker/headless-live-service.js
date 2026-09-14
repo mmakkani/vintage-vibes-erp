@@ -334,16 +334,165 @@ headlessRouter.post('/submit-otp', async (req, res) => {
  * POST /api/booth/social/qr/simulate-approval
  */
 
+/**
+ * Extract Live QR Code from TikTok Web Login via Headless Puppeteer
+ * -----------------------------------------------------------------
+ * Navigates to https://www.tiktok.com/login/phone-or-email/qrcode
+ * Waits explicitly for canvas, img[src*="data:image"], or .tiktok-qr-box
+ * Extracts the data URL or takes an element screenshot buffer and returns base64
+ */
+async function extractTikTokLoginQR(boothId) {
+  console.log(`[Worker Headless] 🚀 fetchLoginQR: Launching Puppeteer to extract TikTok QR login for booth ${boothId}...`);
+  let browser = null;
+  try {
+    let puppeteer = null;
+    try {
+      const pExtra = await import('puppeteer-extra');
+      const StealthPlugin = await import('puppeteer-extra-plugin-stealth');
+      const stealth = StealthPlugin.default || StealthPlugin;
+      puppeteer = pExtra.default || pExtra;
+      if (typeof puppeteer.use === 'function' && stealth) {
+        puppeteer.use(stealth());
+      }
+    } catch (_) {
+      try {
+        puppeteer = (await import('puppeteer')).default || (await import('puppeteer'));
+      } catch (e2) {
+        try {
+          puppeteer = (await import('puppeteer-core')).default || (await import('puppeteer-core'));
+        } catch (_) {}
+      }
+    }
+
+    if (!puppeteer) {
+      throw new Error('Puppeteer module is not installed or could not be loaded in this environment.');
+    }
+
+    console.log('[Worker Headless] 🌐 Launching Chromium browser with stealth automation flags...');
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+      ]
+    });
+
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    );
+
+    const targetUrl = 'https://www.tiktok.com/login/phone-or-email/qrcode';
+    console.log(`[Worker Headless] 🧭 Navigating to TikTok QR login page: ${targetUrl}`);
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+
+    // Wait explicitly for the QR canvas or image selector
+    console.log('[Worker Headless] ⏳ Waiting explicitly for QR selector: canvas, img[src*="data:image"], or .tiktok-qr-box...');
+    const selectors = [
+      'canvas',
+      'img[src*="data:image"]',
+      '.tiktok-qr-box',
+      'div[class*="qrcode"] canvas',
+      'div[class*="qrcode"] img',
+      'div[class*="qr-code"] canvas',
+      'div[class*="qr-code"] img',
+      'div[class*="QRCode"] canvas',
+      'div[class*="QRCode"] img'
+    ];
+
+    let matchedSelector = null;
+    try {
+      matchedSelector = await Promise.any(
+        selectors.map(s => page.waitForSelector(s, { timeout: 15000 }).then(() => s))
+      );
+      console.log(`[Worker Headless] 🎯 Matched TikTok QR selector: "${matchedSelector}"`);
+    } catch (waitErr) {
+      console.warn(`[Worker Headless] ⚠️ Explicit selector wait timed out: ${waitErr.message}`);
+    }
+
+    let qrBase64 = null;
+
+    if (matchedSelector) {
+      const el = await page.$(matchedSelector);
+      if (el) {
+        // Check if image src is data:image or canvas has toDataURL
+        qrBase64 = await page.evaluate(target => {
+          if (target.tagName === 'IMG' && target.src && target.src.startsWith('data:image')) {
+            return target.src;
+          }
+          if (target.tagName === 'CANVAS' && typeof target.toDataURL === 'function') {
+            try { return target.toDataURL('image/png'); } catch (_) {}
+          }
+          return null;
+        }, el);
+
+        // If not directly available as src, capture element screenshot buffer
+        if (!qrBase64) {
+          console.log('[Worker Headless] 📸 Taking element screenshot buffer...');
+          const buf = await el.screenshot({ encoding: 'base64' });
+          if (buf && buf.length > 50) {
+            qrBase64 = `data:image/png;base64,${buf}`;
+          }
+        }
+      }
+    }
+
+    // Fallback: evaluate document canvases and images
+    if (!qrBase64) {
+      qrBase64 = await page.evaluate(() => {
+        const canvases = document.querySelectorAll('canvas');
+        for (const c of canvases) {
+          if (c.width >= 40 && c.height >= 40) {
+            try { return c.toDataURL('image/png'); } catch (_) {}
+          }
+        }
+        const imgs = document.querySelectorAll('img');
+        for (const i of imgs) {
+          if (i.src && i.src.startsWith('data:image')) return i.src;
+        }
+        return null;
+      });
+    }
+
+    if (qrBase64 && qrBase64.startsWith('data:image')) {
+      console.log(`[Worker Headless] ✅ TikTok login QR extracted directly via Puppeteer! (length: ${qrBase64.length})`);
+      return { success: true, qrDataUrl: qrBase64 };
+    }
+
+    throw new Error('QR selector did not produce a valid base64 image on TikTok login page.');
+  } catch (err) {
+    console.error(`[Worker Headless] ❌ Puppeteer TikTok QR extraction failure:`, err.message || err);
+    throw err;
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
+}
+
 // 1. Generate Live Mobile App Login QR Code
 headlessRouter.post('/qr/generate', async (req, res) => {
-  const { boothId, platform } = req.body;
+  const { boothId, platform, fallback } = req.body;
   if (!boothId || !platform) {
     return res.status(400).json({ success: false, error: 'boothId and platform are required' });
   }
 
+  console.log(`[Worker Headless] 🚀 fetchLoginQR invoked for platform: ${platform}, booth: ${boothId}, fallback: ${!!fallback}`);
+
   const sessionKey = `${boothId}_${platform}`;
   const token = `qr_${boothId}_${platform}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
   
+  let qrDataUrl = null;
+  let qrRawUrl = null;
+  let puppeteerError = null;
+
   // Platform specific authentic mobile scan deep-link / login URL
   const deepLinks = {
     tiktok: `https://www.tiktok.com/login/qrcode?token=${token}&mode=live_studio&booth=${encodeURIComponent(boothId)}`,
@@ -352,15 +501,50 @@ headlessRouter.post('/qr/generate', async (req, res) => {
     youtube: `https://accounts.google.com/signin/v2/qr?token=${token}&service=youtube_live`,
     custom: `https://live.vintagevibe.ae/login/qr?token=${token}`
   };
-  const qrRawUrl = deepLinks[platform] || deepLinks.custom;
+  qrRawUrl = deepLinks[platform] || deepLinks.custom;
+
+  // 1. If platform is TikTok and fallback is not explicitly requested, attempt Puppeteer extraction
+  if (platform.toLowerCase() === 'tiktok' && !fallback) {
+    try {
+      const extracted = await extractTikTokLoginQR(boothId);
+      if (extracted?.qrDataUrl && extracted.qrDataUrl.startsWith('data:image/')) {
+        qrDataUrl = extracted.qrDataUrl;
+        qrRawUrl = 'https://www.tiktok.com/login/phone-or-email/qrcode';
+      }
+    } catch (err) {
+      puppeteerError = err?.message || String(err);
+      console.error(`[Worker Headless] ❌ Puppeteer TikTok extraction error:`, puppeteerError);
+    }
+  }
+
+  // 2. If Puppeteer failed on TikTok and no fallback requested, return 500 error with message so UI displays it
+  if (platform.toLowerCase() === 'tiktok' && !qrDataUrl && !fallback) {
+    console.error(`[Worker Headless] ❌ fetchLoginQR: Returning error response for TikTok Puppeteer failure: ${puppeteerError}`);
+    return res.status(500).json({
+      success: false,
+      error: `Puppeteer TikTok QR Extraction Error: ${puppeteerError || 'Failed to extract valid base64 image from https://www.tiktok.com/login/phone-or-email/qrcode'}`
+    });
+  }
+
+  // 3. For other platforms (Instagram, Facebook, YouTube, Custom) or when fallback is requested:
+  if (!qrDataUrl) {
+    try {
+      qrDataUrl = await QRCode.toDataURL(qrRawUrl, {
+        margin: 2,
+        width: 280,
+        color: { dark: '#0a0f1d', light: '#ffffff' }
+      });
+      console.log(`[Worker Headless] ✅ Generated QR data URL via QRCode generator for ${platform} (length: ${qrDataUrl.length})`);
+    } catch (genErr) {
+      console.error(`[Worker Headless] ❌ QRCode generator error:`, genErr);
+      return res.status(500).json({
+        success: false,
+        error: `Failed to generate QR code: ${genErr.message}`
+      });
+    }
+  }
 
   try {
-    const qrDataUrl = await QRCode.toDataURL(qrRawUrl, {
-      margin: 2,
-      width: 280,
-      color: { dark: '#0a0f1d', light: '#ffffff' }
-    });
-
     const session = {
       token,
       boothId,
@@ -381,7 +565,7 @@ headlessRouter.post('/qr/generate', async (req, res) => {
       metadata: { authMode: 'QR_SCAN', qrToken: token, qrGeneratedAt: new Date().toISOString() }
     });
 
-    // Auto-approve after 12-14s to emulate host scanning on phone and tapping Approve
+    // Auto-approve after 13s to emulate host scanning on phone and tapping Approve
     setTimeout(async () => {
       const currentSession = activeQrSessions.get(sessionKey);
       if (currentSession && currentSession.token === token && currentSession.status === 'WAITING_SCAN') {
@@ -424,8 +608,8 @@ headlessRouter.post('/qr/generate', async (req, res) => {
     });
 
   } catch (err) {
-    console.error(`[Worker Headless] QR generation error:`, err);
-    return res.status(500).json({ success: false, error: 'Failed to generate platform login QR' });
+    console.error(`[Worker Headless] QR session save error:`, err);
+    return res.status(500).json({ success: false, error: 'Failed to save QR session' });
   }
 });
 

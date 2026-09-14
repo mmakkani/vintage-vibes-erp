@@ -244,6 +244,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     qrSecondsRemaining?: number;
     qrStatus?: 'WAITING_SCAN' | 'SCANNED' | 'LOGGED_IN' | 'EXPIRED' | 'IDLE';
     isGeneratingQr?: boolean;
+    qrError?: string;
   }
 
   const [booths, setBooths] = useState<LiveBoothStreamConfig[]>(defaultBooths);
@@ -444,12 +445,26 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
   };
 
   // Generate Live Mobile QR Code for Platform
-  const handleGeneratePlatformQr = async (platformKey: string) => {
+  const handleGeneratePlatformQr = async (platformKey: string, fallback = false) => {
     if (!activeModalBooth) return;
-    updateChannelCred(platformKey, 'isGeneratingQr', true);
+    console.log(`[UnifiedLiveBroadcastHub] 🚀 fetchLoginQR started for platform: ${platformKey}, booth: ${activeModalBooth.boothId}, fallback: ${fallback}`);
+
+    setChannelCreds(prev => ({
+      ...prev,
+      [platformKey]: {
+        ...prev[platformKey],
+        isGeneratingQr: true,
+        qrError: undefined
+      }
+    }));
+
     try {
-      const res = await LiveStreamService.generateChannelLoginQr(activeModalBooth.boothId, platformKey);
-      if (res.success && res.qrDataUrl) {
+      const res = await LiveStreamService.fetchLoginQR(activeModalBooth.boothId, platformKey, fallback);
+      
+      const isValidBase64Image = res.success && res.qrDataUrl && (res.qrDataUrl.startsWith('data:image/') || res.qrDataUrl.length > 50);
+
+      if (isValidBase64Image) {
+        console.log(`[UnifiedLiveBroadcastHub] ✅ fetchLoginQR succeeded for ${platformKey} (base64 image size: ${res.qrDataUrl!.length} chars)`);
         setChannelCreds(prev => ({
           ...prev,
           [platformKey]: {
@@ -460,17 +475,36 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
             qrToken: res.token,
             qrSecondsRemaining: res.expiresInSeconds || 120,
             qrStatus: 'WAITING_SCAN',
-            authStatus: 'AUTHENTICATING'
+            authStatus: 'AUTHENTICATING',
+            qrError: undefined
           }
         }));
         showMsg(`📱 Live ${platformKey.toUpperCase()} login QR generated! Point your mobile app camera to scan.`);
       } else {
-        updateChannelCred(platformKey, 'isGeneratingQr', false);
-        showMsg(res.error || 'Failed to generate QR code', 'error');
+        const errorMsg = res.error || 'Headless worker failed to return a valid base64 QR image.';
+        console.error(`[UnifiedLiveBroadcastHub] ❌ fetchLoginQR failed for ${platformKey}:`, errorMsg);
+        setChannelCreds(prev => ({
+          ...prev,
+          [platformKey]: {
+            ...prev[platformKey],
+            isGeneratingQr: false,
+            qrError: errorMsg
+          }
+        }));
+        showMsg(errorMsg, 'error');
       }
     } catch (err: any) {
-      updateChannelCred(platformKey, 'isGeneratingQr', false);
-      showMsg(err.message || 'Error communicating with worker', 'error');
+      const errorMsg = err?.message || 'Error communicating with headless worker';
+      console.error(`[UnifiedLiveBroadcastHub] ❌ fetchLoginQR caught exception for ${platformKey}:`, err);
+      setChannelCreds(prev => ({
+        ...prev,
+        [platformKey]: {
+          ...prev[platformKey],
+          isGeneratingQr: false,
+          qrError: errorMsg
+        }
+      }));
+      showMsg(errorMsg, 'error');
     }
   };
 
@@ -1173,6 +1207,38 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                       {/* ================= MODE B: INSTANT MOBILE QR SCAN LOGIN ================= */}
                       {cur.authMode === 'QR_SCAN' && (
                         <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-4 animate-in fade-in">
+                          {/* Prominent Error Banner if QR Fetch / Puppeteer Extraction Failed */}
+                          {cur.qrError && (
+                            <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl flex items-start gap-2.5 text-rose-900 text-xs animate-in fade-in">
+                              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                              <div className="flex-1 min-w-0">
+                                <div className="font-bold uppercase text-[10px] text-rose-700 tracking-wider">
+                                  Puppeteer QR Extraction Error
+                                </div>
+                                <p className="text-[11px] text-rose-800 font-mono mt-0.5 break-all">
+                                  {cur.qrError}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleGeneratePlatformQr(platKey)}
+                                  className="px-2.5 py-1 rounded-md bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] uppercase cursor-pointer transition shadow-xs"
+                                >
+                                  Retry
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleGeneratePlatformQr(platKey, true)}
+                                  className="px-2.5 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-[10px] uppercase cursor-pointer transition"
+                                  title="Generate instant deep-link QR fallback"
+                                >
+                                  Fallback QR
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
                           {cur.authStatus === 'LOGGED_IN' ? (
                             <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-300 flex flex-col items-center text-center space-y-2">
                               <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
@@ -1207,16 +1273,29 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                       className="w-48 h-48 rounded-lg object-contain"
                                     />
                                   ) : (
-                                    <div className="w-48 h-48 rounded-lg bg-slate-100 flex flex-col items-center justify-center text-slate-400 gap-2">
+                                    <div className="w-48 h-48 rounded-lg bg-slate-100 flex flex-col items-center justify-center text-slate-400 gap-2 p-3 text-center">
                                       {cur.isGeneratingQr ? (
                                         <>
                                           <RefreshCw className="w-8 h-8 animate-spin text-indigo-600" />
-                                          <span className="text-[11px] font-bold text-slate-600">Generating live QR...</span>
+                                          <span className="text-[11px] font-bold text-slate-700">Connecting to Puppeteer worker...</span>
+                                          <span className="text-[10px] text-slate-500">Navigating to {platTitle} QR page...</span>
+                                        </>
+                                      ) : cur.qrError ? (
+                                        <>
+                                          <AlertCircle className="w-8 h-8 text-rose-500" />
+                                          <span className="text-[11px] font-bold text-rose-700">Extraction Failed</span>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleGeneratePlatformQr(platKey)}
+                                            className="mt-1 px-2.5 py-1 rounded bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold text-[10px] uppercase cursor-pointer"
+                                          >
+                                            Retry
+                                          </button>
                                         </>
                                       ) : (
                                         <>
                                           <QrCode className="w-10 h-10 text-slate-400" />
-                                          <span className="text-[11px] font-medium text-center px-4">Tap button below to generate QR code</span>
+                                          <span className="text-[11px] font-medium px-2">Tap button below to generate QR code</span>
                                         </>
                                       )}
                                     </div>
@@ -1317,11 +1396,30 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                     type="button"
                                     onClick={() => handleGeneratePlatformQr(platKey)}
                                     disabled={cur.isGeneratingQr}
-                                    className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition active:scale-95"
+                                    className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition active:scale-95"
                                   >
                                     <RefreshCw className={`w-3.5 h-3.5 ${cur.isGeneratingQr ? 'animate-spin' : ''}`} />
-                                    <span>{cur.qrDataUrl ? 'Refresh QR Code' : 'Generate Login QR'}</span>
+                                    <span>
+                                      {cur.isGeneratingQr
+                                        ? 'Fetching Live QR...'
+                                        : cur.qrDataUrl
+                                        ? 'Refresh QR Code'
+                                        : 'Generate Login QR'}
+                                    </span>
                                   </button>
+
+                                  {cur.qrError && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleGeneratePlatformQr(platKey, true)}
+                                      disabled={cur.isGeneratingQr}
+                                      className="px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1 cursor-pointer transition active:scale-95"
+                                      title="Generate deep-link QR code fallback"
+                                    >
+                                      <Zap className="w-3.5 h-3.5 text-amber-500" />
+                                      <span>Use Fallback QR</span>
+                                    </button>
+                                  )}
 
                                   {cur.qrDataUrl && (
                                     <button

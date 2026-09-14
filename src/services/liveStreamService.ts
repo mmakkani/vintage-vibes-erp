@@ -124,9 +124,13 @@ export class LiveStreamService {
     return res.json();
   }
 
-  public static async generateChannelLoginQr(
+  /**
+   * Fetch Live Login QR from Railway worker or backend API
+   */
+  public static async fetchLoginQR(
     boothId: string,
-    platform: string
+    platform: string,
+    fallback = false
   ): Promise<{
     success: boolean;
     qrDataUrl?: string;
@@ -135,14 +139,33 @@ export class LiveStreamService {
     expiresInSeconds?: number;
     status?: string;
     error?: string;
+    isFallback?: boolean;
   }> {
-    const res = await fetch(`/api/live/booths/${boothId}/channels/${platform}/qr/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
-    });
-    return res.json();
+    console.log(`[Client fetchLoginQR] 🚀 Invoking QR generation for platform: ${platform}, booth: ${boothId}, fallback: ${fallback}`);
+    try {
+      const query = fallback ? '?fallback=true' : '';
+      const res = await fetch(`/api/live/booths/${boothId}/channels/${platform}/qr/generate${query}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fallback })
+      });
+
+      const data = await res.json().catch(() => ({ success: false, error: 'Malformed JSON returned from server' }));
+
+      if (!res.ok || !data.success) {
+        console.error(`[Client fetchLoginQR] ❌ Server returned failure for ${platform}:`, data.error || res.statusText);
+      } else {
+        console.log(`[Client fetchLoginQR] ✅ QR generated successfully for ${platform} (image length: ${data.qrDataUrl?.length || 0})`);
+      }
+
+      return data;
+    } catch (err: any) {
+      console.error(`[Client fetchLoginQR] ❌ Network exception for ${platform}:`, err.message || err);
+      return { success: false, error: err?.message || 'Network error fetching login QR' };
+    }
   }
+
+  public static generateChannelLoginQr = LiveStreamService.fetchLoginQR;
 
   public static async getChannelLoginQrStatus(
     boothId: string,

@@ -12,6 +12,9 @@
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "pino": "^10.3.1",
+    "puppeteer": "^24.4.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "qrcode": "^1.5.4",
     "ws": "^8.18.0"
   },
