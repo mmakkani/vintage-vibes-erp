@@ -1079,6 +1079,10 @@ export class PurchaseService {
   }
 
   // --- Individual Garment Pieces ---
+  public static async getPieces(limit = 1000): Promise<PieceBreakdownItem[]> {
+    return this.getInventoryPieces(limit);
+  }
+
   public static async getInventoryPieces(limit = 1000): Promise<PieceBreakdownItem[]> {
     const [invRes, sortedRes] = await Promise.all([
       supabase
