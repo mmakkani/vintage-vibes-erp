@@ -270,6 +270,31 @@ marketingRouter.get('/whatsapp/all-sessions', (req, res) => {
 marketingRouter.post('/whatsapp/generate-qr', async (req, res) => {
   const { userId, userName } = req.body;
   if (!userId) return res.status(400).json({ error: 'userId is required' });
+
+  const currentCfg = marketingService.getWhatsAppGatewayConfig();
+  const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
+
+  if (bridgeUrl) {
+    try {
+      const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/generate-qr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+        signal: AbortSignal.timeout(7000)
+      });
+      if (bRes.ok) {
+        const bData = await bRes.json();
+        const session = marketingService.getWhatsAppSession(userId, userName);
+        if (bData.qrCodeDataUrl) {
+          session.qrCodeDataUrl = bData.qrCodeDataUrl;
+          session.status = 'PAIRING';
+          session.pairingStatus = 'AWAITING_CODE_ENTRY';
+          return res.json(session);
+        }
+      }
+    } catch (_) {}
+  }
+
   try {
     const session = await marketingService.generateNewQRCodeAsync(userId, userName);
     return res.json(session);
@@ -286,12 +311,39 @@ marketingRouter.post('/whatsapp/request-pairing-code', async (req, res) => {
   if (!userId || !phoneNumber) {
     return res.status(400).json({ error: 'userId and phoneNumber are required' });
   }
+
+  const cleanPhone = (phoneNumber || '').replace(/\D/g, '');
+  const currentCfg = marketingService.getWhatsAppGatewayConfig();
+  const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
+
+  if (bridgeUrl && cleanPhone) {
+    try {
+      const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/pair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber: cleanPhone }),
+        signal: AbortSignal.timeout(9000)
+      });
+      if (bRes.ok) {
+        const bData = await bRes.json();
+        if (bData.pairingCode) {
+          const session = marketingService.getWhatsAppSession(userId);
+          session.pairingCode = bData.pairingCode;
+          session.phoneNumber = `+${cleanPhone}`;
+          session.status = 'PAIRING';
+          session.pairingStatus = 'AWAITING_CODE_ENTRY';
+          return res.json(session);
+        }
+      }
+    } catch (_) {}
+  }
+
   try {
-    const session = await marketingService.requestPhonePairingCodeAsync(userId, phoneNumber);
+    const session = await marketingService.requestPhonePairingCodeAsync(userId, cleanPhone);
     return res.json(session);
   } catch (err: any) {
     console.warn('[Marketing Route] Error requesting pairing code:', err?.message);
-    const session = marketingService.requestPhonePairingCode(userId, phoneNumber);
+    const session = marketingService.requestPhonePairingCode(userId, cleanPhone);
     return res.json(session);
   }
 });

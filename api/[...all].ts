@@ -845,7 +845,13 @@ export default async function handler(req: any, res: any) {
 
       if (bridgeUrl) {
         try {
-          const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/qr`, { signal: AbortSignal.timeout(4000) });
+          // Actively ask worker bridge to clean unlinked creds and regenerate fresh socket
+          const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/generate-qr`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ force: true }),
+            signal: AbortSignal.timeout(6500)
+          });
           if (bRes.ok) {
             const bData = await bRes.json();
             if (bData.qrCodeDataUrl || bData.qr) {
@@ -858,18 +864,30 @@ export default async function handler(req: any, res: any) {
             }
           }
         } catch (_) {}
+
+        // Secondary check on /qr endpoint
+        try {
+          const qrRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/qr`, { signal: AbortSignal.timeout(3000) });
+          if (qrRes.ok) {
+            const qrData = await qrRes.json();
+            if (qrData.qrCodeDataUrl) {
+              session.qrCodeDataUrl = qrData.qrCodeDataUrl;
+              session.status = 'PAIRING';
+              session.pairingStatus = 'AWAITING_CODE_ENTRY';
+              session.lastActive = 'Live Worker QR Ready for Scan';
+              sessionsMap.set(uId, session);
+              return res.status(200).json(session);
+            }
+          }
+        } catch (_) {}
       }
 
-      // Multi-device WhatsApp Web handshake payload fallback
-      const noiseToken = Math.random().toString(36).substring(2, 10);
-      const secretKey = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      const rawQrData = `2@${noiseToken},${secretKey},VintageVibes_${uId}`;
-
+      // Never return fake noise QR! Provide connecting status so frontend displays live spinner
       session.isConnected = false;
       session.status = 'PAIRING';
       session.pairingStatus = 'AWAITING_CODE_ENTRY';
-      session.qrCodeDataUrl = rawQrData;
-      session.lastActive = 'Live QR Ready for Scan';
+      delete session.qrCodeDataUrl;
+      session.lastActive = 'Generating live WhatsApp QR...';
 
       sessionsMap.set(uId, session);
       persistSessionToSupabase(session);
@@ -900,7 +918,7 @@ export default async function handler(req: any, res: any) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ phoneNumber: cleanDigits }),
-            signal: AbortSignal.timeout(6000)
+            signal: AbortSignal.timeout(8000)
           });
           if (bRes.ok) {
             const bData = await bRes.json();
@@ -918,14 +936,12 @@ export default async function handler(req: any, res: any) {
         } catch (_) {}
       }
 
-      const code = generatePairingCode();
-
+      // Do not return fake random pairing code - indicate waiting for authentic WhatsApp code
       session.phoneNumber = `+${cleanDigits}`;
-      session.pairingCode = code;
-      session.pairingCodeRequestedAt = new Date().toISOString();
       session.pairingStatus = 'AWAITING_CODE_ENTRY';
       session.status = 'PAIRING';
-      session.lastActive = 'Official Pairing Code Generated (Enter on phone)';
+      delete session.pairingCode;
+      session.lastActive = 'Contacting WhatsApp servers for 8-digit Pairing Code...';
 
       sessionsMap.set(uId, session);
       persistSessionToSupabase(session);
