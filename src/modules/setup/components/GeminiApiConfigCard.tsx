@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { validateGeminiApiKey } from '../../../utils/geminiOcrService.ts';
 import {
   Sparkles,
   Key,
@@ -80,23 +81,35 @@ export const GeminiApiConfigCard: React.FC<GeminiApiConfigCardProps> = ({ onNoti
     setTestResult({ tested: false, success: false, message: '' });
 
     try {
+      // 1. First test directly from browser against Google Gemini API
+      const clientTest = await validateGeminiApiKey(keyToTest);
+      if (clientTest.valid) {
+        setTestResult({
+          tested: true,
+          success: true,
+          message: `✓ Connected to Google Gemini AI (${clientTest.model || model})! Key is valid and active. Click "Save to Database (UPSERT)" to store it permanently.`
+        });
+        return;
+      }
+
+      // 2. Secondary check via backend test route
       const res = await fetch('/api/setup/gemini-key/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey: keyToTest, model })
       });
-      const data = await res.json();
-      if (res.ok && data.success && data.valid) {
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success && data?.valid) {
         setTestResult({
           tested: true,
           success: true,
-          message: data.message || `Connected to Google Gemini AI (${model}) successfully!`
+          message: data.message || `✓ Connected to Google Gemini AI (${model}) successfully! Click "Save to Database (UPSERT)" below.`
         });
       } else {
         setTestResult({
           tested: true,
           success: false,
-          message: data.error || 'Failed to authenticate with Google Gemini API.'
+          message: clientTest.error || data?.error || 'Google AI rejected this key. Please check your key from Google AI Studio (aistudio.google.com).'
         });
       }
     } catch (err: any) {
