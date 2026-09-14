@@ -89,10 +89,30 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
     }
   }, [defaultCompanyProfile]);
 
-  // Persist to localStorage on change
+  // Fetch saved thermal config from SQL database on mount
+  useEffect(() => {
+    fetch('/api/setup/thermal-config')
+      .then(r => (r.ok ? r.json() : null))
+      .then(res => {
+        if (res && res.success && res.data) {
+          setConfig(prev => ({ ...prev, ...res.data }));
+          try {
+            localStorage.setItem('vintage_thermal_engine_config', JSON.stringify(res.data));
+          } catch {}
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Persist to localStorage and PostgreSQL on change
   useEffect(() => {
     try {
       localStorage.setItem('vintage_thermal_engine_config', JSON.stringify(config));
+      fetch('/api/setup/thermal-config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config)
+      }).catch(err => console.warn('Could not sync thermal config to database:', err));
     } catch (e) {
       console.error('Failed to save thermal config:', e);
     }

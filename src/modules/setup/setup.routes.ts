@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { SetupController } from './setup.controller.ts';
 import { CompanyProfileService } from '../../services/companyProfileService.ts';
 import { SetupService } from '../../services/setupService.ts';
+import { supabase } from '../../supabaseClient.ts';
 
 export const setupRouter = Router();
 
@@ -25,27 +26,58 @@ setupRouter.put(['/company', '/company-profile'], async (req, res) => {
 });
 
 // Live Streaming Multicast Gateway (Restream / Livepush / Ingest Key)
-setupRouter.get('/live-multicast', (req, res) => {
-  return res.json(SetupController.getLiveMulticastConfig());
+setupRouter.get('/live-multicast', async (req, res) => {
+  try {
+    const data = await SetupService.getLiveMulticastConfig();
+    return res.json({ success: true, data });
+  } catch (_) {
+    return res.json({ success: true, data: SetupController.getLiveMulticastConfig() });
+  }
 });
 
-setupRouter.put('/live-multicast', (req, res) => {
-  return res.json(SetupController.updateLiveMulticastConfig(req.body));
+setupRouter.put('/live-multicast', async (req, res) => {
+  try {
+    const data = await SetupService.updateLiveMulticastConfig(req.body);
+    SetupController.updateLiveMulticastConfig(req.body);
+    return res.json({ success: true, data });
+  } catch (_) {
+    return res.json({ success: true, data: SetupController.updateLiveMulticastConfig(req.body) });
+  }
 });
 
 // Multi-Booth Live Stream Relays (Booth 1 to Booth 5)
-setupRouter.get('/live-booths', (req, res) => {
-  return res.json(SetupController.getLiveBoothConfigs());
+setupRouter.get('/live-booths', async (req, res) => {
+  try {
+    const list = await SetupService.getLiveBoothConfigs();
+    if (list && list.length > 0) return res.json(list);
+    return res.json(SetupController.getLiveBoothConfigs());
+  } catch (_) {
+    return res.json(SetupController.getLiveBoothConfigs());
+  }
 });
 
-setupRouter.get('/live-booths/:boothId', (req, res) => {
-  const cfg = SetupController.getLiveBoothConfig(req.params.boothId);
-  if (!cfg) return res.status(404).json({ error: 'Booth not found' });
-  return res.json(cfg);
+setupRouter.get('/live-booths/:boothId', async (req, res) => {
+  try {
+    const cfg = await SetupService.getLiveBoothConfig(req.params.boothId);
+    if (cfg) return res.json(cfg);
+    const fallback = SetupController.getLiveBoothConfig(req.params.boothId);
+    if (!fallback) return res.status(404).json({ error: 'Booth not found' });
+    return res.json(fallback);
+  } catch (_) {
+    const cfg = SetupController.getLiveBoothConfig(req.params.boothId);
+    if (!cfg) return res.status(404).json({ error: 'Booth not found' });
+    return res.json(cfg);
+  }
 });
 
-setupRouter.put('/live-booths/:boothId', (req, res) => {
-  return res.json(SetupController.updateLiveBoothConfig(req.params.boothId, req.body));
+setupRouter.put('/live-booths/:boothId', async (req, res) => {
+  try {
+    const updated = await SetupService.updateLiveBoothConfig(req.params.boothId, req.body);
+    SetupController.updateLiveBoothConfig(req.params.boothId, req.body);
+    return res.json(updated);
+  } catch (_) {
+    return res.json(SetupController.updateLiveBoothConfig(req.params.boothId, req.body));
+  }
 });
 
 // Currencies & FX (supports both /currencies and /currency)
@@ -58,25 +90,49 @@ setupRouter.get(['/currencies', '/currency'], async (req, res) => {
   }
 });
 
-setupRouter.post(['/currencies', '/currency'], (req, res) => {
-  return res.json(SetupController.addCurrency(req.body));
+setupRouter.post(['/currencies', '/currency'], async (req, res) => {
+  try {
+    const created = await SetupService.addCurrency(req.body);
+    SetupController.addCurrency(req.body);
+    return res.json(created);
+  } catch (_) {
+    return res.json(SetupController.addCurrency(req.body));
+  }
 });
 
-setupRouter.put('/currency', (req, res) => {
+setupRouter.put('/currency', async (req, res) => {
   const { code, exchangeRate, rate } = req.body;
-  return res.json(SetupController.updateCurrencyRate(code, Number(exchangeRate ?? rate)));
+  const numRate = Number(exchangeRate ?? rate);
+  try {
+    await SetupService.updateCurrencyRate(code, numRate);
+    return res.json(SetupController.updateCurrencyRate(code, numRate));
+  } catch (_) {
+    return res.json(SetupController.updateCurrencyRate(code, numRate));
+  }
 });
 
-setupRouter.put('/currencies/:code', (req, res) => {
+setupRouter.put('/currencies/:code', async (req, res) => {
   const { code } = req.params;
   const { rate, exchangeRate } = req.body;
-  return res.json(SetupController.updateCurrencyRate(code, Number(rate ?? exchangeRate)));
+  const numRate = Number(rate ?? exchangeRate);
+  try {
+    await SetupService.updateCurrencyRate(code, numRate);
+    return res.json(SetupController.updateCurrencyRate(code, numRate));
+  } catch (_) {
+    return res.json(SetupController.updateCurrencyRate(code, numRate));
+  }
 });
 
-setupRouter.delete(['/currencies/:code', '/currency/:code'], (req, res) => {
+setupRouter.delete(['/currencies/:code', '/currency/:code'], async (req, res) => {
   const { code } = req.params;
-  const success = SetupController.deleteCurrency(code);
-  return res.json({ success });
+  try {
+    await SetupService.deleteCurrency(code);
+    const success = SetupController.deleteCurrency(code);
+    return res.json({ success });
+  } catch (_) {
+    const success = SetupController.deleteCurrency(code);
+    return res.json({ success });
+  }
 });
 
 setupRouter.get(['/items', '/item-master'], async (req, res) => {
@@ -395,12 +451,69 @@ setupRouter.get('/whatsapp-report', (req, res) => {
 });
 
 // WhatsApp Dual-Engine Architecture Config (Baileys vs Meta Cloud API)
-setupRouter.get('/whatsapp-config', (req, res) => {
+setupRouter.get('/whatsapp-config', async (req, res) => {
+  try {
+    const { data } = await supabase.from('whatsapp_gateway_config').select('config').eq('id', 'default').maybeSingle();
+    if (data && data.config) {
+      return res.json(data.config);
+    }
+  } catch (_) {}
   return res.json(SetupController.getWhatsAppConfig());
 });
 
-setupRouter.put('/whatsapp-config', (req, res) => {
-  return res.json(SetupController.updateWhatsAppConfig(req.body));
+setupRouter.put('/whatsapp-config', async (req, res) => {
+  const updated = SetupController.updateWhatsAppConfig(req.body);
+  try {
+    await supabase.from('whatsapp_gateway_config').upsert({
+      id: 'default',
+      config: updated,
+      updated_at: new Date().toISOString()
+    });
+  } catch (e) {
+    console.error('Failed to sync whatsapp_gateway_config to Supabase:', e);
+  }
+  return res.json(updated);
+});
+
+// Thermal Barcode & QR Label Designer Settings
+setupRouter.get('/thermal-config', async (req, res) => {
+  try {
+    const cfg = await SetupService.getThermalBarcodeConfig();
+    if (cfg) return res.json({ success: true, data: cfg });
+  } catch (_) {}
+  return res.json({ success: true, data: null });
+});
+
+setupRouter.put('/thermal-config', async (req, res) => {
+  try {
+    await SetupService.updateThermalBarcodeConfig(req.body);
+    return res.json({ success: true, data: req.body });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Security Master PIN (Encrypted / Admin PIN)
+setupRouter.get('/master-pin', async (req, res) => {
+  try {
+    const pin = await SetupService.getMasterPin();
+    return res.json({ success: true, pin });
+  } catch (_) {
+    return res.json({ success: true, pin: '9988' });
+  }
+});
+
+setupRouter.put('/master-pin', async (req, res) => {
+  const { pin } = req.body;
+  if (!pin || String(pin).trim().length < 4) {
+    return res.status(400).json({ success: false, error: 'PIN must be at least 4 digits' });
+  }
+  try {
+    await SetupService.updateMasterPin(String(pin).trim());
+    return res.json({ success: true, pin: String(pin).trim() });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Top-level Dashboard KPIs

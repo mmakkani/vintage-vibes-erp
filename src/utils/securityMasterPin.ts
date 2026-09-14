@@ -32,14 +32,37 @@ export class SecurityMasterPin {
   }
 
   /**
-   * Set a new Master Admin PIN
+   * Sync Master Admin PIN from PostgreSQL database
+   */
+  public static async syncFromDatabase(): Promise<string> {
+    try {
+      const res = await fetch('/api/setup/master-pin');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.pin) {
+          localStorage.setItem(PIN_STORAGE_KEY, data.pin);
+          return data.pin;
+        }
+      }
+    } catch (_) {}
+    return this.getMasterPin();
+  }
+
+  /**
+   * Set a new Master Admin PIN and persist to PostgreSQL
    */
   public static setMasterPin(newPin: string): boolean {
     if (!newPin || newPin.trim().length < 4 || newPin.trim().length > 6) {
       return false;
     }
+    const cleanPin = newPin.trim();
     try {
-      localStorage.setItem(PIN_STORAGE_KEY, newPin.trim());
+      localStorage.setItem(PIN_STORAGE_KEY, cleanPin);
+      fetch('/api/setup/master-pin', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: cleanPin })
+      }).catch(err => console.warn('Could not sync PIN to database:', err));
       return true;
     } catch {
       return false;
@@ -47,11 +70,16 @@ export class SecurityMasterPin {
   }
 
   /**
-   * Reset to factory default PIN ('9988')
+   * Reset to factory default PIN ('9988') and persist to PostgreSQL
    */
   public static resetToDefaultPin(): void {
     try {
       localStorage.setItem(PIN_STORAGE_KEY, DEFAULT_MASTER_PIN);
+      fetch('/api/setup/master-pin', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: DEFAULT_MASTER_PIN })
+      }).catch(err => console.warn('Could not sync PIN to database:', err));
     } catch {}
   }
 

@@ -401,7 +401,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
 
   const loadData = async () => {
     try {
-      const [profRes, currRes, itemRes, brandRes, labelRes, shopRes, catRes, sizeRes, balesRes] = await Promise.all([
+      const [profRes, currRes, itemRes, brandRes, labelRes, shopRes, catRes, sizeRes, balesRes, liveRes, boothsRes] = await Promise.all([
         CompanyProfileService.getCompanyProfile().catch(e => { console.warn(e); return null; }),
         SetupService.getCurrencies().catch(e => { console.warn(e); return []; }),
         SetupService.getItems().catch(e => { console.warn(e); return []; }),
@@ -410,7 +410,9 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         SetupService.getShops().catch(e => { console.warn(e); return []; }),
         SetupService.getCategories().catch(e => { console.warn(e); return []; }),
         SetupService.getSizes().catch(e => { console.warn(e); return []; }),
-        PurchaseService.getGatePasses().catch(e => { console.warn(e); return []; })
+        PurchaseService.getGatePasses().catch(e => { console.warn(e); return []; }),
+        fetch('/api/setup/live-multicast').then(r => (r.ok ? r.json() : null)).catch(() => null),
+        fetch('/api/setup/live-booths').then(r => (r.ok ? r.json() : null)).catch(() => null)
       ]);
 
       if (profRes) {
@@ -431,6 +433,13 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       } else {
         setBales([]);
       }
+      if (liveRes && liveRes.data) {
+        setLiveConfig(liveRes.data);
+      }
+      if (Array.isArray(boothsRes) && boothsRes.length > 0) {
+        setBoothConfigs(boothsRes);
+      }
+      SecurityMasterPin.syncFromDatabase().catch(() => {});
     } catch (err) {
       console.error(err);
     }

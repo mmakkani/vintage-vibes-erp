@@ -6,7 +6,9 @@ import {
   LabelGrade,
   BrandMaster,
   ShopMaster,
-  ItemMaster
+  ItemMaster,
+  LiveStreamMulticastConfig,
+  LiveBoothStreamConfig
 } from '../modules/setup/setup.types.ts';
 
 export class SetupService {
@@ -431,7 +433,7 @@ export class SetupService {
     const { data, error } = await supabase
       .from('shop_masters')
       .select('*')
-      .order('name');
+      .order('shop_no', { ascending: true, nullsFirst: false });
 
     if (error) {
       console.error('Supabase error on shop_masters:', error);
@@ -440,22 +442,40 @@ export class SetupService {
 
     return (data || []).map((r: any) => ({
       id: r.id,
+      shopNo: r.shop_no || r.shopNo || r.id,
       name: r.name,
       location: r.location || '',
+      city: r.city || '',
+      type: r.type || 'RETAIL',
+      manager: r.manager || r.manager_name || '',
+      managerName: r.manager_name || r.manager || '',
+      rackCount: Number(r.rack_count ?? r.rackCount ?? 10),
+      status: r.status || 'POSTED',
+      isActive: r.is_active !== false,
       isWarehouse: Boolean(r.is_warehouse ?? r.isWarehouse)
     }));
   }
 
-  public static async addShop(item: { name: string; location?: string; isWarehouse?: boolean }): Promise<ShopMaster> {
-    const id = `sh-${Date.now()}`;
+  public static async addShop(item: Partial<ShopMaster>): Promise<ShopMaster> {
+    const id = item.id || `sh-${Date.now()}`;
+    const payload = {
+      id,
+      shop_no: item.shopNo || item.id || `SHP-${Date.now().toString().slice(-2)}`,
+      name: item.name || '',
+      location: item.location || '',
+      city: item.city || '',
+      type: item.type || 'RETAIL',
+      manager: item.manager || item.managerName || '',
+      manager_name: item.managerName || item.manager || '',
+      rack_count: Number(item.rackCount ?? 10),
+      is_warehouse: Boolean(item.isWarehouse || item.type === 'WAREHOUSE'),
+      status: item.status || 'POSTED',
+      is_active: item.isActive !== false
+    };
+
     const { data, error } = await supabase
       .from('shop_masters')
-      .insert({
-        id,
-        name: item.name,
-        location: item.location || '',
-        is_warehouse: Boolean(item.isWarehouse)
-      })
+      .insert(payload)
       .select()
       .single();
 
@@ -466,17 +486,39 @@ export class SetupService {
 
     return {
       id: data.id,
+      shopNo: data.shop_no,
       name: data.name,
       location: data.location,
-      isWarehouse: Boolean(data.is_warehouse)
+      city: data.city,
+      type: data.type,
+      manager: data.manager,
+      managerName: data.manager_name,
+      rackCount: Number(data.rack_count),
+      isWarehouse: Boolean(data.is_warehouse),
+      status: data.status,
+      isActive: data.is_active
     };
   }
 
   public static async updateShop(id: string, updates: Partial<ShopMaster>): Promise<void> {
     const payload: any = {};
+    if (updates.shopNo !== undefined) payload.shop_no = updates.shopNo;
     if (updates.name !== undefined) payload.name = updates.name;
     if (updates.location !== undefined) payload.location = updates.location;
+    if (updates.city !== undefined) payload.city = updates.city;
+    if (updates.type !== undefined) payload.type = updates.type;
+    if (updates.manager !== undefined) {
+      payload.manager = updates.manager;
+      payload.manager_name = updates.manager;
+    }
+    if (updates.managerName !== undefined) {
+      payload.manager = updates.managerName;
+      payload.manager_name = updates.managerName;
+    }
+    if (updates.rackCount !== undefined) payload.rack_count = Number(updates.rackCount);
     if (updates.isWarehouse !== undefined) payload.is_warehouse = updates.isWarehouse;
+    if (updates.status !== undefined) payload.status = updates.status;
+    if (updates.isActive !== undefined) payload.is_active = updates.isActive;
 
     const { error } = await supabase.from('shop_masters').update(payload).eq('id', id);
     if (error) {
@@ -594,5 +636,210 @@ export class SetupService {
       console.error('Supabase error on item_masters:', error);
       throw new Error(error.message || 'Failed to delete item master');
     }
+  }
+
+  // --- Live Streaming Multicast Gateway ---
+  public static async getLiveMulticastConfig(): Promise<LiveStreamMulticastConfig> {
+    const { data, error } = await supabase
+      .from('live_stream_multicast_config')
+      .select('*')
+      .eq('id', 'default')
+      .maybeSingle();
+
+    if (error || !data) {
+      return {
+        provider: 'RESTREAM',
+        enabled: true,
+        accountEmail: 'live@vintagevibe.ae',
+        masterIngestRtmpUrl: 'rtmp://live.restream.io/live',
+        masterStreamKey: 're_live_sec_10482_vv_dxb_773',
+        autoRelayToTikTok: true,
+        autoRelayToInstagram: true,
+        autoRelayToFacebook: true,
+        autoRelayToYouTube: true,
+        tikTokStreamKey: 'live_tt_dubai_bale_stage',
+        instagramStreamKey: 'live_ig_relove_vintage',
+        facebookStreamKey: 'FB-live-page-vv-992',
+        youTubeStreamKey: 'yt_live_channel_dxb_1080',
+        status: 'CONNECTED'
+      };
+    }
+
+    return {
+      provider: data.provider || 'RESTREAM',
+      enabled: data.enabled !== false,
+      accountEmail: data.account_email,
+      accountPassword: data.account_password,
+      apiKey: data.api_key,
+      masterIngestRtmpUrl: data.master_ingest_rtmp_url,
+      masterStreamKey: data.master_stream_key,
+      autoRelayToTikTok: data.auto_relay_to_tiktok !== false,
+      autoRelayToInstagram: data.auto_relay_to_instagram !== false,
+      autoRelayToFacebook: data.auto_relay_to_facebook !== false,
+      autoRelayToYouTube: data.auto_relay_to_youtube !== false,
+      tikTokStreamKey: data.tiktok_stream_key,
+      instagramStreamKey: data.instagram_stream_key,
+      facebookStreamKey: data.facebook_stream_key,
+      youTubeStreamKey: data.youtube_stream_key,
+      status: data.status || 'CONNECTED',
+      lastSyncedAt: data.last_synced_at
+    };
+  }
+
+  public static async updateLiveMulticastConfig(cfg: Partial<LiveStreamMulticastConfig>): Promise<LiveStreamMulticastConfig> {
+    const payload = {
+      id: 'default',
+      provider: cfg.provider || 'RESTREAM',
+      enabled: cfg.enabled !== false,
+      account_email: cfg.accountEmail,
+      account_password: cfg.accountPassword,
+      api_key: cfg.apiKey,
+      master_ingest_rtmp_url: cfg.masterIngestRtmpUrl,
+      master_stream_key: cfg.masterStreamKey,
+      auto_relay_to_tiktok: cfg.autoRelayToTikTok !== false,
+      auto_relay_to_instagram: cfg.autoRelayToInstagram !== false,
+      auto_relay_to_facebook: cfg.autoRelayToFacebook !== false,
+      auto_relay_to_youtube: cfg.autoRelayToYouTube !== false,
+      tiktok_stream_key: cfg.tikTokStreamKey,
+      instagram_stream_key: cfg.instagramStreamKey,
+      facebook_stream_key: cfg.facebookStreamKey,
+      youtube_stream_key: cfg.youTubeStreamKey,
+      status: cfg.status || 'CONNECTED',
+      last_synced_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { error } = await supabase
+      .from('live_stream_multicast_config')
+      .upsert(payload);
+
+    if (error) {
+      console.error('Supabase error on live_stream_multicast_config:', error);
+      throw new Error(error.message || 'Failed to update live multicast config');
+    }
+
+    return this.getLiveMulticastConfig();
+  }
+
+  // --- Live Broadcaster Booths (Booths 1-5) ---
+  public static async getLiveBoothConfigs(): Promise<LiveBoothStreamConfig[]> {
+    const { data, error } = await supabase
+      .from('live_stream_booths')
+      .select('*')
+      .order('booth_id');
+
+    if (error || !data || data.length === 0) {
+      return [];
+    }
+
+    return data.map((r: any) => ({
+      boothId: r.booth_id,
+      boothName: r.booth_name,
+      category: r.category || 'Vintage Apparel',
+      provider: r.provider || 'RESTREAM',
+      enabled: r.enabled !== false,
+      accountEmail: r.account_email,
+      accountPassword: r.account_password,
+      apiKey: r.api_key,
+      masterIngestRtmpUrl: r.master_ingest_rtmp_url,
+      masterStreamKey: r.master_stream_key,
+      autoRelayToTikTok: r.auto_relay_to_tiktok !== false,
+      autoRelayToInstagram: r.auto_relay_to_instagram !== false,
+      autoRelayToFacebook: r.auto_relay_to_facebook !== false,
+      autoRelayToYouTube: r.auto_relay_to_youtube !== false,
+      tiktokStreamKey: r.tiktok_stream_key,
+      instagramStreamKey: r.instagram_stream_key,
+      facebookStreamKey: r.facebook_stream_key,
+      youTubeStreamKey: r.youtube_stream_key,
+      status: r.status || 'CONNECTED',
+      lastSyncedAt: r.last_synced_at
+    }));
+  }
+
+  public static async getLiveBoothConfig(boothId: string): Promise<LiveBoothStreamConfig | undefined> {
+    const list = await this.getLiveBoothConfigs();
+    return list.find(b => b.boothId === boothId);
+  }
+
+  public static async updateLiveBoothConfig(boothId: string, updates: Partial<LiveBoothStreamConfig>): Promise<LiveBoothStreamConfig> {
+    const payload: any = {
+      booth_id: boothId,
+      updated_at: new Date().toISOString()
+    };
+    if (updates.boothName !== undefined) payload.booth_name = updates.boothName;
+    if (updates.category !== undefined) payload.category = updates.category;
+    if (updates.provider !== undefined) payload.provider = updates.provider;
+    if (updates.enabled !== undefined) payload.enabled = updates.enabled;
+    if (updates.accountEmail !== undefined) payload.account_email = updates.accountEmail;
+    if (updates.accountPassword !== undefined) payload.account_password = updates.accountPassword;
+    if (updates.apiKey !== undefined) payload.api_key = updates.apiKey;
+    if (updates.masterIngestRtmpUrl !== undefined) payload.master_ingest_rtmp_url = updates.masterIngestRtmpUrl;
+    if (updates.masterStreamKey !== undefined) payload.master_stream_key = updates.masterStreamKey;
+    if (updates.autoRelayToTikTok !== undefined) payload.auto_relay_to_tiktok = updates.autoRelayToTikTok;
+    if (updates.autoRelayToInstagram !== undefined) payload.auto_relay_to_instagram = updates.autoRelayToInstagram;
+    if (updates.autoRelayToFacebook !== undefined) payload.auto_relay_to_facebook = updates.autoRelayToFacebook;
+    if (updates.autoRelayToYouTube !== undefined) payload.auto_relay_to_youtube = updates.autoRelayToYouTube;
+    if (updates.tiktokStreamKey !== undefined) payload.tiktok_stream_key = updates.tiktokStreamKey;
+    if (updates.instagramStreamKey !== undefined) payload.instagram_stream_key = updates.instagramStreamKey;
+    if (updates.facebookStreamKey !== undefined) payload.facebook_stream_key = updates.facebookStreamKey;
+    if (updates.youTubeStreamKey !== undefined) payload.youtube_stream_key = updates.youTubeStreamKey;
+    if (updates.status !== undefined) payload.status = updates.status;
+    payload.last_synced_at = new Date().toISOString();
+
+    const { error } = await supabase
+      .from('live_stream_booths')
+      .upsert(payload);
+
+    if (error) {
+      console.error(`Supabase error on booth ${boothId}:`, error);
+      throw new Error(error.message || 'Failed to update live booth config');
+    }
+
+    const updated = await this.getLiveBoothConfig(boothId);
+    return updated!;
+  }
+
+  // --- Thermal Barcode & QR Configuration ---
+  public static async getThermalBarcodeConfig(): Promise<any> {
+    const { data, error } = await supabase
+      .from('thermal_barcode_configs')
+      .select('config')
+      .eq('id', 'default')
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return data.config;
+  }
+
+  public static async updateThermalBarcodeConfig(config: any): Promise<void> {
+    await supabase
+      .from('thermal_barcode_configs')
+      .upsert({
+        id: 'default',
+        config,
+        updated_at: new Date().toISOString()
+      });
+  }
+
+  // --- Master Security PIN ---
+  public static async getMasterPin(): Promise<string> {
+    const { data, error } = await supabase
+      .from('security_master_pins')
+      .select('pin')
+      .eq('id', 'default')
+      .maybeSingle();
+
+    if (error || !data || !data.pin) return '9988';
+    return data.pin;
+  }
+
+  public static async updateMasterPin(pin: string): Promise<void> {
+    await supabase
+      .from('security_master_pins')
+      .upsert({
+        id: 'default',
+        pin: pin.trim(),
+        updated_at: new Date().toISOString()
+      });
   }
 }
