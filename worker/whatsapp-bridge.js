@@ -35,6 +35,21 @@ if (!fs.existsSync(AUTH_DIR)) {
   fs.mkdirSync(AUTH_DIR, { recursive: true });
 }
 
+// In-memory debug log buffer for live diagnostics
+const logBuffer = [];
+function logRecord(level, args) {
+  const time = new Date().toISOString().slice(11, 19);
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  logBuffer.push(`[${time}] [${level}] ${msg}`);
+  if (logBuffer.length > 250) logBuffer.shift();
+}
+const _origLog = console.log;
+const _origWarn = console.warn;
+const _origErr = console.error;
+console.log = (...args) => { logRecord('INFO', args); _origLog(...args); };
+console.warn = (...args) => { logRecord('WARN', args); _origWarn(...args); };
+console.error = (...args) => { logRecord('ERROR', args); _origErr(...args); };
+
 // Session state
 let sock = null;
 let reconnectTimer = null;
@@ -102,7 +117,7 @@ async function initBaileysSocket(requestPairingPhone = null) {
 
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
     const { version, isLatest } = await fetchLatestBaileysVersion().catch(() => ({
-      version: [2, 3000, 1015901307],
+      version: [2, 3000, 1043857760],
       isLatest: true
     }));
 
@@ -113,16 +128,23 @@ async function initBaileysSocket(requestPairingPhone = null) {
       auth: state,
       printQRInTerminal: !requestPairingPhone,
       logger,
-      browser: Browsers.ubuntu('Chrome'),
+      browser: Browsers.macOS('Desktop'),
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
       keepAliveIntervalMs: 25000,
       emitOwnEvents: false,
       markOnlineOnConnect: true,
-      syncFullHistory: false
+      syncFullHistory: false,
+      getMessage: async () => undefined
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('creds.update', async () => {
+      try {
+        await saveCreds();
+      } catch (err) {
+        console.warn('[WhatsApp Bridge] Credential save warning:', err?.message);
+      }
+    });
 
     // If pairing code was explicitly requested for a phone number
     if (requestPairingPhone && !state.creds.registered) {
@@ -151,6 +173,11 @@ async function initBaileysSocket(requestPairingPhone = null) {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr && !requestPairingPhone) {
+        // If phone just scanned (status 515 reconnect), do not flash new QR while handshake is completing
+        if (sessionState.status === 'CONNECTING' && sessionState.lastActive?.includes('Finalizing')) {
+          console.log('[WhatsApp Bridge] Intermediate QR received during scan handshake - waiting for mobile to finish.');
+          return;
+        }
         sessionState.qrCode = qr;
         sessionState.status = 'WAITING_QR';
         sessionState.lastActive = 'Live QR Ready for Scan';
@@ -289,18 +316,67 @@ app.get('/health', (req, res) => {
 
 // Server-Sent Events (SSE) stream for real-time QR and pairing code updates
 app.get('/events', (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  // HTTP/2 prohibits the 'Connection' header field (causes ERR_HTTP2_PROTOCOL_ERROR)
+  if (req.httpVersionMajor < 2) {
+    res.setHeader('Connection', 'keep-alive');
+  }
   res.flushHeaders?.();
 
   // Send current state immediately
   res.write(`data: ${JSON.stringify(sessionState)}\n\n`);
   sseClients.add(res);
 
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch (_) {
+      clearInterval(heartbeat);
+    }
+  }, 15000);
+
   req.on('close', () => {
+    clearInterval(heartbeat);
     sseClients.delete(res);
   });
+});
+
+// Live in-memory logs for remote diagnostics
+app.get('/logs', (req, res) => {
+  res.type('text/plain').send(logBuffer.join('\n') || 'No logs captured yet.');
+});
+
+// Auth folder inspection
+app.get('/debug-auth', (req, res) => {
+  try {
+    const files = fs.existsSync(AUTH_DIR) ? fs.readdirSync(AUTH_DIR) : [];
+    let credsSummary = null;
+    const credsPath = path.join(AUTH_DIR, 'creds.json');
+    if (fs.existsSync(credsPath)) {
+      try {
+        const raw = fs.readFileSync(credsPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        credsSummary = {
+          registered: parsed?.registered,
+          me: parsed?.me,
+          accountSyncCounter: parsed?.accountSyncCounter
+        };
+      } catch (parseErr) {
+        credsSummary = { error: parseErr.message };
+      }
+    }
+    res.json({
+      authDir: AUTH_DIR,
+      fileCount: files.length,
+      files: files.slice(0, 30),
+      creds: credsSummary,
+      session: sessionState
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Full Session status for ERP frontend

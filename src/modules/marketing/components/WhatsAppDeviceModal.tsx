@@ -132,6 +132,13 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
             }
           } catch (_) {}
         };
+        eventSource.onerror = () => {
+          // If SSE encounters any proxy or protocol error, cleanly close and let fast polling handle updates
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+        };
       } catch (_) {}
 
       return () => {
