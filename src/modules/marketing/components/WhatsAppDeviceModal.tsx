@@ -150,17 +150,15 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
     }
   }, [isOpen, currentUserId, bridgeUrl]);
 
-  // Auto-fetch fresh QR if opening QR tab and not connected
-  useEffect(() => {
-    if (isOpen && activeTab === 'qr' && !session?.isConnected && !session?.qrCodeDataUrl && !isRegeneratingQr) {
-      handleRefreshQr();
-    }
-  }, [isOpen, activeTab, session?.isConnected, session?.qrCodeDataUrl]);
-
+  // If modal is not open, do not render
   if (!isOpen) return null;
 
   // Regenerate Live QR: Cleanly triggers worker to reset socket & stream brand-new QR
   const handleRefreshQr = async () => {
+    if (isHandshaking) {
+      console.log('Skipping QR refresh: handshake currently in progress with mobile phone.');
+      return;
+    }
     setIsRegeneratingQr(true);
     setVerificationError(null);
     // Clear stale QR so user doesn't point camera at expired image
@@ -532,10 +530,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setActiveTab('qr');
-                    if (!session?.qrCodeDataUrl) handleRefreshQr();
-                  }}
+                  onClick={() => setActiveTab('qr')}
                   className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
                     activeTab === 'qr'
                       ? 'bg-slate-900 text-white shadow-xs'

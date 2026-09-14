@@ -410,6 +410,16 @@ app.get('/qr', (req, res) => {
 // Regenerate QR: Only cleans credentials when explicitly requested by user
 app.post('/generate-qr', requireAuth, async (req, res) => {
   try {
+    // If currently handshaking (status 515 restartRequired), protect credentials and do not wipe!
+    if (sessionState.status === 'CONNECTING' && sessionState.lastActive?.toLowerCase().includes('finalizing')) {
+      console.log('[WhatsApp Bridge] Regenerate QR ignored: phone scan handshake is currently finalizing with mobile.');
+      return res.json({
+        success: true,
+        message: 'Phone scan handshake is currently finalizing. Please wait a moment...',
+        ...sessionState
+      });
+    }
+
     console.log('[WhatsApp Bridge] Manual Regenerate QR requested. Cleaning auth and generating fresh QR...');
     if (sock) {
       try {
@@ -419,8 +429,8 @@ app.post('/generate-qr', requireAuth, async (req, res) => {
       sock = null;
     }
 
-    // Only wipe credentials if not currently connected
-    if (!sessionState.isConnected) {
+    // Only wipe credentials if not currently connected and not handshaking
+    if (!sessionState.isConnected && sessionState.status !== 'CONNECTING') {
       try {
         fs.rmSync(AUTH_DIR, { recursive: true, force: true });
         fs.mkdirSync(AUTH_DIR, { recursive: true });
