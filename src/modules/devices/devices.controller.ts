@@ -292,6 +292,48 @@ export const DevicesController = {
     }
   },
 
+  async getThreatLogs(req: any, res: any) {
+    const ip = req.query.ip ? String(req.query.ip).trim() : '';
+    const client = await getPgClient();
+    if (client) {
+      try {
+        let result;
+        if (ip) {
+          result = await client.query(
+            'SELECT * FROM security_threat_logs WHERE ip_address = $1 ORDER BY created_at DESC LIMIT 50;',
+            [ip]
+          );
+        } else {
+          result = await client.query(
+            'SELECT * FROM security_threat_logs ORDER BY created_at DESC LIMIT 100;'
+          );
+        }
+        await client.end();
+        return res.status(200).json(result.rows || []);
+      } catch (err: any) {
+        try { await client.end(); } catch (_) {}
+      }
+    }
+
+    try {
+      let query = supabaseAdmin
+        .from('security_threat_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (ip) {
+        query = query.eq('ip_address', ip);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return res.status(200).json(data || []);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message });
+    }
+  },
+
   async toggleDeviceStatus(req: any, res: any) {
     const { deviceId, status } = req.body || {};
     if (!deviceId || !['ACTIVE', 'BLOCKED'].includes(status)) {
@@ -306,7 +348,11 @@ export const DevicesController = {
           [status, deviceId]
         );
         await client.end();
-        return res.status(200).json({ success: true, device: q.rows[0] });
+        const updatedDevice = q.rows[0];
+        if (status === 'ACTIVE' && updatedDevice?.ip_address) {
+          BotDetector.unbanIp(updatedDevice.ip_address);
+        }
+        return res.status(200).json({ success: true, device: updatedDevice });
       } catch (err: any) {
         try { await client.end(); } catch (_) {}
       }
@@ -320,6 +366,9 @@ export const DevicesController = {
       .single();
 
     if (error) return res.status(500).json({ success: false, error: error.message });
+    if (status === 'ACTIVE' && data?.ip_address) {
+      BotDetector.unbanIp(data.ip_address);
+    }
     return res.status(200).json({ success: true, device: data });
   },
 

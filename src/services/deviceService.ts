@@ -18,10 +18,25 @@ export interface DeviceInstallation {
   install_status: 'ACTIVE' | 'BLOCKED' | 'PENDING';
   bot_type?: 'HUMAN' | 'VERIFIED_BOT' | 'BAD_BOT';
   block_reason?: string;
+  threat_type?: string;
   max_devices_limit: number;
   registered_at?: string;
   last_active_at?: string;
   created_at?: string;
+}
+
+export interface SecurityThreatLog {
+  id: number;
+  ip_address: string;
+  country?: string;
+  isp_org?: string;
+  user_agent: string;
+  request_method: string;
+  request_url: string;
+  headers?: Record<string, any>;
+  raw_payload?: string;
+  threat_type: string;
+  created_at: string;
 }
 
 export interface RegisterDeviceResponse {
@@ -230,6 +245,22 @@ export const DeviceService = {
     } catch (err) {
       console.error('[DeviceService] Failed to delete device:', err);
       return false;
+    }
+  },
+
+  /**
+   * Admin: Fetch forensic security threat logs from PostgreSQL
+   */
+  async getThreatLogs(ip?: string): Promise<SecurityThreatLog[]> {
+    try {
+      const query = ip ? `?ip=${encodeURIComponent(ip)}` : '';
+      const res = await fetch(`/api/devices/threat-logs${query}`);
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const data = await res.json();
+      return Array.isArray(data) ? data : (data.logs || []);
+    } catch (err) {
+      console.error('[DeviceService] Failed to fetch threat logs:', err);
+      return [];
     }
   }
 };

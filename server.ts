@@ -21,6 +21,79 @@ import { devicesRouter } from './src/modules/devices/devices.routes.ts';
 import { presenceRouter } from './src/modules/presence/presence.routes.ts';
 import { eventHub } from './src/server/events.ts';
 import { BotDetector } from './src/server/botDetector.ts';
+import { Client } from 'pg';
+import { createClient } from '@supabase/supabase-js';
+
+const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
+const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseAdmin = createClient(supaUrl, supaKey || 'anon-key');
+
+async function recordExpressThreat(analysis: any, req: any) {
+  const ip = BotDetector.extractIp(req);
+  const rawUa = (req.headers?.['user-agent'] || '').toString();
+  const hexHash = Buffer.from(ip + '-' + (analysis.botName || 'bot')).toString('hex').slice(0, 16);
+  const deviceId = `bot-${hexHash}`;
+  const threatType = analysis.threatType || (analysis.isHoneypotHit ? 'HONEYPOT_TRAP' : 'BAD_BOT');
+  const reqUrl = (req.originalUrl || req.url || '').toString();
+  const reqMethod = req.method || 'GET';
+  const reason = analysis.reason || 'Security Sentinel Trap Triggered';
+
+  const safeHeaders: Record<string, string> = {};
+  if (req.headers) {
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (['authorization', 'cookie', 'x-forwarded-for'].includes(k.toLowerCase())) continue;
+      safeHeaders[k] = Array.isArray(v) ? v.join(', ') : String(v);
+    }
+  }
+
+  let rawPayloadStr = '';
+  if (req.body) {
+    try {
+      rawPayloadStr = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+    } catch {
+      rawPayloadStr = String(req.body);
+    }
+  }
+
+  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  try {
+    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+    await client.connect();
+    await client.query(`
+      INSERT INTO device_installations (
+        device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit, city, country, last_active_at
+      ) VALUES ($1, null, $2, $3, $4, $5, $6, false, 'BLOCKED', 'BAD_BOT', $7, 0, 'Global', 'Global', NOW())
+      ON CONFLICT (device_id) DO UPDATE
+      SET last_active_at = NOW(),
+          ip_address = EXCLUDED.ip_address,
+          install_status = 'BLOCKED',
+          bot_type = 'BAD_BOT',
+          block_reason = EXCLUDED.block_reason;
+    `, [deviceId, `[BAD BOT] ${analysis.botName}`, ip, 'Bad Bot / Exploit Scanner', analysis.botName, rawUa, reason]);
+
+    await client.query(`
+      INSERT INTO security_threat_logs (
+        ip_address, country, isp_org, user_agent, request_method, request_url, headers, raw_payload, threat_type, created_at
+      ) VALUES ($1, 'Global', 'Automated Host / Public IP', $2, $3, $4, $5, $6, $7, NOW());
+    `, [ip, rawUa, reqMethod, reqUrl, JSON.stringify(safeHeaders), rawPayloadStr, threatType]);
+    await client.end();
+  } catch (_) {
+    try {
+      await supabaseAdmin.from('security_threat_logs').insert({
+        ip_address: ip,
+        country: 'Global',
+        isp_org: 'Automated Host / Public IP',
+        user_agent: rawUa,
+        request_method: reqMethod,
+        request_url: reqUrl,
+        headers: safeHeaders,
+        raw_payload: rawPayloadStr,
+        threat_type: threatType,
+        created_at: new Date().toISOString()
+      });
+    } catch (_) {}
+  }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 // Global resilience: catch unhandled exceptions (such as Baileys websocket or undici fetch disconnects)
@@ -55,16 +128,19 @@ async function startServer() {
     next();
   });
 
-  // Automated Bad Bot Detection & Real-time Auto-Block Security Shield
-  app.use((req, res, next) => {
+  // Security Sentinel & Honeypot Trap Defense Middleware
+  app.use(async (req, res, next) => {
     const analysis = BotDetector.analyze(req);
     if (analysis.isBadBot) {
+      recordExpressThreat(analysis, req).catch(() => {});
       return res.status(403).json({
         success: false,
         blocked: true,
-        error: 'Access Denied: Bad Bot Activity Detected & Blocked',
+        error: 'Access Denied: Blocked by Vintage Vibes Security Sentinel',
         reason: analysis.reason,
-        botName: analysis.botName
+        threatType: analysis.threatType,
+        botName: analysis.botName,
+        ip: BotDetector.extractIp(req)
       });
     }
     next();

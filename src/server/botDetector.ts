@@ -1,7 +1,7 @@
 /**
- * Vintage Vibes Automated Bot Detection & Security Guard Engine
- * Analyzes incoming request headers, user-agents, IP frequency, and path targets
- * to automatically identify and block malicious crawlers, scrapers, and exploit probes.
+ * Vintage Vibes Automated Bot Detection & Security Sentinel Engine
+ * Analyzes incoming request headers, user-agents, honeypot traps, attack paths,
+ * and malicious payloads to instantly quarantine bad actors and record forensics in PostgreSQL.
  */
 
 export type BotClassification = 'HUMAN' | 'VERIFIED_BOT' | 'BAD_BOT';
@@ -12,10 +12,25 @@ export interface BotAnalysisResult {
   classification: BotClassification;
   botName: string;
   reason?: string;
+  threatType?: string;
   threatLevel: 'NONE' | 'LOW' | 'CRITICAL';
+  isHoneypotHit?: boolean;
 }
 
-// Known legitimate search engine indexers and monitoring services
+export interface ThreatForensicPayload {
+  ip: string;
+  country?: string;
+  ispOrg?: string;
+  userAgent: string;
+  method: string;
+  url: string;
+  headers: Record<string, any>;
+  rawPayload?: string;
+  threatType: string;
+  reason?: string;
+}
+
+// Known legitimate search engine indexers and uptime monitors
 const VERIFIED_BOT_PATTERNS = [
   { pattern: /googlebot/i, name: 'Googlebot' },
   { pattern: /bingbot/i, name: 'Bingbot' },
@@ -64,41 +79,145 @@ const BAD_BOT_PATTERNS = [
   { pattern: /acunetix|nessus|qualys/i, name: 'Security Vulnerability Scanner', reason: 'Automated penetration scan tool' }
 ];
 
-// Sensitive exploit probe paths that legitimate clients never request
-const SENSITIVE_PROBE_PATHS = [
+// Honeypot & Attack Path Traps
+const HONEYPOT_TRAP_PATHS = [
   '/.env',
+  '/.env.local',
+  '/.env.production',
+  '/.env.backup',
+  '/.env.save',
+  '/vendor/.env',
   '/.git',
+  '/.git/config',
+  '/.git/head',
   '/.aws',
   '/.vscode',
   '/.ds_store',
   '/wp-admin',
   '/wp-login.php',
   '/wp-content',
+  '/wp-includes',
   '/xmlrpc.php',
   '/phpmyadmin',
   '/pma',
   '/config.json',
+  '/database.sql',
+  '/dump.sql',
+  '/backup.sql',
   '/server-status',
   '/actuator',
   '/solr',
   '/eval-stdin.php',
-  '/backup.sql',
-  '/dump.sql',
-  '/database.sql',
   '/etc/passwd',
   '/web.config',
   '/.svn',
-  '/phpinfo.php'
+  '/phpinfo.php',
+  '/debug/default/view',
+  '/console',
+  '/telescope',
+  '/autodiscover',
+  '/setup.php',
+  '/install.php',
+  '/shell.php'
 ];
+
+// Attack patterns (SQL Injection, Directory Traversal, RCE/Shell probes)
+const ATTACK_SIGNATURES = [
+  {
+    regex: /(\bunion\b[\s\+]+.*[\s\+]*\bselect\b|\bselect\b[\s\+]+.*[\s\+]*\bfrom\b[\s\+]+(users|information_schema|pg_catalog|sys\.tables)|benchmark\s*\(|waitfor\s+delay)/i,
+    name: 'SQL Injection Signature',
+    threatType: 'SQL_INJECTION'
+  },
+  {
+    regex: /(\.\.[\/\\]|\%2e\%2e[\/\\]|\%252e\%252e|\/etc\/passwd|\/windows\/win\.ini)/i,
+    name: 'Directory Traversal Attempt',
+    threatType: 'DIRECTORY_TRAVERSAL'
+  },
+  {
+    regex: /(<script[\s\>]|javascript:|base64_decode\s*\(|eval\s*\(|system\s*\(|passthru\s*\(|\/bin\/sh|\/bin\/bash|cmd\.exe|powershell\.exe)/i,
+    name: 'Remote Code / Script Probe',
+    threatType: 'RCE_PROBE'
+  }
+];
+
+// Active in-memory blacklist of quarantined IPs
+const quarantinedIpsSet = new Set<string>();
 
 // In-memory rate tracker for rapid query loops (IP -> timestamps[])
 const rateTracker = new Map<string, number[]>();
 
 export const BotDetector = {
   /**
-   * Analyze request headers, User-Agent, and destination path
+   * Check if IP is currently quarantined by the Sentinel
+   */
+  isQuarantined(ip: string): boolean {
+    if (!ip || ip === '127.0.0.1' || ip === 'localhost') return false;
+    return quarantinedIpsSet.has(ip);
+  },
+
+  /**
+   * Instantly ban and quarantine an IP address
+   */
+  quarantineIp(ip: string) {
+    if (ip && ip !== '127.0.0.1' && ip !== 'localhost') {
+      quarantinedIpsSet.add(ip);
+    }
+  },
+
+  /**
+   * Unban / release an IP address from quarantine
+   */
+  unbanIp(ip: string) {
+    if (ip) {
+      quarantinedIpsSet.delete(ip);
+      rateTracker.delete(ip);
+    }
+  },
+
+  /**
+   * Get total count of active quarantined IPs
+   */
+  getQuarantinedCount(): number {
+    return quarantinedIpsSet.size;
+  },
+
+  /**
+   * Extract Client IP
+   */
+  extractIp(req: any): string {
+    const forwarded = req.headers?.['x-forwarded-for'] || req.get?.('x-forwarded-for');
+    if (typeof forwarded === 'string') {
+      return forwarded.split(',')[0].trim();
+    }
+    return req.headers?.['cf-connecting-ip'] ||
+           req.headers?.['x-real-ip'] ||
+           req.get?.('cf-connecting-ip') ||
+           req.get?.('x-real-ip') ||
+           req.connection?.remoteAddress ||
+           req.socket?.remoteAddress ||
+           '127.0.0.1';
+  },
+
+  /**
+   * Analyze request headers, User-Agent, Honeypot targets, and injection patterns
    */
   analyze(req: any, explicitPath?: string): BotAnalysisResult {
+    const ip = this.extractIp(req);
+
+    // 0. Check if this IP is already Quarantined by the Sentinel
+    if (this.isQuarantined(ip)) {
+      return {
+        isBadBot: true,
+        isVerifiedBot: false,
+        classification: 'BAD_BOT',
+        botName: 'Quarantined Host',
+        reason: 'IP Address is currently quarantined by Vintage Vibes Security Sentinel',
+        threatType: 'QUARANTINED_IP',
+        threatLevel: 'CRITICAL',
+        isHoneypotHit: false
+      };
+    }
+
     const rawUa = (
       req.headers?.['user-agent'] ||
       req.headers?.['User-Agent'] ||
@@ -106,57 +225,83 @@ export const BotDetector = {
       ''
     ).toString().trim();
 
-    const normalizedPath = (
+    const rawUrl = (
       explicitPath ||
       req.originalUrl ||
       req.url ||
       req.path ||
       ''
-    ).toString().toLowerCase();
+    ).toString();
 
-    // 1. Check for Sensitive Path Probing / Exploits
-    for (const probe of SENSITIVE_PROBE_PATHS) {
-      if (normalizedPath.includes(probe)) {
+    const normalizedPath = rawUrl.toLowerCase();
+
+    // 1. Honeypot & Attack Path Traps
+    for (const trap of HONEYPOT_TRAP_PATHS) {
+      if (normalizedPath.includes(trap)) {
+        this.quarantineIp(ip);
         return {
           isBadBot: true,
           isVerifiedBot: false,
           classification: 'BAD_BOT',
-          botName: 'Exploit Scanner / Probe',
-          reason: `Targeting sensitive exploit path (${probe})`,
-          threatLevel: 'CRITICAL'
+          botName: 'Malicious Probe Bot',
+          reason: `Honeypot Trap: ${trap}`,
+          threatType: 'HONEYPOT_PROBE',
+          threatLevel: 'CRITICAL',
+          isHoneypotHit: true
         };
       }
     }
 
-    // 2. Check for WordPress / PHP Exploits on SPA React App
+    // 2. Attack signatures (SQL Injection, Directory Traversal, RCE) in URL or query params
+    for (const sig of ATTACK_SIGNATURES) {
+      if (sig.regex.test(rawUrl)) {
+        this.quarantineIp(ip);
+        return {
+          isBadBot: true,
+          isVerifiedBot: false,
+          classification: 'BAD_BOT',
+          botName: 'Exploit Injection Bot',
+          reason: `${sig.name} detected in request`,
+          threatType: sig.threatType,
+          threatLevel: 'CRITICAL',
+          isHoneypotHit: false
+        };
+      }
+    }
+
+    // 3. Probing non-existent PHP/Wordpress scripts on React SPA
     if (
       normalizedPath.endsWith('.php') ||
       normalizedPath.includes('/wp-') ||
       normalizedPath.includes('/cgi-bin/')
     ) {
+      this.quarantineIp(ip);
       return {
         isBadBot: true,
         isVerifiedBot: false,
         classification: 'BAD_BOT',
-        botName: 'CMS Exploit Scanner',
-        reason: `Probing nonexistent PHP / WordPress vectors on React SPA`,
-        threatLevel: 'CRITICAL'
+        botName: 'Malicious Probe Bot',
+        reason: `Probing nonexistent PHP/Wordpress vector: ${normalizedPath}`,
+        threatType: 'PHP_CMS_PROBE',
+        threatLevel: 'CRITICAL',
+        isHoneypotHit: true
       };
     }
 
-    // 3. Check for Empty or Suspicious Short User-Agent
-    if (!rawUa || rawUa.length < 6 || /^(bot|spider|test|crawler|check|monitor|-)$/i.test(rawUa)) {
+    // 4. Missing or forged blank User-Agent
+    if (!rawUa || rawUa.length < 5 || /^(bot|spider|test|crawler|check|monitor|-)$/i.test(rawUa)) {
       return {
         isBadBot: true,
         isVerifiedBot: false,
         classification: 'BAD_BOT',
         botName: 'Anomaly / Blank User-Agent',
         reason: 'Missing or forged User-Agent header string',
+        threatType: 'ANOMALOUS_UA',
         threatLevel: 'CRITICAL'
       };
     }
 
-    // 4. Check for Verified Safe Search Engine / Monitoring Bots
+    // 5. Verified Safe Search Engine / Monitoring Bots
     for (const v of VERIFIED_BOT_PATTERNS) {
       if (v.pattern.test(rawUa)) {
         return {
@@ -165,56 +310,51 @@ export const BotDetector = {
           classification: 'VERIFIED_BOT',
           botName: v.name,
           reason: 'Verified Search Engine Indexer / Uptime Monitor',
+          threatType: 'VERIFIED_BOT',
           threatLevel: 'NONE'
         };
       }
     }
 
-    // 5. Check for Known Bad Bots & Scrapers
+    // 6. Known Bad Bots & Automated Scrapers
     for (const b of BAD_BOT_PATTERNS) {
       if (b.pattern.test(rawUa)) {
+        this.quarantineIp(ip);
         return {
           isBadBot: true,
           isVerifiedBot: false,
           classification: 'BAD_BOT',
           botName: b.name,
           reason: b.reason,
+          threatType: 'MALICIOUS_SCRAPER',
           threatLevel: 'CRITICAL'
         };
       }
     }
 
-    // 6. Check for Rapid Query Loops / Flooding (IP burst rate analysis)
-    const forwarded = req.headers?.['x-forwarded-for'];
-    const ip = (typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : '') ||
-               req.headers?.['cf-connecting-ip'] ||
-               req.headers?.['x-real-ip'] ||
-               req.socket?.remoteAddress ||
-               '127.0.0.1';
-
+    // 7. Rate Burst Flood (IP rate tracker)
     const now = Date.now();
-    const windowMs = 5000; // 5 seconds
-    const maxRequests = 40; // max allowed burst in 5 seconds without session
-
     if (ip && ip !== '127.0.0.1') {
       const timestamps = rateTracker.get(ip) || [];
-      const recent = timestamps.filter(t => now - t < windowMs);
+      const recent = timestamps.filter(t => now - t < 5000);
       recent.push(now);
       rateTracker.set(ip, recent);
 
-      if (recent.length > maxRequests) {
+      if (recent.length > 35) {
+        this.quarantineIp(ip);
         return {
           isBadBot: true,
           isVerifiedBot: false,
           classification: 'BAD_BOT',
           botName: 'Rapid Query Loop / Flooder',
           reason: `High frequency request burst (${recent.length} reqs / 5s)`,
+          threatType: 'BURST_FLOOD',
           threatLevel: 'CRITICAL'
         };
       }
     }
 
-    // 7. Legitimate Human / Browser Session
+    // 8. Normal Human Session
     return {
       isBadBot: false,
       isVerifiedBot: false,
@@ -224,3 +364,5 @@ export const BotDetector = {
     };
   }
 };
+
+export default BotDetector;

@@ -75,7 +75,9 @@ export interface BotAnalysisResult {
   classification: BotClassification;
   botName: string;
   reason?: string;
+  threatType?: string;
   threatLevel: 'NONE' | 'LOW' | 'CRITICAL';
+  isHoneypotHit?: boolean;
 }
 
 const VERIFIED_BOT_PATTERNS = [
@@ -125,16 +127,54 @@ const BAD_BOT_PATTERNS = [
   { pattern: /acunetix|nessus|qualys/i, name: 'Security Vulnerability Scanner', reason: 'Automated penetration scan tool' }
 ];
 
-const SENSITIVE_PROBE_PATHS = [
-  '/.env', '/.git', '/.aws', '/.vscode', '/.ds_store', '/wp-admin', '/wp-login.php',
-  '/wp-content', '/xmlrpc.php', '/phpmyadmin', '/pma', '/config.json', '/server-status',
-  '/actuator', '/solr', '/eval-stdin.php', '/backup.sql', '/dump.sql', '/database.sql',
-  '/etc/passwd', '/web.config', '/.svn', '/phpinfo.php'
+const HONEYPOT_TRAP_PATHS = [
+  '/.env', '/.env.local', '/.env.production', '/.env.backup', '/vendor/.env',
+  '/.git', '/.git/config', '/.git/head', '/.aws', '/.vscode', '/.ds_store',
+  '/wp-admin', '/wp-login.php', '/wp-content', '/wp-includes', '/xmlrpc.php',
+  '/phpmyadmin', '/pma', '/config.json', '/database.sql', '/dump.sql', '/backup.sql',
+  '/server-status', '/actuator', '/solr', '/eval-stdin.php', '/etc/passwd',
+  '/web.config', '/.svn', '/phpinfo.php', '/debug/default/view', '/console',
+  '/telescope', '/autodiscover', '/setup.php', '/install.php', '/shell.php'
 ];
 
+const ATTACK_SIGNATURES = [
+  {
+    regex: /(\bunion\b[\s\+]+.*[\s\+]*\bselect\b|\bselect\b[\s\+]+.*[\s\+]*\bfrom\b[\s\+]+(users|information_schema|pg_catalog|sys\.tables)|benchmark\s*\(|waitfor\s+delay)/i,
+    name: 'SQL Injection Signature',
+    threatType: 'SQL_INJECTION'
+  },
+  {
+    regex: /(\.\.[\/\\]|\%2e\%2e[\/\\]|\%252e\%252e|\/etc\/passwd|\/windows\/win\.ini)/i,
+    name: 'Directory Traversal Attempt',
+    threatType: 'DIRECTORY_TRAVERSAL'
+  },
+  {
+    regex: /(<script[\s\>]|javascript:|base64_decode\s*\(|eval\s*\(|system\s*\(|passthru\s*\(|\/bin\/sh|\/bin\/bash|cmd\.exe|powershell\.exe)/i,
+    name: 'Remote Code / Script Probe',
+    threatType: 'RCE_PROBE'
+  }
+];
+
+const serverlessQuarantinedIps = new Set<string>();
 const ipBurstMap = new Map<string, number[]>();
 
 function analyzeBotRequest(req: any, explicitPath?: string, explicitUa?: string): BotAnalysisResult {
+  const ip = getClientIp(req);
+
+  // 0. Quarantined IP check
+  if (ip && ip !== '127.0.0.1' && serverlessQuarantinedIps.has(ip)) {
+    return {
+      isBadBot: true,
+      isVerifiedBot: false,
+      classification: 'BAD_BOT',
+      botName: 'Quarantined Host',
+      reason: 'IP quarantined across application by Security Sentinel',
+      threatType: 'QUARANTINED_IP',
+      threatLevel: 'CRITICAL',
+      isHoneypotHit: false
+    };
+  }
+
   const rawUa = (
     explicitUa ||
     req.headers?.['user-agent'] ||
@@ -142,52 +182,78 @@ function analyzeBotRequest(req: any, explicitPath?: string, explicitUa?: string)
     ''
   ).toString().trim();
 
-  const normalizedPath = (
+  const rawUrl = (
     explicitPath ||
     req.originalUrl ||
     req.url ||
     ''
-  ).toString().toLowerCase();
+  ).toString();
 
-  // 1. Sensitive path probes
-  for (const probe of SENSITIVE_PROBE_PATHS) {
-    if (normalizedPath.includes(probe)) {
+  const normalizedPath = rawUrl.toLowerCase();
+
+  // 1. Honeypot & Attack Path Traps
+  for (const trap of HONEYPOT_TRAP_PATHS) {
+    if (normalizedPath.includes(trap)) {
+      if (ip && ip !== '127.0.0.1') serverlessQuarantinedIps.add(ip);
       return {
         isBadBot: true,
         isVerifiedBot: false,
         classification: 'BAD_BOT',
-        botName: 'Exploit Scanner / Probe',
-        reason: `Targeting sensitive exploit path (${probe})`,
-        threatLevel: 'CRITICAL'
+        botName: 'Malicious Probe Bot',
+        reason: `Honeypot Trap: ${trap}`,
+        threatType: 'HONEYPOT_TRAP',
+        threatLevel: 'CRITICAL',
+        isHoneypotHit: true
       };
     }
   }
 
-  // 2. Non-existent PHP / CMS probes on React SPA
+  // 2. Attack Signatures (SQL Injection, Directory Traversal, RCE)
+  for (const sig of ATTACK_SIGNATURES) {
+    if (sig.regex.test(rawUrl)) {
+      if (ip && ip !== '127.0.0.1') serverlessQuarantinedIps.add(ip);
+      return {
+        isBadBot: true,
+        isVerifiedBot: false,
+        classification: 'BAD_BOT',
+        botName: 'Exploit Injection Bot',
+        reason: `${sig.name} detected in request`,
+        threatType: sig.threatType,
+        threatLevel: 'CRITICAL',
+        isHoneypotHit: false
+      };
+    }
+  }
+
+  // 3. Non-existent PHP / CMS probes on React SPA
   if (normalizedPath.endsWith('.php') || normalizedPath.includes('/wp-') || normalizedPath.includes('/cgi-bin/')) {
+    if (ip && ip !== '127.0.0.1') serverlessQuarantinedIps.add(ip);
     return {
       isBadBot: true,
       isVerifiedBot: false,
       classification: 'BAD_BOT',
-      botName: 'CMS Exploit Scanner',
-      reason: 'Probing nonexistent PHP / WordPress vectors on React SPA',
-      threatLevel: 'CRITICAL'
+      botName: 'Malicious Probe Bot',
+      reason: `Probing nonexistent PHP / WordPress vector (${normalizedPath})`,
+      threatType: 'PHP_CMS_PROBE',
+      threatLevel: 'CRITICAL',
+      isHoneypotHit: true
     };
   }
 
-  // 3. Blank or suspicious short User-Agent
-  if (!rawUa || rawUa.length < 6 || /^(bot|spider|test|crawler|check|monitor|-)$/i.test(rawUa)) {
+  // 4. Blank or suspicious short User-Agent
+  if (!rawUa || rawUa.length < 5 || /^(bot|spider|test|crawler|check|monitor|-)$/i.test(rawUa)) {
     return {
       isBadBot: true,
       isVerifiedBot: false,
       classification: 'BAD_BOT',
       botName: 'Anomaly / Blank User-Agent',
       reason: 'Missing or forged User-Agent header string',
+      threatType: 'ANOMALOUS_UA',
       threatLevel: 'CRITICAL'
     };
   }
 
-  // 4. Verified Search Engine Bots
+  // 5. Verified Search Engine Bots
   for (const v of VERIFIED_BOT_PATTERNS) {
     if (v.pattern.test(rawUa)) {
       return {
@@ -196,27 +262,29 @@ function analyzeBotRequest(req: any, explicitPath?: string, explicitUa?: string)
         classification: 'VERIFIED_BOT',
         botName: v.name,
         reason: 'Verified Search Engine Indexer / Uptime Monitor',
+        threatType: 'VERIFIED_BOT',
         threatLevel: 'NONE'
       };
     }
   }
 
-  // 5. Bad Bot Patterns
+  // 6. Bad Bot Patterns
   for (const b of BAD_BOT_PATTERNS) {
     if (b.pattern.test(rawUa)) {
+      if (ip && ip !== '127.0.0.1') serverlessQuarantinedIps.add(ip);
       return {
         isBadBot: true,
         isVerifiedBot: false,
         classification: 'BAD_BOT',
         botName: b.name,
         reason: b.reason,
+        threatType: 'MALICIOUS_SCRAPER',
         threatLevel: 'CRITICAL'
       };
     }
   }
 
-  // 6. Rapid Loop Burst Analysis
-  const ip = getClientIp(req);
+  // 7. Rapid Loop Burst Analysis
   const now = Date.now();
   if (ip && ip !== '127.0.0.1') {
     const timestamps = ipBurstMap.get(ip) || [];
@@ -224,12 +292,14 @@ function analyzeBotRequest(req: any, explicitPath?: string, explicitUa?: string)
     recent.push(now);
     ipBurstMap.set(ip, recent);
     if (recent.length > 35) {
+      serverlessQuarantinedIps.add(ip);
       return {
         isBadBot: true,
         isVerifiedBot: false,
         classification: 'BAD_BOT',
         botName: 'Rapid Query Loop / Flooder',
         reason: `High frequency request burst (${recent.length} reqs / 5s)`,
+        threatType: 'BURST_FLOOD',
         threatLevel: 'CRITICAL'
       };
     }
@@ -258,10 +328,34 @@ async function recordBotHit(botAnalysis: BotAnalysisResult, req: any, explicitPa
   const deviceType = botAnalysis.isBadBot ? 'Bad Bot / Exploit Scanner' : 'Search Crawler';
   const deviceModel = botAnalysis.botName;
   const reason = botAnalysis.reason || (botAnalysis.isBadBot ? 'Suspicious automated crawler' : 'Verified Indexer');
+  const threatType = botAnalysis.threatType || (botAnalysis.isHoneypotHit ? 'HONEYPOT_TRAP' : (botAnalysis.isBadBot ? 'BAD_BOT' : 'VERIFIED_BOT'));
+  const reqUrl = (explicitPath || req.originalUrl || req.url || '').toString();
+  const reqMethod = req.method || 'GET';
+  const ispOrg = (req.headers?.['x-vercel-ip-as-number'] || req.headers?.['cf-ray'] || 'Automated Host / Public IP').toString();
+
+  // Clean safe headers for JSON snapshot
+  const safeHeaders: Record<string, string> = {};
+  if (req.headers) {
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (['authorization', 'cookie', 'x-forwarded-for'].includes(k.toLowerCase())) continue;
+      safeHeaders[k] = Array.isArray(v) ? v.join(', ') : String(v);
+    }
+  }
+
+  // Raw payload string representation
+  let rawPayloadStr = '';
+  if (req.body) {
+    try {
+      rawPayloadStr = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+    } catch {
+      rawPayloadStr = String(req.body);
+    }
+  }
 
   const client = await getPgClient();
   if (client) {
     try {
+      // 1. Record device status
       await client.query(`
         INSERT INTO device_installations (
           device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit, city, country, last_active_at
@@ -275,6 +369,16 @@ async function recordBotHit(botAnalysis: BotAnalysisResult, req: any, explicitPa
             city = COALESCE(NULLIF(EXCLUDED.city, ''), device_installations.city),
             country = COALESCE(NULLIF(EXCLUDED.country, ''), device_installations.country);
       `, [deviceId, username, ip, deviceType, deviceModel, rawUa, status, botType, reason, loc.city, loc.country]);
+
+      // 2. Record Forensic Snapshot into security_threat_logs if bad bot
+      if (botAnalysis.isBadBot) {
+        await client.query(`
+          INSERT INTO security_threat_logs (
+            ip_address, country, isp_org, user_agent, request_method, request_url, headers, raw_payload, threat_type, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW());
+        `, [ip, loc.country, ispOrg, rawUa, reqMethod, reqUrl, JSON.stringify(safeHeaders), rawPayloadStr, threatType]);
+      }
+
       await client.end();
     } catch (e) {
       try { await client.end(); } catch (_) {}
@@ -297,6 +401,21 @@ async function recordBotHit(botAnalysis: BotAnalysisResult, req: any, explicitPa
         country: loc.country,
         last_active_at: new Date().toISOString()
       }, { onConflict: 'device_id' });
+
+      if (botAnalysis.isBadBot) {
+        await supabaseAdmin.from('security_threat_logs').insert({
+          ip_address: ip,
+          country: loc.country,
+          isp_org: ispOrg,
+          user_agent: rawUa,
+          request_method: reqMethod,
+          request_url: reqUrl,
+          headers: safeHeaders,
+          raw_payload: rawPayloadStr,
+          threat_type: threatType,
+          created_at: new Date().toISOString()
+        });
+      }
     } catch (_) {}
   }
 }
@@ -2257,6 +2376,31 @@ export default async function handler(req: any, res: any) {
         }
       }
 
+      if (pathname.includes('/devices/threat-logs') && method === 'GET') {
+        const ipParam = parsedUrl.searchParams.get('ip') || req.query?.ip;
+        const client = await getPgClient();
+        if (client) {
+          try {
+            let q;
+            if (ipParam) {
+              q = await client.query('SELECT * FROM security_threat_logs WHERE ip_address = $1 ORDER BY created_at DESC LIMIT 50;', [ipParam]);
+            } else {
+              q = await client.query('SELECT * FROM security_threat_logs ORDER BY created_at DESC LIMIT 100;');
+            }
+            await client.end();
+            return res.status(200).json(q.rows || []);
+          } catch (e) { try { await client.end(); } catch (_) {} }
+        }
+        try {
+          let sQuery = supabaseAdmin.from('security_threat_logs').select('*').order('created_at', { ascending: false }).limit(100);
+          if (ipParam) sQuery = sQuery.eq('ip_address', ipParam);
+          const { data } = await sQuery;
+          return res.status(200).json(data || []);
+        } catch (err: any) {
+          return res.status(500).json({ success: false, error: err?.message });
+        }
+      }
+
       if (pathname.includes('/devices/toggle-status') && method === 'POST') {
         const { deviceId, status } = body || {};
         const client = await getPgClient();
@@ -2264,10 +2408,17 @@ export default async function handler(req: any, res: any) {
           try {
             const q = await client.query('UPDATE device_installations SET install_status = $1 WHERE device_id = $2 RETURNING *;', [status, deviceId]);
             await client.end();
-            return res.status(200).json({ success: true, device: q.rows[0] });
+            const dev = q.rows[0];
+            if (status === 'ACTIVE' && dev?.ip_address) {
+              serverlessQuarantinedIps.delete(dev.ip_address);
+            }
+            return res.status(200).json({ success: true, device: dev });
           } catch (e) { try { await client.end(); } catch (_) {} }
         }
         const { data } = await supabaseAdmin.from('device_installations').update({ install_status: status }).eq('device_id', deviceId).select().single();
+        if (status === 'ACTIVE' && data?.ip_address) {
+          serverlessQuarantinedIps.delete(data.ip_address);
+        }
         return res.status(200).json({ success: true, device: data });
       }
 
