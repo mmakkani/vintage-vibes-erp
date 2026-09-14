@@ -394,6 +394,12 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
   };
 
   const qrString = session?.qrCodeDataUrl || session?.qrCode || '';
+  const isHandshaking = !session?.isConnected && (
+    session?.status === 'CONNECTING' ||
+    session?.lastActive?.toLowerCase().includes('scanned') ||
+    session?.lastActive?.toLowerCase().includes('finalizing') ||
+    session?.lastActive?.toLowerCase().includes('exchanging')
+  );
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
@@ -708,7 +714,26 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                     {/* QR Code Container */}
                     <div className="bg-slate-50 border-2 border-dashed border-emerald-400 rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-inner relative">
                       <div className="bg-white p-3 rounded-xl shadow-md border border-slate-200 min-h-[190px] min-w-[190px] flex items-center justify-center">
-                        {qrString && !isRegeneratingQr ? (
+                        {isHandshaking ? (
+                          <div className="flex flex-col items-center justify-center p-3 text-center max-w-[185px]">
+                            <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 mb-2 animate-bounce">
+                              <Smartphone className="w-6 h-6" />
+                            </div>
+                            <span className="text-xs font-bold text-emerald-800">
+                              📱 Phone Scanned!
+                            </span>
+                            <span className="text-[11px] font-semibold text-slate-700 mt-1">
+                              Finalizing secure login...
+                            </span>
+                            <span className="text-[10px] text-slate-500 mt-1">
+                              Please keep WhatsApp open on your phone.
+                            </span>
+                            <div className="mt-2.5 flex items-center gap-1.5 text-[11px] text-emerald-600 font-bold">
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>Completing handshake</span>
+                            </div>
+                          </div>
+                        ) : qrString && !isRegeneratingQr ? (
                           qrString.startsWith('data:image') ? (
                             <img
                               src={qrString}
@@ -738,8 +763,8 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                         <button
                           type="button"
                           onClick={handleRefreshQr}
-                          disabled={isRegeneratingQr}
-                          className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-900 bg-white border border-slate-300 hover:bg-slate-50 px-3 py-1.5 rounded-lg shadow-xs cursor-pointer transition active:scale-95"
+                          disabled={isRegeneratingQr || isHandshaking}
+                          className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-900 bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-50 px-3 py-1.5 rounded-lg shadow-xs cursor-pointer transition active:scale-95"
                         >
                           <RefreshCw className={`w-3.5 h-3.5 ${isRegeneratingQr ? 'animate-spin text-emerald-600' : ''}`} />
                           <span>Regenerate Live QR</span>

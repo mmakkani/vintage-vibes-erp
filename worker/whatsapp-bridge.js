@@ -67,33 +67,6 @@ function notifyClients() {
   }
 }
 
-// Check if credentials exist and are registered
-function isCredsRegistered() {
-  try {
-    const credsPath = path.join(AUTH_DIR, 'creds.json');
-    if (!fs.existsSync(credsPath)) return false;
-    const raw = fs.readFileSync(credsPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    return Boolean(parsed?.registered);
-  } catch (_) {
-    return false;
-  }
-}
-
-// Clean unlinked / corrupted auth directory if not registered
-function cleanUnregisteredAuthDir() {
-  try {
-    if (!fs.existsSync(AUTH_DIR)) return;
-    if (!isCredsRegistered()) {
-      console.log('[WhatsApp Bridge] Removing unregistered/stale auth credentials in:', AUTH_DIR);
-      fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-      fs.mkdirSync(AUTH_DIR, { recursive: true });
-    }
-  } catch (err) {
-    console.warn('[WhatsApp Bridge] Error cleaning unlinked auth dir:', err?.message);
-  }
-}
-
 // Logger
 const logger = pino({ level: process.env.LOG_LEVEL || 'warn' });
 
@@ -120,13 +93,6 @@ async function initBaileysSocket(requestPairingPhone = null) {
   }
 
   try {
-    // If we are not connected and not registered, clear stale QR so old strings are never cached
-    if (!isCredsRegistered()) {
-      sessionState.qrCode = '';
-      sessionState.qrCodeDataUrl = '';
-      sessionState.pairingCode = '';
-    }
-
     sessionState.status = requestPairingPhone ? 'WAITING_PAIRING' : 'CONNECTING';
     sessionState.lastActive = requestPairingPhone
       ? `Requesting Pairing Code for ${requestPairingPhone}...`
@@ -147,7 +113,7 @@ async function initBaileysSocket(requestPairingPhone = null) {
       auth: state,
       printQRInTerminal: !requestPairingPhone,
       logger,
-      browser: Browsers.macOS('Chrome'),
+      browser: Browsers.ubuntu('Chrome'),
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
       keepAliveIntervalMs: 25000,
@@ -200,6 +166,12 @@ async function initBaileysSocket(requestPairingPhone = null) {
         notifyClients();
       }
 
+      if (connection === 'connecting') {
+        sessionState.status = 'CONNECTING';
+        sessionState.lastActive = 'Exchanging keys with WhatsApp...';
+        notifyClients();
+      }
+
       if (connection === 'open') {
         sessionState.isConnected = true;
         sessionState.status = 'CONNECTED';
@@ -222,34 +194,45 @@ async function initBaileysSocket(requestPairingPhone = null) {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const errorMsg = lastDisconnect?.error?.message || '';
         const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-        const isQrExpired = errorMsg.includes('QR refs') || statusCode === 408 || statusCode === 428;
+        const isRestartRequired = statusCode === DisconnectReason.restartRequired;
 
-        sessionState.isConnected = false;
-        sessionState.status = 'DISCONNECTED';
-        sessionState.qrCode = '';
-        sessionState.qrCodeDataUrl = '';
-        sessionState.pairingCode = '';
-        sessionState.lastError = errorMsg || `Socket closed (${statusCode || 'unknown'})`;
-        sessionState.lastActive = isQrExpired
-          ? 'QR expired. Click "Regenerate Live QR" to refresh.'
-          : `Disconnected (Status: ${statusCode || 'unknown'})`;
-
-        console.warn(`[WhatsApp Bridge] Connection closed. Reason: ${sessionState.lastError}. LoggedOut: ${isLoggedOut}. QrExpired: ${isQrExpired}`);
-        notifyClients();
+        console.warn(`[WhatsApp Bridge] Connection closed. StatusCode: ${statusCode}. Reason: ${errorMsg}`);
 
         if (isLoggedOut) {
-          console.log('[WhatsApp Bridge] Device logged out. Purging credentials.');
+          console.log('[WhatsApp Bridge] Device was logged out. Clearing credentials.');
+          sessionState.isConnected = false;
+          sessionState.status = 'DISCONNECTED';
+          sessionState.phoneNumber = '';
+          sessionState.qrCode = '';
+          sessionState.qrCodeDataUrl = '';
+          sessionState.pairingCode = '';
+          sessionState.lastActive = 'Logged Out';
+          notifyClients();
+
           try {
             fs.rmSync(AUTH_DIR, { recursive: true, force: true });
           } catch (_) {}
-          reconnectTimer = setTimeout(() => initBaileysSocket(), 3000);
+
+          reconnectTimer = setTimeout(() => initBaileysSocket(), 2000);
+        } else if (isRestartRequired) {
+          // CRITICAL: When phone scans QR, WhatsApp sends status 515 (restartRequired) to finalize encryption handshake!
+          // NEVER wipe credentials on 515! Reconnect immediately within 500ms using existing keys!
+          console.log('[WhatsApp Bridge] Status 515: restartRequired (QR scan handshake in progress). Reconnecting immediately to complete login...');
+          sessionState.status = 'CONNECTING';
+          sessionState.lastActive = 'Phone scanned! Finalizing secure login with mobile...';
+          sessionState.qrCode = '';
+          sessionState.qrCodeDataUrl = '';
+          notifyClients();
+
+          reconnectTimer = setTimeout(() => initBaileysSocket(), 500);
         } else {
-          // If connection dropped before pairing was completed, clean unregistered state so next QR is clean
-          if (!isCredsRegistered()) {
-            cleanUnregisteredAuthDir();
-          }
-          const reconnectDelay = isQrExpired ? 2500 : 5000;
-          reconnectTimer = setTimeout(() => initBaileysSocket(), reconnectDelay);
+          // Stream drop or temporary network disconnect: Keep credentials intact!
+          sessionState.isConnected = false;
+          sessionState.status = 'CONNECTING';
+          sessionState.lastActive = `Reconnecting (${statusCode || 'stream drop'})...`;
+          notifyClients();
+
+          reconnectTimer = setTimeout(() => initBaileysSocket(), 3000);
         }
       }
     });
@@ -259,7 +242,7 @@ async function initBaileysSocket(requestPairingPhone = null) {
     sessionState.status = 'DISCONNECTED';
     sessionState.lastError = err?.message;
     notifyClients();
-    reconnectTimer = setTimeout(() => initBaileysSocket(), 8000);
+    reconnectTimer = setTimeout(() => initBaileysSocket(), 5000);
   } finally {
     isInitializing = false;
   }
@@ -348,10 +331,10 @@ app.get('/qr', (req, res) => {
   });
 });
 
-// Regenerate QR (Cleans unlinked state and starts fresh socket)
+// Regenerate QR: Only cleans credentials when explicitly requested by user
 app.post('/generate-qr', requireAuth, async (req, res) => {
   try {
-    console.log('[WhatsApp Bridge] Regenerate QR requested. Cleaning unlinked session and resetting socket...');
+    console.log('[WhatsApp Bridge] Manual Regenerate QR requested. Cleaning auth and generating fresh QR...');
     if (sock) {
       try {
         sock.ev.removeAllListeners();
@@ -359,13 +342,20 @@ app.post('/generate-qr', requireAuth, async (req, res) => {
       } catch (_) {}
       sock = null;
     }
-    cleanUnregisteredAuthDir();
+
+    // Only wipe credentials if not currently connected
+    if (!sessionState.isConnected) {
+      try {
+        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+        fs.mkdirSync(AUTH_DIR, { recursive: true });
+      } catch (_) {}
+    }
 
     sessionState.qrCode = '';
     sessionState.qrCodeDataUrl = '';
     sessionState.pairingCode = '';
     sessionState.status = 'CONNECTING';
-    sessionState.lastActive = 'Re-initializing live WhatsApp QR...';
+    sessionState.lastActive = 'Generating fresh live WhatsApp QR...';
     notifyClients();
 
     await initBaileysSocket();
@@ -407,7 +397,13 @@ app.post('/pair', requireAuth, async (req, res) => {
       } catch (_) {}
       sock = null;
     }
-    cleanUnregisteredAuthDir();
+
+    if (!sessionState.isConnected) {
+      try {
+        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+        fs.mkdirSync(AUTH_DIR, { recursive: true });
+      } catch (_) {}
+    }
 
     sessionState.qrCode = '';
     sessionState.qrCodeDataUrl = '';
