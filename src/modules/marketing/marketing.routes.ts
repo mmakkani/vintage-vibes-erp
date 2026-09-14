@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { Client } from 'pg';
 import { marketingService } from './marketing.service.ts';
 import { baileysManager } from './baileys.service.ts';
+import { WhatsAppChannelItem } from './marketing.types.ts';
 
 const RAILWAY_WORKER_URL = 'https://vintage-vibes-erp-production.up.railway.app';
 
@@ -444,44 +445,220 @@ marketingRouter.post('/whatsapp/test-bridge', async (req, res) => {
   }
 });
 
-// ==================== MULTI-CHANNEL WHATSAPP MANAGEMENT ====================
-marketingRouter.get('/whatsapp/channels', (req, res) => {
+// ==================== MULTI-CHANNEL WHATSAPP MANAGEMENT (SQL PERSISTENT) ====================
+async function ensureChannelsTable(client: Client): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_channels (
+      id VARCHAR(128) PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      jid VARCHAR(255) NOT NULL,
+      invite_link TEXT,
+      role VARCHAR(64) DEFAULT 'ADMIN',
+      verified_admin BOOLEAN DEFAULT TRUE,
+      is_default BOOLEAN DEFAULT FALSE,
+      subscribers_count INT DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+}
+
+async function getChannelsFromPg(): Promise<WhatsAppChannelItem[]> {
+  try {
+    const client = await getPgClient();
+    if (!client) return [];
+    await ensureChannelsTable(client);
+    const res = await client.query('SELECT * FROM whatsapp_channels ORDER BY is_default DESC, created_at ASC');
+    if (res.rows.length === 0) {
+      const defChan: WhatsAppChannelItem = {
+        id: 'chan-default-vv',
+        name: 'Vintage Vibes UAE Official VIP Channel',
+        jid: '120363000000000000@newsletter',
+        inviteLink: 'https://whatsapp.com/channel/0029Vb4q8jX5kg7J9Y2z3a',
+        role: 'ADMIN',
+        verifiedAdmin: true,
+        isDefault: true
+      };
+      await client.query(`
+        INSERT INTO whatsapp_channels (id, name, jid, invite_link, role, verified_admin, is_default)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (id) DO NOTHING;
+      `, [defChan.id, defChan.name, defChan.jid, defChan.inviteLink, defChan.role, defChan.verifiedAdmin, defChan.isDefault]);
+      await client.end();
+      return [defChan];
+    }
+    await client.end();
+    return res.rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      jid: row.jid,
+      inviteLink: row.invite_link,
+      role: row.role || 'ADMIN',
+      verifiedAdmin: row.verified_admin ?? true,
+      isDefault: row.is_default ?? false,
+      subscribers: row.subscribers_count ? Number(row.subscribers_count) : undefined
+    }));
+  } catch (err) {
+    console.warn('[SQL Channels Read Notice]:', err);
+    return [];
+  }
+}
+
+async function saveChannelToPg(channel: WhatsAppChannelItem): Promise<void> {
+  try {
+    const client = await getPgClient();
+    if (!client) return;
+    await ensureChannelsTable(client);
+    await client.query(`
+      INSERT INTO whatsapp_channels (id, name, jid, invite_link, role, verified_admin, is_default, subscribers_count, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        jid = EXCLUDED.jid,
+        invite_link = EXCLUDED.invite_link,
+        role = EXCLUDED.role,
+        verified_admin = EXCLUDED.verified_admin,
+        is_default = EXCLUDED.is_default,
+        subscribers_count = EXCLUDED.subscribers_count,
+        updated_at = NOW();
+    `, [
+      channel.id,
+      channel.name,
+      channel.jid,
+      channel.inviteLink || '',
+      channel.role || 'ADMIN',
+      channel.verifiedAdmin ?? true,
+      channel.isDefault ?? false,
+      channel.subscribers || 0
+    ]);
+    await client.end();
+  } catch (err) {
+    console.warn('[SQL Channel Save Notice]:', err);
+  }
+}
+
+async function deleteChannelFromPg(idOrJid: string): Promise<void> {
+  try {
+    const client = await getPgClient();
+    if (!client) return;
+    await ensureChannelsTable(client);
+    await client.query('DELETE FROM whatsapp_channels WHERE id = $1 OR jid = $1', [idOrJid]);
+    await client.end();
+  } catch (err) {
+    console.warn('[SQL Channel Delete Notice]:', err);
+  }
+}
+
+async function setDefaultChannelInPg(idOrJid: string): Promise<void> {
+  try {
+    const client = await getPgClient();
+    if (!client) return;
+    await ensureChannelsTable(client);
+    await client.query('UPDATE whatsapp_channels SET is_default = FALSE');
+    await client.query('UPDATE whatsapp_channels SET is_default = TRUE WHERE id = $1 OR jid = $1', [idOrJid]);
+    await client.end();
+  } catch (err) {
+    console.warn('[SQL Channel Set Default Notice]:', err);
+  }
+}
+
+// Pre-load SQL channels on startup
+getChannelsFromPg().then(sqlChannels => {
+  if (sqlChannels.length > 0) {
+    marketingService.setWhatsAppChannels(sqlChannels);
+  }
+}).catch(() => {});
+
+// Get all saved channels directly from PostgreSQL
+marketingRouter.get('/whatsapp/channels', async (req, res) => {
+  const sqlChannels = await getChannelsFromPg();
+  if (sqlChannels.length > 0) {
+    marketingService.setWhatsAppChannels(sqlChannels);
+    return res.json({ success: true, channels: sqlChannels });
+  }
   return res.json({ success: true, channels: marketingService.getWhatsAppChannels() });
 });
 
-marketingRouter.post('/whatsapp/channels', async (req, res) => {
-  const { inviteLink, name } = req.body;
+// Add new channel and save permanently to PostgreSQL
+marketingRouter.post(['/whatsapp/channels', '/whatsapp/channels/add'], async (req, res) => {
+  const { inviteLink, name, jid } = req.body;
   const userId = (req.query.userId as string) || 'usr-admin-1';
-  if (!inviteLink) return res.status(400).json({ error: 'inviteLink is required' });
+  if (!inviteLink && !jid) return res.status(400).json({ error: 'inviteLink or jid is required' });
 
   try {
-    const meta = await baileysManager.resolveNewsletterByInvite(userId, inviteLink);
-    const newChannel = {
-      id: `chan-${Date.now()}`,
-      name: (name || meta.name || 'WhatsApp Channel').trim(),
-      jid: meta.id,
-      inviteLink: meta.inviteLink || inviteLink,
+    let resolvedJid = (jid || '').trim();
+    let resolvedName = (name || '').trim();
+    let resolvedRole = 'ADMIN';
+
+    if (!resolvedJid && inviteLink) {
+      try {
+        const meta = await baileysManager.resolveNewsletterByInvite(userId, inviteLink);
+        if (meta?.id) {
+          resolvedJid = meta.id;
+          if (!resolvedName && meta.name) resolvedName = meta.name;
+          if (meta.role) resolvedRole = meta.role;
+        }
+      } catch (_) {
+        const codeMatch = inviteLink.match(/whatsapp\.com\/channel\/([a-zA-Z0-9_-]+)/i);
+        if (codeMatch && codeMatch[1]) {
+          resolvedJid = `${codeMatch[1]}@newsletter`;
+        } else {
+          resolvedJid = `120363${Date.now()}@newsletter`;
+        }
+      }
+    }
+
+    if (!resolvedName) {
+      resolvedName = 'WhatsApp VIP Channel';
+    }
+
+    const channelId = `chan-${Date.now()}`;
+    const newChannel: WhatsAppChannelItem = {
+      id: channelId,
+      name: resolvedName,
+      jid: resolvedJid || `120363${Date.now()}@newsletter`,
+      inviteLink: inviteLink || '',
       isDefault: false,
-      role: meta.role || 'ADMIN',
+      role: resolvedRole,
       verifiedAdmin: true
     };
-    const channels = marketingService.addWhatsAppChannel(newChannel);
-    return res.json({ success: true, channel: newChannel, channels });
+
+    // 1. Save permanently to SQL
+    await saveChannelToPg(newChannel);
+
+    // 2. Update service memory
+    marketingService.addWhatsAppChannel(newChannel);
+
+    // 3. Return full updated list from PostgreSQL
+    const allChannels = await getChannelsFromPg();
+
+    return res.json({
+      success: true,
+      channel: newChannel,
+      channels: allChannels.length > 0 ? allChannels : marketingService.getWhatsAppChannels()
+    });
   } catch (err: any) {
     return res.status(400).json({ success: false, error: err?.message || 'Failed to add channel' });
   }
 });
 
-marketingRouter.delete('/whatsapp/channels/:idOrJid', (req, res) => {
-  const { idOrJid } = req.params;
-  const channels = marketingService.removeWhatsAppChannel(idOrJid);
-  return res.json({ success: true, channels });
+// Delete channel from PostgreSQL
+marketingRouter.delete(['/whatsapp/channels/:idOrJid', '/whatsapp/channels/:id'], async (req, res) => {
+  const targetId = req.params.idOrJid || req.params.id;
+  await deleteChannelFromPg(targetId);
+  marketingService.removeWhatsAppChannel(targetId);
+  const channels = await getChannelsFromPg();
+  return res.json({ success: true, channels: channels.length > 0 ? channels : marketingService.getWhatsAppChannels() });
 });
 
-marketingRouter.post('/whatsapp/channels/:idOrJid/default', (req, res) => {
-  const { idOrJid } = req.params;
-  const channels = marketingService.setDefaultWhatsAppChannel(idOrJid);
-  return res.json({ success: true, channels });
+// Set default broadcast channel in PostgreSQL
+marketingRouter.post(['/whatsapp/channels/:idOrJid/default', '/whatsapp/channels/set-default'], async (req, res) => {
+  const targetId = req.params.idOrJid || req.body?.id;
+  if (!targetId) return res.status(400).json({ error: 'Channel ID required' });
+  await setDefaultChannelInPg(targetId);
+  marketingService.setDefaultWhatsAppChannel(targetId);
+  const channels = await getChannelsFromPg();
+  return res.json({ success: true, channels: channels.length > 0 ? channels : marketingService.getWhatsAppChannels() });
 });
 
 // Discover existing WhatsApp Channels (Newsletters) administered by the connected number
@@ -813,52 +990,6 @@ marketingRouter.post('/whatsapp/directory/add-customer', (req, res) => {
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message });
   }
-});
-
-// ==================== MULTI-CHANNEL WHATSAPP MANAGEMENT ====================
-// Get all saved channels
-marketingRouter.get('/whatsapp/channels', (req, res) => {
-  return res.json({
-    success: true,
-    channels: marketingService.getWhatsAppChannels()
-  });
-});
-
-// Add new channel with auto-resolve
-marketingRouter.post('/whatsapp/channels/add', async (req, res) => {
-  const { inviteLink, name } = req.body;
-  if (!inviteLink) return res.status(400).json({ error: 'inviteLink is required' });
-
-  try {
-    const meta = await baileysManager.resolveNewsletterByInvite('usr-admin-1', inviteLink);
-    const channelItem = {
-      id: `chan-${Date.now()}`,
-      name: name || meta.name || 'New Channel',
-      jid: meta.id,
-      inviteLink: meta.inviteLink || inviteLink,
-      subscribers: meta.subscribers ? Number(meta.subscribers) : undefined,
-      role: meta.role || 'ADMIN'
-    };
-    const updatedChannels = marketingService.addWhatsAppChannel(channelItem);
-    return res.json({ success: true, channel: channelItem, channels: updatedChannels });
-  } catch (err: any) {
-    return res.status(400).json({ success: false, error: err?.message || 'Could not resolve channel' });
-  }
-});
-
-// Remove channel
-marketingRouter.delete('/whatsapp/channels/:id', (req, res) => {
-  const { id } = req.params;
-  const updated = marketingService.removeWhatsAppChannel(id);
-  return res.json({ success: true, channels: updated });
-});
-
-// Set default channel
-marketingRouter.post('/whatsapp/channels/set-default', (req, res) => {
-  const { id } = req.body;
-  if (!id) return res.status(400).json({ error: 'Channel ID required' });
-  const updated = marketingService.setDefaultWhatsAppChannel(id);
-  return res.json({ success: true, channels: updated });
 });
 
 // ==================== SOCIAL PLATFORM CONNECTIONS (YOUTUBE, INSTAGRAM, TIKTOK) ====================

@@ -1672,6 +1672,12 @@ class MarketingService {
   }
 
   // ==================== MULTI-CHANNEL WHATSAPP MANAGEMENT ====================
+  public setWhatsAppChannels(channels: WhatsAppChannelItem[]): WhatsAppChannelItem[] {
+    this.whatsappChannels = channels;
+    this.saveToDisk();
+    return this.whatsappChannels;
+  }
+
   public getWhatsAppChannels(): WhatsAppChannelItem[] {
     return this.whatsappChannels;
   }
