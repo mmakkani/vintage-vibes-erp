@@ -20,7 +20,7 @@ import { AccessDeniedNotice } from './components/AccessDeniedNotice.tsx';
 import { GoldenCursorDust } from './components/GoldenCursorDust.tsx';
 import { useIdleTimer } from './hooks/useIdleTimer.ts';
 import { isTabAccessible, getAccessibleTabs } from './modules/auth/utils/permissionUtils.ts';
-import { CompanyProfileService, SetupService, AuthService, DeviceService } from './services/index.ts';
+import { CompanyProfileService, SetupService, AuthService, DeviceService, PresenceService } from './services/index.ts';
 import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
 import { ModuleMaintenanceGuard } from './components/ModuleMaintenanceGuard.tsx';
 import { PWAUpdatePrompt } from './components/PWAUpdatePrompt.tsx';
@@ -65,6 +65,16 @@ const VALID_TABS: ActiveTab[] = [
   'audit',
   'access'
 ];
+
+const GUEST_OPERATOR: User = {
+  id: 'guest',
+  username: 'guest',
+  email: 'guest@vintagevibe.ae',
+  name: 'Guest Operator',
+  role: 'STAFF',
+  assignedShopId: 'Al Ain Main Branch',
+  isActive: false
+};
 
 export default function App() {
   const [activeTab, setActiveTabState] = useState<ActiveTab>(() => {
@@ -185,9 +195,14 @@ export default function App() {
   // Handle logout
   const handleLogout = (timeoutReason?: any) => {
     try {
+      if (currentUser?.username && currentUser.username !== 'guest') {
+        PresenceService.logout(currentUser.username).catch(() => {});
+      }
       localStorage.removeItem('vintage_erp_logged_user');
+      localStorage.removeItem('vintage_vibes_auth_user');
       localStorage.removeItem('vintage_erp_active_tab');
-      localStorage.setItem('vintage_app_view_mode', 'storefront');
+      localStorage.removeItem('vintage_app_view_mode');
+      sessionStorage.clear();
       // Clean address bar so ?tab=dashboard is removed and user doesn't bounce back
       const url = new URL(window.location.href);
       url.searchParams.delete('tab');
@@ -200,6 +215,7 @@ export default function App() {
       setSessionTimeoutMsg(null);
     }
     setIsAuthenticated(false);
+    setCurrentUser(GUEST_OPERATOR);
     setCurrentView('storefront');
   };
 
@@ -279,15 +295,7 @@ export default function App() {
     } catch (e) {
       // fallback
     }
-    return {
-      id: 'usr-admin-01',
-      username: 'admin',
-      email: 'admin@vintagevibe.ae',
-      name: 'Muhammad',
-      role: 'ADMIN',
-      assignedShopId: 'Al Ain Main Branch',
-      isActive: true
-    };
+    return GUEST_OPERATOR;
   });
 
   const [allUsers, setAllUsers] = useState<User[]>([]);
@@ -319,18 +327,21 @@ export default function App() {
       if (Array.isArray(currs) && currs.length > 0) setCurrencies(currs);
       if (Array.isArray(users) && users.length > 0) {
         setAllUsers(users);
-        const found = users.find(u => u.id === currentUser.id || u.username?.toLowerCase() === currentUser.username?.toLowerCase());
-        if (found) {
-          setCurrentUser(found);
-          try {
-            localStorage.setItem('vintage_erp_logged_user', JSON.stringify(found));
-          } catch {}
+        const activeStored = localStorage.getItem('vintage_erp_logged_user');
+        if (isAuthenticated && activeStored && currentUser?.username && currentUser.username !== 'guest') {
+          const found = users.find(u => u.id === currentUser.id || u.username?.toLowerCase() === currentUser.username?.toLowerCase());
+          if (found) {
+            setCurrentUser(found);
+            try {
+              localStorage.setItem('vintage_erp_logged_user', JSON.stringify(found));
+            } catch {}
+          }
         }
       }
     } catch (err: any) {
       console.warn('Global data sync notice (using resilient client state):', err?.message);
     }
-  }, [currentUser.id, currentUser.username]);
+  }, [currentUser.id, currentUser.username, isAuthenticated]);
 
   useEffect(() => {
     refreshGlobalData();
@@ -486,10 +497,16 @@ export default function App() {
             <StorefrontView
               companyProfile={companyProfile}
               onOpenERPLogin={() => {
-                if (isAuthenticated) {
+                const activeStored = localStorage.getItem('vintage_erp_logged_user');
+                if (isAuthenticated && activeStored) {
                   localStorage.setItem('vintage_app_view_mode', 'erp');
                   setCurrentView('erp');
                 } else {
+                  setIsAuthenticated(false);
+                  setCurrentUser(GUEST_OPERATOR);
+                  localStorage.removeItem('vintage_erp_logged_user');
+                  localStorage.removeItem('vintage_vibes_auth_user');
+                  localStorage.removeItem('vintage_app_view_mode');
                   setCurrentView('login');
                 }
               }}
