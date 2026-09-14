@@ -844,21 +844,32 @@ export class SetupService {
   }
 
   // --- Google Gemini AI API Key Config ---
-  public static async getGeminiApiConfig(): Promise<{ apiKey: string; model: string; configured: boolean }> {
-    const { data, error } = await supabase
-      .from('gemini_api_config')
-      .select('*')
-      .eq('id', 'default')
-      .maybeSingle();
-
-    if (!error && data && data.api_key) {
+  public static async getGeminiApiConfig(): Promise<{ apiKey: string; model: string; configured: boolean; updatedAt?: string }> {
+    if (typeof window !== 'undefined') {
+      try {
+        const res = await fetch('/api/setup/gemini-key');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.success && data.apiKey) {
+            return {
+              apiKey: data.apiKey,
+              model: data.model || 'gemini-2.5-flash',
+              status: data.status || 'ACTIVE',
+              configured: true,
+              updatedAt: data.updatedAt
+            } as any;
+          }
+        }
+      } catch {}
+      const localKey = (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_api_key') || '') : '').trim();
       return {
-        apiKey: data.api_key,
-        model: data.model || 'gemini-2.5-flash',
-        configured: true
+        apiKey: localKey,
+        model: 'gemini-2.5-flash',
+        configured: Boolean(localKey)
       };
     }
 
+    // Node environment
     const envKey = (process.env.GEMINI_API_KEY || '').trim();
     if (envKey) {
       return {
@@ -868,6 +879,23 @@ export class SetupService {
       };
     }
 
+    try {
+      const { data, error } = await supabase
+        .from('gemini_api_config')
+        .select('*')
+        .eq('id', 'default')
+        .maybeSingle();
+
+      if (!error && data && data.api_key) {
+        return {
+          apiKey: data.api_key,
+          model: data.model || 'gemini-2.5-flash',
+          configured: true,
+          updatedAt: data.updated_at
+        };
+      }
+    } catch {}
+
     return {
       apiKey: '',
       model: 'gemini-2.5-flash',
@@ -875,23 +903,39 @@ export class SetupService {
     };
   }
 
-  public static async updateGeminiApiKey(apiKey: string, model: string = 'gemini-2.5-flash'): Promise<void> {
+  public static async updateGeminiApiKey(apiKey: string, model: string = 'gemini-2.5-flash'): Promise<{ success: boolean; message: string }> {
     const trimmed = apiKey.trim();
-    const { error } = await supabase
-      .from('gemini_api_config')
-      .upsert({
-        id: 'default',
-        api_key: trimmed,
-        model: model || 'gemini-2.5-flash',
-        status: 'ACTIVE',
-        updated_at: new Date().toISOString()
-      });
 
-    if (error) {
-      console.error('Supabase error saving gemini_api_config:', error);
-      throw new Error(error.message || 'Failed to save Gemini API key in SQL database');
+    if (typeof window !== 'undefined') {
+      const response = await fetch('/api/setup/gemini-key', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: trimmed, model: model || 'gemini-2.5-flash' })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to persist Gemini API key to database');
+      }
+      try {
+        localStorage.setItem('vintage_gemini_api_key', trimmed);
+      } catch {}
+      return { success: true, message: data.message || 'Gemini API key successfully saved.' };
     }
 
+    // Node environment
     process.env.GEMINI_API_KEY = trimmed;
+    try {
+      await supabase
+        .from('gemini_api_config')
+        .upsert({
+          id: 'default',
+          api_key: trimmed,
+          model: model || 'gemini-2.5-flash',
+          status: 'ACTIVE',
+          updated_at: new Date().toISOString()
+        });
+    } catch {}
+
+    return { success: true, message: 'Gemini API key saved to runtime.' };
   }
 }

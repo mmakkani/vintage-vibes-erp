@@ -1,8 +1,36 @@
 import { Router } from 'express';
+import { Client } from 'pg';
 import { SetupController } from './setup.controller.ts';
 import { CompanyProfileService } from '../../services/companyProfileService.ts';
 import { SetupService } from '../../services/setupService.ts';
 import { supabase } from '../../supabaseClient.ts';
+
+async function getPgClient(): Promise<Client | null> {
+  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  try {
+    if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
+      dbUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+    }
+    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+    if (match) {
+      let [_, u, rawPwd, host, port, rest] = match;
+      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
+      dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+    }
+    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+    await client.connect();
+    return client;
+  } catch (err) {
+    try {
+      const fallbackUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+      const fallbackClient = new Client({ connectionString: fallbackUrl, ssl: { rejectUnauthorized: false } });
+      await fallbackClient.connect();
+      return fallbackClient;
+    } catch {
+      return null;
+    }
+  }
+}
 
 export const setupRouter = Router();
 
@@ -518,11 +546,43 @@ setupRouter.put('/master-pin', async (req, res) => {
 
 // Google Gemini Vision / OCR API Key Config (SQL Persistent)
 setupRouter.get('/gemini-key', async (req, res) => {
+  let pgClient: Client | null = null;
+  try {
+    pgClient = await getPgClient();
+    if (pgClient) {
+      const dbRes = await pgClient.query(`
+        SELECT id, api_key, model, status, updated_at
+        FROM gemini_api_config
+        WHERE id = 'default'
+        LIMIT 1;
+      `);
+      if (dbRes.rows && dbRes.rows.length > 0 && dbRes.rows[0].api_key) {
+        const row = dbRes.rows[0];
+        return res.json({
+          success: true,
+          apiKey: row.api_key,
+          model: row.model || 'gemini-2.5-flash',
+          status: row.status || 'ACTIVE',
+          updatedAt: row.updated_at,
+          configured: true
+        });
+      }
+    }
+  } catch (dbErr) {
+    console.warn('[Setup Routes] PG gemini-key select warning:', dbErr);
+  } finally {
+    if (pgClient) {
+      try { await pgClient.end(); } catch {}
+    }
+  }
+
+  // Fallback to env or SetupService
   try {
     const config = await SetupService.getGeminiApiConfig();
     return res.json({ success: true, ...config });
   } catch (_) {
-    return res.json({ success: true, apiKey: process.env.GEMINI_API_KEY || '', model: 'gemini-2.5-flash', configured: Boolean(process.env.GEMINI_API_KEY) });
+    const envKey = process.env.GEMINI_API_KEY || '';
+    return res.json({ success: true, apiKey: envKey, model: 'gemini-2.5-flash', configured: Boolean(envKey) });
   }
 });
 
@@ -531,11 +591,128 @@ setupRouter.put('/gemini-key', async (req, res) => {
   if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 8) {
     return res.status(400).json({ success: false, error: 'API key must be at least 8 characters' });
   }
+  const cleanKey = apiKey.trim();
+  const selectedModel = (model || 'gemini-2.5-flash').trim();
+
+  let pgClient: Client | null = null;
+  let savedRecord = null;
   try {
-    await SetupService.updateGeminiApiKey(apiKey.trim(), model);
-    return res.json({ success: true, apiKey: apiKey.trim(), model: model || 'gemini-2.5-flash', configured: true });
+    pgClient = await getPgClient();
+    if (pgClient) {
+      // Ensure table exists
+      await pgClient.query(`
+        CREATE TABLE IF NOT EXISTS gemini_api_config (
+          id VARCHAR(64) PRIMARY KEY,
+          api_key TEXT NOT NULL,
+          model VARCHAR(64) DEFAULT 'gemini-2.5-flash',
+          status VARCHAR(64) DEFAULT 'ACTIVE',
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+      `);
+
+      // Execute SQL UPSERT: INSERT ... ON CONFLICT (id) DO UPDATE ... RETURNING *
+      const upsertResult = await pgClient.query(`
+        INSERT INTO gemini_api_config (id, api_key, model, status, updated_at)
+        VALUES ('default', $1, $2, 'ACTIVE', NOW())
+        ON CONFLICT (id) DO UPDATE
+        SET api_key = EXCLUDED.api_key,
+            model = COALESCE(EXCLUDED.model, gemini_api_config.model),
+            status = 'ACTIVE',
+            updated_at = NOW()
+        RETURNING id, api_key, model, status, updated_at;
+      `, [cleanKey, selectedModel]);
+
+      if (upsertResult.rows && upsertResult.rows.length > 0) {
+        savedRecord = upsertResult.rows[0];
+      }
+    }
+  } catch (err: any) {
+    console.error('[Setup Routes] Failed to UPSERT into gemini_api_config:', err);
+  } finally {
+    if (pgClient) {
+      try { await pgClient.end(); } catch {}
+    }
+  }
+
+  // Update in-memory runtime environment variable for active node process
+  process.env.GEMINI_API_KEY = cleanKey;
+
+  if (savedRecord) {
+    return res.json({
+      success: true,
+      message: '✓ Gemini API Key successfully saved and persisted in PostgreSQL database (gemini_api_config)!',
+      apiKey: savedRecord.api_key,
+      model: savedRecord.model,
+      status: savedRecord.status,
+      updatedAt: savedRecord.updated_at,
+      configured: true
+    });
+  }
+
+  // Fallback if PG pooler was unreachable: try SetupService
+  try {
+    await SetupService.updateGeminiApiKey(cleanKey, selectedModel);
+    return res.json({
+      success: true,
+      message: '✓ Gemini API Key updated successfully.',
+      apiKey: cleanKey,
+      model: selectedModel,
+      configured: true
+    });
   } catch (e: any) {
-    return res.status(500).json({ success: false, error: e.message });
+    return res.status(500).json({ success: false, error: e.message || 'Database error saving Gemini API key' });
+  }
+});
+
+setupRouter.post('/gemini-key/test', async (req, res) => {
+  let keyToTest = (req.body?.apiKey || '').trim();
+  const selectedModel = (req.body?.model || 'gemini-2.5-flash').trim();
+
+  if (!keyToTest) {
+    // Attempt to read from PostgreSQL database
+    let pgClient: Client | null = null;
+    try {
+      pgClient = await getPgClient();
+      if (pgClient) {
+        const dbRes = await pgClient.query(`SELECT api_key FROM gemini_api_config WHERE id = 'default' LIMIT 1;`);
+        if (dbRes.rows && dbRes.rows.length > 0) {
+          keyToTest = dbRes.rows[0].api_key;
+        }
+      }
+    } catch {} finally {
+      if (pgClient) {
+        try { await pgClient.end(); } catch {}
+      }
+    }
+    if (!keyToTest) {
+      keyToTest = (process.env.GEMINI_API_KEY || '').trim();
+    }
+  }
+
+  if (!keyToTest || keyToTest.length < 8) {
+    return res.status(400).json({ success: false, valid: false, error: 'No valid Gemini API key found to test.' });
+  }
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${keyToTest}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      const errText = await response.text();
+      return res.status(response.status).json({
+        success: false,
+        valid: false,
+        error: `Google API rejected the key (${response.status}): ${errText.slice(0, 150)}`
+      });
+    }
+    const data = await response.json();
+    return res.json({
+      success: true,
+      valid: true,
+      model: selectedModel,
+      message: `Successfully connected to Google Gemini AI! Available models: ${data.models?.length || 0}`
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, valid: false, error: err?.message || 'Network error connecting to Google AI' });
   }
 });
 

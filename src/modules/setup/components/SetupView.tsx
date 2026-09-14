@@ -63,12 +63,13 @@ import { WhatsAppConfigEngine } from './WhatsAppConfigEngine.tsx';
 import { PaymentGatewayModal } from './PaymentGatewayModal.tsx';
 import { SocialSocketsModal } from './SocialSocketsModal.tsx';
 import { ModuleMaintenanceSwitchboard } from './ModuleMaintenanceSwitchboard.tsx';
+import { GeminiApiConfigCard } from './GeminiApiConfigCard.tsx';
 import { Zap } from 'lucide-react';
 import { CompanyProfileService } from '../../../services/companyProfileService.ts';
 import { SetupService } from '../../../services/setupService.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 
-export type SetupSubTab = 'profile' | 'maintenance' | 'payment_gateways' | 'live_multicast_sockets' | 'banks' | 'pos_terminal' | 'bale_qr' | 'currency' | 'categories' | 'sizes' | 'items' | 'brands' | 'labels' | 'shops' | 'whatsapp' | 'security';
+export type SetupSubTab = 'profile' | 'ai_vision' | 'maintenance' | 'payment_gateways' | 'live_multicast_sockets' | 'banks' | 'pos_terminal' | 'bale_qr' | 'currency' | 'categories' | 'sizes' | 'items' | 'brands' | 'labels' | 'shops' | 'whatsapp' | 'security';
 
 const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
@@ -125,12 +126,12 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       const urlParams = new URLSearchParams(window.location.search);
       let sub = urlParams.get('setupSubTab') as any;
       if (sub === 'social_sockets' || sub === 'live_stream') sub = 'live_multicast_sockets';
-      if (sub && ['profile', 'maintenance', 'payment_gateways', 'live_multicast_sockets', 'banks', 'pos_terminal', 'currency', 'categories', 'sizes', 'items', 'brands', 'labels', 'shops', 'whatsapp', 'bale_qr', 'security'].includes(sub)) {
+      if (sub && ['profile', 'ai_vision', 'maintenance', 'payment_gateways', 'live_multicast_sockets', 'banks', 'pos_terminal', 'currency', 'categories', 'sizes', 'items', 'brands', 'labels', 'shops', 'whatsapp', 'bale_qr', 'security'].includes(sub)) {
         return sub;
       }
       let saved = localStorage.getItem('vintage_setup_subtab') as any;
       if (saved === 'social_sockets' || saved === 'live_stream') saved = 'live_multicast_sockets';
-      if (saved && ['profile', 'maintenance', 'payment_gateways', 'live_multicast_sockets', 'banks', 'pos_terminal', 'currency', 'categories', 'sizes', 'items', 'brands', 'labels', 'shops', 'whatsapp', 'bale_qr', 'security'].includes(saved)) {
+      if (saved && ['profile', 'ai_vision', 'maintenance', 'payment_gateways', 'live_multicast_sockets', 'banks', 'pos_terminal', 'currency', 'categories', 'sizes', 'items', 'brands', 'labels', 'shops', 'whatsapp', 'bale_qr', 'security'].includes(saved)) {
         return saved;
       }
     } catch {}
@@ -1094,6 +1095,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         <div className="flex items-center gap-1.5 overflow-x-auto flex-wrap">
           {[
             { id: 'profile', label: 'Company Profile', icon: <Building2 className="w-3.5 h-3.5" /> },
+            { id: 'ai_vision', label: 'Google Gemini AI Config', icon: <Sparkles className="w-3.5 h-3.5 text-purple-600" /> },
             { id: 'maintenance', label: 'Maintenance Mode', icon: <Wrench className="w-3.5 h-3.5 text-amber-500" /> },
             { id: 'payment_gateways', label: 'Payment Gateway (Apple Pay / Stripe)', icon: <Zap className="w-3.5 h-3.5 text-amber-500" /> },
             { id: 'live_multicast_sockets', label: 'Live Multicast & Social Sockets Hub', icon: <Radio className="w-3.5 h-3.5 text-red-500" /> },
@@ -1595,6 +1597,18 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               showMsg={showMsg}
             />
           </div>
+
+          {/* Embedded Google Gemini AI & Neural Vision OCR Card in Profile */}
+          <div className="mt-6 pt-5 border-t border-slate-200">
+            <GeminiApiConfigCard onNotify={showMsg} />
+          </div>
+        </div>
+      )}
+
+      {/* DEDICATED GOOGLE GEMINI AI OCR & VALUATION TAB */}
+      {subTab === 'ai_vision' && (
+        <div className="animate-in fade-in duration-200">
+          <GeminiApiConfigCard onNotify={showMsg} />
         </div>
       )}
 

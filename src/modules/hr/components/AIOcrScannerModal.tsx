@@ -96,6 +96,8 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
   const [serverKeyConfigured, setServerKeyConfigured] = useState(false);
   const [testingKey, setTestingKey] = useState(false);
   const [keyTestResult, setKeyTestResult] = useState<{ valid?: boolean; message?: string } | null>(null);
+  const [isSavingKey, setIsSavingKey] = useState(false);
+  const [saveKeyFeedback, setSaveKeyFeedback] = useState<{ success?: boolean; message?: string } | null>(null);
 
   // Scanning status & result
   const [isScanning, setIsScanning] = useState(false);
@@ -110,62 +112,79 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
   const residencyInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // 1. Check local storage
     const saved = localStorage.getItem('vintage_gemini_api_key') || '';
     if (saved) {
-      setStoredApiKey(saved);
       setApiKeyInput(saved);
+      setStoredApiKey(saved);
     }
 
-    // Load API key from PostgreSQL database
+    // 2. Check server-side SQL database (gemini_api_config)
     fetch('/api/setup/gemini-key')
       .then(r => (r.ok ? r.json() : null))
       .then(res => {
-        if (res && res.success && res.apiKey) {
-          setStoredApiKey(res.apiKey);
-          setApiKeyInput(res.apiKey);
-          localStorage.setItem('vintage_gemini_api_key', res.apiKey);
+        if (res?.success && res.apiKey) {
           setServerKeyConfigured(true);
-        } else if (saved) {
-          // If browser has a saved key, automatically sync it to PostgreSQL
-          fetch('/api/setup/gemini-key', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ apiKey: saved })
-          }).catch(() => {});
+          if (!saved) {
+            setApiKeyInput(res.apiKey);
+            setStoredApiKey(res.apiKey);
+            localStorage.setItem('vintage_gemini_api_key', res.apiKey);
+          }
         }
-      })
-      .catch(() => {});
-
-    // Check server status
-    fetch('/api/hr/ocr/status')
-      .then(r => r.json())
-      .then(res => {
-        if (res?.configured) setServerKeyConfigured(true);
       })
       .catch(() => {});
   }, []);
 
   if (!isOpen) return null;
 
-  const handleSaveApiKey = () => {
+  const handleSaveApiKey = async () => {
     const trimmed = apiKeyInput.trim();
-    localStorage.setItem('vintage_gemini_api_key', trimmed);
-    setStoredApiKey(trimmed);
-    setShowKeyModal(false);
+    if (!trimmed || trimmed.length < 8) {
+      setSaveKeyFeedback({
+        success: false,
+        message: 'Please enter a valid Gemini API key (at least 8 characters).'
+      });
+      return;
+    }
 
-    // Persist to PostgreSQL database table gemini_api_config
-    fetch('/api/setup/gemini-key', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ apiKey: trimmed })
-    })
-      .then(r => r.json())
-      .then(res => {
-        if (res?.success) {
-          setServerKeyConfigured(true);
-        }
-      })
-      .catch(err => console.warn('Failed to sync Gemini API key to SQL:', err));
+    setIsSavingKey(true);
+    setSaveKeyFeedback(null);
+
+    try {
+      localStorage.setItem('vintage_gemini_api_key', trimmed);
+      setStoredApiKey(trimmed);
+
+      // Persist to PostgreSQL database table gemini_api_config via UPSERT
+      const res = await fetch('/api/setup/gemini-key', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: trimmed, model: 'gemini-2.5-flash' })
+      });
+      const data = await res.json();
+      if (res.ok && data?.success) {
+        setServerKeyConfigured(true);
+        setSaveKeyFeedback({
+          success: true,
+          message: '✓ Gemini API Key successfully saved and persisted in PostgreSQL database (gemini_api_config)!'
+        });
+        setTimeout(() => {
+          setShowKeyModal(false);
+          setSaveKeyFeedback(null);
+        }, 1600);
+      } else {
+        setSaveKeyFeedback({
+          success: false,
+          message: data?.error || 'Failed to persist API key to PostgreSQL database.'
+        });
+      }
+    } catch (err: any) {
+      setSaveKeyFeedback({
+        success: false,
+        message: err?.message || 'Network error saving API key to database.'
+      });
+    } finally {
+      setIsSavingKey(false);
+    }
   };
 
   const handleTestApiKey = async () => {
@@ -1017,10 +1036,26 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                 </div>
               )}
 
+              {/* Database Save Feedback Notification */}
+              {saveKeyFeedback && (
+                <div className={`p-2.5 rounded-lg text-xs flex items-start gap-2 border ${
+                  saveKeyFeedback.success 
+                    ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                    : 'bg-rose-50 border-rose-300 text-rose-800'
+                }`}>
+                  {saveKeyFeedback.success ? (
+                    <CheckCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  )}
+                  <span className="text-[11px] leading-relaxed font-semibold">{saveKeyFeedback.message}</span>
+                </div>
+              )}
+
               <div className="flex justify-between items-center gap-2 pt-2 border-t border-slate-200">
                 <button
                   type="button"
-                  disabled={testingKey || !apiKeyInput.trim()}
+                  disabled={testingKey || isSavingKey || !apiKeyInput.trim()}
                   onClick={handleTestApiKey}
                   className="px-3 py-1.5 rounded bg-slate-100 hover:bg-blue-50 text-blue-700 border border-slate-300 hover:border-blue-300 font-bold text-xs flex items-center gap-1.5 disabled:opacity-50 transition-all"
                 >
@@ -1040,18 +1075,29 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                 <div className="flex gap-2">
                   <button
                     type="button"
+                    disabled={isSavingKey}
                     onClick={() => setShowKeyModal(false)}
-                    className="px-3 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
+                    className="px-3 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs disabled:opacity-50"
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
+                    disabled={isSavingKey || !apiKeyInput.trim()}
                     onClick={handleSaveApiKey}
-                    className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs flex items-center gap-1.5"
+                    className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs flex items-center gap-1.5 disabled:opacity-50"
                   >
-                    <Check className="w-3.5 h-3.5" />
-                    <span>Save API Key</span>
+                    {isSavingKey ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                        <span>Saving to SQL...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Save to SQL Database</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>

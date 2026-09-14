@@ -331,19 +331,41 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
     }
   };
 
-  const handleSaveApiKey = () => {
+  const [isSavingKey, setIsSavingKey] = useState(false);
+  const [keyToastMessage, setKeyToastMessage] = useState('');
+
+  const handleSaveApiKey = async () => {
     const trimmed = geminiApiKeyInput.trim();
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('vintage_gemini_api_key', trimmed);
+    if (!trimmed || trimmed.length < 8) {
+      setKeyToastMessage('Please enter a valid Gemini API key (at least 8 characters).');
       setKeySavedToast(true);
-      setTimeout(() => setKeySavedToast(false), 2500);
+      setTimeout(() => setKeySavedToast(false), 3000);
+      return;
     }
-    if (trimmed) {
-      fetch('/api/setup/gemini-key', {
+
+    setIsSavingKey(true);
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('vintage_gemini_api_key', trimmed);
+      }
+
+      const res = await fetch('/api/setup/gemini-key', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: trimmed })
-      }).catch(err => console.warn('Could not sync Gemini key to SQL:', err));
+        body: JSON.stringify({ apiKey: trimmed, model: 'gemini-2.5-flash' })
+      });
+      const data = await res.json();
+      if (res.ok && data?.success) {
+        setKeyToastMessage('✓ Gemini API Key successfully saved and persisted in PostgreSQL database (gemini_api_config)!');
+      } else {
+        setKeyToastMessage(data?.error || 'Failed to persist API key to PostgreSQL database.');
+      }
+    } catch (err: any) {
+      setKeyToastMessage(err?.message || 'Network error saving API key to database.');
+    } finally {
+      setIsSavingKey(false);
+      setKeySavedToast(true);
+      setTimeout(() => setKeySavedToast(false), 3500);
     }
   };
 
@@ -423,15 +445,16 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
               />
               <button
                 type="button"
+                disabled={isSavingKey}
                 onClick={handleSaveApiKey}
-                className="btn-3d btn-3d-amber text-xs py-1 px-3"
+                className="btn-3d btn-3d-amber text-xs py-1 px-3 disabled:opacity-50"
               >
-                Save
+                {isSavingKey ? 'Saving to SQL...' : 'Save to SQL'}
               </button>
             </div>
             {keySavedToast && (
-              <p className="text-[11px] text-emerald-400 font-semibold">
-                ✓ Gemini API Key saved to browser!
+              <p className={`text-[11px] font-semibold ${keyToastMessage.includes('✓') ? 'text-emerald-400' : 'text-amber-400'}`}>
+                {keyToastMessage}
               </p>
             )}
           </div>
