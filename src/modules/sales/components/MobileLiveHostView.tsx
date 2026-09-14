@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useSync } from '../../../context/SyncContext.tsx';
+import { LiveStreamService, BoothSocialChannel } from '../../../services/liveStreamService.ts';
 import { RTMPDestination, LiveStudioComment, BoothSession } from '../../../server/streamController.ts';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
 import { SalesInvoice } from '../sales.types.ts';
@@ -34,7 +35,14 @@ import {
   VolumeX,
   RefreshCw,
   Copy,
-  Check
+  Check,
+  ShieldCheck,
+  KeyRound,
+  ExternalLink,
+  Phone,
+  Smartphone,
+  Globe,
+  Shield
 } from 'lucide-react';
 
 interface MobileLiveHostViewProps {
@@ -68,10 +76,28 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [uptimeSeconds, setUptimeSeconds] = useState<number>(1840);
   const [connectionStatus, setConnectionStatus] = useState<'LIVE' | 'CONNECTING' | 'OFFLINE'>('LIVE');
 
-  // Multi-Platform Multicast Destinations
-  const [destinations, setDestinations] = useState<RTMPDestination[]>([]);
-  const [showRtmpModal, setShowRtmpModal] = useState<boolean>(false);
-  const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
+  // Multi-Platform Social Channels & Headless Ingestion
+  const [socialChannels, setSocialChannels] = useState<BoothSocialChannel[]>([]);
+  const [showChannelModal, setShowChannelModal] = useState<boolean>(false);
+  const [isHeadlessLive, setIsHeadlessLive] = useState<boolean>(false);
+  const [isTogglingHeadless, setIsTogglingHeadless] = useState<boolean>(false);
+  const [otpInputs, setOtpInputs] = useState<Record<string, string>>({});
+  const [isSubmittingOtp, setIsSubmittingOtp] = useState<Record<string, boolean>>({});
+  const [isAuthenticatingChannel, setIsAuthenticatingChannel] = useState<Record<string, boolean>>({});
+  const [channelFeedback, setChannelFeedback] = useState<{ platform: string; message: string; isError?: boolean } | null>(null);
+
+  // WhatsApp 1-Click Dispatch Hub
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState<boolean>(false);
+  const [activeWhatsAppPayload, setActiveWhatsAppPayload] = useState<{
+    customerPhone: string;
+    buyerHandle: string;
+    invoiceNo: string;
+    barcode: string;
+    priceAed: number;
+    message: string;
+  } | null>(null);
+  const [isDispatchingWhatsApp, setIsDispatchingWhatsApp] = useState<boolean>(false);
+  const [whatsAppFeedback, setWhatsAppFeedback] = useState<{ success: boolean; message: string; waMeLink?: string } | null>(null);
 
   // Unified Chat & Fast Claims
   const [comments, setComments] = useState<LiveStudioComment[]>([]);
@@ -161,47 +187,23 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   // Load Booth Data
   const loadBoothData = useCallback(async () => {
     try {
-      const normId = currentBoothId.replace('-0', '-');
-      const [boothRes, allRes, piecesRes, commentsRes, boothConfigRes] = await Promise.all([
+      const [boothRes, allRes, piecesRes, commentsRes, channels] = await Promise.all([
         fetch(`/api/live/booths/${currentBoothId}`),
         fetch('/api/live/booths'),
         fetch('/api/purchase/pieces'),
         fetch(`/api/live/booths/${currentBoothId}/comments`),
-        fetch(`/api/setup/live-booths/${normId}`).catch(() => null)
+        LiveStreamService.getBoothSocialChannels(currentBoothId).catch(() => [])
       ]);
 
-      let boothConfig: any = null;
-      if (boothConfigRes && boothConfigRes.ok) {
-        try {
-          boothConfig = await boothConfigRes.json();
-        } catch {}
+      if (Array.isArray(channels)) {
+        setSocialChannels(channels);
+        const anyBroadcasting = channels.some(c => c.stream_status === 'LIVE');
+        setIsHeadlessLive(anyBroadcasting);
       }
 
       if (boothRes.ok) {
         const b = await boothRes.json();
         setBooth(b);
-        if (b && Array.isArray(b.destinations)) {
-          if (boothConfig) {
-            const synced = (b.destinations || []).map((d: any) => {
-              if (d.platform === 'tiktok' && boothConfig.tikTokStreamKey) {
-                return { ...d, streamKey: boothConfig.tikTokStreamKey, enabled: boothConfig.autoRelayToTikTok };
-              }
-              if (d.platform === 'instagram' && boothConfig.instagramStreamKey) {
-                return { ...d, streamKey: boothConfig.instagramStreamKey, enabled: boothConfig.autoRelayToInstagram };
-              }
-              if (d.platform === 'facebook' && boothConfig.facebookStreamKey) {
-                return { ...d, streamKey: boothConfig.facebookStreamKey, enabled: boothConfig.autoRelayToFacebook };
-              }
-              if (d.platform === 'youtube' && boothConfig.youTubeStreamKey) {
-                return { ...d, streamKey: boothConfig.youTubeStreamKey, enabled: boothConfig.autoRelayToYouTube };
-              }
-              return d;
-            });
-            setDestinations(synced);
-          } else {
-            setDestinations(b.destinations);
-          }
-        }
         if (b.viewerCount) setLiveViewers(b.viewerCount);
       }
 
@@ -468,6 +470,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         });
       } else {
         playSaleChime();
+        if (data.whatsAppPayload) {
+          setActiveWhatsAppPayload(data.whatsAppPayload);
+        }
         setSaleResultBanner({
           type: 'success',
           title: 'SOLD & POSTED TO GENERAL LEDGER!',
@@ -498,6 +503,133 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       });
     } finally {
       setIsProcessingSale(false);
+    }
+  };
+
+  // Headless Social Channel Authentication
+  const handleAuthenticatePlatform = async (platform: string) => {
+    setIsAuthenticatingChannel(prev => ({ ...prev, [platform]: true }));
+    setChannelFeedback(null);
+    try {
+      const res = await LiveStreamService.authenticateSocialChannel(currentBoothId, platform);
+      if (res.requiresOtp) {
+        setChannelFeedback({
+          platform,
+          message: '🔐 2FA challenge triggered! Please enter the 6-digit OTP code below.',
+          isError: false
+        });
+      } else if (res.success) {
+        setChannelFeedback({
+          platform,
+          message: `✅ ${platform.toUpperCase()} session active and authenticated via stealth browser!`,
+          isError: false
+        });
+      } else {
+        setChannelFeedback({
+          platform,
+          message: res.error || 'Authentication failed. Please check credentials in Setup Hub.',
+          isError: true
+        });
+      }
+      const updated = await LiveStreamService.getBoothSocialChannels(currentBoothId);
+      setSocialChannels(updated);
+    } catch (err: any) {
+      setChannelFeedback({
+        platform,
+        message: err.message || 'Error connecting to headless worker.',
+        isError: true
+      });
+    } finally {
+      setIsAuthenticatingChannel(prev => ({ ...prev, [platform]: false }));
+    }
+  };
+
+  // Submit 2FA OTP Code
+  const handleSubmitOtp = async (platform: string) => {
+    const code = otpInputs[platform]?.trim();
+    if (!code) {
+      setChannelFeedback({
+        platform,
+        message: 'Please enter the 6-digit verification code.',
+        isError: true
+      });
+      return;
+    }
+    setIsSubmittingOtp(prev => ({ ...prev, [platform]: true }));
+    try {
+      const res = await LiveStreamService.submitChannelOtp(currentBoothId, platform, code);
+      if (res.success) {
+        setChannelFeedback({
+          platform,
+          message: `🎉 2FA verified successfully! ${platform.toUpperCase()} session cookies persisted.`,
+          isError: false
+        });
+        setOtpInputs(prev => ({ ...prev, [platform]: '' }));
+      } else {
+        setChannelFeedback({
+          platform,
+          message: res.error || 'Invalid OTP code. Please try again.',
+          isError: true
+        });
+      }
+      const updated = await LiveStreamService.getBoothSocialChannels(currentBoothId);
+      setSocialChannels(updated);
+    } catch (err: any) {
+      setChannelFeedback({
+        platform,
+        message: err.message || 'Failed to submit OTP to worker.',
+        isError: true
+      });
+    } finally {
+      setIsSubmittingOtp(prev => ({ ...prev, [platform]: false }));
+    }
+  };
+
+  // Headless Stream Broadcast Toggle across all platforms
+  const handleToggleHeadlessBroadcast = async () => {
+    setIsTogglingHeadless(true);
+    try {
+      if (isHeadlessLive) {
+        await LiveStreamService.stopHeadlessStream(currentBoothId);
+        setIsHeadlessLive(false);
+      } else {
+        await LiveStreamService.startHeadlessStream(currentBoothId, {
+          streamFeedUrl: `https://vintage-vibes-erp-production.up.railway.app/live/${currentBoothId}.m3u8`
+        });
+        setIsHeadlessLive(true);
+      }
+      const updated = await LiveStreamService.getBoothSocialChannels(currentBoothId);
+      setSocialChannels(updated);
+    } catch (e) {
+      console.warn('Toggle headless error:', e);
+    } finally {
+      setIsTogglingHeadless(false);
+    }
+  };
+
+  // 1-Click WhatsApp Dispatch Handler
+  const handleDispatchWhatsApp = async (payloadToDispatch = activeWhatsAppPayload) => {
+    if (!payloadToDispatch) return;
+    setIsDispatchingWhatsApp(true);
+    setWhatsAppFeedback(null);
+    try {
+      const res = await LiveStreamService.dispatchLiveSaleWhatsApp(payloadToDispatch);
+      setWhatsAppFeedback({
+        success: res.success,
+        message: res.dispatchedViaWorker
+          ? '🚀 Order advice dispatched to customer WhatsApp via Railway Persistent Socket!'
+          : '⚡ WhatsApp link ready! Tap below to open chat directly.',
+        waMeLink: res.waMeLink
+      });
+    } catch (err: any) {
+      const clean = (payloadToDispatch.customerPhone || '').replace(/\D/g, '');
+      setWhatsAppFeedback({
+        success: true,
+        message: 'Direct WhatsApp deep link ready.',
+        waMeLink: clean ? `https://wa.me/${clean}?text=${encodeURIComponent(payloadToDispatch.message)}` : undefined
+      });
+    } finally {
+      setIsDispatchingWhatsApp(false);
     }
   };
 
@@ -696,45 +828,95 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             <RefreshCw className="w-4 h-4" />
           </button>
 
-          {/* RTMP Multicast Settings */}
+          {/* Headless Social Channels Settings */}
           <button
-            onClick={() => setShowRtmpModal(true)}
+            onClick={() => setShowChannelModal(true)}
             className="p-2 rounded-lg bg-black/60 backdrop-blur-md border border-white/20 text-slate-300 hover:text-amber-400 active:scale-90 transition-all cursor-pointer relative"
-            title="Multicast RTMP Destinations"
+            title="Headless Social Channels & Stealth Broadcasting"
           >
-            <Radio className="w-4 h-4" />
-            <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full ring-2 ring-black" />
+            <Radio className={`w-4 h-4 ${isHeadlessLive ? 'text-emerald-400 animate-pulse' : 'text-slate-300'}`} />
+            <span
+              className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full ring-2 ring-black ${
+                isHeadlessLive
+                  ? 'bg-emerald-400 animate-ping'
+                  : socialChannels.some(c => c.auth_status === 'LOGGED_IN')
+                  ? 'bg-emerald-500'
+                  : 'bg-amber-500'
+              }`}
+            />
           </button>
         </div>
       </header>
 
-      {/* ================= ONE-TO-MANY MULTICAST VIDEO RELAY STRIP ================= */}
+      {/* ================= ONE-TO-MANY SOCIAL CHANNELS & STEALTH INGESTION STRIP ================= */}
       <div className="relative z-20 px-3 py-1 bg-black/55 backdrop-blur-md border-y border-white/10 flex items-center justify-between overflow-x-auto gap-2 no-scrollbar text-[11px]">
         <div className="flex items-center gap-2 whitespace-nowrap">
-          <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest flex items-center gap-1">
-            <Radio className="w-3 h-3 animate-pulse" /> Relay (4/4):
-          </span>
+          <button
+            onClick={() => setShowChannelModal(true)}
+            className="text-[10px] font-bold text-amber-400 uppercase tracking-widest flex items-center gap-1.5 hover:underline cursor-pointer"
+          >
+            <Radio className={`w-3 h-3 ${isHeadlessLive ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
+            Channels ({socialChannels.filter(c => c.auth_status === 'LOGGED_IN').length}/{socialChannels.length || 4}):
+          </button>
 
-          {/* Destination Badges */}
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 border border-cyan-400/40 text-cyan-300 font-mono">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            TikTok (4.8M)
-          </span>
-
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 border border-blue-500/40 text-blue-300 font-mono">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            Facebook (4.0M)
-          </span>
-
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 border border-pink-500/40 text-pink-300 font-mono">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            Instagram (4.2M)
-          </span>
-
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 border border-red-500/40 text-red-300 font-mono">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            YouTube (6.0M)
-          </span>
+          {/* Dynamic Social Channel Badges */}
+          {socialChannels.length > 0 ? (
+            socialChannels.map(ch => {
+              const isLoggedIn = ch.auth_status === 'LOGGED_IN';
+              const isWaitingOtp = ch.auth_status === 'WAITING_OTP';
+              const isLive = ch.stream_status === 'LIVE' || isHeadlessLive;
+              return (
+                <button
+                  key={ch.id || ch.platform}
+                  onClick={() => setShowChannelModal(true)}
+                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[11px] font-mono transition-all cursor-pointer ${
+                    isLoggedIn
+                      ? 'bg-black/80 border-emerald-500/40 text-emerald-300'
+                      : isWaitingOtp
+                      ? 'bg-amber-950/80 border-amber-400 text-amber-200 animate-pulse'
+                      : 'bg-black/60 border-white/15 text-slate-400'
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isLoggedIn
+                        ? isLive
+                          ? 'bg-emerald-400 animate-ping'
+                          : 'bg-emerald-400'
+                        : isWaitingOtp
+                        ? 'bg-amber-400'
+                        : ch.auth_status === 'AUTHENTICATING'
+                        ? 'bg-blue-400 animate-pulse'
+                        : 'bg-slate-600'
+                    }`}
+                  />
+                  <span className="capitalize font-bold">{ch.platform}</span>
+                  <span className="text-[9px] opacity-75">
+                    {isWaitingOtp ? '2FA OTP' : ch.account_username || 'Standby'}
+                  </span>
+                </button>
+              );
+            })
+          ) : (
+            <>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 border border-cyan-400/40 text-cyan-300 font-mono">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                TikTok
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 border border-blue-500/40 text-blue-300 font-mono">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                Facebook
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 border border-pink-500/40 text-pink-300 font-mono">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                Instagram
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 border border-red-500/40 text-red-300 font-mono">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                YouTube
+              </span>
+            </>
+          )}
         </div>
 
         {/* Audio VU Indicator */}
@@ -774,6 +956,21 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   <p className="text-[10px] font-mono mt-1 text-emerald-300 bg-black/40 p-1.5 rounded">
                     {saleResultBanner.details}
                   </p>
+                )}
+                {activeWhatsAppPayload && saleResultBanner.type === 'success' && (
+                  <div className="mt-2 pt-2 border-t border-emerald-400/30 flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-mono text-emerald-300 flex items-center gap-1">
+                      <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+                      {activeWhatsAppPayload.customerPhone} ({activeWhatsAppPayload.buyerHandle})
+                    </span>
+                    <button
+                      onClick={() => setShowWhatsAppModal(true)}
+                      className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px] rounded-md tracking-wider uppercase flex items-center gap-1 cursor-pointer shadow-md transition-all active:scale-95"
+                    >
+                      <MessageSquare className="w-3 h-3 fill-slate-950" />
+                      Dispatch WhatsApp
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -1106,74 +1303,373 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         </div>
       )}
 
-      {/* ================= RTMP MULTICAST CONFIGURATION MODAL ================= */}
-      {showRtmpModal && (
+      {/* ================= HEADLESS SOCIAL BROADCAST CHANNELS MODAL ================= */}
+      {showChannelModal && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col justify-end sm:justify-center sm:items-center p-0 sm:p-4">
-          <div className="w-full sm:max-w-lg bg-slate-900 border border-white/20 rounded-t-2xl sm:rounded-2xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl">
-            <div className="p-3 border-b border-white/10 flex items-center justify-between">
-              <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                <Radio className="w-4 h-4 text-amber-400" />
-                Backend RTMP Multicast Relay ({currentBoothId.toUpperCase()})
-              </h3>
+          <div className="w-full sm:max-w-xl bg-slate-900 border border-white/20 rounded-t-2xl sm:rounded-2xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+            {/* Header */}
+            <div className="p-3 border-b border-white/10 flex items-center justify-between bg-black/40">
+              <div>
+                <h3 className="font-bold text-sm text-white flex items-center gap-2">
+                  <Radio className={`w-4 h-4 ${isHeadlessLive ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
+                  Social Broadcast Channels ({currentBoothId.toUpperCase()})
+                </h3>
+                <p className="text-[10px] text-slate-400">Direct Account Ingestion & Stealth Headless Live Hub</p>
+              </div>
               <button
-                onClick={() => setShowRtmpModal(false)}
+                onClick={() => setShowChannelModal(false)}
                 className="p-1 rounded-md text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-3 overflow-y-auto space-y-3 text-xs">
-              <p className="text-slate-300 text-xs">
-                The mobile video feed ingests once via WebRTC and is fanned out simultaneously to 4 RTMP destinations. Keys are persistently configured per booth.
-              </p>
-
-              {(destinations || []).map(d => (
-                <div key={d.id} className="p-3 rounded-xl bg-black/50 border border-white/10 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-amber-300 flex items-center gap-2">
-                      {getPlatformBadge(d.platform)}
-                      {d.name}
-                    </span>
-                    <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                      {d.status} • {d.bitrateKbps} kbps
-                    </span>
+            {/* Anti-Ban & Master Headless Stream Controls */}
+            <div className="p-3 bg-slate-950/60 border-b border-white/10 flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                    <ShieldCheck className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="text-[10px] text-slate-400 font-mono">RTMP URL:</span>
-                    <p className="font-mono text-[11px] text-slate-200 truncate">{d.rtmpUrl}</p>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <span className="text-[10px] text-slate-400 font-mono">Stream Key:</span>
-                      <p className="font-mono text-[11px] text-slate-200 truncate">
-                        {d.streamKey.slice(0, 8)}••••••••••••
-                      </p>
+                    <div className="text-[11px] font-bold text-emerald-300 flex items-center gap-1.5">
+                      Stealth Safeguards & Anti-Ban Active
                     </div>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(d.streamKey);
-                        setCopiedKeyId(d.id);
-                        setTimeout(() => setCopiedKeyId(null), 2000);
-                      }}
-                      className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer"
-                    >
-                      {copiedKeyId === d.id ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                      Copy Key
-                    </button>
+                    <p className="text-[10px] text-slate-400">
+                      Persistent Cookies • Human Jitter (1.2s-3.5s) • Masked Browser Fingerprint
+                    </p>
                   </div>
                 </div>
-              ))}
+
+                <button
+                  onClick={handleToggleHeadlessBroadcast}
+                  disabled={isTogglingHeadless}
+                  className={`px-3 py-1.5 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer shadow-lg transition-all active:scale-95 ${
+                    isHeadlessLive
+                      ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse'
+                      : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:brightness-110 text-slate-950'
+                  }`}
+                >
+                  {isTogglingHeadless ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Zap className="w-3.5 h-3.5 fill-current" />
+                  )}
+                  {isHeadlessLive ? 'Stop Broadcast' : 'Go Live Everywhere'}
+                </button>
+              </div>
+
+              {channelFeedback && (
+                <div
+                  className={`p-2 rounded-lg text-xs flex items-center justify-between gap-2 ${
+                    channelFeedback.isError
+                      ? 'bg-rose-950/80 border border-rose-500/50 text-rose-200'
+                      : 'bg-emerald-950/80 border border-emerald-500/50 text-emerald-200'
+                  }`}
+                >
+                  <span>{channelFeedback.message}</span>
+                  <button
+                    onClick={() => setChannelFeedback(null)}
+                    className="text-white/60 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
 
-            <div className="p-3 border-t border-white/10 text-right">
+            {/* Channels List */}
+            <div className="p-3 overflow-y-auto space-y-2.5 text-xs flex-1">
+              {socialChannels.map(ch => {
+                const isLoggedIn = ch.auth_status === 'LOGGED_IN';
+                const isWaitingOtp = ch.auth_status === 'WAITING_OTP';
+                const isAuthenticating = isAuthenticatingChannel[ch.platform];
+                const isSubmitting = isSubmittingOtp[ch.platform];
+
+                return (
+                  <div
+                    key={ch.id || ch.platform}
+                    className={`p-3 rounded-xl border transition-all ${
+                      isWaitingOtp
+                        ? 'bg-amber-950/40 border-amber-400 shadow-md ring-1 ring-amber-400/50'
+                        : isLoggedIn
+                        ? 'bg-black/40 border-emerald-500/30'
+                        : 'bg-black/30 border-white/10'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        {getPlatformBadge(ch.platform)}
+                        <span className="font-bold text-white uppercase text-[11px]">
+                          {ch.platform}
+                        </span>
+                        <span className="text-[11px] font-mono text-amber-300">
+                          {ch.account_username || '@unconfigured'}
+                        </span>
+                      </div>
+
+                      {/* Status Badge */}
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase ${
+                          isLoggedIn
+                            ? 'bg-emerald-900/60 text-emerald-300 border border-emerald-500/40'
+                            : isWaitingOtp
+                            ? 'bg-amber-900/80 text-amber-200 border border-amber-400 animate-pulse'
+                            : ch.auth_status === 'AUTHENTICATING'
+                            ? 'bg-blue-900/60 text-blue-300 border border-blue-500/40'
+                            : 'bg-slate-800 text-slate-400 border border-white/10'
+                        }`}
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            isLoggedIn
+                              ? 'bg-emerald-400'
+                              : isWaitingOtp
+                              ? 'bg-amber-400 animate-ping'
+                              : ch.auth_status === 'AUTHENTICATING'
+                              ? 'bg-blue-400 animate-pulse'
+                              : 'bg-slate-500'
+                          }`}
+                        />
+                        {ch.auth_status}
+                      </span>
+                    </div>
+
+                    {/* 2FA OTP Challenge Interactive Form */}
+                    {isWaitingOtp && (
+                      <div className="my-2 p-2.5 rounded-lg bg-amber-900/30 border border-amber-400/60 space-y-2">
+                        <div className="flex items-center gap-1.5 text-amber-300 text-[11px] font-bold">
+                          <KeyRound className="w-3.5 h-3.5" />
+                          <span>Enter 2-Factor Authentication Code:</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            maxLength={8}
+                            placeholder="e.g. 849201"
+                            value={otpInputs[ch.platform] || ''}
+                            onChange={e =>
+                              setOtpInputs(prev => ({ ...prev, [ch.platform]: e.target.value }))
+                            }
+                            onKeyDown={e => e.key === 'Enter' && handleSubmitOtp(ch.platform)}
+                            className="flex-1 bg-black/80 border border-amber-400 rounded-lg px-2.5 py-1 text-sm font-mono text-amber-300 tracking-widest placeholder-slate-500 focus:outline-hidden"
+                          />
+                          <button
+                            onClick={() => handleSubmitOtp(ch.platform)}
+                            disabled={isSubmitting}
+                            className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-lg cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                          >
+                            {isSubmitting ? 'Verifying...' : 'Verify OTP'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Metadata & Actions */}
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-white/5">
+                      <div className="flex items-center gap-2 font-mono">
+                        <span>
+                          {ch.session_cookies && ch.session_cookies.length > 0
+                            ? '💾 Cookie State Cached'
+                            : 'No Saved Session'}
+                        </span>
+                        {ch.proxy_url && (
+                          <span className="text-slate-500 truncate max-w-[120px]">
+                            Proxy: {ch.proxy_url}
+                          </span>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => handleAuthenticatePlatform(ch.platform)}
+                        disabled={isAuthenticating}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-white font-medium cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                      >
+                        {isAuthenticating ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <ShieldCheck className="w-3 h-3" />
+                        )}
+                        {isLoggedIn ? 'Re-Sync Session' : 'Authenticate'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="p-3 border-t border-white/10 bg-black/40 flex items-center justify-between">
+              <span className="text-[11px] text-slate-400">
+                To update usernames or passwords, use ERP Setup Hub.
+              </span>
               <button
-                onClick={() => setShowRtmpModal(false)}
+                onClick={() => setShowChannelModal(false)}
                 className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-lg cursor-pointer"
               >
-                Close Settings
+                Done
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= WHATSAPP 1-CLICK DISPATCH HUB MODAL ================= */}
+      {showWhatsAppModal && activeWhatsAppPayload && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col justify-end sm:justify-center sm:items-center p-0 sm:p-4">
+          <div className="w-full sm:max-w-lg bg-slate-900 border border-white/20 rounded-t-2xl sm:rounded-2xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+            {/* Header */}
+            <div className="p-3 border-b border-white/10 flex items-center justify-between bg-emerald-950/40">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                  <MessageSquare className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-white">
+                    WhatsApp Order Dispatch Hub
+                  </h3>
+                  <p className="text-[10px] text-emerald-300">
+                    Live Claim Confirmation & Courier Dispatch Advice
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowWhatsAppModal(false)}
+                className="p-1 rounded-md text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-3.5 space-y-3 text-xs overflow-y-auto flex-1">
+              {/* Customer & Invoice Details */}
+              <div className="grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-black/50 border border-white/10">
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-mono">Buyer Handle</span>
+                  <p className="font-bold text-amber-300 text-xs">{activeWhatsAppPayload.buyerHandle}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-mono">Invoice Number</span>
+                  <p className="font-mono text-white text-xs">{activeWhatsAppPayload.invoiceNo}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-mono">SKU Barcode</span>
+                  <p className="font-mono text-emerald-400 text-xs">{activeWhatsAppPayload.barcode}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-mono">Amount Payable</span>
+                  <p className="font-bold text-amber-400 text-xs font-mono">AED {activeWhatsAppPayload.priceAed}</p>
+                </div>
+              </div>
+
+              {/* Customer WhatsApp Number */}
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-mono mb-1">
+                  Customer Phone / WhatsApp:
+                </label>
+                <div className="relative">
+                  <Phone className="w-4 h-4 absolute left-2.5 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={activeWhatsAppPayload.customerPhone}
+                    onChange={e =>
+                      setActiveWhatsAppPayload(prev =>
+                        prev ? { ...prev, customerPhone: e.target.value } : null
+                      )
+                    }
+                    className="w-full pl-8 pr-3 py-2 bg-black/60 border border-white/20 rounded-lg text-xs font-mono text-white focus:outline-hidden focus:border-emerald-400"
+                    placeholder="+971 50 000 0000"
+                  />
+                </div>
+              </div>
+
+              {/* Message Preview */}
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-mono mb-1">
+                  Message Content (Pre-formatted):
+                </label>
+                <textarea
+                  rows={6}
+                  value={activeWhatsAppPayload.message}
+                  onChange={e =>
+                    setActiveWhatsAppPayload(prev =>
+                      prev ? { ...prev, message: e.target.value } : null
+                    )
+                  }
+                  className="w-full p-2.5 bg-black/60 border border-white/20 rounded-lg text-xs font-mono text-emerald-200 leading-relaxed focus:outline-hidden focus:border-emerald-400"
+                />
+              </div>
+
+              {/* Status Feedback */}
+              {whatsAppFeedback && (
+                <div
+                  className={`p-2.5 rounded-xl border text-xs flex flex-col gap-1.5 ${
+                    whatsAppFeedback.success
+                      ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200'
+                      : 'bg-rose-950/80 border-rose-500/60 text-rose-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-bold">
+                    <CheckCircle className="w-4 h-4 text-emerald-400" />
+                    <span>{whatsAppFeedback.message}</span>
+                  </div>
+                  {whatsAppFeedback.waMeLink && (
+                    <a
+                      href={whatsAppFeedback.waMeLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 font-bold text-amber-300 hover:underline pt-1"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      Open in WhatsApp Web / App directly
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="p-3 border-t border-white/10 bg-black/40 flex items-center justify-between gap-2">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(activeWhatsAppPayload.message);
+                  setWhatsAppFeedback({
+                    success: true,
+                    message: '📋 Message copied to clipboard!'
+                  });
+                }}
+                className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                Copy
+              </button>
+
+              <div className="flex items-center gap-2">
+                {whatsAppFeedback?.waMeLink && (
+                  <a
+                    href={whatsAppFeedback.waMeLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Open Chat
+                  </a>
+                )}
+
+                <button
+                  onClick={() => handleDispatchWhatsApp()}
+                  disabled={isDispatchingWhatsApp}
+                  className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:brightness-110 text-slate-950 font-black text-xs uppercase tracking-wider rounded-lg flex items-center gap-1.5 cursor-pointer shadow-lg transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {isDispatchingWhatsApp ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Send className="w-3.5 h-3.5 fill-current" />
+                  )}
+                  {isDispatchingWhatsApp ? 'Dispatching...' : '1-Click Dispatch'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

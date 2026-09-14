@@ -39,7 +39,112 @@ export interface StreamingApiKey {
   updated_at?: string;
 }
 
+export interface BoothSocialChannel {
+  id: string;
+  booth_id: string;
+  platform: 'tiktok' | 'instagram' | 'facebook' | 'youtube' | string;
+  account_username?: string;
+  account_password?: string;
+  session_cookies?: any[];
+  auth_status: 'IDLE' | 'AUTHENTICATING' | 'WAITING_OTP' | 'LOGGED_IN' | 'AUTH_FAILED';
+  last_login_at?: string | null;
+  otp_required?: boolean;
+  proxy_url?: string | null;
+  is_active?: boolean;
+  stream_status?: 'STANDBY' | 'CONNECTING' | 'LIVE' | 'ERROR';
+  metadata?: any;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export class LiveStreamService {
+  public static async getBoothSocialChannels(boothId: string): Promise<BoothSocialChannel[]> {
+    try {
+      const { data, error } = await supabase
+        .from('booth_social_channels')
+        .select('*')
+        .eq('booth_id', boothId)
+        .order('platform');
+
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return data as BoothSocialChannel[];
+      }
+    } catch (e) {
+      console.warn('Supabase fetch channels note:', e);
+    }
+
+    // Fallback through API
+    try {
+      const res = await fetch(`/api/live/booths/${boothId}/channels`);
+      if (res.ok) {
+        const json = await res.json();
+        return json.channels || [];
+      }
+    } catch (_) {}
+
+    return [];
+  }
+
+  public static async saveBoothSocialChannel(channelData: Partial<BoothSocialChannel>): Promise<BoothSocialChannel> {
+    const res = await fetch(`/api/live/booths/${channelData.booth_id}/channels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(channelData)
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to save social channel credentials');
+    }
+    return data.channel;
+  }
+
+  public static async authenticateSocialChannel(
+    boothId: string,
+    platform: string,
+    payload: { username?: string; password?: string; proxyUrl?: string; forceFreshLogin?: boolean } = {}
+  ): Promise<{ success: boolean; status: string; requiresOtp?: boolean; message?: string; error?: string }> {
+    const res = await fetch(`/api/live/booths/${boothId}/channels/${platform}/auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return res.json();
+  }
+
+  public static async submitChannelOtp(
+    boothId: string,
+    platform: string,
+    otpCode: string
+  ): Promise<{ success: boolean; status: string; message?: string; error?: string }> {
+    const res = await fetch(`/api/live/booths/${boothId}/channels/${platform}/otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ otpCode })
+    });
+    return res.json();
+  }
+
+  public static async startHeadlessStream(
+    boothId: string,
+    payload: { streamFeedUrl?: string; resolution?: string } = {}
+  ): Promise<any> {
+    const res = await fetch(`/api/live/booths/${boothId}/stream/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return res.json();
+  }
+
+  public static async stopHeadlessStream(boothId: string): Promise<any> {
+    const res = await fetch(`/api/live/booths/${boothId}/stream/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    return res.json();
+  }
+
   public static async getBooths(): Promise<LiveBooth[]> {
     const { data, error } = await supabase
       .from('live_booths')
@@ -152,6 +257,33 @@ export class LiveStreamService {
       throw new Error(error.message);
     }
     return data;
+  }
+
+  public static async dispatchLiveSaleWhatsApp(payload: {
+    to?: string;
+    customerPhone?: string;
+    message?: string;
+    buyerHandle?: string;
+    invoiceNo?: string;
+    barcode?: string;
+    priceAed?: number;
+  }): Promise<{ success: boolean; dispatchedViaWorker: boolean; waMeLink?: string; message?: string }> {
+    try {
+      const res = await fetch('/api/live/whatsapp/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      return await res.json();
+    } catch (e: any) {
+      const cleanPhone = (payload.to || payload.customerPhone || '').replace(/\D/g, '');
+      return {
+        success: true,
+        dispatchedViaWorker: false,
+        message: 'Network offline, deep link ready',
+        waMeLink: cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(payload.message || '')}` : undefined
+      };
+    }
   }
 }
 export default LiveStreamService;

@@ -251,15 +251,26 @@ export interface LiveBoothStreamConfig {
   enabled: boolean;
   apiKey?: string;
   accountEmail?: string;
-  accountPassword?: string;
-  masterIngestRtmpUrl: string;
-  masterStreamKey: string;
-  // Per-Booth Distinct Social Media Accounts & Stream Keys
+  masterIngestRtmpUrl?: string;
+  masterStreamKey?: string;
+  // Per-Booth Distinct Social Media Accounts & Headless Credentials
+  socialChannels?: Array<{
+    platform: string;
+    account_username?: string;
+    account_password?: string;
+    auth_status?: 'IDLE' | 'AUTHENTICATING' | 'WAITING_OTP' | 'LOGGED_IN' | 'AUTH_FAILED';
+    last_login_at?: string | null;
+    otp_required?: boolean;
+    proxy_url?: string | null;
+  }>;
   tiktokAccountHandle?: string;
+  tiktokAccountPassword?: string;
+  tiktokAuthStatus?: 'IDLE' | 'AUTHENTICATING' | 'WAITING_OTP' | 'LOGGED_IN' | 'AUTH_FAILED';
   tiktokStreamKey?: string;
   tiktokRtmpUrl?: string;
   tiktokSocketConnected?: boolean;
   autoRelayToTikTok: boolean;
+
 
   instagramAccountHandle?: string;
   instagramStreamKey?: string;

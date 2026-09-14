@@ -992,3 +992,28 @@ SET config = jsonb_set(
     '"https://vintage-vibes-erp-production.up.railway.app"'::jsonb
 ),
 updated_at = NOW();
+
+-- ============================================================================
+-- 22. BOOTH SOCIAL CHANNELS & HEADLESS LIVE MULTICAST INGESTION
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.booth_social_channels (
+    id TEXT PRIMARY KEY,
+    booth_id TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    account_username TEXT,
+    account_password TEXT,
+    session_cookies JSONB DEFAULT '[]'::jsonb,
+    auth_status TEXT DEFAULT 'IDLE' CHECK (auth_status IN ('IDLE', 'AUTHENTICATING', 'WAITING_OTP', 'LOGGED_IN', 'AUTH_FAILED')),
+    last_login_at TIMESTAMPTZ,
+    otp_required BOOLEAN DEFAULT false,
+    proxy_url TEXT,
+    is_active BOOLEAN DEFAULT true,
+    stream_status TEXT DEFAULT 'STANDBY',
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT uq_booth_platform UNIQUE (booth_id, platform)
+);
+
+CREATE INDEX IF NOT EXISTS idx_booth_social_booth_id ON public.booth_social_channels(booth_id);
+CREATE INDEX IF NOT EXISTS idx_booth_social_platform ON public.booth_social_channels(platform);

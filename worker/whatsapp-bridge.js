@@ -19,6 +19,7 @@ import makeWASocket, {
   delay,
   Browsers
 } from '@whiskeysockets/baileys';
+import { headlessRouter } from './headless-live-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,6 +27,12 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
+
+// Mount Headless Live Ingestion & Anti-Ban Social Automation Engine
+app.use('/api/booth/social', headlessRouter);
+app.use('/api/booth', headlessRouter);
+app.use('/api/worker/headless', headlessRouter);
+
 
 const PORT = process.env.PORT || 3001;
 const AUTH_DIR = process.env.AUTH_DIR || path.join(__dirname, 'baileys_auth');

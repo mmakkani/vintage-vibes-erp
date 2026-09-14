@@ -167,6 +167,8 @@ async function startServer() {
   app.use('/api/audit', auditRouter);
   app.use('/api/live-stream', liveStreamingRouter);
   app.use('/api/live', liveStreamingRouter);
+  app.use('/api/booth', liveStreamingRouter);
+
   app.use('/api/payments', paymentRouter);
   app.use('/api/webhooks', paymentRouter);
   app.use('/api/marketing', marketingRouter);
