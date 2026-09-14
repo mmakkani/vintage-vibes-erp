@@ -117,7 +117,7 @@ export async function validateGeminiApiKey(apiKey: string): Promise<{ valid: boo
 
   const cleanKey = apiKey.trim();
   // Universally supported active production Google Gemini models
-  const models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+  const models = ['gemini-3.6', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash'];
   let lastError = '';
 
   for (const model of models) {
@@ -163,7 +163,7 @@ export async function validateGeminiApiKey(apiKey: string): Promise<{ valid: boo
  * Executes direct Gemini Vision API call from browser
  */
 async function callGeminiVisionApi(apiKey: string, parts: any[]): Promise<any> {
-  const models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+  const models = ['gemini-3.6', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash'];
   let lastError: any = null;
 
   for (const model of models) {

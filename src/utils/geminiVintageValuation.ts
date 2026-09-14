@@ -109,7 +109,7 @@ Return ONLY a pure JSON object matching this schema without markdown codeblocks 
  * Direct Gemini 3.6 / 2.5 Flash Vision browser execution
  */
 async function callGeminiVisionAppraisal(apiKey: string, imageBase64: string): Promise<VintageValuationResult> {
-  const models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+  const models = ['gemini-3.6', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash'];
   const mime = detectMime(imageBase64);
   const data = cleanBase64(imageBase64);
 
