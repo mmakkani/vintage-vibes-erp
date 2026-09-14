@@ -157,12 +157,13 @@ export default function App() {
       if (viewParam === 'login') return 'login';
       if (viewParam === 'storefront') return 'storefront';
 
-      // If user specifically has tab param or active ERP session flag, open ERP
-      if (urlParams.has('tab')) return 'erp';
+      // If user specifically has tab param and an active authenticated session, open ERP
+      const hasActiveSession = !!localStorage.getItem('vintage_erp_logged_user');
+      if (urlParams.has('tab') && hasActiveSession) return 'erp';
       const lastSessionMode = localStorage.getItem('vintage_app_view_mode');
       if (lastSessionMode === 'pos-standalone') return 'pos-standalone';
       if (lastSessionMode === 'staff-mobile') return 'staff-mobile';
-      if (lastSessionMode === 'erp' && localStorage.getItem('vintage_erp_logged_user')) {
+      if (lastSessionMode === 'erp' && hasActiveSession) {
         return 'erp';
       }
     } catch {}
@@ -185,7 +186,13 @@ export default function App() {
   const handleLogout = (timeoutReason?: any) => {
     try {
       localStorage.removeItem('vintage_erp_logged_user');
+      localStorage.removeItem('vintage_erp_active_tab');
       localStorage.setItem('vintage_app_view_mode', 'storefront');
+      // Clean address bar so ?tab=dashboard is removed and user doesn't bounce back
+      const url = new URL(window.location.href);
+      url.searchParams.delete('tab');
+      url.searchParams.delete('view');
+      window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
     } catch {}
     if (typeof timeoutReason === 'string') {
       setSessionTimeoutMsg(timeoutReason);
