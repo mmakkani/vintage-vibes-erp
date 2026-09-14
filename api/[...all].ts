@@ -509,18 +509,20 @@ const defaultCurrencies = [
   { code: 'SAR', name: 'Saudi Riyal', symbol: 'SAR', exchangeRate: 1.02, isBase: false }
 ];
 
+const RAILWAY_WORKER_URL = 'https://vintage-vibes-erp-production.up.railway.app';
+
 let whatsappGatewayConfig = {
-  connectionMode: 'META_CLOUD_API' as 'BAILEYS_DIRECT_WEB' | 'META_CLOUD_API' | 'GATEWAY_API',
+  connectionMode: 'BAILEYS_DIRECT_WEB' as 'BAILEYS_DIRECT_WEB' | 'META_CLOUD_API' | 'GATEWAY_API',
   baileysConfig: {
     enabled: true,
     sessionName: 'vintage-vibes-prod',
     autoReconnect: true,
     browserName: 'Vintage Vibes ERP (Production)',
     status: 'READY' as 'READY' | 'PAIRING' | 'CONNECTED' | 'DISCONNECTED',
-    workerBridgeUrl: process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || ''
+    workerBridgeUrl: process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL
   },
   metaCloudConfig: {
-    enabled: true,
+    enabled: false,
     phoneNumberId: process.env.META_PHONE_NUMBER_ID || '',
     wabaId: process.env.META_WABA_ID || '',
     accessToken: process.env.META_ACCESS_TOKEN || '',
@@ -544,6 +546,65 @@ let whatsappGatewayConfig = {
     verifiedAdmin: true
   }
 };
+
+async function getWhatsappGatewayConfigFromDb(): Promise<typeof whatsappGatewayConfig> {
+  const client = await getPgClient();
+  if (!client) return whatsappGatewayConfig;
+  try {
+    const res = await client.query('SELECT config FROM whatsapp_gateway_config WHERE id = $1', ['default']);
+    if (res.rows.length > 0 && res.rows[0].config) {
+      const dbCfg = res.rows[0].config;
+      whatsappGatewayConfig = {
+        ...whatsappGatewayConfig,
+        ...dbCfg,
+        baileysConfig: {
+          ...whatsappGatewayConfig.baileysConfig,
+          ...(dbCfg.baileysConfig || {}),
+          workerBridgeUrl: dbCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL
+        },
+        metaCloudConfig: {
+          ...whatsappGatewayConfig.metaCloudConfig,
+          ...(dbCfg.metaCloudConfig || {})
+        },
+        gatewayConfig: {
+          ...whatsappGatewayConfig.gatewayConfig,
+          ...(dbCfg.gatewayConfig || {})
+        },
+        channelConfig: {
+          ...whatsappGatewayConfig.channelConfig,
+          ...(dbCfg.channelConfig || {})
+        }
+      };
+    }
+  } catch (err) {
+    console.warn('[Serverless WhatsApp Config Load Notice]:', err);
+  } finally {
+    try { await client.end(); } catch (_) {}
+  }
+  return whatsappGatewayConfig;
+}
+
+async function saveWhatsappGatewayConfigToDb(newConfig: typeof whatsappGatewayConfig): Promise<void> {
+  const client = await getPgClient();
+  if (!client) return;
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS whatsapp_gateway_config (
+        id VARCHAR(64) PRIMARY KEY,
+        config JSONB NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      INSERT INTO whatsapp_gateway_config (id, config, updated_at)
+      VALUES ('default', $1, NOW())
+      ON CONFLICT (id) DO UPDATE
+      SET config = $1, updated_at = NOW();
+    `, [JSON.stringify(newConfig)]);
+  } catch (err) {
+    console.warn('[Serverless WhatsApp Config Save Notice]:', err);
+  } finally {
+    try { await client.end(); } catch (_) {}
+  }
+}
 
 let channelsList: WhatsAppChannelItem[] = [
   {
@@ -750,8 +811,9 @@ export default async function handler(req: any, res: any) {
 
     // 1. WhatsApp Session
     if ((pathname.endsWith('/whatsapp/session') || pathname.endsWith('/whatsapp/status')) && method === 'GET') {
+      const currentCfg = await getWhatsappGatewayConfigFromDb();
       const session = getOrCreateSession(userId, userName);
-      const bridgeUrl = whatsappGatewayConfig.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL;
+      const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
       if (bridgeUrl) {
         try {
           const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/status`, { signal: AbortSignal.timeout(3000) });
@@ -775,10 +837,11 @@ export default async function handler(req: any, res: any) {
 
     // 2. Generate Multi-Device QR Code (Tab 4 / QR)
     if ((pathname.endsWith('/whatsapp/generate-qr') || pathname.endsWith('/whatsapp/qr')) && method === 'POST') {
+      const currentCfg = await getWhatsappGatewayConfigFromDb();
       const uId = body.userId || userId;
       const uName = body.userName || userName;
       const session = getOrCreateSession(uId, uName);
-      const bridgeUrl = whatsappGatewayConfig.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL;
+      const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
 
       if (bridgeUrl) {
         try {
@@ -816,6 +879,7 @@ export default async function handler(req: any, res: any) {
 
     // 3. Request 8-Digit Pairing Code (Tab 3 / Pairing)
     if ((pathname.endsWith('/whatsapp/request-pairing-code') || pathname.endsWith('/whatsapp/pair')) && method === 'POST') {
+      const currentCfg = await getWhatsappGatewayConfigFromDb();
       const uId = body.userId || userId;
       const rawPhone = (body.phoneNumber || '').toString();
       const cleanDigits = rawPhone.replace(/\D/g, '');
@@ -828,7 +892,7 @@ export default async function handler(req: any, res: any) {
       }
 
       const session = getOrCreateSession(uId);
-      const bridgeUrl = whatsappGatewayConfig.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL;
+      const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
 
       if (bridgeUrl) {
         try {
@@ -928,9 +992,10 @@ export default async function handler(req: any, res: any) {
     }
 
     if (pathname.endsWith('/whatsapp/disconnect-device') && method === 'POST') {
+      const currentCfg = await getWhatsappGatewayConfigFromDb();
       const uId = body.userId || userId;
       const session = getOrCreateSession(uId);
-      const bridgeUrl = whatsappGatewayConfig.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL;
+      const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
 
       if (bridgeUrl) {
         try {
@@ -960,29 +1025,32 @@ export default async function handler(req: any, res: any) {
     if (pathname.endsWith('/whatsapp/config')) {
       if (method === 'POST' || method === 'PUT') {
         const updates = body;
+        const currentCfg = await getWhatsappGatewayConfigFromDb();
         whatsappGatewayConfig = {
-          ...whatsappGatewayConfig,
+          ...currentCfg,
           ...updates,
           baileysConfig: {
-            ...whatsappGatewayConfig.baileysConfig,
+            ...currentCfg.baileysConfig,
             ...(updates.baileysConfig || {})
           },
           metaCloudConfig: {
-            ...whatsappGatewayConfig.metaCloudConfig,
+            ...currentCfg.metaCloudConfig,
             ...(updates.metaCloudConfig || {})
           },
           gatewayConfig: {
-            ...whatsappGatewayConfig.gatewayConfig,
+            ...currentCfg.gatewayConfig,
             ...(updates.gatewayConfig || {})
           },
           channelConfig: {
-            ...whatsappGatewayConfig.channelConfig,
+            ...currentCfg.channelConfig,
             ...(updates.channelConfig || {})
           }
         };
+        await saveWhatsappGatewayConfigToDb(whatsappGatewayConfig);
         return res.status(200).json(whatsappGatewayConfig);
       }
-      return res.status(200).json(whatsappGatewayConfig);
+      const cfg = await getWhatsappGatewayConfigFromDb();
+      return res.status(200).json(cfg);
     }
 
     // 7. Meta Cloud API Send (Tab 3)
@@ -1054,7 +1122,8 @@ export default async function handler(req: any, res: any) {
 
     // 8. Test Bridge (Tab 4)
     if (pathname.endsWith('/whatsapp/test-bridge') && method === 'POST') {
-      const testUrl = (body.bridgeUrl || '').trim();
+      const currentCfg = await getWhatsappGatewayConfigFromDb();
+      const testUrl = (body.bridgeUrl || currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL).trim();
       if (!testUrl) {
         return res.status(400).json({ success: false, error: 'Bridge URL is required' });
       }

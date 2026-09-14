@@ -62,9 +62,10 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
   const [metaTestPhone, setMetaTestPhone] = useState<string>('');
   const [metaTestMsg, setMetaTestMsg] = useState<string | null>(null);
 
-  // Worker Bridge State (supports VITE_WHATSAPP_WORKER_URL)
-  const envWorkerUrl = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_WHATSAPP_WORKER_URL) || '';
-  const [bridgeUrl, setBridgeUrl] = useState<string>(envWorkerUrl);
+  // Worker Bridge State (supports VITE_WHATSAPP_WORKER_URL & persistent Railway bridge)
+  const RAILWAY_WORKER_BRIDGE_URL = 'https://vintage-vibes-erp-production.up.railway.app';
+  const envWorkerUrl = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_WHATSAPP_WORKER_URL) || RAILWAY_WORKER_BRIDGE_URL;
+  const [bridgeUrl, setBridgeUrl] = useState<string>(envWorkerUrl || RAILWAY_WORKER_BRIDGE_URL);
   const [isSavingBridge, setIsSavingBridge] = useState<boolean>(false);
   const [isTestingBridge, setIsTestingBridge] = useState<boolean>(false);
   const [bridgeTestResult, setBridgeTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
@@ -94,8 +95,8 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
         }
         if (cfg.baileysConfig?.workerBridgeUrl) {
           setBridgeUrl(cfg.baileysConfig.workerBridgeUrl);
-        } else if (envWorkerUrl && !bridgeUrl) {
-          setBridgeUrl(envWorkerUrl);
+        } else {
+          setBridgeUrl(RAILWAY_WORKER_BRIDGE_URL);
         }
       }
     } catch (err) {
@@ -433,7 +434,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
         body: JSON.stringify({
           connectionMode: 'BAILEYS_DIRECT_WEB',
           baileysConfig: {
-            workerBridgeUrl: bridgeUrl.trim()
+            workerBridgeUrl: bridgeUrl.trim() || RAILWAY_WORKER_BRIDGE_URL
           }
         })
       });

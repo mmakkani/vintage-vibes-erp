@@ -1,6 +1,36 @@
 import { Router } from 'express';
+import { Client } from 'pg';
 import { marketingService } from './marketing.service.ts';
 import { baileysManager } from './baileys.service.ts';
+
+const RAILWAY_WORKER_URL = 'https://vintage-vibes-erp-production.up.railway.app';
+
+async function getPgClient(): Promise<Client | null> {
+  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  try {
+    if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
+      dbUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+    }
+    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+    if (match) {
+      let [_, u, rawPwd, host, port, rest] = match;
+      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
+      dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+    }
+    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+    await client.connect();
+    return client;
+  } catch (err) {
+    try {
+      const fallbackUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+      const fallbackClient = new Client({ connectionString: fallbackUrl, ssl: { rejectUnauthorized: false } });
+      await fallbackClient.connect();
+      return fallbackClient;
+    } catch {
+      return null;
+    }
+  }
+}
 
 export const marketingRouter = Router();
 export const publicFeedRouter = Router();
@@ -297,13 +327,69 @@ marketingRouter.post('/whatsapp/disconnect-device', (req, res) => {
   return res.json(session);
 });
 // WhatsApp Gateway & Channel Configuration Endpoints
-marketingRouter.get('/whatsapp/config', (req, res) => {
+marketingRouter.get('/whatsapp/config', async (req, res) => {
+  try {
+    const client = await getPgClient();
+    if (client) {
+      const dbRes = await client.query('SELECT config FROM whatsapp_gateway_config WHERE id = $1', ['default']);
+      await client.end();
+      if (dbRes.rows.length > 0 && dbRes.rows[0].config) {
+        marketingService.updateWhatsAppGatewayConfig(dbRes.rows[0].config);
+      }
+    }
+  } catch (_) {}
   return res.json(marketingService.getWhatsAppGatewayConfig());
 });
 
-marketingRouter.post('/whatsapp/config', (req, res) => {
+marketingRouter.post('/whatsapp/config', async (req, res) => {
   const updated = marketingService.updateWhatsAppGatewayConfig(req.body);
+  try {
+    const client = await getPgClient();
+    if (client) {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS whatsapp_gateway_config (
+          id VARCHAR(64) PRIMARY KEY,
+          config JSONB NOT NULL,
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        INSERT INTO whatsapp_gateway_config (id, config, updated_at)
+        VALUES ('default', $1, NOW())
+        ON CONFLICT (id) DO UPDATE
+        SET config = $1, updated_at = NOW();
+      `, [JSON.stringify(updated)]);
+      await client.end();
+    }
+  } catch (err) {
+    console.warn('[Marketing WhatsApp Config Save Notice]:', err);
+  }
   return res.json(updated);
+});
+
+marketingRouter.post('/whatsapp/test-bridge', async (req, res) => {
+  const currentCfg = marketingService.getWhatsAppGatewayConfig();
+  const testUrl = (req.body.bridgeUrl || currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL).trim();
+  if (!testUrl) {
+    return res.status(400).json({ success: false, error: 'Bridge URL is required' });
+  }
+
+  const start = Date.now();
+  try {
+    const pingResp = await fetch(`${testUrl.replace(/\/$/, '')}/health`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' }
+    });
+    const latencyMs = Date.now() - start;
+    return res.status(200).json({
+      success: pingResp.ok,
+      latencyMs,
+      message: pingResp.ok ? 'External Worker Bridge connection established and healthy!' : `Bridge responded with HTTP ${pingResp.status}`
+    });
+  } catch (err: any) {
+    return res.status(200).json({
+      success: false,
+      error: `Could not reach bridge: ${err?.message || 'Network error'}. Ensure the external server is running and accessible over HTTPS.`
+    });
+  }
 });
 
 // ==================== MULTI-CHANNEL WHATSAPP MANAGEMENT ====================

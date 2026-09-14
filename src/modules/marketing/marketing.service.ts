@@ -1271,10 +1271,11 @@ class MarketingService {
     connectionMode: 'BAILEYS_DIRECT_WEB',
     baileysConfig: {
       enabled: true,
-      sessionName: 'vintage_vibe_dubai_session',
+      sessionName: 'vintage-vibes-prod',
       autoReconnect: true,
-      browserName: 'Ubuntu Chrome 20.0.04',
-      status: 'READY'
+      browserName: 'Vintage Vibes ERP (Production)',
+      status: 'READY',
+      workerBridgeUrl: 'https://vintage-vibes-erp-production.up.railway.app'
     },
     metaCloudConfig: {
       enabled: false,

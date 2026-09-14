@@ -969,3 +969,26 @@ CREATE TABLE IF NOT EXISTS public.hr_ocr_logs (
     raw_response TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ============================================================================
+-- WHATSAPP GATEWAY & PERSISTENT WORKER BRIDGE CONFIGURATION
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.whatsapp_gateway_config (
+    id VARCHAR(64) PRIMARY KEY,
+    config JSONB NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO public.whatsapp_gateway_config (id, config, updated_at)
+VALUES (
+    'default',
+    '{"connectionMode":"BAILEYS_DIRECT_WEB","baileysConfig":{"enabled":true,"sessionName":"vintage-vibes-prod","autoReconnect":true,"browserName":"Vintage Vibes ERP (Production)","status":"READY","workerBridgeUrl":"https://vintage-vibes-erp-production.up.railway.app"},"metaCloudConfig":{},"gatewayConfig":{},"channelConfig":{}}'::jsonb,
+    NOW()
+)
+ON CONFLICT (id) DO UPDATE
+SET config = jsonb_set(
+    COALESCE(whatsapp_gateway_config.config, '{}'::jsonb),
+    '{baileysConfig,workerBridgeUrl}',
+    '"https://vintage-vibes-erp-production.up.railway.app"'::jsonb
+),
+updated_at = NOW();
