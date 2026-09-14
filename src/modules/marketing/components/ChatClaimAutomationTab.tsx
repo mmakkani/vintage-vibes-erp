@@ -28,6 +28,7 @@ import {
 import { AutoClaimKeywordRule, BotResponseTemplate, ChatClaimRecord, WhatsAppVipDropPayload } from '../marketing.types.ts';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
 import { SocialLiveConnectModal } from './SocialLiveConnectModal.tsx';
+import { supabase } from '../../../supabaseClient.ts';
 
 export const ChatClaimAutomationTab: React.FC = () => {
   // Tab Switcher between Auto-Claim Bot & WhatsApp VIP Drops
@@ -96,6 +97,49 @@ export const ChatClaimAutomationTab: React.FC = () => {
 
   useEffect(() => {
     fetchBotConfig();
+
+    // 1. SSE Realtime Listener for Live Claims and Marketing updates
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/events/subscribe');
+      es.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (
+            payload.module === 'MARKETING' ||
+            payload.module === 'SALES' ||
+            payload.entity === 'LIVE_CLAIM' ||
+            payload.entity === 'KEYWORD_RULES' ||
+            payload.entity === 'RESPONSE_TEMPLATE' ||
+            payload.entity === 'MARKETING_DROP'
+          ) {
+            fetchBotConfig();
+          }
+        } catch (_) {}
+      };
+    } catch (_) {}
+
+    // 2. Supabase Realtime channel subscription for instant multi-device claims
+    const channel = supabase
+      .channel('chat-claim-realtime-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_claim_logs' }, () => {
+        fetchBotConfig();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_claim_rules' }, () => {
+        fetchBotConfig();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_bot_templates' }, () => {
+        fetchBotConfig();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_vip_drops' }, () => {
+        fetchBotConfig();
+      })
+      .subscribe();
+
+    return () => {
+      if (es) es.close();
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Save Keyword Rules

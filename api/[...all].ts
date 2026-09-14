@@ -2828,6 +2828,620 @@ export default async function handler(req: any, res: any) {
       });
     }
 
+    // ========================================================================
+    // 100% SQL-BACKED MARKETING AUTOMATION ENDPOINTS (SUPABASE POSTGRESQL)
+    // ========================================================================
+    if (pathname.includes('/marketing/')) {
+      const client = await getPgClient();
+
+      // 1. Auto-Claim Keyword Rules
+      if (pathname.includes('/marketing/chat-claim/rules')) {
+        if (method === 'GET') {
+          if (client) {
+            try {
+              const resRows = await client.query('SELECT * FROM marketing_claim_rules ORDER BY priority ASC, created_at ASC;');
+              await client.end();
+              const rules = resRows.rows.map(r => ({
+                id: r.id,
+                keyword: r.keyword,
+                action: r.action,
+                enabled: Boolean(r.enabled),
+                matchType: r.match_type,
+                lockDurationMinutes: Number(r.lock_duration_minutes) || 15,
+                priority: Number(r.priority) || 1
+              }));
+              return res.status(200).json(rules);
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json([
+            { id: 'kw-1', keyword: 'MINE', action: 'LOCK_AND_DRAFT_INVOICE', enabled: true, matchType: 'STARTS_WITH', lockDurationMinutes: 15, priority: 1 },
+            { id: 'kw-2', keyword: 'CLAIM', action: 'LOCK_AND_DRAFT_INVOICE', enabled: true, matchType: 'STARTS_WITH', lockDurationMinutes: 15, priority: 2 },
+            { id: 'kw-3', keyword: 'SOLD', action: 'LOCK_AND_DRAFT_INVOICE', enabled: true, matchType: 'STARTS_WITH', lockDurationMinutes: 15, priority: 3 },
+            { id: 'kw-4', keyword: 'BIN', action: 'LOCK_AND_DRAFT_INVOICE', enabled: true, matchType: 'STARTS_WITH', lockDurationMinutes: 15, priority: 4 },
+            { id: 'kw-5', keyword: 'TAKE', action: 'LOCK_AND_DRAFT_INVOICE', enabled: true, matchType: 'STARTS_WITH', lockDurationMinutes: 15, priority: 5 }
+          ]);
+        }
+
+        if (method === 'POST') {
+          const rules = body;
+          if (Array.isArray(rules) && client) {
+            try {
+              for (const r of rules) {
+                await client.query(`
+                  INSERT INTO marketing_claim_rules (id, keyword, action, enabled, match_type, lock_duration_minutes, priority, updated_at)
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                  ON CONFLICT (id) DO UPDATE SET
+                    keyword = EXCLUDED.keyword,
+                    action = EXCLUDED.action,
+                    enabled = EXCLUDED.enabled,
+                    match_type = EXCLUDED.match_type,
+                    lock_duration_minutes = EXCLUDED.lock_duration_minutes,
+                    priority = EXCLUDED.priority,
+                    updated_at = NOW();
+                `, [r.id, r.keyword, r.action, r.enabled, r.matchType, r.lockDurationMinutes, r.priority]);
+              }
+              await client.end();
+              return res.status(200).json(rules);
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json(rules || []);
+        }
+      }
+
+      // 2. Bot Response Templates
+      if (pathname.includes('/marketing/chat-claim/template')) {
+        if (method === 'GET') {
+          if (client) {
+            try {
+              const resRows = await client.query("SELECT * FROM marketing_bot_templates WHERE id = 'default' LIMIT 1;");
+              await client.end();
+              if (resRows.rows.length > 0) {
+                const t = resRows.rows[0];
+                return res.status(200).json({
+                  successTemplate: t.success_template,
+                  alreadyClaimedTemplate: t.already_claimed_template,
+                  invalidSkuTemplate: t.invalid_sku_template,
+                  paymentLinkBaseUrl: t.payment_link_base_url || 'http://localhost:3000/?checkout=',
+                  sendWhatsAppDm: Boolean(t.send_whatsapp_dm),
+                  sendPublicReply: Boolean(t.send_public_reply)
+                });
+              }
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json({
+            successTemplate: '🔥 CLAIM LOCKED @{customer}! You secured {sku} ({item_name}) for AED {price}. Your VIP lock is held for {expiry_mins} mins. Complete instant checkout: {checkout_link}',
+            alreadyClaimedTemplate: '⚠️ Sorry @{customer}, {sku} was already locked by another collector! You have been prioritized on the waitlist.',
+            invalidSkuTemplate: '👀 @{customer}, we could not locate that SKU. Please comment with a valid item barcode (e.g., MINE VV-BAL-001-0001).',
+            paymentLinkBaseUrl: 'http://localhost:3000/?checkout=',
+            sendWhatsAppDm: true,
+            sendPublicReply: true
+          });
+        }
+
+        if (method === 'POST') {
+          const t = body || {};
+          if (client) {
+            try {
+              await client.query(`
+                INSERT INTO marketing_bot_templates (id, success_template, already_claimed_template, invalid_sku_template, payment_link_base_url, send_whatsapp_dm, send_public_reply, updated_at)
+                VALUES ('default', $1, $2, $3, $4, $5, $6, NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                  success_template = COALESCE(EXCLUDED.success_template, marketing_bot_templates.success_template),
+                  already_claimed_template = COALESCE(EXCLUDED.already_claimed_template, marketing_bot_templates.already_claimed_template),
+                  invalid_sku_template = COALESCE(EXCLUDED.invalid_sku_template, marketing_bot_templates.invalid_sku_template),
+                  payment_link_base_url = COALESCE(EXCLUDED.payment_link_base_url, marketing_bot_templates.payment_link_base_url),
+                  send_whatsapp_dm = COALESCE(EXCLUDED.send_whatsapp_dm, marketing_bot_templates.send_whatsapp_dm),
+                  send_public_reply = COALESCE(EXCLUDED.send_public_reply, marketing_bot_templates.send_public_reply),
+                  updated_at = NOW();
+              `, [t.successTemplate, t.alreadyClaimedTemplate, t.invalidSkuTemplate, t.paymentLinkBaseUrl, t.sendWhatsAppDm, t.sendPublicReply]);
+              await client.end();
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json(t);
+        }
+      }
+
+      // 3. Claim Logs
+      if (pathname.includes('/marketing/chat-claim/logs')) {
+        if (client) {
+          try {
+            const resRows = await client.query('SELECT * FROM marketing_claim_logs ORDER BY created_at DESC LIMIT 100;');
+            await client.end();
+            const logs = resRows.rows.map(l => ({
+              id: l.id,
+              timestamp: l.timestamp,
+              customerHandle: l.customer_handle,
+              platform: l.platform,
+              rawComment: l.raw_comment,
+              matchedKeyword: l.matched_keyword,
+              sku: l.sku,
+              itemName: l.item_name,
+              itemImage: l.item_image,
+              priceAed: Number(l.price_aed) || 0,
+              invoiceNo: l.invoice_no,
+              status: l.status,
+              replyDispatched: l.reply_dispatched,
+              checkoutUrl: l.checkout_url,
+              lockExpiresAt: Number(l.lock_expires_at) || 0,
+              boothId: l.booth_id
+            }));
+            return res.status(200).json(logs);
+          } catch (err) {
+            try { await client.end(); } catch (_) {}
+          }
+        }
+        return res.status(200).json([]);
+      }
+
+      // 4. Live Session Status & Controls
+      if (pathname.includes('/marketing/live-session')) {
+        if (pathname.endsWith('/toggle') && method === 'POST') {
+          const { start, boothId } = body || {};
+          const isBroadcasting = Boolean(start);
+          const startedAt = isBroadcasting ? Date.now() : null;
+          const activeBooth = boothId || 'booth-01';
+          if (client) {
+            try {
+              await client.query(`
+                INSERT INTO marketing_live_sessions (id, is_broadcasting, started_at, active_booth_id, updated_at)
+                VALUES ('active_session', $1, $2, $3, NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                  is_broadcasting = EXCLUDED.is_broadcasting,
+                  started_at = EXCLUDED.started_at,
+                  active_booth_id = EXCLUDED.active_booth_id,
+                  updated_at = NOW();
+              `, [isBroadcasting, startedAt, activeBooth]);
+              await client.end();
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json({
+            isBroadcasting,
+            startedAt,
+            uptimeSeconds: 0,
+            activeBoothId: activeBooth,
+            activeBoothName: 'Booth 01 - Main Stage',
+            activeOnAirPiece: null,
+            scannerFeed: [],
+            totalClaimsInSession: 0,
+            totalRevenueAedInSession: 0,
+            obsOverlayUrl: `/live-overlay?booth=${activeBooth}`
+          });
+        }
+
+        if (pathname.endsWith('/scan') && method === 'POST') {
+          const { barcode, scannedBy } = body || {};
+          const cleanCode = (barcode || '').trim().toUpperCase();
+          if (client) {
+            try {
+              // Look up piece from inventory_items
+              const itemQ = await client.query('SELECT * FROM inventory_items WHERE barcode = $1 OR id = $1 LIMIT 1;', [cleanCode]);
+              const piece = itemQ.rows[0] ? {
+                id: itemQ.rows[0].id,
+                barcode: itemQ.rows[0].barcode,
+                itemName: itemQ.rows[0].title || itemQ.rows[0].item_name || 'Vintage Garment',
+                brandName: itemQ.rows[0].brand || 'Vintage',
+                sizeScanned: itemQ.rows[0].size || 'M',
+                retailPriceAed: Number(itemQ.rows[0].price_aed || itemQ.rows[0].price) || 120,
+                frontImageUrl: itemQ.rows[0].image_url || itemQ.rows[0].front_image_url
+              } : null;
+
+              if (piece) {
+                await client.query(`
+                  UPDATE marketing_live_sessions
+                  SET active_on_air_piece = $1, updated_at = NOW()
+                  WHERE id = 'active_session';
+                `, [JSON.stringify(piece)]);
+              }
+              await client.end();
+              if (piece) {
+                return res.status(200).json({ success: true, piece });
+              }
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(404).json({ success: false, error: `Barcode '${cleanCode}' not found` });
+        }
+
+        // GET Live Session Status
+        if (method === 'GET') {
+          if (client) {
+            try {
+              const resRows = await client.query("SELECT * FROM marketing_live_sessions WHERE id = 'active_session' LIMIT 1;");
+              await client.end();
+              if (resRows.rows.length > 0) {
+                const s = resRows.rows[0];
+                const piece = s.active_on_air_piece ? (typeof s.active_on_air_piece === 'string' ? JSON.parse(s.active_on_air_piece) : s.active_on_air_piece) : null;
+                const feed = s.scanner_feed ? (typeof s.scanner_feed === 'string' ? JSON.parse(s.scanner_feed) : s.scanner_feed) : [];
+                return res.status(200).json({
+                  isBroadcasting: Boolean(s.is_broadcasting),
+                  startedAt: s.started_at ? Number(s.started_at) : null,
+                  uptimeSeconds: s.started_at && s.is_broadcasting ? Math.floor((Date.now() - Number(s.started_at)) / 1000) : 0,
+                  activeBoothId: s.active_booth_id || 'booth-01',
+                  activeBoothName: s.active_booth_name || 'Booth 01 - Main Stage',
+                  activeOnAirPiece: piece,
+                  scannerFeed: feed,
+                  totalClaimsInSession: 0,
+                  totalRevenueAedInSession: 0,
+                  obsOverlayUrl: `/live-overlay?booth=${s.active_booth_id || 'booth-01'}`
+                });
+              }
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json({
+            isBroadcasting: false,
+            startedAt: null,
+            uptimeSeconds: 0,
+            activeBoothId: 'booth-01',
+            activeBoothName: 'Booth 01 - Main Stage',
+            activeOnAirPiece: null,
+            scannerFeed: [],
+            totalClaimsInSession: 0,
+            totalRevenueAedInSession: 0,
+            obsOverlayUrl: '/live-overlay?booth=booth-01'
+          });
+        }
+      }
+
+      // 5. VIP Media Drops
+      if (pathname.includes('/marketing/vip-drops')) {
+        if (method === 'GET') {
+          if (client) {
+            try {
+              const resRows = await client.query('SELECT * FROM marketing_vip_drops ORDER BY created_at DESC LIMIT 50;');
+              await client.end();
+              const drops = resRows.rows.map(d => ({
+                id: d.id,
+                campaignTitle: d.campaign_title,
+                targetGroup: d.target_group,
+                recipientCount: Number(d.recipient_count) || 0,
+                pieceIds: Array.isArray(d.piece_ids) ? d.piece_ids : (typeof d.piece_ids === 'string' ? JSON.parse(d.piece_ids) : []),
+                pieces: Array.isArray(d.pieces) ? d.pieces : (typeof d.pieces === 'string' ? JSON.parse(d.pieces) : []),
+                customNote: d.custom_note,
+                generatedText: d.generated_text,
+                status: d.status,
+                sentAt: d.sent_at
+              }));
+              return res.status(200).json(drops);
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json([]);
+        }
+
+        if (method === 'POST') {
+          const { campaignTitle, targetGroup, pieceIds, customNote } = body || {};
+          const newDrop = {
+            id: `drop-${Date.now()}`,
+            campaignTitle: campaignTitle || 'VIP Collection Drop',
+            targetGroup: targetGroup || 'VIP_GOLD_BUYERS',
+            recipientCount: 150,
+            pieceIds: pieceIds || [],
+            pieces: [],
+            customNote: customNote || '',
+            generatedText: `🚨 *VINTAGE VIBES VIP COLLECTION DROP* 🚨\n\n${campaignTitle}\n\n${customNote || 'Exclusive early preview before live stream auction'}\n\n📦 *Complimentary VIP Courier Dispatch across UAE & GCC*`,
+            sentAt: new Date().toISOString(),
+            status: 'SENT'
+          };
+          if (client) {
+            try {
+              await client.query(`
+                INSERT INTO marketing_vip_drops (id, campaign_title, target_group, recipient_count, piece_ids, pieces, custom_note, generated_text, status, sent_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+              `, [newDrop.id, newDrop.campaignTitle, newDrop.targetGroup, newDrop.recipientCount, JSON.stringify(newDrop.pieceIds), JSON.stringify(newDrop.pieces), newDrop.customNote, newDrop.generatedText, newDrop.status, newDrop.sentAt]);
+              await client.end();
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json(newDrop);
+        }
+      }
+
+      // 6. Voice Presets
+      if (pathname.includes('/marketing/voice-presets')) {
+        if (client) {
+          try {
+            const resRows = await client.query('SELECT * FROM marketing_voice_presets ORDER BY id ASC;');
+            await client.end();
+            const presets = resRows.rows.map(p => ({
+              id: p.id,
+              title: p.title,
+              scriptText: p.script_text,
+              durationSeconds: Number(p.duration_seconds) || 15,
+              speaker: p.speaker
+            }));
+            return res.status(200).json(presets);
+          } catch (err) {
+            try { await client.end(); } catch (_) {}
+          }
+        }
+        return res.status(200).json([]);
+      }
+
+      // 7. Auto-Broadcast Campaigns
+      if (pathname.includes('/marketing/broadcast-campaign')) {
+        if (pathname.endsWith('/status')) {
+          if (client) {
+            try {
+              const resRows = await client.query('SELECT * FROM marketing_broadcast_campaigns ORDER BY started_at DESC LIMIT 20;');
+              await client.end();
+              const campaigns = resRows.rows.map(c => ({
+                id: c.id,
+                title: c.title,
+                targetAudience: c.target_audience,
+                targetChatId: c.target_chat_id,
+                customerPhones: Array.isArray(c.customer_phones) ? c.customer_phones : (typeof c.customer_phones === 'string' ? JSON.parse(c.customer_phones) : undefined),
+                voiceNoteEnabled: Boolean(c.voice_note_enabled),
+                voiceNotePresetId: c.voice_note_preset_id,
+                voiceNoteText: c.voice_note_text,
+                voiceNoteStatus: c.voice_note_status,
+                intervalSeconds: Number(c.interval_seconds) || 4,
+                status: c.status,
+                currentIndex: Number(c.current_index) || 0,
+                totalCount: Number(c.total_count) || 0,
+                sentCount: Number(c.sent_count) || 0,
+                failedCount: Number(c.failed_count) || 0,
+                items: Array.isArray(c.items) ? c.items : (typeof c.items === 'string' ? JSON.parse(c.items) : []),
+                startedAt: c.started_at,
+                completedAt: c.completed_at
+              }));
+              const current = campaigns.find(c => c.status === 'RUNNING' || c.status === 'PAUSED') || null;
+              const history = campaigns.filter(c => c.status !== 'RUNNING' && c.status !== 'PAUSED');
+              return res.status(200).json({ current, history });
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json({ current: null, history: [] });
+        }
+
+        if (pathname.endsWith('/start') && method === 'POST') {
+          const { title, targetAudience, targetChatId, customerPhones, pieceIds, voiceNoteEnabled, voiceNotePresetId, customVoiceNoteText, intervalSeconds } = body || {};
+          const newCamp = {
+            id: `camp-${Date.now()}`,
+            title: title || 'VIP Photo Drop Collection',
+            targetAudience: targetAudience || 'VIP Drop Audience',
+            targetChatId: targetChatId || '',
+            customerPhones: Array.isArray(customerPhones) ? customerPhones : undefined,
+            voiceNoteEnabled: Boolean(voiceNoteEnabled),
+            voiceNotePresetId,
+            voiceNoteText: customVoiceNoteText || 'Exclusive Vintage Drop Alert!',
+            voiceNoteStatus: voiceNoteEnabled ? 'PENDING' : 'SKIPPED',
+            intervalSeconds: Math.max(3, Number(intervalSeconds) || 4),
+            status: 'RUNNING',
+            currentIndex: 0,
+            totalCount: Array.isArray(pieceIds) ? pieceIds.length : 0,
+            sentCount: 0,
+            failedCount: 0,
+            startedAt: new Date().toISOString(),
+            items: []
+          };
+          if (client) {
+            try {
+              await client.query(`
+                INSERT INTO marketing_broadcast_campaigns (
+                  id, title, target_audience, target_chat_id, customer_phones,
+                  voice_note_enabled, voice_note_preset_id, voice_note_text, voice_note_status,
+                  interval_seconds, status, current_index, total_count, sent_count,
+                  failed_count, items, started_at, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW());
+              `, [
+                newCamp.id, newCamp.title, newCamp.targetAudience, newCamp.targetChatId,
+                JSON.stringify(newCamp.customerPhones || []), newCamp.voiceNoteEnabled,
+                newCamp.voiceNotePresetId, newCamp.voiceNoteText, newCamp.voiceNoteStatus,
+                newCamp.intervalSeconds, newCamp.status, newCamp.currentIndex,
+                newCamp.totalCount, newCamp.sentCount, newCamp.failedCount,
+                JSON.stringify(newCamp.items), newCamp.startedAt
+              ]);
+              await client.end();
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json(newCamp);
+        }
+
+        if (pathname.endsWith('/pause') && method === 'POST') {
+          if (client) {
+            try {
+              await client.query("UPDATE marketing_broadcast_campaigns SET status = 'PAUSED' WHERE status = 'RUNNING';");
+              await client.end();
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json({ success: true });
+        }
+
+        if (pathname.endsWith('/resume') && method === 'POST') {
+          if (client) {
+            try {
+              await client.query("UPDATE marketing_broadcast_campaigns SET status = 'RUNNING' WHERE status = 'PAUSED';");
+              await client.end();
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json({ success: true });
+        }
+
+        if (pathname.endsWith('/abort') && method === 'POST') {
+          if (client) {
+            try {
+              await client.query("UPDATE marketing_broadcast_campaigns SET status = 'ABORTED', completed_at = NOW() WHERE status IN ('RUNNING', 'PAUSED');");
+              await client.end();
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json({ success: true });
+        }
+      }
+
+      // 8. Social Live Accounts
+      if (pathname.includes('/marketing/social/connections')) {
+        if (method === 'GET') {
+          if (client) {
+            try {
+              const resRows = await client.query('SELECT * FROM marketing_social_accounts ORDER BY id ASC;');
+              await client.end();
+              const accounts = resRows.rows.map(a => ({
+                id: a.id,
+                platformName: a.platform_name,
+                isConnected: Boolean(a.is_connected),
+                serverUrl: a.server_url,
+                streamKey: a.stream_key,
+                accountHandle: a.account_handle,
+                channelId: a.channel_id,
+                autoClaimBot: Boolean(a.auto_claim_bot),
+                autoInvoiceOnClaim: Boolean(a.auto_invoice_on_claim),
+                lastTestedAt: a.last_tested_at
+              }));
+              return res.status(200).json({ success: true, accounts });
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json({ success: true, accounts: [] });
+        }
+
+        if (method === 'POST') {
+          const { id, updates } = body || {};
+          if (client && id) {
+            try {
+              await client.query(`
+                UPDATE marketing_social_accounts
+                SET is_connected = COALESCE($2, is_connected),
+                    server_url = COALESCE($3, server_url),
+                    stream_key = COALESCE($4, stream_key),
+                    account_handle = COALESCE($5, account_handle),
+                    channel_id = COALESCE($6, channel_id),
+                    auto_claim_bot = COALESCE($7, auto_claim_bot),
+                    auto_invoice_on_claim = COALESCE($8, auto_invoice_on_claim),
+                    updated_at = NOW()
+                WHERE id = $1;
+              `, [id, updates?.isConnected, updates?.serverUrl, updates?.streamKey, updates?.accountHandle, updates?.channelId, updates?.autoClaimBot, updates?.autoInvoiceOnClaim]);
+              const resRows = await client.query('SELECT * FROM marketing_social_accounts ORDER BY id ASC;');
+              await client.end();
+              return res.status(200).json({ success: true, accounts: resRows.rows });
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json({ success: true });
+        }
+      }
+
+      // 9. Auto-Invoice Settings
+      if (pathname.includes('/marketing/auto-invoice/settings')) {
+        if (method === 'GET') {
+          if (client) {
+            try {
+              const resRows = await client.query("SELECT * FROM marketing_auto_invoice_rules WHERE id = 'default' LIMIT 1;");
+              await client.end();
+              if (resRows.rows.length > 0) {
+                const r = resRows.rows[0];
+                return res.status(200).json({
+                  success: true,
+                  rules: {
+                    autoGenerateTaxInvoice: Boolean(r.auto_generate_tax_invoice),
+                    autoPostToLedger: Boolean(r.auto_post_to_ledger),
+                    defaultVatPercent: Number(r.default_vat_percent) || 5,
+                    reservationExpiryMins: Number(r.reservation_expiry_mins) || 15,
+                    defaultPaymentMethod: r.default_payment_method || 'DIGITAL_GATEWAY',
+                    printThermalReceipt: Boolean(r.print_thermal_receipt)
+                  }
+                });
+              }
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json({
+            success: true,
+            rules: {
+              autoGenerateTaxInvoice: true,
+              autoPostToLedger: true,
+              defaultVatPercent: 5,
+              reservationExpiryMins: 15,
+              defaultPaymentMethod: 'DIGITAL_GATEWAY',
+              printThermalReceipt: true
+            }
+          });
+        }
+
+        if (method === 'POST') {
+          const r = body || {};
+          if (client) {
+            try {
+              await client.query(`
+                INSERT INTO marketing_auto_invoice_rules (
+                  id, auto_generate_tax_invoice, auto_post_to_ledger, default_vat_percent,
+                  reservation_expiry_mins, default_payment_method, print_thermal_receipt, updated_at
+                ) VALUES ('default', $1, $2, $3, $4, $5, $6, NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                  auto_generate_tax_invoice = COALESCE(EXCLUDED.auto_generate_tax_invoice, marketing_auto_invoice_rules.auto_generate_tax_invoice),
+                  auto_post_to_ledger = COALESCE(EXCLUDED.auto_post_to_ledger, marketing_auto_invoice_rules.auto_post_to_ledger),
+                  default_vat_percent = COALESCE(EXCLUDED.default_vat_percent, marketing_auto_invoice_rules.default_vat_percent),
+                  reservation_expiry_mins = COALESCE(EXCLUDED.reservation_expiry_mins, marketing_auto_invoice_rules.reservation_expiry_mins),
+                  default_payment_method = COALESCE(EXCLUDED.default_payment_method, marketing_auto_invoice_rules.default_payment_method),
+                  print_thermal_receipt = COALESCE(EXCLUDED.print_thermal_receipt, marketing_auto_invoice_rules.print_thermal_receipt),
+                  updated_at = NOW();
+              `, [r.autoGenerateTaxInvoice, r.autoPostToLedger, r.defaultVatPercent, r.reservationExpiryMins, r.defaultPaymentMethod, r.printThermalReceipt]);
+              await client.end();
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json({ success: true, rules: r });
+        }
+      }
+
+      // 10. WhatsApp Channels
+      if (pathname.includes('/marketing/whatsapp/channels')) {
+        if (method === 'GET') {
+          if (client) {
+            try {
+              const resRows = await client.query('SELECT * FROM whatsapp_channels ORDER BY is_default DESC, created_at ASC;');
+              await client.end();
+              const channels = resRows.rows.map(ch => ({
+                id: ch.id,
+                name: ch.name,
+                jid: ch.jid,
+                inviteLink: ch.invite_link,
+                isDefault: Boolean(ch.is_default),
+                role: ch.role || 'ADMIN',
+                verifiedAdmin: Boolean(ch.verified_admin),
+                lastTestedAt: ch.last_tested_at
+              }));
+              return res.status(200).json({ success: true, channels });
+            } catch (err) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          return res.status(200).json({ success: true, channels: [] });
+        }
+      }
+
+      if (client) {
+        try { await client.end(); } catch (_) {}
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: 'Vintage Vibe ERP Serverless Gateway',

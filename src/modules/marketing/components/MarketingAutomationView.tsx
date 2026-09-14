@@ -33,8 +33,10 @@ import {
   Coupon,
   MarketingAudience
 } from '../../../services/marketingService.ts';
+import { supabase } from '../../../supabaseClient.ts';
 import { LiveBroadcastDeskTab } from './LiveBroadcastDeskTab.tsx';
 import { AutoPhotoBroadcastTab } from './AutoPhotoBroadcastTab.tsx';
+import { ChatClaimAutomationTab } from './ChatClaimAutomationTab.tsx';
 import { WhatsAppDeviceModal } from './WhatsAppDeviceModal.tsx';
 
 interface MarketingAutomationViewProps {
@@ -47,6 +49,7 @@ export type MarketingSubTab =
   | 'automations'
   | 'coupons'
   | 'audiences'
+  | 'chat-claim'
   | 'auto-broadcast'
   | 'live-desk';
 
@@ -139,6 +142,56 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
 
   useEffect(() => {
     loadAllMarketingData();
+
+    // 1. Server-Sent Events (SSE) Realtime Listener for multi-device sync
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/events/subscribe');
+      es.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (
+            payload.module === 'MARKETING' ||
+            payload.module === 'SALES' ||
+            payload.module === 'ALL' ||
+            payload.entity === 'BROADCAST_CAMPAIGN_STARTED' ||
+            payload.entity === 'BROADCAST_PROGRESS' ||
+            payload.entity === 'BROADCAST_COMPLETED' ||
+            payload.entity === 'LIVE_CLAIM'
+          ) {
+            loadAllMarketingData();
+          }
+        } catch (_) {}
+      };
+    } catch (_) {}
+
+    // 2. Supabase Realtime Channel Subscription for immediate database table updates
+    const channel = supabase
+      .channel('marketing-realtime-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_campaigns' }, () => {
+        loadAllMarketingData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_automations' }, () => {
+        loadAllMarketingData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'coupons' }, () => {
+        loadAllMarketingData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_audiences' }, () => {
+        loadAllMarketingData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_claim_rules' }, () => {
+        loadAllMarketingData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_vip_drops' }, () => {
+        loadAllMarketingData();
+      })
+      .subscribe();
+
+    return () => {
+      if (es) es.close();
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Handlers for Campaigns
@@ -502,6 +555,19 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
           <span className="text-[10px] font-mono bg-amber-100 text-amber-950 px-1.5 py-0.5 rounded font-black border border-amber-300">
             {audiences.length}
           </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('chat-claim')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap border ${
+            activeSubTab === 'chat-claim'
+              ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-xs font-black ring-2 ring-amber-400/50'
+              : 'bg-white hover:bg-amber-50 text-slate-700 border-slate-200'
+          }`}
+        >
+          <Bot className="w-3.5 h-3.5" />
+          <span>Live Chat Auto-Claim Bot</span>
         </button>
 
         <button
@@ -1052,10 +1118,13 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
         </div>
       )}
 
-      {/* 7. SUPPLEMENTARY TAB: VIP MEDIA DROPS */}
+      {/* 7. LIVE CHAT AUTO-CLAIM BOT */}
+      {activeSubTab === 'chat-claim' && <ChatClaimAutomationTab />}
+
+      {/* 8. SUPPLEMENTARY TAB: VIP MEDIA DROPS */}
       {activeSubTab === 'auto-broadcast' && <AutoPhotoBroadcastTab />}
 
-      {/* 8. SUPPLEMENTARY TAB: LIVE STREAM BROADCAST DESK */}
+      {/* 9. SUPPLEMENTARY TAB: LIVE STREAM BROADCAST DESK */}
       {activeSubTab === 'live-desk' && <LiveBroadcastDeskTab />}
 
       {/* Multi-Device WhatsApp Linking Modal */}

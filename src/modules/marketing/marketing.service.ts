@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { Client } from 'pg';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { streamController } from '../../server/streamController.ts';
 import { eventHub } from '../../server/events.ts';
@@ -24,6 +25,33 @@ import {
   AutoInvoiceRules
 } from './marketing.types.ts';
 import { WhatsAppGatewayConfig } from '../setup/setup.types.ts';
+
+async function getPgClient(): Promise<Client | null> {
+  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  try {
+    if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
+      dbUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+    }
+    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+    if (match) {
+      let [_, u, rawPwd, host, port, rest] = match;
+      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
+      dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+    }
+    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+    await client.connect();
+    return client;
+  } catch {
+    try {
+      const fallbackUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+      const fallbackClient = new Client({ connectionString: fallbackUrl, ssl: { rejectUnauthorized: false } });
+      await fallbackClient.connect();
+      return fallbackClient;
+    } catch {
+      return null;
+    }
+  }
+}
 
 class MarketingService {
   private dataFilePath = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
@@ -142,6 +170,7 @@ class MarketingService {
 
   constructor() {
     this.loadFromDisk();
+    this.loadFromSql().catch(err => console.warn('[MarketingService SQL load notice]:', err));
     this.initMockHistoryIfNeeded();
     this.initBaileysAutoClaimListener();
 
@@ -295,6 +324,417 @@ class MarketingService {
     }
   }
 
+  public async loadFromSql(): Promise<void> {
+    const client = await getPgClient();
+    if (!client) return;
+    try {
+      // 1. Keyword Rules
+      const rulesRes = await client.query('SELECT * FROM marketing_claim_rules ORDER BY priority ASC, created_at ASC');
+      if (rulesRes.rows && rulesRes.rows.length > 0) {
+        this.keywordRules = rulesRes.rows.map(r => ({
+          id: r.id,
+          keyword: r.keyword,
+          action: r.action,
+          enabled: Boolean(r.enabled),
+          matchType: r.match_type,
+          lockDurationMinutes: Number(r.lock_duration_minutes) || 15,
+          priority: Number(r.priority) || 1
+        }));
+      }
+
+      // 2. Response Template
+      const templateRes = await client.query("SELECT * FROM marketing_bot_templates WHERE id = 'default' LIMIT 1");
+      if (templateRes.rows && templateRes.rows.length > 0) {
+        const t = templateRes.rows[0];
+        this.responseTemplate = {
+          successTemplate: t.success_template,
+          alreadyClaimedTemplate: t.already_claimed_template,
+          invalidSkuTemplate: t.invalid_sku_template,
+          paymentLinkBaseUrl: t.payment_link_base_url || 'http://localhost:3000/?checkout=',
+          sendWhatsAppDm: Boolean(t.send_whatsapp_dm),
+          sendPublicReply: Boolean(t.send_public_reply)
+        };
+      }
+
+      // 3. Claim Logs
+      const logsRes = await client.query('SELECT * FROM marketing_claim_logs ORDER BY created_at DESC LIMIT 100');
+      if (logsRes.rows && logsRes.rows.length > 0) {
+        this.claimLogs = logsRes.rows.map(l => ({
+          id: l.id,
+          timestamp: l.timestamp,
+          customerHandle: l.customer_handle,
+          platform: l.platform,
+          rawComment: l.raw_comment,
+          matchedKeyword: l.matched_keyword,
+          sku: l.sku,
+          itemName: l.item_name,
+          itemImage: l.item_image,
+          priceAed: Number(l.price_aed) || 0,
+          invoiceNo: l.invoice_no,
+          status: l.status,
+          replyDispatched: l.reply_dispatched,
+          checkoutUrl: l.checkout_url,
+          lockExpiresAt: Number(l.lock_expires_at) || 0,
+          boothId: l.booth_id
+        }));
+      }
+
+      // 4. VIP Drops
+      const dropsRes = await client.query('SELECT * FROM marketing_vip_drops ORDER BY created_at DESC LIMIT 50');
+      if (dropsRes.rows && dropsRes.rows.length > 0) {
+        this.vipDrops = dropsRes.rows.map(d => ({
+          id: d.id,
+          campaignTitle: d.campaign_title,
+          targetGroup: d.target_group,
+          recipientCount: Number(d.recipient_count) || 0,
+          pieceIds: Array.isArray(d.piece_ids) ? d.piece_ids : (typeof d.piece_ids === 'string' ? JSON.parse(d.piece_ids) : []),
+          pieces: Array.isArray(d.pieces) ? d.pieces : (typeof d.pieces === 'string' ? JSON.parse(d.pieces) : []),
+          customNote: d.custom_note,
+          generatedText: d.generated_text,
+          status: d.status,
+          sentAt: d.sent_at
+        }));
+      }
+
+      // 5. Live Session
+      const liveRes = await client.query("SELECT * FROM marketing_live_sessions WHERE id = 'active_session' LIMIT 1");
+      if (liveRes.rows && liveRes.rows.length > 0) {
+        const s = liveRes.rows[0];
+        this.isLiveBroadcasting = Boolean(s.is_broadcasting);
+        this.liveStartedAt = s.started_at ? Number(s.started_at) : null;
+        if (s.active_booth_id) this.activeBoothId = s.active_booth_id;
+        if (s.active_on_air_piece) {
+          this.activeOnAirPiece = typeof s.active_on_air_piece === 'string' ? JSON.parse(s.active_on_air_piece) : s.active_on_air_piece;
+        }
+        if (s.scanner_feed) {
+          this.liveDeskScannerFeed = Array.isArray(s.scanner_feed) ? s.scanner_feed : (typeof s.scanner_feed === 'string' ? JSON.parse(s.scanner_feed) : []);
+        }
+      }
+
+      // 6. Social Accounts
+      const socialRes = await client.query('SELECT * FROM marketing_social_accounts ORDER BY id ASC');
+      if (socialRes.rows && socialRes.rows.length > 0) {
+        this.socialLiveAccounts = socialRes.rows.map(a => ({
+          id: a.id,
+          platformName: a.platform_name,
+          isConnected: Boolean(a.is_connected),
+          serverUrl: a.server_url,
+          streamKey: a.stream_key,
+          accountHandle: a.account_handle,
+          channelId: a.channel_id,
+          autoClaimBot: Boolean(a.auto_claim_bot),
+          autoInvoiceOnClaim: Boolean(a.auto_invoice_on_claim),
+          lastTestedAt: a.last_tested_at
+        }));
+      }
+
+      // 7. Auto Invoice Rules
+      const invRulesRes = await client.query("SELECT * FROM marketing_auto_invoice_rules WHERE id = 'default' LIMIT 1");
+      if (invRulesRes.rows && invRulesRes.rows.length > 0) {
+        const r = invRulesRes.rows[0];
+        this.autoInvoiceRules = {
+          autoGenerateTaxInvoice: Boolean(r.auto_generate_tax_invoice),
+          autoPostToLedger: Boolean(r.auto_post_to_ledger),
+          defaultVatPercent: Number(r.default_vat_percent) || 5,
+          reservationExpiryMins: Number(r.reservation_expiry_mins) || 15,
+          defaultPaymentMethod: r.default_payment_method || 'DIGITAL_GATEWAY',
+          printThermalReceipt: Boolean(r.print_thermal_receipt)
+        };
+      }
+
+      // 8. Voice Presets
+      const presetsRes = await client.query('SELECT * FROM marketing_voice_presets ORDER BY id ASC');
+      if (presetsRes.rows && presetsRes.rows.length > 0) {
+        this.voiceNotePresets = presetsRes.rows.map(p => ({
+          id: p.id,
+          title: p.title,
+          scriptText: p.script_text,
+          durationSeconds: Number(p.duration_seconds) || 15,
+          speaker: p.speaker
+        }));
+      }
+
+      // 9. Broadcast Campaigns
+      const campRes = await client.query('SELECT * FROM marketing_broadcast_campaigns ORDER BY started_at DESC LIMIT 20');
+      if (campRes.rows && campRes.rows.length > 0) {
+        const campaigns: AutoBroadcastCampaign[] = campRes.rows.map(c => ({
+          id: c.id,
+          title: c.title,
+          targetAudience: c.target_audience,
+          targetChatId: c.target_chat_id,
+          customerPhones: Array.isArray(c.customer_phones) ? c.customer_phones : (typeof c.customer_phones === 'string' ? JSON.parse(c.customer_phones) : undefined),
+          voiceNoteEnabled: Boolean(c.voice_note_enabled),
+          voiceNotePresetId: c.voice_note_preset_id,
+          voiceNoteText: c.voice_note_text,
+          voiceNoteStatus: c.voice_note_status,
+          intervalSeconds: Number(c.interval_seconds) || 4,
+          status: c.status,
+          currentIndex: Number(c.current_index) || 0,
+          totalCount: Number(c.total_count) || 0,
+          sentCount: Number(c.sent_count) || 0,
+          failedCount: Number(c.failed_count) || 0,
+          items: Array.isArray(c.items) ? c.items : (typeof c.items === 'string' ? JSON.parse(c.items) : []),
+          startedAt: c.started_at,
+          completedAt: c.completed_at
+        }));
+        this.broadcastHistory = campaigns.filter(c => c.status !== 'RUNNING');
+        const activeRunning = campaigns.find(c => c.status === 'RUNNING' || c.status === 'PAUSED');
+        if (activeRunning) {
+          this.currentBroadcastCampaign = activeRunning;
+        }
+      }
+
+      // 10. WhatsApp Channels
+      const channelsRes = await client.query('SELECT * FROM whatsapp_channels ORDER BY is_default DESC, created_at ASC');
+      if (channelsRes.rows && channelsRes.rows.length > 0) {
+        this.whatsappChannels = channelsRes.rows.map(ch => ({
+          id: ch.id,
+          name: ch.name,
+          jid: ch.jid,
+          inviteLink: ch.invite_link,
+          isDefault: Boolean(ch.is_default),
+          role: ch.role || 'ADMIN',
+          verifiedAdmin: Boolean(ch.verified_admin),
+          lastTestedAt: ch.last_tested_at
+        }));
+      }
+
+      // 11. WhatsApp Gateway Config
+      const gwRes = await client.query("SELECT config FROM whatsapp_gateway_config WHERE id = 'default' LIMIT 1");
+      if (gwRes.rows && gwRes.rows.length > 0 && gwRes.rows[0].config) {
+        this.whatsappGatewayConfig = {
+          ...this.whatsappGatewayConfig,
+          ...gwRes.rows[0].config
+        };
+      }
+    } catch (err: any) {
+      console.warn('[MarketingService SQL load error]:', err?.message);
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  public async persistKeywordRulesToSql(rules: AutoClaimKeywordRule[]) {
+    const client = await getPgClient();
+    if (!client) return;
+    try {
+      for (const r of rules) {
+        await client.query(`
+          INSERT INTO marketing_claim_rules (id, keyword, action, enabled, match_type, lock_duration_minutes, priority, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+          ON CONFLICT (id) DO UPDATE SET
+            keyword = EXCLUDED.keyword,
+            action = EXCLUDED.action,
+            enabled = EXCLUDED.enabled,
+            match_type = EXCLUDED.match_type,
+            lock_duration_minutes = EXCLUDED.lock_duration_minutes,
+            priority = EXCLUDED.priority,
+            updated_at = NOW();
+        `, [r.id, r.keyword, r.action, r.enabled, r.matchType, r.lockDurationMinutes, r.priority]);
+      }
+    } catch (e: any) {
+      console.warn('[SQL persistKeywordRules notice]:', e?.message);
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  public async persistResponseTemplateToSql(template: BotResponseTemplate) {
+    const client = await getPgClient();
+    if (!client) return;
+    try {
+      await client.query(`
+        INSERT INTO marketing_bot_templates (id, success_template, already_claimed_template, invalid_sku_template, payment_link_base_url, send_whatsapp_dm, send_public_reply, updated_at)
+        VALUES ('default', $1, $2, $3, $4, $5, $6, NOW())
+        ON CONFLICT (id) DO UPDATE SET
+          success_template = EXCLUDED.success_template,
+          already_claimed_template = EXCLUDED.already_claimed_template,
+          invalid_sku_template = EXCLUDED.invalid_sku_template,
+          payment_link_base_url = EXCLUDED.payment_link_base_url,
+          send_whatsapp_dm = EXCLUDED.send_whatsapp_dm,
+          send_public_reply = EXCLUDED.send_public_reply,
+          updated_at = NOW();
+      `, [template.successTemplate, template.alreadyClaimedTemplate, template.invalidSkuTemplate, template.paymentLinkBaseUrl, template.sendWhatsAppDm, template.sendPublicReply]);
+    } catch (e: any) {
+      console.warn('[SQL persistResponseTemplate notice]:', e?.message);
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  public async persistClaimLogToSql(claim: ChatClaimRecord) {
+    const client = await getPgClient();
+    if (!client) return;
+    try {
+      await client.query(`
+        INSERT INTO marketing_claim_logs (
+          id, timestamp, customer_handle, platform, raw_comment, matched_keyword,
+          sku, item_name, item_image, price_aed, invoice_no, status,
+          reply_dispatched, checkout_url, lock_expires_at, booth_id, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+        ON CONFLICT (id) DO UPDATE SET
+          status = EXCLUDED.status,
+          invoice_no = EXCLUDED.invoice_no,
+          reply_dispatched = EXCLUDED.reply_dispatched,
+          lock_expires_at = EXCLUDED.lock_expires_at;
+      `, [
+        claim.id, claim.timestamp, claim.customerHandle, claim.platform, claim.rawComment, claim.matchedKeyword,
+        claim.sku, claim.itemName, claim.itemImage, claim.priceAed || 0, claim.invoiceNo, claim.status,
+        claim.replyDispatched, claim.checkoutUrl, claim.lockExpiresAt, claim.boothId
+      ]);
+    } catch (e: any) {
+      console.warn('[SQL persistClaimLog notice]:', e?.message);
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  public async persistVipDropToSql(drop: WhatsAppVipDropPayload) {
+    const client = await getPgClient();
+    if (!client) return;
+    try {
+      await client.query(`
+        INSERT INTO marketing_vip_drops (
+          id, campaign_title, target_group, recipient_count, piece_ids,
+          pieces, custom_note, generated_text, status, sent_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (id) DO UPDATE SET
+          status = EXCLUDED.status;
+      `, [
+        drop.id, drop.campaignTitle, drop.targetGroup, drop.recipientCount,
+        JSON.stringify(drop.pieceIds || []), JSON.stringify(drop.pieces || []),
+        drop.customNote, drop.generatedText, drop.status, drop.sentAt
+      ]);
+    } catch (e: any) {
+      console.warn('[SQL persistVipDrop notice]:', e?.message);
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  public async persistLiveSessionToSql() {
+    const client = await getPgClient();
+    if (!client) return;
+    try {
+      await client.query(`
+        INSERT INTO marketing_live_sessions (
+          id, is_broadcasting, started_at, active_booth_id, active_booth_name,
+          active_on_air_piece, scanner_feed, updated_at
+        ) VALUES ('active_session', $1, $2, $3, 'Booth 01 - Main Stage', $4, $5, NOW())
+        ON CONFLICT (id) DO UPDATE SET
+          is_broadcasting = EXCLUDED.is_broadcasting,
+          started_at = EXCLUDED.started_at,
+          active_booth_id = EXCLUDED.active_booth_id,
+          active_on_air_piece = EXCLUDED.active_on_air_piece,
+          scanner_feed = EXCLUDED.scanner_feed,
+          updated_at = NOW();
+      `, [
+        this.isLiveBroadcasting,
+        this.liveStartedAt,
+        this.activeBoothId,
+        this.activeOnAirPiece ? JSON.stringify(this.activeOnAirPiece) : null,
+        JSON.stringify(this.liveDeskScannerFeed || [])
+      ]);
+    } catch (e: any) {
+      console.warn('[SQL persistLiveSession notice]:', e?.message);
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  public async persistSocialAccountToSql(account: SocialLiveAccountConfig) {
+    const client = await getPgClient();
+    if (!client) return;
+    try {
+      await client.query(`
+        INSERT INTO marketing_social_accounts (
+          id, platform_name, is_connected, server_url, stream_key,
+          account_handle, channel_id, auto_claim_bot, auto_invoice_on_claim,
+          last_tested_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+        ON CONFLICT (id) DO UPDATE SET
+          is_connected = EXCLUDED.is_connected,
+          server_url = EXCLUDED.server_url,
+          stream_key = EXCLUDED.stream_key,
+          account_handle = EXCLUDED.account_handle,
+          channel_id = EXCLUDED.channel_id,
+          auto_claim_bot = EXCLUDED.auto_claim_bot,
+          auto_invoice_on_claim = EXCLUDED.auto_invoice_on_claim,
+          last_tested_at = EXCLUDED.last_tested_at,
+          updated_at = NOW();
+      `, [
+        account.id, account.platformName, account.isConnected, account.serverUrl, account.streamKey,
+        account.accountHandle, account.channelId, account.autoClaimBot, account.autoInvoiceOnClaim,
+        account.lastTestedAt || null
+      ]);
+    } catch (e: any) {
+      console.warn('[SQL persistSocialAccount notice]:', e?.message);
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  public async persistAutoInvoiceRulesToSql(rules: AutoInvoiceRules) {
+    const client = await getPgClient();
+    if (!client) return;
+    try {
+      await client.query(`
+        INSERT INTO marketing_auto_invoice_rules (
+          id, auto_generate_tax_invoice, auto_post_to_ledger, default_vat_percent,
+          reservation_expiry_mins, default_payment_method, print_thermal_receipt, updated_at
+        ) VALUES ('default', $1, $2, $3, $4, $5, $6, NOW())
+        ON CONFLICT (id) DO UPDATE SET
+          auto_generate_tax_invoice = EXCLUDED.auto_generate_tax_invoice,
+          auto_post_to_ledger = EXCLUDED.auto_post_to_ledger,
+          default_vat_percent = EXCLUDED.default_vat_percent,
+          reservation_expiry_mins = EXCLUDED.reservation_expiry_mins,
+          default_payment_method = EXCLUDED.default_payment_method,
+          print_thermal_receipt = EXCLUDED.print_thermal_receipt,
+          updated_at = NOW();
+      `, [
+        rules.autoGenerateTaxInvoice, rules.autoPostToLedger, rules.defaultVatPercent,
+        rules.reservationExpiryMins, rules.defaultPaymentMethod, rules.printThermalReceipt
+      ]);
+    } catch (e: any) {
+      console.warn('[SQL persistAutoInvoiceRules notice]:', e?.message);
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  public async persistBroadcastCampaignToSql(campaign: AutoBroadcastCampaign) {
+    const client = await getPgClient();
+    if (!client) return;
+    try {
+      await client.query(`
+        INSERT INTO marketing_broadcast_campaigns (
+          id, title, target_audience, target_chat_id, customer_phones,
+          voice_note_enabled, voice_note_preset_id, voice_note_text, voice_note_status,
+          interval_seconds, status, current_index, total_count, sent_count,
+          failed_count, items, started_at, completed_at, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW())
+        ON CONFLICT (id) DO UPDATE SET
+          status = EXCLUDED.status,
+          current_index = EXCLUDED.current_index,
+          sent_count = EXCLUDED.sent_count,
+          failed_count = EXCLUDED.failed_count,
+          items = EXCLUDED.items,
+          completed_at = EXCLUDED.completed_at;
+      `, [
+        campaign.id, campaign.title, campaign.targetAudience, campaign.targetChatId,
+        JSON.stringify(campaign.customerPhones || []), campaign.voiceNoteEnabled,
+        campaign.voiceNotePresetId, campaign.voiceNoteText, campaign.voiceNoteStatus,
+        campaign.intervalSeconds, campaign.status, campaign.currentIndex,
+        campaign.totalCount, campaign.sentCount, campaign.failedCount,
+        JSON.stringify(campaign.items || []), campaign.startedAt, campaign.completedAt || null
+      ]);
+    } catch (e: any) {
+      console.warn('[SQL persistBroadcastCampaign notice]:', e?.message);
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
   private initMockHistoryIfNeeded() {
     if (this.claimLogs.length === 0) {
       const now = new Date();
@@ -435,6 +875,15 @@ class MarketingService {
   public saveKeywordRules(rules: AutoClaimKeywordRule[]) {
     this.keywordRules = rules;
     this.saveToDisk();
+    this.persistKeywordRulesToSql(rules).catch(() => {});
+    eventHub.broadcast({
+      type: 'ENTITY_MUTATED',
+      module: 'MARKETING',
+      entity: 'KEYWORD_RULES',
+      action: 'UPDATE',
+      documentRef: 'rules',
+      data: { rules }
+    });
     return this.keywordRules;
   }
 
@@ -445,6 +894,15 @@ class MarketingService {
   public saveResponseTemplate(template: Partial<BotResponseTemplate>) {
     this.responseTemplate = { ...this.responseTemplate, ...template };
     this.saveToDisk();
+    this.persistResponseTemplateToSql(this.responseTemplate).catch(() => {});
+    eventHub.broadcast({
+      type: 'ENTITY_MUTATED',
+      module: 'MARKETING',
+      entity: 'RESPONSE_TEMPLATE',
+      action: 'UPDATE',
+      documentRef: 'template',
+      data: { template: this.responseTemplate }
+    });
     return this.responseTemplate;
   }
 
@@ -559,6 +1017,7 @@ class MarketingService {
 
       this.claimLogs.unshift(failedRecord);
       this.saveToDisk();
+      this.persistClaimLogToSql(failedRecord).catch(() => {});
 
       // Emit failure notification
       eventHub.broadcast({
@@ -614,6 +1073,7 @@ class MarketingService {
     this.claimLogs.unshift(claimRecord);
     if (this.claimLogs.length > 100) this.claimLogs.pop();
     this.saveToDisk();
+    this.persistClaimLogToSql(claimRecord).catch(() => {});
 
     // 5. Broadcast to all clients (Live host HUD, Storefront, Mobile App)
     eventHub.broadcast({
@@ -683,6 +1143,7 @@ class MarketingService {
 
     this.vipDrops.unshift(newDrop);
     this.saveToDisk();
+    this.persistVipDropToSql(newDrop).catch(() => {});
 
     eventHub.broadcast({
       type: 'ENTITY_MUTATED',
@@ -729,6 +1190,7 @@ class MarketingService {
     }
 
     this.saveToDisk();
+    this.persistLiveSessionToSql().catch(() => {});
 
     // Broadcast event so storefront displays pulsing live announcement banner!
     eventHub.broadcast({
@@ -767,6 +1229,8 @@ class MarketingService {
       scannedBy
     });
     if (this.liveDeskScannerFeed.length > 20) this.liveDeskScannerFeed.pop();
+    this.saveToDisk();
+    this.persistLiveSessionToSql().catch(() => {});
 
     // Real-time update for OBS Overlay & Host Screen
     eventHub.broadcast({
@@ -1052,6 +1516,7 @@ class MarketingService {
     };
 
     this.currentBroadcastCampaign = newCampaign;
+    this.persistBroadcastCampaignToSql(newCampaign).catch(() => {});
 
     // Broadcast campaign start event via SSE
     eventHub.broadcast({
@@ -1074,6 +1539,7 @@ class MarketingService {
       return { success: false, error: 'No active running campaign to pause' };
     }
     this.currentBroadcastCampaign.status = 'PAUSED';
+    this.persistBroadcastCampaignToSql(this.currentBroadcastCampaign).catch(() => {});
 
     eventHub.broadcast({
       type: 'ENTITY_MUTATED',
@@ -1092,6 +1558,7 @@ class MarketingService {
       return { success: false, error: 'No paused campaign to resume' };
     }
     this.currentBroadcastCampaign.status = 'RUNNING';
+    this.persistBroadcastCampaignToSql(this.currentBroadcastCampaign).catch(() => {});
 
     eventHub.broadcast({
       type: 'ENTITY_MUTATED',
@@ -1113,6 +1580,7 @@ class MarketingService {
     this.currentBroadcastCampaign.status = 'ABORTED';
     this.currentBroadcastCampaign.completedAt = new Date().toISOString();
     this.broadcastHistory.unshift({ ...this.currentBroadcastCampaign });
+    this.persistBroadcastCampaignToSql(this.currentBroadcastCampaign).catch(() => {});
 
     eventHub.broadcast({
       type: 'ENTITY_MUTATED',
@@ -1214,6 +1682,7 @@ class MarketingService {
         }
 
         // Emit real-time progress update
+        this.persistBroadcastCampaignToSql(campaign).catch(() => {});
         eventHub.broadcast({
           type: 'ENTITY_MUTATED',
           module: 'MARKETING',
@@ -1236,6 +1705,7 @@ class MarketingService {
           campaign.status = 'COMPLETED';
           campaign.completedAt = new Date().toISOString();
           this.broadcastHistory.unshift({ ...campaign });
+          this.persistBroadcastCampaignToSql(campaign).catch(() => {});
 
           eventHub.broadcast({
             type: 'ENTITY_MUTATED',
@@ -1255,6 +1725,7 @@ class MarketingService {
         campaign.status = 'COMPLETED';
         campaign.completedAt = new Date().toISOString();
         this.broadcastHistory.unshift({ ...campaign });
+        this.persistBroadcastCampaignToSql(campaign).catch(() => {});
       }
     };
 
@@ -1733,6 +2204,15 @@ class MarketingService {
     if (target) {
       Object.assign(target, updates);
       this.saveToDisk();
+      this.persistSocialAccountToSql(target).catch(() => {});
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'MARKETING',
+        entity: 'SOCIAL_ACCOUNT',
+        action: 'UPDATE',
+        documentRef: id,
+        data: { account: target }
+      });
     }
     return this.socialLiveAccounts;
   }
@@ -1745,6 +2225,15 @@ class MarketingService {
   public updateAutoInvoiceRules(updates: Partial<AutoInvoiceRules>): AutoInvoiceRules {
     this.autoInvoiceRules = { ...this.autoInvoiceRules, ...updates };
     this.saveToDisk();
+    this.persistAutoInvoiceRulesToSql(this.autoInvoiceRules).catch(() => {});
+    eventHub.broadcast({
+      type: 'ENTITY_MUTATED',
+      module: 'MARKETING',
+      entity: 'AUTO_INVOICE_RULES',
+      action: 'UPDATE',
+      documentRef: 'rules',
+      data: { rules: this.autoInvoiceRules }
+    });
     return this.autoInvoiceRules;
   }
 
@@ -1781,6 +2270,15 @@ class MarketingService {
           relationalStore.postSalesInvoice(invResult.invoice.id, 'Auto-Invoice Bot');
         }
         this.saveToDisk();
+        this.persistClaimLogToSql(claim).catch(() => {});
+        eventHub.broadcast({
+          type: 'ENTITY_MUTATED',
+          module: 'SALES',
+          entity: 'LIVE_CLAIM',
+          action: 'UPDATE',
+          documentRef: claim.sku,
+          data: { claimRecord: claim, invoice: invResult.invoice }
+        });
         return { success: true, invoice: invResult.invoice };
       }
       return { success: false, error: invResult.error || 'Invoice generation error' };

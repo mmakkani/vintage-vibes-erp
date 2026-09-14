@@ -31,6 +31,7 @@ import { LiveStreamSessionStatus } from '../marketing.types.ts';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
 import { LiveStreamService, LiveBooth } from '../../../services/liveStreamService.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
+import { supabase } from '../../../supabaseClient.ts';
 
 export const LiveBroadcastDeskTab: React.FC = () => {
   const [session, setSession] = useState<LiveStreamSessionStatus | null>(null);
@@ -145,8 +146,43 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
   useEffect(() => {
     fetchSessionStatus();
+
+    // 1. SSE Realtime Listener for Live Stream and Claims
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/events/subscribe');
+      es.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (
+            payload.module === 'SALES' ||
+            payload.module === 'MARKETING' ||
+            payload.entity === 'LIVE_STREAM' ||
+            payload.entity === 'LIVE_CLAIM'
+          ) {
+            fetchSessionStatus();
+          }
+        } catch (_) {}
+      };
+    } catch (_) {}
+
+    // 2. Supabase Realtime Channel Subscription for live sessions & booths
+    const channel = supabase
+      .channel('live-desk-realtime-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_live_sessions' }, () => {
+        fetchSessionStatus();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'live_booths' }, () => {
+        fetchSessionStatus();
+      })
+      .subscribe();
+
     const interval = setInterval(fetchSessionStatus, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      if (es) es.close();
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
   }, [selectedBooth]);
 
   // Sync available pieces into rotation queue

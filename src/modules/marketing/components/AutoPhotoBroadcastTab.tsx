@@ -42,6 +42,7 @@ import { WhatsAppDeviceModal } from './WhatsAppDeviceModal.tsx';
 import { SocialLiveConnectModal } from './SocialLiveConnectModal.tsx';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
+import { supabase } from '../../../supabaseClient.ts';
 
 export const AutoPhotoBroadcastTab: React.FC = () => {
   // Wizard Setup State
@@ -216,7 +217,59 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
 
   useEffect(() => {
     fetchInitialData();
-    // Fast 2-second polling to update live dispatch queue progress and WhatsApp connection status
+
+    // 1. Real-time SSE listener for instant broadcast progress across all devices
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/events/subscribe');
+      es.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (
+            payload.module === 'MARKETING' ||
+            payload.entity === 'BROADCAST_PROGRESS' ||
+            payload.entity === 'BROADCAST_CAMPAIGN_STARTED' ||
+            payload.entity === 'BROADCAST_CAMPAIGN_PAUSED' ||
+            payload.entity === 'BROADCAST_CAMPAIGN_RESUMED' ||
+            payload.entity === 'BROADCAST_CAMPAIGN_ABORTED' ||
+            payload.entity === 'BROADCAST_COMPLETED' ||
+            payload.entity === 'WHATSAPP_DEVICE'
+          ) {
+            fetch('/api/marketing/broadcast-campaign/status')
+              .then(res => res.json())
+              .then(data => {
+                if (data.current) setActiveCampaign(data.current);
+                if (data.history) setCampaignHistory(data.history);
+              })
+              .catch(() => {});
+          }
+        } catch (_) {}
+      };
+    } catch (_) {}
+
+    // 2. Supabase Realtime Channel Subscription for campaigns and channels
+    const channel = supabase
+      .channel('broadcast-tab-realtime-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_broadcast_campaigns' }, () => {
+        fetch('/api/marketing/broadcast-campaign/status')
+          .then(res => res.json())
+          .then(data => {
+            if (data.current) setActiveCampaign(data.current);
+            if (data.history) setCampaignHistory(data.history);
+          })
+          .catch(() => {});
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_channels' }, () => {
+        fetch('/api/marketing/whatsapp/channels')
+          .then(res => res.json())
+          .then(data => {
+            if (data.channels) setChannels(data.channels);
+          })
+          .catch(() => {});
+      })
+      .subscribe();
+
+    // Fast 3-second fallback interval
     const interval = setInterval(async () => {
       try {
         const [campRes, devRes] = await Promise.all([
@@ -233,9 +286,13 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
           setLinkedDevice(dev);
         }
       } catch {}
-    }, 2000);
+    }, 3000);
 
-    return () => clearInterval(interval);
+    return () => {
+      if (es) es.close();
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
   }, []);
 
   // Filter pieces by bale, brand, category, search
