@@ -1,6 +1,7 @@
 node_modules/
 build/
 dist/
+dev-dist/
 coverage/
 .DS_Store
 *.log
@@ -8,3 +9,9 @@ coverage/
 !.env.example
 .data/
 baileys_auth/
+.tmp_edge/
+cloudflared.exe
+*.exe
+dom.html
+scratch_dom.txt
+scratch/
