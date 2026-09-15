@@ -43,7 +43,7 @@ export interface StreamingApiKey {
 export interface BoothSocialChannel {
   id: string;
   booth_id: string;
-  platform: 'tiktok' | 'instagram' | 'facebook' | 'youtube' | string;
+  platform: 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'threads' | string;
   account_username?: string;
   account_password?: string;
   session_cookies?: any[];
@@ -305,6 +305,54 @@ export class LiveStreamService {
       return await res.json();
     } catch (_) {
       return { success: true, status: 'STOPPED', message: 'Stream stopped' };
+    }
+  }
+
+  public static async getAllSetupBooths(): Promise<any[]> {
+    try {
+      const res = await fetch('/api/setup/live-booths');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.booths)) {
+          return json.booths;
+        }
+      }
+    } catch (_) {}
+
+    // Fallback directly to Supabase client
+    try {
+      const { data, error } = await supabase
+        .from('live_stream_booths')
+        .select('*')
+        .order('booth_id');
+      if (!error && Array.isArray(data)) {
+        return data;
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  public static async createBooth(boothData: any): Promise<{ success: boolean; booth?: any; error?: string }> {
+    try {
+      const res = await fetch('/api/setup/live-booths', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(boothData)
+      });
+      return await res.json();
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to create booth' };
+    }
+  }
+
+  public static async deleteBooth(boothId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res = await fetch(`/api/setup/live-booths/${encodeURIComponent(boothId)}`, {
+        method: 'DELETE'
+      });
+      return await res.json();
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to delete booth' };
     }
   }
 

@@ -31,7 +31,9 @@ import {
   Zap,
   RotateCcw,
   PowerOff,
-  XCircle
+  XCircle,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { LiveStreamService } from '../../../services/liveStreamService.ts';
@@ -255,42 +257,78 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
   const [booths, setBooths] = useState<LiveBoothStreamConfig[]>(defaultBooths);
   const [activeModalBooth, setActiveModalBooth] = useState<LiveBoothStreamConfig | null>(null);
   const [showPassword, setShowPassword] = useState(false);
-  const [activePlatformTab, setActivePlatformTab] = useState<'TIKTOK' | 'INSTAGRAM' | 'FACEBOOK' | 'YOUTUBE' | 'CUSTOM'>('TIKTOK');
+  const [activePlatformTab, setActivePlatformTab] = useState<'TIKTOK' | 'INSTAGRAM' | 'FACEBOOK' | 'YOUTUBE' | 'THREADS' | 'CUSTOM'>('TIKTOK');
   const [isSaving, setIsSaving] = useState(false);
   const [isTestingPing, setIsTestingPing] = useState(false);
   const [newKeyword, setNewKeyword] = useState('');
+
+  // Create New Booth Modal State
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [isCreatingBooth, setIsCreatingBooth] = useState(false);
+  const [newBoothForm, setNewBoothForm] = useState({
+    boothName: '',
+    category: '',
+    hostName: '',
+    hostHandle: '',
+    accountEmail: '',
+    activePlatforms: ['tiktok', 'instagram', 'facebook', 'youtube', 'threads'] as string[],
+    threadsAccountHandle: ''
+  });
 
   const [channelCreds, setChannelCreds] = useState<Record<string, ChannelCreds>>({
     tiktok: { username: '', password: '', authStatus: 'IDLE' },
     instagram: { username: '', password: '', authStatus: 'IDLE' },
     facebook: { username: '', password: '', authStatus: 'IDLE' },
     youtube: { username: '', password: '', authStatus: 'IDLE' },
+    threads: { username: '', password: '', authStatus: 'IDLE' },
     custom: { username: '', password: '', authStatus: 'IDLE' }
   });
 
-  // Fetch saved booth settings from Supabase
+  // Fetch saved booth settings from PostgreSQL
   const loadBooths = async () => {
     try {
-      const data = await LiveStreamService.getBooths();
+      const data = await LiveStreamService.getAllSetupBooths();
       if (Array.isArray(data) && data.length > 0) {
-        // Merge defaults with live Supabase data
-        const merged = defaultBooths.map(def => {
-          const num = def.boothId.replace('booth-', '');
-          const dbId = `booth_${num.padStart(2, '0')}`;
-          const found = data.find(d => d.id === dbId || d.id === def.boothId);
-          if (found) {
-            return {
-              ...def,
-              boothName: found.booth_name || def.boothName,
-              hostName: found.host_operator_name || def.hostName,
-              masterIngestRtmpUrl: found.rtmp_ingest_url || def.masterIngestRtmpUrl,
-              masterStreamKey: found.stream_key || def.masterStreamKey,
-              enabled: Boolean(found.is_broadcasting)
-            };
-          }
-          return def;
-        });
-        setBooths(merged);
+        const loaded: LiveBoothStreamConfig[] = data.map((b: any, index: number) => ({
+          boothId: b.boothId || b.booth_id || `booth-${index + 1}`,
+          boothName: b.boothName || b.booth_name || `Booth ${index + 1}`,
+          category: b.category || 'Vintage Garments & Streetwear',
+          hostName: b.hostName || b.host_name || 'Broadcaster Host',
+          hostHandle: b.hostHandle || b.host_handle || `@host_${b.booth_id || b.boothId}`,
+          provider: b.provider || 'RESTREAM',
+          enabled: typeof b.enabled === 'boolean' ? b.enabled : true,
+          accountEmail: b.accountEmail || b.account_email || `booth${index + 1}@vintagevibe.ae`,
+          accountPassword: b.accountPassword || '',
+          masterIngestRtmpUrl: b.masterIngestRtmpUrl || b.master_ingest_rtmp_url || 'rtmp://live.restream.io/live',
+          masterStreamKey: b.masterStreamKey || b.master_stream_key || `stream_key_${b.booth_id || b.boothId}`,
+          activePlatforms: Array.isArray(b.activePlatforms) ? b.activePlatforms : ['tiktok', 'instagram', 'facebook', 'youtube', 'threads'],
+          autoRelayToTikTok: typeof b.autoRelayToTikTok === 'boolean' ? b.autoRelayToTikTok : Boolean(b.auto_relay_to_tiktok),
+          autoRelayToInstagram: typeof b.autoRelayToInstagram === 'boolean' ? b.autoRelayToInstagram : Boolean(b.auto_relay_to_instagram),
+          autoRelayToFacebook: typeof b.autoRelayToFacebook === 'boolean' ? b.autoRelayToFacebook : Boolean(b.auto_relay_to_facebook),
+          autoRelayToYouTube: typeof b.autoRelayToYouTube === 'boolean' ? b.autoRelayToYouTube : Boolean(b.auto_relay_to_youtube),
+          autoRelayToThreads: typeof b.autoRelayToThreads === 'boolean' ? b.autoRelayToThreads : Boolean(b.auto_relay_to_threads),
+          tiktokAccountHandle: b.tiktokAccountHandle || b.tiktok_stream_key || '',
+          instagramAccountHandle: b.instagramAccountHandle || '',
+          facebookAccountHandle: b.facebookAccountHandle || '',
+          youTubeAccountHandle: b.youTubeAccountHandle || '',
+          threadsAccountHandle: b.threadsAccountHandle || b.threads_account_handle || '',
+          tiktokStreamKey: b.tiktokStreamKey || b.tiktok_stream_key || '',
+          instagramStreamKey: b.instagramStreamKey || b.instagram_stream_key || '',
+          facebookStreamKey: b.facebookStreamKey || b.facebook_stream_key || '',
+          youtubeStreamKey: b.youtubeStreamKey || b.youtube_stream_key || '',
+          threadsStreamKey: b.threadsStreamKey || b.threads_stream_key || '',
+          tiktokSocketConnected: false,
+          instagramSocketConnected: false,
+          facebookSocketConnected: false,
+          youTubeSocketConnected: false,
+          threadsSocketConnected: false,
+          claimKeywords: b.claimKeywords || ['CLAIM', 'MINE', 'BIN', 'TAKE', 'BUY'],
+          reservationTimeoutMinutes: b.reservationTimeoutMinutes || 15,
+          status: b.status || 'CONNECTED'
+        }));
+        setBooths(loaded);
+      } else {
+        setBooths(defaultBooths);
       }
     } catch (e) {
       console.warn('Live booths load note:', e);
@@ -313,6 +351,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
       instagram: { username: booth.instagramAccountHandle || '@vintage_dubai_ig', password: '', authStatus: 'IDLE' },
       facebook: { username: booth.facebookAccountHandle || 'Vintage Vibes UAE', password: '', authStatus: 'IDLE' },
       youtube: { username: booth.youTubeAccountHandle || 'Vintage Vibes Studio Live', password: '', authStatus: 'IDLE' },
+      threads: { username: booth.threadsAccountHandle || '@vintage_dubai_th', password: '', authStatus: 'IDLE' },
       custom: { username: '@web_studio_feed', password: '', authStatus: 'IDLE' }
     };
 
@@ -747,22 +786,95 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     updateModalBooth({ claimKeywords: current.filter(k => k !== kw) });
   };
 
-  // Save active booth configuration directly to Supabase & Railway Worker
+  // Create New Dedicated Broadcaster Booth (Persisted in PostgreSQL)
+  const handleCreateBooth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsCreatingBooth(true);
+    try {
+      const nextNum = booths.length + 1;
+      const boothName = newBoothForm.boothName.trim() || `Booth ${nextNum}: Live Selling`;
+      const category = newBoothForm.category.trim() || 'Vintage Garments & Rare Collectibles';
+      const hostName = newBoothForm.hostName.trim() || 'Broadcaster Host';
+      const hostHandle = newBoothForm.hostHandle.trim() || `@host_booth${nextNum}`;
+      const accountEmail = newBoothForm.accountEmail.trim() || `booth${nextNum}@vintagevibe.ae`;
+      const threadsHandle = newBoothForm.threadsAccountHandle.trim() || `@booth${nextNum}_threads`;
+
+      const payload = {
+        boothName,
+        category,
+        hostName,
+        hostHandle,
+        accountEmail,
+        activePlatforms: newBoothForm.activePlatforms,
+        threadsAccountHandle: threadsHandle,
+        enabled: true
+      };
+
+      const res = await LiveStreamService.createBooth(payload);
+      if (res.success) {
+        showMsg(`✓ Booth "${boothName}" created and persisted in SQL database!`, 'success');
+        setShowCreateModal(false);
+        setNewBoothForm({
+          boothName: '',
+          category: '',
+          hostName: '',
+          hostHandle: '',
+          accountEmail: '',
+          activePlatforms: ['tiktok', 'instagram', 'facebook', 'youtube', 'threads'],
+          threadsAccountHandle: ''
+        });
+        await loadBooths();
+      } else {
+        showMsg(`Failed to create booth: ${res.error || 'Server error'}`, 'error');
+      }
+    } catch (err: any) {
+      showMsg(`Error creating booth: ${err.message}`, 'error');
+    } finally {
+      setIsCreatingBooth(false);
+    }
+  };
+
+  // Delete Booth Permanently from PostgreSQL
+  const handleDeleteBooth = async (boothId: string, boothName: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${boothName}" (${boothId})?\n\nThis will permanently remove this booth, its social accounts (TikTok, IG, FB, Threads, YouTube), RTMP keys, and sales floor allocations from the database.`)) {
+      return;
+    }
+    try {
+      const res = await LiveStreamService.deleteBooth(boothId);
+      if (res.success) {
+        showMsg(`✓ Booth "${boothName}" (${boothId}) deleted from SQL database.`, 'success');
+        if (activeModalBooth?.boothId === boothId) {
+          handleCloseModal();
+        }
+        await loadBooths();
+      } else {
+        showMsg(`Failed to delete booth: ${res.error || 'Server error'}`, 'error');
+      }
+    } catch (err: any) {
+      showMsg(`Error deleting booth: ${err.message}`, 'error');
+    }
+  };
+
+  // Save active booth configuration directly to PostgreSQL & Railway Worker
   const handleSaveModalBooth = async () => {
     if (!activeModalBooth) return;
     setIsSaving(true);
     try {
-      const num = activeModalBooth.boothId.replace('booth-', '');
-      const dbBoothId = `booth_${num.padStart(2, '0')}`;
-
-      // 1. Update live_booths table
-      await LiveStreamService.updateBooth(dbBoothId, {
-        booth_name: activeModalBooth.boothName,
-        host_operator_name: activeModalBooth.hostName,
-        camera_source: activeModalBooth.provider || 'Webcam / OBS'
+      // 1. Update live_stream_booths table via API
+      await fetch(`/api/setup/live-booths/${activeModalBooth.boothId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...activeModalBooth,
+          tiktokAccountHandle: channelCreds.tiktok?.username || activeModalBooth.tiktokAccountHandle,
+          instagramAccountHandle: channelCreds.instagram?.username || activeModalBooth.instagramAccountHandle,
+          facebookAccountHandle: channelCreds.facebook?.username || activeModalBooth.facebookAccountHandle,
+          youTubeAccountHandle: channelCreds.youtube?.username || activeModalBooth.youTubeAccountHandle,
+          threadsAccountHandle: channelCreds.threads?.username || activeModalBooth.threadsAccountHandle
+        })
       });
 
-      // 2. Persist credentials for all 5 platforms into booth_social_channels (stored AES-256 encrypted)
+      // 2. Persist credentials for all platforms into booth_social_channels
       for (const [platform, creds] of Object.entries(channelCreds)) {
         if (creds.username) {
           await LiveStreamService.saveBoothSocialChannel({
@@ -776,21 +888,8 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
         }
       }
 
-      // 3. Update local state
-      setBooths(prev =>
-        prev.map(b =>
-          b.boothId === activeModalBooth.boothId
-            ? {
-                ...activeModalBooth,
-                tiktokAccountHandle: channelCreds.tiktok?.username,
-                instagramAccountHandle: channelCreds.instagram?.username,
-                facebookAccountHandle: channelCreds.facebook?.username,
-                youTubeAccountHandle: channelCreds.youtube?.username
-              }
-            : b
-        )
-      );
-      showMsg(`✓ Account credentials for ${activeModalBooth.boothName} saved and encrypted with AES-256!`);
+      await loadBooths();
+      showMsg(`✓ Account credentials and relay settings for ${activeModalBooth.boothName} saved in SQL!`, 'success');
       handleCloseModal();
     } catch (e: any) {
       console.error('Error saving booth settings:', e);
@@ -829,18 +928,27 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-black tracking-wide uppercase">5-Booth Live Social Multicast & Sockets Hub</h2>
+              <h2 className="text-base font-black tracking-wide uppercase">{booths.length}-Booth Live Social Multicast & Sockets Hub</h2>
               <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-emerald-500 text-white">
-                5 Floors Active
+                {booths.filter(b => b.enabled).length} Floors Active
               </span>
             </div>
             <p className="text-xs text-slate-300 mt-0.5">
-              Unified control center: Each warehouse booth runs its own dedicated broadcaster mobile camera, distinct social media accounts (TikTok, IG, FB, YT), login credentials, and real-time chat claim sockets.
+              Unified control center: Each warehouse booth runs its own dedicated broadcaster mobile camera, distinct social media accounts (TikTok, IG, FB, Threads, YT), login credentials, and real-time chat claim sockets.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 self-end md:self-auto">
+        <div className="flex items-center gap-2 self-end md:self-auto flex-wrap">
+          <button
+            type="button"
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded text-xs font-black uppercase tracking-wider bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-sm transition-colors cursor-pointer"
+          >
+            <Plus className="w-4 h-4 text-slate-950" />
+            <span>+ Create New Booth</span>
+          </button>
+
           <button
             type="button"
             onClick={async () => {
@@ -853,17 +961,17 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                   })
                 )
               );
-              showMsg('✓ All 5 Warehouse Booths successfully synchronized to cloud relay engine!');
+              showMsg(`✓ All ${booths.length} Warehouse Booths successfully synchronized to cloud relay engine!`);
             }}
             className="flex items-center gap-1.5 px-4 py-2 rounded text-xs font-black uppercase tracking-wider bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-colors cursor-pointer"
           >
             <Check className="w-3.5 h-3.5" />
-            <span>Sync All 5 Booths</span>
+            <span>Sync All {booths.length} Booths</span>
           </button>
         </div>
       </div>
 
-      {/* Grid of 5 Broadcaster Booth Cards */}
+      {/* Grid of Broadcaster Booth Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
         {booths.map((b, index) => (
           <div
@@ -902,10 +1010,10 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                 </div>
               </div>
 
-              {/* 4 Social Platforms Preview */}
+              {/* 5 Social Platforms Preview */}
               <div className="space-y-1.5 pt-1">
                 <span className="text-[10px] font-bold uppercase text-slate-400">Connected Social Channels:</span>
-                <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-[11px]">
                   <div className="flex items-center gap-1 px-2 py-1 rounded bg-slate-50 border border-slate-200 truncate" title={b.tiktokAccountHandle}>
                     <span className="font-black text-[10px] text-black">TT</span>
                     <span className="font-medium truncate">{b.tiktokAccountHandle || '@not_linked'}</span>
@@ -922,21 +1030,35 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                     <span className="font-black text-[10px] text-red-600">YT</span>
                     <span className="font-medium truncate">{b.youTubeAccountHandle || 'Not linked'}</span>
                   </div>
+                  <div className="flex items-center gap-1 px-2 py-1 rounded bg-slate-50 border border-slate-200 truncate col-span-2 sm:col-span-1" title={b.threadsAccountHandle || 'Meta Threads'}>
+                    <span className="font-black text-[10px] text-purple-700">TH</span>
+                    <span className="font-medium truncate">{b.threadsAccountHandle || (b.autoRelayToThreads ? 'Relay Active' : 'Not linked')}</span>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Bottom Button to Open Full Configuration Window */}
-            <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-              <span className="text-[10px] text-slate-400 font-mono">ID: {b.boothId}</span>
-              <button
-                type="button"
-                onClick={() => handleOpenBoothModal(b)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-colors cursor-pointer"
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span>Configure Booth</span>
-              </button>
+            {/* Bottom Button to Open Full Configuration Window or Delete */}
+            <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
+              <span className="text-[10px] text-slate-400 font-mono truncate">ID: {b.boothId}</span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleDeleteBooth(b.boothId, b.boothName)}
+                  title={`Delete ${b.boothName} permanently`}
+                  className="p-1.5 rounded-lg text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenBoothModal(b)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-colors cursor-pointer"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>Configure</span>
+                </button>
+              </div>
             </div>
           </div>
         ))}
@@ -1078,13 +1200,14 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                   </span>
                 </div>
 
-                {/* Platform Selector Buttons (5 Channels) */}
+                {/* Platform Selector Buttons (6 Channels) */}
                 <div className="flex border-b border-slate-200 gap-2 overflow-x-auto no-scrollbar">
                   {[
                     { id: 'TIKTOK', key: 'tiktok', label: '🎵 TikTok Live' },
                     { id: 'INSTAGRAM', key: 'instagram', label: '📸 Instagram Live' },
                     { id: 'FACEBOOK', key: 'facebook', label: '📘 Facebook Live' },
                     { id: 'YOUTUBE', key: 'youtube', label: '📺 YouTube Live' },
+                    { id: 'THREADS', key: 'threads', label: '🧵 Meta Threads' },
                     { id: 'CUSTOM', key: 'custom', label: '⚡ Snapchat / Web Studio' }
                   ].map(p => {
                     const status = channelCreds[p.key]?.authStatus || 'IDLE';
@@ -1131,6 +1254,8 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                       ? 'Facebook Live Producer'
                       : activePlatformTab === 'YOUTUBE'
                       ? 'YouTube Studio Live'
+                      : activePlatformTab === 'THREADS'
+                      ? 'Meta Threads Live Relay'
                       : 'Snapchat / Custom Studio';
 
                   return (
@@ -1169,13 +1294,18 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                 ? activeModalBooth.autoRelayToInstagram
                                 : platKey === 'facebook'
                                 ? activeModalBooth.autoRelayToFacebook
-                                : activeModalBooth.autoRelayToYouTube
+                                : platKey === 'youtube'
+                                ? activeModalBooth.autoRelayToYouTube
+                                : platKey === 'threads'
+                                ? activeModalBooth.autoRelayToThreads
+                                : false
                             }
                             onChange={e => {
                               if (platKey === 'tiktok') updateModalBooth({ autoRelayToTikTok: e.target.checked });
                               else if (platKey === 'instagram') updateModalBooth({ autoRelayToInstagram: e.target.checked });
                               else if (platKey === 'facebook') updateModalBooth({ autoRelayToFacebook: e.target.checked });
-                              else updateModalBooth({ autoRelayToYouTube: e.target.checked });
+                              else if (platKey === 'youtube') updateModalBooth({ autoRelayToYouTube: e.target.checked });
+                              else if (platKey === 'threads') updateModalBooth({ autoRelayToThreads: e.target.checked });
                             }}
                             className="rounded text-indigo-600"
                           />
@@ -1589,6 +1719,14 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                       <p>3. Point camera at the QR code and tap <strong>"Yes, it's me"</strong>.</p>
                                     </>
                                   )}
+                                  {platKey === 'threads' && (
+                                    <>
+                                      <p>1. Open the <strong>Threads App</strong> on your phone.</p>
+                                      <p>2. Go to <strong>Profile</strong> ➔ <strong>Settings</strong> ➔ <strong>Account</strong>.</p>
+                                      <p>3. Scan QR code or approve session for <strong>Live Broadcast Relay</strong>.</p>
+                                      <p>4. Or configure your Threads stream key directly in credentials tab.</p>
+                                    </>
+                                  )}
                                   {platKey === 'custom' && (
                                     <>
                                       <p>1. Open your camera app or browser.</p>
@@ -1709,8 +1847,18 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => handleForceResetPlatform(activePlatformTab.toLowerCase())}
+                  onClick={() => handleDeleteBooth(activeModalBooth.boothId, activeModalBooth.boothName)}
                   className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors cursor-pointer"
+                  title="Delete this entire booth from database"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete Booth</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleForceResetPlatform(activePlatformTab.toLowerCase())}
+                  className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors cursor-pointer"
                   title={`Force Disconnect & Reset ${activePlatformTab} state to IDLE`}
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
@@ -1736,6 +1884,207 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* CREATE NEW BOOTH MODAL (WITH SOCIAL MEDIA SELECTION & THREADS)             */}
+      {/* ========================================================================= */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="relative w-full max-w-2xl bg-white border border-slate-300 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-5 py-3.5 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white border-b border-indigo-900">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300">
+                  <Plus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm uppercase tracking-wider">
+                    Create New Broadcaster Booth
+                  </h3>
+                  <p className="text-[11px] text-indigo-200">
+                    Provision dedicated auction floor, host identity, and social media channels in SQL
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Form Body */}
+            <form onSubmit={handleCreateBooth} className="p-5 overflow-y-auto space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 uppercase mb-1">
+                    Booth Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder={`e.g. Booth ${booths.length + 1}: Rare Grails & Streetwear`}
+                    value={newBoothForm.boothName}
+                    onChange={e => setNewBoothForm(prev => ({ ...prev, boothName: e.target.value }))}
+                    className="w-full font-bold border border-slate-300 rounded p-2 focus:ring-1 focus:ring-indigo-500 bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 uppercase mb-1">
+                    Category Focus
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Heavy Flannels, Carhartt & Workwear"
+                    value={newBoothForm.category}
+                    onChange={e => setNewBoothForm(prev => ({ ...prev, category: e.target.value }))}
+                    className="w-full border border-slate-300 rounded p-2 focus:ring-1 focus:ring-indigo-500 bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 uppercase mb-1">
+                    Host Broadcaster Name
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Sarah Al-Maktoum"
+                    value={newBoothForm.hostName}
+                    onChange={e => setNewBoothForm(prev => ({ ...prev, hostName: e.target.value }))}
+                    className="w-full font-bold border border-slate-300 rounded p-2 focus:ring-1 focus:ring-indigo-500 bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 uppercase mb-1">
+                    Host Social Handle
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="@sarah_vintage"
+                    value={newBoothForm.hostHandle}
+                    onChange={e => setNewBoothForm(prev => ({ ...prev, hostHandle: e.target.value }))}
+                    className="w-full font-mono border border-slate-300 rounded p-2 focus:ring-1 focus:ring-indigo-500 bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 uppercase mb-1">
+                  Ingest Broadcaster Account Email
+                </label>
+                <input
+                  type="email"
+                  placeholder={`booth${booths.length + 1}@vintagevibe.ae`}
+                  value={newBoothForm.accountEmail}
+                  onChange={e => setNewBoothForm(prev => ({ ...prev, accountEmail: e.target.value }))}
+                  className="w-full font-mono border border-slate-300 rounded p-2 focus:ring-1 focus:ring-indigo-500 bg-white"
+                />
+              </div>
+
+              {/* Required Social Media Platforms Selection */}
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-black text-xs uppercase tracking-wider text-slate-900">
+                    Required Social Media Accounts
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    Select which platforms this booth will multicast to
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  {[
+                    { id: 'tiktok', label: 'TikTok Live', icon: '🎵', desc: 'Auto-claim comments, stealth anti-ban' },
+                    { id: 'instagram', label: 'Instagram Live', icon: '📸', desc: 'Direct comments stream, mobile QR auth' },
+                    { id: 'facebook', label: 'Facebook Live', icon: '📘', desc: 'RTMP stream key, group & page feed' },
+                    { id: 'youtube', label: 'YouTube Live', icon: '📺', desc: '1080p stream relay, studio live chat' },
+                    { id: 'threads', label: 'Meta Threads', icon: '🧵', desc: 'Fast mobile broadcast relay, post comments' }
+                  ].map(plat => {
+                    const isChecked = newBoothForm.activePlatforms.includes(plat.id);
+                    return (
+                      <label
+                        key={plat.id}
+                        className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all ${
+                          isChecked
+                            ? 'bg-indigo-50/60 border-indigo-300 text-indigo-950 shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => {
+                            if (e.target.checked) {
+                              setNewBoothForm(prev => ({
+                                ...prev,
+                                activePlatforms: [...prev.activePlatforms, plat.id]
+                              }));
+                            } else {
+                              setNewBoothForm(prev => ({
+                                ...prev,
+                                activePlatforms: prev.activePlatforms.filter(p => p !== plat.id)
+                              }));
+                            }
+                          }}
+                          className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 font-black text-xs">
+                            <span>{plat.icon}</span>
+                            <span>{plat.label}</span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 mt-0.5 truncate">{plat.desc}</p>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                {newBoothForm.activePlatforms.includes('threads') && (
+                  <div className="pt-2">
+                    <label className="block font-bold text-slate-700 uppercase mb-1">
+                      Threads Account Handle (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={`@vintage_dubai_b${booths.length + 1}_th`}
+                      value={newBoothForm.threadsAccountHandle}
+                      onChange={e => setNewBoothForm(prev => ({ ...prev, threadsAccountHandle: e.target.value }))}
+                      className="w-full font-mono border border-slate-300 rounded p-2 focus:ring-1 focus:ring-indigo-500 bg-white"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Form Footer */}
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-800 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingBooth}
+                  className="flex items-center gap-1.5 px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white shadow-sm transition-colors cursor-pointer"
+                >
+                  <Plus className="w-4 h-4 text-white" />
+                  <span>{isCreatingBooth ? 'Creating in SQL...' : 'Create & Save Booth'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

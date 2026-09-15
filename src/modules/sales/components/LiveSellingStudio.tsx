@@ -581,6 +581,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
         const current: BoothSession = boothsList.find((b: BoothSession) => b.boothId === selectedBoothId) || boothsList[0];
         if (current) {
+          if (selectedBoothId !== current.boothId) {
+            setSelectedBoothId(current.boothId);
+          }
           setActiveBooth(current);
           setComments(current.comments || []);
 
@@ -1003,7 +1006,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest bg-red-600 text-white shadow-xs">
                   CONCURRENT MULTI-BOOTH STUDIO
                 </span>
-                <span className="text-xs text-stone-400 font-mono">10 Dedicated Auction Booths</span>
+                <span className="text-xs text-stone-400 font-mono">
+                  {(allBoothsData?.booths || []).length} Dedicated Auction Booths
+                </span>
               </div>
 
               {/* Booth Select Dropdown */}

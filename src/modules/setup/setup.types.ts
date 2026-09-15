@@ -290,6 +290,13 @@ export interface LiveBoothStreamConfig {
   youTubeSocketConnected?: boolean;
   autoRelayToYouTube: boolean;
 
+  threadsAccountHandle?: string;
+  threadsStreamKey?: string;
+  threadsRtmpUrl?: string;
+  threadsSocketConnected?: boolean;
+  autoRelayToThreads?: boolean;
+  activePlatforms?: string[];
+
   claimKeywords?: string[];
   reservationTimeoutMinutes?: number;
   status: 'CONNECTED' | 'STANDBY' | 'DISCONNECTED' | 'ERROR';
