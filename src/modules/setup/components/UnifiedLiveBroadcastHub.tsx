@@ -636,45 +636,46 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     }
   };
 
-  // Immediate Mobile Scan Approval / Fallback Manual Authorization
-  const handleSimulateQrApproval = async (platformKey: string) => {
+  // Verify Authentic Mobile Scan Status from Server (Does NOT fake login without scan)
+  const handleVerifyQrStatus = async (platformKey: string) => {
     if (!activeModalBooth) return;
-    clearConnectionTimeout(platformKey);
-    const token = channelCreds[platformKey]?.qrToken;
-    try {
-      await LiveStreamService.simulateChannelQrApproval(activeModalBooth.boothId, platformKey, token);
-    } catch (_) {}
+    const cred = channelCreds[platformKey];
+    const token = cred?.qrToken;
 
-    setChannelCreds(prev => ({
-      ...prev,
-      [platformKey]: {
-        ...prev[platformKey],
-        authStatus: 'LOGGED_IN',
-        qrStatus: 'LOGGED_IN',
-        lastLoginAt: new Date().toISOString(),
-        cookieCount: 4,
-        qrError: undefined
-      }
-    }));
+    showMsg(`🔍 Checking ${platformKey.toUpperCase()} scan status on server...`);
 
-    // Verify database persistence across all booth aliases
     try {
-      const refreshed = await LiveStreamService.getBoothSocialChannels(activeModalBooth.boothId);
-      const target = refreshed.find(c => c.platform === platformKey);
-      if (target && target.auth_status === 'LOGGED_IN') {
+      const res = await LiveStreamService.getChannelLoginQrStatus(activeModalBooth.boothId, platformKey, token);
+      if (res.status === 'LOGGED_IN') {
+        clearConnectionTimeout(platformKey);
         setChannelCreds(prev => ({
           ...prev,
           [platformKey]: {
             ...prev[platformKey],
             authStatus: 'LOGGED_IN',
-            lastLoginAt: target.last_login_at || new Date().toISOString(),
-            cookieCount: target.session_cookies?.length || 4
+            qrStatus: 'LOGGED_IN',
+            isAuthenticating: false,
+            isGeneratingQr: false,
+            lastLoginAt: new Date().toISOString(),
+            cookieCount: 4,
+            qrError: undefined
           }
         }));
-      }
-    } catch (_) {}
 
-    showMsg(`🟢 ${platformKey.toUpperCase()} authorized & marked LOGGED IN!`);
+        try {
+          const freshChannels = await LiveStreamService.getBoothSocialChannels(activeModalBooth.boothId);
+          if (freshChannels && freshChannels.length > 0) {
+            setChannels(freshChannels);
+          }
+        } catch (_) {}
+
+        showMsg(`🎉 ${platformKey.toUpperCase()} mobile scan confirmed! Account is active & Logged In.`);
+      } else {
+        showMsg(`⚠️ Mobile scan not completed yet. Please scan the QR code using your ${platformKey.toUpperCase()} app and tap Approve, then check status again.`, 'error');
+      }
+    } catch (err: any) {
+      showMsg(`Error verifying scan status: ${err?.message || 'Server check failed'}`, 'error');
+    }
   };
 
   // QR Code Real-Time Polling Listener
@@ -1402,15 +1403,6 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                 >
                                   Retry
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleSimulateQrApproval(platKey)}
-                                  className="px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] uppercase cursor-pointer transition shadow-xs flex items-center gap-1 active:scale-95"
-                                  title="Confirm scan and mark channel as Logged In"
-                                >
-                                  <CheckCircle className="w-3 h-3 text-white" />
-                                  <span>Confirm Scan / Mark Logged In</span>
-                                </button>
                               </div>
                             </div>
                           )}
@@ -1419,7 +1411,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                             <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-indigo-950 text-xs animate-in fade-in">
                               <div className="flex items-center gap-2">
                                 <Smartphone className="w-4 h-4 text-indigo-600 shrink-0" />
-                                <span>Scan code with <strong>{platTitle}</strong> mobile app or tap <strong>Confirm Login</strong>:</span>
+                                <span>Scan code with <strong>{platTitle}</strong> mobile app to authenticate:</span>
                               </div>
                               <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
                                 <button
@@ -1433,11 +1425,12 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => handleSimulateQrApproval(platKey)}
+                                  onClick={() => handleVerifyQrStatus(platKey)}
                                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-lg cursor-pointer transition shadow-sm flex items-center gap-1.5 active:scale-95"
+                                  title="Query server to verify if mobile scan was approved"
                                 >
                                   <CheckCircle className="w-3.5 h-3.5" />
-                                  <span>Confirm Scan (Mark Logged In)</span>
+                                  <span>Verify Scan Status</span>
                                 </button>
                               </div>
                             </div>
@@ -1622,15 +1615,15 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                     </span>
                                   </button>
 
-                                  {(cur.qrError || cur.qrDataUrl) && (
+                                  {cur.qrDataUrl && (
                                     <button
                                       type="button"
-                                      onClick={() => handleSimulateQrApproval(platKey)}
+                                      onClick={() => handleVerifyQrStatus(platKey)}
                                       className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition active:scale-95"
-                                      title="Confirm mobile scan or fallback authorization and mark channel as Logged In"
+                                      title="Query server to verify if mobile scan was approved"
                                     >
                                       <CheckCircle className="w-4 h-4 text-white" />
-                                      <span>Confirm Scan / Mark Logged In</span>
+                                      <span>Verify Scan Status</span>
                                     </button>
                                   )}
 

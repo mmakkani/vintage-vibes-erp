@@ -799,37 +799,54 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }
   };
 
-  // Instant Mobile QR Approval / Fallback Manual Confirmation
-  const handleSimulateChannelQrApproval = async (platform: string) => {
-    clearChannelConnectionTimeout(platform);
+  // Verify Authentic Mobile Scan Status from Server (Does NOT fake login without scan)
+  const handleVerifyChannelQrStatus = async (platform: string) => {
     const token = channelQrData[platform]?.token;
+    setChannelFeedback({
+      platform,
+      message: `🔍 Verifying ${platform.toUpperCase()} mobile scan status on server...`,
+      isError: false
+    });
+
     try {
-      await LiveStreamService.simulateChannelQrApproval(currentBoothId, platform, token);
-      setChannelQrData(prev => ({
-        ...prev,
-        [platform]: {
-          ...prev[platform],
-          status: 'LOGGED_IN',
-          secondsRemaining: 0,
-          qrError: undefined
-        }
-      }));
-      setSocialChannels(prev =>
-        prev.map(c => (c.platform === platform ? { ...c, auth_status: 'LOGGED_IN' } : c))
-      );
-      const updated = await LiveStreamService.getBoothSocialChannels(currentBoothId);
-      if (updated && updated.length > 0) {
-        setSocialChannels(updated);
+      const res = await LiveStreamService.getChannelLoginQrStatus(currentBoothId, platform, token);
+      if (res.status === 'LOGGED_IN') {
+        clearChannelConnectionTimeout(platform);
+        setChannelQrData(prev => ({
+          ...prev,
+          [platform]: {
+            ...prev[platform],
+            status: 'LOGGED_IN',
+            secondsRemaining: 0,
+            qrError: undefined
+          }
+        }));
+        setSocialChannels(prev =>
+          prev.map(c => (c.platform === platform ? { ...c, auth_status: 'LOGGED_IN' } : c))
+        );
+        try {
+          const updated = await LiveStreamService.getBoothSocialChannels(currentBoothId);
+          if (updated && updated.length > 0) {
+            setSocialChannels(updated);
+          }
+        } catch (_) {}
+
+        setChannelFeedback({
+          platform,
+          message: `🎉 ${platform.toUpperCase()} mobile scan confirmed! Account is active & Logged In.`,
+          isError: false
+        });
+      } else {
+        setChannelFeedback({
+          platform,
+          message: `⚠️ Mobile scan not completed yet. Please scan the QR code using your ${platform.toUpperCase()} app and tap Approve, then verify again.`,
+          isError: true
+        });
       }
-      setChannelFeedback({
-        platform,
-        message: `🟢 ${platform.toUpperCase()} authorized & marked LOGGED IN!`,
-        isError: false
-      });
     } catch (err: any) {
       setChannelFeedback({
         platform,
-        message: err?.message || 'Error confirming mobile QR approval.',
+        message: err?.message || 'Error checking mobile QR scan status.',
         isError: true
       });
     }
@@ -1880,15 +1897,6 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                               >
                                 Retry
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => handleSimulateChannelQrApproval(ch.platform)}
-                                className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[9px] uppercase cursor-pointer flex items-center gap-1"
-                                title="Confirm scan and mark channel as Logged In"
-                              >
-                                <CheckCircle2 className="w-3 h-3 text-white" />
-                                <span>Confirm Login</span>
-                              </button>
                             </div>
                           </div>
                         )}
@@ -2050,15 +2058,15 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                                   <span>{qr.isGenerating ? 'Fetching QR...' : qr.qrDataUrl ? 'Refresh QR' : 'Generate QR'}</span>
                                 </button>
 
-                                {(qr.qrError || qr.qrDataUrl) && (
+                                {qr.qrDataUrl && (
                                   <button
                                     type="button"
-                                    onClick={() => handleSimulateChannelQrApproval(ch.platform)}
+                                    onClick={() => handleVerifyChannelQrStatus(ch.platform)}
                                     className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer transition active:scale-95 shadow-sm"
-                                    title="Confirm mobile scan or manual authorization and mark channel as Logged In"
+                                    title="Verify if mobile scan was authorized on server"
                                   >
                                     <CheckCircle2 className="w-3.5 h-3.5" />
-                                    <span>Confirm Scan / Mark Logged In</span>
+                                    <span>Verify Scan Status</span>
                                   </button>
                                 )}
 

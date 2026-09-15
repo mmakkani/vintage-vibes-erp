@@ -14,6 +14,8 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import fs from 'fs';
 import QRCode from 'qrcode';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 
 export const headlessRouter = Router();
 
@@ -452,33 +454,50 @@ function getChromiumExecutablePath() {
 async function loadPuppeteer() {
   let puppeteer = null;
   let isStealth = false;
+
+  // 1. Try CommonJS require for puppeteer-extra with stealth plugin
   try {
-    const pExtraMod = await import('puppeteer-extra');
-    const stealthMod = await import('puppeteer-extra-plugin-stealth');
-    const pExtra = pExtraMod.default || pExtraMod;
-    const StealthPlugin = stealthMod.default || stealthMod;
+    const pExtra = require('puppeteer-extra');
+    const StealthPlugin = require('puppeteer-extra-plugin-stealth');
     if (pExtra && StealthPlugin) {
-      const stealth = typeof StealthPlugin === 'function' ? StealthPlugin() : (StealthPlugin.default ? StealthPlugin.default() : null);
-      if (stealth && typeof pExtra.use === 'function') {
-        pExtra.use(stealth);
+      const plugin = typeof StealthPlugin === 'function' ? StealthPlugin() : (StealthPlugin.default ? StealthPlugin.default() : null);
+      if (plugin && typeof pExtra.use === 'function') {
+        pExtra.use(plugin);
       }
       puppeteer = pExtra;
       isStealth = true;
+      console.log('[Worker Headless] ✅ Loaded puppeteer-extra with StealthPlugin via require');
     }
   } catch (e1) {
-    console.warn('[Worker Headless] puppeteer-extra note:', e1.message);
+    console.warn('[Worker Headless] puppeteer-extra require note:', e1.message);
   }
 
+  // 2. Try CommonJS require for standard puppeteer
+  if (!puppeteer) {
+    try {
+      puppeteer = require('puppeteer');
+      console.log('[Worker Headless] ✅ Loaded standard puppeteer via require');
+    } catch (e2) {
+      try {
+        puppeteer = require('puppeteer-core');
+        console.log('[Worker Headless] ✅ Loaded puppeteer-core via require');
+      } catch (e3) {
+        console.warn('[Worker Headless] CommonJS puppeteer require failure:', e3.message);
+      }
+    }
+  }
+
+  // 3. Fallback to dynamic ESM imports
   if (!puppeteer) {
     try {
       const pMod = await import('puppeteer');
       puppeteer = pMod.default || pMod;
-    } catch (e2) {
+    } catch (e4) {
       try {
         const pCoreMod = await import('puppeteer-core');
         puppeteer = pCoreMod.default || pCoreMod;
-      } catch (e3) {
-        console.error('[Worker Headless] ❌ Puppeteer import failure:', e3.message);
+      } catch (e5) {
+        console.error('[Worker Headless] ❌ All puppeteer import attempts failed:', e5.message);
       }
     }
   }
@@ -489,9 +508,9 @@ async function loadPuppeteer() {
 /**
  * Extract Live QR Code from TikTok Web Login via Headless Puppeteer
  * -----------------------------------------------------------------
- * 1. Automates opening https://www.tiktok.com/login and /login/phone-or-email/qrcode
- * 2. Waits for dynamic canvas, svg, or qr container element
- * 3. Extracts real base64 image data URL (or takes crisp element screenshot)
+ * 1. Automates opening https://www.tiktok.com/login
+ * 2. Clicks "Use QR code" channel item to render authentic dynamic QR canvas
+ * 3. Extracts real base64 image data URL from canvas screenshot
  * 4. Keeps the browser session alive in activePuppeteerSessions
  * 5. Continuously polls cookies for sessionid / redirect to detect mobile scan approval
  * 6. Once approved, persists cookies to DB, sets status to LOGGED_IN, and cleans up browser
@@ -527,8 +546,7 @@ async function extractTikTokLoginQR(boothId, token) {
     '--no-first-run',
     '--no-zygote',
     '--disable-gpu',
-    '--disable-extensions',
-    '--single-process'
+    '--disable-extensions'
   ];
 
   const launchOpts = {
@@ -558,34 +576,46 @@ async function extractTikTokLoginQR(boothId, token) {
     page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
     await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
     );
 
-    // 1. Navigate to TikTok QR login page
-    const targetUrl = 'https://www.tiktok.com/login/phone-or-email/qrcode';
-    console.log(`[Worker Headless] 🧭 Navigating to TikTok QR login page: ${targetUrl}`);
+    // 1. Navigate directly to TikTok web login
+    const targetUrl = 'https://www.tiktok.com/login';
+    console.log(`[Worker Headless] 🧭 Navigating to TikTok login page: ${targetUrl}`);
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await humanDelay(1500, 2500);
+
+    // 2. Click "Use QR code" option to render dynamic QR canvas
+    console.log('[Worker Headless] 👆 Locating and clicking "Use QR code" option...');
     try {
-      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
-    } catch (navErr) {
-      console.warn(`[Worker Headless] ⚠️ Navigation note on ${targetUrl}:`, navErr.message);
-      await page.goto('https://www.tiktok.com/login', { waitUntil: 'domcontentloaded', timeout: 20000 });
+      const clickedQr = await page.evaluate(() => {
+        // Option A: Look for channel item with QR text
+        const channelItems = Array.from(document.querySelectorAll('[data-e2e="channel-item"]'));
+        for (const item of channelItems) {
+          if ((item.textContent || '').trim().toLowerCase().includes('qr')) {
+            item.click();
+            return true;
+          }
+        }
+        // Option B: Look for any leaf element with "Use QR code"
+        const els = Array.from(document.querySelectorAll('div, a, button, span, p'));
+        for (const el of els) {
+          if (el.children.length === 0 && (el.textContent || '').trim().toLowerCase().includes('use qr code')) {
+            const clickable = el.closest('[data-e2e="channel-item"]') || el.closest('div[role="button"]') || el.closest('a') || el.closest('button') || el;
+            clickable.click();
+            return true;
+          }
+        }
+        return false;
+      });
+      console.log('[Worker Headless] 🎯 Clicked QR code login button:', clickedQr);
+      await humanDelay(1200, 2000);
+    } catch (clickErr) {
+      console.warn('[Worker Headless] ⚠️ Error while clicking QR code option:', clickErr.message);
     }
 
-    await humanDelay(1200, 2200);
-
-    // If on general login page, click QR code option if present
-    try {
-      const qrTabSelector = 'a[href*="qrcode"], [data-e2e="channel-item"]:first-child, div[class*="qrcode-tab"]';
-      const qrTab = await page.$(qrTabSelector);
-      if (qrTab) {
-        console.log('[Worker Headless] 👆 Clicking TikTok QR Code tab...');
-        await qrTab.click().catch(() => {});
-        await humanDelay(1000, 1500);
-      }
-    } catch (_) {}
-
-    // Wait for the QR canvas, svg, or image selector
-    console.log('[Worker Headless] ⏳ Waiting for QR element: canvas, svg, img[src*="data:image"], or .tiktok-qr-box...');
+    // 3. Wait for dynamic canvas or QR selector
+    console.log('[Worker Headless] ⏳ Waiting for QR canvas element...');
     const selectors = [
       'canvas',
       'div[class*="qrcode"] canvas',
@@ -604,7 +634,7 @@ async function extractTikTokLoginQR(boothId, token) {
     let matchedSelector = null;
     try {
       matchedSelector = await Promise.any(
-        selectors.map(s => page.waitForSelector(s, { timeout: 12000 }).then(() => s))
+        selectors.map(s => page.waitForSelector(s, { timeout: 15000 }).then(() => s))
       );
       console.log(`[Worker Headless] 🎯 Matched TikTok QR selector: "${matchedSelector}"`);
     } catch (waitErr) {
@@ -751,7 +781,7 @@ async function extractTikTokLoginQR(boothId, token) {
     return {
       success: true,
       qrDataUrl: qrBase64,
-      qrRawUrl: 'https://www.tiktok.com/login/phone-or-email/qrcode'
+      qrRawUrl: 'https://www.tiktok.com/login'
     };
 
   } catch (err) {

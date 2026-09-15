@@ -1,10 +1,28 @@
 # Railway Nixpacks build configuration for Vintage Vibes Headless Worker
 [phases.setup]
-nixPkgs = ["chromium", "ca-certificates"]
-
-[phases.build]
-cmds = ["npm install"]
+aptPkgs = [
+  'chromium',
+  'fonts-liberation',
+  'libappindicator3-1',
+  'libasound2',
+  'libatk-bridge2.0-0',
+  'libatk1.0-0',
+  'libgbm1',
+  'libgtk-3-0',
+  'libnspr4',
+  'libnss3',
+  'libx11-xcb1',
+  'libxcomposite1',
+  'libxcursor1',
+  'libxdamage1',
+  'libxfixes3',
+  'libxi6',
+  'libxrandr2',
+  'libxss1',
+  'libxtst6',
+  'xdg-utils',
+  'ca-certificates'
+]
 
 [variables]
-PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
 PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
