@@ -58,17 +58,40 @@ export interface BoothSocialChannel {
   updated_at?: string;
 }
 
+export function getBoothIdAliases(boothId: string): string[] {
+  if (!boothId) return [];
+  const m = String(boothId).match(/^booth[-_]?0*(\d+)$/i);
+  if (m) {
+    const num = parseInt(m[1], 10);
+    const padded = num < 10 ? `0${num}` : `${num}`;
+    return [
+      `booth-${num}`,
+      `booth-${padded}`,
+      `booth_${num}`,
+      `booth_${padded}`
+    ];
+  }
+  return [String(boothId)];
+}
+
 export class LiveStreamService {
   public static async getBoothSocialChannels(boothId: string): Promise<BoothSocialChannel[]> {
+    const aliases = getBoothIdAliases(boothId);
     try {
       const { data, error } = await supabase
         .from('booth_social_channels')
         .select('*')
-        .eq('booth_id', boothId)
+        .in('booth_id', aliases)
         .order('platform');
 
       if (!error && Array.isArray(data) && data.length > 0) {
-        return data as BoothSocialChannel[];
+        const map = new Map<string, BoothSocialChannel>();
+        for (const item of data as BoothSocialChannel[]) {
+          if (!map.has(item.platform) || item.auth_status === 'LOGGED_IN') {
+            map.set(item.platform, { ...item, booth_id: boothId });
+          }
+        }
+        return Array.from(map.values());
       }
     } catch (e) {
       console.warn('Supabase fetch channels note:', e);
@@ -187,7 +210,7 @@ export class LiveStreamService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fallback }),
-        signal: AbortSignal.timeout(22000)
+        signal: AbortSignal.timeout(25000)
       });
 
       const data = await res.json().catch(() => ({ success: false, error: 'Malformed JSON returned from server' }));
@@ -198,29 +221,8 @@ export class LiveStreamService {
         return data;
       }
 
-      // If fallback was requested and server didn't provide image data, generate in-browser
-      if (fallback) {
-        console.log(`[Client fetchLoginQR] ⚡ Generating in-browser fallback QR for ${platform}...`);
-        const qrDataUrl = await QRCode.toDataURL(qrRawUrl, {
-          margin: 2,
-          width: 280,
-          color: { dark: '#0a0f1d', light: '#ffffff' }
-        });
-        return {
-          success: true,
-          status: 'WAITING_SCAN',
-          qrDataUrl,
-          qrRawUrl,
-          token,
-          expiresInSeconds: 120,
-          platform,
-          boothId,
-          isFallback: true
-        };
-      }
-
-      // If server returned failure or no image data for standard extraction
-      const errorMsg = data.error || (data.message ? `${data.message} (HTTP ${res.status})` : `Headless worker failed to return a valid base64 QR image (HTTP ${res.status}).`);
+      // Return failure cleanly without generating unscannable fake QR
+      const errorMsg = data.error || (data.message ? `${data.message} (HTTP ${res.status})` : `Headless worker was unable to extract live ${platform.toUpperCase()} QR image.`);
       console.error(`[Client fetchLoginQR] ❌ Server returned failure for ${platform}:`, errorMsg);
       return {
         success: false,
@@ -228,28 +230,6 @@ export class LiveStreamService {
       };
     } catch (err: any) {
       console.warn(`[Client fetchLoginQR] ⚠️ Exception during QR fetch for ${platform}:`, err);
-      // If network error occurred and fallback requested, generate in-browser
-      if (fallback) {
-        try {
-          const qrDataUrl = await QRCode.toDataURL(qrRawUrl, {
-            margin: 2,
-            width: 280,
-            color: { dark: '#0a0f1d', light: '#ffffff' }
-          });
-          return {
-            success: true,
-            status: 'WAITING_SCAN',
-            qrDataUrl,
-            qrRawUrl,
-            token,
-            expiresInSeconds: 120,
-            platform,
-            boothId,
-            isFallback: true
-          };
-        } catch (_) {}
-      }
-
       return { success: false, error: err?.name === 'TimeoutError' ? 'Connection timed out. Please try again.' : (err?.message || 'Network error fetching login QR') };
     }
   }

@@ -1,0 +1,10 @@
+# Railway Nixpacks build configuration for Vintage Vibes Headless Worker
+[phases.setup]
+nixPkgs = ["chromium", "ca-certificates"]
+
+[phases.build]
+cmds = ["npm install"]
+
+[variables]
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
+PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"

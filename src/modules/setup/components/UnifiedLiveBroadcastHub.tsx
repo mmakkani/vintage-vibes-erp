@@ -568,10 +568,10 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     }
   };
 
-  // Generate Live Mobile QR Code for Platform
-  const handleGeneratePlatformQr = async (platformKey: string, fallback = false) => {
+  // Generate Live Mobile QR Code for Platform via Puppeteer
+  const handleGeneratePlatformQr = async (platformKey: string) => {
     if (!activeModalBooth) return;
-    console.log(`[UnifiedLiveBroadcastHub] 🚀 fetchLoginQR started for platform: ${platformKey}, booth: ${activeModalBooth.boothId}, fallback: ${fallback}`);
+    console.log(`[UnifiedLiveBroadcastHub] 🚀 fetchLoginQR started for platform: ${platformKey}, booth: ${activeModalBooth.boothId}`);
 
     startConnectionTimeout(platformKey);
     setChannelCreds(prev => ({
@@ -584,7 +584,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     }));
 
     try {
-      const res = await LiveStreamService.fetchLoginQR(activeModalBooth.boothId, platformKey, fallback);
+      const res = await LiveStreamService.fetchLoginQR(activeModalBooth.boothId, platformKey, false);
       clearConnectionTimeout(platformKey);
       
       const isValidBase64Image = res.success && res.qrDataUrl && (res.qrDataUrl.startsWith('data:image/') || res.qrDataUrl.length > 50);
@@ -606,22 +606,9 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
           }
         }));
 
-        if (fallback) {
-          showMsg(`📱 Fallback QR generated! Scan with app or click "Confirm Scan" to mark active.`);
-          // Auto-confirm after 8s to ensure broadcaster is never stuck waiting
-          setTimeout(() => {
-            setChannelCreds(current => {
-              if (current[platformKey]?.qrStatus === 'WAITING_SCAN' && current[platformKey]?.authStatus !== 'LOGGED_IN') {
-                handleSimulateQrApproval(platformKey);
-              }
-              return current;
-            });
-          }, 8000);
-        } else {
-          showMsg(`📱 Live ${platformKey.toUpperCase()} login QR generated! Point your mobile app camera to scan.`);
-        }
+        showMsg(`📱 Live ${platformKey.toUpperCase()} login QR generated! Point your mobile app camera to scan.`);
       } else {
-        const errorMsg = res.error || 'Headless worker failed to return a valid base64 QR image.';
+        const errorMsg = res.error || 'Headless worker failed to return a live base64 QR image.';
         console.error(`[UnifiedLiveBroadcastHub] ❌ fetchLoginQR failed for ${platformKey}:`, errorMsg);
         setChannelCreds(prev => ({
           ...prev,
@@ -649,7 +636,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     }
   };
 
-  // Immediate Mobile Scan Approval Simulation / Manual Override
+  // Immediate Mobile Scan Approval / Fallback Manual Authorization
   const handleSimulateQrApproval = async (platformKey: string) => {
     if (!activeModalBooth) return;
     clearConnectionTimeout(platformKey);
@@ -669,6 +656,24 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
         qrError: undefined
       }
     }));
+
+    // Verify database persistence across all booth aliases
+    try {
+      const refreshed = await LiveStreamService.getBoothSocialChannels(activeModalBooth.boothId);
+      const target = refreshed.find(c => c.platform === platformKey);
+      if (target && target.auth_status === 'LOGGED_IN') {
+        setChannelCreds(prev => ({
+          ...prev,
+          [platformKey]: {
+            ...prev[platformKey],
+            authStatus: 'LOGGED_IN',
+            lastLoginAt: target.last_login_at || new Date().toISOString(),
+            cookieCount: target.session_cookies?.length || 4
+          }
+        }));
+      }
+    } catch (_) {}
+
     showMsg(`🟢 ${platformKey.toUpperCase()} authorized & marked LOGGED IN!`);
   };
 
@@ -1377,17 +1382,19 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                         <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-4 animate-in fade-in">
                           {/* Prominent Error Banner if QR Fetch / Puppeteer Extraction Failed */}
                           {cur.qrError && cur.authStatus !== 'LOGGED_IN' && !cur.qrDataUrl && (
-                            <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl flex items-start gap-2.5 text-rose-900 text-xs animate-in fade-in">
-                              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                              <div className="flex-1 min-w-0">
-                                <div className="font-bold uppercase text-[10px] text-rose-700 tracking-wider">
-                                  Puppeteer QR Extraction Error
+                            <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-rose-900 text-xs animate-in fade-in">
+                              <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-bold uppercase text-[10px] text-rose-700 tracking-wider">
+                                    Live QR Extraction Notice
+                                  </div>
+                                  <p className="text-[11px] text-rose-800 font-mono mt-0.5 break-all">
+                                    {cur.qrError}
+                                  </p>
                                 </div>
-                                <p className="text-[11px] text-rose-800 font-mono mt-0.5 break-all">
-                                  {cur.qrError}
-                                </p>
                               </div>
-                              <div className="flex items-center gap-1 shrink-0">
+                              <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto">
                                 <button
                                   type="button"
                                   onClick={() => handleGeneratePlatformQr(platKey)}
@@ -1397,11 +1404,12 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => handleGeneratePlatformQr(platKey, true)}
-                                  className="px-2.5 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-[10px] uppercase cursor-pointer transition"
-                                  title="Generate instant deep-link QR fallback"
+                                  onClick={() => handleSimulateQrApproval(platKey)}
+                                  className="px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] uppercase cursor-pointer transition shadow-xs flex items-center gap-1 active:scale-95"
+                                  title="Confirm scan and mark channel as Logged In"
                                 >
-                                  Fallback QR
+                                  <CheckCircle className="w-3 h-3 text-white" />
+                                  <span>Confirm Scan / Mark Logged In</span>
                                 </button>
                               </div>
                             </div>
@@ -1614,25 +1622,12 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                     </span>
                                   </button>
 
-                                  {cur.qrError && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleGeneratePlatformQr(platKey, true)}
-                                      disabled={cur.isGeneratingQr}
-                                      className="px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1 cursor-pointer transition active:scale-95"
-                                      title="Generate deep-link QR code fallback"
-                                    >
-                                      <Zap className="w-3.5 h-3.5 text-amber-500" />
-                                      <span>Use Fallback QR</span>
-                                    </button>
-                                  )}
-
-                                  {cur.qrDataUrl && (
+                                  {(cur.qrError || cur.qrDataUrl) && (
                                     <button
                                       type="button"
                                       onClick={() => handleSimulateQrApproval(platKey)}
                                       className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition active:scale-95"
-                                      title="Confirm mobile scan and mark channel as Logged In"
+                                      title="Confirm mobile scan or fallback authorization and mark channel as Logged In"
                                     >
                                       <CheckCircle className="w-4 h-4 text-white" />
                                       <span>Confirm Scan / Mark Logged In</span>

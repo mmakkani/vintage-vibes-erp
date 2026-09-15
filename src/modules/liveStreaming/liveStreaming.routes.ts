@@ -25,18 +25,50 @@ function getWorkerUrl(): string {
   return process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || 'https://vintage-vibes-erp-production.up.railway.app';
 }
 
+export function getBoothIdAliases(boothId: string): string[] {
+  if (!boothId) return [];
+  const m = String(boothId).match(/^booth[-_]?0*(\d+)$/i);
+  if (m) {
+    const num = parseInt(m[1], 10);
+    const padded = num < 10 ? `0${num}` : `${num}`;
+    return [
+      `booth-${num}`,
+      `booth-${padded}`,
+      `booth_${num}`,
+      `booth_${padded}`
+    ];
+  }
+  return [String(boothId)];
+}
+
 // ======================== BOOTH SOCIAL CHANNELS & HEADLESS AUTH ========================
 liveStreamingRouter.get('/booths/:boothId/channels', async (req, res) => {
   const { boothId } = req.params;
+  const aliases = getBoothIdAliases(boothId);
   const client = await getPgClient();
   try {
     let rows: any[] = [];
     if (client) {
-      const q = await client.query('SELECT * FROM booth_social_channels WHERE booth_id = $1 ORDER BY platform', [boothId]);
-      rows = q.rows;
+      const q = await client.query(
+        "SELECT * FROM booth_social_channels WHERE booth_id = ANY($1::text[]) ORDER BY platform, (auth_status = 'LOGGED_IN') DESC",
+        [aliases]
+      );
+      const seen = new Map<string, any>();
+      for (const r of q.rows) {
+        if (!seen.has(r.platform) || r.auth_status === 'LOGGED_IN') {
+          seen.set(r.platform, r);
+        }
+      }
+      rows = Array.from(seen.values());
     } else {
-      const { data } = await supabase.from('booth_social_channels').select('*').eq('booth_id', boothId).order('platform');
-      rows = data || [];
+      const { data } = await supabase.from('booth_social_channels').select('*').in('booth_id', aliases).order('platform');
+      const seen = new Map<string, any>();
+      for (const r of (data || [])) {
+        if (!seen.has(r.platform) || r.auth_status === 'LOGGED_IN') {
+          seen.set(r.platform, r);
+        }
+      }
+      rows = Array.from(seen.values());
     }
 
     if (rows.length === 0) {
@@ -56,6 +88,7 @@ liveStreamingRouter.get('/booths/:boothId/channels', async (req, res) => {
 
     const masked = rows.map(r => ({
       ...r,
+      booth_id: boothId,
       account_password: r.account_password ? maskCredential(r.account_password) : ''
     }));
 
@@ -124,6 +157,7 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/auth', async (req,
   const { boothId, platform } = req.params;
   const { username, password, proxyUrl, forceFreshLogin } = req.body;
   const workerUrl = getWorkerUrl();
+  const aliases = getBoothIdAliases(boothId);
 
   // Try forwarding to Railway Worker first
   try {
@@ -143,13 +177,13 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/auth', async (req,
   try {
     let channel: any = null;
     if (client) {
-      const q = await client.query('SELECT * FROM booth_social_channels WHERE booth_id = $1 AND platform = $2', [boothId, platform]);
+      const q = await client.query("SELECT * FROM booth_social_channels WHERE booth_id = ANY($1::text[]) AND platform = $2 ORDER BY (auth_status = 'LOGGED_IN') DESC LIMIT 1", [aliases, platform]);
       channel = q.rows[0];
     }
     const cookies = channel?.session_cookies || [];
     if (!forceFreshLogin && Array.isArray(cookies) && cookies.length > 0) {
       if (client) {
-        await client.query("UPDATE booth_social_channels SET auth_status = 'LOGGED_IN', last_login_at = NOW(), otp_required = false WHERE booth_id = $1 AND platform = $2", [boothId, platform]);
+        await client.query("UPDATE booth_social_channels SET auth_status = 'LOGGED_IN', last_login_at = NOW(), otp_required = false WHERE booth_id = ANY($1::text[]) AND platform = $2", [aliases, platform]);
       }
       return res.json({ success: true, status: 'LOGGED_IN', message: `Restored ${platform.toUpperCase()} persistent session cookies.` });
     }
@@ -158,7 +192,7 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/auth', async (req,
 
     if (username && username.toLowerCase().includes('2fa') && !req.body.otpCode) {
       if (client) {
-        await client.query("UPDATE booth_social_channels SET auth_status = 'WAITING_OTP', otp_required = true WHERE booth_id = $1 AND platform = $2", [boothId, platform]);
+        await client.query("UPDATE booth_social_channels SET auth_status = 'WAITING_OTP', otp_required = true WHERE booth_id = ANY($1::text[]) AND platform = $2", [aliases, platform]);
       }
       return res.json({ success: false, status: 'WAITING_OTP', requiresOtp: true, message: `2FA Verification Challenge triggered on ${platform.toUpperCase()}. Please enter the OTP code.` });
     }
@@ -169,17 +203,19 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/auth', async (req,
     ];
 
     if (client) {
-      await client.query("UPDATE booth_social_channels SET auth_status = 'LOGGED_IN', session_cookies = $3, last_login_at = NOW(), otp_required = false WHERE booth_id = $1 AND platform = $2", [boothId, platform, JSON.stringify(simCookies)]);
+      await client.query("UPDATE booth_social_channels SET auth_status = 'LOGGED_IN', session_cookies = $3, last_login_at = NOW(), otp_required = false WHERE booth_id = ANY($1::text[]) AND platform = $2", [aliases, platform, JSON.stringify(simCookies)]);
     }
 
-    eventHub.broadcast({
-      type: 'ENTITY_MUTATED',
-      module: 'SALES',
-      entity: 'BOOTH_CHANNEL_AUTH',
-      action: 'UPDATE',
-      documentRef: `${boothId}_${platform}`,
-      data: { boothId, platform, authStatus: 'LOGGED_IN' }
-    });
+    for (const a of aliases) {
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'SALES',
+        entity: 'BOOTH_CHANNEL_AUTH',
+        action: 'UPDATE',
+        documentRef: `${a}_${platform}`,
+        data: { boothId: a, platform, authStatus: 'LOGGED_IN' }
+      });
+    }
 
     return res.json({ success: true, status: 'LOGGED_IN', message: `Authenticated ${platform.toUpperCase()} successfully. Cookies persisted!` });
   } catch (err: any) {
@@ -193,6 +229,7 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/otp', async (req, 
   const { boothId, platform } = req.params;
   const { otpCode } = req.body;
   const workerUrl = getWorkerUrl();
+  const aliases = getBoothIdAliases(boothId);
 
   try {
     const workerRes = await fetch(`${workerUrl}/api/booth/social/submit-otp`, {
@@ -208,7 +245,7 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/otp', async (req, 
   const client = await getPgClient();
   try {
     if (client) {
-      await client.query("UPDATE booth_social_channels SET auth_status = 'LOGGED_IN', last_login_at = NOW(), otp_required = false WHERE booth_id = $1 AND platform = $2", [boothId, platform]);
+      await client.query("UPDATE booth_social_channels SET auth_status = 'LOGGED_IN', last_login_at = NOW(), otp_required = false WHERE booth_id = ANY($1::text[]) AND platform = $2", [aliases, platform]);
     }
     return res.json({ success: true, status: 'LOGGED_IN', message: `OTP challenge verified for ${platform.toUpperCase()}!` });
   } finally {
@@ -224,44 +261,7 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/generate', asyn
 
   console.log(`[liveStreaming.routes] 🚀 fetchLoginQR request: boothId=${boothId}, platform=${platform}, fallback=${isFallbackRequested}`);
 
-  // 1. If fallback requested, generate in-process deep-link QR directly
-  if (isFallbackRequested) {
-    console.log(`[liveStreaming.routes] ⚡ In-process fallback requested for ${platform}, generating high-contrast QR...`);
-    const token = `qr_${boothId}_${platform}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const deepLinks: Record<string, string> = {
-      tiktok: `https://www.tiktok.com/login/qrcode?token=${token}&mode=live_studio&booth=${encodeURIComponent(boothId)}`,
-      instagram: `https://www.instagram.com/accounts/login/two_factor?qr_token=${token}&booth=${encodeURIComponent(boothId)}`,
-      facebook: `https://www.facebook.com/security/2fa/qr?token=${token}&app=live_producer`,
-      youtube: `https://accounts.google.com/signin/v2/qr?token=${token}&service=youtube_live`,
-      custom: `https://live.vintagevibe.ae/login/qr?token=${token}`
-    };
-    const qrRawUrl = deepLinks[platform] || deepLinks.custom;
-
-    try {
-      const qrDataUrl = await QRCode.toDataURL(qrRawUrl, {
-        margin: 2,
-        width: 280,
-        color: { dark: '#0a0f1d', light: '#ffffff' }
-      });
-
-      return res.json({
-        success: true,
-        status: 'WAITING_SCAN',
-        qrDataUrl,
-        qrRawUrl,
-        token,
-        expiresInSeconds: 120,
-        platform,
-        boothId,
-        isFallback: true
-      });
-    } catch (genErr: any) {
-      console.error(`[liveStreaming.routes] ❌ Fallback QR generation failed:`, genErr);
-      return res.status(500).json({ success: false, error: genErr.message });
-    }
-  }
-
-  // 2. Forward to Railway headless worker
+  // Forward to Railway headless worker
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 35000); // 35s timeout for Puppeteer launch & navigation
 
@@ -270,7 +270,7 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/generate', asyn
     const workerRes = await fetch(`${workerUrl}/api/booth/social/qr/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ boothId, platform, fallback: false }),
+      body: JSON.stringify({ boothId, platform, fallback: isFallbackRequested }),
       signal: controller.signal
     });
     clearTimeout(timeoutId);
@@ -284,7 +284,7 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/generate', asyn
       console.error(`[liveStreaming.routes] ❌ Worker returned failure for ${platform}:`, workerData.error || workerRes.statusText);
       const errPayload = workerData && typeof workerData === 'object' && workerData.error ? workerData : {
         success: false,
-        error: workerData?.error || `Worker failed to extract QR (${workerRes.status || 500}). Click "Use Fallback QR" to generate a scan code.`
+        error: workerData?.error || `Worker failed to extract live QR (${workerRes.status || 500}). Click "Confirm Scan / Mark Logged In" to authorize channel manually.`
       };
       return res.status(workerRes.status || 500).json(errPayload);
     }
@@ -293,7 +293,7 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/generate', asyn
     console.error(`[liveStreaming.routes] ❌ Failed to communicate with worker (${workerUrl}):`, err.message || err);
     return res.status(502).json({
       success: false,
-      error: `Worker connection error (${workerUrl}): ${err.message || 'Worker unreachable'}. Please ensure headless worker is active or use Fallback QR.`
+      error: `Worker connection note (${workerUrl}): ${err.message || 'Worker unreachable'}. Click "Confirm Scan / Mark Logged In" to authorize channel manually.`
     });
   }
 });
@@ -302,6 +302,7 @@ liveStreamingRouter.get('/booths/:boothId/channels/:platform/qr/status', async (
   const { boothId, platform } = req.params;
   const { token } = req.query;
   const workerUrl = getWorkerUrl();
+  const aliases = getBoothIdAliases(boothId);
 
   try {
     const query = token ? `?boothId=${encodeURIComponent(boothId)}&platform=${encodeURIComponent(platform)}&token=${encodeURIComponent(String(token))}` : `?boothId=${encodeURIComponent(boothId)}&platform=${encodeURIComponent(platform)}`;
@@ -314,7 +315,7 @@ liveStreamingRouter.get('/booths/:boothId/channels/:platform/qr/status', async (
   const client = await getPgClient();
   try {
     if (client) {
-      const q = await client.query('SELECT auth_status, metadata, last_login_at FROM booth_social_channels WHERE booth_id = $1 AND platform = $2', [boothId, platform]);
+      const q = await client.query("SELECT auth_status, metadata, last_login_at FROM booth_social_channels WHERE booth_id = ANY($1::text[]) AND platform = $2 ORDER BY (auth_status = 'LOGGED_IN') DESC LIMIT 1", [aliases, platform]);
       const row = q.rows[0];
       if (row?.auth_status === 'LOGGED_IN') {
         return res.json({ success: true, status: 'LOGGED_IN', message: 'Channel is logged in' });
@@ -343,6 +344,7 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/simulate-approv
   const { boothId, platform } = req.params;
   const { token } = req.body;
   const workerUrl = getWorkerUrl();
+  const aliases = getBoothIdAliases(boothId);
 
   try {
     await fetch(`${workerUrl}/api/booth/social/qr/simulate-approval`, {
@@ -363,19 +365,21 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/simulate-approv
 
     if (client) {
       await client.query(
-        "UPDATE booth_social_channels SET auth_status = 'LOGGED_IN', session_cookies = $3, last_login_at = NOW(), otp_required = false, metadata = $4 WHERE booth_id = $1 AND platform = $2",
-        [boothId, platform, JSON.stringify(simCookies), JSON.stringify({ authMode: 'QR_SCAN', approvedAt: new Date().toISOString() })]
+        "UPDATE booth_social_channels SET auth_status = 'LOGGED_IN', session_cookies = $3, last_login_at = NOW(), otp_required = false, metadata = $4 WHERE booth_id = ANY($1::text[]) AND platform = $2",
+        [aliases, platform, JSON.stringify(simCookies), JSON.stringify({ authMode: 'QR_SCAN', approvedAt: new Date().toISOString() })]
       );
     }
 
-    eventHub.broadcast({
-      type: 'ENTITY_MUTATED',
-      module: 'SALES',
-      entity: 'BOOTH_CHANNEL_AUTH',
-      action: 'UPDATE',
-      documentRef: `${boothId}_${platform}`,
-      data: { boothId, platform, authStatus: 'LOGGED_IN', method: 'MOBILE_QR_SCAN' }
-    });
+    for (const a of aliases) {
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'SALES',
+        entity: 'BOOTH_CHANNEL_AUTH',
+        action: 'UPDATE',
+        documentRef: `${a}_${platform}`,
+        data: { boothId: a, platform, authStatus: 'LOGGED_IN', method: 'MOBILE_QR_SCAN' }
+      });
+    }
 
     return res.json({ success: true, status: 'LOGGED_IN', message: `Mobile approval confirmed for ${platform.toUpperCase()}!` });
   } catch (err: any) {
@@ -389,6 +393,7 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/simulate-approv
 liveStreamingRouter.post(['/booths/:boothId/channels/:platform/reset', '/booths/:boothId/channels/:platform/disconnect'], async (req, res) => {
   const { boothId, platform } = req.params;
   const workerUrl = getWorkerUrl();
+  const aliases = getBoothIdAliases(boothId);
 
   try {
     await fetch(`${workerUrl}/api/booth/social/reset`, {
@@ -403,19 +408,21 @@ liveStreamingRouter.post(['/booths/:boothId/channels/:platform/reset', '/booths/
   try {
     if (client) {
       await client.query(
-        "UPDATE booth_social_channels SET auth_status = 'IDLE', session_cookies = NULL, last_login_at = NULL, otp_required = false, metadata = '{}' WHERE booth_id = $1 AND platform = $2",
-        [boothId, platform]
+        "UPDATE booth_social_channels SET auth_status = 'IDLE', session_cookies = NULL, last_login_at = NULL, otp_required = false, metadata = '{}' WHERE booth_id = ANY($1::text[]) AND platform = $2",
+        [aliases, platform]
       );
     }
 
-    eventHub.broadcast({
-      type: 'ENTITY_MUTATED',
-      module: 'SALES',
-      entity: 'BOOTH_CHANNEL_AUTH',
-      action: 'UPDATE',
-      documentRef: `${boothId}_${platform}`,
-      data: { boothId, platform, authStatus: 'IDLE' }
-    });
+    for (const a of aliases) {
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'SALES',
+        entity: 'BOOTH_CHANNEL_AUTH',
+        action: 'UPDATE',
+        documentRef: `${a}_${platform}`,
+        data: { boothId: a, platform, authStatus: 'IDLE' }
+      });
+    }
 
     return res.json({ success: true, status: 'IDLE', message: `${platform.toUpperCase()} connection state reset to IDLE` });
   } catch (err: any) {

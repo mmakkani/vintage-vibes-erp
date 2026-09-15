@@ -12,6 +12,7 @@
 
 import { Router } from 'express';
 import crypto from 'crypto';
+import fs from 'fs';
 import QRCode from 'qrcode';
 
 export const headlessRouter = Router();
@@ -21,6 +22,24 @@ const activeStreams = new Map(); // boothId -> { isLive, startTime, channels: Ma
 const activeCommentListeners = new Map(); // `${boothId}_${platform}` -> { timer, status, reconnectAttempts }
 const pendingOtpChallenges = new Map(); // `${boothId}_${platform}` -> { state, credentials, createdAt }
 const activeQrSessions = new Map(); // `${boothId}_${platform}` -> { token, boothId, platform, qrDataUrl, qrRawUrl, expiresAt, status }
+const activePuppeteerSessions = new Map(); // `${boothId}_${platform}` -> { browser, page, boothId, platform, token, checkInterval, createdAt, expiresAt }
+
+// Booth ID normalization helper ('booth-1' <-> 'booth-01' <-> 'booth_01')
+function getBoothIdAliases(boothId) {
+  if (!boothId) return [];
+  const m = String(boothId).match(/^booth[-_]?0*(\d+)$/i);
+  if (m) {
+    const num = parseInt(m[1], 10);
+    const padded = num < 10 ? `0${num}` : `${num}`;
+    return [
+      `booth-${num}`,
+      `booth-${padded}`,
+      `booth_${num}`,
+      `booth_${padded}`
+    ];
+  }
+  return [String(boothId)];
+}
 
 // Decrypt helper for passwords
 const RAW_KEY = process.env.ENCRYPTION_KEY || process.env.BOOTH_CREDENTIAL_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || 'vintage-vibes-dubai-aes-256-secret-key-2026';
@@ -52,47 +71,112 @@ const humanDelay = (minMs = 1200, maxMs = 3200) => {
   return new Promise(resolve => setTimeout(resolve, ms));
 };
 
-// Database helper: update booth channel directly in PostgreSQL or via Supabase REST
+// Database helper: update booth channel across all aliases in PostgreSQL and Supabase REST
 async function updateDbChannel(boothId, platform, updates) {
+  const aliases = getBoothIdAliases(boothId);
   const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
   const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
 
+  // 1. Direct PostgreSQL update if DATABASE_URL is available
+  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
   try {
-    const res = await fetch(`${supaUrl}/rest/v1/booth_social_channels?booth_id=eq.${encodeURIComponent(boothId)}&platform=eq.${encodeURIComponent(platform)}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': supaKey,
-        'Authorization': `Bearer ${supaKey}`,
-        'Prefer': 'return=representation'
-      },
-      body: JSON.stringify({
-        ...updates,
-        updated_at: new Date().toISOString()
-      })
-    });
-    return res.ok;
+    const { Client } = await import('pg');
+    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+    await client.connect();
+
+    const setClauses = ['updated_at = NOW()'];
+    const values = [];
+    let idx = 1;
+
+    if (updates.auth_status !== undefined) {
+      setClauses.push(`auth_status = $${idx++}`);
+      values.push(updates.auth_status);
+    }
+    if (updates.session_cookies !== undefined) {
+      setClauses.push(`session_cookies = $${idx++}::jsonb`);
+      values.push(JSON.stringify(updates.session_cookies || []));
+    }
+    if (updates.last_login_at !== undefined) {
+      setClauses.push(`last_login_at = CASE WHEN $${idx++}::text IS NOT NULL THEN $${idx - 1}::timestamptz ELSE NULL END`);
+      values.push(updates.last_login_at || null);
+    }
+    if (updates.otp_required !== undefined) {
+      setClauses.push(`otp_required = $${idx++}`);
+      values.push(Boolean(updates.otp_required));
+    }
+    if (updates.metadata !== undefined) {
+      setClauses.push(`metadata = $${idx++}::jsonb`);
+      values.push(JSON.stringify(updates.metadata || {}));
+    }
+    if (updates.proxy_url !== undefined) {
+      setClauses.push(`proxy_url = $${idx++}`);
+      values.push(updates.proxy_url || null);
+    }
+
+    values.push(aliases);
+    const aliasIdx = idx++;
+    values.push(platform);
+    const platIdx = idx++;
+
+    const q = `UPDATE booth_social_channels SET ${setClauses.join(', ')} WHERE booth_id = ANY($${aliasIdx}::text[]) AND platform = $${platIdx}`;
+    await client.query(q, values);
+    await client.end();
+  } catch (pgErr) {
+    console.warn('[Worker Headless] Direct PG update note:', pgErr.message);
+  }
+
+  // 2. Supabase REST update across all aliases
+  try {
+    for (const alias of aliases) {
+      await fetch(`${supaUrl}/rest/v1/booth_social_channels?booth_id=eq.${encodeURIComponent(alias)}&platform=eq.${encodeURIComponent(platform)}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': supaKey,
+          'Authorization': `Bearer ${supaKey}`,
+          'Prefer': 'return=representation'
+        },
+        body: JSON.stringify({
+          ...updates,
+          updated_at: new Date().toISOString()
+        })
+      });
+    }
+    return true;
   } catch (e) {
     console.warn('[Worker Headless] DB update note:', e.message);
     return false;
   }
 }
 
-// Database helper: fetch booth channel from Supabase
+// Database helper: fetch booth channel from PostgreSQL or Supabase across all aliases
 async function getDbChannel(boothId, platform) {
+  const aliases = getBoothIdAliases(boothId);
+  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  try {
+    const { Client } = await import('pg');
+    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+    await client.connect();
+    const q = await client.query('SELECT * FROM booth_social_channels WHERE booth_id = ANY($1::text[]) AND platform = $2 ORDER BY (auth_status = \'LOGGED_IN\') DESC LIMIT 1', [aliases, platform]);
+    await client.end();
+    if (q.rows && q.rows.length > 0) return q.rows[0];
+  } catch (_) {}
+
   const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
   const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
 
   try {
-    const res = await fetch(`${supaUrl}/rest/v1/booth_social_channels?booth_id=eq.${encodeURIComponent(boothId)}&platform=eq.${encodeURIComponent(platform)}&select=*`, {
-      headers: {
-        'apikey': supaKey,
-        'Authorization': `Bearer ${supaKey}`
+    for (const alias of aliases) {
+      const res = await fetch(`${supaUrl}/rest/v1/booth_social_channels?booth_id=eq.${encodeURIComponent(alias)}&platform=eq.${encodeURIComponent(platform)}&select=*`, {
+        headers: {
+          'apikey': supaKey,
+          'Authorization': `Bearer ${supaKey}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data[0]) return data[0];
       }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      return data[0] || null;
     }
   } catch (e) {
     console.warn('[Worker Headless] DB fetch note:', e.message);
@@ -335,82 +419,192 @@ headlessRouter.post('/submit-otp', async (req, res) => {
  */
 
 /**
+ * Detect available Chromium executable on Linux, Railway container, or local host
+ */
+function getChromiumExecutablePath() {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+    return process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+  if (process.env.CHROME_BIN && fs.existsSync(process.env.CHROME_BIN)) {
+    return process.env.CHROME_BIN;
+  }
+  const candidatePaths = [
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/nix/var/nix/profiles/default/bin/chromium',
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
+  ];
+  for (const p of candidatePaths) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch (_) {}
+  }
+  return null;
+}
+
+/**
+ * Gracefully load puppeteer-extra with stealth plugin, with fallback to puppeteer / puppeteer-core
+ */
+async function loadPuppeteer() {
+  let puppeteer = null;
+  let isStealth = false;
+  try {
+    const pExtraMod = await import('puppeteer-extra');
+    const stealthMod = await import('puppeteer-extra-plugin-stealth');
+    const pExtra = pExtraMod.default || pExtraMod;
+    const StealthPlugin = stealthMod.default || stealthMod;
+    if (pExtra && StealthPlugin) {
+      const stealth = typeof StealthPlugin === 'function' ? StealthPlugin() : (StealthPlugin.default ? StealthPlugin.default() : null);
+      if (stealth && typeof pExtra.use === 'function') {
+        pExtra.use(stealth);
+      }
+      puppeteer = pExtra;
+      isStealth = true;
+    }
+  } catch (e1) {
+    console.warn('[Worker Headless] puppeteer-extra note:', e1.message);
+  }
+
+  if (!puppeteer) {
+    try {
+      const pMod = await import('puppeteer');
+      puppeteer = pMod.default || pMod;
+    } catch (e2) {
+      try {
+        const pCoreMod = await import('puppeteer-core');
+        puppeteer = pCoreMod.default || pCoreMod;
+      } catch (e3) {
+        console.error('[Worker Headless] ❌ Puppeteer import failure:', e3.message);
+      }
+    }
+  }
+
+  return { puppeteer, isStealth };
+}
+
+/**
  * Extract Live QR Code from TikTok Web Login via Headless Puppeteer
  * -----------------------------------------------------------------
- * Navigates to https://www.tiktok.com/login/phone-or-email/qrcode
- * Waits explicitly for canvas, img[src*="data:image"], or .tiktok-qr-box
- * Extracts the data URL or takes an element screenshot buffer and returns base64
+ * 1. Automates opening https://www.tiktok.com/login and /login/phone-or-email/qrcode
+ * 2. Waits for dynamic canvas, svg, or qr container element
+ * 3. Extracts real base64 image data URL (or takes crisp element screenshot)
+ * 4. Keeps the browser session alive in activePuppeteerSessions
+ * 5. Continuously polls cookies for sessionid / redirect to detect mobile scan approval
+ * 6. Once approved, persists cookies to DB, sets status to LOGGED_IN, and cleans up browser
  */
-async function extractTikTokLoginQR(boothId) {
+async function extractTikTokLoginQR(boothId, token) {
+  const sessionKey = `${boothId}_tiktok`;
   console.log(`[Worker Headless] 🚀 fetchLoginQR: Launching Puppeteer to extract TikTok QR login for booth ${boothId}...`);
+
+  // Clean up any existing active session for this booth
+  const prevSession = activePuppeteerSessions.get(sessionKey);
+  if (prevSession) {
+    console.log(`[Worker Headless] 🧹 Cleaning up prior active Puppeteer browser for ${sessionKey}...`);
+    if (prevSession.checkInterval) clearInterval(prevSession.checkInterval);
+    if (prevSession.browser) {
+      await prevSession.browser.close().catch(() => {});
+    }
+    activePuppeteerSessions.delete(sessionKey);
+  }
+
+  const { puppeteer } = await loadPuppeteer();
+  if (!puppeteer) {
+    throw new Error('Puppeteer module is not installed or could not be loaded in this environment. Please ensure puppeteer or puppeteer-core is present.');
+  }
+
+  const execPath = getChromiumExecutablePath();
+  console.log('[Worker Headless] 🌐 Launching Chromium browser with stealth automation flags...' + (execPath ? ` (executable: ${execPath})` : ' (bundled)'));
+
+  const launchArgs = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--no-first-run',
+    '--no-zygote',
+    '--disable-gpu',
+    '--disable-extensions',
+    '--single-process'
+  ];
+
+  const launchOpts = {
+    headless: 'new',
+    args: launchArgs
+  };
+  if (execPath) {
+    launchOpts.executablePath = execPath;
+  }
+
   let browser = null;
   try {
-    let puppeteer = null;
-    try {
-      const pExtra = await import('puppeteer-extra');
-      const StealthPlugin = await import('puppeteer-extra-plugin-stealth');
-      const stealth = StealthPlugin.default || StealthPlugin;
-      puppeteer = pExtra.default || pExtra;
-      if (typeof puppeteer.use === 'function' && stealth) {
-        puppeteer.use(stealth());
-      }
-    } catch (_) {
-      try {
-        puppeteer = (await import('puppeteer')).default || (await import('puppeteer'));
-      } catch (e2) {
-        try {
-          puppeteer = (await import('puppeteer-core')).default || (await import('puppeteer-core'));
-        } catch (_) {}
-      }
+    browser = await puppeteer.launch(launchOpts);
+  } catch (launchErr) {
+    console.error('[Worker Headless] ❌ Puppeteer launch failed:', launchErr.message);
+    if (execPath) {
+      console.log('[Worker Headless] 🔄 Retrying launch with default bundled browser...');
+      delete launchOpts.executablePath;
+      browser = await puppeteer.launch(launchOpts);
+    } else {
+      throw launchErr;
     }
+  }
 
-    if (!puppeteer) {
-      throw new Error('Puppeteer module is not installed or could not be loaded in this environment.');
-    }
-
-    console.log('[Worker Headless] 🌐 Launching Chromium browser with stealth automation flags...');
-    browser = await puppeteer.launch({
-      headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-        '--disable-gpu'
-      ]
-    });
-
-    const page = await browser.newPage();
+  let page = null;
+  try {
+    page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     );
 
+    // 1. Navigate to TikTok QR login page
     const targetUrl = 'https://www.tiktok.com/login/phone-or-email/qrcode';
     console.log(`[Worker Headless] 🧭 Navigating to TikTok QR login page: ${targetUrl}`);
-    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    try {
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    } catch (navErr) {
+      console.warn(`[Worker Headless] ⚠️ Navigation note on ${targetUrl}:`, navErr.message);
+      await page.goto('https://www.tiktok.com/login', { waitUntil: 'domcontentloaded', timeout: 20000 });
+    }
 
-    // Wait explicitly for the QR canvas or image selector
-    console.log('[Worker Headless] ⏳ Waiting explicitly for QR selector: canvas, img[src*="data:image"], or .tiktok-qr-box...');
+    await humanDelay(1200, 2200);
+
+    // If on general login page, click QR code option if present
+    try {
+      const qrTabSelector = 'a[href*="qrcode"], [data-e2e="channel-item"]:first-child, div[class*="qrcode-tab"]';
+      const qrTab = await page.$(qrTabSelector);
+      if (qrTab) {
+        console.log('[Worker Headless] 👆 Clicking TikTok QR Code tab...');
+        await qrTab.click().catch(() => {});
+        await humanDelay(1000, 1500);
+      }
+    } catch (_) {}
+
+    // Wait for the QR canvas, svg, or image selector
+    console.log('[Worker Headless] ⏳ Waiting for QR element: canvas, svg, img[src*="data:image"], or .tiktok-qr-box...');
     const selectors = [
       'canvas',
-      'img[src*="data:image"]',
-      '.tiktok-qr-box',
       'div[class*="qrcode"] canvas',
-      'div[class*="qrcode"] img',
       'div[class*="qr-code"] canvas',
-      'div[class*="qr-code"] img',
       'div[class*="QRCode"] canvas',
-      'div[class*="QRCode"] img'
+      'div[class*="tiktok-qr-box"]',
+      '.tiktok-qr-box',
+      'div[class*="qrcode"] svg',
+      'svg[class*="qrcode"]',
+      'div[class*="qrcode"] img',
+      'div[class*="qr-code"] img',
+      'img[src*="data:image"]',
+      '[data-e2e="qr-code"]'
     ];
 
     let matchedSelector = null;
     try {
       matchedSelector = await Promise.any(
-        selectors.map(s => page.waitForSelector(s, { timeout: 15000 }).then(() => s))
+        selectors.map(s => page.waitForSelector(s, { timeout: 12000 }).then(() => s))
       );
       console.log(`[Worker Headless] 🎯 Matched TikTok QR selector: "${matchedSelector}"`);
     } catch (waitErr) {
@@ -422,58 +616,149 @@ async function extractTikTokLoginQR(boothId) {
     if (matchedSelector) {
       const el = await page.$(matchedSelector);
       if (el) {
-        // Check if image src is data:image or canvas has toDataURL
+        // Attempt canvas export or data URL
         qrBase64 = await page.evaluate(target => {
+          if (target.tagName === 'CANVAS' && typeof target.toDataURL === 'function') {
+            try {
+              const d = target.toDataURL('image/png');
+              if (d && d.length > 100) return d;
+            } catch (_) {}
+          }
           if (target.tagName === 'IMG' && target.src && target.src.startsWith('data:image')) {
             return target.src;
           }
-          if (target.tagName === 'CANVAS' && typeof target.toDataURL === 'function') {
-            try { return target.toDataURL('image/png'); } catch (_) {}
+          const childCanvas = target.querySelector('canvas');
+          if (childCanvas && typeof childCanvas.toDataURL === 'function') {
+            try {
+              const d = childCanvas.toDataURL('image/png');
+              if (d && d.length > 100) return d;
+            } catch (_) {}
+          }
+          const childImg = target.querySelector('img');
+          if (childImg && childImg.src && childImg.src.startsWith('data:image')) {
+            return childImg.src;
           }
           return null;
         }, el);
 
-        // If not directly available as src, capture element screenshot buffer
+        // Fallback to element screenshot buffer
         if (!qrBase64) {
-          console.log('[Worker Headless] 📸 Taking element screenshot buffer...');
+          console.log('[Worker Headless] 📸 Capturing element screenshot buffer...');
           const buf = await el.screenshot({ encoding: 'base64' });
-          if (buf && buf.length > 50) {
+          if (buf && buf.length > 100) {
             qrBase64 = `data:image/png;base64,${buf}`;
           }
         }
       }
     }
 
-    // Fallback: evaluate document canvases and images
+    // Document-wide fallback search for canvas or base64 image
     if (!qrBase64) {
       qrBase64 = await page.evaluate(() => {
         const canvases = document.querySelectorAll('canvas');
         for (const c of canvases) {
           if (c.width >= 40 && c.height >= 40) {
-            try { return c.toDataURL('image/png'); } catch (_) {}
+            try {
+              const d = c.toDataURL('image/png');
+              if (d && d.length > 100) return d;
+            } catch (_) {}
           }
         }
         const imgs = document.querySelectorAll('img');
         for (const i of imgs) {
-          if (i.src && i.src.startsWith('data:image')) return i.src;
+          if (i.src && i.src.startsWith('data:image') && i.src.length > 150) return i.src;
         }
         return null;
       });
     }
 
-    if (qrBase64 && qrBase64.startsWith('data:image')) {
-      console.log(`[Worker Headless] ✅ TikTok login QR extracted directly via Puppeteer! (length: ${qrBase64.length})`);
-      return { success: true, qrDataUrl: qrBase64 };
+    if (!qrBase64 || !qrBase64.startsWith('data:image')) {
+      throw new Error('QR selector did not produce a valid base64 image on TikTok login page.');
     }
 
-    throw new Error('QR selector did not produce a valid base64 image on TikTok login page.');
+    console.log(`[Worker Headless] ✅ TikTok login QR extracted directly via Puppeteer! (length: ${qrBase64.length})`);
+
+    // =========================================================================
+    // KEEP BROWSER ALIVE & CONTINUOUSLY WATCH FOR SESSION COOKIES
+    // =========================================================================
+    const expiresAt = Date.now() + 120000; // 2 minutes
+
+    const checkInterval = setInterval(async () => {
+      try {
+        const currentSession = activePuppeteerSessions.get(sessionKey);
+        if (!currentSession || Date.now() > expiresAt) {
+          console.log(`[Worker Headless] ⏰ Session watcher finished for ${sessionKey}.`);
+          clearInterval(checkInterval);
+          if (browser) await browser.close().catch(() => {});
+          activePuppeteerSessions.delete(sessionKey);
+          return;
+        }
+
+        const cookies = await page.cookies().catch(() => []);
+        const currentUrl = page.url();
+
+        // Check for authentic TikTok session cookies
+        const hasAuthCookie = cookies.some(c =>
+          ['sessionid', 'sessionid_ss', 'sid_guard', 'passport_csrf_token', 'uid_tt', 'sid_tt'].includes(c.name) &&
+          c.value && c.value.length > 5
+        );
+
+        // Check if page navigated away from /login
+        const hasNavigatedAway = currentUrl && !currentUrl.includes('/login') && (currentUrl.includes('tiktok.com') || currentUrl.includes('/live'));
+
+        if (hasAuthCookie || hasNavigatedAway) {
+          console.log(`[Worker Headless] 🎉 TikTok mobile scan authorized! Cookies detected (${cookies.length} cookies). Updating ${boothId} to LOGGED_IN!`);
+          clearInterval(checkInterval);
+
+          const qrSession = activeQrSessions.get(sessionKey);
+          if (qrSession) qrSession.status = 'LOGGED_IN';
+
+          await updateDbChannel(boothId, 'tiktok', {
+            auth_status: 'LOGGED_IN',
+            session_cookies: cookies,
+            last_login_at: new Date().toISOString(),
+            otp_required: false,
+            metadata: { authMode: 'QR_SCAN', approvedAt: new Date().toISOString(), cookieCount: cookies.length }
+          });
+
+          await forwardToERP({
+            module: 'SALES',
+            entity: 'BOOTH_CHANNEL_AUTH',
+            action: 'UPDATE',
+            documentRef: sessionKey,
+            data: { boothId, platform: 'tiktok', authStatus: 'LOGGED_IN', method: 'MOBILE_QR_SCAN', cookieCount: cookies.length }
+          });
+
+          await browser.close().catch(() => {});
+          activePuppeteerSessions.delete(sessionKey);
+        }
+      } catch (watchErr) {
+        console.warn('[Worker Headless] Cookie watch note:', watchErr.message);
+      }
+    }, 2000);
+
+    activePuppeteerSessions.set(sessionKey, {
+      browser,
+      page,
+      boothId,
+      platform: 'tiktok',
+      token,
+      checkInterval,
+      createdAt: Date.now(),
+      expiresAt
+    });
+
+    return {
+      success: true,
+      qrDataUrl: qrBase64,
+      qrRawUrl: 'https://www.tiktok.com/login/phone-or-email/qrcode'
+    };
+
   } catch (err) {
-    console.error(`[Worker Headless] ❌ Puppeteer TikTok QR extraction failure:`, err.message || err);
-    throw err;
-  } finally {
     if (browser) {
       await browser.close().catch(() => {});
     }
+    throw err;
   }
 }
 
@@ -506,10 +791,10 @@ headlessRouter.post('/qr/generate', async (req, res) => {
   // 1. If platform is TikTok and fallback is not explicitly requested, attempt Puppeteer extraction
   if (platform.toLowerCase() === 'tiktok' && !fallback) {
     try {
-      const extracted = await extractTikTokLoginQR(boothId);
+      const extracted = await extractTikTokLoginQR(boothId, token);
       if (extracted?.qrDataUrl && extracted.qrDataUrl.startsWith('data:image/')) {
         qrDataUrl = extracted.qrDataUrl;
-        qrRawUrl = 'https://www.tiktok.com/login/phone-or-email/qrcode';
+        qrRawUrl = extracted.qrRawUrl || 'https://www.tiktok.com/login/phone-or-email/qrcode';
       }
     } catch (err) {
       puppeteerError = err?.message || String(err);
@@ -517,16 +802,16 @@ headlessRouter.post('/qr/generate', async (req, res) => {
     }
   }
 
-  // 2. If Puppeteer failed on TikTok and no fallback requested, return 500 error with message so UI displays it
+  // 2. If Puppeteer failed on TikTok and no fallback requested, return 500 error with informative message
   if (platform.toLowerCase() === 'tiktok' && !qrDataUrl && !fallback) {
     console.error(`[Worker Headless] ❌ fetchLoginQR: Returning error response for TikTok Puppeteer failure: ${puppeteerError}`);
     return res.status(500).json({
       success: false,
-      error: `Puppeteer TikTok QR Extraction Error: ${puppeteerError || 'Failed to extract valid base64 image from https://www.tiktok.com/login/phone-or-email/qrcode'}. Click "Use Fallback QR" to generate a scan code.`
+      error: `Puppeteer TikTok QR Extraction Error: ${puppeteerError || 'Failed to extract live QR image from TikTok login page'}. Click "Confirm Scan / Mark Logged In" to authorize channel manually.`
     });
   }
 
-  // 3. For other platforms (Instagram, Facebook, YouTube, Custom) or when fallback is requested:
+  // 3. For other platforms or fallback:
   if (!qrDataUrl) {
     try {
       qrDataUrl = await QRCode.toDataURL(qrRawUrl, {
@@ -534,7 +819,6 @@ headlessRouter.post('/qr/generate', async (req, res) => {
         width: 280,
         color: { dark: '#0a0f1d', light: '#ffffff' }
       });
-      console.log(`[Worker Headless] ✅ Generated QR data URL via QRCode generator for ${platform} (length: ${qrDataUrl.length})`);
     } catch (genErr) {
       console.error(`[Worker Headless] ❌ QRCode generator error:`, genErr);
       return res.status(500).json({
@@ -558,43 +842,45 @@ headlessRouter.post('/qr/generate', async (req, res) => {
 
     activeQrSessions.set(sessionKey, session);
 
-    // Update DB status to AUTHENTICATING
+    // Update DB status to AUTHENTICATING across all aliases
     await updateDbChannel(boothId, platform, {
       auth_status: 'AUTHENTICATING',
       otp_required: false,
       metadata: { authMode: 'QR_SCAN', qrToken: token, qrGeneratedAt: new Date().toISOString() }
     });
 
-    // Auto-approve after 13s to emulate host scanning on phone and tapping Approve
-    setTimeout(async () => {
-      const currentSession = activeQrSessions.get(sessionKey);
-      if (currentSession && currentSession.token === token && currentSession.status === 'WAITING_SCAN') {
-        console.log(`[Worker Headless] 📱 Mobile app scan detected & authorized for ${platform.toUpperCase()} (${boothId})!`);
-        currentSession.status = 'LOGGED_IN';
-        const simulatedCookies = [
-          { name: 'session_id', value: `sid_qr_${crypto.randomBytes(16).toString('hex')}`, domain: `.${platform}.com`, path: '/' },
-          { name: 'auth_token', value: `at_qr_${crypto.randomBytes(24).toString('hex')}`, domain: `.${platform}.com`, path: '/', secure: true, httpOnly: true },
-          { name: 'qr_approved', value: 'true', domain: `.${platform}.com`, path: '/' },
-          { name: 'login_method', value: 'MOBILE_QR_SCAN', domain: `.${platform}.com`, path: '/' }
-        ];
+    // Only auto-approve simulated platforms if not actively waiting for real TikTok puppeteer scan
+    if (platform.toLowerCase() !== 'tiktok' || fallback) {
+      setTimeout(async () => {
+        const currentSession = activeQrSessions.get(sessionKey);
+        if (currentSession && currentSession.token === token && currentSession.status === 'WAITING_SCAN') {
+          console.log(`[Worker Headless] 📱 Mobile app scan detected & authorized for ${platform.toUpperCase()} (${boothId})!`);
+          currentSession.status = 'LOGGED_IN';
+          const simulatedCookies = [
+            { name: 'session_id', value: `sid_qr_${crypto.randomBytes(16).toString('hex')}`, domain: `.${platform}.com`, path: '/' },
+            { name: 'auth_token', value: `at_qr_${crypto.randomBytes(24).toString('hex')}`, domain: `.${platform}.com`, path: '/', secure: true, httpOnly: true },
+            { name: 'qr_approved', value: 'true', domain: `.${platform}.com`, path: '/' },
+            { name: 'login_method', value: 'MOBILE_QR_SCAN', domain: `.${platform}.com`, path: '/' }
+          ];
 
-        await updateDbChannel(boothId, platform, {
-          auth_status: 'LOGGED_IN',
-          session_cookies: simulatedCookies,
-          last_login_at: new Date().toISOString(),
-          otp_required: false,
-          metadata: { authMode: 'QR_SCAN', approvedAt: new Date().toISOString(), cookieCount: simulatedCookies.length }
-        });
+          await updateDbChannel(boothId, platform, {
+            auth_status: 'LOGGED_IN',
+            session_cookies: simulatedCookies,
+            last_login_at: new Date().toISOString(),
+            otp_required: false,
+            metadata: { authMode: 'QR_SCAN', approvedAt: new Date().toISOString(), cookieCount: simulatedCookies.length }
+          });
 
-        await forwardToERP({
-          module: 'SALES',
-          entity: 'BOOTH_CHANNEL_AUTH',
-          action: 'UPDATE',
-          documentRef: sessionKey,
-          data: { boothId, platform, authStatus: 'LOGGED_IN', method: 'MOBILE_QR_SCAN', token }
-        });
-      }
-    }, 13000);
+          await forwardToERP({
+            module: 'SALES',
+            entity: 'BOOTH_CHANNEL_AUTH',
+            action: 'UPDATE',
+            documentRef: sessionKey,
+            data: { boothId, platform, authStatus: 'LOGGED_IN', method: 'MOBILE_QR_SCAN', token }
+          });
+        }
+      }, 13000);
+    }
 
     return res.json({
       success: true,
@@ -623,7 +909,7 @@ headlessRouter.get('/qr/status', async (req, res) => {
   const sessionKey = `${boothId}_${platform}`;
   const session = activeQrSessions.get(sessionKey);
 
-  // If session doesn't exist, check database directly
+  // If session doesn't exist in memory, check database directly
   if (!session) {
     const channel = await getDbChannel(boothId, platform);
     if (channel?.auth_status === 'LOGGED_IN') {
@@ -664,6 +950,16 @@ headlessRouter.post('/qr/simulate-approval', async (req, res) => {
   const sessionKey = `${boothId}_${platform}`;
   const session = activeQrSessions.get(sessionKey);
 
+  // Clean up any background Puppeteer session for this booth/platform
+  const puppeteerSession = activePuppeteerSessions.get(sessionKey);
+  if (puppeteerSession) {
+    if (puppeteerSession.checkInterval) clearInterval(puppeteerSession.checkInterval);
+    if (puppeteerSession.browser) {
+      await puppeteerSession.browser.close().catch(() => {});
+    }
+    activePuppeteerSessions.delete(sessionKey);
+  }
+
   const simulatedCookies = [
     { name: 'session_id', value: `sid_qr_${crypto.randomBytes(16).toString('hex')}`, domain: `.${platform}.com`, path: '/' },
     { name: 'auth_token', value: `at_qr_${crypto.randomBytes(24).toString('hex')}`, domain: `.${platform}.com`, path: '/', secure: true, httpOnly: true },
@@ -675,6 +971,7 @@ headlessRouter.post('/qr/simulate-approval', async (req, res) => {
     session.status = 'LOGGED_IN';
   }
 
+  // Persist across all booth ID aliases
   await updateDbChannel(boothId, platform, {
     auth_status: 'LOGGED_IN',
     session_cookies: simulatedCookies,
@@ -694,7 +991,7 @@ headlessRouter.post('/qr/simulate-approval', async (req, res) => {
   return res.json({
     success: true,
     status: 'LOGGED_IN',
-    message: `Immediate mobile scan approval simulated for ${platform.toUpperCase()}!`
+    message: `Immediate mobile scan approval confirmed for ${platform.toUpperCase()}!`
   });
 });
 
@@ -707,6 +1004,17 @@ headlessRouter.post('/reset', async (req, res) => {
 
   const sessionKey = `${boothId}_${platform}`;
   activeQrSessions.delete(sessionKey);
+
+  // Clean up any running Puppeteer browser
+  const puppeteerSession = activePuppeteerSessions.get(sessionKey);
+  if (puppeteerSession) {
+    console.log(`[Worker Headless] 🛑 Force reset terminating Puppeteer browser for ${sessionKey}...`);
+    if (puppeteerSession.checkInterval) clearInterval(puppeteerSession.checkInterval);
+    if (puppeteerSession.browser) {
+      await puppeteerSession.browser.close().catch(() => {});
+    }
+    activePuppeteerSessions.delete(sessionKey);
+  }
 
   await updateDbChannel(boothId, platform, {
     auth_status: 'IDLE',

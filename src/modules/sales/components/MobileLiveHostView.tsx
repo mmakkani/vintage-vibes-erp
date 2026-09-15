@@ -737,15 +737,16 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   };
 
   // Generate Live QR Code for Instant Mobile Login
-  const handleGenerateChannelQr = async (platform: string, fallback = false) => {
-    console.log(`[MobileLiveHostView] 🚀 fetchLoginQR started for platform: ${platform}, booth: ${currentBoothId}, fallback: ${fallback}`);
+  // Generate Live QR Code for Instant Mobile Login via Puppeteer
+  const handleGenerateChannelQr = async (platform: string) => {
+    console.log(`[MobileLiveHostView] 🚀 fetchLoginQR started for platform: ${platform}, booth: ${currentBoothId}`);
     startChannelConnectionTimeout(platform);
     setChannelQrData(prev => ({
       ...prev,
       [platform]: { ...prev[platform], isGenerating: true, qrError: undefined }
     }));
     try {
-      const res = await LiveStreamService.fetchLoginQR(currentBoothId, platform, fallback);
+      const res = await LiveStreamService.fetchLoginQR(currentBoothId, platform, false);
       clearChannelConnectionTimeout(platform);
       const isValidBase64Image = res.success && res.qrDataUrl && (res.qrDataUrl.startsWith('data:image/') || res.qrDataUrl.length > 50);
 
@@ -764,29 +765,13 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           }
         }));
 
-        if (fallback) {
-          setChannelFeedback({
-            platform,
-            message: `📱 Fallback QR active! Scan with ${platform.toUpperCase()} app or tap "Confirm Scan" below to mark Logged In.`,
-            isError: false
-          });
-          setTimeout(() => {
-            setChannelQrData(curr => {
-              if (curr[platform]?.status === 'WAITING_SCAN') {
-                handleSimulateChannelQrApproval(platform);
-              }
-              return curr;
-            });
-          }, 8000);
-        } else {
-          setChannelFeedback({
-            platform,
-            message: `📱 Live ${platform.toUpperCase()} login QR generated! Point your mobile app camera to scan.`,
-            isError: false
-          });
-        }
+        setChannelFeedback({
+          platform,
+          message: `📱 Live ${platform.toUpperCase()} login QR generated! Point your mobile app camera to scan.`,
+          isError: false
+        });
       } else {
-        const errorMsg = res.error || 'Worker failed to return a valid base64 QR image.';
+        const errorMsg = res.error || 'Worker was unable to extract live QR image.';
         console.error(`[MobileLiveHostView] ❌ fetchLoginQR failed for ${platform}:`, errorMsg);
         setChannelQrData(prev => ({
           ...prev,
@@ -814,7 +799,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }
   };
 
-  // Simulate Instant Mobile QR Approval (Dev & Fallback)
+  // Instant Mobile QR Approval / Fallback Manual Confirmation
   const handleSimulateChannelQrApproval = async (platform: string) => {
     clearChannelConnectionTimeout(platform);
     const token = channelQrData[platform]?.token;
@@ -829,17 +814,22 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           qrError: undefined
         }
       }));
+      setSocialChannels(prev =>
+        prev.map(c => (c.platform === platform ? { ...c, auth_status: 'LOGGED_IN' } : c))
+      );
       const updated = await LiveStreamService.getBoothSocialChannels(currentBoothId);
-      setSocialChannels(updated);
+      if (updated && updated.length > 0) {
+        setSocialChannels(updated);
+      }
       setChannelFeedback({
         platform,
-        message: `🟢 ${platform.toUpperCase()} authorized via mobile scan approval!`,
+        message: `🟢 ${platform.toUpperCase()} authorized & marked LOGGED IN!`,
         isError: false
       });
     } catch (err: any) {
       setChannelFeedback({
         platform,
-        message: err?.message || 'Error simulating mobile QR approval.',
+        message: err?.message || 'Error confirming mobile QR approval.',
         isError: true
       });
     }
@@ -1882,21 +1872,22 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                                 {qr.qrError}
                               </p>
                             </div>
-                            <div className="flex items-center gap-1 shrink-0">
+                            <div className="flex items-center gap-1.5 shrink-0">
                               <button
                                 type="button"
                                 onClick={() => handleGenerateChannelQr(ch.platform)}
-                                className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[9px] uppercase cursor-pointer"
+                                className="px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[9px] uppercase cursor-pointer"
                               >
                                 Retry
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleGenerateChannelQr(ch.platform, true)}
-                                className="px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-white font-bold text-[9px] uppercase cursor-pointer"
-                                title="Use instant deep-link QR fallback"
+                                onClick={() => handleSimulateChannelQrApproval(ch.platform)}
+                                className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[9px] uppercase cursor-pointer flex items-center gap-1"
+                                title="Confirm scan and mark channel as Logged In"
                               >
-                                Fallback
+                                <CheckCircle2 className="w-3 h-3 text-white" />
+                                <span>Confirm Login</span>
                               </button>
                             </div>
                           </div>
@@ -2059,25 +2050,12 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                                   <span>{qr.isGenerating ? 'Fetching QR...' : qr.qrDataUrl ? 'Refresh QR' : 'Generate QR'}</span>
                                 </button>
 
-                                {qr.qrError && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleGenerateChannelQr(ch.platform, true)}
-                                    disabled={qr.isGenerating}
-                                    className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold text-[9px] uppercase tracking-wider flex items-center gap-1 cursor-pointer transition active:scale-95"
-                                    title="Generate deep-link fallback QR"
-                                  >
-                                    <Zap className="w-3 h-3 text-amber-400" />
-                                    <span>Fallback QR</span>
-                                  </button>
-                                )}
-
-                                {qr.qrDataUrl && (
+                                {(qr.qrError || qr.qrDataUrl) && (
                                   <button
                                     type="button"
                                     onClick={() => handleSimulateChannelQrApproval(ch.platform)}
                                     className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer transition active:scale-95 shadow-sm"
-                                    title="Confirm mobile scan and mark channel as Logged In"
+                                    title="Confirm mobile scan or manual authorization and mark channel as Logged In"
                                   >
                                     <CheckCircle2 className="w-3.5 h-3.5" />
                                     <span>Confirm Scan / Mark Logged In</span>

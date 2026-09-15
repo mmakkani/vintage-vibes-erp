@@ -3725,6 +3725,152 @@ export default async function handler(req: any, res: any) {
             }
           }
           return res.status(200).json({ success: true, channels: [] });
+      // 11. Booth Social Channels & Headless QR Scan Handlers
+      if (pathname.includes('/booths/') && pathname.includes('/channels')) {
+        const parts = pathname.split('/');
+        const boothsIdx = parts.findIndex(p => p === 'booths');
+        const boothId = boothsIdx !== -1 ? parts[boothsIdx + 1] : '';
+        const aliases = (function(b: string) {
+          const m = String(b).match(/^booth[-_]?0*(\d+)$/i);
+          if (m) {
+            const n = parseInt(m[1], 10);
+            const p = n < 10 ? `0${n}` : `${n}`;
+            return [`booth-${n}`, `booth-${p}`, `booth_${n}`, `booth_${p}`];
+          }
+          return [String(b)];
+        })(boothId);
+
+        // A. /channels/:platform/qr/simulate-approval
+        if (pathname.includes('/qr/simulate-approval') && method === 'POST') {
+          const channelsIdx = parts.findIndex(p => p === 'channels');
+          const platform = channelsIdx !== -1 ? parts[channelsIdx + 1] : '';
+          const { token } = req.body || {};
+          const workerUrl = process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
+
+          try {
+            await fetch(`${workerUrl}/api/booth/social/qr/simulate-approval`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ boothId, platform, token }),
+              signal: AbortSignal.timeout(2000)
+            }).catch(() => {});
+          } catch (_) {}
+
+          if (client) {
+            const simCookies = [
+              { name: 'session_id', value: `sid_qr_${Date.now()}`, domain: `.${platform}.com`, path: '/' },
+              { name: 'auth_token', value: `at_qr_${Date.now()}`, domain: `.${platform}.com`, path: '/' },
+              { name: 'login_method', value: 'MOBILE_QR_SCAN', domain: `.${platform}.com`, path: '/' }
+            ];
+            await client.query(
+              "UPDATE booth_social_channels SET auth_status = 'LOGGED_IN', session_cookies = $3, last_login_at = NOW(), otp_required = false, metadata = $4 WHERE booth_id = ANY($1::text[]) AND platform = $2",
+              [aliases, platform, JSON.stringify(simCookies), JSON.stringify({ authMode: 'QR_SCAN', approvedAt: new Date().toISOString() })]
+            );
+            await client.end();
+          }
+          return res.status(200).json({ success: true, status: 'LOGGED_IN', message: `Mobile approval confirmed for ${platform.toUpperCase()}!` });
+        }
+
+        // B. /channels/:platform/reset
+        if (pathname.includes('/reset') && method === 'POST') {
+          const channelsIdx = parts.findIndex(p => p === 'channels');
+          const platform = channelsIdx !== -1 ? parts[channelsIdx + 1] : '';
+          const workerUrl = process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
+          try {
+            await fetch(`${workerUrl}/api/booth/social/reset`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ boothId, platform }),
+              signal: AbortSignal.timeout(2000)
+            }).catch(() => {});
+          } catch (_) {}
+
+          if (client) {
+            await client.query(
+              "UPDATE booth_social_channels SET auth_status = 'IDLE', session_cookies = NULL, last_login_at = NULL, otp_required = false, metadata = '{}' WHERE booth_id = ANY($1::text[]) AND platform = $2",
+              [aliases, platform]
+            );
+            await client.end();
+          }
+          return res.status(200).json({ success: true, status: 'IDLE', message: `State reset to IDLE for ${platform.toUpperCase()}` });
+        }
+
+        // C. /channels/:platform/qr/generate
+        if (pathname.includes('/qr/generate') && method === 'POST') {
+          const channelsIdx = parts.findIndex(p => p === 'channels');
+          const platform = channelsIdx !== -1 ? parts[channelsIdx + 1] : '';
+          const workerUrl = process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
+          const isFallback = req.query?.fallback === 'true' || req.body?.fallback === true;
+
+          try {
+            const workerRes = await fetch(`${workerUrl}/api/booth/social/qr/generate`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ boothId, platform, fallback: isFallback }),
+              signal: AbortSignal.timeout(35000)
+            });
+            const workerData = await workerRes.json();
+            if (client) await client.end().catch(() => {});
+            return res.status(workerRes.status).json(workerData);
+          } catch (err: any) {
+            if (client) await client.end().catch(() => {});
+            return res.status(502).json({
+              success: false,
+              error: `Worker connection note (${workerUrl}): ${err.message || 'Worker unreachable'}. Click "Confirm Scan / Mark Logged In" to authorize channel manually.`
+            });
+          }
+        }
+
+        // D. /channels/:platform/qr/status
+        if (pathname.includes('/qr/status') && method === 'GET') {
+          const channelsIdx = parts.findIndex(p => p === 'channels');
+          const platform = channelsIdx !== -1 ? parts[channelsIdx + 1] : '';
+          const workerUrl = process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
+          try {
+            const token = req.query?.token ? `?token=${encodeURIComponent(String(req.query.token))}` : '';
+            const workerRes = await fetch(`${workerUrl}/api/booth/social/qr/status${token}`);
+            if (workerRes.ok) {
+              const workerData = await workerRes.json();
+              if (client) await client.end().catch(() => {});
+              return res.status(200).json(workerData);
+            }
+          } catch (_) {}
+
+          if (client) {
+            const q = await client.query("SELECT auth_status, metadata, last_login_at FROM booth_social_channels WHERE booth_id = ANY($1::text[]) AND platform = $2 ORDER BY (auth_status = 'LOGGED_IN') DESC LIMIT 1", [aliases, platform]);
+            await client.end();
+            const row = q.rows[0];
+            return res.status(200).json({
+              success: true,
+              status: row?.auth_status === 'LOGGED_IN' ? 'LOGGED_IN' : (row?.auth_status || 'WAITING_SCAN'),
+              secondsRemaining: 90
+            });
+          }
+          return res.status(200).json({ success: true, status: 'WAITING_SCAN', secondsRemaining: 90 });
+        }
+
+        // E. GET /booths/:boothId/channels
+        if (method === 'GET') {
+          if (client) {
+            const q = await client.query(
+              "SELECT * FROM booth_social_channels WHERE booth_id = ANY($1::text[]) ORDER BY platform, (auth_status = 'LOGGED_IN') DESC",
+              [aliases]
+            );
+            await client.end();
+            const seen = new Map<string, any>();
+            for (const r of q.rows) {
+              if (!seen.has(r.platform) || r.auth_status === 'LOGGED_IN') {
+                seen.set(r.platform, r);
+              }
+            }
+            const channels = Array.from(seen.values()).map(r => ({
+              ...r,
+              booth_id: boothId,
+              account_password: r.account_password ? '••••••••' : ''
+            }));
+            return res.status(200).json({ success: true, channels });
+          }
+          return res.status(200).json({ success: true, channels: [] });
         }
       }
 
