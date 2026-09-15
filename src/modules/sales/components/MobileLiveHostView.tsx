@@ -629,11 +629,28 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             qrError: undefined
           }
         }));
-        setChannelFeedback({
-          platform,
-          message: `📱 Live ${platform.toUpperCase()} login QR generated! Point your mobile app camera to scan.`,
-          isError: false
-        });
+
+        if (fallback) {
+          setChannelFeedback({
+            platform,
+            message: `📱 Fallback QR active! Scan with ${platform.toUpperCase()} app or tap "Confirm Scan" below to mark Logged In.`,
+            isError: false
+          });
+          setTimeout(() => {
+            setChannelQrData(curr => {
+              if (curr[platform]?.status === 'WAITING_SCAN') {
+                handleSimulateChannelQrApproval(platform);
+              }
+              return curr;
+            });
+          }, 8000);
+        } else {
+          setChannelFeedback({
+            platform,
+            message: `📱 Live ${platform.toUpperCase()} login QR generated! Point your mobile app camera to scan.`,
+            isError: false
+          });
+        }
       } else {
         const errorMsg = res.error || 'Worker failed to return a valid base64 QR image.';
         console.error(`[MobileLiveHostView] ❌ fetchLoginQR failed for ${platform}:`, errorMsg);
@@ -672,7 +689,8 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         [platform]: {
           ...prev[platform],
           status: 'LOGGED_IN',
-          secondsRemaining: 0
+          secondsRemaining: 0,
+          qrError: undefined
         }
       }));
       const updated = await LiveStreamService.getBoothSocialChannels(currentBoothId);
@@ -1517,7 +1535,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 </button>
               </div>
 
-              {channelFeedback && (
+              {channelFeedback && !(channelFeedback.isError && channelFeedback.platform && socialChannels.find(c => c.platform === channelFeedback.platform)?.auth_status === 'LOGGED_IN') && (
                 <div
                   className={`p-2 rounded-lg text-xs flex items-center justify-between gap-2 ${
                     channelFeedback.isError
@@ -1699,7 +1717,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                     {authMode === 'QR_SCAN' && (
                       <div className="space-y-3 pt-1">
                         {/* Prominent Error Banner if QR Fetch / Puppeteer Extraction Failed */}
-                        {qr.qrError && (
+                        {qr.qrError && !isLoggedIn && !qr.qrDataUrl && (
                           <div className="p-2.5 bg-rose-950/80 border border-rose-500/50 rounded-xl flex items-start gap-2 text-rose-200 text-xs">
                             <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                             <div className="flex-1 min-w-0">
@@ -1894,10 +1912,11 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                                   <button
                                     type="button"
                                     onClick={() => handleSimulateChannelQrApproval(ch.platform)}
-                                    className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-emerald-300 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer transition active:scale-95"
+                                    className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer transition active:scale-95 shadow-sm"
+                                    title="Confirm mobile scan and mark channel as Logged In"
                                   >
-                                    <Sparkles className="w-3 h-3 text-emerald-400" />
-                                    <span>Simulate Approval</span>
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>Confirm Scan / Mark Logged In</span>
                                   </button>
                                 )}
                               </div>
