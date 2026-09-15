@@ -698,6 +698,39 @@ headlessRouter.post('/qr/simulate-approval', async (req, res) => {
   });
 });
 
+// 4. Force Reset / Disconnect Channel
+headlessRouter.post('/reset', async (req, res) => {
+  const { boothId, platform } = req.body;
+  if (!boothId || !platform) {
+    return res.status(400).json({ success: false, error: 'boothId and platform are required' });
+  }
+
+  const sessionKey = `${boothId}_${platform}`;
+  activeQrSessions.delete(sessionKey);
+
+  await updateDbChannel(boothId, platform, {
+    auth_status: 'IDLE',
+    session_cookies: null,
+    last_login_at: null,
+    otp_required: false,
+    metadata: {}
+  });
+
+  await forwardToERP({
+    module: 'SALES',
+    entity: 'BOOTH_CHANNEL_AUTH',
+    action: 'UPDATE',
+    documentRef: sessionKey,
+    data: { boothId, platform, authStatus: 'IDLE' }
+  });
+
+  return res.json({
+    success: true,
+    status: 'IDLE',
+    message: `State reset to IDLE for ${platform.toUpperCase()}`
+  });
+});
+
 /**
  * ============================================================================
  * 3. STREAM RELAYER: NATIVE WEB STUDIO "GO LIVE"

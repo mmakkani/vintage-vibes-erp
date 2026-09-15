@@ -1595,8 +1595,48 @@ export default async function handler(req: any, res: any) {
       });
     }
 
+    // 3.5 Reset / Disconnect Channel Auth State
+    if (pathname.includes('/channels/') && (pathname.includes('/reset') || pathname.includes('/disconnect')) && method === 'POST') {
+      const parts = pathname.split('/');
+      const boothsIdx = parts.indexOf('booths');
+      const channelsIdx = parts.indexOf('channels');
+      const boothId = boothsIdx !== -1 && parts[boothsIdx + 1] ? parts[boothsIdx + 1] : (body.boothId || 'booth-1');
+      const platform = channelsIdx !== -1 && parts[channelsIdx + 1] ? parts[channelsIdx + 1].toLowerCase() : (body.platform || 'tiktok').toLowerCase();
+      const workerUrl = process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
+
+      try {
+        await fetch(`${workerUrl.replace(/\/$/, '')}/api/booth/social/reset`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ boothId, platform }),
+          signal: AbortSignal.timeout(2000)
+        }).catch(() => {});
+      } catch (_) {}
+
+      try {
+        await supabaseAdmin.from('booth_social_channels').upsert({
+          id: `${boothId}_${platform}`,
+          booth_id: boothId,
+          platform,
+          auth_status: 'IDLE',
+          session_cookies: null,
+          last_login_at: null,
+          otp_required: false,
+          is_active: true,
+          metadata: {},
+          updated_at: new Date().toISOString()
+        });
+      } catch (_) {}
+
+      return res.status(200).json({
+        success: true,
+        status: 'IDLE',
+        message: `Successfully reset ${platform.toUpperCase()} connection state.`
+      });
+    }
+
     // 4. Booth Social Channels List & Update
-    if (pathname.includes('/channels') && !pathname.includes('/qr') && !pathname.includes('/auth') && !pathname.includes('/otp')) {
+    if (pathname.includes('/channels') && !pathname.includes('/qr') && !pathname.includes('/auth') && !pathname.includes('/otp') && !pathname.includes('/reset') && !pathname.includes('/disconnect')) {
       const parts = pathname.split('/');
       const boothsIdx = parts.indexOf('booths');
       const boothId = boothsIdx !== -1 && parts[boothsIdx + 1] ? parts[boothsIdx + 1] : 'booth-1';

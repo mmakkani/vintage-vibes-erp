@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { LiveBoothStreamConfig, CompanyProfile } from '../setup.types.ts';
 import {
   Radio,
@@ -28,7 +28,10 @@ import {
   QrCode,
   Clock,
   AlertCircle,
-  Zap
+  Zap,
+  RotateCcw,
+  PowerOff,
+  XCircle
 } from 'lucide-react';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { LiveStreamService } from '../../../services/liveStreamService.ts';
@@ -340,6 +343,9 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
 
   // Close modal window
   const handleCloseModal = () => {
+    Object.values(authTimeoutsRef.current).forEach(t => clearTimeout(t));
+    authTimeoutsRef.current = {};
+    connectionStartTimesRef.current = {};
     setActiveModalBooth(null);
   };
 
@@ -359,6 +365,115 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     }));
   };
 
+  // 45s Auto-Timeout Tracking
+  const authTimeoutsRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const connectionStartTimesRef = useRef<Record<string, number>>({});
+
+  const startConnectionTimeout = (platformKey: string) => {
+    if (authTimeoutsRef.current[platformKey]) {
+      clearTimeout(authTimeoutsRef.current[platformKey]);
+    }
+    connectionStartTimesRef.current[platformKey] = Date.now();
+
+    authTimeoutsRef.current[platformKey] = setTimeout(() => {
+      console.warn(`[UnifiedLiveBroadcastHub] ⏰ 45s connection timeout reached for ${platformKey}`);
+      setChannelCreds(prev => {
+        const cur = prev[platformKey];
+        if (cur && (cur.authStatus === 'AUTHENTICATING' || cur.isAuthenticating || cur.isGeneratingQr)) {
+          return {
+            ...prev,
+            [platformKey]: {
+              ...cur,
+              authStatus: 'IDLE',
+              isAuthenticating: false,
+              isGeneratingQr: false,
+              qrStatus: cur.qrStatus === 'WAITING_SCAN' ? 'IDLE' : cur.qrStatus,
+              qrError: 'Connection timed out. Please try again.'
+            }
+          };
+        }
+        return prev;
+      });
+      delete connectionStartTimesRef.current[platformKey];
+      delete authTimeoutsRef.current[platformKey];
+      showMsg(`⚠️ Connection timed out for ${platformKey.toUpperCase()}. Please try again.`, 'error');
+    }, 45000);
+  };
+
+  const clearConnectionTimeout = (platformKey: string) => {
+    if (authTimeoutsRef.current[platformKey]) {
+      clearTimeout(authTimeoutsRef.current[platformKey]);
+      delete authTimeoutsRef.current[platformKey];
+    }
+    delete connectionStartTimesRef.current[platformKey];
+  };
+
+  // Safety Interval: Revert any connection state stuck past 45s
+  useEffect(() => {
+    const safetyInterval = setInterval(() => {
+      const now = Date.now();
+      Object.entries(connectionStartTimesRef.current).forEach(([platKey, startTime]) => {
+        if (now - startTime > 45000) {
+          console.warn(`[UnifiedLiveBroadcastHub] ⏰ 45s safety interval triggered for ${platKey}`);
+          clearConnectionTimeout(platKey);
+          setChannelCreds(prev => {
+            const cur = prev[platKey];
+            if (cur && (cur.authStatus === 'AUTHENTICATING' || cur.isAuthenticating || cur.isGeneratingQr)) {
+              return {
+                ...prev,
+                [platKey]: {
+                  ...cur,
+                  authStatus: 'IDLE',
+                  isAuthenticating: false,
+                  isGeneratingQr: false,
+                  qrStatus: cur.qrStatus === 'WAITING_SCAN' ? 'IDLE' : cur.qrStatus,
+                  qrError: 'Connection timed out. Please try again.'
+                }
+              };
+            }
+            return prev;
+          });
+          showMsg(`⚠️ Connection timed out for ${platKey.toUpperCase()}. Please try again.`, 'error');
+        }
+      });
+    }, 3000);
+
+    return () => clearInterval(safetyInterval);
+  }, []);
+
+  // Force Disconnect / Reset State Action
+  const handleForceResetPlatform = async (platformKey: string) => {
+    if (!activeModalBooth) return;
+    clearConnectionTimeout(platformKey);
+    console.log(`[UnifiedLiveBroadcastHub] 🛑 Force reset requested for ${platformKey} on booth ${activeModalBooth.boothId}`);
+
+    // Immediately reset UI state to IDLE
+    setChannelCreds(prev => ({
+      ...prev,
+      [platformKey]: {
+        ...prev[platformKey],
+        authStatus: 'IDLE',
+        qrStatus: 'IDLE',
+        isAuthenticating: false,
+        isGeneratingQr: false,
+        qrDataUrl: undefined,
+        qrRawUrl: undefined,
+        qrToken: undefined,
+        qrSecondsRemaining: 0,
+        cookieCount: 0,
+        lastLoginAt: null,
+        otpCode: '',
+        qrError: undefined
+      }
+    }));
+
+    try {
+      await LiveStreamService.resetBoothSocialChannel(activeModalBooth.boothId, platformKey);
+    } catch (_) {}
+
+    showMsg(`🔴 ${platformKey.toUpperCase()} state forcefully reset to IDLE.`);
+  };
+
   // Trigger Headless Authentication for a platform
   const handleAuthenticatePlatform = async (platformKey: string) => {
     if (!activeModalBooth) return;
@@ -368,6 +483,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
       return;
     }
 
+    startConnectionTimeout(platformKey);
     setChannelCreds(prev => ({
       ...prev,
       [platformKey]: { ...prev[platformKey], isAuthenticating: true, authStatus: 'AUTHENTICATING' }
@@ -380,6 +496,8 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
         proxyUrl: current.proxyUrl,
         forceFreshLogin: false
       });
+
+      clearConnectionTimeout(platformKey);
 
       if (res.requiresOtp || res.status === 'WAITING_OTP') {
         setChannelCreds(prev => ({
@@ -407,6 +525,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
         showMsg(res.error || `Authentication failed for ${platformKey.toUpperCase()}`, 'error');
       }
     } catch (err: any) {
+      clearConnectionTimeout(platformKey);
       setChannelCreds(prev => ({
         ...prev,
         [platformKey]: { ...prev[platformKey], isAuthenticating: false, authStatus: 'AUTH_FAILED' }
@@ -424,8 +543,10 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
       return;
     }
 
+    startConnectionTimeout(platformKey);
     try {
       const res = await LiveStreamService.submitChannelOtp(activeModalBooth.boothId, platformKey, current.otpCode.trim());
+      clearConnectionTimeout(platformKey);
       if (res.success || res.status === 'LOGGED_IN') {
         setChannelCreds(prev => ({
           ...prev,
@@ -442,6 +563,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
         showMsg(res.error || 'OTP verification failed', 'error');
       }
     } catch (err: any) {
+      clearConnectionTimeout(platformKey);
       showMsg(err?.message || 'OTP verification failed', 'error');
     }
   };
@@ -451,6 +573,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     if (!activeModalBooth) return;
     console.log(`[UnifiedLiveBroadcastHub] 🚀 fetchLoginQR started for platform: ${platformKey}, booth: ${activeModalBooth.boothId}, fallback: ${fallback}`);
 
+    startConnectionTimeout(platformKey);
     setChannelCreds(prev => ({
       ...prev,
       [platformKey]: {
@@ -462,6 +585,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
 
     try {
       const res = await LiveStreamService.fetchLoginQR(activeModalBooth.boothId, platformKey, fallback);
+      clearConnectionTimeout(platformKey);
       
       const isValidBase64Image = res.success && res.qrDataUrl && (res.qrDataUrl.startsWith('data:image/') || res.qrDataUrl.length > 50);
 
@@ -510,6 +634,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
         showMsg(errorMsg, 'error');
       }
     } catch (err: any) {
+      clearConnectionTimeout(platformKey);
       const errorMsg = err?.message || 'Error communicating with headless worker';
       console.error(`[UnifiedLiveBroadcastHub] ❌ fetchLoginQR caught exception for ${platformKey}:`, err);
       setChannelCreds(prev => ({
@@ -527,6 +652,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
   // Immediate Mobile Scan Approval Simulation / Manual Override
   const handleSimulateQrApproval = async (platformKey: string) => {
     if (!activeModalBooth) return;
+    clearConnectionTimeout(platformKey);
     const token = channelCreds[platformKey]?.qrToken;
     try {
       await LiveStreamService.simulateChannelQrApproval(activeModalBooth.boothId, platformKey, token);
@@ -1184,13 +1310,28 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                             </div>
 
                             <div className="flex items-center gap-2">
+                              {(cur.authStatus !== 'IDLE' || cur.isAuthenticating) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleForceResetPlatform(platKey)}
+                                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition cursor-pointer shadow-xs"
+                                  title="Force Disconnect & Reset to IDLE"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  <span>Force Reset / Disconnect</span>
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => handleAuthenticatePlatform(platKey)}
                                 disabled={cur.isAuthenticating || !cur.username}
                                 className="flex items-center gap-1 px-3.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white transition cursor-pointer shadow-xs"
                               >
-                                <ShieldCheck className="w-3.5 h-3.5" />
+                                {cur.isAuthenticating ? (
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <ShieldCheck className="w-3.5 h-3.5" />
+                                )}
                                 <span>{cur.authStatus === 'LOGGED_IN' ? 'Re-Verify Session' : 'Authenticate Account'}</span>
                               </button>
                             </div>
@@ -1267,19 +1408,30 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                           )}
 
                           {cur.qrDataUrl && cur.authStatus !== 'LOGGED_IN' && (
-                            <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center justify-between gap-3 text-indigo-950 text-xs animate-in fade-in">
+                            <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-indigo-950 text-xs animate-in fade-in">
                               <div className="flex items-center gap-2">
                                 <Smartphone className="w-4 h-4 text-indigo-600 shrink-0" />
                                 <span>Scan code with <strong>{platTitle}</strong> mobile app or tap <strong>Confirm Login</strong>:</span>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => handleSimulateQrApproval(platKey)}
-                                className="shrink-0 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-lg cursor-pointer transition shadow-sm flex items-center gap-1.5 active:scale-95"
-                              >
-                                <CheckCircle className="w-3.5 h-3.5" />
-                                <span>Confirm Scan (Mark Logged In)</span>
-                              </button>
+                              <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleForceResetPlatform(platKey)}
+                                  className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-xs rounded-lg cursor-pointer transition flex items-center gap-1"
+                                  title="Force Disconnect & Reset State to IDLE"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  <span>Reset State</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSimulateQrApproval(platKey)}
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-lg cursor-pointer transition shadow-sm flex items-center gap-1.5 active:scale-95"
+                                >
+                                  <CheckCircle className="w-3.5 h-3.5" />
+                                  <span>Confirm Scan (Mark Logged In)</span>
+                                </button>
+                              </div>
                             </div>
                           )}
 
@@ -1296,14 +1448,24 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                   Authenticated via mobile QR scan. Session cookies are persisted for 24/7 background comment scraping and live streaming.
                                 </p>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => handleGeneratePlatformQr(platKey)}
-                                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-900 hover:bg-emerald-100 text-xs font-bold cursor-pointer transition shadow-xs"
-                              >
-                                <RefreshCw className="w-3.5 h-3.5" />
-                                <span>Re-Authenticate with New QR</span>
-                              </button>
+                              <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleGeneratePlatformQr(platKey)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-900 hover:bg-emerald-100 text-xs font-bold cursor-pointer transition shadow-xs"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                  <span>Re-Authenticate with New QR</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleForceResetPlatform(platKey)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 hover:bg-rose-100 text-xs font-bold cursor-pointer transition shadow-xs"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  <span>Force Disconnect / Reset</span>
+                                </button>
+                              </div>
                             </div>
                           ) : (
                             <div className="flex flex-col sm:flex-row items-center gap-6 justify-center">
@@ -1476,6 +1638,18 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                       <span>Confirm Scan / Mark Logged In</span>
                                     </button>
                                   )}
+
+                                  {(cur.authStatus !== 'IDLE' || cur.qrDataUrl || cur.isGeneratingQr) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleForceResetPlatform(platKey)}
+                                      className="px-3.5 py-2 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition active:scale-95 shadow-xs"
+                                      title="Force Disconnect & Reset to IDLE"
+                                    >
+                                      <RotateCcw className="w-3.5 h-3.5" />
+                                      <span>Force Reset / Disconnect</span>
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -1547,10 +1721,20 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => handleForceResetPlatform(activePlatformTab.toLowerCase())}
+                  className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors cursor-pointer"
+                  title={`Force Disconnect & Reset ${activePlatformTab} state to IDLE`}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reset {activePlatformTab}</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={handleCloseModal}
                   className="px-4 py-2 rounded-lg text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-800 transition-colors cursor-pointer"
                 >
-                  Cancel
+                  Cancel / Close
                 </button>
 
                 <button

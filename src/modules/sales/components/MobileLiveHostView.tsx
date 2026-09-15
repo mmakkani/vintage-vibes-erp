@@ -46,7 +46,11 @@ import {
   Shield,
   QrCode,
   Clock,
-  Sparkles
+  Sparkles,
+  RotateCcw,
+  PowerOff,
+  XCircle,
+  LogOut
 } from 'lucide-react';
 
 interface MobileLiveHostViewProps {
@@ -525,8 +529,133 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }
   };
 
+  // 45-Second Auto-Timeout Tracking for Social Channels
+  const channelAuthTimeoutsRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const channelStartTimesRef = useRef<Record<string, number>>({});
+
+  const startChannelConnectionTimeout = (platform: string) => {
+    if (channelAuthTimeoutsRef.current[platform]) {
+      clearTimeout(channelAuthTimeoutsRef.current[platform]);
+    }
+    channelStartTimesRef.current[platform] = Date.now();
+
+    channelAuthTimeoutsRef.current[platform] = setTimeout(() => {
+      console.warn(`[MobileLiveHostView] ⏰ 45s connection timeout reached for ${platform}`);
+      setIsAuthenticatingChannel(prev => ({ ...prev, [platform]: false }));
+      setIsSubmittingOtp(prev => ({ ...prev, [platform]: false }));
+      setChannelQrData(prev => ({
+        ...prev,
+        [platform]: {
+          ...prev[platform],
+          isGenerating: false,
+          status: prev[platform]?.status === 'WAITING_SCAN' ? 'EXPIRED' : prev[platform]?.status,
+          qrError: 'Connection timed out. Please try again.'
+        }
+      }));
+      setSocialChannels(prev =>
+        prev.map(c => (c.platform === platform && c.auth_status === 'AUTHENTICATING' ? { ...c, auth_status: 'IDLE' } : c))
+      );
+      setChannelFeedback({
+        platform,
+        message: 'Connection timed out. Please try again.',
+        isError: true
+      });
+      delete channelStartTimesRef.current[platform];
+      delete channelAuthTimeoutsRef.current[platform];
+    }, 45000);
+  };
+
+  const clearChannelConnectionTimeout = (platform: string) => {
+    if (channelAuthTimeoutsRef.current[platform]) {
+      clearTimeout(channelAuthTimeoutsRef.current[platform]);
+      delete channelAuthTimeoutsRef.current[platform];
+    }
+    delete channelStartTimesRef.current[platform];
+  };
+
+  // Periodic Safety Check: Auto-Timeout any stuck channel past 45s
+  useEffect(() => {
+    const safetyInterval = setInterval(() => {
+      const now = Date.now();
+      Object.entries(channelStartTimesRef.current).forEach(([platform, startTime]) => {
+        if (now - startTime > 45000) {
+          console.warn(`[MobileLiveHostView] ⏰ 45s safety interval triggered for ${platform}`);
+          clearChannelConnectionTimeout(platform);
+          setIsAuthenticatingChannel(prev => ({ ...prev, [platform]: false }));
+          setIsSubmittingOtp(prev => ({ ...prev, [platform]: false }));
+          setChannelQrData(prev => ({
+            ...prev,
+            [platform]: {
+              ...prev[platform],
+              isGenerating: false,
+              status: prev[platform]?.status === 'WAITING_SCAN' ? 'EXPIRED' : prev[platform]?.status,
+              qrError: 'Connection timed out. Please try again.'
+            }
+          }));
+          setSocialChannels(prev =>
+            prev.map(c => (c.platform === platform && c.auth_status === 'AUTHENTICATING' ? { ...c, auth_status: 'IDLE' } : c))
+          );
+          setChannelFeedback({
+            platform,
+            message: 'Connection timed out. Please try again.',
+            isError: true
+          });
+        }
+      });
+    }, 3000);
+
+    return () => clearInterval(safetyInterval);
+  }, []);
+
+  // Top-level Camera/WebRTC stream connection timeout safety
+  useEffect(() => {
+    if (connectionStatus === 'CONNECTING') {
+      const t = setTimeout(() => {
+        console.warn('[MobileLiveHostView] ⏰ Stream connection timed out after 45s');
+        setConnectionStatus('OFFLINE');
+      }, 45000);
+      return () => clearTimeout(t);
+    }
+  }, [connectionStatus]);
+
+  // Force Disconnect / Reset State Action
+  const handleForceResetChannel = async (platform: string) => {
+    clearChannelConnectionTimeout(platform);
+    console.log(`[MobileLiveHostView] 🛑 Force reset requested for ${platform} on ${currentBoothId}`);
+
+    // Immediately reset UI state
+    setIsAuthenticatingChannel(prev => ({ ...prev, [platform]: false }));
+    setIsSubmittingOtp(prev => ({ ...prev, [platform]: false }));
+    setOtpInputs(prev => ({ ...prev, [platform]: '' }));
+    setChannelQrData(prev => ({
+      ...prev,
+      [platform]: {
+        isGenerating: false,
+        qrDataUrl: undefined,
+        qrRawUrl: undefined,
+        token: undefined,
+        secondsRemaining: 0,
+        status: 'IDLE',
+        qrError: undefined
+      }
+    }));
+    setSocialChannels(prev =>
+      prev.map(c => (c.platform === platform ? { ...c, auth_status: 'IDLE', session_cookies: [] } : c))
+    );
+    setChannelFeedback({
+      platform,
+      message: `🔴 ${platform.toUpperCase()} connection state reset to IDLE.`,
+      isError: false
+    });
+
+    try {
+      await LiveStreamService.resetBoothSocialChannel(currentBoothId, platform);
+    } catch (_) {}
+  };
+
   // Headless Social Channel Authentication
   const handleAuthenticatePlatform = async (platform: string) => {
+    startChannelConnectionTimeout(platform);
     setIsAuthenticatingChannel(prev => ({ ...prev, [platform]: true }));
     setChannelFeedback(null);
     try {
@@ -560,6 +689,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       });
     } finally {
       setIsAuthenticatingChannel(prev => ({ ...prev, [platform]: false }));
+      clearChannelConnectionTimeout(platform);
     }
   };
 
@@ -574,6 +704,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       });
       return;
     }
+    startChannelConnectionTimeout(platform);
     setIsSubmittingOtp(prev => ({ ...prev, [platform]: true }));
     try {
       const res = await LiveStreamService.submitChannelOtp(currentBoothId, platform, code);
@@ -601,18 +732,21 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       });
     } finally {
       setIsSubmittingOtp(prev => ({ ...prev, [platform]: false }));
+      clearChannelConnectionTimeout(platform);
     }
   };
 
   // Generate Live QR Code for Instant Mobile Login
   const handleGenerateChannelQr = async (platform: string, fallback = false) => {
     console.log(`[MobileLiveHostView] 🚀 fetchLoginQR started for platform: ${platform}, booth: ${currentBoothId}, fallback: ${fallback}`);
+    startChannelConnectionTimeout(platform);
     setChannelQrData(prev => ({
       ...prev,
       [platform]: { ...prev[platform], isGenerating: true, qrError: undefined }
     }));
     try {
       const res = await LiveStreamService.fetchLoginQR(currentBoothId, platform, fallback);
+      clearChannelConnectionTimeout(platform);
       const isValidBase64Image = res.success && res.qrDataUrl && (res.qrDataUrl.startsWith('data:image/') || res.qrDataUrl.length > 50);
 
       if (isValidBase64Image) {
@@ -665,6 +799,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         });
       }
     } catch (err: any) {
+      clearChannelConnectionTimeout(platform);
       const errorMsg = err?.message || 'Error communicating with live worker.';
       console.error(`[MobileLiveHostView] ❌ fetchLoginQR exception for ${platform}:`, err);
       setChannelQrData(prev => ({
@@ -681,6 +816,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
 
   // Simulate Instant Mobile QR Approval (Dev & Fallback)
   const handleSimulateChannelQrApproval = async (platform: string) => {
+    clearChannelConnectionTimeout(platform);
     const token = channelQrData[platform]?.token;
     try {
       await LiveStreamService.simulateChannelQrApproval(currentBoothId, platform, token);
@@ -764,6 +900,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   // Headless Stream Broadcast Toggle across all platforms
   const handleToggleHeadlessBroadcast = async () => {
     setIsTogglingHeadless(true);
+    const timeout = setTimeout(() => {
+      setIsTogglingHeadless(false);
+    }, 12000);
     try {
       if (isHeadlessLive) {
         await LiveStreamService.stopHeadlessStream(currentBoothId);
@@ -779,6 +918,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     } catch (e) {
       console.warn('Toggle headless error:', e);
     } finally {
+      clearTimeout(timeout);
       setIsTogglingHeadless(false);
     }
   };
@@ -1697,18 +1837,32 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                             )}
                           </div>
 
-                          <button
-                            onClick={() => handleAuthenticatePlatform(ch.platform)}
-                            disabled={isAuthenticating}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-white font-bold cursor-pointer transition-all active:scale-95 disabled:opacity-50"
-                          >
-                            {isAuthenticating ? (
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <ShieldCheck className="w-3 h-3" />
+                          <div className="flex items-center gap-1.5">
+                            {(ch.auth_status !== 'IDLE' || isAuthenticating || isWaitingOtp) && (
+                              <button
+                                type="button"
+                                onClick={() => handleForceResetChannel(ch.platform)}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded bg-rose-900/60 hover:bg-rose-800 text-rose-200 border border-rose-500/40 font-bold text-[10px] cursor-pointer transition-all active:scale-95"
+                                title="Force Disconnect & Reset State to IDLE"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                <span>Reset</span>
+                              </button>
                             )}
-                            {isLoggedIn ? 'Re-Sync Session' : 'Authenticate'}
-                          </button>
+
+                            <button
+                              onClick={() => handleAuthenticatePlatform(ch.platform)}
+                              disabled={isAuthenticating}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-white font-bold cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                            >
+                              {isAuthenticating ? (
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <ShieldCheck className="w-3 h-3" />
+                              )}
+                              {isLoggedIn ? 'Re-Sync Session' : 'Authenticate'}
+                            </button>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -1759,14 +1913,24 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                             <p className="text-[10px] text-emerald-300/80">
                               Authenticated via mobile QR scan. Session cookies are persisted for background comment scraping and live streaming.
                             </p>
-                            <button
-                              type="button"
-                              onClick={() => handleGenerateChannelQr(ch.platform)}
-                              className="mt-1 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold cursor-pointer"
-                            >
-                              <RefreshCw className="w-3 h-3" />
-                              <span>Re-Authenticate with New QR</span>
-                            </button>
+                            <div className="flex flex-wrap items-center justify-center gap-1.5 mt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleGenerateChannelQr(ch.platform)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold cursor-pointer"
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                                <span>Re-Authenticate with New QR</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleForceResetChannel(ch.platform)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-900/50 hover:bg-rose-800 text-rose-200 border border-rose-500/30 text-[10px] font-bold cursor-pointer"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                <span>Force Disconnect / Reset</span>
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <div className="flex flex-col sm:flex-row items-center gap-3 bg-slate-950/70 p-3 rounded-xl border border-white/10">
@@ -1917,6 +2081,18 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                                   >
                                     <CheckCircle2 className="w-3.5 h-3.5" />
                                     <span>Confirm Scan / Mark Logged In</span>
+                                  </button>
+                                )}
+
+                                {(ch.auth_status !== 'IDLE' || qr.qrDataUrl || qr.isGenerating) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleForceResetChannel(ch.platform)}
+                                    className="px-2.5 py-1.5 rounded-lg bg-rose-900/60 hover:bg-rose-800 text-rose-200 border border-rose-500/40 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer transition active:scale-95 shadow-xs"
+                                    title="Force Disconnect & Reset to IDLE"
+                                  >
+                                    <RotateCcw className="w-3 h-3" />
+                                    <span>Force Reset</span>
                                   </button>
                                 )}
                               </div>

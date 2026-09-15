@@ -348,7 +348,8 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/simulate-approv
     await fetch(`${workerUrl}/api/booth/social/qr/simulate-approval`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ boothId, platform, token })
+      body: JSON.stringify({ boothId, platform, token }),
+      signal: AbortSignal.timeout(2000)
     }).catch(() => {});
   } catch (_) {}
 
@@ -377,6 +378,46 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/simulate-approv
     });
 
     return res.json({ success: true, status: 'LOGGED_IN', message: `Mobile approval confirmed for ${platform.toUpperCase()}!` });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// Force Reset / Disconnect Channel
+liveStreamingRouter.post(['/booths/:boothId/channels/:platform/reset', '/booths/:boothId/channels/:platform/disconnect'], async (req, res) => {
+  const { boothId, platform } = req.params;
+  const workerUrl = getWorkerUrl();
+
+  try {
+    await fetch(`${workerUrl}/api/booth/social/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boothId, platform }),
+      signal: AbortSignal.timeout(2000)
+    }).catch(() => {});
+  } catch (_) {}
+
+  const client = await getPgClient();
+  try {
+    if (client) {
+      await client.query(
+        "UPDATE booth_social_channels SET auth_status = 'IDLE', session_cookies = NULL, last_login_at = NULL, otp_required = false, metadata = '{}' WHERE booth_id = $1 AND platform = $2",
+        [boothId, platform]
+      );
+    }
+
+    eventHub.broadcast({
+      type: 'ENTITY_MUTATED',
+      module: 'SALES',
+      entity: 'BOOTH_CHANNEL_AUTH',
+      action: 'UPDATE',
+      documentRef: `${boothId}_${platform}`,
+      data: { boothId, platform, authStatus: 'IDLE' }
+    });
+
+    return res.json({ success: true, status: 'IDLE', message: `${platform.toUpperCase()} connection state reset to IDLE` });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   } finally {
