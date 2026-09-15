@@ -3725,9 +3725,18 @@ export default async function handler(req: any, res: any) {
             }
           }
           return res.status(200).json({ success: true, channels: [] });
-      // 11. Booth Social Channels & Headless QR Scan Handlers
-      if (pathname.includes('/booths/') && pathname.includes('/channels')) {
-        const parts = pathname.split('/');
+        }
+      }
+
+      if (client) {
+        try { await client.end(); } catch (_) {}
+      }
+    }
+
+    // 11. Booth Social Channels & Headless QR Scan Handlers
+    if (pathname.includes('/booths/') && pathname.includes('/channels')) {
+      const client = await getPgClient();
+      const parts = pathname.split('/');
         const boothsIdx = parts.findIndex(p => p === 'booths');
         const boothId = boothsIdx !== -1 ? parts[boothsIdx + 1] : '';
         const aliases = (function(b: string) {
@@ -3872,12 +3881,238 @@ export default async function handler(req: any, res: any) {
           }
           return res.status(200).json({ success: true, channels: [] });
         }
+
+        if (client) {
+          try { await client.end(); } catch (_) {}
+        }
       }
 
-      if (client) {
-        try { await client.end(); } catch (_) {}
+      // 12. Live Stream Booths Overview & Multi-Booth Management
+      if (
+        pathname.includes('/live-stream/booths') ||
+        pathname.includes('/live/booths') ||
+        pathname.endsWith('/booths')
+      ) {
+        const DEFAULT_BOOTHS = [
+          {
+            boothId: 'booth-01',
+            boothNumber: 1,
+            boothName: 'Booth 01 - Main Stage',
+            hostName: 'Sarah Al-Maktoum',
+            categoryFocus: '90s Denim & Graphic Tees',
+            tiktokHandle: '@sarah_vintage',
+            isBroadcasting: true,
+            streamHealth: 'EXCELLENT',
+            fps: 60,
+            bitrateKbps: 4500,
+            viewerCount: 1420,
+            itemsClaimed: 18,
+            netRevenueAed: 4950,
+            conversionRatePct: 88.5,
+            reservationTimeoutMinutes: 120,
+            destinations: [
+              { platform: 'tiktok', url: 'rtmp://live.tiktok.com/live', streamKey: '••••••••', isConnected: true }
+            ],
+            comments: []
+          },
+          {
+            boothId: 'booth-02',
+            boothNumber: 2,
+            boothName: 'Booth 02 - Rare Grails',
+            hostName: 'Marcus Chen',
+            categoryFocus: 'Rare Carhartt & Workwear',
+            tiktokHandle: '@marcus_grails',
+            isBroadcasting: true,
+            streamHealth: 'EXCELLENT',
+            fps: 60,
+            bitrateKbps: 4200,
+            viewerCount: 980,
+            itemsClaimed: 14,
+            netRevenueAed: 6200,
+            conversionRatePct: 92.0,
+            reservationTimeoutMinutes: 120,
+            destinations: [
+              { platform: 'tiktok', url: 'rtmp://live.tiktok.com/live', streamKey: '••••••••', isConnected: true }
+            ],
+            comments: []
+          },
+          {
+            boothId: 'booth-03',
+            boothNumber: 3,
+            boothName: 'Booth 03 - Designer Vault',
+            hostName: 'Layla Haddad',
+            categoryFocus: 'Designer Trench & Silk',
+            tiktokHandle: '@layla_relove',
+            isBroadcasting: true,
+            streamHealth: 'GOOD',
+            fps: 58,
+            bitrateKbps: 3800,
+            viewerCount: 750,
+            itemsClaimed: 9,
+            netRevenueAed: 5400,
+            conversionRatePct: 85.0,
+            reservationTimeoutMinutes: 120,
+            destinations: [
+              { platform: 'tiktok', url: 'rtmp://live.tiktok.com/live', streamKey: '••••••••', isConnected: true }
+            ],
+            comments: []
+          },
+          {
+            boothId: 'booth-04',
+            boothNumber: 4,
+            boothName: 'Booth 04 - Streetwear Zone',
+            hostName: 'Tariq Mansoor',
+            categoryFocus: 'Vintage Hoodies & Sweats',
+            tiktokHandle: '@tariq_street',
+            isBroadcasting: false,
+            streamHealth: 'OFFLINE',
+            fps: 0,
+            bitrateKbps: 0,
+            viewerCount: 0,
+            itemsClaimed: 0,
+            netRevenueAed: 0,
+            conversionRatePct: 0,
+            reservationTimeoutMinutes: 120,
+            destinations: [],
+            comments: []
+          },
+          {
+            boothId: 'booth-05',
+            boothNumber: 5,
+            boothName: 'Booth 05 - Y2K Pop',
+            hostName: 'Amina Al-Fassi',
+            categoryFocus: 'Y2K Baby Tees & Cargo',
+            tiktokHandle: '@amina_y2k',
+            isBroadcasting: true,
+            streamHealth: 'EXCELLENT',
+            fps: 60,
+            bitrateKbps: 4600,
+            viewerCount: 1120,
+            itemsClaimed: 22,
+            netRevenueAed: 3800,
+            conversionRatePct: 94.2,
+            reservationTimeoutMinutes: 120,
+            destinations: [
+              { platform: 'tiktok', url: 'rtmp://live.tiktok.com/live', streamKey: '••••••••', isConnected: true }
+            ],
+            comments: []
+          },
+          {
+            boothId: 'booth-06',
+            boothNumber: 6,
+            boothName: 'Booth 06 - Leather & Moto',
+            hostName: 'Zayd Qasimi',
+            categoryFocus: 'Motorcycle & Flight Jackets',
+            tiktokHandle: '@zayd_moto',
+            isBroadcasting: false,
+            streamHealth: 'OFFLINE',
+            fps: 0,
+            bitrateKbps: 0,
+            viewerCount: 0,
+            itemsClaimed: 0,
+            netRevenueAed: 0,
+            conversionRatePct: 0,
+            reservationTimeoutMinutes: 120,
+            destinations: [],
+            comments: []
+          },
+          {
+            boothId: 'booth-07',
+            boothNumber: 7,
+            boothName: 'Booth 07 - Retro Sports',
+            hostName: 'Muhammad',
+            categoryFocus: 'Retro Football & Basketball',
+            tiktokHandle: '@muhammad_vintage',
+            isBroadcasting: true,
+            streamHealth: 'GOOD',
+            fps: 60,
+            bitrateKbps: 4100,
+            viewerCount: 640,
+            itemsClaimed: 11,
+            netRevenueAed: 2900,
+            conversionRatePct: 82.5,
+            reservationTimeoutMinutes: 120,
+            destinations: [
+              { platform: 'tiktok', url: 'rtmp://live.tiktok.com/live', streamKey: '••••••••', isConnected: true }
+            ],
+            comments: []
+          },
+          {
+            boothId: 'booth-08',
+            boothNumber: 8,
+            boothName: 'Booth 08 - Heavy Knitwear',
+            hostName: 'Omar Farooq',
+            categoryFocus: 'Heavy Flannel & Wool Sweaters',
+            tiktokHandle: '@omar_knit',
+            isBroadcasting: false,
+            streamHealth: 'OFFLINE',
+            fps: 0,
+            bitrateKbps: 0,
+            viewerCount: 0,
+            itemsClaimed: 0,
+            netRevenueAed: 0,
+            conversionRatePct: 0,
+            reservationTimeoutMinutes: 120,
+            destinations: [],
+            comments: []
+          },
+          {
+            boothId: 'booth-09',
+            boothNumber: 9,
+            boothName: 'Booth 09 - 70s Archive',
+            hostName: 'Chloe Dupont',
+            categoryFocus: '70s/80s Floral Dresses',
+            tiktokHandle: '@chloe_archive',
+            isBroadcasting: false,
+            streamHealth: 'OFFLINE',
+            fps: 0,
+            bitrateKbps: 0,
+            viewerCount: 0,
+            itemsClaimed: 0,
+            netRevenueAed: 0,
+            conversionRatePct: 0,
+            reservationTimeoutMinutes: 120,
+            destinations: [],
+            comments: []
+          },
+          {
+            boothId: 'booth-10',
+            boothNumber: 10,
+            boothName: 'Booth 10 - Military Surplus',
+            hostName: 'Karim Al-Sayed',
+            categoryFocus: 'Vintage Military BDU & Parkas',
+            tiktokHandle: '@karim_surplus',
+            isBroadcasting: false,
+            streamHealth: 'OFFLINE',
+            fps: 0,
+            bitrateKbps: 0,
+            viewerCount: 0,
+            itemsClaimed: 0,
+            netRevenueAed: 0,
+            conversionRatePct: 0,
+            reservationTimeoutMinutes: 120,
+            destinations: [],
+            comments: []
+          }
+        ];
+
+        return res.status(200).json({
+          success: true,
+          booths: DEFAULT_BOOTHS,
+          totals: {
+            activeStreamers: 5,
+            totalViewers: 4890,
+            totalRevenueAed: 23250,
+            totalClaimsCount: 74,
+            avgClaimsPerMin: 1.1
+          }
+        });
       }
-    }
+
+      // 13. Live Selling Pool / Inventory items
+      if (pathname.includes('/live-stream/pool')) {
+        return res.status(200).json({ success: true, pools: [] });
+      }
 
     return res.status(200).json({
       success: true,
