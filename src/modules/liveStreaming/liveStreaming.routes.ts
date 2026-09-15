@@ -282,7 +282,11 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/generate', asyn
       return res.json(workerData);
     } else {
       console.error(`[liveStreaming.routes] ❌ Worker returned failure for ${platform}:`, workerData.error || workerRes.statusText);
-      return res.status(workerRes.status || 500).json(workerData);
+      const errPayload = workerData && typeof workerData === 'object' && workerData.error ? workerData : {
+        success: false,
+        error: workerData?.error || `Worker failed to extract QR (${workerRes.status || 500}). Click "Use Fallback QR" to generate a scan code.`
+      };
+      return res.status(workerRes.status || 500).json(errPayload);
     }
   } catch (err: any) {
     clearTimeout(timeoutId);

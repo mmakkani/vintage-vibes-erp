@@ -522,7 +522,7 @@ headlessRouter.post('/qr/generate', async (req, res) => {
     console.error(`[Worker Headless] ❌ fetchLoginQR: Returning error response for TikTok Puppeteer failure: ${puppeteerError}`);
     return res.status(500).json({
       success: false,
-      error: `Puppeteer TikTok QR Extraction Error: ${puppeteerError || 'Failed to extract valid base64 image from https://www.tiktok.com/login/phone-or-email/qrcode'}`
+      error: `Puppeteer TikTok QR Extraction Error: ${puppeteerError || 'Failed to extract valid base64 image from https://www.tiktok.com/login/phone-or-email/qrcode'}. Click "Use Fallback QR" to generate a scan code.`
     });
   }
 

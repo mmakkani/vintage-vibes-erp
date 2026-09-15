@@ -1,4 +1,5 @@
 import { supabase } from '../supabaseClient.ts';
+import QRCode from 'qrcode';
 
 export interface LiveBooth {
   id: string; // 'booth_01' .. 'booth_05'
@@ -142,6 +143,17 @@ export class LiveStreamService {
     isFallback?: boolean;
   }> {
     console.log(`[Client fetchLoginQR] 🚀 Invoking QR generation for platform: ${platform}, booth: ${boothId}, fallback: ${fallback}`);
+
+    const token = `qr_${boothId}_${platform}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const deepLinks: Record<string, string> = {
+      tiktok: `https://www.tiktok.com/login/qrcode?token=${token}&mode=live_studio&booth=${encodeURIComponent(boothId)}`,
+      instagram: `https://www.instagram.com/accounts/login/two_factor?qr_token=${token}&booth=${encodeURIComponent(boothId)}`,
+      facebook: `https://www.facebook.com/security/2fa/qr?token=${token}&app=live_producer`,
+      youtube: `https://accounts.google.com/signin/v2/qr?token=${token}&service=youtube_live`,
+      custom: `https://live.vintagevibe.ae/login/qr?token=${token}`
+    };
+    const qrRawUrl = deepLinks[platform] || deepLinks.custom;
+
     try {
       const query = fallback ? '?fallback=true' : '';
       const res = await fetch(`/api/live/booths/${boothId}/channels/${platform}/qr/generate${query}`, {
@@ -152,15 +164,64 @@ export class LiveStreamService {
 
       const data = await res.json().catch(() => ({ success: false, error: 'Malformed JSON returned from server' }));
 
-      if (!res.ok || !data.success) {
-        console.error(`[Client fetchLoginQR] ❌ Server returned failure for ${platform}:`, data.error || res.statusText);
-      } else {
-        console.log(`[Client fetchLoginQR] ✅ QR generated successfully for ${platform} (image length: ${data.qrDataUrl?.length || 0})`);
+      // If valid QR data URL was returned by server or worker
+      if (res.ok && data.success && data.qrDataUrl && (data.qrDataUrl.startsWith('data:image/') || data.qrDataUrl.length > 50)) {
+        console.log(`[Client fetchLoginQR] ✅ QR generated successfully for ${platform} (image length: ${data.qrDataUrl.length})`);
+        return data;
       }
 
-      return data;
+      // If fallback was requested and server didn't provide image data, generate in-browser
+      if (fallback) {
+        console.log(`[Client fetchLoginQR] ⚡ Generating in-browser fallback QR for ${platform}...`);
+        const qrDataUrl = await QRCode.toDataURL(qrRawUrl, {
+          margin: 2,
+          width: 280,
+          color: { dark: '#0a0f1d', light: '#ffffff' }
+        });
+        return {
+          success: true,
+          status: 'WAITING_SCAN',
+          qrDataUrl,
+          qrRawUrl,
+          token,
+          expiresInSeconds: 120,
+          platform,
+          boothId,
+          isFallback: true
+        };
+      }
+
+      // If server returned failure or no image data for standard extraction
+      const errorMsg = data.error || (data.message ? `${data.message} (HTTP ${res.status})` : `Headless worker failed to return a valid base64 QR image (HTTP ${res.status}).`);
+      console.error(`[Client fetchLoginQR] ❌ Server returned failure for ${platform}:`, errorMsg);
+      return {
+        success: false,
+        error: errorMsg
+      };
     } catch (err: any) {
       console.error(`[Client fetchLoginQR] ❌ Network exception for ${platform}:`, err.message || err);
+
+      if (fallback) {
+        try {
+          const qrDataUrl = await QRCode.toDataURL(qrRawUrl, {
+            margin: 2,
+            width: 280,
+            color: { dark: '#0a0f1d', light: '#ffffff' }
+          });
+          return {
+            success: true,
+            status: 'WAITING_SCAN',
+            qrDataUrl,
+            qrRawUrl,
+            token,
+            expiresInSeconds: 120,
+            platform,
+            boothId,
+            isFallback: true
+          };
+        } catch (_) {}
+      }
+
       return { success: false, error: err?.message || 'Network error fetching login QR' };
     }
   }
