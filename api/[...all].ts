@@ -4165,6 +4165,65 @@ export default async function handler(req: any, res: any) {
         }
       }
 
+      // 12-A. Update Live Booth Metrics (/api/live-stream/booths/:id/metrics or /api/live/booths/:id/metrics)
+      if (
+        (pathname.includes('/live-stream/booths') || pathname.includes('/live/booths')) &&
+        method === 'POST' &&
+        pathname.includes('/metrics')
+      ) {
+        const client = await getPgClient();
+        const parts = pathname.split('/');
+        const boothIdIdx = parts.findIndex(p => p === 'booths');
+        const targetId = boothIdIdx !== -1 && parts[boothIdIdx + 1] ? parts[boothIdIdx + 1] : '';
+        const b = body || {};
+
+        if (client && targetId) {
+          try {
+            const isBroadcasting = typeof b.isBroadcasting === 'boolean' ? b.isBroadcasting : undefined;
+            const viewerCount = typeof b.viewerCount === 'number' ? b.viewerCount : undefined;
+            const itemsClaimed = typeof b.itemsClaimed === 'number' ? b.itemsClaimed : undefined;
+            const netRevenueAed = typeof b.netRevenueAed === 'number' ? b.netRevenueAed : undefined;
+            const streamHealth = b.streamHealth || (isBroadcasting ? 'EXCELLENT' : 'OFFLINE');
+            const activeOnAirSku = b.activeOnAirSku !== undefined ? b.activeOnAirSku : undefined;
+            const currentDealPrice = typeof b.currentDealPrice === 'number' ? b.currentDealPrice : undefined;
+
+            await client.query(`
+              INSERT INTO live_booth_metrics (
+                booth_id, is_broadcasting, viewer_count, items_claimed, net_revenue_aed,
+                stream_health, active_on_air_sku, current_deal_price, updated_at
+              ) VALUES ($1, COALESCE($2, false), COALESCE($3, 0), COALESCE($4, 0), COALESCE($5, 0), $6, $7, COALESCE($8, 0), NOW())
+              ON CONFLICT (booth_id) DO UPDATE SET
+                is_broadcasting = COALESCE($2, live_booth_metrics.is_broadcasting),
+                viewer_count = COALESCE($3, live_booth_metrics.viewer_count),
+                items_claimed = COALESCE($4, live_booth_metrics.items_claimed),
+                net_revenue_aed = COALESCE($5, live_booth_metrics.net_revenue_aed),
+                stream_health = COALESCE($6, live_booth_metrics.stream_health),
+                active_on_air_sku = COALESCE($7, live_booth_metrics.active_on_air_sku),
+                current_deal_price = COALESCE($8, live_booth_metrics.current_deal_price),
+                updated_at = NOW();
+            `, [targetId, isBroadcasting, viewerCount, itemsClaimed, netRevenueAed, streamHealth, activeOnAirSku, currentDealPrice]);
+
+            await client.query(`
+              UPDATE live_stream_booths SET
+                is_broadcasting = COALESCE($2, is_broadcasting),
+                viewer_count = COALESCE($3, viewer_count),
+                stream_health = COALESCE($4, stream_health),
+                active_on_air_sku = COALESCE($5, active_on_air_sku),
+                current_deal_price = COALESCE($6, current_deal_price),
+                updated_at = NOW()
+              WHERE booth_id = $1;
+            `, [targetId, isBroadcasting, viewerCount, streamHealth, activeOnAirSku, currentDealPrice]);
+
+            await client.end();
+            return res.status(200).json({ success: true, message: 'Booth metrics updated in SQL' });
+          } catch (err: any) {
+            try { await client.end(); } catch (_) {}
+            return res.status(500).json({ success: false, error: err.message });
+          }
+        }
+        return res.status(200).json({ success: true });
+      }
+
       // 12. Live Stream Booths Overview & Multi-Booth Management (/api/live-stream/booths)
       if (
         pathname.includes('/live-stream/booths') ||
@@ -4174,9 +4233,44 @@ export default async function handler(req: any, res: any) {
         const client = await getPgClient();
         if (client) {
           try {
-            const bQuery = await client.query("SELECT * FROM live_stream_booths ORDER BY booth_id ASC;");
+            const bQuery = await client.query(`
+              SELECT 
+                b.*,
+                COALESCE(m.is_broadcasting, b.is_broadcasting, false) as is_broadcasting,
+                COALESCE(m.viewer_count, b.viewer_count, 0) as viewer_count,
+                COALESCE(m.items_claimed, b.items_claimed, 0) as items_claimed,
+                COALESCE(m.net_revenue_aed, b.net_revenue_aed, 0) as net_revenue_aed,
+                COALESCE(m.items_sold_per_min, b.items_sold_per_min, 0) as items_sold_per_min,
+                COALESCE(m.conversion_rate_pct, 0) as conversion_rate_pct,
+                COALESCE(m.stream_health, b.stream_health, 'OFFLINE') as stream_health,
+                COALESCE(m.fps, b.fps, 0) as fps,
+                COALESCE(m.bitrate_kbps, b.bitrate_kbps, 0) as bitrate_kbps,
+                COALESCE(m.active_on_air_sku, b.active_on_air_sku) as active_on_air_sku,
+                COALESCE(m.current_deal_price, b.current_deal_price, 0) as current_deal_price,
+                COALESCE(m.reservation_timeout_minutes, b.reservation_timeout_minutes, 120) as reservation_timeout_minutes
+              FROM live_stream_booths b
+              LEFT JOIN live_booth_metrics m ON b.booth_id = m.booth_id
+              ORDER BY b.booth_id ASC;
+            `);
+
             const cQuery = await client.query("SELECT * FROM booth_social_channels;");
+            const claimStatsQuery = await client.query(`
+              SELECT booth_id, COUNT(*) as claim_count, COALESCE(SUM(price_aed), 0) as total_rev
+              FROM marketing_claim_logs
+              GROUP BY booth_id;
+            `);
             await client.end();
+
+            const claimStatsMap = new Map<string, { count: number; rev: number }>();
+            for (const r of claimStatsQuery.rows) {
+              const count = parseInt(r.claim_count, 10) || 0;
+              const rev = parseFloat(r.total_rev) || 0;
+              const rawId = String(r.booth_id).toLowerCase();
+              const num = rawId.replace(/^booth[-_]?0*/i, '');
+              claimStatsMap.set(rawId, { count, rev });
+              claimStatsMap.set(`booth-${num}`, { count, rev });
+              claimStatsMap.set(`booth_${num}`, { count, rev });
+            }
 
             if (bQuery.rows.length > 0) {
               const channelsByBooth = new Map<string, any[]>();
@@ -4201,6 +4295,13 @@ export default async function handler(req: any, res: any) {
                   isConnected: c.auth_status === 'LOGGED_IN'
                 }));
 
+                const realClaim = claimStatsMap.get(b.booth_id) || { count: 0, rev: 0 };
+                const isLive = Boolean(b.is_broadcasting);
+                const itemsClaimed = Math.max(parseInt(b.items_claimed, 10) || 0, realClaim.count);
+                const netRevenueAed = Math.max(parseFloat(b.net_revenue_aed) || 0, realClaim.rev);
+                const viewerCount = isLive ? (parseInt(b.viewer_count, 10) || 0) : 0;
+                const itemsSoldPerMin = parseFloat(b.items_sold_per_min) || 0;
+
                 return {
                   boothId: b.booth_id,
                   boothNumber: num,
@@ -4208,15 +4309,18 @@ export default async function handler(req: any, res: any) {
                   hostName: b.host_name || 'Broadcaster Host',
                   categoryFocus: b.category || 'Vintage Garments',
                   tiktokHandle: b.host_handle || ttCh?.account_username || `@host_${b.booth_id}`,
-                  isBroadcasting: Boolean(b.enabled),
-                  streamHealth: b.enabled ? 'EXCELLENT' : 'OFFLINE',
-                  fps: b.enabled ? 60 : 0,
-                  bitrateKbps: b.enabled ? 4500 : 0,
-                  viewerCount: b.enabled ? (1000 + num * 120) : 0,
-                  itemsClaimed: 0,
-                  netRevenueAed: 0,
-                  conversionRatePct: b.enabled ? 88.0 : 0,
-                  reservationTimeoutMinutes: 120,
+                  isBroadcasting: isLive,
+                  streamHealth: isLive ? (b.stream_health || 'EXCELLENT') : 'OFFLINE',
+                  fps: isLive ? (parseInt(b.fps, 10) || 60) : 0,
+                  bitrateKbps: isLive ? (parseInt(b.bitrate_kbps, 10) || 4500) : 0,
+                  viewerCount,
+                  itemsClaimed,
+                  netRevenueAed,
+                  itemsSoldPerMin,
+                  conversionRatePct: parseFloat(b.conversion_rate_pct) || 0,
+                  reservationTimeoutMinutes: parseInt(b.reservation_timeout_minutes, 10) || 120,
+                  activeOnAirSku: b.active_on_air_sku || null,
+                  currentDealPrice: parseFloat(b.current_deal_price) || 0,
                   destinations,
                   comments: []
                 };
@@ -4224,6 +4328,9 @@ export default async function handler(req: any, res: any) {
 
               const activeStreamers = dynamicBooths.filter(b => b.isBroadcasting).length;
               const totalViewers = dynamicBooths.reduce((s, b) => s + b.viewerCount, 0);
+              const totalRevenueAed = dynamicBooths.reduce((s, b) => s + b.netRevenueAed, 0);
+              const totalClaimsCount = dynamicBooths.reduce((s, b) => s + b.itemsClaimed, 0);
+              const avgClaimsPerMin = dynamicBooths.reduce((s, b) => s + b.itemsSoldPerMin, 0);
 
               return res.status(200).json({
                 success: true,
@@ -4231,9 +4338,9 @@ export default async function handler(req: any, res: any) {
                 totals: {
                   activeStreamers,
                   totalViewers,
-                  totalRevenueAed: 0,
-                  totalClaimsCount: 0,
-                  avgClaimsPerMin: 0
+                  totalRevenueAed,
+                  totalClaimsCount,
+                  avgClaimsPerMin
                 }
               });
             }

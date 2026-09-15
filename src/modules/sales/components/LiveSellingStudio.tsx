@@ -78,75 +78,75 @@ interface BuyerPool {
 
 const DEFAULT_BOOTHS: BoothSession[] = [
   {
-    boothId: 'booth-01',
+    boothId: 'booth-1',
     boothNumber: 1,
-    boothName: 'Booth 01 - Main Stage',
+    boothName: 'Booth 1: Vintage Denim & Outerwear',
     hostName: 'Sarah Al-Maktoum',
     hostHandle: '@sarah_vintage',
-    categoryFocus: '90s Denim & Graphic Tees',
+    categoryFocus: 'Vintage Denim, Selvedge & Heavy Jackets',
     tiktokHandle: '@vintage_dubai_b1',
-    isBroadcasting: true,
-    startTime: Date.now() - 1200000,
-    uptimeSeconds: 1200,
-    viewerCount: 1420,
-    itemsSoldPerMin: 1.2,
-    itemsClaimed: 18,
-    netRevenueAed: 4950,
-    conversionRatePct: 88.5,
+    isBroadcasting: false,
+    startTime: 0,
+    uptimeSeconds: 0,
+    viewerCount: 0,
+    itemsSoldPerMin: 0,
+    itemsClaimed: 0,
+    netRevenueAed: 0,
+    conversionRatePct: 0,
     reservationTimeoutMinutes: 120,
     destinations: [],
     comments: [],
-    pairedDeviceName: 'iPhone 15 Pro Max',
-    pairedDeviceIp: '192.168.1.141'
+    pairedDeviceName: '',
+    pairedDeviceIp: ''
   },
   {
-    boothId: 'booth-02',
+    boothId: 'booth-2',
     boothNumber: 2,
-    boothName: 'Booth 02 - Rare Grails',
+    boothName: 'Booth 2: Cream Quality / Ladies Vintage',
     hostName: 'Marcus Chen',
     hostHandle: '@marcus_grails',
-    categoryFocus: 'Rare Carhartt & Workwear',
+    categoryFocus: '90s Reverse Weave & Cream Hoodies',
     tiktokHandle: '@grail_vault_b2',
-    isBroadcasting: true,
-    startTime: Date.now() - 1500000,
-    uptimeSeconds: 1500,
-    viewerCount: 980,
-    itemsSoldPerMin: 0.9,
-    itemsClaimed: 14,
-    netRevenueAed: 6200,
-    conversionRatePct: 92.0,
+    isBroadcasting: false,
+    startTime: 0,
+    uptimeSeconds: 0,
+    viewerCount: 0,
+    itemsSoldPerMin: 0,
+    itemsClaimed: 0,
+    netRevenueAed: 0,
+    conversionRatePct: 0,
     reservationTimeoutMinutes: 120,
     destinations: [],
     comments: [],
-    pairedDeviceName: 'iPhone 15 Pro',
-    pairedDeviceIp: '192.168.1.142'
+    pairedDeviceName: '',
+    pairedDeviceIp: ''
   },
   {
-    boothId: 'booth-03',
+    boothId: 'booth-3',
     boothNumber: 3,
-    boothName: 'Booth 03 - Designer Vault',
+    boothName: 'Booth 3: Branded Tees & Sportswear',
     hostName: 'Layla Haddad',
     hostHandle: '@layla_relove',
     categoryFocus: 'Designer Trench & Silk',
     tiktokHandle: '@luxury_relove_b3',
-    isBroadcasting: true,
-    startTime: Date.now() - 1800000,
-    uptimeSeconds: 1800,
-    viewerCount: 750,
-    itemsSoldPerMin: 0.6,
-    itemsClaimed: 9,
-    netRevenueAed: 5400,
-    conversionRatePct: 85.0,
+    isBroadcasting: false,
+    startTime: 0,
+    uptimeSeconds: 0,
+    viewerCount: 0,
+    itemsSoldPerMin: 0,
+    itemsClaimed: 0,
+    netRevenueAed: 0,
+    conversionRatePct: 0,
     reservationTimeoutMinutes: 120,
     destinations: [],
     comments: [],
-    pairedDeviceName: 'iPad Pro M2',
-    pairedDeviceIp: '192.168.1.143'
+    pairedDeviceName: '',
+    pairedDeviceIp: ''
   },
   {
-    boothId: 'booth-04',
+    boothId: 'booth-4',
     boothNumber: 4,
-    boothName: 'Booth 04 - Streetwear Zone',
+    boothName: 'Booth 4: Winter Overcoats & Leather',
     hostName: 'Tariq Mansoor',
     hostHandle: '@tariq_street',
     categoryFocus: 'Vintage Hoodies & Sweats',
@@ -166,123 +166,13 @@ const DEFAULT_BOOTHS: BoothSession[] = [
     pairedDeviceIp: ''
   },
   {
-    boothId: 'booth-05',
+    boothId: 'booth-5',
     boothNumber: 5,
-    boothName: 'Booth 05 - 90s Sports Archive',
-    hostName: 'Elena Rostova',
-    hostHandle: '@elena_archive',
+    boothName: 'Booth 5: Shoes & Vintage Accessories',
+    hostName: 'Alex Workwear',
+    hostHandle: '@alex_workwear',
     categoryFocus: 'Starter Jackets & Snapbacks',
     tiktokHandle: '@starter_vintage_b5',
-    isBroadcasting: true,
-    startTime: Date.now() - 2100000,
-    uptimeSeconds: 2100,
-    viewerCount: 1100,
-    itemsSoldPerMin: 1.5,
-    itemsClaimed: 22,
-    netRevenueAed: 3800,
-    conversionRatePct: 89.0,
-    reservationTimeoutMinutes: 120,
-    destinations: [],
-    comments: [],
-    pairedDeviceName: 'iPhone 14 Pro',
-    pairedDeviceIp: '192.168.1.145'
-  },
-  {
-    boothId: 'booth-06',
-    boothNumber: 6,
-    boothName: 'Booth 06 - Y2K Denim',
-    hostName: 'Zayd Al-Hashimi',
-    hostHandle: '@zayd_denim',
-    categoryFocus: 'True Religion & Evisu',
-    tiktokHandle: '@evisu_vault_b6',
-    isBroadcasting: false,
-    startTime: 0,
-    uptimeSeconds: 0,
-    viewerCount: 0,
-    itemsSoldPerMin: 0,
-    itemsClaimed: 0,
-    netRevenueAed: 0,
-    conversionRatePct: 0,
-    reservationTimeoutMinutes: 120,
-    destinations: [],
-    comments: [],
-    pairedDeviceName: '',
-    pairedDeviceIp: ''
-  },
-  {
-    boothId: 'booth-07',
-    boothNumber: 7,
-    boothName: 'Booth 07 - Retro Sportswear',
-    hostName: 'Amira Kassam',
-    hostHandle: '@amira_retro',
-    categoryFocus: 'Retro Football & Basketball',
-    tiktokHandle: '@retro_jersey_b7',
-    isBroadcasting: true,
-    startTime: Date.now() - 2400000,
-    uptimeSeconds: 2400,
-    viewerCount: 640,
-    itemsSoldPerMin: 0.8,
-    itemsClaimed: 11,
-    netRevenueAed: 2900,
-    conversionRatePct: 82.5,
-    reservationTimeoutMinutes: 120,
-    destinations: [],
-    comments: [],
-    pairedDeviceName: 'iPhone 15',
-    pairedDeviceIp: '192.168.1.147'
-  },
-  {
-    boothId: 'booth-08',
-    boothNumber: 8,
-    boothName: 'Booth 08 - Heavy Knitwear',
-    hostName: 'Omar Farooq',
-    hostHandle: '@omar_knit',
-    categoryFocus: 'Heavy Flannel & Wool Sweaters',
-    tiktokHandle: '@flannel_retro_b8',
-    isBroadcasting: false,
-    startTime: 0,
-    uptimeSeconds: 0,
-    viewerCount: 0,
-    itemsSoldPerMin: 0,
-    itemsClaimed: 0,
-    netRevenueAed: 0,
-    conversionRatePct: 0,
-    reservationTimeoutMinutes: 120,
-    destinations: [],
-    comments: [],
-    pairedDeviceName: '',
-    pairedDeviceIp: ''
-  },
-  {
-    boothId: 'booth-09',
-    boothNumber: 9,
-    boothName: 'Booth 09 - 70s Archive',
-    hostName: 'Chloe Dupont',
-    hostHandle: '@chloe_archive',
-    categoryFocus: '70s/80s Floral Dresses',
-    tiktokHandle: '@dress_archive_b9',
-    isBroadcasting: false,
-    startTime: 0,
-    uptimeSeconds: 0,
-    viewerCount: 0,
-    itemsSoldPerMin: 0,
-    itemsClaimed: 0,
-    netRevenueAed: 0,
-    conversionRatePct: 0,
-    reservationTimeoutMinutes: 120,
-    destinations: [],
-    comments: [],
-    pairedDeviceName: '',
-    pairedDeviceIp: ''
-  },
-  {
-    boothId: 'booth-10',
-    boothNumber: 10,
-    boothName: 'Booth 10 - Military Surplus',
-    hostName: 'Karim Al-Sayed',
-    hostHandle: '@karim_surplus',
-    categoryFocus: 'Vintage Military BDU & Parkas',
-    tiktokHandle: '@military_surplus_b10',
     isBroadcasting: false,
     startTime: 0,
     uptimeSeconds: 0,
@@ -310,8 +200,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   // Mode: 'STUDIO' (single booth) vs 'SUPERVISOR' (Master Admin Live Overview across 10 booths)
   const [viewMode, setViewMode] = useState<'STUDIO' | 'SUPERVISOR'>('STUDIO');
 
-  // Active Booth State (Booth 01 to Booth 10)
-  const [selectedBoothId, setSelectedBoothId] = useState<string>('booth-01');
+  // Active Booth State (Booth 1 to Booth 5)
+  const [selectedBoothId, setSelectedBoothId] = useState<string>('booth-1');
   const [allBoothsData, setAllBoothsData] = useState<{
     booths: BoothSession[];
     totals: {
@@ -324,11 +214,11 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   }>({
     booths: DEFAULT_BOOTHS,
     totals: {
-      activeStreamers: 5,
-      totalViewers: 4890,
-      totalRevenueAed: 23250,
-      totalClaimsCount: 74,
-      avgClaimsPerMin: 1.1
+      activeStreamers: 0,
+      totalViewers: 0,
+      totalRevenueAed: 0,
+      totalClaimsCount: 0,
+      avgClaimsPerMin: 0
     }
   });
 
@@ -575,7 +465,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
             totalViewers: boothsList.reduce((s: number, b: any) => s + (b.isBroadcasting ? (b.viewerCount || 0) : 0), 0),
             totalRevenueAed: boothsList.reduce((s: number, b: any) => s + (b.netRevenueAed || 0), 0),
             totalClaimsCount: boothsList.reduce((s: number, b: any) => s + (b.itemsClaimed || 0), 0),
-            avgClaimsPerMin: 1.1
+            avgClaimsPerMin: boothsList.reduce((s: number, b: any) => s + (b.itemsSoldPerMin || 0), 0)
           }
         });
 
@@ -618,11 +508,11 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
           setAllBoothsData(prev => (prev && prev.booths.length > 0 ? prev : {
             booths: DEFAULT_BOOTHS,
             totals: {
-              activeStreamers: 5,
-              totalViewers: 4890,
-              totalRevenueAed: 23250,
-              totalClaimsCount: 74,
-              avgClaimsPerMin: 1.1
+              activeStreamers: 0,
+              totalViewers: 0,
+              totalRevenueAed: 0,
+              totalClaimsCount: 0,
+              avgClaimsPerMin: 0
             }
           }));
         }
@@ -1120,40 +1010,40 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               <div className="text-[10px] text-stone-500 font-bold uppercase">Active Live Booths</div>
               <div className="text-lg font-black text-emerald-600 mt-0.5 flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>{allBoothsData?.totals.activeStreamers || 5} / 10 Online</span>
+                <span>{allBoothsData?.totals?.activeStreamers ?? 0} / {(allBoothsData?.booths || []).length} Online</span>
               </div>
             </div>
 
             <div className="bg-white p-3 rounded-xl border border-stone-200 shadow-xs">
               <div className="text-[10px] text-stone-500 font-bold uppercase">Combined Viewers</div>
               <div className="text-lg font-black text-stone-900 mt-0.5">
-                {(allBoothsData?.totals.totalViewers || 4890).toLocaleString()} Viewers
+                {(allBoothsData?.totals?.totalViewers ?? 0).toLocaleString()} Viewers
               </div>
             </div>
 
             <div className="bg-white p-3 rounded-xl border border-stone-200 shadow-xs">
               <div className="text-[10px] text-stone-500 font-bold uppercase">Total Live Gross Booked</div>
               <div className="text-lg font-black text-amber-600 mt-0.5">
-                AED {(allBoothsData?.totals.totalRevenueAed || 23250).toLocaleString()}
+                AED {(allBoothsData?.totals?.totalRevenueAed ?? 0).toLocaleString()}
               </div>
             </div>
 
             <div className="bg-white p-3 rounded-xl border border-stone-200 shadow-xs">
               <div className="text-[10px] text-stone-500 font-bold uppercase">Total Claims Today</div>
               <div className="text-lg font-black text-stone-900 mt-0.5">
-                {allBoothsData?.totals.totalClaimsCount || 74} Garments
+                {(allBoothsData?.totals?.totalClaimsCount ?? 0).toLocaleString()} Garments
               </div>
             </div>
 
             <div className="bg-white p-3 rounded-xl border border-stone-200 shadow-xs">
               <div className="text-[10px] text-stone-500 font-bold uppercase">Average Velocity</div>
               <div className="text-lg font-black text-purple-600 mt-0.5">
-                {allBoothsData?.totals.avgClaimsPerMin || 1.1} items/min
+                {(allBoothsData?.totals?.avgClaimsPerMin ?? 0).toFixed(1)} items/min
               </div>
             </div>
           </div>
 
-          {/* Bento Grid: 10 Concurrent Booth Monitors */}
+          {/* Bento Grid: Concurrent Booth Monitors */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
             {(allBoothsData?.booths && allBoothsData.booths.length > 0 ? allBoothsData.booths : DEFAULT_BOOTHS).map(b => (
               <div
@@ -1371,7 +1261,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     LIVE
                   </span>
                   <span className="px-2 py-0.5 rounded bg-stone-900/80 backdrop-blur-xs text-white font-mono font-bold text-[9px] border border-stone-700">
-                    {((activeBooth || DEFAULT_BOOTHS[0])?.viewerCount || 1420).toLocaleString()} Viewers
+                    {((activeBooth || DEFAULT_BOOTHS[0])?.viewerCount ?? 0).toLocaleString()} Viewers
                   </span>
                   <span className="px-2 py-0.5 rounded bg-stone-900/80 backdrop-blur-xs text-amber-300 font-mono text-[9px] border border-stone-700">
                     {cameraResolution} @ {cameraFps}fps
@@ -1406,7 +1296,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               <div className="p-2.5 bg-stone-950 border-t border-stone-800 space-y-1.5">
                 <div className="text-[10px] uppercase font-bold text-stone-400 flex items-center justify-between">
                   <span>
-                    UAE Multicast Relays ({editDestinations.filter(d => d.enabled).length || 2} Active)
+                    UAE Multicast Relays ({editDestinations.filter(d => d.enabled).length} Active)
                   </span>
                   <button
                     type="button"
@@ -2431,10 +2321,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               </div>
             </div>
 
-            {/* Comparison Table Across All 10 Booths */}
+            {/* Comparison Table Across All Booths */}
             <div className="space-y-2">
               <h4 className="font-black text-stone-900 text-xs uppercase tracking-tight">
-                All 10 Booths Leaderboard
+                All Booths Leaderboard
               </h4>
               <div className="border border-stone-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
                 <table className="w-full text-left text-xs">
