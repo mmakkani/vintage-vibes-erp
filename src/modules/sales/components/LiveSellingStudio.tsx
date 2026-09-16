@@ -76,118 +76,28 @@ interface BuyerPool {
   items: PieceBreakdownItem[];
 }
 
-const DEFAULT_BOOTHS: BoothSession[] = [
-  {
-    boothId: 'booth-1',
-    boothNumber: 1,
-    boothName: 'Booth 1: Vintage Denim & Outerwear',
-    hostName: 'Sarah Al-Maktoum',
-    hostHandle: '@sarah_vintage',
-    categoryFocus: 'Vintage Denim, Selvedge & Heavy Jackets',
-    tiktokHandle: '@vintage_dubai_b1',
-    isBroadcasting: false,
-    startTime: 0,
-    uptimeSeconds: 0,
-    viewerCount: 0,
-    itemsSoldPerMin: 0,
-    itemsClaimed: 0,
-    netRevenueAed: 0,
-    conversionRatePct: 0,
-    reservationTimeoutMinutes: 120,
-    destinations: [],
-    comments: [],
-    pairedDeviceName: '',
-    pairedDeviceIp: ''
-  },
-  {
-    boothId: 'booth-2',
-    boothNumber: 2,
-    boothName: 'Booth 2: Cream Quality / Ladies Vintage',
-    hostName: 'Marcus Chen',
-    hostHandle: '@marcus_grails',
-    categoryFocus: '90s Reverse Weave & Cream Hoodies',
-    tiktokHandle: '@grail_vault_b2',
-    isBroadcasting: false,
-    startTime: 0,
-    uptimeSeconds: 0,
-    viewerCount: 0,
-    itemsSoldPerMin: 0,
-    itemsClaimed: 0,
-    netRevenueAed: 0,
-    conversionRatePct: 0,
-    reservationTimeoutMinutes: 120,
-    destinations: [],
-    comments: [],
-    pairedDeviceName: '',
-    pairedDeviceIp: ''
-  },
-  {
-    boothId: 'booth-3',
-    boothNumber: 3,
-    boothName: 'Booth 3: Branded Tees & Sportswear',
-    hostName: 'Layla Haddad',
-    hostHandle: '@layla_relove',
-    categoryFocus: 'Designer Trench & Silk',
-    tiktokHandle: '@luxury_relove_b3',
-    isBroadcasting: false,
-    startTime: 0,
-    uptimeSeconds: 0,
-    viewerCount: 0,
-    itemsSoldPerMin: 0,
-    itemsClaimed: 0,
-    netRevenueAed: 0,
-    conversionRatePct: 0,
-    reservationTimeoutMinutes: 120,
-    destinations: [],
-    comments: [],
-    pairedDeviceName: '',
-    pairedDeviceIp: ''
-  },
-  {
-    boothId: 'booth-4',
-    boothNumber: 4,
-    boothName: 'Booth 4: Winter Overcoats & Leather',
-    hostName: 'Tariq Mansoor',
-    hostHandle: '@tariq_street',
-    categoryFocus: 'Vintage Hoodies & Sweats',
-    tiktokHandle: '@streetwear_dxb_b4',
-    isBroadcasting: false,
-    startTime: 0,
-    uptimeSeconds: 0,
-    viewerCount: 0,
-    itemsSoldPerMin: 0,
-    itemsClaimed: 0,
-    netRevenueAed: 0,
-    conversionRatePct: 0,
-    reservationTimeoutMinutes: 120,
-    destinations: [],
-    comments: [],
-    pairedDeviceName: '',
-    pairedDeviceIp: ''
-  },
-  {
-    boothId: 'booth-5',
-    boothNumber: 5,
-    boothName: 'Booth 5: Shoes & Vintage Accessories',
-    hostName: 'Alex Workwear',
-    hostHandle: '@alex_workwear',
-    categoryFocus: 'Starter Jackets & Snapbacks',
-    tiktokHandle: '@starter_vintage_b5',
-    isBroadcasting: false,
-    startTime: 0,
-    uptimeSeconds: 0,
-    viewerCount: 0,
-    itemsSoldPerMin: 0,
-    itemsClaimed: 0,
-    netRevenueAed: 0,
-    conversionRatePct: 0,
-    reservationTimeoutMinutes: 120,
-    destinations: [],
-    comments: [],
-    pairedDeviceName: '',
-    pairedDeviceIp: ''
-  }
-];
+const EMPTY_BOOTH_PLACEHOLDER: BoothSession = {
+  boothId: 'booth-1',
+  boothNumber: 1,
+  boothName: 'Booth 1',
+  hostName: 'Broadcaster Host',
+  hostHandle: '@host',
+  categoryFocus: 'Live Auction',
+  tiktokHandle: '@host_live',
+  isBroadcasting: false,
+  startTime: 0,
+  uptimeSeconds: 0,
+  viewerCount: 0,
+  itemsSoldPerMin: 0,
+  itemsClaimed: 0,
+  netRevenueAed: 0,
+  conversionRatePct: 0,
+  reservationTimeoutMinutes: 120,
+  destinations: [],
+  comments: [],
+  pairedDeviceName: '',
+  pairedDeviceIp: ''
+};
 
 export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   stockPieces,
@@ -197,10 +107,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 }) => {
   const { syncVersion, notifyMutation } = useSync();
 
-  // Mode: 'STUDIO' (single booth) vs 'SUPERVISOR' (Master Admin Live Overview across 10 booths)
+  // Mode: 'STUDIO' (single booth) vs 'SUPERVISOR' (Master Admin Live Overview)
   const [viewMode, setViewMode] = useState<'STUDIO' | 'SUPERVISOR'>('STUDIO');
 
-  // Active Booth State (Booth 1 to Booth 5)
+  // Active Booth State from SQL Database
   const [selectedBoothId, setSelectedBoothId] = useState<string>('booth-1');
   const [allBoothsData, setAllBoothsData] = useState<{
     booths: BoothSession[];
@@ -212,7 +122,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       avgClaimsPerMin: number;
     };
   }>({
-    booths: DEFAULT_BOOTHS,
+    booths: [],
     totals: {
       activeStreamers: 0,
       totalViewers: 0,
@@ -222,7 +132,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
   });
 
-  const [activeBooth, setActiveBooth] = useState<BoothSession>(DEFAULT_BOOTHS[0]);
+  const [activeBooth, setActiveBooth] = useState<BoothSession | null>(null);
 
   // ==================== FUNCTIONAL CAMERA & WEBRTC INGEST ====================
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -456,7 +366,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       try {
         const res = await fetch('/api/live-stream/booths');
         const data = res.ok ? await res.json().catch(() => null) : null;
-        const boothsList = (data && Array.isArray(data.booths) && data.booths.length > 0) ? data.booths : DEFAULT_BOOTHS;
+        const boothsList: BoothSession[] = (data && Array.isArray(data.booths)) ? data.booths : [];
 
         setAllBoothsData({
           booths: boothsList,
@@ -469,7 +379,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
           }
         });
 
-        const current: BoothSession = boothsList.find((b: BoothSession) => b.boothId === selectedBoothId) || boothsList[0];
+        const current: BoothSession | null = boothsList.find((b: BoothSession) => b.boothId === selectedBoothId) || boothsList[0] || null;
         if (current) {
           if (selectedBoothId !== current.boothId) {
             setSelectedBoothId(current.boothId);
@@ -506,7 +416,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         } else {
           console.warn('Booths overview sync warning (using defaults):', err);
           setAllBoothsData(prev => (prev && prev.booths.length > 0 ? prev : {
-            booths: DEFAULT_BOOTHS,
+            booths: [],
             totals: {
               activeStreamers: 0,
               totalViewers: 0,
@@ -908,7 +818,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   onChange={e => {
                     const newId = e.target.value;
                     setSelectedBoothId(newId);
-                    const b = (allBoothsData?.booths || DEFAULT_BOOTHS).find(item => item.boothId === newId);
+                    const b = (allBoothsData?.booths || []).find(item => item.boothId === newId);
                     if (b) {
                       setActiveBooth(b);
                       setComments(b.comments || []);
@@ -917,7 +827,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   }}
                   className="bg-stone-950 border-2 border-amber-500/70 text-amber-300 font-black text-xs sm:text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer shadow-md min-w-[240px]"
                 >
-                  {(allBoothsData?.booths && allBoothsData.booths.length > 0 ? allBoothsData.booths : DEFAULT_BOOTHS).map(b => (
+                  {(allBoothsData?.booths || []).map(b => (
                     <option key={b.boothId} value={b.boothId} className="bg-stone-900 text-stone-100 font-bold py-1.5">
                       {b.boothName} • Host: {b.hostName} ({b.isBroadcasting ? '🔴 LIVE' : '⚪ IDLE'})
                     </option>
@@ -925,7 +835,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 </select>
 
                 <span className="text-xs text-amber-400 font-mono font-bold hidden sm:inline px-2 py-1 rounded bg-stone-950 border border-stone-800">
-                  {(activeBooth || DEFAULT_BOOTHS[0])?.tiktokHandle}
+                  {(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.tiktokHandle}
                 </span>
               </div>
             </div>
@@ -968,7 +878,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               title="Release unpaid basket holds past reservation window"
             >
               <Timer className="w-3.5 h-3.5 text-amber-400" />
-              <span>Sweep Holds ({(activeBooth || DEFAULT_BOOTHS[0])?.reservationTimeoutMinutes || 120}m)</span>
+              <span>Sweep Holds ({(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.reservationTimeoutMinutes || 120}m)</span>
             </button>
           </div>
         </div>
@@ -1044,8 +954,15 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
           </div>
 
           {/* Bento Grid: Concurrent Booth Monitors */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-            {(allBoothsData?.booths && allBoothsData.booths.length > 0 ? allBoothsData.booths : DEFAULT_BOOTHS).map(b => (
+          {(allBoothsData?.booths || []).length === 0 ? (
+            <div className="bg-white p-8 rounded-xl border border-stone-200 text-center py-10">
+              <Radio className="w-8 h-8 text-stone-400 mx-auto mb-2 animate-pulse" />
+              <div className="font-extrabold text-stone-700 text-sm">No Live Booths Configured in SQL Database</div>
+              <p className="text-xs text-stone-400 mt-1">Configure your active auction floors in Setup &gt; Live Multicast Hub.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+              {(allBoothsData?.booths || []).map(b => (
               <div
                 key={b.boothId}
                 className={`rounded-xl border p-3 flex flex-col justify-between transition-all ${
@@ -1121,6 +1038,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               </div>
             ))}
           </div>
+        )}
         </div>
       )}
 
@@ -1230,10 +1148,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       <Camera className="w-8 h-8 text-amber-400 animate-pulse" />
                     </div>
                     <span className="font-black text-amber-300 text-sm">
-                      {webrtcStatus === 'CONNECTING' ? 'CONNECTING CAMERA...' : `${((activeBooth || DEFAULT_BOOTHS[0])?.boothName || 'BOOTH 01').toUpperCase()} STANDBY`}
+                      {webrtcStatus === 'CONNECTING' ? 'CONNECTING CAMERA...' : `${((activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.boothName || 'BOOTH 01').toUpperCase()} STANDBY`}
                     </span>
                     <p className="text-[11px] text-stone-400 max-w-xs mt-1">
-                      Native browser video & audio capture ready for host {(activeBooth || DEFAULT_BOOTHS[0])?.hostName || 'Host'} ({(activeBooth || DEFAULT_BOOTHS[0])?.tiktokHandle || '@vintage_dubai'}).
+                      Native browser video & audio capture ready for host {(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.hostName || 'Host'} ({(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.tiktokHandle || '@vintage_dubai'}).
                     </p>
                     <div className="mt-3 flex items-center gap-2">
                       <button
@@ -1261,7 +1179,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     LIVE
                   </span>
                   <span className="px-2 py-0.5 rounded bg-stone-900/80 backdrop-blur-xs text-white font-mono font-bold text-[9px] border border-stone-700">
-                    {((activeBooth || DEFAULT_BOOTHS[0])?.viewerCount ?? 0).toLocaleString()} Viewers
+                    {((activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.viewerCount ?? 0).toLocaleString()} Viewers
                   </span>
                   <span className="px-2 py-0.5 rounded bg-stone-900/80 backdrop-blur-xs text-amber-300 font-mono text-[9px] border border-stone-700">
                     {cameraResolution} @ {cameraFps}fps
@@ -1339,7 +1257,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     <span>Booth Chat Feed</span>
                   </h3>
                   <div className="text-[10px] text-stone-500">
-                    Listening to <strong className="text-stone-800">{(activeBooth || DEFAULT_BOOTHS[0])?.tiktokHandle || '@vintage_dubai'}</strong>
+                    Listening to <strong className="text-stone-800">{(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.tiktokHandle || '@vintage_dubai'}</strong>
                   </div>
                 </div>
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-100 text-amber-900">
@@ -1447,7 +1365,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               <div className="flex items-center justify-between pb-2 border-b border-stone-100">
                 <span className="text-[11px] font-black uppercase text-amber-900 flex items-center gap-1.5">
                   <Scan className="w-4 h-4 text-amber-700" />
-                  <span>Fast Barcode Claim ({((activeBooth || DEFAULT_BOOTHS[0])?.boothName || 'Booth 01').split('-')[0].trim()})</span>
+                  <span>Fast Barcode Claim ({((activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.boothName || 'Booth 01').split('-')[0].trim()})</span>
                 </span>
                 <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-100 text-amber-950">
                   AUTO-FOCUSED ⚡
@@ -2338,7 +2256,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-100">
-                    {(allBoothsData?.booths && allBoothsData.booths.length > 0 ? allBoothsData.booths : DEFAULT_BOOTHS).map(b => (
+                    {(allBoothsData?.booths || []).map(b => (
                       <tr key={b.boothId} className="hover:bg-stone-50 transition-colors">
                         <td className="p-2.5 font-bold text-stone-900">
                           {b.boothName.split('-')[0].trim()} ({b.hostName})

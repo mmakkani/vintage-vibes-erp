@@ -3909,8 +3909,11 @@ export default async function handler(req: any, res: any) {
           if (client) {
             try {
               await client.query("DELETE FROM booth_social_channels WHERE booth_id = ANY($1::text[]);", [aliases]);
+              await client.query("DELETE FROM live_booth_metrics WHERE booth_id = ANY($1::text[]);", [aliases]);
               await client.query("DELETE FROM live_stream_booths WHERE booth_id = ANY($1::text[]);", [aliases]);
-              await client.query("DELETE FROM live_booths WHERE id = ANY($1::text[]);", [aliases]);
+              try {
+                await client.query("DELETE FROM live_booths WHERE id = ANY($1::text[]);", [aliases]);
+              } catch (_) {}
               await client.end();
               return res.status(200).json({ success: true, message: `Booth ${targetBoothId} deleted successfully` });
             } catch (err: any) {
@@ -4046,15 +4049,30 @@ export default async function handler(req: any, res: any) {
                 b.masterStreamKey || `stream_key_${boothId}`,
               ]);
 
-              const legacyId = `booth_${boothId.replace(/^booth[-_]?0*/i, '').padStart(2, '0')}`;
               await client.query(`
-                INSERT INTO live_booths (id, booth_name, host_operator_name, is_broadcasting, viewer_count, camera_source, current_deal_price, updated_at)
-                VALUES ($1, $2, $3, false, 0, 'Webcam / OBS', 0, NOW())
-                ON CONFLICT (id) DO UPDATE SET
+                INSERT INTO live_booth_metrics (
+                  booth_id, booth_name, host_name, category, is_broadcasting, viewer_count, items_claimed,
+                  net_revenue_aed, items_sold_per_min, conversion_rate_pct, stream_health, updated_at
+                ) VALUES (
+                  $1, $2, $3, $4, false, 0, 0, 0, 0, 0, 'OFFLINE', NOW()
+                ) ON CONFLICT (booth_id) DO UPDATE SET
                   booth_name = EXCLUDED.booth_name,
-                  host_operator_name = EXCLUDED.host_operator_name,
+                  host_name = EXCLUDED.host_name,
+                  category = EXCLUDED.category,
                   updated_at = NOW();
-              `, [legacyId, boothName, hostName]);
+              `, [boothId, boothName, hostName, category]);
+
+              const legacyId = `booth_${boothId.replace(/^booth[-_]?0*/i, '').padStart(2, '0')}`;
+              try {
+                await client.query(`
+                  INSERT INTO live_booths (id, booth_name, host_operator_name, is_broadcasting, viewer_count, camera_source, current_deal_price, updated_at)
+                  VALUES ($1, $2, $3, false, 0, 'Webcam / OBS', 0, NOW())
+                  ON CONFLICT (id) DO UPDATE SET
+                    booth_name = EXCLUDED.booth_name,
+                    host_operator_name = EXCLUDED.host_operator_name,
+                    updated_at = NOW();
+                `, [legacyId, boothName, hostName]);
+              } catch (_) {}
 
               const allPlats = ['tiktok', 'instagram', 'facebook', 'youtube', 'threads', 'custom'];
               for (const plat of allPlats) {

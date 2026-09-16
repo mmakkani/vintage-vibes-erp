@@ -313,9 +313,8 @@ export class LiveStreamService {
       const res = await fetch('/api/setup/live-booths');
       if (res.ok) {
         const json = await res.json();
-        if (json.success && Array.isArray(json.booths)) {
-          return json.booths;
-        }
+        if (Array.isArray(json)) return json;
+        if (json && Array.isArray(json.booths)) return json.booths;
       }
     } catch (_) {}
 

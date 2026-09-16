@@ -51,190 +51,6 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
 }) => {
   const { syncVersion } = useSync();
 
-  // 5 Default Warehouse Broadcaster Booths with unique social accounts & distinct logins
-  const defaultBooths: LiveBoothStreamConfig[] = [
-    {
-      boothId: 'booth-1',
-      boothName: 'Booth 1: Vintage Denim & Outerwear',
-      category: 'Vintage Denim, Selvedge & Heavy Jackets',
-      hostName: 'Sarah Al-Maktoum',
-      hostHandle: '@sarah_vintage',
-      provider: 'RESTREAM',
-      enabled: true,
-      accountEmail: 'booth1@vintagevibe.ae',
-      accountPassword: 'Password!Booth1#2026',
-      masterIngestRtmpUrl: 'rtmp://live.restream.io/live',
-      masterStreamKey: 're_booth1_sec_99182_dxb',
-      tiktokAccountHandle: '@vintage_dubai_b1',
-      tiktokRtmpUrl: 'rtmp://live.tiktok.com/live',
-      tiktokStreamKey: 'live_tt_booth1_denim_grail',
-      tiktokSocketConnected: false,
-      autoRelayToTikTok: true,
-      instagramAccountHandle: '@vintage_dubai_b1_ig',
-      instagramRtmpUrl: 'rtmps://live-upload.instagram.com:443/rtmp/',
-      instagramStreamKey: 'live_ig_booth1_denim_vintage',
-      instagramSocketConnected: false,
-      autoRelayToInstagram: true,
-      facebookAccountHandle: 'Vintage Vibes UAE - Floor 1',
-      facebookRtmpUrl: 'rtmps://live-api-s.facebook.com:443/rtmp/',
-      facebookStreamKey: 'FB-live-booth1-991',
-      facebookSocketConnected: false,
-      autoRelayToFacebook: true,
-      youTubeAccountHandle: 'Vintage Vibes Studio 1 Live',
-      youTubeRtmpUrl: 'rtmp://a.rtmp.youtube.com/live2',
-      youTubeStreamKey: 'yt_booth1_live_1080',
-      youTubeSocketConnected: false,
-      autoRelayToYouTube: true,
-      claimKeywords: ['CLAIM', 'MINE', 'BIN', 'TAKE', 'BUY'],
-      reservationTimeoutMinutes: 15,
-      status: 'CONNECTED'
-    },
-    {
-      boothId: 'booth-2',
-      boothName: 'Booth 2: Cream Grade Sweats & Hoodies',
-      category: '90s Reverse Weave & Cream Hoodies',
-      hostName: 'Marcus Chen',
-      hostHandle: '@marcus_grails',
-      provider: 'RESTREAM',
-      enabled: true,
-      accountEmail: 'booth2@vintagevibe.ae',
-      accountPassword: 'Password!Booth2#2026',
-      masterIngestRtmpUrl: 'rtmp://live.restream.io/live',
-      masterStreamKey: 're_booth2_sec_44819_dxb',
-      tiktokAccountHandle: '@vintage_sweats_b2',
-      tiktokRtmpUrl: 'rtmp://live.tiktok.com/live',
-      tiktokStreamKey: 'live_tt_booth2_champion_grail',
-      tiktokSocketConnected: false,
-      autoRelayToTikTok: true,
-      instagramAccountHandle: '@vintage_sweats_b2_ig',
-      instagramRtmpUrl: 'rtmps://live-upload.instagram.com:443/rtmp/',
-      instagramStreamKey: 'live_ig_booth2_sweats',
-      instagramSocketConnected: false,
-      autoRelayToInstagram: true,
-      facebookAccountHandle: 'Vintage Vibes UAE - Floor 2',
-      facebookRtmpUrl: 'rtmps://live-api-s.facebook.com:443/rtmp/',
-      facebookStreamKey: 'FB-live-booth2-442',
-      facebookSocketConnected: false,
-      autoRelayToFacebook: true,
-      youTubeAccountHandle: 'Vintage Vibes Studio 2 Live',
-      youTubeRtmpUrl: 'rtmp://a.rtmp.youtube.com/live2',
-      youTubeStreamKey: 'yt_booth2_live_1080',
-      youTubeSocketConnected: false,
-      autoRelayToYouTube: true,
-      claimKeywords: ['CLAIM', 'MINE', 'BIN', 'TAKE', 'BUY'],
-      reservationTimeoutMinutes: 15,
-      status: 'STANDBY'
-    },
-    {
-      boothId: 'booth-3',
-      boothName: 'Booth 3: Brand Tiers & Rare Archive',
-      category: 'Nirvana, Harley & Luxury Heritage Grails',
-      hostName: 'Layla Haddad',
-      hostHandle: '@layla_relove',
-      provider: 'RESTREAM',
-      enabled: true,
-      accountEmail: 'booth3@vintagevibe.ae',
-      accountPassword: 'Password!Booth3#2026',
-      masterIngestRtmpUrl: 'rtmp://live.restream.io/live',
-      masterStreamKey: 're_booth3_sec_11094_dxb',
-      tiktokAccountHandle: '@vintage_vault_b3',
-      tiktokRtmpUrl: 'rtmp://live.tiktok.com/live',
-      tiktokStreamKey: 'live_tt_booth3_vault_grail',
-      tiktokSocketConnected: false,
-      autoRelayToTikTok: true,
-      instagramAccountHandle: '@vintage_vault_b3_ig',
-      instagramRtmpUrl: 'rtmps://live-upload.instagram.com:443/rtmp/',
-      instagramStreamKey: 'live_ig_booth3_vault',
-      instagramSocketConnected: false,
-      autoRelayToInstagram: true,
-      facebookAccountHandle: 'Vintage Vibes UAE - Floor 3',
-      facebookRtmpUrl: 'rtmps://live-api-s.facebook.com:443/rtmp/',
-      facebookStreamKey: 'FB-live-booth3-771',
-      facebookSocketConnected: false,
-      autoRelayToFacebook: true,
-      youTubeAccountHandle: 'Vintage Vibes Studio 3 Live',
-      youTubeRtmpUrl: 'rtmp://a.rtmp.youtube.com/live2',
-      youTubeStreamKey: 'yt_booth3_live_1080',
-      youTubeSocketConnected: false,
-      autoRelayToYouTube: true,
-      claimKeywords: ['CLAIM', 'MINE', 'BIN', 'TAKE', 'BUY', 'VIP'],
-      reservationTimeoutMinutes: 15,
-      status: 'STANDBY'
-    },
-    {
-      boothId: 'booth-4',
-      boothName: 'Booth 4: Winter Overcoats & Workwear',
-      category: 'Carhartt Detroit, Nuptse & Duck Parkas',
-      hostName: 'Tariq Mansour',
-      hostHandle: '@tariq_archive',
-      provider: 'RESTREAM',
-      enabled: true,
-      accountEmail: 'booth4@vintagevibe.ae',
-      accountPassword: 'Password!Booth4#2026',
-      masterIngestRtmpUrl: 'rtmp://live.restream.io/live',
-      masterStreamKey: 're_booth4_sec_55921_dxb',
-      tiktokAccountHandle: '@workwear_dubai_b4',
-      tiktokRtmpUrl: 'rtmp://live.tiktok.com/live',
-      tiktokStreamKey: 'live_tt_booth4_workwear',
-      tiktokSocketConnected: false,
-      autoRelayToTikTok: true,
-      instagramAccountHandle: '@workwear_dubai_b4_ig',
-      instagramRtmpUrl: 'rtmps://live-upload.instagram.com:443/rtmp/',
-      instagramStreamKey: 'live_ig_booth4_workwear',
-      instagramSocketConnected: false,
-      autoRelayToInstagram: true,
-      facebookAccountHandle: 'Vintage Vibes UAE - Floor 4',
-      facebookRtmpUrl: 'rtmps://live-api-s.facebook.com:443/rtmp/',
-      facebookStreamKey: 'FB-live-booth4-332',
-      facebookSocketConnected: false,
-      autoRelayToFacebook: true,
-      youTubeAccountHandle: 'Vintage Vibes Studio 4 Live',
-      youTubeRtmpUrl: 'rtmp://a.rtmp.youtube.com/live2',
-      youTubeStreamKey: 'yt_booth4_live_1080',
-      youTubeSocketConnected: false,
-      autoRelayToYouTube: true,
-      claimKeywords: ['CLAIM', 'MINE', 'BIN', 'TAKE', 'BUY'],
-      reservationTimeoutMinutes: 15,
-      status: 'STANDBY'
-    },
-    {
-      boothId: 'booth-5',
-      boothName: 'Booth 5: Shoes & Rare Headwear',
-      category: 'Vintage Leather Boots, Dunks & Snapbacks',
-      hostName: 'Alex Workwear',
-      hostHandle: '@alex_vintage',
-      provider: 'RESTREAM',
-      enabled: true,
-      accountEmail: 'booth5@vintagevibe.ae',
-      accountPassword: 'Password!Booth5#2026',
-      masterIngestRtmpUrl: 'rtmp://live.restream.io/live',
-      masterStreamKey: 're_booth5_sec_88201_dxb',
-      tiktokAccountHandle: '@vintage_kicks_b5',
-      tiktokRtmpUrl: 'rtmp://live.tiktok.com/live',
-      tiktokStreamKey: 'live_tt_booth5_kicks',
-      tiktokSocketConnected: false,
-      autoRelayToTikTok: true,
-      instagramAccountHandle: '@vintage_kicks_b5_ig',
-      instagramRtmpUrl: 'rtmps://live-upload.instagram.com:443/rtmp/',
-      instagramStreamKey: 'live_ig_booth5_kicks',
-      instagramSocketConnected: false,
-      autoRelayToInstagram: true,
-      facebookAccountHandle: 'Vintage Vibes UAE - Floor 5',
-      facebookRtmpUrl: 'rtmps://live-api-s.facebook.com:443/rtmp/',
-      facebookStreamKey: 'FB-live-booth5-119',
-      facebookSocketConnected: false,
-      autoRelayToFacebook: true,
-      youTubeAccountHandle: 'Vintage Vibes Studio 5 Live',
-      youTubeRtmpUrl: 'rtmp://a.rtmp.youtube.com/live2',
-      youTubeStreamKey: 'yt_booth5_live_1080',
-      youTubeSocketConnected: false,
-      autoRelayToYouTube: true,
-      claimKeywords: ['CLAIM', 'MINE', 'BIN', 'TAKE', 'BUY'],
-      reservationTimeoutMinutes: 15,
-      status: 'STANDBY'
-    }
-  ];
-
   interface ChannelCreds {
     username: string;
     password: string;
@@ -254,7 +70,8 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     qrError?: string;
   }
 
-  const [booths, setBooths] = useState<LiveBoothStreamConfig[]>(defaultBooths);
+  const [booths, setBooths] = useState<LiveBoothStreamConfig[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeModalBooth, setActiveModalBooth] = useState<LiveBoothStreamConfig | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [activePlatformTab, setActivePlatformTab] = useState<'TIKTOK' | 'INSTAGRAM' | 'FACEBOOK' | 'YOUTUBE' | 'THREADS' | 'CUSTOM'>('TIKTOK');
@@ -286,9 +103,10 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
 
   // Fetch saved booth settings from PostgreSQL
   const loadBooths = async () => {
+    setIsLoading(true);
     try {
       const data = await LiveStreamService.getAllSetupBooths();
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         const loaded: LiveBoothStreamConfig[] = data.map((b: any, index: number) => ({
           boothId: b.boothId || b.booth_id || `booth-${index + 1}`,
           boothName: b.boothName || b.booth_name || `Booth ${index + 1}`,
@@ -328,10 +146,13 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
         }));
         setBooths(loaded);
       } else {
-        setBooths(defaultBooths);
+        setBooths([]);
       }
     } catch (e) {
       console.warn('Live booths load note:', e);
+      setBooths([]);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -840,18 +661,21 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
       return;
     }
     try {
+      setBooths(prev => prev.filter(b => b.boothId !== boothId));
+      if (activeModalBooth?.boothId === boothId) {
+        handleCloseModal();
+      }
+
       const res = await LiveStreamService.deleteBooth(boothId);
       if (res.success) {
         showMsg(`✓ Booth "${boothName}" (${boothId}) deleted from SQL database.`, 'success');
-        if (activeModalBooth?.boothId === boothId) {
-          handleCloseModal();
-        }
-        await loadBooths();
       } else {
         showMsg(`Failed to delete booth: ${res.error || 'Server error'}`, 'error');
       }
+      await loadBooths();
     } catch (err: any) {
       showMsg(`Error deleting booth: ${err.message}`, 'error');
+      await loadBooths();
     }
   };
 
@@ -971,9 +795,42 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
         </div>
       </div>
 
+      {/* Loading Skeleton / Indicator */}
+      {isLoading && (
+        <div className="bg-white p-8 rounded-lg border border-slate-200 text-center py-12">
+          <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto mb-3" />
+          <p className="text-sm font-bold text-slate-700">Loading Broadcaster Booths from SQL Database...</p>
+          <p className="text-xs text-slate-400 mt-1">Retrieving live floor RTMP keys, social sockets, and stream configurations.</p>
+        </div>
+      )}
+
+      {/* Empty State when 0 booths configured in PostgreSQL */}
+      {!isLoading && booths.length === 0 && (
+        <div className="bg-white p-8 rounded-lg border-2 border-dashed border-slate-200 text-center py-12 space-y-3">
+          <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
+            <Radio className="w-6 h-6" />
+          </div>
+          <div>
+            <h3 className="text-sm font-extrabold text-slate-800">No Broadcaster Booths Found in Database</h3>
+            <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+              All deleted booths have been cleared from SQL. Click &quot;+ Create New Booth&quot; above to set up a dedicated auction floor with unique social channels.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowCreateModal(true)}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black uppercase bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Create First Booth</span>
+          </button>
+        </div>
+      )}
+
       {/* Grid of Broadcaster Booth Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-        {booths.map((b, index) => (
+      {!isLoading && booths.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+          {booths.map((b, index) => (
           <div
             key={b.boothId}
             className="bg-white rounded-lg border border-slate-200 shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden"
@@ -1063,6 +920,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
           </div>
         ))}
       </div>
+      )}
 
       {/* ========================================================================= */}
       {/* DEDICATED BOOTH CONFIGURATION WINDOW / MODAL                              */}
