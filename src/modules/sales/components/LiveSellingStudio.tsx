@@ -6,6 +6,7 @@ import { SalesInvoice } from '../sales.types.ts';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { RTMPDestination, LiveStudioComment, StreamTelemetry, BoothSession } from '../../../server/streamController.ts';
 import { ThermalBarcodeSticker, StickerData } from '../../../components/ThermalBarcodeSticker.tsx';
+import { LiveStreamService } from '../../../services/liveStreamService.ts';
 import {
   Radio,
   Video,
@@ -42,6 +43,8 @@ import {
   Monitor,
   BarChart3,
   Timer,
+  LayoutGrid,
+  Table as TableIcon,
   Truck,
   FileText,
   RotateCcw,
@@ -130,6 +133,18 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       totalClaimsCount: 0,
       avgClaimsPerMin: 0
     }
+  });
+
+  // Supervisor Layout & Table Management (100% SQL-Backed)
+  const [overviewLayout, setOverviewLayout] = useState<'TABLE' | 'CARDS'>('TABLE');
+  const [boothSearch, setBoothSearch] = useState<string>('');
+  const [isDeletingBooth, setIsDeletingBooth] = useState<string | null>(null);
+  const [showCreateBoothModal, setShowCreateBoothModal] = useState<boolean>(false);
+  const [newBoothForm, setNewBoothForm] = useState({
+    boothId: '',
+    boothName: '',
+    hostName: '',
+    category: ''
   });
 
   const [activeBooth, setActiveBooth] = useState<BoothSession | null>(null);
@@ -429,6 +444,73 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       }
     }
   }, [selectedBoothId]);
+
+  // Filtered booths based on SQL live search
+  const filteredBooths = useMemo(() => {
+    const q = boothSearch.trim().toLowerCase();
+    const list = allBoothsData?.booths || [];
+    if (!q) return list;
+    return list.filter((b: any) =>
+      (b.boothName || '').toLowerCase().includes(q) ||
+      (b.boothId || '').toLowerCase().includes(q) ||
+      (b.hostName || '').toLowerCase().includes(q) ||
+      (b.categoryFocus || '').toLowerCase().includes(q) ||
+      (b.tiktokHandle || '').toLowerCase().includes(q)
+    );
+  }, [allBoothsData?.booths, boothSearch]);
+
+  const handleDeleteBooth = async (boothId: string, boothName: string) => {
+    if (!window.confirm(`Are you sure you want to permanently delete "${boothName}" (${boothId}) from the SQL database?`)) {
+      return;
+    }
+    setIsDeletingBooth(boothId);
+    try {
+      const res = await LiveStreamService.deleteBooth(boothId);
+      if (res.success) {
+        setClaimFeedback({ type: 'success', text: `✓ Booth "${boothName}" permanently deleted from SQL database.` });
+        await loadBoothsOverview();
+        if (selectedBoothId === boothId) {
+          setSelectedBoothId('');
+        }
+      } else {
+        setClaimFeedback({ type: 'error', text: `Failed to delete booth: ${res.error || 'Server error'}` });
+      }
+    } catch (err: any) {
+      setClaimFeedback({ type: 'error', text: `Error deleting booth: ${err.message}` });
+    } finally {
+      setIsDeletingBooth(null);
+    }
+  };
+
+  const handleCreateBooth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBoothForm.boothName.trim()) return;
+    const bId = newBoothForm.boothId.trim() || `booth-${(allBoothsData?.booths || []).length + 1}`;
+    try {
+      const res = await fetch('/api/setup/live-booths', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          boothId: bId,
+          boothName: newBoothForm.boothName.trim(),
+          hostName: newBoothForm.hostName.trim() || 'Staff Host',
+          category: newBoothForm.category.trim() || 'Vintage Garments',
+          activePlatforms: ['tiktok', 'instagram']
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setClaimFeedback({ type: 'success', text: `✓ Booth "${newBoothForm.boothName}" created in SQL database!` });
+        setShowCreateBoothModal(false);
+        setNewBoothForm({ boothId: '', boothName: '', hostName: '', category: '' });
+        await loadBoothsOverview();
+      } else {
+        setClaimFeedback({ type: 'error', text: data.error || 'Failed to create booth in SQL database' });
+      }
+    } catch (err: any) {
+      setClaimFeedback({ type: 'error', text: `Error creating booth: ${err.message}` });
+    }
+  };
 
   // Load backend pool data for current booth
   const loadPoolData = useCallback(async (retries = 2) => {
@@ -953,22 +1035,200 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
             </div>
           </div>
 
-          {/* Bento Grid: Concurrent Booth Monitors */}
+          {/* Supervisor Booth Directory & SQL Table Controls */}
+          <div className="bg-white p-3.5 rounded-xl border border-stone-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-700">
+                <TableIcon className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-black text-sm text-stone-900 uppercase tracking-wider flex items-center gap-2">
+                  <span>Broadcast Floors & SQL Booth Directory</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    {filteredBooths.length} Live in SQL
+                  </span>
+                </h3>
+                <p className="text-[11px] text-stone-500">
+                  Real-time synchronization with PostgreSQL database (<code className="font-mono text-amber-800">live_stream_booths</code> &amp; <code className="font-mono text-amber-800">live_booth_metrics</code>)
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Live Search */}
+              <div className="relative min-w-[200px]">
+                <Search className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={boothSearch}
+                  onChange={e => setBoothSearch(e.target.value)}
+                  placeholder="Filter floor, host, SKU..."
+                  className="w-full pl-8 pr-3 py-1.5 bg-stone-50 border border-stone-200 rounded-lg text-xs text-stone-900 placeholder:text-stone-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* View Layout Toggle: Table vs Cards */}
+              <div className="flex items-center bg-stone-100 p-0.5 rounded-lg border border-stone-200">
+                <button
+                  type="button"
+                  onClick={() => setOverviewLayout('TABLE')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                    overviewLayout === 'TABLE'
+                      ? 'bg-white text-stone-900 shadow-xs'
+                      : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                  title="Switch to SQL Data Table View"
+                >
+                  <TableIcon className="w-3.5 h-3.5" />
+                  <span>Table</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOverviewLayout('CARDS')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                    overviewLayout === 'CARDS'
+                      ? 'bg-white text-stone-900 shadow-xs'
+                      : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                  title="Switch to Card Grid View"
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span>Cards</span>
+                </button>
+              </div>
+
+              {/* Add New Booth Button */}
+              <button
+                type="button"
+                onClick={() => setShowCreateBoothModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-amber-300 text-xs font-black uppercase tracking-wider cursor-pointer shadow-xs transition-colors"
+                title="Create a new dedicated live broadcast floor in SQL database"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Booth</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Empty State when 0 booths configured in PostgreSQL */}
           {(allBoothsData?.booths || []).length === 0 ? (
-            <div className="bg-white p-8 rounded-xl border border-stone-200 text-center py-10">
-              <Radio className="w-8 h-8 text-stone-400 mx-auto mb-2 animate-pulse" />
+            <div className="bg-white p-8 rounded-xl border border-stone-200 text-center py-10 space-y-3">
+              <Radio className="w-8 h-8 text-stone-400 mx-auto animate-pulse" />
               <div className="font-extrabold text-stone-700 text-sm">No Live Booths Configured in SQL Database</div>
-              <p className="text-xs text-stone-400 mt-1">Configure your active auction floors in Setup &gt; Live Multicast Hub.</p>
+              <p className="text-xs text-stone-500 max-w-md mx-auto">
+                All demo booths have been permanently removed. Click below to set up your real broadcaster auction floors.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowCreateBoothModal(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-stone-900 hover:bg-stone-800 text-amber-300 text-xs font-black uppercase tracking-wider shadow-xs cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Create First Booth</span>
+              </button>
+            </div>
+          ) : overviewLayout === 'TABLE' ? (
+            /* ========================================================================= */
+            /* VIEW A: 100% SQL DATA TABLE                                              */
+            /* ========================================================================= */
+            <div className="bg-white rounded-xl border border-stone-200 overflow-hidden shadow-xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-stone-900 text-stone-300 font-bold uppercase text-[10px] tracking-wider border-b border-stone-800">
+                      <th className="py-3 px-3.5">Floor ID</th>
+                      <th className="py-3 px-3.5">Floor / Stage Name</th>
+                      <th className="py-3 px-3.5">Host / Broadcaster</th>
+                      <th className="py-3 px-3.5">Category Focus</th>
+                      <th className="py-3 px-3.5 text-center">Status</th>
+                      <th className="py-3 px-3.5 text-right">Viewers</th>
+                      <th className="py-3 px-3.5 text-right">Claims</th>
+                      <th className="py-3 px-3.5 text-right">Revenue (AED)</th>
+                      <th className="py-3 px-3.5 text-right">Pace</th>
+                      <th className="py-3 px-3.5 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {filteredBooths.map(b => (
+                      <tr key={b.boothId} className="hover:bg-stone-50/80 transition-colors">
+                        <td className="py-3 px-3.5 font-mono font-bold text-stone-900">
+                          <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-800 border border-stone-200 text-[10px]">
+                            {b.boothId}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3.5 font-extrabold text-stone-900 text-xs">
+                          {b.boothName}
+                        </td>
+                        <td className="py-3 px-3.5">
+                          <div className="font-bold text-stone-800">{b.hostName}</div>
+                          <div className="text-[10px] text-amber-700 font-mono">{b.tiktokHandle || b.hostHandle}</div>
+                        </td>
+                        <td className="py-3 px-3.5 text-stone-600 text-[11px]">
+                          {b.categoryFocus || 'General Vintage'}
+                        </td>
+                        <td className="py-3 px-3.5 text-center">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                            b.isBroadcasting ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-stone-100 text-stone-600 border border-stone-200'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${b.isBroadcasting ? 'bg-red-600 animate-pulse' : 'bg-stone-400'}`}></span>
+                            {b.isBroadcasting ? 'LIVE' : 'STANDBY'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3.5 text-right font-bold text-stone-900">
+                          {b.isBroadcasting ? (b.viewerCount || 0).toLocaleString() : 0}
+                        </td>
+                        <td className="py-3 px-3.5 text-right font-bold text-stone-900">
+                          {b.itemsClaimed || 0}
+                        </td>
+                        <td className="py-3 px-3.5 text-right font-black text-amber-700">
+                          AED {(b.netRevenueAed || 0).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-3.5 text-right font-mono text-purple-700 font-bold">
+                          {b.itemsSoldPerMin || 0}/m
+                        </td>
+                        <td className="py-3 px-3.5 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedBoothId(b.boothId);
+                                setViewMode('STUDIO');
+                              }}
+                              className="px-2.5 py-1 rounded bg-stone-900 hover:bg-stone-800 text-amber-300 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
+                              title="Enter broadcaster live studio console"
+                            >
+                              <span>Enter Console</span>
+                              <ArrowUpRight className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteBooth(b.boothId, b.boothName)}
+                              disabled={isDeletingBooth === b.boothId}
+                              className="p-1.5 rounded text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 transition-colors cursor-pointer disabled:opacity-50"
+                              title={`Permanently delete ${b.boothName} from SQL database`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-              {(allBoothsData?.booths || []).map(b => (
+            /* ========================================================================= */
+            /* VIEW B: BENTO CARDS GRID                                                 */
+            /* ========================================================================= */
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+              {filteredBooths.map(b => (
               <div
                 key={b.boothId}
-                className={`rounded-xl border p-3 flex flex-col justify-between transition-all ${
+                className={`rounded-xl border p-3.5 flex flex-col justify-between transition-all ${
                   b.isBroadcasting
                     ? 'bg-white border-stone-300 shadow-md ring-1 ring-amber-400/30'
-                    : 'bg-stone-50 border-stone-200 opacity-75'
+                    : 'bg-stone-50 border-stone-200'
                 }`}
               >
                 <div>
@@ -977,19 +1237,29 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     <span className="font-black text-xs text-stone-900 truncate">
                       {b.boothName.split('-')[0].trim()}
                     </span>
-                    <span
-                      className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
-                        b.isBroadcasting ? 'bg-red-600 text-white animate-pulse' : 'bg-stone-200 text-stone-600'
-                      }`}
-                    >
-                      {b.isBroadcasting ? 'LIVE' : 'STANDBY'}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                          b.isBroadcasting ? 'bg-red-600 text-white animate-pulse' : 'bg-stone-200 text-stone-600'
+                        }`}
+                      >
+                        {b.isBroadcasting ? 'LIVE' : 'STANDBY'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteBooth(b.boothId, b.boothName)}
+                        title={`Delete ${b.boothName}`}
+                        className="p-1 rounded text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Host info */}
                   <div className="mt-2 text-xs">
                     <div className="font-extrabold text-stone-800">{b.hostName}</div>
-                    <div className="text-[10px] text-amber-700 font-mono">{b.tiktokHandle}</div>
+                    <div className="text-[10px] text-amber-700 font-mono">{b.tiktokHandle || b.hostHandle}</div>
                     <div className="text-[10px] text-stone-500 truncate mt-0.5">{b.categoryFocus}</div>
                   </div>
 
@@ -997,19 +1267,19 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   <div className="mt-3 p-2 bg-stone-50 rounded-lg border border-stone-200 space-y-1 text-[11px]">
                     <div className="flex justify-between">
                       <span className="text-stone-500">Viewers:</span>
-                      <span className="font-bold text-stone-900">{b.isBroadcasting ? b.viewerCount.toLocaleString() : 0}</span>
+                      <span className="font-bold text-stone-900">{b.isBroadcasting ? (b.viewerCount || 0).toLocaleString() : 0}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-stone-500">Claims:</span>
-                      <span className="font-bold text-stone-900">{b.itemsClaimed} items</span>
+                      <span className="font-bold text-stone-900">{b.itemsClaimed || 0} items</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-stone-500">Revenue:</span>
-                      <span className="font-black text-amber-700">AED {b.netRevenueAed.toLocaleString()}</span>
+                      <span className="font-black text-amber-700">AED {(b.netRevenueAed || 0).toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-stone-500">Pace:</span>
-                      <span className="font-mono text-purple-700 font-bold">{b.itemsSoldPerMin} / min</span>
+                      <span className="font-mono text-purple-700 font-bold">{b.itemsSoldPerMin || 0} / min</span>
                     </div>
                   </div>
 
@@ -1022,7 +1292,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 </div>
 
                 <div className="mt-3 pt-2 border-t border-stone-100 flex items-center justify-between">
-                  <span className="text-[9px] text-stone-400">Hold: {b.reservationTimeoutMinutes}m</span>
+                  <span className="text-[9px] text-stone-400">Hold: {b.reservationTimeoutMinutes || 120}m</span>
                   <button
                     type="button"
                     onClick={() => {
@@ -1037,6 +1307,91 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Create New Booth Modal */}
+        {showCreateBoothModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/80 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="bg-white border border-stone-300 rounded-xl shadow-2xl max-w-md w-full p-5 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-stone-100">
+                <h3 className="text-sm font-extrabold text-stone-900 uppercase tracking-wider flex items-center gap-2">
+                  <Plus className="w-4 h-4 text-amber-600" />
+                  <span>Create Live Broadcaster Booth</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateBoothModal(false)}
+                  className="text-stone-400 hover:text-stone-700 text-sm cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateBooth} className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-700 mb-1">Booth Unique ID</label>
+                  <input
+                    type="text"
+                    value={newBoothForm.boothId}
+                    onChange={e => setNewBoothForm({ ...newBoothForm, boothId: e.target.value })}
+                    placeholder={`e.g. booth-${(allBoothsData?.booths || []).length + 1}`}
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-xs font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                  <span className="text-[10px] text-stone-400">Leave blank to auto-generate sequentially.</span>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-700 mb-1">Floor / Booth Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newBoothForm.boothName}
+                    onChange={e => setNewBoothForm({ ...newBoothForm, boothName: e.target.value })}
+                    placeholder="e.g. Booth 3: Premium Outerwear"
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-700 mb-1">Host / Broadcaster Name</label>
+                  <input
+                    type="text"
+                    value={newBoothForm.hostName}
+                    onChange={e => setNewBoothForm({ ...newBoothForm, hostName: e.target.value })}
+                    placeholder="e.g. Studio Host"
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-700 mb-1">Category Focus</label>
+                  <input
+                    type="text"
+                    value={newBoothForm.category}
+                    onChange={e => setNewBoothForm({ ...newBoothForm, category: e.target.value })}
+                    placeholder="e.g. Vintage Denim & Jackets"
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-3 border-t border-stone-100">
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateBoothModal(false)}
+                    className="px-3.5 py-1.5 rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 font-bold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-amber-300 font-bold uppercase tracking-wider cursor-pointer shadow-xs"
+                  >
+                    Save to SQL Database
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         )}
         </div>

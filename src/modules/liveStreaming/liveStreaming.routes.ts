@@ -599,12 +599,34 @@ liveStreamingRouter.get('/booths', async (req, res) => {
           }
         });
       }
+
+      return res.json({
+        success: true,
+        booths: [],
+        totals: {
+          activeStreamers: 0,
+          totalViewers: 0,
+          totalRevenueAed: 0,
+          totalClaimsCount: 0,
+          avgClaimsPerMin: 0
+        }
+      });
     } catch (err: any) {
       if (client) await client.end().catch(() => {});
-      console.warn('DB booths overview error, falling back:', err.message);
+      console.warn('DB booths overview error:', err.message);
     }
   }
-  return res.json(streamController.getAllBoothsOverview());
+  return res.json({
+    success: true,
+    booths: [],
+    totals: {
+      activeStreamers: 0,
+      totalViewers: 0,
+      totalRevenueAed: 0,
+      totalClaimsCount: 0,
+      avgClaimsPerMin: 0
+    }
+  });
 });
 
 // Update Booth Metrics directly in PostgreSQL

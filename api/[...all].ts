@@ -4362,10 +4362,33 @@ export default async function handler(req: any, res: any) {
                 }
               });
             }
+
+            return res.status(200).json({
+              success: true,
+              booths: [],
+              totals: {
+                activeStreamers: 0,
+                totalViewers: 0,
+                totalRevenueAed: 0,
+                totalClaimsCount: 0,
+                avgClaimsPerMin: 0
+              }
+            });
           } catch (err) {
             try { await client.end(); } catch (_) {}
           }
         }
+        return res.status(200).json({
+          success: true,
+          booths: [],
+          totals: {
+            activeStreamers: 0,
+            totalViewers: 0,
+            totalRevenueAed: 0,
+            totalClaimsCount: 0,
+            avgClaimsPerMin: 0
+          }
+        });
       }
 
       // 13. Live Selling Pool / Inventory items
