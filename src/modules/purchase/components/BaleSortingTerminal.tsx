@@ -9,6 +9,7 @@ import { openThermalLabelPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { CameraTagScannerModal, ExtractedTagData } from './CameraTagScannerModal.tsx';
 import { StudioPhotoCaptureModal } from './StudioPhotoCaptureModal.tsx';
+import { BaleProfitHorizonGauge } from './BaleProfitHorizonGauge.tsx';
 import { compressImage } from '../../../utils/imageCompressor.ts';
 import {
   Scale,
@@ -1223,6 +1224,17 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               <span>&bull;</span>
               <span>Bale Landed: <strong className="text-slate-200">AED {Number(activeBale.totalBaleCost || 0).toFixed(2)}</strong></span>
             </div>
+          </div>
+        )}
+
+        {/* 3D BALE BREAK-EVEN PROFIT HORIZON GAUGE */}
+        {activeBale && (
+          <div className="px-3.5 sm:px-5 py-3 bg-slate-950/70 border-b border-slate-800">
+            <BaleProfitHorizonGauge
+              baleCost={Number(activeBale.totalBaleCost) || (Number(activeBale.totalBaleWeight || 20) * 120)}
+              pieces={pieces}
+              baleCode={activeBale.baleCode || activeBale.gatePassNo || 'BALE-001'}
+            />
           </div>
         )}
 

@@ -17,12 +17,14 @@ import {
   Flame,
   ShieldCheck,
   HelpCircle,
-  Key
+  Key,
+  Award
 } from 'lucide-react';
 import { compressImage } from '../../../utils/imageCompressor.ts';
 import { analyzeVintageGarment, VintageValuationResult } from '../../../utils/geminiVintageValuation.ts';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { autoCropGarment } from '../../../utils/garmentCropper.ts';
+import { VintageGrailCertificateModal, GrailCertificateData } from '../../../components/VintageGrailCertificateModal.tsx';
 
 export interface ExtractedTagData {
   brand: string;
@@ -68,6 +70,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
   const [extractedData, setExtractedData] = useState<ExtractedTagData | null>(null);
   const [tagOcrError, setTagOcrError] = useState<string | null>(null);
   const [isPermissionDenied, setIsPermissionDenied] = useState(false);
+  const [showGrailCertModal, setShowGrailCertModal] = useState(false);
 
   // Quick API Key Config
   const [showApiKeyDrawer, setShowApiKeyDrawer] = useState(false);
@@ -799,18 +802,30 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                     </span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setExtractedData(null);
-                      setCapturedImage(null);
-                      startCamera();
-                    }}
-                    className="btn-3d btn-3d-slate text-[11px] py-1 px-2.5 cursor-pointer inline-flex items-center gap-1"
-                  >
-                    <RotateCw className="w-3 h-3" />
-                    <span>Scan Next Piece</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowGrailCertModal(true)}
+                      className="btn-3d btn-3d-amber text-[11px] py-1 px-2.5 cursor-pointer inline-flex items-center gap-1 font-bold text-amber-950"
+                      title="View AI Digital Certificate of Authenticity with 3D Wax Seal"
+                    >
+                      <Award className="w-3.5 h-3.5 text-amber-900" />
+                      <span>📜 Grail Certificate</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExtractedData(null);
+                        setCapturedImage(null);
+                        startCamera();
+                      }}
+                      className="btn-3d btn-3d-slate text-[11px] py-1 px-2.5 cursor-pointer inline-flex items-center gap-1"
+                    >
+                      <RotateCw className="w-3 h-3" />
+                      <span>Scan Next Piece</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Garment Title & High-Speed Market Valuation HUD */}
@@ -983,6 +998,25 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
           className="hidden"
           onChange={handleFileUpload}
         />
+        {/* Museum-Grade Vintage Grail Certificate Modal */}
+        {extractedData && (
+          <VintageGrailCertificateModal
+            isOpen={showGrailCertModal}
+            onClose={() => setShowGrailCertModal(false)}
+            data={{
+              certId: `VV-GRAIL-${Math.floor(10000 + Math.random() * 90000)}-DXB`,
+              itemTitle: extractedData.garmentTitle || extractedData.brand || 'Vintage Holy Grail',
+              brand: extractedData.brand || 'Vintage Archive',
+              era: extractedData.era || '1990s',
+              provenance: `${extractedData.stitchType || 'Single Stitch'}, Tag: ${extractedData.tagType || extractedData.brand}, Origin: ${extractedData.countryOfOrigin || 'USA'}`,
+              category: extractedData.category || 'Vintage Collectible',
+              grade: extractedData.suggestedQualityGrade || (extractedData.isGrail ? 'Holy Grail (Museum Grade 9.8)' : 'Grade A Cream'),
+              estimatedValueAed: extractedData.recommendedRetailPriceAed || extractedData.estimatedMarketValueAed || 450,
+              tagImageUrl: extractedData.tagImageUrl || capturedImage || undefined,
+              aiConfidenceScore: extractedData.confidence || 99.4
+            }}
+          />
+        )}
       </div>
     </div>
   );

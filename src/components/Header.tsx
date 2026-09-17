@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { CompanyProfile, CurrencyItem } from '../modules/setup/setup.types.ts';
 import { User } from '../modules/auth/auth.types.ts';
-import { MessageSquare, Shield, RefreshCw, Sparkles, Building2, MapPin, ReceiptText, LogOut, Users, Smartphone, Laptop } from 'lucide-react';
+import { MessageSquare, Shield, RefreshCw, Sparkles, Building2, MapPin, ReceiptText, LogOut, Users, Smartphone, Laptop, Tv } from 'lucide-react';
 import { GlobalSearchBar } from './GlobalSearchBar.tsx';
 import { Vintage3DLogo } from './Vintage3DLogo.tsx';
 import { CompanyName3D } from './CompanyName3D.tsx';
@@ -23,6 +23,7 @@ interface HeaderProps {
   onLogout?: () => void;
   onOpenStorefront?: () => void;
   onOpenStaffMobile?: () => void;
+  onOpenExecutiveTerminal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -35,7 +36,8 @@ export const Header: React.FC<HeaderProps> = ({
   onNavigateTab,
   onLogout,
   onOpenStorefront,
-  onOpenStaffMobile
+  onOpenStaffMobile,
+  onOpenExecutiveTerminal
 }) => {
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showOnlineDropdown, setShowOnlineDropdown] = useState(false);
@@ -280,6 +282,21 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <Sparkles className="w-3 h-3 text-amber-950 shrink-0" />
                 <span>Storefront</span>
+              </button>
+            )}
+
+            {/* Executive Wall-Street TV Command Center */}
+            {onOpenExecutiveTerminal && (
+              <button
+                type="button"
+                id="btn-header-executive-terminal"
+                onClick={onOpenExecutiveTerminal}
+                title="Launch Fullscreen Executive Wall-Street TV Command Center (Shortcut: Shift + E)"
+                className="btn-3d btn-3d-slate h-7 px-2.5 text-[10.5px] font-black uppercase tracking-wider rounded-lg flex items-center gap-1.5 text-amber-300 hover:text-amber-200 border border-amber-500/50 shadow-xs"
+              >
+                <Tv className="w-3.5 h-3.5 text-amber-400 shrink-0 animate-pulse" />
+                <span className="font-mono">TV Desk</span>
+                <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono hidden md:inline">⇧E</span>
               </button>
             )}
 

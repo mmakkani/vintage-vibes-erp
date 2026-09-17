@@ -42,6 +42,7 @@ const StaffMobileAppView = lazyWithRetry(() => import('./modules/staff/StaffMobi
 const CounterSalePOSTerminal = lazyWithRetry(() => import('./modules/sales/components/CounterSalePOSTerminal.tsx').then(m => ({ default: m.CounterSalePOSTerminal })));
 const MarketingAutomationView = lazyWithRetry(() => import('./modules/marketing/components/MarketingAutomationView.tsx').then(m => ({ default: m.MarketingAutomationView })));
 const LiveOBSOverlayView = lazyWithRetry(() => import('./modules/marketing/components/LiveOBSOverlayView.tsx').then(m => ({ default: m.LiveOBSOverlayView })));
+const ExecutiveCommandCenterModal = lazyWithRetry(() => import('./components/ExecutiveCommandCenterModal.tsx').then(m => ({ default: m.ExecutiveCommandCenterModal })));
 
 const ModuleLoadingFallback: React.FC<{ name?: string }> = ({ name }) => (
   <div className="flex flex-col items-center justify-center py-24 px-4 min-h-[380px]">
@@ -115,6 +116,23 @@ export default function App() {
   };
 
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+  const [isExecutiveTerminalOpen, setIsExecutiveTerminalOpen] = useState(false);
+
+  // Global Keyboard Shortcut: Shift + E to launch Executive TV Command Center
+  useEffect(() => {
+    const handleGlobalTerminalKey = (e: KeyboardEvent) => {
+      if (e.shiftKey && (e.key === 'E' || e.key === 'e')) {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+          return;
+        }
+        e.preventDefault();
+        setIsExecutiveTerminalOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalTerminalKey);
+    return () => window.removeEventListener('keydown', handleGlobalTerminalKey);
+  }, []);
   const [liveHostState, setLiveHostState] = useState<{ isHostMode: boolean; boothId: string }>(() => {
     try {
       const path = window.location.pathname;
@@ -582,6 +600,7 @@ export default function App() {
             localStorage.setItem('vintage_app_view_mode', 'staff-mobile');
             setCurrentView('staff-mobile');
           }}
+          onOpenExecutiveTerminal={() => setIsExecutiveTerminalOpen(true)}
         />
 
         {/* Dubai Live Gold Souk, Forex Exchange & Inbound Cargo Marquee Ticker */}
@@ -752,6 +771,14 @@ export default function App() {
           isOpen={isWhatsAppModalOpen}
           onClose={() => setIsWhatsAppModalOpen(false)}
         />
+
+        {/* Executive Wall-Street TV Command Center Terminal */}
+        <Suspense fallback={null}>
+          <ExecutiveCommandCenterModal
+            isOpen={isExecutiveTerminalOpen}
+            onClose={() => setIsExecutiveTerminalOpen(false)}
+          />
+        </Suspense>
 
         {/* Subtle Luxury Golden Starlight Cursor Dust Particle Trail */}
         <GoldenCursorDust />
