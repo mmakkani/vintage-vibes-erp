@@ -652,6 +652,7 @@ export class SetupService {
         enabled: true,
         accountEmail: 'live@vintagevibe.ae',
         masterIngestRtmpUrl: 'rtmp://live.restream.io/live',
+        backupServerUrl: 'rtmp://live-backup.restream.io/live',
         masterStreamKey: 're_live_sec_10482_vv_dxb_773',
         autoRelayToTikTok: true,
         autoRelayToInstagram: true,
@@ -671,8 +672,9 @@ export class SetupService {
       accountEmail: data.account_email,
       accountPassword: data.account_password,
       apiKey: data.api_key,
-      masterIngestRtmpUrl: data.master_ingest_rtmp_url,
-      masterStreamKey: data.master_stream_key,
+      masterIngestRtmpUrl: data.master_ingest_rtmp_url || 'rtmp://live.restream.io/live',
+      backupServerUrl: data.backup_server_url || 'rtmp://live-backup.restream.io/live',
+      masterStreamKey: data.master_stream_key || '',
       autoRelayToTikTok: data.auto_relay_to_tiktok !== false,
       autoRelayToInstagram: data.auto_relay_to_instagram !== false,
       autoRelayToFacebook: data.auto_relay_to_facebook !== false,
@@ -695,6 +697,7 @@ export class SetupService {
       account_password: cfg.accountPassword,
       api_key: cfg.apiKey,
       master_ingest_rtmp_url: cfg.masterIngestRtmpUrl,
+      backup_server_url: cfg.backupServerUrl,
       master_stream_key: cfg.masterStreamKey,
       auto_relay_to_tiktok: cfg.autoRelayToTikTok !== false,
       auto_relay_to_instagram: cfg.autoRelayToInstagram !== false,
@@ -741,7 +744,8 @@ export class SetupService {
       accountEmail: r.account_email,
       accountPassword: r.account_password,
       apiKey: r.api_key,
-      masterIngestRtmpUrl: r.master_ingest_rtmp_url,
+      masterIngestRtmpUrl: r.master_ingest_rtmp_url || 'rtmp://live.restream.io/live',
+      backupServerUrl: r.backup_server_url || 'rtmp://live-backup.restream.io/live',
       masterStreamKey: r.master_stream_key,
       autoRelayToTikTok: r.auto_relay_to_tiktok !== false,
       autoRelayToInstagram: r.auto_relay_to_instagram !== false,
@@ -774,6 +778,7 @@ export class SetupService {
     if (updates.accountPassword !== undefined) payload.account_password = updates.accountPassword;
     if (updates.apiKey !== undefined) payload.api_key = updates.apiKey;
     if (updates.masterIngestRtmpUrl !== undefined) payload.master_ingest_rtmp_url = updates.masterIngestRtmpUrl;
+    if (updates.backupServerUrl !== undefined) payload.backup_server_url = updates.backupServerUrl;
     if (updates.masterStreamKey !== undefined) payload.master_stream_key = updates.masterStreamKey;
     if (updates.autoRelayToTikTok !== undefined) payload.auto_relay_to_tiktok = updates.autoRelayToTikTok;
     if (updates.autoRelayToInstagram !== undefined) payload.auto_relay_to_instagram = updates.autoRelayToInstagram;

@@ -228,6 +228,7 @@ export interface LiveStreamMulticastConfig {
   accountEmail?: string;
   accountPassword?: string;
   masterIngestRtmpUrl: string;
+  backupServerUrl?: string;
   masterStreamKey: string;
   autoRelayToTikTok: boolean;
   autoRelayToInstagram: boolean;
@@ -251,7 +252,9 @@ export interface LiveBoothStreamConfig {
   enabled: boolean;
   apiKey?: string;
   accountEmail?: string;
+  accountPassword?: string;
   masterIngestRtmpUrl?: string;
+  backupServerUrl?: string;
   masterStreamKey?: string;
   // Per-Booth Distinct Social Media Accounts & Headless Credentials
   socialChannels?: Array<{

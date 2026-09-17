@@ -55,6 +55,42 @@ setupRouter.put(['/company', '/company-profile'], async (req, res) => {
 
 // Live Streaming Multicast Gateway (Restream / Livepush / Ingest Key)
 setupRouter.get('/live-multicast', async (req, res) => {
+  const client = await getPgClient();
+  if (client) {
+    try {
+      const q = await client.query("SELECT * FROM live_stream_multicast_config WHERE id = 'default' LIMIT 1;");
+      await client.end();
+      if (q.rows.length > 0) {
+        const r = q.rows[0];
+        return res.json({
+          success: true,
+          data: {
+            provider: r.provider || 'RESTREAM',
+            enabled: Boolean(r.enabled),
+            accountEmail: r.account_email || 'live@vintagevibe.ae',
+            accountPassword: r.account_password || '',
+            apiKey: r.api_key || '',
+            masterIngestRtmpUrl: r.master_ingest_rtmp_url || 'rtmp://live.restream.io/live',
+            backupServerUrl: r.backup_server_url || 'rtmp://live-backup.restream.io/live',
+            masterStreamKey: r.master_stream_key || 're_live_sec_10482_vv_dxb_773',
+            autoRelayToTikTok: Boolean(r.auto_relay_to_tiktok),
+            autoRelayToInstagram: Boolean(r.auto_relay_to_instagram),
+            autoRelayToFacebook: Boolean(r.auto_relay_to_facebook),
+            autoRelayToYouTube: Boolean(r.auto_relay_to_youtube),
+            tikTokStreamKey: r.tiktok_stream_key || '',
+            instagramStreamKey: r.instagram_stream_key || '',
+            facebookStreamKey: r.facebook_stream_key || '',
+            youTubeStreamKey: r.youtube_stream_key || '',
+            status: r.status || 'CONNECTED',
+            lastSyncedAt: r.last_synced_at
+          }
+        });
+      }
+    } catch (_) {
+      try { await client.end(); } catch (_) {}
+    }
+  }
+
   try {
     const data = await SetupService.getLiveMulticastConfig();
     return res.json({ success: true, data });
@@ -64,6 +100,68 @@ setupRouter.get('/live-multicast', async (req, res) => {
 });
 
 setupRouter.put('/live-multicast', async (req, res) => {
+  const cfg = req.body || {};
+  const client = await getPgClient();
+  if (client) {
+    try {
+      await client.query(`
+        INSERT INTO live_stream_multicast_config (
+          id, provider, enabled, account_email, account_password, api_key,
+          master_ingest_rtmp_url, backup_server_url, master_stream_key,
+          auto_relay_to_tiktok, auto_relay_to_instagram, auto_relay_to_facebook, auto_relay_to_youtube,
+          tiktok_stream_key, instagram_stream_key, facebook_stream_key, youtube_stream_key,
+          status, last_synced_at, updated_at
+        ) VALUES (
+          'default', $1, $2, $3, $4, $5,
+          $6, $7, $8,
+          $9, $10, $11, $12,
+          $13, $14, $15, $16,
+          $17, NOW(), NOW()
+        ) ON CONFLICT (id) DO UPDATE SET
+          provider = EXCLUDED.provider,
+          enabled = EXCLUDED.enabled,
+          account_email = EXCLUDED.account_email,
+          account_password = COALESCE(EXCLUDED.account_password, live_stream_multicast_config.account_password),
+          api_key = COALESCE(EXCLUDED.api_key, live_stream_multicast_config.api_key),
+          master_ingest_rtmp_url = EXCLUDED.master_ingest_rtmp_url,
+          backup_server_url = EXCLUDED.backup_server_url,
+          master_stream_key = EXCLUDED.master_stream_key,
+          auto_relay_to_tiktok = EXCLUDED.auto_relay_to_tiktok,
+          auto_relay_to_instagram = EXCLUDED.auto_relay_to_instagram,
+          auto_relay_to_facebook = EXCLUDED.auto_relay_to_facebook,
+          auto_relay_to_youtube = EXCLUDED.auto_relay_to_youtube,
+          tiktok_stream_key = EXCLUDED.tiktok_stream_key,
+          instagram_stream_key = EXCLUDED.instagram_stream_key,
+          facebook_stream_key = EXCLUDED.facebook_stream_key,
+          youtube_stream_key = EXCLUDED.youtube_stream_key,
+          status = EXCLUDED.status,
+          last_synced_at = NOW(),
+          updated_at = NOW();
+      `, [
+        cfg.provider || 'RESTREAM',
+        cfg.enabled !== false,
+        cfg.accountEmail || '',
+        cfg.accountPassword || '',
+        cfg.apiKey || '',
+        cfg.masterIngestRtmpUrl || 'rtmp://live.restream.io/live',
+        cfg.backupServerUrl || 'rtmp://live-backup.restream.io/live',
+        cfg.masterStreamKey || '',
+        cfg.autoRelayToTikTok !== false,
+        cfg.autoRelayToInstagram !== false,
+        cfg.autoRelayToFacebook !== false,
+        cfg.autoRelayToYouTube !== false,
+        cfg.tikTokStreamKey || '',
+        cfg.instagramStreamKey || '',
+        cfg.facebookStreamKey || '',
+        cfg.youTubeStreamKey || '',
+        cfg.status || 'CONNECTED'
+      ]);
+      await client.end();
+    } catch (_) {
+      try { await client.end(); } catch (_) {}
+    }
+  }
+
   try {
     const data = await SetupService.updateLiveMulticastConfig(req.body);
     SetupController.updateLiveMulticastConfig(req.body);
@@ -108,6 +206,7 @@ setupRouter.get('/live-booths', async (req, res) => {
           provider: r.provider || 'RESTREAM',
           enabled: Boolean(r.enabled),
           masterIngestRtmpUrl: r.master_ingest_rtmp_url || 'rtmp://live.restream.io/live',
+          backupServerUrl: r.backup_server_url || 'rtmp://live-backup.restream.io/live',
           masterStreamKey: r.master_stream_key || '',
           activePlatforms: activePlatforms.length > 0 ? activePlatforms : ['tiktok', 'instagram', 'facebook', 'youtube', 'threads'],
           autoRelayToTikTok: Boolean(r.auto_relay_to_tiktok),
@@ -191,17 +290,19 @@ setupRouter.post('/live-booths', async (req, res) => {
         INSERT INTO live_stream_booths (
           booth_id, booth_name, category, host_name, host_handle, account_email, provider, enabled,
           auto_relay_to_tiktok, auto_relay_to_instagram, auto_relay_to_facebook, auto_relay_to_youtube, auto_relay_to_threads,
-          threads_account_handle, threads_stream_key, master_ingest_rtmp_url, master_stream_key, status, created_at, updated_at
+          threads_account_handle, threads_stream_key, master_ingest_rtmp_url, backup_server_url, master_stream_key, status, created_at, updated_at
         ) VALUES (
           $1, $2, $3, $4, $5, $6, 'RESTREAM', true,
           $7, $8, $9, $10, $11,
-          $12, $13, $14, $15, 'STANDBY', NOW(), NOW()
+          $12, $13, $14, $15, $16, 'STANDBY', NOW(), NOW()
         ) ON CONFLICT (booth_id) DO UPDATE SET
           booth_name = EXCLUDED.booth_name,
           category = EXCLUDED.category,
           host_name = EXCLUDED.host_name,
           host_handle = EXCLUDED.host_handle,
           account_email = EXCLUDED.account_email,
+          backup_server_url = EXCLUDED.backup_server_url,
+          master_stream_key = EXCLUDED.master_stream_key,
           updated_at = NOW();
       `, [
         boothId, boothName, category, hostName, hostHandle, accountEmail,
@@ -211,6 +312,7 @@ setupRouter.post('/live-booths', async (req, res) => {
         b.threadsAccountHandle || `@${boothId.replace('-', '')}_threads`,
         b.threadsStreamKey || '',
         b.masterIngestRtmpUrl || 'rtmp://live.restream.io/live',
+        b.backupServerUrl || 'rtmp://live-backup.restream.io/live',
         b.masterStreamKey || `stream_key_${boothId}`,
       ]);
 
@@ -309,24 +411,25 @@ setupRouter.put('/live-booths/:boothId', async (req, res) => {
           host_handle = COALESCE($5, host_handle),
           account_email = COALESCE($6, account_email),
           master_ingest_rtmp_url = COALESCE($7, master_ingest_rtmp_url),
-          master_stream_key = COALESCE($8, master_stream_key),
-          auto_relay_to_tiktok = COALESCE($9, auto_relay_to_tiktok),
-          auto_relay_to_instagram = COALESCE($10, auto_relay_to_instagram),
-          auto_relay_to_facebook = COALESCE($11, auto_relay_to_facebook),
-          auto_relay_to_youtube = COALESCE($12, auto_relay_to_youtube),
-          auto_relay_to_threads = COALESCE($13, auto_relay_to_threads),
-          tiktok_stream_key = COALESCE($14, tiktok_stream_key),
-          instagram_stream_key = COALESCE($15, instagram_stream_key),
-          facebook_stream_key = COALESCE($16, facebook_stream_key),
-          youtube_stream_key = COALESCE($17, youtube_stream_key),
-          threads_stream_key = COALESCE($18, threads_stream_key),
-          threads_account_handle = COALESCE($19, threads_account_handle),
-          enabled = COALESCE($20, enabled),
+          backup_server_url = COALESCE($8, backup_server_url),
+          master_stream_key = COALESCE($9, master_stream_key),
+          auto_relay_to_tiktok = COALESCE($10, auto_relay_to_tiktok),
+          auto_relay_to_instagram = COALESCE($11, auto_relay_to_instagram),
+          auto_relay_to_facebook = COALESCE($12, auto_relay_to_facebook),
+          auto_relay_to_youtube = COALESCE($13, auto_relay_to_youtube),
+          auto_relay_to_threads = COALESCE($14, auto_relay_to_threads),
+          tiktok_stream_key = COALESCE($15, tiktok_stream_key),
+          instagram_stream_key = COALESCE($16, instagram_stream_key),
+          facebook_stream_key = COALESCE($17, facebook_stream_key),
+          youtube_stream_key = COALESCE($18, youtube_stream_key),
+          threads_stream_key = COALESCE($19, threads_stream_key),
+          threads_account_handle = COALESCE($20, threads_account_handle),
+          enabled = COALESCE($21, enabled),
           updated_at = NOW()
         WHERE booth_id = ANY($1::text[]);
       `, [
         aliases, b.boothName, b.category, b.hostName, b.hostHandle,
-        b.accountEmail, b.masterIngestRtmpUrl, b.masterStreamKey,
+        b.accountEmail, b.masterIngestRtmpUrl, b.backupServerUrl, b.masterStreamKey,
         b.autoRelayToTikTok, b.autoRelayToInstagram, b.autoRelayToFacebook, b.autoRelayToYouTube, b.autoRelayToThreads,
         b.tiktokStreamKey, b.instagramStreamKey, b.facebookStreamKey, b.youtubeStreamKey, b.threadsStreamKey,
         b.threadsAccountHandle, b.enabled

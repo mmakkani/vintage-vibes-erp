@@ -96,6 +96,7 @@ class RelationalStore {
       accountPassword: '••••••••••••',
       apiKey: 'rst_live_key_904812_vintage_dubai',
       masterIngestRtmpUrl: 'rtmp://live.restream.io/live',
+      backupServerUrl: 'rtmp://live-backup.restream.io/live',
       masterStreamKey: 're_live_sec_10482_vv_dxb_773',
       autoRelayToTikTok: true,
       autoRelayToInstagram: true,
