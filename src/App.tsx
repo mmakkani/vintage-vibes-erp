@@ -24,6 +24,7 @@ import { CompanyProfileService, SetupService, AuthService, DeviceService, Presen
 import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
 import { ModuleMaintenanceGuard } from './components/ModuleMaintenanceGuard.tsx';
 import { PWAUpdatePrompt } from './components/PWAUpdatePrompt.tsx';
+import { RoyalSplashScreen } from './components/RoyalSplashScreen.tsx';
 import { lazyWithRetry } from './utils/lazyWithRetry.ts';
 
 // Code-Split Dynamic Views for 10x Load Speed with Deployment Chunk Auto-Retry
@@ -77,6 +78,7 @@ const GUEST_OPERATOR: User = {
 };
 
 export default function App() {
+  const [showSplash, setShowSplash] = useState<boolean>(true);
   const [activeTab, setActiveTabState] = useState<ActiveTab>(() => {
     try {
       // 1. Check URL query param ?tab=
@@ -760,6 +762,11 @@ export default function App() {
 
   return (
     <>
+      {showSplash && (
+        <RoyalSplashScreen
+          onFinish={() => setShowSplash(false)}
+        />
+      )}
       {renderViewContent()}
       {currentView !== 'live-overlay' && <IOSInstallBanner />}
       <PWAUpdatePrompt />
