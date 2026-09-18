@@ -172,16 +172,14 @@ partiesRouter.get('/:id', async (req, res) => {
     const accountCodeClient = `1130-${cleanCode}`;
     const accountId = party.coa_account_id || `acc-${id}`;
 
-    // Query invoice stats and ledger entries
-    const [purchasesRes, salesRes, khataRes, glRes] = await Promise.all([
-      client.query('SELECT count(*) as count, COALESCE(SUM(total_amount), 0) as total FROM purchase_invoices WHERE supplier_id = $1', [id]).catch(() => ({ rows: [{ count: 0, total: 0 }] })),
-      client.query('SELECT count(*) as count, COALESCE(SUM(total_amount), 0) as total FROM sales_invoices WHERE client_id = $1', [id]).catch(() => ({ rows: [{ count: 0, total: 0 }] })),
-      client.query('SELECT count(*) as count FROM party_khata_logs WHERE party_id = $1', [id]).catch(() => ({ rows: [{ count: 0 }] })),
-      client.query(`
-        SELECT count(*) as count FROM general_ledger 
-        WHERE party_id = $1 OR account_id = $2 OR account_code = $3 OR account_code = $4
-      `, [id, accountId, accountCodeSupplier, accountCodeClient]).catch(() => ({ rows: [{ count: 0 }] }))
-    ]);
+    // Query invoice stats and ledger entries sequentially (avoids pg client socket concurrency)
+    const purchasesRes = await client.query('SELECT count(*) as count, COALESCE(SUM(total_amount), 0) as total FROM purchase_invoices WHERE supplier_id = $1', [id]).catch(() => ({ rows: [{ count: 0, total: 0 }] }));
+    const salesRes = await client.query('SELECT count(*) as count, COALESCE(SUM(total_amount), 0) as total FROM sales_invoices WHERE client_id = $1', [id]).catch(() => ({ rows: [{ count: 0, total: 0 }] }));
+    const khataRes = await client.query('SELECT count(*) as count FROM party_khata_logs WHERE party_id = $1', [id]).catch(() => ({ rows: [{ count: 0 }] }));
+    const glRes = await client.query(`
+      SELECT count(*) as count FROM general_ledger 
+      WHERE party_id = $1 OR account_id = $2 OR account_code = $3 OR account_code = $4
+    `, [id, accountId, accountCodeSupplier, accountCodeClient]).catch(() => ({ rows: [{ count: 0 }] }));
 
     const purCount = Number(purchasesRes.rows[0]?.count || 0);
     const purTotal = Number(purchasesRes.rows[0]?.total || 0);
@@ -322,7 +320,7 @@ partiesRouter.post('/', async (req, res) => {
         is_active = EXCLUDED.is_active,
         account_map = EXCLUDED.account_map,
         coa_account_id = EXCLUDED.coa_account_id;
-    `, [id, code, name, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, currency, isActive, JSON.stringify(initialMap), coaId]);
+    `, [id, code, cleanName, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, currency, isActive, JSON.stringify(initialMap), coaId]);
 
     // 2. Auto-provision COA Sub-Account
     try {
@@ -345,7 +343,7 @@ partiesRouter.post('/', async (req, res) => {
     const createdParty = {
       id,
       code,
-      name,
+      name: cleanName,
       type,
       contactPerson,
       phone,
@@ -523,15 +521,14 @@ partiesRouter.delete('/:id', async (req, res) => {
     const accountCodeClient = `1130-${cleanCode}`;
     const accountId = party.coa_account_id || `acc-${id}`;
 
-    const [purCheck, salesCheck, khataCheck, glCheck] = await Promise.all([
-      client.query('SELECT count(*) as count, COALESCE(SUM(total_amount), 0) as total FROM purchase_invoices WHERE supplier_id = $1', [id]).catch(() => ({ rows: [{ count: 0, total: 0 }] })),
-      client.query('SELECT count(*) as count, COALESCE(SUM(total_amount), 0) as total FROM sales_invoices WHERE client_id = $1', [id]).catch(() => ({ rows: [{ count: 0, total: 0 }] })),
-      client.query('SELECT count(*) as count FROM party_khata_logs WHERE party_id = $1', [id]).catch(() => ({ rows: [{ count: 0 }] })),
-      client.query(`
-        SELECT count(*) as count FROM general_ledger 
-        WHERE party_id = $1 OR account_id = $2 OR account_code = $3 OR account_code = $4
-      `, [id, accountId, accountCodeSupplier, accountCodeClient]).catch(() => ({ rows: [{ count: 0 }] }))
-    ]);
+    // Strict Check: Check transactions sequentially (avoids pg client socket concurrency)
+    const purCheck = await client.query('SELECT count(*) as count, COALESCE(SUM(total_amount), 0) as total FROM purchase_invoices WHERE supplier_id = $1', [id]).catch(() => ({ rows: [{ count: 0, total: 0 }] }));
+    const salesCheck = await client.query('SELECT count(*) as count, COALESCE(SUM(total_amount), 0) as total FROM sales_invoices WHERE client_id = $1', [id]).catch(() => ({ rows: [{ count: 0, total: 0 }] }));
+    const khataCheck = await client.query('SELECT count(*) as count FROM party_khata_logs WHERE party_id = $1', [id]).catch(() => ({ rows: [{ count: 0 }] }));
+    const glCheck = await client.query(`
+      SELECT count(*) as count FROM general_ledger 
+      WHERE party_id = $1 OR account_id = $2 OR account_code = $3 OR account_code = $4
+    `, [id, accountId, accountCodeSupplier, accountCodeClient]).catch(() => ({ rows: [{ count: 0 }] }));
 
     const purCount = Number(purCheck.rows[0]?.count || 0);
     const salesCount = Number(salesCheck.rows[0]?.count || 0);
@@ -567,26 +564,34 @@ partiesRouter.delete('/:id', async (req, res) => {
 
     await client.query('BEGIN');
 
-    // 3. Clean up / unlink COA sub-account (only if 0 balance & clean)
-    await client.query('UPDATE coa_accounts SET party_id = NULL WHERE party_id = $1', [id]);
-    if (party.coa_account_id) {
-      await client.query('DELETE FROM coa_accounts WHERE id = $1 AND (current_balance = 0 OR current_balance IS NULL)', [party.coa_account_id]).catch(() => {});
+    // 3. Clean up empty khata logs if any
+    await client.query('DELETE FROM party_khata_logs WHERE party_id = $1', [id]);
+
+    // 4. Find all linked COA sub-account(s) for this party before deleting
+    const coaRes = await client.query('SELECT id, code, name FROM coa_accounts WHERE party_id = $1 OR id = $2', [id, party.coa_account_id]);
+    const coaIds = coaRes.rows.map((r: any) => r.id);
+
+    // 5. Clean up ledgers referencing party or linked coa accounts
+    if (coaIds.length > 0) {
+      await client.query('DELETE FROM ledgers WHERE account_id = ANY($1) OR party_id = $2', [coaIds, id]);
+    } else {
+      await client.query('DELETE FROM ledgers WHERE party_id = $1', [id]);
     }
 
-    // 4. Unlink and clean ledgers
-    await client.query('UPDATE ledgers SET party_id = NULL WHERE party_id = $1', [id]).catch(() => {});
+    // 6. Permanently DELETE linked COA account(s) from coa_accounts table in SQL
+    const delCoaRes = await client.query('DELETE FROM coa_accounts WHERE party_id = $1 OR id = $2', [id, party.coa_account_id]);
 
-    // 5. Clean up empty khata logs if any
-    await client.query('DELETE FROM party_khata_logs WHERE party_id = $1', [id]).catch(() => {});
-
-    // 6. Delete from parties
+    // 7. Permanently DELETE party from parties table in SQL
     await client.query('DELETE FROM parties WHERE id = $1', [id]);
 
     await client.query('COMMIT');
 
     return res.json({
       success: true,
-      message: `Party "${party.name}" (${party.code}) successfully deleted from SQL database.`
+      message: `Party "${party.name}" (${party.code}) and its linked Chart of Accounts entry were permanently deleted from SQL database.`,
+      deletedPartyId: id,
+      deletedCoaAccountsCount: delCoaRes.rowCount,
+      deletedCoaAccountIds: coaIds
     });
 
   } catch (err: any) {

@@ -1,5 +1,6 @@
 import { supabase } from '../supabaseClient.ts';
 import { Party, PartyKhataLog } from '../modules/parties/parties.types.ts';
+import { FinanceService } from './financeService.ts';
 
 export class PartiesService {
   public static async getParties(): Promise<Party[]> {
@@ -367,7 +368,7 @@ export class PartiesService {
   }
 
   public static async deleteParty(id: string): Promise<void> {
-    // 1. Primary route: Express PostgreSQL backend (with safety verification)
+    // 1. Primary route: Express PostgreSQL backend (with accounting integrity checks)
     if (typeof window !== 'undefined') {
       try {
         const rawFetch = (window as any).__originalFetch || window.fetch;
@@ -375,27 +376,30 @@ export class PartiesService {
           method: 'DELETE'
         });
         if (apiRes.ok) {
+          // Immediately purge deleted party from localStorage cache
+          try {
+            const cached = localStorage.getItem('vibe_cached_parties');
+            if (cached) {
+              const list = JSON.parse(cached);
+              if (Array.isArray(list)) {
+                localStorage.setItem('vibe_cached_parties', JSON.stringify(list.filter((p: any) => p.id !== id)));
+              }
+            }
+          } catch {}
+          FinanceService.clearCoaCache();
           return;
         }
         const errData = await apiRes.json().catch(() => ({}));
-        if (errData.error) {
-          throw new Error(errData.error);
+        if (errData.error || errData.messageUrdu) {
+          throw new Error(errData.messageUrdu ? `${errData.error}\n${errData.messageUrdu}` : errData.error);
         }
+        throw new Error(`Server returned HTTP ${apiRes.status}`);
       } catch (err: any) {
         if (err.message && !err.message.includes('fetch')) {
           throw err;
         }
+        throw new Error('Database server is not reachable. Please make sure the local server is running on http://localhost:3000.');
       }
-    }
-
-    // 2. Fallback route: Supabase client (unlinking foreign keys first)
-    await supabase.from('coa_accounts').update({ party_id: null }).eq('party_id', id);
-    await supabase.from('ledgers').update({ party_id: null }).eq('party_id', id);
-    await supabase.from('party_khata_logs').delete().eq('party_id', id);
-    const { error } = await supabase.from('parties').delete().eq('id', id);
-    if (error) {
-      console.error('Supabase error on parties:', error);
-      throw new Error(error.message || 'Failed to delete party');
     }
   }
 

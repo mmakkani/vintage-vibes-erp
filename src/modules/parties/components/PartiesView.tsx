@@ -342,15 +342,18 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     setIsDeleting(true);
     setDeleteError(null);
     try {
-      await PartiesService.deleteParty(deletingParty.id);
+      const delId = deletingParty.id;
+      const delName = deletingParty.name;
+      const delCode = deletingParty.code;
+      await PartiesService.deleteParty(delId);
       setShowDeletePartyModal(false);
-      showMsg(`Party "${deletingParty.name}" (${deletingParty.code}) deleted from SQL database.`, 'success');
+      showMsg(`Party "${delName}" (${delCode}) and linked Chart of Accounts entry deleted from SQL database.`, 'success');
       setDeletingParty(null);
-      await loadParties();
-      if (selectedParty?.id === deletingParty.id) {
+      if (selectedParty?.id === delId) {
         setSelectedParty(null);
         setKhataLogs([]);
       }
+      await Promise.all([loadParties(), loadCoaAccounts()]);
       onRefreshAll();
     } catch (err: any) {
       setDeleteError(err.message || 'Failed to delete party');

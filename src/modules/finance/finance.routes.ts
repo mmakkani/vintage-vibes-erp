@@ -1,16 +1,76 @@
 import { Router } from 'express';
+import { Client } from 'pg';
 import { FinanceController } from './finance.controller.ts';
 import { FinanceService } from '../../services/financeService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 
 export const financeRouter = Router();
 
+async function getDbClient(): Promise<Client> {
+  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+  if (!dbUrl) throw new Error('Database connection URL not configured');
+  const client = new Client({
+    connectionString: dbUrl,
+    ssl: { rejectUnauthorized: false }
+  });
+  await client.connect();
+  return client;
+}
+
 financeRouter.get('/coa', async (req, res) => {
+  let client: Client | null = null;
   try {
-    const data = await FinanceService.getCoaAccounts();
-    return res.json(data);
-  } catch (_) {
-    return res.json(FinanceController.getCOA());
+    client = await getDbClient();
+    const result = await client.query(`
+      SELECT 
+        id, 
+        code, 
+        name, 
+        type, 
+        sub_type, 
+        currency, 
+        current_balance, 
+        is_active, 
+        parent_id, 
+        parent_code, 
+        tier_level, 
+        party_id
+      FROM coa_accounts
+      ORDER BY code ASC
+    `);
+    const accounts = result.rows.map((r: any) => ({
+      id: r.id,
+      code: r.code,
+      name: r.name,
+      type: (r.type || 'ASSET').toUpperCase(),
+      classification: (r.type || 'ASSET').toUpperCase(),
+      subType: r.sub_type || '',
+      sub_type: r.sub_type || '',
+      currency: r.currency || 'AED',
+      currentBalance: Number(r.current_balance || 0),
+      current_balance: Number(r.current_balance || 0),
+      isActive: r.is_active !== false,
+      is_active: r.is_active !== false,
+      parentId: r.parent_id,
+      parent_id: r.parent_id,
+      parentCode: r.parent_code,
+      parent_code: r.parent_code,
+      tierLevel: r.tier_level,
+      tier_level: r.tier_level,
+      partyId: r.party_id,
+      party_id: r.party_id
+    }));
+    return res.json(accounts);
+  } catch (err: any) {
+    console.warn('[Finance COA] Falling back to FinanceService/Controller:', err.message);
+    try {
+      const data = await FinanceService.getCoaAccounts();
+      return res.json(data);
+    } catch (_) {
+      return res.json(FinanceController.getCOA());
+    }
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
 });
 

@@ -24,7 +24,23 @@ export class FinanceService {
 
     this.coaAccountsPromise = (async () => {
       try {
-        // Prefer live SQL view with dynamically calculated balances
+        // 1. Primary route: Query Express backend directly connected to PostgreSQL coa_accounts
+        if (typeof window !== 'undefined') {
+          try {
+            const rawFetch = (window as any).__originalFetch || window.fetch;
+            const apiRes = await rawFetch('/api/finance/coa');
+            if (apiRes && apiRes.ok) {
+              const apiData = await apiRes.json();
+              if (Array.isArray(apiData) && apiData.length > 0) {
+                this.cachedCoaAccounts = apiData;
+                this.lastCoaFetched = Date.now();
+                return apiData;
+              }
+            }
+          } catch (_) {}
+        }
+
+        // 2. Secondary fallback: Prefer live SQL view with dynamically calculated balances
         let rows: any[] = [];
         try {
           const { data: viewData, error: viewErr } = await supabase
