@@ -158,6 +158,32 @@ const serverlessQuarantinedIps = new Set<string>();
 const ipBurstMap = new Map<string, number[]>();
 
 function analyzeBotRequest(req: any, explicitPath?: string, explicitUa?: string): BotAnalysisResult {
+  const rawUrl = (
+    explicitPath ||
+    req.originalUrl ||
+    req.url ||
+    ''
+  ).toString();
+
+  const normalizedPath = rawUrl.toLowerCase();
+
+  // Whitelist all /api/access-control/* and /api/finance/* endpoints from any 403 / bot blocking
+  if (
+    normalizedPath.includes('/api/access-control') ||
+    normalizedPath.includes('/access-control') ||
+    normalizedPath.includes('/api/finance') ||
+    normalizedPath.includes('/finance')
+  ) {
+    return {
+      isBadBot: false,
+      isVerifiedBot: true,
+      classification: 'HUMAN',
+      botName: 'Whitelisted Core Module',
+      threatLevel: 'NONE',
+      isHoneypotHit: false
+    };
+  }
+
   const ip = getClientIp(req);
 
   // Whitelist safe development & operator IPs
@@ -799,21 +825,29 @@ export default async function handler(req: any, res: any) {
     // ========================================================================
     // AUTOMATED BAD BOT DETECTION & AUTO-BLOCK SHIELD
     // ========================================================================
-    const botCheck = analyzeBotRequest(req, pathname);
-    if (botCheck.isBadBot) {
-      await recordBotHit(botCheck, req, pathname);
-      return res.status(403).json({
-        success: false,
-        blocked: true,
-        error: 'Access Denied: Bad Bot Activity Neutralized & Blocked',
-        reason: botCheck.reason,
-        botName: botCheck.botName,
-        ip: getClientIp(req)
-      });
-    }
+    const isWhitelistedRoute =
+      pathname.includes('/api/access-control') ||
+      pathname.includes('/access-control') ||
+      pathname.includes('/api/finance') ||
+      pathname.includes('/finance');
 
-    if (botCheck.isVerifiedBot) {
-      recordBotHit(botCheck, req, pathname).catch(() => {});
+    if (!isWhitelistedRoute) {
+      const botCheck = analyzeBotRequest(req, pathname);
+      if (botCheck.isBadBot) {
+        await recordBotHit(botCheck, req, pathname);
+        return res.status(403).json({
+          success: false,
+          blocked: true,
+          error: 'Access Denied: Bad Bot Activity Neutralized & Blocked',
+          reason: botCheck.reason,
+          botName: botCheck.botName,
+          ip: getClientIp(req)
+        });
+      }
+
+      if (botCheck.isVerifiedBot) {
+        recordBotHit(botCheck, req, pathname).catch(() => {});
+      }
     }
 
     // ========================================================================
@@ -2973,20 +3007,28 @@ export default async function handler(req: any, res: any) {
 
       if (pathname.includes('/devices/toggle-status') && method === 'POST') {
         const { deviceId, status } = body || {};
+        const normStatus = String(status || '').toUpperCase();
+        const isUnblock = normStatus === 'ACTIVE' || normStatus === 'ACTIVE';
         const client = await getPgClient();
         if (client) {
           try {
-            const q = await client.query('UPDATE device_installations SET install_status = $1 WHERE device_id = $2 RETURNING *;', [status, deviceId]);
+            const queryText = isUnblock
+              ? "UPDATE device_installations SET install_status = 'active', bot_type = NULL, block_reason = NULL WHERE device_id = $1 RETURNING *;"
+              : "UPDATE device_installations SET install_status = 'BLOCKED', bot_type = 'BAD_BOT', block_reason = 'Blocked by Administrator' WHERE device_id = $1 RETURNING *;";
+            const q = await client.query(queryText, [deviceId]);
             await client.end();
             const dev = q.rows[0];
-            if (status === 'ACTIVE' && dev?.ip_address) {
+            if (isUnblock && dev?.ip_address) {
               serverlessQuarantinedIps.delete(dev.ip_address);
             }
             return res.status(200).json({ success: true, device: dev });
           } catch (e) { try { await client.end(); } catch (_) {} }
         }
-        const { data } = await supabaseAdmin.from('device_installations').update({ install_status: status }).eq('device_id', deviceId).select().single();
-        if (status === 'ACTIVE' && data?.ip_address) {
+        const updatePayload = isUnblock
+          ? { install_status: 'active', bot_type: null, block_reason: null }
+          : { install_status: 'BLOCKED', bot_type: 'BAD_BOT', block_reason: 'Blocked by Administrator' };
+        const { data } = await supabaseAdmin.from('device_installations').update(updatePayload).eq('device_id', deviceId).select().single();
+        if (isUnblock && data?.ip_address) {
           serverlessQuarantinedIps.delete(data.ip_address);
         }
         return res.status(200).json({ success: true, device: data });

@@ -200,6 +200,33 @@ export const BotDetector = {
    * Analyze request headers, User-Agent, Honeypot targets, and injection patterns
    */
   analyze(req: any, explicitPath?: string): BotAnalysisResult {
+    const rawUrl = (
+      explicitPath ||
+      req.originalUrl ||
+      req.url ||
+      req.path ||
+      ''
+    ).toString();
+
+    const normalizedPath = rawUrl.toLowerCase();
+
+    // Whitelist all /api/access-control/* and /api/finance/* endpoints from any 403 / bot blocking
+    if (
+      normalizedPath.includes('/api/access-control') ||
+      normalizedPath.includes('/access-control') ||
+      normalizedPath.includes('/api/finance') ||
+      normalizedPath.includes('/finance')
+    ) {
+      return {
+        isBadBot: false,
+        isVerifiedBot: true,
+        classification: 'HUMAN',
+        botName: 'Whitelisted Core Module',
+        threatLevel: 'NONE',
+        isHoneypotHit: false
+      };
+    }
+
     const ip = this.extractIp(req);
     const WHITELISTED = ['127.0.0.1', '::1', 'localhost', '39.51.46.64'];
     if (ip && WHITELISTED.includes(ip)) {

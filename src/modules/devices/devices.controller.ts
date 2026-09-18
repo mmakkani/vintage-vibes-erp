@@ -336,20 +336,22 @@ export const DevicesController = {
 
   async toggleDeviceStatus(req: any, res: any) {
     const { deviceId, status } = req.body || {};
-    if (!deviceId || !['ACTIVE', 'BLOCKED'].includes(status)) {
+    const normStatus = String(status || '').toUpperCase();
+    if (!deviceId || !['ACTIVE', 'BLOCKED'].includes(normStatus)) {
       return res.status(400).json({ success: false, error: 'Invalid deviceId or status' });
     }
 
+    const isUnblock = normStatus === 'ACTIVE';
     const client = await getPgClient();
     if (client) {
       try {
-        const q = await client.query(
-          'UPDATE device_installations SET install_status = $1 WHERE device_id = $2 RETURNING *;',
-          [status, deviceId]
-        );
+        const queryText = isUnblock
+          ? "UPDATE device_installations SET install_status = 'active', bot_type = NULL, block_reason = NULL WHERE device_id = $1 RETURNING *;"
+          : "UPDATE device_installations SET install_status = 'BLOCKED', bot_type = 'BAD_BOT', block_reason = 'Blocked by Administrator' WHERE device_id = $1 RETURNING *;";
+        const q = await client.query(queryText, [deviceId]);
         await client.end();
         const updatedDevice = q.rows[0];
-        if (status === 'ACTIVE' && updatedDevice?.ip_address) {
+        if (isUnblock && updatedDevice?.ip_address) {
           BotDetector.unbanIp(updatedDevice.ip_address);
         }
         return res.status(200).json({ success: true, device: updatedDevice });
@@ -358,15 +360,19 @@ export const DevicesController = {
       }
     }
 
+    const updatePayload = isUnblock
+      ? { install_status: 'active', bot_type: null, block_reason: null }
+      : { install_status: 'BLOCKED', bot_type: 'BAD_BOT', block_reason: 'Blocked by Administrator' };
+
     const { data, error } = await supabaseAdmin
       .from('device_installations')
-      .update({ install_status: status })
+      .update(updatePayload)
       .eq('device_id', deviceId)
       .select()
       .single();
 
     if (error) return res.status(500).json({ success: false, error: error.message });
-    if (status === 'ACTIVE' && data?.ip_address) {
+    if (isUnblock && data?.ip_address) {
       BotDetector.unbanIp(data.ip_address);
     }
     return res.status(200).json({ success: true, device: data });
