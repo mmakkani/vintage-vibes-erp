@@ -56,9 +56,12 @@ interface COARowProps {
 const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, onViewLedger }) => {
   const code = acc.code || '';
   const name = acc.name || '';
-  const type = (acc.type || acc.classification || 'ASSET').toString().toUpperCase();
+  const rawType = (acc.type || acc.classification || acc.account_type || 'ASSET').toString().toUpperCase();
+  const type = rawType === 'INCOME' ? 'REVENUE' : rawType;
   const currentBalance = typeof acc.current_balance === 'number' ? acc.current_balance : (Number(acc.currentBalance) || 0);
-  const tierLevel = acc.tierLevel || acc.tier_level || (code.includes('-') ? (code.split('-').length > 2 || (!code.endsWith('-00') && (code.startsWith('2110-') || code.startsWith('1130-') || code.startsWith('2120-'))) ? 3 : 2) : 1);
+  const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
+  const isSub = code.endsWith('-00') && !isMaster;
+  const tierLevel = acc.tierLevel || acc.tier_level || (isMaster ? 1 : (isSub ? 2 : 3));
   const isDebit = type === 'ASSET' || type === 'EXPENSE';
   const isActive = acc.is_active !== false && acc.isActive !== false;
   const isPartyAccount = Boolean(
@@ -439,15 +442,21 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
     setIsSavingAccount(true);
     try {
-      await FinanceService.addCoaAccount({
+      const parentAcc = newAccParentCode ? accounts.find(a => a.code === newAccParentCode.trim() || a.id === newAccParentCode.trim()) : null;
+      const parentId = parentAcc?.id || null;
+
+      const created = await FinanceService.addCoaAccount({
         code: newAccCode.trim(),
         name: newAccName.trim(),
         type: newAccClassification,
         classification: newAccClassification,
+        account_type: newAccClassification === 'REVENUE' ? 'INCOME' : newAccClassification,
         sub_type: '',
         subType: '',
         tierLevel: newAccTierLevel,
         parentCode: newAccParentCode.trim() || undefined,
+        parentId: parentId || undefined,
+        parent_id: parentId || undefined,
         currency: newAccCurrency,
         currentBalance: Number(newAccOpeningBalance) || 0,
         current_balance: Number(newAccOpeningBalance) || 0,
@@ -460,6 +469,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       setShowAddAccountModal(false);
       setNewAccName('');
       setNewAccOpeningBalance('0');
+      if (created) {
+        setAccounts(prev => {
+          const exists = prev.some(a => a.id === created.id || a.code === created.code);
+          if (exists) return prev.map(a => (a.id === created.id || a.code === created.code ? created : a));
+          return [...prev, created];
+        });
+      }
       loadData();
       onRefreshAll();
     } catch (err: any) {
@@ -1016,12 +1032,16 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     }
   };
 
-  // Memoized Filtered COA Accounts with Hierarchical Sorting
+  // Memoized Filtered COA Accounts with Natural Sorting
   const filteredAccounts = useMemo(() => {
     const safeAccountsList = Array.isArray(accounts) ? accounts : [];
     const matches = safeAccountsList.filter(acc => {
-      const accType = (acc.type || acc.classification || '').toString().toUpperCase();
-      if (coaFilterPillar !== 'ALL' && accType !== coaFilterPillar.toUpperCase()) {
+      const rawType = (acc.type || acc.classification || acc.account_type || '').toString().toUpperCase();
+      const normAccType = rawType === 'INCOME' ? 'REVENUE' : rawType;
+      const normFilter = (coaFilterPillar || 'ALL').toUpperCase();
+      const effectiveFilter = normFilter === 'INCOME' ? 'REVENUE' : normFilter;
+
+      if (effectiveFilter !== 'ALL' && normAccType !== effectiveFilter) {
         return false;
       }
       if (coaSearchText.trim()) {
@@ -1029,35 +1049,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         return (
           (acc.code || '').toLowerCase().includes(query) ||
           (acc.name || '').toLowerCase().includes(query) ||
-          accType.toLowerCase().includes(query) ||
+          normAccType.toLowerCase().includes(query) ||
           (acc.sub_type || acc.subType || '').toLowerCase().includes(query)
         );
       }
       return true;
     });
 
-    const sorted: COAAccount[] = [];
-    const tier1 = matches.filter(a => (a.tierLevel === 1 || a.tier_level === 1 || !(a.code || '').includes('-')));
-    for (const t1 of tier1) {
-      sorted.push(t1);
-      const tier2 = matches.filter(a => (a.tierLevel === 2 || a.tier_level === 2 || ((a.code || '').endsWith('-00') && a.code !== t1.code)) && (a.parentCode === t1.code || a.parent_id === t1.id || (a.type || a.classification) === (t1.type || t1.classification)));
-      for (const t2 of tier2) {
-        if (!sorted.includes(t2)) sorted.push(t2);
-        const prefix = (t2.code || '').split('-')[0];
-        const tier3 = matches.filter(a => 
-          a.id !== t2.id &&
-          (a.tierLevel === 3 || a.tier_level === 3 || Boolean(a.party_id || a.partyId) || !(a.code || '').endsWith('-00')) && 
-          (a.parentCode === t2.code || a.parent_id === t2.id || (prefix && (a.code || '').startsWith(`${prefix}-`)))
-        );
-        for (const t3 of tier3) {
-          if (!sorted.includes(t3)) sorted.push(t3);
-        }
-      }
-    }
-    for (const acc of matches) {
-      if (!sorted.includes(acc)) sorted.push(acc);
-    }
-    return sorted;
+    return [...matches].sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true }));
   }, [accounts, coaFilterPillar, coaSearchText]);
 
   // General Ledger Entries strictly queried and aggregated via PostgreSQL window functions
@@ -1336,7 +1335,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
             {coaPillars.map(p => {
               const safeAcc = Array.isArray(accounts) ? accounts : [];
-              const pillarAccounts = safeAcc.filter(a => (a.type || a.classification || '').toString().toUpperCase() === p.key);
+              const pKey = p.key.toUpperCase();
+              const normKey = pKey === 'INCOME' ? 'REVENUE' : pKey;
+              const pillarAccounts = safeAcc.filter(a => {
+                const t = (a.type || a.classification || a.account_type || '').toString().toUpperCase();
+                const normT = t === 'INCOME' ? 'REVENUE' : t;
+                return normT === normKey;
+              });
               const count = pillarAccounts.length;
               const totalVal = pillarAccounts
                 .reduce((sum, a) => sum + (typeof a.current_balance === 'number' ? a.current_balance : (Number(a.currentBalance) || 0)), 0);
@@ -2547,11 +2552,23 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                         else if (newAccClassification === 'REVENUE') setNewAccCode('4000-05');
                         else if (newAccClassification === 'EXPENSE') setNewAccCode('5000-05');
                       } else if (lvl === 2) {
-                        const parentT1 = accounts.find(a => a.classification === newAccClassification && a.tierLevel === 1);
+                        const parentT1 = accounts.find(a => {
+                          const c = (a.classification || a.type || a.account_type || '').toUpperCase();
+                          const normC = c === 'INCOME' ? 'REVENUE' : c;
+                          const targetC = newAccClassification.toUpperCase();
+                          const normTarget = targetC === 'INCOME' ? 'REVENUE' : targetC;
+                          return normC === normTarget && (a.tierLevel === 1 || a.tier_level === 1 || (a.code || '').endsWith('000-00'));
+                        });
                         if (parentT1) setNewAccParentCode(parentT1.code);
                         setNewAccCode(newAccClassification === 'ASSET' ? '1150-00' : '5150-00');
                       } else if (lvl === 3) {
-                        const parentT2 = accounts.find(a => a.classification === newAccClassification && a.tierLevel === 2);
+                        const parentT2 = accounts.find(a => {
+                          const c = (a.classification || a.type || a.account_type || '').toUpperCase();
+                          const normC = c === 'INCOME' ? 'REVENUE' : c;
+                          const targetC = newAccClassification.toUpperCase();
+                          const normTarget = targetC === 'INCOME' ? 'REVENUE' : targetC;
+                          return normC === normTarget;
+                        });
                         if (parentT2) setNewAccParentCode(parentT2.code);
                         setNewAccCode(newAccClassification === 'ASSET' ? '1150-01' : '5150-01');
                       }
@@ -2574,11 +2591,21 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     value={newAccParentCode}
                     onChange={val => setNewAccParentCode(val)}
                     options={accounts
-                      .filter(a => a.classification === newAccClassification && a.tierLevel === (newAccTierLevel - 1))
+                      .filter(a => {
+                        const c = (a.classification || a.type || a.account_type || '').toUpperCase();
+                        const normC = c === 'INCOME' ? 'REVENUE' : c;
+                        const targetC = newAccClassification.toUpperCase();
+                        const normTarget = targetC === 'INCOME' ? 'REVENUE' : targetC;
+                        if (normC !== normTarget) return false;
+                        if (newAccTierLevel === 2) {
+                          return a.tierLevel === 1 || a.tier_level === 1 || (a.code || '').endsWith('000-00') || !(a.code || '').includes('-');
+                        }
+                        return true;
+                      })
                       .map(parentAcc => ({
                         value: parentAcc.code,
                         label: `${parentAcc.code} - ${parentAcc.name}`,
-                        badge: parentAcc.classification
+                        badge: parentAcc.classification || parentAcc.type || 'COA'
                       }))}
                     placeholder="Select Parent Folder..."
                     searchPlaceholder="Search parent folders..."

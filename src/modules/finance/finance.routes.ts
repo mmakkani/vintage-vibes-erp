@@ -21,61 +21,54 @@ financeRouter.get('/coa', async (req, res) => {
   let client: Client | null = null;
   try {
     client = await getDbClient();
-    const tblCheck = await client.query(`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_schema = 'public' 
-        AND table_name IN ('chart_of_accounts', 'coa_accounts')
-      ORDER BY CASE WHEN table_name = 'chart_of_accounts' THEN 1 ELSE 2 END
-      LIMIT 1;
-    `);
-    const targetTable = tblCheck.rows[0]?.table_name;
-    if (!targetTable) {
-      return res.json([]);
-    }
-
     const result = await client.query(`
       SELECT 
         id, 
         code, 
         name, 
-        COALESCE(type, 'ASSET') AS type, 
-        COALESCE(sub_type, '') AS sub_type, 
-        COALESCE(currency, 'AED') AS currency, 
-        COALESCE(current_balance, 0) AS current_balance, 
-        COALESCE(is_active, true) AS is_active, 
+        account_type, 
         parent_id, 
-        parent_code, 
-        COALESCE(tier_level, 1) AS tier_level, 
-        party_id
-      FROM ${targetTable}
+        COALESCE(current_balance, 0) AS current_balance, 
+        created_at
+      FROM chart_of_accounts
       ORDER BY code ASC
     `);
-    const accounts = result.rows.map((r: any) => ({
-      id: r.id,
-      code: r.code,
-      name: r.name,
-      type: (r.type || 'ASSET').toUpperCase(),
-      classification: (r.type || 'ASSET').toUpperCase(),
-      subType: r.sub_type || '',
-      sub_type: r.sub_type || '',
-      currency: r.currency || 'AED',
-      currentBalance: Number(r.current_balance || 0),
-      current_balance: Number(r.current_balance || 0),
-      isActive: r.is_active !== false,
-      is_active: r.is_active !== false,
-      parentId: r.parent_id,
-      parent_id: r.parent_id,
-      parentCode: r.parent_code,
-      parent_code: r.parent_code,
-      tierLevel: r.tier_level,
-      tier_level: r.tier_level,
-      partyId: r.party_id,
-      party_id: r.party_id
-    }));
+
+    const accounts = result.rows.map((r: any) => {
+      const rawType = (r.account_type || 'ASSET').toUpperCase();
+      const normalizedType = rawType === 'INCOME' ? 'REVENUE' : rawType;
+      const codeStr = r.code || '';
+      const isMaster = codeStr === '1000-00' || codeStr === '2000-00' || codeStr === '3000-00' || codeStr === '4000-00' || codeStr === '5000-00' || !codeStr.includes('-');
+      const isSub = codeStr.endsWith('-00') && !isMaster;
+      const tierLevel = isMaster ? 1 : (isSub ? 2 : 3);
+
+      return {
+        id: r.id,
+        code: r.code,
+        name: r.name,
+        type: normalizedType,
+        classification: normalizedType,
+        account_type: rawType,
+        subType: '',
+        sub_type: '',
+        currency: 'AED',
+        currentBalance: Number(r.current_balance || 0),
+        current_balance: Number(r.current_balance || 0),
+        isActive: true,
+        is_active: true,
+        parentId: r.parent_id || null,
+        parent_id: r.parent_id || null,
+        parentCode: '',
+        parent_code: '',
+        tierLevel,
+        tier_level: tierLevel,
+        createdAt: r.created_at,
+        created_at: r.created_at
+      };
+    });
     return res.json(accounts);
   } catch (err: any) {
-    console.warn('[Finance COA] Fallback to FinanceService:', err.message);
+    console.warn('[Finance COA] Error fetching from Postgres, trying FinanceService:', err.message);
     try {
       const data = await FinanceService.getCoaAccounts();
       return res.json(Array.isArray(data) ? data : []);
@@ -88,11 +81,71 @@ financeRouter.get('/coa', async (req, res) => {
 });
 
 financeRouter.post('/coa', async (req, res) => {
+  let client: Client | null = null;
   try {
-    const created = await FinanceService.addCoaAccount(req.body);
-    return res.json(created);
-  } catch (_) {
-    return res.json(FinanceController.addAccount(req.body));
+    client = await getDbClient();
+    const body = req.body || {};
+    const code = (body.code || '').trim();
+    const name = (body.name || '').trim();
+    if (!code || !name) {
+      return res.status(400).json({ error: 'Account Code and Name are required' });
+    }
+    const rawType = (body.account_type || body.type || body.classification || 'ASSET').toUpperCase();
+    const accountType = rawType === 'REVENUE' ? 'INCOME' : rawType;
+    let parentId = body.parent_id || body.parentId || null;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (parentId && !uuidRegex.test(parentId)) {
+      const parentLookup = await client.query('SELECT id FROM chart_of_accounts WHERE code = $1 LIMIT 1', [parentId]);
+      parentId = parentLookup.rows[0]?.id || null;
+    }
+    const currentBalance = Number(body.current_balance ?? body.currentBalance ?? 0);
+
+    const insertResult = await client.query(`
+      INSERT INTO chart_of_accounts (code, name, account_type, parent_id, current_balance)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id, code, name, account_type, parent_id, current_balance, created_at
+    `, [code, name, accountType, parentId, currentBalance]);
+
+    const r = insertResult.rows[0];
+    const normalizedType = r.account_type === 'INCOME' ? 'REVENUE' : r.account_type;
+    const codeStr = r.code || '';
+    const isMaster = codeStr === '1000-00' || codeStr === '2000-00' || codeStr === '3000-00' || codeStr === '4000-00' || codeStr === '5000-00' || !codeStr.includes('-');
+    const isSub = codeStr.endsWith('-00') && !isMaster;
+    const tierLevel = isMaster ? 1 : (isSub ? 2 : 3);
+
+    return res.json({
+      id: r.id,
+      code: r.code,
+      name: r.name,
+      type: normalizedType,
+      classification: normalizedType,
+      account_type: r.account_type,
+      subType: '',
+      sub_type: '',
+      currency: 'AED',
+      currentBalance: Number(r.current_balance || 0),
+      current_balance: Number(r.current_balance || 0),
+      isActive: true,
+      is_active: true,
+      parentId: r.parent_id || null,
+      parent_id: r.parent_id || null,
+      parentCode: '',
+      parent_code: '',
+      tierLevel,
+      tier_level: tierLevel,
+      createdAt: r.created_at,
+      created_at: r.created_at
+    });
+  } catch (err: any) {
+    console.error('[Finance POST /coa] Postgres insert failed:', err.message);
+    try {
+      const created = await FinanceService.addCoaAccount(req.body);
+      return res.json(created);
+    } catch (e: any) {
+      return res.status(400).json({ error: e.message || err.message });
+    }
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
 });
 
