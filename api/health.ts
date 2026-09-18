@@ -11,6 +11,7 @@ export default function handler(req: any, res: any) {
     status: 'healthy',
     system: 'Vintage Vibe Enterprise ERP',
     runtime: 'Vercel Serverless Function',
+    version: '2.4.0',
     timestamp: new Date().toISOString()
   });
 }

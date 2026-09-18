@@ -2450,22 +2450,26 @@ export default async function handler(req: any, res: any) {
             p.currency || 'AED', p.isActive !== false, JSON.stringify(accountMap), coaId
           ]);
 
-          // 2. Auto-create COA sub-account
-          await client.query(`
-            INSERT INTO coa_accounts (id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, party_id, tier_level, parent_code)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 3, $11)
-            ON CONFLICT (code) DO UPDATE SET
-              name = EXCLUDED.name,
-              type = EXCLUDED.type,
-              sub_type = EXCLUDED.sub_type,
-              party_id = EXCLUDED.party_id,
-              parent_id = EXCLUDED.parent_id,
-              parent_code = EXCLUDED.parent_code
-          `, [
-            coaId, coaCode, coaName, coaType, subType,
-            p.currency || 'AED', Number(p.currentBalance || p.current_balance || 0),
-            p.isActive !== false, parentId, id, parentCode
-          ]);
+          // 2. Auto-create COA sub-account in live accounts table
+          try {
+            await client.query(`
+              INSERT INTO accounts (account_code, account_name, account_type_id, is_active, is_transactional, account_level)
+              VALUES ($1, $2, $3, true, true, 3)
+              ON CONFLICT (account_code) DO NOTHING;
+            `, [coaCode, coaName, isSupplier ? 2 : (isClient ? 1 : 2)]);
+          } catch (_) {}
+
+          try {
+            await client.query(`
+              INSERT INTO coa_accounts (id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, party_id, tier_level, parent_code)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 3, $11)
+              ON CONFLICT (code) DO NOTHING;
+            `, [
+              coaId, coaCode, coaName, coaType, subType,
+              p.currency || 'AED', Number(p.currentBalance || p.current_balance || 0),
+              p.isActive !== false, parentId, id, parentCode
+            ]);
+          } catch (_) {}
 
           await client.end();
           return res.status(200).json({ success: true, id, code, coaAccountId: coaId });
