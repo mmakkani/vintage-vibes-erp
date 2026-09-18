@@ -617,7 +617,7 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
                   value={form.residencySponsor}
                   onChange={e => setForm({ ...form, residencySponsor: e.target.value })}
                   className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs bg-white"
-                  placeholder="HFZA GOLDTEX FZC"
+                  placeholder="HFZA Al Wasl Logistics"
                 />
               </div>
             </div>

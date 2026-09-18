@@ -11,6 +11,18 @@ export class FinanceService {
     this.cachedCoaAccounts = null;
     this.coaAccountsPromise = null;
     this.lastCoaFetched = 0;
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const keysToRemove = [
+          'vintage_cached_coa',
+          'vibe_cached_coa',
+          'coa_accounts',
+          'vintage_coa',
+          'vibe_cached_parties'
+        ];
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+      } catch {}
+    }
   }
 
   // --- Chart of Accounts (COA) ---
@@ -24,14 +36,14 @@ export class FinanceService {
 
     this.coaAccountsPromise = (async () => {
       try {
-        // 1. Primary route: Query Express backend directly connected to PostgreSQL coa_accounts
+        // 1. Primary route: Query Express backend directly connected to PostgreSQL chart_of_accounts / coa_accounts
         if (typeof window !== 'undefined') {
           try {
             const rawFetch = (window as any).__originalFetch || window.fetch;
-            const apiRes = await rawFetch('/api/finance/coa');
+            const apiRes = await rawFetch('/api/finance/coa?_t=' + Date.now());
             if (apiRes && apiRes.ok) {
               const apiData = await apiRes.json();
-              if (Array.isArray(apiData) && apiData.length > 0) {
+              if (Array.isArray(apiData)) {
                 this.cachedCoaAccounts = apiData;
                 this.lastCoaFetched = Date.now();
                 return apiData;
@@ -40,71 +52,94 @@ export class FinanceService {
           } catch (_) {}
         }
 
-        // 2. Secondary fallback: Prefer live SQL view with dynamically calculated balances
+        // 2. Secondary fallback: Query Supabase database tables directly
         let rows: any[] = [];
+        let querySucceeded = false;
+
+        // Try 'chart_of_accounts' first (verified primary table)
         try {
-          const { data: viewData, error: viewErr } = await supabase
-            .from('view_coa_live_balances')
+          const { data: coaData, error: coaErr } = await supabase
+            .from('chart_of_accounts')
             .select('*')
-            .order('account_code', { ascending: true });
-          if (!viewErr && Array.isArray(viewData) && viewData.length > 0) {
-            rows = viewData.map((r: any) => ({
-              id: r.account_id || r.id,
-              code: r.account_code || r.code,
-              name: r.account_name || r.name,
-              type: (r.account_type || r.type || 'ASSET').toUpperCase(),
-              sub_type: r.sub_type || '',
-              currency: r.currency || 'AED',
-              current_balance: Number(r.current_balance ?? 0),
-              is_active: r.is_active !== false,
-              parent_id: r.parent_id,
-              tier_level: r.tier_level,
-              parent_code: r.parent_code,
-              party_id: r.party_id
-            }));
+            .order('code', { ascending: true });
+          if (!coaErr && Array.isArray(coaData)) {
+            rows = coaData;
+            querySucceeded = true;
           }
         } catch (_) {}
 
-        if (rows.length === 0) {
-          const { data, error } = await supabase
-            .from('coa_accounts')
-            .select('id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, party_id')
-            .order('code', { ascending: true });
-
-          if (error) {
-            console.error('Supabase error on coa_accounts:', error);
-            if (this.cachedCoaAccounts) return this.cachedCoaAccounts;
-            throw new Error(error.message || 'Database error occurred reading Chart of Accounts');
-          }
-          rows = data || [];
+        // If chart_of_accounts query was not successful, try 'view_coa_live_balances'
+        if (!querySucceeded) {
+          try {
+            const { data: viewData, error: viewErr } = await supabase
+              .from('view_coa_live_balances')
+              .select('*')
+              .order('account_code', { ascending: true });
+            if (!viewErr && Array.isArray(viewData)) {
+              rows = viewData.map((r: any) => ({
+                id: r.account_id || r.id,
+                code: r.account_code || r.code,
+                name: r.account_name || r.name,
+                type: (r.account_type || r.type || 'ASSET').toUpperCase(),
+                sub_type: r.sub_type || '',
+                currency: r.currency || 'AED',
+                current_balance: Number(r.current_balance ?? 0),
+                is_active: r.is_active !== false,
+                parent_id: r.parent_id,
+                tier_level: r.tier_level,
+                parent_code: r.parent_code,
+                party_id: r.party_id
+              }));
+              querySucceeded = true;
+            }
+          } catch (_) {}
         }
 
-        const mapped = rows.map((row: any) => ({
-          id: row.id,
-          code: row.code,
-          name: row.name,
-          type: (row.type || 'ASSET').toUpperCase(),
-          classification: (row.type || 'ASSET').toUpperCase() as any,
-          subType: row.sub_type || '',
-          sub_type: row.sub_type || '',
-          currency: row.currency || 'AED',
-          currentBalance: Number(row.current_balance ?? 0),
-          current_balance: Number(row.current_balance ?? 0),
-          isActive: row.is_active !== false,
-          is_active: row.is_active !== false,
-          parentId: row.parent_id,
-          parent_id: row.parent_id,
-          partyId: row.party_id,
-          party_id: row.party_id,
-          tierLevel: row.tier_level || (row.code?.includes('-') ? (row.code.split('-').length > 2 ? 3 : 2) : 1),
-          parentCode: row.parent_code || '',
-          isSystem: Boolean(row.is_system),
-          createdAt: row.created_at
-        }));
+        // If still not successful, try 'coa_accounts'
+        if (!querySucceeded) {
+          try {
+            const { data, error } = await supabase
+              .from('coa_accounts')
+              .select('id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, party_id')
+              .order('code', { ascending: true });
 
-        this.cachedCoaAccounts = mapped;
-        this.lastCoaFetched = Date.now();
-        return mapped;
+            if (!error && Array.isArray(data)) {
+              rows = data;
+              querySucceeded = true;
+            }
+          } catch (_) {}
+        }
+
+        if (querySucceeded) {
+          const mapped = rows.map((row: any) => ({
+            id: row.id,
+            code: row.code,
+            name: row.name,
+            type: (row.type || 'ASSET').toUpperCase(),
+            classification: (row.type || 'ASSET').toUpperCase() as any,
+            subType: row.sub_type || '',
+            sub_type: row.sub_type || '',
+            currency: row.currency || 'AED',
+            currentBalance: Number(row.current_balance ?? 0),
+            current_balance: Number(row.current_balance ?? 0),
+            isActive: row.is_active !== false,
+            is_active: row.is_active !== false,
+            parentId: row.parent_id,
+            parent_id: row.parent_id,
+            partyId: row.party_id,
+            party_id: row.party_id,
+            tierLevel: row.tier_level || (row.code?.includes('-') ? (row.code.split('-').length > 2 ? 3 : 2) : 1),
+            parentCode: row.parent_code || '',
+            isSystem: Boolean(row.is_system),
+            createdAt: row.created_at
+          }));
+
+          this.cachedCoaAccounts = mapped;
+          this.lastCoaFetched = Date.now();
+          return mapped;
+        }
+
+        return this.cachedCoaAccounts || [];
       } finally {
         this.coaAccountsPromise = null;
       }

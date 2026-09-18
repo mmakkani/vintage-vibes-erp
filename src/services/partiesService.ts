@@ -38,7 +38,11 @@ export class PartiesService {
               createdAt: r.createdAt || r.created_at || new Date().toISOString()
             }));
             try {
-              localStorage.setItem('vibe_cached_parties', JSON.stringify(normalized));
+              if (normalized.length > 0) {
+                localStorage.setItem('vibe_cached_parties', JSON.stringify(normalized));
+              } else {
+                localStorage.removeItem('vibe_cached_parties');
+              }
             } catch {}
             return normalized;
           }
@@ -53,7 +57,14 @@ export class PartiesService {
         supabase.from('view_coa_live_balances').select('party_id, account_id, current_balance')
       ]);
 
-      if (!partiesRes.error && partiesRes.data && partiesRes.data.length > 0) {
+      if (!partiesRes.error && Array.isArray(partiesRes.data)) {
+        if (partiesRes.data.length === 0) {
+          try {
+            localStorage.removeItem('vibe_cached_parties');
+          } catch {}
+          return [];
+        }
+
         const liveBalancesMap = new Map<string, number>();
         if (liveBalancesRes.data) {
           liveBalancesRes.data.forEach((row: any) => {
@@ -101,21 +112,6 @@ export class PartiesService {
         return mapped;
       }
     } catch (_) {}
-
-    // 3. Fallback to localStorage cache
-    try {
-      const cached = localStorage.getItem('vibe_cached_parties');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((r: any) => ({
-            ...r,
-            creditLimit: Number(r.creditLimit ?? r.credit_limit ?? 0),
-            currentBalance: Number(r.currentBalance ?? r.current_balance ?? 0)
-          }));
-        }
-      }
-    } catch {}
 
     return [];
   }

@@ -21,21 +21,34 @@ financeRouter.get('/coa', async (req, res) => {
   let client: Client | null = null;
   try {
     client = await getDbClient();
+    const tblCheck = await client.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+        AND table_name IN ('chart_of_accounts', 'coa_accounts')
+      ORDER BY CASE WHEN table_name = 'chart_of_accounts' THEN 1 ELSE 2 END
+      LIMIT 1;
+    `);
+    const targetTable = tblCheck.rows[0]?.table_name;
+    if (!targetTable) {
+      return res.json([]);
+    }
+
     const result = await client.query(`
       SELECT 
         id, 
         code, 
         name, 
-        type, 
-        sub_type, 
-        currency, 
-        current_balance, 
-        is_active, 
+        COALESCE(type, 'ASSET') AS type, 
+        COALESCE(sub_type, '') AS sub_type, 
+        COALESCE(currency, 'AED') AS currency, 
+        COALESCE(current_balance, 0) AS current_balance, 
+        COALESCE(is_active, true) AS is_active, 
         parent_id, 
         parent_code, 
-        tier_level, 
+        COALESCE(tier_level, 1) AS tier_level, 
         party_id
-      FROM coa_accounts
+      FROM ${targetTable}
       ORDER BY code ASC
     `);
     const accounts = result.rows.map((r: any) => ({
@@ -62,12 +75,12 @@ financeRouter.get('/coa', async (req, res) => {
     }));
     return res.json(accounts);
   } catch (err: any) {
-    console.warn('[Finance COA] Falling back to FinanceService/Controller:', err.message);
+    console.warn('[Finance COA] Fallback to FinanceService:', err.message);
     try {
       const data = await FinanceService.getCoaAccounts();
-      return res.json(data);
+      return res.json(Array.isArray(data) ? data : []);
     } catch (_) {
-      return res.json(FinanceController.getCOA());
+      return res.json([]);
     }
   } finally {
     if (client) await client.end().catch(() => {});

@@ -49,11 +49,7 @@ export async function safeFetchJson<T = any>(
         return (await SetupService.getShops()) as any;
       }
       if (url.includes('/parties')) {
-        try {
-          const cached = typeof localStorage !== 'undefined' ? localStorage.getItem('vibe_cached_parties') : null;
-          if (cached) return JSON.parse(cached);
-        } catch (_) {}
-        return [];
+        return (await PartiesService.getParties()) as any;
       }
       if (url.includes('/purchase/gate-passes') || url.includes('/bales')) {
         return (await PurchaseService.getInwardGatePasses()) as any;

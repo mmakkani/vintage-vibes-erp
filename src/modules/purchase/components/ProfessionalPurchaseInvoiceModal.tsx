@@ -63,19 +63,12 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
   onSuccess
 }) => {
   const [internalParties, setInternalParties] = useState<Party[]>(() => {
-    if (Array.isArray(partiesProp) && partiesProp.length > 0) return partiesProp;
-    try {
-      const cached = localStorage.getItem('vibe_cached_parties');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
+    if (Array.isArray(partiesProp)) return partiesProp;
     return [];
   });
 
   useEffect(() => {
-    if (Array.isArray(partiesProp) && partiesProp.length > 0) {
+    if (Array.isArray(partiesProp)) {
       setInternalParties(partiesProp);
     }
   }, [partiesProp]);

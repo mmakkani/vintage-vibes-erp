@@ -1200,7 +1200,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   type="text"
                   value={editPartyForm.name}
                   onChange={e => setEditPartyForm({ ...editPartyForm, name: e.target.value })}
-                  placeholder="e.g. GOLDTEX FZC"
+                  placeholder="e.g. Al Wasl Trading LLC"
                   className={`w-full border rounded p-1.5 text-xs font-semibold text-slate-800 ${
                     editPartyForm.name.trim() && parties.some(p => p.id !== editPartyForm.id && p.name.trim().toLowerCase() === editPartyForm.name.trim().toLowerCase())
                       ? 'border-red-500 bg-red-50/40 focus:border-red-600'

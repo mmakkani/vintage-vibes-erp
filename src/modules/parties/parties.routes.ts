@@ -46,7 +46,10 @@ partiesRouter.get('/', async (req, res) => {
     const salesCountsRes = await client.query('SELECT client_id as party_id, COUNT(*) as count FROM sales_invoices GROUP BY client_id;').catch(() => ({ rows: [] }));
     const glCountsRes = await client.query('SELECT party_id, COUNT(*) as count FROM general_ledger WHERE party_id IS NOT NULL GROUP BY party_id;').catch(() => ({ rows: [] }));
 
-    if (partiesRes.rows && partiesRes.rows.length > 0) {
+    if (partiesRes.rows) {
+      if (partiesRes.rows.length === 0) {
+        return res.json([]);
+      }
       const liveBalancesMap = new Map<string, number>();
       (liveBalancesRes.rows || []).forEach((row: any) => {
         if (row.party_id) liveBalancesMap.set(String(row.party_id), Number(row.current_balance || 0));
@@ -117,7 +120,7 @@ partiesRouter.get('/', async (req, res) => {
   // Fallback to Supabase client
   try {
     const { data, error } = await supabase.from('parties').select('*').order('name');
-    if (!error && data && data.length > 0) {
+    if (!error && Array.isArray(data)) {
       return res.json(data.map((r: any) => ({
         id: String(r.id),
         code: r.code || `P-${String(r.id).slice(-4)}`,

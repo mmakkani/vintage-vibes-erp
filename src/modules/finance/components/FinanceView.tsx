@@ -371,8 +371,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         PartiesService.getParties().catch(() => safeFetchJson<Party[]>('/api/parties', undefined, 3, 300))
       ]);
 
-      const coaList = (Array.isArray(coaRes) && coaRes.length > 0) ? coaRes : await safeFetchJson<COAAccount[]>('/api/finance/coa', undefined, 3, 300);
-      const finalCoa = Array.isArray(coaList) && coaList.length > 0 ? coaList : (Array.isArray(coaRes) ? coaRes : []);
+      const finalCoa = Array.isArray(coaRes) ? coaRes : [];
       setAccounts(finalCoa);
       setVouchers(Array.isArray(vchRes) ? vchRes : []);
       setLedgers(Array.isArray(ledRes) ? ledRes : []);
@@ -421,6 +420,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   }, [glSelectedTarget, glDateFrom, glDateTo, glSearchText, subTab]);
 
   useEffect(() => {
+    FinanceService.clearCoaCache();
     loadData();
   }, [syncVersion]);
 
@@ -1435,20 +1435,28 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
-                  {filteredAccounts.map(acc => (
-                    <COARow
-                      key={acc.id}
-                      acc={acc}
-                      isDebitNormal={
-                        (acc.type || acc.classification || '').toString().toUpperCase() === 'ASSET' ||
-                        (acc.type || acc.classification || '').toString().toUpperCase() === 'EXPENSE'
-                      }
-                      onViewLedger={(accId) => {
-                        setGlSelectedTarget(accId);
-                        setSubTab('ledger');
-                      }}
-                    />
-                  ))}
+                  {filteredAccounts.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-3.5 py-8 text-center text-slate-400 font-sans text-xs">
+                        No accounts found in Chart of Accounts database.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredAccounts.map(acc => (
+                      <COARow
+                        key={acc.id}
+                        acc={acc}
+                        isDebitNormal={
+                          (acc.type || acc.classification || '').toString().toUpperCase() === 'ASSET' ||
+                          (acc.type || acc.classification || '').toString().toUpperCase() === 'EXPENSE'
+                        }
+                        onViewLedger={(accId) => {
+                          setGlSelectedTarget(accId);
+                          setSubTab('ledger');
+                        }}
+                      />
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
