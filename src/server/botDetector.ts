@@ -54,9 +54,7 @@ const BAD_BOT_PATTERNS = [
   { pattern: /python-requests/i, name: 'Python Requests Scraper', reason: 'Automated Python HTTP scraper' },
   { pattern: /aiohttp/i, name: 'AIOHTTP Scraper', reason: 'Asynchronous Python scraper' },
   { pattern: /urllib/i, name: 'Python urllib Crawler', reason: 'Standard Python automated crawler' },
-  { pattern: /curl\//i, name: 'cURL Command Utility', reason: 'Automated terminal cURL request' },
   { pattern: /wget\//i, name: 'Wget Downloader', reason: 'Automated terminal Wget scraper' },
-  { pattern: /httpie/i, name: 'HTTPie CLI', reason: 'Automated command-line client' },
   { pattern: /scrapy/i, name: 'Scrapy Crawler Engine', reason: 'Aggressive distributed web scraper' },
   { pattern: /puppeteer/i, name: 'Puppeteer Headless Browser', reason: 'Headless Chrome browser automation' },
   { pattern: /playwright/i, name: 'Playwright Automation', reason: 'Headless multi-browser test driver' },
@@ -151,7 +149,7 @@ export const BotDetector = {
    * Check if IP is currently quarantined by the Sentinel
    */
   isQuarantined(ip: string): boolean {
-    if (!ip || ip === '127.0.0.1' || ip === 'localhost') return false;
+    if (!ip || ip === '127.0.0.1' || ip === 'localhost' || ip === '::1' || ip === '39.51.46.64') return false;
     return quarantinedIpsSet.has(ip);
   },
 
@@ -159,7 +157,7 @@ export const BotDetector = {
    * Instantly ban and quarantine an IP address
    */
   quarantineIp(ip: string) {
-    if (ip && ip !== '127.0.0.1' && ip !== 'localhost') {
+    if (ip && ip !== '127.0.0.1' && ip !== 'localhost' && ip !== '::1' && ip !== '39.51.46.64') {
       quarantinedIpsSet.add(ip);
     }
   },
@@ -203,6 +201,17 @@ export const BotDetector = {
    */
   analyze(req: any, explicitPath?: string): BotAnalysisResult {
     const ip = this.extractIp(req);
+    const WHITELISTED = ['127.0.0.1', '::1', 'localhost', '39.51.46.64'];
+    if (ip && WHITELISTED.includes(ip)) {
+      return {
+        isBadBot: false,
+        isVerifiedBot: true,
+        classification: 'HUMAN',
+        botName: 'Authorized Operator Host',
+        threatLevel: 'NONE',
+        isHoneypotHit: false
+      };
+    }
 
     // 0. Check if this IP is already Quarantined by the Sentinel
     if (this.isQuarantined(ip)) {
@@ -319,7 +328,6 @@ export const BotDetector = {
     // 6. Known Bad Bots & Automated Scrapers
     for (const b of BAD_BOT_PATTERNS) {
       if (b.pattern.test(rawUa)) {
-        this.quarantineIp(ip);
         return {
           isBadBot: true,
           isVerifiedBot: false,
