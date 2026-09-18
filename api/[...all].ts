@@ -1,9 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { Client } from 'pg';
 import { createClient } from '@supabase/supabase-js';
-import QRCode from 'qrcode';
+
 function getClientIp(req: any): string {
   const forwarded = req.headers?.['x-forwarded-for'];
   if (typeof forwarded === 'string') {
@@ -32,29 +31,53 @@ function getClientLocation(req: any): { city: string; country: string } {
   return { city: city || 'Unknown City', country: country || 'AE' };
 }
 
-const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
-const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
-let supabaseAdmin: any;
-try {
-  supabaseAdmin = createClient(supaUrl, supaKey || 'anon-key');
-} catch (e: any) {
-  console.warn('[Supabase Client Init Warning]:', e?.message || e);
-  supabaseAdmin = {
-    from: () => ({
-      select: () => Promise.resolve({ data: [], error: null }),
-      insert: () => Promise.resolve({ data: [], error: null }),
-      update: () => Promise.resolve({ data: [], error: null }),
-      delete: () => Promise.resolve({ data: [], error: null }),
-      upsert: () => Promise.resolve({ data: [], error: null })
-    }),
-    rpc: () => Promise.resolve({ data: null, error: null })
-  };
+let _supabaseAdmin: any = null;
+function getSupabaseAdmin() {
+  if (!_supabaseAdmin) {
+    try {
+      const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
+      const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+      _supabaseAdmin = createClient(supaUrl, supaKey || 'anon-key');
+    } catch (e: any) {
+      console.warn('[Supabase Client Init Warning]:', e?.message || e);
+      _supabaseAdmin = {
+        from: () => ({
+          select: () => ({ order: () => Promise.resolve({ data: [] }), eq: () => Promise.resolve({ data: [] }), limit: () => Promise.resolve({ data: [] }), maybeSingle: () => Promise.resolve({ data: null }) }),
+          insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: {} }) }) }),
+          update: () => ({ eq: () => ({ select: () => ({ single: () => Promise.resolve({ data: {} }) }) }) }),
+          delete: () => ({ eq: () => Promise.resolve({ data: [] }), or: () => Promise.resolve({ data: [] }) }),
+          upsert: () => Promise.resolve({ data: [] })
+        }),
+        rpc: () => Promise.resolve({ data: null, error: null })
+      };
+    }
+  }
+  return _supabaseAdmin;
 }
 
-async function getPgClient(): Promise<Client | null> {
+const supabaseAdmin = new Proxy({} as any, {
+  get(_target, prop) {
+    const client = getSupabaseAdmin();
+    const val = client[prop];
+    return typeof val === 'function' ? val.bind(client) : val;
+  }
+});
+
+let pgClientClass: any = null;
+async function getPgClient(): Promise<any> {
   const DEFAULT_DB_URL = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
   let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL;
   try {
+    if (!pgClientClass) {
+      try {
+        const pgMod: any = await import('pg');
+        pgClientClass = pgMod.Client || pgMod.default?.Client || pgMod.default;
+      } catch (importErr: any) {
+        console.warn('[PG Dynamic Import Warning]:', importErr?.message);
+      }
+    }
+    if (!pgClientClass) return null;
+
     if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
       dbUrl = DEFAULT_DB_URL;
     }
@@ -64,14 +87,17 @@ async function getPgClient(): Promise<Client | null> {
       if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
       dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
     }
-    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 });
+    const client = new pgClientClass({ connectionString: dbUrl, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 });
     await client.connect();
     return client;
   } catch (err: any) {
     try {
-      const fallbackClient = new Client({ connectionString: DEFAULT_DB_URL, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 });
-      await fallbackClient.connect();
-      return fallbackClient;
+      if (pgClientClass) {
+        const fallbackClient = new pgClientClass({ connectionString: DEFAULT_DB_URL, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 });
+        await fallbackClient.connect();
+        return fallbackClient;
+      }
+      return null;
     } catch (fbErr: any) {
       console.warn('[Serverless PG Connect Warning]:', fbErr?.message || fbErr);
       return null;
@@ -728,7 +754,10 @@ function saveSessionsToTmp() {
   }
 }
 
+let hasLoadedSessionsFromTmp = false;
 function loadSessionsFromTmp() {
+  if (hasLoadedSessionsFromTmp) return;
+  hasLoadedSessionsFromTmp = true;
   try {
     if (fs.existsSync(tmpSessionsFile)) {
       const raw = fs.readFileSync(tmpSessionsFile, 'utf-8');
@@ -741,21 +770,12 @@ function loadSessionsFromTmp() {
     console.warn('[Tmp Sessions Load Notice]:', e?.message);
   }
 }
-loadSessionsFromTmp();
 
 async function persistSessionToSupabase(session: WhatsAppDeviceSession) {
   saveSessionsToTmp();
   try {
-    let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
-    if (!dbUrl || dbUrl.includes('placeholder')) return;
-    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-    if (match) {
-      let [_, user, rawPwd, host, port, rest] = match;
-      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
-      dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
-    }
-    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-    await client.connect();
+    const client = await getPgClient();
+    if (!client) return;
     await client.query(`
       CREATE TABLE IF NOT EXISTS whatsapp_sessions (
         user_id VARCHAR(64) PRIMARY KEY,
@@ -769,13 +789,14 @@ async function persistSessionToSupabase(session: WhatsAppDeviceSession) {
       ON CONFLICT (user_id) DO UPDATE
       SET session_data = $2, updated_at = NOW();
     `, [session.userId, JSON.stringify(session)]);
-    await client.end();
+    await client.end().catch(() => {});
   } catch (err: any) {
     console.warn('[Supabase WhatsApp Session Save Notice]:', err?.message);
   }
 }
 
 function getOrCreateSession(userId: string, userName?: string): WhatsAppDeviceSession {
+  loadSessionsFromTmp();
   let session = sessionsMap.get(userId);
   if (!session) {
     session = {
@@ -1521,7 +1542,9 @@ export default async function handler(req: any, res: any) {
       // In-process fallback generation
       if (isFallbackRequested) {
         try {
-          const qrDataUrl = await QRCode.toDataURL(qrRawUrl, {
+          const qrcodeMod: any = await import('qrcode');
+          const qrGen = qrcodeMod.default || qrcodeMod;
+          const qrDataUrl = await qrGen.toDataURL(qrRawUrl, {
             margin: 2,
             width: 280,
             color: { dark: '#0a0f1d', light: '#ffffff' }
@@ -2031,26 +2054,18 @@ export default async function handler(req: any, res: any) {
         const template = customReportTemplatesList.find(t => t.id === templateId) || customReportTemplatesList[0];
         
         let coaRows: any[] = [];
-        let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
-        if (dbUrl && !dbUrl.includes('placeholder')) {
-          try {
-            const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-            if (match) {
-              let [_, user, rawPwd, host, port, rest] = match;
-              if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
-              dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
-            }
-            const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-            await client.connect();
+        try {
+          const client = await getPgClient();
+          if (client) {
             const resQ = await client.query(`
               SELECT a.account_id AS id, a.account_code AS code, a.account_name AS name, COALESCE(t.type_name, 'ASSET') AS type, '' AS sub_type, 0.00 AS current_balance 
               FROM accounts a 
               LEFT JOIN account_types t ON a.account_type_id = t.type_id
             `);
-            coaRows = resQ.rows;
-            await client.end();
-          } catch (_) {}
-        }
+            coaRows = resQ.rows || [];
+            await client.end().catch(() => {});
+          }
+        } catch (_) {}
 
         const executedSections = (template?.sections || []).map((sec: any) => {
           const sectionAccounts = (sec.accountIds || []).map((accId: string) => {
@@ -2316,20 +2331,12 @@ export default async function handler(req: any, res: any) {
 
     // Finance Vouchers
     if (pathname.includes('/finance/vouchers')) {
-      let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
-      if (dbUrl && !dbUrl.includes('placeholder')) {
-        try {
-          const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-          if (match) {
-            let [_, user, rawPwd, host, port, rest] = match;
-            if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
-            dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
-          }
-          const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-          await client.connect();
+      try {
+        const client = await getPgClient();
+        if (client) {
           const vchRes = await client.query('SELECT * FROM vouchers ORDER BY date DESC, created_at DESC LIMIT 200');
           const veRes = await client.query('SELECT * FROM voucher_entries ORDER BY id ASC');
-          await client.end();
+          await client.end().catch(() => {});
 
           const allEntries = veRes.rows || [];
           const formatted = vchRes.rows.map((row: any) => {
@@ -2370,9 +2377,9 @@ export default async function handler(req: any, res: any) {
             };
           });
           return res.status(200).json(formatted);
-        } catch (e: any) {
-          console.warn('Error querying vouchers in serverless gateway:', e?.message);
         }
+      } catch (e: any) {
+        console.warn('Error querying vouchers in serverless gateway:', e?.message);
       }
       if (method === 'DELETE') {
         const vId = pathname.split('/').pop();

@@ -1,5 +1,3 @@
-import { Client } from 'pg';
-
 function generatePermissions(userId: string, role: string) {
   const modules = [
     'DASHBOARD', 'PURCHASE', 'INVENTORY', 'SALES', 'FINANCE', 'PARTIES', 'HR', 'SETUP', 'AUDIT', 'AUTH'
@@ -105,9 +103,12 @@ export default async function handler(req: any, res: any) {
       }
 
       async function tryPgQuery(connStr: string) {
-        const client = new Client({
+        const pgMod: any = await import('pg');
+        const ClientClass = pgMod.Client || pgMod.default?.Client || pgMod.default;
+        const client = new ClientClass({
           connectionString: connStr,
-          ssl: { rejectUnauthorized: false }
+          ssl: { rejectUnauthorized: false },
+          connectionTimeoutMillis: 5000
         });
         await client.connect();
         const result = await client.query(
@@ -121,7 +122,7 @@ export default async function handler(req: any, res: any) {
            LIMIT 1`,
           [username]
         );
-        await client.end();
+        await client.end().catch(() => {});
         return result.rows?.[0] || null;
       }
 
