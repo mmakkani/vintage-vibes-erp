@@ -2231,63 +2231,21 @@ export default async function handler(req: any, res: any) {
         let rows: any[] = [];
         try {
           const result = await client.query(`
-            SELECT 
-              a.account_id,
-              a.account_code,
-              a.account_name,
-              a.account_type_id,
-              t.type_name,
-              a.parent_id,
-              p.account_code AS parent_code,
-              a.is_active,
-              a.is_transactional,
-              a.account_level,
-              COALESCE(
-                ROUND(
-                  CASE 
-                    WHEN UPPER(COALESCE(t.type_name, '')) IN ('ASSET', 'EXPENSE') OR a.account_code LIKE '1%' OR a.account_code LIKE '5%' THEN 
-                      COALESCE(SUM(entries.debit), 0) - COALESCE(SUM(entries.credit), 0)
-                    ELSE 
-                      COALESCE(SUM(entries.credit), 0) - COALESCE(SUM(entries.debit), 0)
-                  END, 2
-                ), 0.00
-              ) AS current_balance
+            SELECT a.*, t.type_name, p.account_code AS parent_code, 0.00 AS current_balance
             FROM accounts a
             LEFT JOIN account_types t ON a.account_type_id = t.type_id
             LEFT JOIN accounts p ON a.parent_id = p.account_id
-            LEFT JOIN (
-              SELECT account_id::text AS acc_id, account_code, SUM(debit) AS debit, SUM(credit) AS credit 
-              FROM voucher_entries 
-              GROUP BY account_id, account_code
-              UNION ALL
-              SELECT account_id::text AS acc_id, NULL AS account_code, SUM(debit_amount) AS debit, SUM(credit_amount) AS credit 
-              FROM journal_items 
-              GROUP BY account_id
-            ) entries ON (entries.acc_id = a.account_id::text OR (entries.account_code IS NOT NULL AND entries.account_code = a.account_code))
-            GROUP BY a.account_id, a.account_code, a.account_name, a.account_type_id, t.type_name, a.parent_id, p.account_code, a.is_active, a.is_transactional, a.account_level
-            ORDER BY a.account_code ASC
+            ORDER BY a.account_code ASC;
           `);
           rows = result.rows;
         } catch (queryErr) {
-          const simpleResult = await client.query(`
-            SELECT a.*, t.type_name, p.account_code AS parent_code, 0.00 AS current_balance
-            FROM accounts a
-            LEFT JOIN account_types t ON a.account_type_id = t.type_id
-            LEFT JOIN accounts p ON a.parent_id = p.account_id
-            ORDER BY a.account_code ASC
-          `);
-          rows = simpleResult.rows;
+          const directResult = await client.query('SELECT * FROM accounts ORDER BY account_code ASC;');
+          rows = directResult.rows;
         }
 
         if (rows.length === 0) {
-          const simpleResult = await client.query(`
-            SELECT a.*, t.type_name, p.account_code AS parent_code, 0.00 AS current_balance
-            FROM accounts a
-            LEFT JOIN account_types t ON a.account_type_id = t.type_id
-            LEFT JOIN accounts p ON a.parent_id = p.account_id
-            ORDER BY a.account_code ASC
-          `);
-          rows = simpleResult.rows;
+          const directResult = await client.query('SELECT * FROM accounts ORDER BY account_code ASC;');
+          rows = directResult.rows;
         }
 
         await client.end();

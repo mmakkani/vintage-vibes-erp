@@ -43,10 +43,11 @@ export class FinanceService {
             const apiRes = await rawFetch('/api/finance/coa?_t=' + Date.now());
             if (apiRes && apiRes.ok) {
               const apiData = await apiRes.json();
-              if (Array.isArray(apiData)) {
-                this.cachedCoaAccounts = apiData;
+              const list = Array.isArray(apiData) ? apiData : (apiData?.accounts || apiData?.data || []);
+              if (Array.isArray(list) && list.length > 0) {
+                this.cachedCoaAccounts = list;
                 this.lastCoaFetched = Date.now();
-                return apiData;
+                return list;
               }
             }
           } catch (_) {}
