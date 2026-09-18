@@ -765,6 +765,28 @@ export class FinanceService {
     isBalanced: boolean;
     difference: number;
   }> {
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const q = new URLSearchParams();
+        if (startDate) q.append('startDate', startDate);
+        if (endDate) q.append('endDate', endDate);
+        const res = await rawFetch(`/api/finance/reports/trial-balance${q.toString() ? '?' + q.toString() : ''}`);
+        if (res && res.ok) {
+          const data = await res.json();
+          if (data && (Array.isArray(data.rows) || data.totalDebit !== undefined)) {
+            return {
+              rows: data.rows || [],
+              totalDebit: Number(data.totalDebit || 0),
+              totalCredit: Number(data.totalCredit || 0),
+              isBalanced: Boolean(data.isBalanced),
+              difference: Number(data.difference || 0)
+            };
+          }
+        }
+      } catch (_) {}
+    }
+
     try {
       const { data, error } = await supabase.rpc('get_trial_balance', {
         p_start_date: startDate || null,
@@ -787,7 +809,7 @@ export class FinanceService {
   }
 
   public static async getIncomeStatement(startDate?: string, endDate?: string): Promise<{
-    revenue: { accounts: any[]; total: number };
+    revenue: { accounts: any[]; total: number; categories?: any };
     cogs: { accounts: any[]; total: number };
     operatingExpenses: { accounts: any[]; total: number };
     expenses: { accounts: any[]; total: number };
@@ -795,6 +817,43 @@ export class FinanceService {
     netProfit: number;
     netOperatingProfit: number;
   }> {
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const q = new URLSearchParams();
+        if (startDate) q.append('startDate', startDate);
+        if (endDate) q.append('endDate', endDate);
+        const res = await rawFetch(`/api/finance/reports/income-statement${q.toString() ? '?' + q.toString() : ''}`);
+        if (res && res.ok) {
+          const data = await res.json();
+          if (data && (data.revenue || data.netProfit !== undefined)) {
+            return {
+              revenue: {
+                accounts: data.revenue?.accounts || [],
+                total: Number(data.revenue?.total || 0),
+                categories: data.revenue?.categories || {}
+              },
+              cogs: {
+                accounts: data.cogs?.accounts || [],
+                total: Number(data.cogs?.total || 0)
+              },
+              operatingExpenses: {
+                accounts: data.operatingExpenses?.accounts || [],
+                total: Number(data.operatingExpenses?.total || 0)
+              },
+              expenses: {
+                accounts: data.expenses?.accounts || [],
+                total: Number(data.expenses?.total || 0)
+              },
+              grossProfit: Number(data.grossProfit || 0),
+              netProfit: Number(data.netProfit || 0),
+              netOperatingProfit: Number(data.netOperatingProfit || data.netProfit || 0)
+            };
+          }
+        }
+      } catch (_) {}
+    }
+
     try {
       const { data, error } = await supabase.rpc('get_income_statement', {
         p_start_date: startDate || null,
@@ -851,6 +910,43 @@ export class FinanceService {
     balanced: boolean;
     difference: number;
   }> {
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const q = asOfDate ? `?asOfDate=${encodeURIComponent(asOfDate)}` : '';
+        const res = await rawFetch(`/api/finance/reports/balance-sheet${q}`);
+        if (res && res.ok) {
+          const data = await res.json();
+          if (data && (data.assets || data.totalAssets !== undefined)) {
+            return {
+              assets: {
+                accounts: data.assets?.accounts || [],
+                total: Number(data.assets?.total || 0),
+                categories: data.assets?.categories || {}
+              },
+              liabilities: {
+                accounts: data.liabilities?.accounts || [],
+                total: Number(data.liabilities?.total || 0),
+                categories: data.liabilities?.categories || {}
+              },
+              equity: {
+                accounts: data.equity?.accounts || [],
+                total: Number(data.equity?.total || 0),
+                categories: data.equity?.categories || {}
+              },
+              retainedEarnings: Number(data.retainedEarnings || 0),
+              totalAssets: Number(data.totalAssets || 0),
+              totalLiabilities: Number(data.totalLiabilities || 0),
+              totalEquity: Number(data.totalEquity || 0),
+              totalLiabilitiesAndEquity: Number(data.totalLiabilitiesAndEquity || 0),
+              balanced: Boolean(data.balanced),
+              difference: Number(data.difference || 0)
+            };
+          }
+        }
+      } catch (_) {}
+    }
+
     try {
       const { data, error } = await supabase.rpc('get_balance_sheet', {
         p_as_of_date: asOfDate || null
@@ -900,6 +996,23 @@ export class FinanceService {
   }
 
   public static async getFinancialReports(params?: { startDate?: string; endDate?: string; asOfDate?: string }): Promise<any> {
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const q = new URLSearchParams();
+        if (params?.startDate) q.append('startDate', params.startDate);
+        if (params?.endDate) q.append('endDate', params.endDate);
+        if (params?.asOfDate) q.append('asOfDate', params.asOfDate);
+        const res = await rawFetch(`/api/finance/reports${q.toString() ? '?' + q.toString() : ''}`);
+        if (res && res.ok) {
+          const data = await res.json();
+          if (data && (data.balanceSheet || data.trialBalance || data.incomeStatement)) {
+            return data;
+          }
+        }
+      } catch (_) {}
+    }
+
     const [tb, inc, bs] = await Promise.all([
       this.getTrialBalance(params?.startDate, params?.endDate),
       this.getIncomeStatement(params?.startDate, params?.endDate),
@@ -920,6 +1033,43 @@ export class FinanceService {
     endDate?: string;
     search?: string;
   }): Promise<{ entries: LedgerEntry[]; totalDebit: number; totalCredit: number }> {
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const q = new URLSearchParams();
+        if (filters?.accountId) q.append('accountId', filters.accountId);
+        if (filters?.partyId) q.append('partyId', filters.partyId);
+        if (filters?.startDate) q.append('startDate', filters.startDate);
+        if (filters?.endDate) q.append('endDate', filters.endDate);
+        if (filters?.search) q.append('search', filters.search);
+        const res = await rawFetch(`/api/finance/ledgers${q.toString() ? '?' + q.toString() : ''}`);
+        if (res && res.ok) {
+          const data = await res.json();
+          const list: any[] = Array.isArray(data) ? data : (Array.isArray(data?.entries) ? data.entries : []);
+          const entries: LedgerEntry[] = list.map((r: any) => ({
+            id: r.id,
+            voucherId: r.voucherId || r.voucher_id,
+            voucherNo: r.voucherNo || r.voucher_no,
+            accountId: r.accountId || r.account_id,
+            accountCode: r.accountCode || r.account_code,
+            accountName: r.accountName || r.account_name,
+            partyId: r.partyId || r.party_id,
+            partyName: r.partyName || r.party_name,
+            date: r.date,
+            debit: Number(r.debit || 0),
+            credit: Number(r.credit || 0),
+            runningBalance: Number(r.runningBalance || r.balance || 0),
+            balance: Number(r.runningBalance || r.balance || 0),
+            documentRef: r.documentRef || r.document_ref || '',
+            narration: r.narration || ''
+          }));
+          const totalDebit = entries.reduce((s, e) => s + (e.debit || 0), 0);
+          const totalCredit = entries.reduce((s, e) => s + (e.credit || 0), 0);
+          return { entries, totalDebit, totalCredit };
+        }
+      } catch (_) {}
+    }
+
     try {
       const { data, error } = await supabase.rpc('get_general_ledger_entries', {
         p_account_id: filters?.accountId || null,

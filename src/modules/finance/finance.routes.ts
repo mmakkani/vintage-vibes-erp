@@ -222,61 +222,138 @@ financeRouter.delete('/vouchers/:id', async (req, res) => {
 
 financeRouter.get('/ledgers', async (req, res) => {
   const { accountId, partyId, startDate, endDate, search } = req.query as any;
+  let client: Client | null = null;
   try {
-    const data = await FinanceService.getGeneralLedgerEntries({
-      accountId,
-      partyId,
-      startDate,
-      endDate,
-      search
-    });
-    return res.json(data.entries);
-  } catch (_) {
-    return res.json(FinanceController.getLedger(accountId, partyId));
+    client = await getDbClient();
+    const result = await client.query(
+      'SELECT get_general_ledger_entries($1, $2, $3, $4, $5) AS gl',
+      [accountId || null, partyId || null, startDate || null, endDate || null, search || null]
+    );
+    const gl = result.rows[0]?.gl;
+    const entries = (gl?.entries || []).map((r: any) => ({
+      id: r.id,
+      voucherId: r.voucherId,
+      voucherNo: r.voucherNo,
+      accountId: r.accountId,
+      accountCode: r.accountCode,
+      accountName: r.accountName,
+      partyId: r.partyId,
+      partyName: r.partyName,
+      date: r.date,
+      debit: Number(r.debit || 0),
+      credit: Number(r.credit || 0),
+      runningBalance: Number(r.runningBalance || 0),
+      balance: Number(r.runningBalance || 0),
+      documentRef: r.documentRef || '',
+      narration: r.narration || ''
+    }));
+    return res.json(entries);
+  } catch (err: any) {
+    console.warn('[Finance /ledgers] Postgres error, trying FinanceService:', err?.message);
+    try {
+      const data = await FinanceService.getGeneralLedgerEntries({ accountId, partyId, startDate, endDate, search });
+      return res.json(data.entries);
+    } catch (_) {
+      return res.json(FinanceController.getLedger(accountId, partyId));
+    }
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
 });
 
 financeRouter.get('/reports', async (req, res) => {
+  const s = (req.query.startDate as string) || null;
+  const e = (req.query.endDate as string) || null;
+  const asOf = (req.query.asOfDate as string) || e || null;
+  let client: Client | null = null;
   try {
-    const s = req.query.startDate as string;
-    const e = req.query.endDate as string;
-    const asOf = req.query.asOfDate as string;
-    const data = await FinanceService.getFinancialReports({ startDate: s, endDate: e, asOfDate: asOf });
-    return res.json(data);
-  } catch (_) {
-    return res.json(FinanceController.getFinancialStatements());
+    client = await getDbClient();
+    const tbRes = await client.query('SELECT get_trial_balance($1, $2) AS tb', [s, e]);
+    const incRes = await client.query('SELECT get_income_statement($1, $2) AS inc', [s, e]);
+    const bsRes = await client.query('SELECT get_balance_sheet($1) AS bs', [asOf]);
+
+    const tb = tbRes.rows[0]?.tb || { rows: [], totalDebit: 0, totalCredit: 0 };
+    const inc = incRes.rows[0]?.inc || { revenue: { total: 0 }, cogs: { total: 0 }, operatingExpenses: { total: 0 }, netProfit: 0 };
+    const bs = bsRes.rows[0]?.bs || { assets: { total: 0 }, liabilities: { total: 0 }, equity: { total: 0 }, balanced: true };
+
+    return res.json({
+      trialBalance: tb.rows || [],
+      trialBalanceMeta: tb,
+      incomeStatement: inc,
+      balanceSheet: bs
+    });
+  } catch (err: any) {
+    console.warn('[Finance /reports] Postgres error, trying FinanceService:', err?.message);
+    try {
+      const data = await FinanceService.getFinancialReports({ startDate: s || undefined, endDate: e || undefined, asOfDate: asOf || undefined });
+      return res.json(data);
+    } catch (_) {
+      return res.json(FinanceController.getFinancialStatements());
+    }
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
 });
 
 financeRouter.get('/reports/trial-balance', async (req, res) => {
+  const s = (req.query.startDate as string) || null;
+  const e = (req.query.endDate as string) || null;
+  let client: Client | null = null;
   try {
-    const s = req.query.startDate as string;
-    const e = req.query.endDate as string;
-    const data = await FinanceService.getTrialBalance(s, e);
-    return res.json(data);
-  } catch (_) {
-    return res.json([]);
+    client = await getDbClient();
+    const result = await client.query('SELECT get_trial_balance($1, $2) AS tb', [s, e]);
+    return res.json(result.rows[0]?.tb || { rows: [], totalDebit: 0, totalCredit: 0, isBalanced: true, difference: 0 });
+  } catch (err: any) {
+    console.warn('[Finance /reports/trial-balance] Postgres error, trying FinanceService:', err?.message);
+    try {
+      const data = await FinanceService.getTrialBalance(s || undefined, e || undefined);
+      return res.json(data);
+    } catch (_) {
+      return res.json({ rows: [], totalDebit: 0, totalCredit: 0, isBalanced: true, difference: 0 });
+    }
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
 });
 
 financeRouter.get('/reports/income-statement', async (req, res) => {
+  const s = (req.query.startDate as string) || null;
+  const e = (req.query.endDate as string) || null;
+  let client: Client | null = null;
   try {
-    const s = req.query.startDate as string;
-    const e = req.query.endDate as string;
-    const data = await FinanceService.getIncomeStatement(s, e);
-    return res.json(data);
-  } catch (_) {
-    return res.json([]);
+    client = await getDbClient();
+    const result = await client.query('SELECT get_income_statement($1, $2) AS inc', [s, e]);
+    return res.json(result.rows[0]?.inc || {});
+  } catch (err: any) {
+    console.warn('[Finance /reports/income-statement] Postgres error, trying FinanceService:', err?.message);
+    try {
+      const data = await FinanceService.getIncomeStatement(s || undefined, e || undefined);
+      return res.json(data);
+    } catch (_) {
+      return res.json({});
+    }
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
 });
 
 financeRouter.get('/reports/balance-sheet', async (req, res) => {
+  const asOf = (req.query.asOfDate as string) || null;
+  let client: Client | null = null;
   try {
-    const asOf = req.query.asOfDate as string;
-    const data = await FinanceService.getBalanceSheet(asOf);
-    return res.json(data);
-  } catch (_) {
-    return res.json([]);
+    client = await getDbClient();
+    const result = await client.query('SELECT get_balance_sheet($1) AS bs', [asOf]);
+    return res.json(result.rows[0]?.bs || {});
+  } catch (err: any) {
+    console.warn('[Finance /reports/balance-sheet] Postgres error, trying FinanceService:', err?.message);
+    try {
+      const data = await FinanceService.getBalanceSheet(asOf || undefined);
+      return res.json(data);
+    } catch (_) {
+      return res.json({});
+    }
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
 });
 
