@@ -275,7 +275,7 @@ partiesRouter.post('/', async (req, res) => {
     const phone = partyData.phone || partyData.contact_no || partyData.contactNo || '';
     const email = partyData.email || '';
     const address = partyData.address || '';
-    const trnNo = partyData.trnNo || partyData.trn_no || partyData.trn || partyData.tax_id || partyData.trnTaxNo || '';
+    const trnNo = partyData.trn_no || partyData.trnNo || partyData.tax_id || partyData.trnTaxNo || '';
     const creditLimit = Number(partyData.creditLimit ?? partyData.credit_limit ?? 50000);
     const currentBalance = Number(partyData.currentBalance ?? partyData.current_balance ?? 0);
     const currency = partyData.currency || 'AED';
@@ -403,7 +403,7 @@ partiesRouter.put('/:id', async (req, res) => {
     const phone = updates.phone !== undefined ? updates.phone : current.phone;
     const email = updates.email !== undefined ? updates.email : current.email;
     const address = updates.address !== undefined ? updates.address : current.address;
-    const trnNo = updates.trnNo !== undefined ? updates.trnNo : (updates.trn_no !== undefined ? updates.trn_no : current.trn_no);
+    const trnNo = updates.trn_no !== undefined ? updates.trn_no : (updates.trnNo !== undefined ? updates.trnNo : current.trn_no);
     const creditLimit = updates.creditLimit !== undefined ? Number(updates.creditLimit) : (updates.credit_limit !== undefined ? Number(updates.credit_limit) : Number(current.credit_limit || 0));
     const currentBalance = updates.currentBalance !== undefined ? Number(updates.currentBalance) : (updates.current_balance !== undefined ? Number(updates.current_balance) : Number(current.current_balance || 0));
     const isActive = updates.isActive !== undefined ? Boolean(updates.isActive) : (updates.is_active !== undefined ? Boolean(updates.is_active) : Boolean(current.is_active));

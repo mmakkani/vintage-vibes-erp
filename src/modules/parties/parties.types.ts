@@ -20,23 +20,89 @@ export interface PartyKhataLog {
   description: string;
 }
 
-export interface Party {
+export interface PartyRow {
+  party_id: number;
   id: string;
-  code: string; // "CLI-001", "SUP-001", "AGT-001"
+  code: string;
   name: string;
+  company_name: string;
+  party_type: string;
+  type: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  contact_person?: string | null;
+  tin_or_ntn?: string | null;
+  trn_no?: string | null;
+  credit_limit?: number | null;
+  current_balance?: number | null;
+  currency?: string | null;
+  is_active?: boolean | null;
+  account_map?: PartyAccountMap | null;
+  coa_account_id?: string | null;
+  linked_account_id?: number | null;
+  created_at?: string | null;
+}
+
+export interface PartyFormData {
+  name: string;
+  company_name?: string;
   type: PartyType;
+  party_type?: string;
+  contact_person?: string;
   contactPerson?: string;
   phone: string;
   email?: string;
   address?: string;
+  trn_no?: string;
   trnNo?: string;
+  credit_limit?: number;
+  creditLimit?: number;
+  currency?: CurrencyCode;
+  payable_account_id?: string;
+  payableAccountId?: string;
+  receivable_account_id?: string;
+  receivableAccountId?: string;
+  clearing_account_id?: string;
+  clearingAccountId?: string;
+  revenue_account_id?: string;
+  revenueAccountId?: string;
+  inventory_account_id?: string;
+}
+
+export interface Party {
+  party_id?: number;
+  id: string;
+  code: string; // "CLI-001", "SUP-001", "AGT-001"
+  name: string;
+  company_name?: string;
+  companyName?: string;
+  type: PartyType;
+  party_type?: string;
+  partyType?: string;
+  contact_person?: string;
+  contactPerson?: string;
+  phone: string;
+  email?: string;
+  address?: string;
+  tin_or_ntn?: string;
+  tinOrNtn?: string;
+  trn_no?: string;
+  trnNo?: string;
+  credit_limit?: number;
   creditLimit: number;
+  current_balance?: number;
   currentBalance: number; // Positive = Customer owes us (Receivable), Negative = We owe supplier (Payable)
   currency: CurrencyCode;
+  is_active?: boolean;
   isActive: boolean;
+  account_map?: PartyAccountMap;
   accountMap: PartyAccountMap;
-  coaAccountId?: string;
   coa_account_id?: string;
+  coaAccountId?: string;
+  linked_account_id?: number;
+  linkedAccountId?: number;
+  created_at?: string;
   createdAt: string;
   purchaseInvoicesCount?: number;
   salesInvoicesCount?: number;

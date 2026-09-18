@@ -25,8 +25,8 @@ export class SearchService {
       // 1. Search Parties (Clients & Suppliers)
       const { data: parties } = await supabase
         .from('parties')
-        .select('id, name, phone, type, trn, current_balance')
-        .or(`name.ilike.%${q}%,phone.ilike.%${q}%,trn.ilike.%${q}%`)
+        .select('id, name, phone, type, trn_no, current_balance')
+        .or(`name.ilike.%${q}%,phone.ilike.%${q}%,trn_no.ilike.%${q}%`)
         .limit(8);
 
       if (Array.isArray(parties)) {
@@ -35,7 +35,7 @@ export class SearchService {
             category: 'PARTIES',
             id: String(p.id),
             title: p.name || 'Unnamed Party',
-            subtitle: `${p.type || 'PARTY'} • ${p.phone || 'No Phone'}${p.trn ? ` • TRN: ${p.trn}` : ''}`,
+            subtitle: `${p.type || 'PARTY'} • ${p.phone || 'No Phone'}${p.trn_no ? ` • TRN: ${p.trn_no}` : ''}`,
             badge: p.type,
             amount: p.current_balance ? `AED ${Number(p.current_balance).toLocaleString()}` : undefined,
             tab: 'parties',

@@ -133,11 +133,14 @@ export const PartyInputSchema = z.object({
   name: z.string().trim().min(2, 'Party name must be at least 2 characters'),
   type: z.enum(['CLIENT', 'SUPPLIER', 'AGENT']),
   contactPerson: z.string().optional().nullable(),
+  contact_person: z.string().optional().nullable(),
   phone: z.string().trim().min(5, 'Valid contact phone number is required'),
   email: z.string().email('Invalid email address format').optional().or(z.literal('')),
   address: z.string().optional().nullable(),
+  trn_no: z.string().optional().nullable(),
   trnNo: z.string().optional().nullable(),
   creditLimit: z.number().min(0, 'Credit limit must be non-negative').default(50000),
+  credit_limit: z.number().min(0, 'Credit limit must be non-negative').optional(),
   currency: z.enum(['AED', 'USD', 'PKR']).default('AED')
 });
 

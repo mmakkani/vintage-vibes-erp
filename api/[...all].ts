@@ -2464,7 +2464,7 @@ export default async function handler(req: any, res: any) {
           const partyName = (p.name || p.company_name || '').trim();
           const partyType = (p.type || p.party_type || 'CLIENT').toUpperCase();
           const phone = p.phone || null;
-          const trn = p.trn || p.trn_no || p.tin_or_ntn || null;
+          const trn = p.trn_no || p.trnNo || p.tin_or_ntn || null;
           const creditLimit = Number(p.creditLimit || p.credit_limit || 0);
 
           try {
@@ -2491,16 +2491,19 @@ export default async function handler(req: any, res: any) {
         const partiesRes = await client.query(`
           SELECT 
             COALESCE(id, party_id::text) as id,
+            party_id,
             COALESCE(code, CONCAT(CASE WHEN UPPER(COALESCE(type, party_type, '')) LIKE '%SUPP%' THEN 'SUP-' ELSE 'CLI-' END, LPAD(COALESCE(party_id, 1)::text, 4, '0'))) as code,
             COALESCE(name, company_name, '') as name,
+            company_name,
             COALESCE(type, party_type, 'CLIENT') as type,
+            party_type,
             contact_person, phone, email, address,
             COALESCE(trn_no, tin_or_ntn, '') as trn_no,
             COALESCE(credit_limit, 0) as credit_limit,
             COALESCE(current_balance, 0) as current_balance,
             COALESCE(currency, 'AED') as currency,
             COALESCE(is_active, true) as is_active,
-            account_map, coa_account_id, created_at
+            account_map, coa_account_id, linked_account_id, created_at
           FROM parties 
           ORDER BY COALESCE(name, company_name, '') ASC;
         `);
@@ -2508,21 +2511,33 @@ export default async function handler(req: any, res: any) {
         if (partiesRes.rows && partiesRes.rows.length > 0) {
           return res.status(200).json(partiesRes.rows.map((r: any) => ({
             id: r.id,
+            party_id: r.party_id,
             code: r.code,
             name: r.name,
+            company_name: r.company_name || r.name,
             type: (r.type || 'CLIENT').toUpperCase(),
+            party_type: r.party_type || r.type,
             contactPerson: r.contact_person,
+            contact_person: r.contact_person,
             phone: r.phone,
             email: r.email,
             address: r.address,
             trnNo: r.trn_no,
+            trn_no: r.trn_no,
             creditLimit: Number(r.credit_limit || 0),
+            credit_limit: Number(r.credit_limit || 0),
             currentBalance: Number(r.current_balance || 0),
+            current_balance: Number(r.current_balance || 0),
             currency: r.currency || 'AED',
             isActive: r.is_active !== false,
+            is_active: r.is_active !== false,
             accountMap: r.account_map || {},
+            account_map: r.account_map || {},
             coaAccountId: r.coa_account_id,
-            createdAt: r.created_at
+            coa_account_id: r.coa_account_id,
+            linked_account_id: r.linked_account_id,
+            createdAt: r.created_at,
+            created_at: r.created_at
           })));
         }
       } catch (e: any) {
@@ -2535,21 +2550,33 @@ export default async function handler(req: any, res: any) {
         if (data && data.length > 0) {
           return res.status(200).json(data.map((r: any) => ({
             id: r.id || String(r.party_id),
+            party_id: r.party_id,
             code: r.code || (r.party_id ? `P-${r.party_id}` : ''),
             name: r.name || r.company_name || '',
+            company_name: r.company_name || r.name || '',
             type: (r.type || r.party_type || 'CLIENT').toUpperCase(),
+            party_type: r.party_type || r.type,
             contactPerson: r.contact_person || r.contactPerson || '',
+            contact_person: r.contact_person || r.contactPerson || '',
             phone: r.phone || '',
             email: r.email || '',
             address: r.address || '',
             trnNo: r.trn_no || r.trnNo || r.tin_or_ntn || '',
+            trn_no: r.trn_no || r.trnNo || r.tin_or_ntn || '',
             creditLimit: Number(r.credit_limit ?? r.creditLimit ?? 0),
+            credit_limit: Number(r.credit_limit ?? r.creditLimit ?? 0),
             currentBalance: Number(r.current_balance ?? r.currentBalance ?? 0),
+            current_balance: Number(r.current_balance ?? r.currentBalance ?? 0),
             currency: r.currency || 'AED',
             isActive: r.is_active !== false && r.isActive !== false,
+            is_active: r.is_active !== false && r.isActive !== false,
             accountMap: r.account_map || r.accountMap || {},
+            account_map: r.account_map || r.accountMap || {},
             coaAccountId: r.coa_account_id || r.coaAccountId || r.linked_account_id,
-            createdAt: r.created_at
+            coa_account_id: r.coa_account_id || r.coaAccountId || r.linked_account_id,
+            linked_account_id: r.linked_account_id,
+            createdAt: r.created_at,
+            created_at: r.created_at
           })));
         }
       } catch (_) {}

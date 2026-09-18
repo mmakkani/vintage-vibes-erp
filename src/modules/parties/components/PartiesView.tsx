@@ -223,9 +223,11 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
     const formData = {
       name: cleanName,
+      company_name: cleanName,
       party_type: cleanType,
+      type: cleanType,
       phone: partyForm.phone || (partyForm as any).contact_no || null,
-      trn: partyForm.trnNo || (partyForm as any).trn || (partyForm as any).trn_no || null,
+      trn_no: partyForm.trn_no || partyForm.trnNo || null,
       credit_limit: Number(partyForm.creditLimit ?? (partyForm as any).credit_limit ?? 0),
       inventory_account_id: (partyForm as any).inventory_account_id || null
     };
@@ -235,7 +237,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         p_name: formData.name,
         p_type: formData.party_type,
         p_phone: formData.phone || null,
-        p_trn: formData.trn || null,
+        p_trn: formData.trn_no || null,
         p_credit_limit: Number(formData.credit_limit) || 0,
         p_inventory_account_id: formData.inventory_account_id || null
       });
@@ -347,7 +349,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       phone: party.phone || '',
       email: party.email || '',
       address: party.address || '',
-      trnNo: party.trnNo || '',
+      trnNo: party.trn_no || party.trnNo || '',
       creditLimit: Number(party.creditLimit || 0),
       isActive: party.isActive !== false,
       payableAccountId: party.accountMap?.payableAccountId || (party.type === 'SUPPLIER' ? `2110-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : '2110-00'),
@@ -382,6 +384,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         email: editPartyForm.email,
         address: editPartyForm.address,
         trnNo: editPartyForm.trnNo,
+        trn_no: editPartyForm.trnNo,
         creditLimit: editPartyForm.creditLimit,
         isActive: editPartyForm.isActive,
         accountMap: {
@@ -589,9 +592,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       <Phone className="w-3 h-3 text-blue-600" /> {party.phone}
                     </span>
                   )}
-                  {party.trnNo && (
+                  {(party.trn_no || party.trnNo) && (
                     <span className="flex items-center gap-1 font-mono text-[10px] text-slate-500">
-                      TRN: {party.trnNo}
+                      TRN: {party.trn_no || party.trnNo}
                     </span>
                   )}
                 </div>
@@ -1194,7 +1197,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <div className="flex justify-between items-center pt-2">
                   <span className="font-semibold text-slate-500">Tax Registration Number (TRN)</span>
                   <span className="font-mono font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200">
-                    {viewPartyData.trnNo || '-'}
+                    {viewPartyData.trn_no || viewPartyData.trnNo || '-'}
                   </span>
                 </div>
 

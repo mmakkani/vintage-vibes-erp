@@ -21,12 +21,21 @@ export class PartiesService {
               phone: r.phone || '',
               email: r.email || '',
               address: r.address || '',
-              trnNo: r.trnNo || r.trn_no || '',
+              trnNo: r.trn_no || r.trnNo || '',
+              trn_no: r.trn_no || r.trnNo || '',
+              party_id: r.party_id,
+              company_name: r.company_name || r.name,
+              party_type: r.party_type || r.type,
+              linked_account_id: r.linked_account_id,
               creditLimit: Number(r.creditLimit ?? r.credit_limit ?? 0),
+              credit_limit: Number(r.creditLimit ?? r.credit_limit ?? 0),
               currentBalance: Number(r.currentBalance ?? r.current_balance ?? 0),
+              current_balance: Number(r.currentBalance ?? r.current_balance ?? 0),
               currency: r.currency || 'AED',
               isActive: r.isActive !== false && r.is_active !== false,
+              is_active: r.isActive !== false && r.is_active !== false,
               accountMap: r.accountMap || r.account_map || {},
+              account_map: r.accountMap || r.account_map || {},
               coaAccountId: r.coaAccountId || r.coa_account_id,
               coa_account_id: r.coaAccountId || r.coa_account_id,
               purchaseInvoicesCount: Number(r.purchaseInvoicesCount || 0),
@@ -35,7 +44,8 @@ export class PartiesService {
               glEntriesCount: Number(r.glEntriesCount || 0),
               totalEntriesCount: Number(r.totalEntriesCount || 0),
               hasEntries: Boolean(r.hasEntries),
-              createdAt: r.createdAt || r.created_at || new Date().toISOString()
+              createdAt: r.createdAt || r.created_at || new Date().toISOString(),
+              created_at: r.createdAt || r.created_at || new Date().toISOString()
             }));
             try {
               localStorage.removeItem('vibe_cached_parties');
@@ -90,14 +100,24 @@ export class PartiesService {
             email: row.email || '',
             address: row.address || '',
             trnNo: row.trn_no || row.trnNo || '',
+            trn_no: row.trn_no || row.trnNo || '',
+            party_id: row.party_id,
+            company_name: row.company_name || row.name,
+            party_type: row.party_type || row.type,
+            linked_account_id: row.linked_account_id,
             creditLimit: Number(row.credit_limit ?? row.creditLimit ?? 0),
+            credit_limit: Number(row.credit_limit ?? row.creditLimit ?? 0),
             currentBalance: Number(liveBal.toFixed(2)),
+            current_balance: Number(liveBal.toFixed(2)),
             currency: row.currency || 'AED',
             isActive: row.is_active !== false && row.isActive !== false,
+            is_active: row.is_active !== false && row.isActive !== false,
             accountMap: row.account_map || row.accountMap || {},
+            account_map: row.account_map || row.accountMap || {},
             coaAccountId: row.coa_account_id,
             coa_account_id: row.coa_account_id,
-            createdAt: row.created_at || new Date().toISOString()
+            createdAt: row.created_at || new Date().toISOString(),
+            created_at: row.created_at || new Date().toISOString()
           };
         });
 
@@ -208,7 +228,7 @@ export class PartiesService {
     return data as any;
   }
 
-  public static async addParty(party: Partial<Party> & { party_type?: string; company_name?: string; companyName?: string; trn?: string; tax_id?: string; contact_no?: string; credit_limit?: number; receivable_account_id?: string; payable_account_id?: string }): Promise<Party> {
+  public static async addParty(party: Partial<Party> & { party_type?: string; company_name?: string; companyName?: string; trn_no?: string; trnNo?: string; tax_id?: string; contact_no?: string; credit_limit?: number; receivable_account_id?: string; payable_account_id?: string }): Promise<Party> {
     const cleanName = String(party.name || party.company_name || party.companyName || '').trim();
     if (!cleanName) {
       throw new Error('Party company/customer name is required and cannot be empty or undefined');
@@ -218,7 +238,7 @@ export class PartiesService {
     const type = (rawType === 'SUPPLIER' || rawType === 'AGENT') ? rawType : 'CLIENT';
 
     const phone = party.phone || party.contact_no || (party as any).contactNo || '';
-    const trnNo = party.trnNo || (party as any).trn_no || party.trn || party.tax_id || (party as any).trnTaxNo || '';
+    const trnNo = party.trn_no || party.trnNo || party.tax_id || (party as any).trnTaxNo || '';
     const creditLimit = Number(party.creditLimit ?? party.credit_limit ?? 50000);
     const payableAccountId = party.payableAccountId || (party as any).payable_account_id || '2110-00';
     const receivableAccountId = party.receivableAccountId || (party as any).receivable_account_id || '1130-00';
@@ -271,15 +291,21 @@ export class PartiesService {
             phone: created.phone || phone,
             email: created.email || '',
             address: created.address || '',
-            trnNo: created.trnNo || created.trn_no || trnNo,
+            trnNo: created.trn_no || created.trnNo || trnNo,
+            trn_no: created.trn_no || created.trnNo || trnNo,
             creditLimit: Number(created.creditLimit ?? created.credit_limit ?? creditLimit),
+            credit_limit: Number(created.creditLimit ?? created.credit_limit ?? creditLimit),
             currentBalance: Number(created.currentBalance ?? created.current_balance ?? 0),
+            current_balance: Number(created.currentBalance ?? created.current_balance ?? 0),
             currency: created.currency || 'AED',
             isActive: created.isActive !== false && created.is_active !== false,
+            is_active: created.isActive !== false && created.is_active !== false,
             accountMap: created.accountMap || created.account_map || {},
+            account_map: created.accountMap || created.account_map || {},
             coaAccountId: created.coaAccountId || created.coa_account_id,
             coa_account_id: created.coaAccountId || created.coa_account_id,
-            createdAt: created.createdAt || created.created_at || new Date().toISOString()
+            createdAt: created.createdAt || created.created_at || new Date().toISOString(),
+            created_at: created.createdAt || created.created_at || new Date().toISOString()
           };
         } else {
           const errData = await apiRes.json().catch(() => ({}));
@@ -324,6 +350,7 @@ export class PartiesService {
       email: party.email || '',
       address: party.address || '',
       trnNo: trnNo || '',
+      trn_no: trnNo || '',
       creditLimit,
       currentBalance: 0,
       currency: party.currency || 'AED',
@@ -368,6 +395,7 @@ export class PartiesService {
     if (updates.phone !== undefined) payload.phone = updates.phone;
     if (updates.email !== undefined) payload.email = updates.email;
     if (updates.address !== undefined) payload.address = updates.address;
+    if (updates.trn_no !== undefined) payload.trn_no = updates.trn_no;
     if (updates.trnNo !== undefined) payload.trn_no = updates.trnNo;
     if (updates.creditLimit !== undefined) payload.credit_limit = Number(updates.creditLimit);
     if (updates.currentBalance !== undefined) payload.current_balance = Number(updates.currentBalance);
@@ -407,6 +435,11 @@ export class PartiesService {
       email: data.email,
       address: data.address,
       trnNo: data.trn_no,
+      trn_no: data.trn_no,
+      party_id: data.party_id,
+      company_name: data.company_name,
+      party_type: data.party_type,
+      linked_account_id: data.linked_account_id,
       creditLimit: Number(data.credit_limit),
       currentBalance: Number(data.current_balance),
       currency: data.currency,
