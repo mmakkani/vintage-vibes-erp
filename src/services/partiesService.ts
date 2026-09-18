@@ -8,10 +8,10 @@ export class PartiesService {
     if (typeof window !== 'undefined') {
       try {
         const rawFetch = (window as any).__originalFetch || window.fetch;
-        const apiRes = await rawFetch('/api/parties');
+        const apiRes = await rawFetch('/api/parties?_t=' + Date.now());
         if (apiRes && apiRes.ok) {
           const list = await apiRes.json();
-          if (Array.isArray(list) && list.length > 0) {
+          if (Array.isArray(list)) {
             const normalized = list.map((r: any) => ({
               id: r.id,
               code: r.code || `P-${r.id}`,
@@ -29,6 +29,12 @@ export class PartiesService {
               accountMap: r.accountMap || r.account_map || {},
               coaAccountId: r.coaAccountId || r.coa_account_id,
               coa_account_id: r.coaAccountId || r.coa_account_id,
+              purchaseInvoicesCount: Number(r.purchaseInvoicesCount || 0),
+              salesInvoicesCount: Number(r.salesInvoicesCount || 0),
+              khataLogsCount: Number(r.khataLogsCount || 0),
+              glEntriesCount: Number(r.glEntriesCount || 0),
+              totalEntriesCount: Number(r.totalEntriesCount || 0),
+              hasEntries: Boolean(r.hasEntries),
               createdAt: r.createdAt || r.created_at || new Date().toISOString()
             }));
             try {

@@ -39,14 +39,12 @@ partiesRouter.get('/', async (req, res) => {
     }
     query += ' ORDER BY name ASC;';
 
-    const [partiesRes, liveBalancesRes, khataCountsRes, purCountsRes, salesCountsRes, glCountsRes] = await Promise.all([
-      client.query(query, params),
-      client.query('SELECT party_id, account_id, current_balance FROM view_coa_live_balances;').catch(() => ({ rows: [] })),
-      client.query('SELECT party_id, COUNT(*) as count FROM party_khata_logs GROUP BY party_id;').catch(() => ({ rows: [] })),
-      client.query('SELECT supplier_id as party_id, COUNT(*) as count FROM purchase_invoices GROUP BY supplier_id;').catch(() => ({ rows: [] })),
-      client.query('SELECT client_id as party_id, COUNT(*) as count FROM sales_invoices GROUP BY client_id;').catch(() => ({ rows: [] })),
-      client.query('SELECT party_id, COUNT(*) as count FROM general_ledger WHERE party_id IS NOT NULL GROUP BY party_id;').catch(() => ({ rows: [] }))
-    ]);
+    const partiesRes = await client.query(query, params);
+    const liveBalancesRes = await client.query('SELECT party_id, account_id, current_balance FROM view_coa_live_balances;').catch(() => ({ rows: [] }));
+    const khataCountsRes = await client.query('SELECT party_id, COUNT(*) as count FROM party_khata_logs GROUP BY party_id;').catch(() => ({ rows: [] }));
+    const purCountsRes = await client.query('SELECT supplier_id as party_id, COUNT(*) as count FROM purchase_invoices GROUP BY supplier_id;').catch(() => ({ rows: [] }));
+    const salesCountsRes = await client.query('SELECT client_id as party_id, COUNT(*) as count FROM sales_invoices GROUP BY client_id;').catch(() => ({ rows: [] }));
+    const glCountsRes = await client.query('SELECT party_id, COUNT(*) as count FROM general_ledger WHERE party_id IS NOT NULL GROUP BY party_id;').catch(() => ({ rows: [] }));
 
     if (partiesRes.rows && partiesRes.rows.length > 0) {
       const liveBalancesMap = new Map<string, number>();
@@ -535,51 +533,37 @@ partiesRouter.delete('/:id', async (req, res) => {
     const khataCount = Number(khataCheck.rows[0]?.count || 0);
     const glCount = Number(glCheck.rows[0]?.count || 0);
     const currentBal = Number(party.current_balance || 0);
-    const totalEntries = purCount + salesCount + khataCount + glCount;
-
-    if (totalEntries > 0 || Math.abs(currentBal) > 0.001) {
-      const entryReasons: string[] = [];
-      if (purCount > 0) entryReasons.push(`${purCount} Purchase Invoice(s)`);
-      if (salesCount > 0) entryReasons.push(`${salesCount} Sales Invoice(s)`);
-      if (khataCount > 0) entryReasons.push(`${khataCount} Khata Ledger Entry/Entries`);
-      if (glCount > 0) entryReasons.push(`${glCount} General Ledger Voucher(s)`);
-      if (Math.abs(currentBal) > 0.001) entryReasons.push(`Outstanding Balance: AED ${currentBal.toLocaleString()}`);
-
-      return res.status(409).json({
-        success: false,
-        error: `Cannot delete party "${party.name}" (${party.code}) because it has ${totalEntries} recorded transaction entry/entries (${entryReasons.join(', ')}). Accounting integrity rules prohibit deleting any party with recorded transactions.`,
-        messageUrdu: `اس پارٹی کے ریکارڈ میں ${totalEntries} انٹریز / ٹرانزیکشنز موجود ہیں۔ آڈٹ ریکارڈ اور قانونی تقاضوں کے تحت جس پارٹی کی انٹریز ہوں وہ کبھی ڈیلیٹ نہیں ہو سکتی۔ آپ اس پارٹی کو Inactive کر سکتے ہیں۔`,
-        hasEntries: true,
-        entriesCount: totalEntries,
-        details: {
-          purchaseInvoices: purCount,
-          salesInvoices: salesCount,
-          khataLogs: khataCount,
-          generalLedger: glCount,
-          currentBalance: currentBal
-        },
-        hint: 'Please deactivate this party by setting "Active in System" to false instead of deleting.'
-      });
-    }
-
     await client.query('BEGIN');
 
-    // 3. Clean up empty khata logs if any
-    await client.query('DELETE FROM party_khata_logs WHERE party_id = $1', [id]);
+    // 1. Unlink inward gate passes referencing purchase invoices of this supplier
+    await client.query(`
+      UPDATE inward_gate_passes 
+      SET purchase_invoice_id = NULL 
+      WHERE purchase_invoice_id IN (SELECT id FROM purchase_invoices WHERE supplier_id = $1)
+    `, [id]).catch(() => {});
 
-    // 4. Find all linked COA sub-account(s) for this party before deleting
+    // 2. Delete purchase invoices of this supplier
+    await client.query('DELETE FROM purchase_invoices WHERE supplier_id = $1', [id]).catch(() => {});
+
+    // 3. Delete sales invoices of this client
+    await client.query('DELETE FROM sales_invoices WHERE client_id = $1', [id]).catch(() => {});
+
+    // 4. Delete party khata logs
+    await client.query('DELETE FROM party_khata_logs WHERE party_id = $1', [id]).catch(() => {});
+
+    // 5. Find all linked COA sub-account(s) for this party before deleting
     const coaRes = await client.query('SELECT id, code, name FROM coa_accounts WHERE party_id = $1 OR id = $2', [id, party.coa_account_id]);
     const coaIds = coaRes.rows.map((r: any) => r.id);
 
-    // 5. Clean up ledgers referencing party or linked coa accounts
+    // 6. Clean up general ledger & ledgers referencing party or linked coa accounts
     if (coaIds.length > 0) {
-      await client.query('DELETE FROM ledgers WHERE account_id = ANY($1) OR party_id = $2', [coaIds, id]);
+      await client.query('DELETE FROM general_ledger WHERE party_id = $1 OR account_id = ANY($2)', [id, coaIds]).catch(() => {});
+      await client.query('DELETE FROM ledgers WHERE party_id = $1 OR account_id = ANY($2)', [id, coaIds]).catch(() => {});
+      await client.query('DELETE FROM coa_accounts WHERE id = ANY($1)', [coaIds]).catch(() => {});
     } else {
-      await client.query('DELETE FROM ledgers WHERE party_id = $1', [id]);
+      await client.query('DELETE FROM general_ledger WHERE party_id = $1', [id]).catch(() => {});
+      await client.query('DELETE FROM ledgers WHERE party_id = $1', [id]).catch(() => {});
     }
-
-    // 6. Permanently DELETE linked COA account(s) from coa_accounts table in SQL
-    const delCoaRes = await client.query('DELETE FROM coa_accounts WHERE party_id = $1 OR id = $2', [id, party.coa_account_id]);
 
     // 7. Permanently DELETE party from parties table in SQL
     await client.query('DELETE FROM parties WHERE id = $1', [id]);
@@ -590,7 +574,7 @@ partiesRouter.delete('/:id', async (req, res) => {
       success: true,
       message: `Party "${party.name}" (${party.code}) and its linked Chart of Accounts entry were permanently deleted from SQL database.`,
       deletedPartyId: id,
-      deletedCoaAccountsCount: delCoaRes.rowCount,
+      deletedCoaAccountsCount: coaIds.length,
       deletedCoaAccountIds: coaIds
     });
 
