@@ -34,13 +34,29 @@ function getClientLocation(req: any): { city: string; country: string } {
 
 const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
-const supabaseAdmin = createClient(supaUrl, supaKey || 'anon-key');
+let supabaseAdmin: any;
+try {
+  supabaseAdmin = createClient(supaUrl, supaKey || 'anon-key');
+} catch (e: any) {
+  console.warn('[Supabase Client Init Warning]:', e?.message || e);
+  supabaseAdmin = {
+    from: () => ({
+      select: () => Promise.resolve({ data: [], error: null }),
+      insert: () => Promise.resolve({ data: [], error: null }),
+      update: () => Promise.resolve({ data: [], error: null }),
+      delete: () => Promise.resolve({ data: [], error: null }),
+      upsert: () => Promise.resolve({ data: [], error: null })
+    }),
+    rpc: () => Promise.resolve({ data: null, error: null })
+  };
+}
 
 async function getPgClient(): Promise<Client | null> {
-  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  const DEFAULT_DB_URL = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL;
   try {
     if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
-      dbUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+      dbUrl = DEFAULT_DB_URL;
     }
     const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
     if (match) {
@@ -48,17 +64,16 @@ async function getPgClient(): Promise<Client | null> {
       if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
       dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
     }
-    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 });
     await client.connect();
     return client;
-  } catch (err) {
+  } catch (err: any) {
     try {
-      const fallbackUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-      const fallbackClient = new Client({ connectionString: fallbackUrl, ssl: { rejectUnauthorized: false } });
+      const fallbackClient = new Client({ connectionString: DEFAULT_DB_URL, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 });
       await fallbackClient.connect();
       return fallbackClient;
-    } catch (fbErr) {
-      console.warn('[Serverless PG Connect Notice]:', fbErr);
+    } catch (fbErr: any) {
+      console.warn('[Serverless PG Connect Warning]:', fbErr?.message || fbErr);
       return null;
     }
   }
@@ -219,15 +234,6 @@ function analyzeBotRequest(req: any, explicitPath?: string, explicitUa?: string)
     req.headers?.['User-Agent'] ||
     ''
   ).toString().trim();
-
-  const rawUrl = (
-    explicitPath ||
-    req.originalUrl ||
-    req.url ||
-    ''
-  ).toString();
-
-  const normalizedPath = rawUrl.toLowerCase();
 
   // 1. Honeypot & Attack Path Traps
   for (const trap of HONEYPOT_TRAP_PATHS) {
@@ -788,40 +794,40 @@ function getOrCreateSession(userId: string, userName?: string): WhatsAppDeviceSe
 
 // Master Handler
 export default async function handler(req: any, res: any) {
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  const rawUrl = req.url || '';
-  const parsedUrl = new URL(rawUrl, 'http://localhost');
-  const pathname = parsedUrl.pathname;
-  const method = req.method || 'GET';
-
-  // Parse Body safely
-  let body = req.body || {};
-  if (Buffer.isBuffer(body)) {
-    try {
-      body = JSON.parse(body.toString('utf-8'));
-    } catch {
-      body = {};
-    }
-  } else if (typeof body === 'string') {
-    try {
-      body = JSON.parse(body);
-    } catch {
-      body = {};
-    }
-  }
-
-  const userId = parsedUrl.searchParams.get('userId') || req.query?.userId || body.userId || 'usr-admin-1';
-  const userName = parsedUrl.searchParams.get('userName') || req.query?.userName || body.userName || 'Sales & Marketing Operator';
-
   try {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+
+    const rawUrl = req.url || '';
+    const parsedUrl = new URL(rawUrl, 'http://localhost');
+    const pathname = parsedUrl.pathname;
+    const method = req.method || 'GET';
+
+    // Parse Body safely
+    let body = req.body || {};
+    if (Buffer.isBuffer(body)) {
+      try {
+        body = JSON.parse(body.toString('utf-8'));
+      } catch {
+        body = {};
+      }
+    } else if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        body = {};
+      }
+    }
+
+    const userId = parsedUrl.searchParams.get('userId') || req.query?.userId || body.userId || 'usr-admin-1';
+    const userName = parsedUrl.searchParams.get('userName') || req.query?.userName || body.userName || 'Sales & Marketing Operator';
+
     // ========================================================================
     // AUTOMATED BAD BOT DETECTION & AUTO-BLOCK SHIELD
     // ========================================================================
@@ -2440,79 +2446,39 @@ export default async function handler(req: any, res: any) {
 
     // Parties (Suppliers & Clients) Endpoint
     if (pathname.includes('/parties')) {
-      const DEFAULT_DB_URL = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-      let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL;
       try {
-        const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-        if (match) {
-          let [_, user, rawPwd, host, port, rest] = match;
-          if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
-          dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+        const client = await getPgClient();
+        if (!client) {
+          throw new Error('Could not establish database connection for parties');
         }
-        const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-        await client.connect();
 
         if (method === 'POST') {
           const p = body || {};
-          const id = p.id || `pty-${Date.now()}`;
-          const code = p.code || `P-${Date.now().toString().slice(-4)}`;
-          const isSupplier = p.type === 'SUPPLIER';
-          const isClient = p.type === 'CLIENT' || p.type === 'CUSTOMER';
-          const cleanCode = code.replace(/[^A-Za-z0-9]/g, '');
-          const coaCode = isSupplier ? `2110-${cleanCode}` : (isClient ? `1130-${cleanCode}` : `2120-${cleanCode}`);
-          const coaId = `acc-${id}`;
-          const parentId = isSupplier ? 'acc-2110' : (isClient ? 'acc-1130' : 'acc-2120');
-          const parentCode = isSupplier ? '2110-00' : (isClient ? '1130-00' : '2120-00');
-          const coaType = isSupplier ? 'LIABILITY' : (isClient ? 'ASSET' : 'LIABILITY');
-          const subType = isSupplier ? 'Accounts Payable - Trade' : (isClient ? 'Accounts Receivable - Trade' : 'Accounts Payable - Agent');
-          const coaName = `${p.name} (${isSupplier ? 'Supplier' : (isClient ? 'Customer' : 'Agent')})`;
-
-          const accountMap = {
-            payableAccountId: isSupplier ? coaCode : '2110-00',
-            receivableAccountId: isClient ? coaCode : '1130-00',
-            clearingAccountId: '1310-00',
-            revenueAccountId: '4110-00'
-          };
-
-          // 1. Insert into parties
-          await client.query(`
-            INSERT INTO parties (id, code, name, type, contact_person, phone, email, address, trn_no, credit_limit, current_balance, currency, is_active, account_map, coa_account_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-            ON CONFLICT (id) DO UPDATE SET
-              name = EXCLUDED.name,
-              current_balance = EXCLUDED.current_balance,
-              coa_account_id = EXCLUDED.coa_account_id,
-              account_map = EXCLUDED.account_map
-          `, [
-            id, code, p.name, p.type || 'CLIENT', p.contactPerson || p.contact_person || '',
-            p.phone || '', p.email || '', p.address || '', p.trnNo || p.trn_no || '',
-            Number(p.creditLimit || p.credit_limit || 0), Number(p.currentBalance || p.current_balance || 0),
-            p.currency || 'AED', p.isActive !== false, JSON.stringify(accountMap), coaId
-          ]);
-
-          // 2. Auto-create COA sub-account in live accounts table
-          try {
-            await client.query(`
-              INSERT INTO accounts (account_code, account_name, account_type_id, is_active, is_transactional, account_level)
-              VALUES ($1, $2, $3, true, true, 3)
-              ON CONFLICT (account_code) DO NOTHING;
-            `, [coaCode, coaName, isSupplier ? 2 : (isClient ? 1 : 2)]);
-          } catch (_) {}
+          const partyName = (p.name || p.company_name || '').trim();
+          const partyType = (p.type || p.party_type || 'CLIENT').toUpperCase();
+          const phone = p.phone || null;
+          const trn = p.trn || p.trn_no || p.tin_or_ntn || null;
+          const creditLimit = Number(p.creditLimit || p.credit_limit || 0);
 
           try {
-            await client.query(`
-              INSERT INTO coa_accounts (id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, party_id, tier_level, parent_code)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 3, $11)
-              ON CONFLICT (code) DO NOTHING;
-            `, [
-              coaId, coaCode, coaName, coaType, subType,
-              p.currency || 'AED', Number(p.currentBalance || p.current_balance || 0),
-              p.isActive !== false, parentId, id, parentCode
-            ]);
-          } catch (_) {}
-
-          await client.end();
-          return res.status(200).json({ success: true, id, code, coaAccountId: coaId });
+            const rpcRes = await client.query(
+              'SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6) as data;',
+              [partyName, partyType, phone, trn, creditLimit, null]
+            );
+            await client.end();
+            const resData = rpcRes.rows[0]?.data || {};
+            return res.status(200).json({
+              success: true,
+              id: resData.party_id,
+              code: resData.party_code || resData.code,
+              coaAccountId: resData.account_id,
+              data: resData
+            });
+          } catch (fnErr: any) {
+            console.error('[Party Creation RPC Error]:', fnErr);
+            await client.end();
+            return res.status(500).json({ error: fnErr.message, stack: fnErr.stack, details: String(fnErr) });
+          }
         }
 
         const partiesRes = await client.query(`
@@ -4668,11 +4634,16 @@ export default async function handler(req: any, res: any) {
       timestamp: new Date().toISOString()
     });
 
-  } catch (error: any) {
-    console.error(`[Serverless Handler Error for ${pathname}]:`, error);
+  } catch (err: any) {
+    console.error(`[Serverless Handler Error for ${pathname}]:`, err);
+    try {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    } catch (_) {}
     return res.status(500).json({
-      success: false,
-      error: error?.message || 'Internal Server Error in Vercel Gateway'
+      error: err?.message || String(err),
+      stack: err?.stack,
+      details: String(err)
     });
   }
 }
