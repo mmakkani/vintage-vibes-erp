@@ -242,13 +242,16 @@ partiesRouter.get('/:id', async (req, res) => {
 partiesRouter.post('/', async (req, res) => {
   let client: Client | null = null;
   try {
-    const partyData = req.body;
-    const id = partyData.id || `pty-${Date.now()}`;
+    const partyData = req.body || {};
+    const id = partyData.id || partyData.party_id || `pty-${Date.now()}`;
     const code = partyData.code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
-    const cleanName = String(partyData.name || '').trim();
+    const cleanName = String(partyData.name || partyData.company_name || partyData.companyName || '').trim();
     if (!cleanName) {
       return res.status(400).json({ error: 'Party company/customer name is required' });
     }
+
+    const rawType = String(partyData.type || partyData.party_type || partyData.partyType || 'CLIENT').trim().toUpperCase();
+    const type = (rawType === 'SUPPLIER' || rawType === 'AGENT') ? rawType : 'CLIENT';
 
     client = await getDbClient();
 
@@ -268,12 +271,11 @@ partiesRouter.post('/', async (req, res) => {
       });
     }
 
-    const type = (partyData.type || 'CLIENT').toUpperCase();
     const contactPerson = partyData.contactPerson || partyData.contact_person || '';
-    const phone = partyData.phone || '';
+    const phone = partyData.phone || partyData.contact_no || partyData.contactNo || '';
     const email = partyData.email || '';
     const address = partyData.address || '';
-    const trnNo = partyData.trnNo || partyData.trn_no || '';
+    const trnNo = partyData.trnNo || partyData.trn_no || partyData.trn || partyData.tax_id || partyData.trnTaxNo || '';
     const creditLimit = Number(partyData.creditLimit ?? partyData.credit_limit ?? 50000);
     const currentBalance = Number(partyData.currentBalance ?? partyData.current_balance ?? 0);
     const currency = partyData.currency || 'AED';
@@ -285,19 +287,20 @@ partiesRouter.post('/', async (req, res) => {
     const cleanCode = code.replace(/[^A-Za-z0-9]/g, '');
     const coaCode = isSupplier ? `2110-${cleanCode}` : (isClient ? `1130-${cleanCode}` : `2120-${cleanCode}`);
     const coaId = `acc-${id}`;
-    const parentCode = isSupplier ? '2110-00' : (isClient ? '1130-00' : '2120-00');
-    const parentId = isSupplier ? 'acc-2110' : (isClient ? 'acc-1130' : 'acc-2120');
+    const parentCode = isSupplier 
+      ? (partyData.payableAccountId || partyData.payable_account_id || '2110-00')
+      : (isClient ? (partyData.receivableAccountId || partyData.receivable_account_id || '1130-00') : '2120-00');
     const coaType = isSupplier ? 'LIABILITY' : (isClient ? 'ASSET' : 'LIABILITY');
     const subType = isSupplier ? 'Accounts Payable - Trade' : (isClient ? 'Accounts Receivable - Trade' : 'Accounts Payable - Agent');
     const roleTag = isSupplier ? 'Supplier' : (isClient ? 'Customer' : 'Agent');
     const coaName = `${cleanName} (${roleTag})`;
 
     const initialMap = {
-      ...(partyData.accountMap || {}),
-      payableAccountId: isSupplier ? coaCode : (partyData.payableAccountId || '2110-00'),
-      receivableAccountId: isClient ? coaCode : (partyData.receivableAccountId || '1130-00'),
-      clearingAccountId: partyData.clearingAccountId || '1310-00',
-      revenueAccountId: partyData.revenueAccountId || '4110-00'
+      ...(partyData.accountMap || partyData.account_map || {}),
+      payableAccountId: isSupplier ? coaCode : (partyData.payableAccountId || partyData.payable_account_id || '2110-00'),
+      receivableAccountId: isClient ? coaCode : (partyData.receivableAccountId || partyData.receivable_account_id || '1130-00'),
+      clearingAccountId: partyData.clearingAccountId || partyData.clearing_account_id || '1310-00',
+      revenueAccountId: partyData.revenueAccountId || partyData.revenue_account_id || '4110-00'
     };
 
     await client.query('BEGIN');
@@ -321,9 +324,23 @@ partiesRouter.post('/', async (req, res) => {
         is_active = EXCLUDED.is_active,
         account_map = EXCLUDED.account_map,
         coa_account_id = EXCLUDED.coa_account_id;
-    `, [id, code, cleanName, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, currency, isActive, JSON.stringify(initialMap), coaId]);
+    `, [id, code, cleanName, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, currency, isActive, JSON.stringify(initialMap), coaCode]);
 
-    // 2. Auto-provision COA Sub-Account
+    // 2. Auto-provision in chart_of_accounts (Standard 5-Tier PostgreSQL table)
+    try {
+      const parentLookup = await client.query('SELECT id FROM chart_of_accounts WHERE code = $1 LIMIT 1', [parentCode]);
+      const parentId = parentLookup.rows[0]?.id || null;
+
+      await client.query(`
+        INSERT INTO chart_of_accounts (code, name, account_type, parent_id, current_balance)
+        VALUES ($1, $2, $3, $4, 0)
+        ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name;
+      `, [coaCode, coaName, coaType, parentId]);
+    } catch (coaErr: any) {
+      console.warn('chart_of_accounts auto-provision notice:', coaErr?.message);
+    }
+
+    // 3. Also maintain coa_accounts for compatibility
     try {
       await client.query(`
         INSERT INTO coa_accounts (
@@ -334,9 +351,9 @@ partiesRouter.post('/', async (req, res) => {
           name = EXCLUDED.name,
           current_balance = EXCLUDED.current_balance,
           is_active = EXCLUDED.is_active;
-      `, [coaId, coaCode, coaName, coaType, subType, currency, currentBalance, isActive, parentId, parentCode, id]);
-    } catch (coaErr) {
-      console.warn('Non-blocking COA sub-account insert notice:', coaErr);
+      `, [coaId, coaCode, coaName, coaType, subType, currency, currentBalance, isActive, `acc-${parentCode.replace('-00', '')}`, parentCode, id]);
+    } catch (coaErr: any) {
+      console.warn('Non-blocking coa_accounts insert notice:', coaErr?.message);
     }
 
     await client.query('COMMIT');
@@ -345,19 +362,29 @@ partiesRouter.post('/', async (req, res) => {
       id,
       code,
       name: cleanName,
+      company_name: cleanName,
       type,
+      party_type: type,
+      partyType: type,
       contactPerson,
+      contact_person: contactPerson,
       phone,
       email,
       address,
       trnNo,
+      trn_no: trnNo,
+      tax_id: trnNo,
       creditLimit,
+      credit_limit: creditLimit,
       currentBalance,
+      current_balance: currentBalance,
       currency,
       isActive,
+      is_active: isActive,
       accountMap: initialMap,
-      coaAccountId: coaId,
-      coa_account_id: coaId,
+      account_map: initialMap,
+      coaAccountId: coaCode,
+      coa_account_id: coaCode,
       createdAt: new Date().toISOString()
     };
 

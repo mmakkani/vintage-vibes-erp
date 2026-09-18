@@ -122,36 +122,58 @@ export class PartiesService {
     isActive?: boolean;
     accountMap?: any;
   }): Promise<string> {
+    const cleanName = String(party.name || '').trim();
+    if (!cleanName) return '';
+
     const isSupplier = party.type === 'SUPPLIER';
     const isClient = party.type === 'CLIENT' || party.type === 'CUSTOMER';
-    const parentCode = isSupplier ? '2110-00' : (isClient ? '1130-00' : '2120-00');
-    const parentId = isSupplier ? 'acc-2110' : (isClient ? 'acc-1130' : 'acc-2120');
-    const coaType = isSupplier ? 'LIABILITY' : (isClient ? 'ASSET' : 'LIABILITY');
+    const parentCode = isSupplier 
+      ? (party.accountMap?.payableAccountId || '2110-00')
+      : (isClient ? (party.accountMap?.receivableAccountId || '1130-00') : '2120-00');
+    const coaAccountType = isSupplier ? 'LIABILITY' : (isClient ? 'ASSET' : 'LIABILITY');
     const subType = isSupplier ? 'Accounts Payable - Trade' : (isClient ? 'Accounts Receivable - Trade' : 'Accounts Payable - Agent');
     const cleanCode = (party.code || '').replace(/[^A-Za-z0-9]/g, '') || String(Date.now()).slice(-4);
     const coaCode = isSupplier ? `2110-${cleanCode}` : (isClient ? `1130-${cleanCode}` : `2120-${cleanCode}`);
     const coaId = `acc-${party.id}`;
     const roleTag = isSupplier ? 'Supplier' : (isClient ? 'Customer' : 'Agent');
-    const coaName = `${party.name} (${roleTag})`;
+    const coaName = `${cleanName} (${roleTag})`;
 
     try {
-      // 1. Upsert COA Sub-Account
+      // 1. Look up parent in chart_of_accounts to get parent UUID
+      const { data: parentAcc } = await supabase
+        .from('chart_of_accounts')
+        .select('id')
+        .eq('code', parentCode)
+        .maybeSingle();
+
+      const parentId = parentAcc?.id || null;
+
+      // 2. Upsert in chart_of_accounts (Standard 5-Tier PostgreSQL table)
+      await supabase.from('chart_of_accounts').upsert({
+        code: coaCode,
+        name: coaName,
+        account_type: coaAccountType,
+        parent_id: parentId,
+        current_balance: Number(party.currentBalance || 0)
+      }, { onConflict: 'code' });
+
+      // 3. Upsert in coa_accounts (Legacy compatibility)
       await supabase.from('coa_accounts').upsert({
         id: coaId,
         code: coaCode,
         name: coaName,
-        type: coaType,
+        type: coaAccountType,
         sub_type: subType,
         currency: party.currency || 'AED',
         current_balance: Number(party.currentBalance || 0),
         is_active: party.isActive !== false,
-        parent_id: parentId,
+        parent_id: parentId || `acc-${parentCode.replace('-00', '')}`,
         parent_code: parentCode,
         party_id: party.id,
         tier_level: 3
       }, { onConflict: 'id' });
 
-      // 2. Link accountMap and coa_account_id on party
+      // 4. Link accountMap and coa_account_id on party
       const updatedMap = {
         ...(party.accountMap || {}),
         payableAccountId: isSupplier ? coaCode : (party.accountMap?.payableAccountId || '2110-00'),
@@ -159,14 +181,16 @@ export class PartiesService {
       };
 
       await supabase.from('parties').update({
-        coa_account_id: coaId,
+        coa_account_id: coaCode,
         account_map: updatedMap
       }).eq('id', party.id);
+
+      FinanceService.clearCoaCache();
     } catch (err) {
       console.warn('Auto-provisioning COA account for party failed (non-blocking):', err);
     }
 
-    return coaId;
+    return coaCode;
   }
 
   public static async getPartyById(id: string): Promise<Party | null> {
@@ -184,7 +208,44 @@ export class PartiesService {
     return data as any;
   }
 
-  public static async addParty(party: Partial<Party>): Promise<Party> {
+  public static async addParty(party: Partial<Party> & { party_type?: string; company_name?: string; companyName?: string; trn?: string; tax_id?: string; contact_no?: string; credit_limit?: number; receivable_account_id?: string; payable_account_id?: string }): Promise<Party> {
+    const cleanName = String(party.name || party.company_name || party.companyName || '').trim();
+    if (!cleanName) {
+      throw new Error('Party company/customer name is required and cannot be empty or undefined');
+    }
+
+    const rawType = String(party.type || party.party_type || (party as any).partyType || 'CLIENT').trim().toUpperCase();
+    const type = (rawType === 'SUPPLIER' || rawType === 'AGENT') ? rawType : 'CLIENT';
+
+    const phone = party.phone || party.contact_no || (party as any).contactNo || '';
+    const trnNo = party.trnNo || (party as any).trn_no || party.trn || party.tax_id || (party as any).trnTaxNo || '';
+    const creditLimit = Number(party.creditLimit ?? party.credit_limit ?? 50000);
+    const payableAccountId = party.payableAccountId || (party as any).payable_account_id || '2110-00';
+    const receivableAccountId = party.receivableAccountId || (party as any).receivable_account_id || '1130-00';
+    const clearingAccountId = party.clearingAccountId || (party as any).clearing_account_id || '1310-00';
+    const revenueAccountId = party.revenueAccountId || (party as any).revenue_account_id || '4110-00';
+
+    const normalizedInput = {
+      ...party,
+      name: cleanName,
+      company_name: cleanName,
+      type,
+      party_type: type,
+      phone,
+      trnNo,
+      trn_no: trnNo,
+      creditLimit,
+      credit_limit: creditLimit,
+      payableAccountId,
+      payable_account_id: payableAccountId,
+      receivableAccountId,
+      receivable_account_id: receivableAccountId,
+      clearingAccountId,
+      clearing_account_id: clearingAccountId,
+      revenueAccountId,
+      revenue_account_id: revenueAccountId
+    };
+
     // 1. Primary route: Express PostgreSQL backend
     if (typeof window !== 'undefined') {
       try {
@@ -192,53 +253,75 @@ export class PartiesService {
         const apiRes = await rawFetch('/api/parties', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(party)
+          body: JSON.stringify(normalizedInput)
         });
         if (apiRes.ok) {
-          const created = await apiRes.json();
-          return created;
+          const resJson = await apiRes.json();
+          const created = resJson.party || resJson;
+          FinanceService.clearCoaCache();
+          try {
+            localStorage.removeItem('vibe_cached_parties');
+          } catch {}
+          return {
+            id: created.id || `pty-${Date.now()}`,
+            code: created.code || 'P-NEW',
+            name: created.name || cleanName,
+            type: created.type || type,
+            contactPerson: created.contactPerson || created.contact_person || '',
+            phone: created.phone || phone,
+            email: created.email || '',
+            address: created.address || '',
+            trnNo: created.trnNo || created.trn_no || trnNo,
+            creditLimit: Number(created.creditLimit ?? created.credit_limit ?? creditLimit),
+            currentBalance: Number(created.currentBalance ?? created.current_balance ?? 0),
+            currency: created.currency || 'AED',
+            isActive: created.isActive !== false && created.is_active !== false,
+            accountMap: created.accountMap || created.account_map || {},
+            coaAccountId: created.coaAccountId || created.coa_account_id,
+            coa_account_id: created.coaAccountId || created.coa_account_id,
+            createdAt: created.createdAt || created.created_at || new Date().toISOString()
+          };
         } else {
           const errData = await apiRes.json().catch(() => ({}));
           if (errData.error) throw new Error(errData.error);
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('fetch')) throw err;
+        if (err.message && !err.message.includes('fetch') && !err.message.includes('JSON')) throw err;
       }
     }
 
     // 2. Fallback route: Supabase client
-    const id = party.id || `pty-${Date.now()}`;
-    const code = party.code || `P-${Date.now().toString().slice(-4)}`;
-    const coaId = `acc-${id}`;
-    const isSupplier = party.type === 'SUPPLIER';
-    const isClient = party.type === 'CLIENT' || party.type === 'CUSTOMER';
+    const id = party.id || (party as any).party_id || `pty-${Date.now()}`;
+    const code = party.code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
     const cleanCode = code.replace(/[^A-Za-z0-9]/g, '');
+    const isSupplier = type === 'SUPPLIER';
+    const isClient = type === 'CLIENT' || type === 'CUSTOMER';
     const coaCode = isSupplier ? `2110-${cleanCode}` : (isClient ? `1130-${cleanCode}` : `2120-${cleanCode}`);
 
     const initialMap = {
-      ...(party.accountMap || {}),
-      payableAccountId: isSupplier ? coaCode : '2110-00',
-      receivableAccountId: isClient ? coaCode : '1130-00',
-      clearingAccountId: '1310-00',
-      revenueAccountId: '4110-00'
+      ...(party.accountMap || (party as any).account_map || {}),
+      payableAccountId: isSupplier ? coaCode : payableAccountId,
+      receivableAccountId: isClient ? coaCode : receivableAccountId,
+      clearingAccountId,
+      revenueAccountId
     };
 
     const payload = {
       id,
       code,
-      name: party.name,
-      type: party.type || 'CLIENT',
-      contact_person: party.contactPerson || '',
-      phone: party.phone || '',
+      name: cleanName,
+      type,
+      contact_person: party.contactPerson || (party as any).contact_person || '',
+      phone,
       email: party.email || '',
       address: party.address || '',
-      trn_no: party.trnNo || '',
-      credit_limit: Number(party.creditLimit || 0),
-      current_balance: Number(party.currentBalance || 0),
+      trn_no: trnNo,
+      credit_limit: creditLimit,
+      current_balance: Number(party.currentBalance || (party as any).current_balance || 0),
       currency: party.currency || 'AED',
-      is_active: party.isActive !== false,
+      is_active: party.isActive !== false && (party as any).is_active !== false,
       account_map: initialMap,
-      coa_account_id: null
+      coa_account_id: coaCode
     };
 
     const { data, error } = await supabase
@@ -252,7 +335,7 @@ export class PartiesService {
       throw new Error(error.message || 'Failed to save party');
     }
 
-    // Auto-provision COA account immediately
+    // Auto-provision COA account immediately in chart_of_accounts and coa_accounts
     await PartiesService.ensurePartyCoaAccount({
       id: data.id,
       code: data.code,
@@ -263,6 +346,11 @@ export class PartiesService {
       isActive: data.is_active,
       accountMap: initialMap
     });
+
+    FinanceService.clearCoaCache();
+    try {
+      localStorage.removeItem('vibe_cached_parties');
+    } catch {}
 
     return {
       id: data.id,
@@ -279,8 +367,8 @@ export class PartiesService {
       currency: data.currency,
       isActive: data.is_active,
       accountMap: initialMap,
-      coaAccountId: coaId,
-      coa_account_id: coaId,
+      coaAccountId: coaCode,
+      coa_account_id: coaCode,
       createdAt: data.created_at
     };
   }

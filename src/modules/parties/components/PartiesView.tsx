@@ -79,18 +79,27 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   // New Party form
   const [partyForm, setPartyForm] = useState({
     name: '',
-    type: 'CLIENT' as any,
+    company_name: '',
+    type: 'CLIENT' as 'CLIENT' | 'SUPPLIER' | 'AGENT',
+    party_type: 'CLIENT' as 'CLIENT' | 'SUPPLIER' | 'AGENT',
     contactPerson: '',
+    contact_person: '',
     phone: '',
     email: '',
     address: '',
     trnNo: '',
+    trn_no: '',
     creditLimit: 50000,
+    credit_limit: 50000,
     currency: 'AED' as any,
     payableAccountId: '2110-00',
+    payable_account_id: '2110-00',
     clearingAccountId: '1310-00',
-    receivableAccountId: '1120-00',
-    revenueAccountId: '4110-00'
+    clearing_account_id: '1310-00',
+    receivableAccountId: '1130-00',
+    receivable_account_id: '1130-00',
+    revenueAccountId: '4110-00',
+    revenue_account_id: '4110-00'
   });
 
   const [coaAccounts, setCoaAccounts] = useState<any[]>([]);
@@ -131,14 +140,14 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       setParties(safeData);
 
       // Auto-select party if none selected or if selectedParty was deleted
-      if (safeData.length > 0) {
-        setSelectedParty((prev: any) => {
-          if (!prev) return safeData[0];
-          const exists = safeData.find((p: any) => p.id === prev.id);
-          return exists || safeData[0];
-        });
-      } else {
-        setSelectedParty(null);
+      setParties(data || []);
+      if (data && data.length > 0) {
+        if (!selectedParty) {
+          selectParty(data[0]);
+        } else {
+          const stillThere = data.find(p => p.id === selectedParty.id);
+          if (stillThere) setSelectedParty(stillThere);
+        }
       }
     } catch (err: any) {
       console.error('Failed to load parties:', err);
@@ -176,9 +185,15 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
   const handleCreateParty = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanName = partyForm.name.trim();
+    const cleanName = String(partyForm.name || (partyForm as any).company_name || '').trim();
+    const cleanType = String(partyForm.type || (partyForm as any).party_type || 'CLIENT').trim().toUpperCase() as 'CLIENT' | 'SUPPLIER' | 'AGENT';
+
     if (!cleanName) {
-      showMsg('Party / Company Name cannot be empty.', 'error');
+      showMsg('Party / Company Name cannot be empty or undefined.', 'error');
+      return;
+    }
+    if (!cleanType) {
+      showMsg('Party Entity Type cannot be empty or undefined.', 'error');
       return;
     }
 
@@ -189,10 +204,48 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     }
 
     try {
-      const newParty = await PartiesService.addParty({ ...partyForm, name: cleanName });
+      const newParty = await PartiesService.addParty({
+        ...partyForm,
+        name: cleanName,
+        company_name: cleanName,
+        type: cleanType,
+        party_type: cleanType
+      });
+
+      const partyName = newParty?.name || (newParty as any)?.company_name || cleanName;
+      const partyCode = newParty?.code || 'P-NEW';
+
       setShowNewPartyModal(false);
-      showMsg(`Added ${newParty.name} (${newParty.code}) and auto-provisioned COA sub-accounts!`);
-      loadParties();
+      showMsg(`Added ${partyName} (${partyCode}) and auto-provisioned COA sub-accounts!`);
+
+      // Reset form
+      setPartyForm({
+        name: '',
+        company_name: '',
+        type: 'CLIENT',
+        party_type: 'CLIENT',
+        contactPerson: '',
+        contact_person: '',
+        phone: '',
+        email: '',
+        address: '',
+        trnNo: '',
+        trn_no: '',
+        creditLimit: 50000,
+        credit_limit: 50000,
+        currency: 'AED',
+        payableAccountId: '2110-00',
+        payable_account_id: '2110-00',
+        clearingAccountId: '1310-00',
+        clearing_account_id: '1310-00',
+        receivableAccountId: '1130-00',
+        receivable_account_id: '1130-00',
+        revenueAccountId: '4110-00',
+        revenue_account_id: '4110-00'
+      });
+
+      await loadParties();
+      await loadCoaAccounts();
       onRefreshAll();
     } catch (err: any) {
       showMsg(err?.message || 'Failed to add party', 'error');
@@ -730,8 +783,11 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
               <div>
                 <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Party Entity Type:</label>
                 <select
-                  value={partyForm.type}
-                  onChange={e => setPartyForm({ ...partyForm, type: e.target.value as any })}
+                  value={partyForm.type || (partyForm as any).party_type}
+                  onChange={e => {
+                    const val = e.target.value as any;
+                    setPartyForm(prev => ({ ...prev, type: val, party_type: val }));
+                  }}
                   className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500"
                 >
                   <option value="CLIENT">Client (Customer)</option>
@@ -745,7 +801,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <input
                   type="text"
                   value={partyForm.name}
-                  onChange={e => setPartyForm({ ...partyForm, name: e.target.value })}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setPartyForm(prev => ({ ...prev, name: val, company_name: val }));
+                  }}
                   placeholder="e.g. Dubai Vintage Archive Ltd"
                   className={`w-full border rounded p-1.5 text-xs text-slate-800 ${
                     partyForm.name.trim() && parties.some(p => p.name.trim().toLowerCase() === partyForm.name.trim().toLowerCase())
@@ -776,7 +835,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   <input
                     type="text"
                     value={partyForm.phone}
-                    onChange={e => setPartyForm({ ...partyForm, phone: e.target.value })}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setPartyForm(prev => ({ ...prev, phone: val, contact_no: val }));
+                    }}
                     placeholder="+971 50 ..."
                     className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500"
                     required
@@ -787,7 +849,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   <input
                     type="text"
                     value={partyForm.trnNo}
-                    onChange={e => setPartyForm({ ...partyForm, trnNo: e.target.value })}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setPartyForm(prev => ({ ...prev, trnNo: val, trn_no: val }));
+                    }}
                     placeholder="100..."
                     className="w-full border border-slate-300 rounded p-1.5 text-xs font-mono text-slate-800 focus:border-blue-500"
                   />
@@ -799,7 +864,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <input
                   type="text"
                   value={partyForm.address}
-                  onChange={e => setPartyForm({ ...partyForm, address: e.target.value })}
+                  onChange={e => setPartyForm(prev => ({ ...prev, address: e.target.value }))}
                   placeholder="Plot 12, Industrial Area, Dubai"
                   className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500"
                 />
@@ -810,7 +875,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <input
                   type="number"
                   value={partyForm.creditLimit}
-                  onChange={e => setPartyForm({ ...partyForm, creditLimit: Number(e.target.value) })}
+                  onChange={e => {
+                    const val = Number(e.target.value);
+                    setPartyForm(prev => ({ ...prev, creditLimit: val, credit_limit: val }));
+                  }}
                   className="w-full border border-slate-300 rounded p-1.5 text-xs font-mono text-slate-800 focus:border-blue-500"
                 />
               </div>
@@ -829,7 +897,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     </label>
                     <SearchableSelect
                       value={partyForm.payableAccountId}
-                      onChange={val => setPartyForm({ ...partyForm, payableAccountId: val })}
+                      onChange={val => setPartyForm(prev => ({ ...prev, payableAccountId: val, payable_account_id: val }))}
                       options={coaAccounts.filter(a => a.classification === 'LIABILITY').map(a => ({
                         value: a.code,
                         label: `${a.code} - ${a.name}`,
@@ -848,7 +916,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     </label>
                     <SearchableSelect
                       value={partyForm.clearingAccountId}
-                      onChange={val => setPartyForm({ ...partyForm, clearingAccountId: val })}
+                      onChange={val => setPartyForm(prev => ({ ...prev, clearingAccountId: val, clearing_account_id: val }))}
                       options={coaAccounts.filter(a => a.classification === 'ASSET').map(a => ({
                         value: a.code,
                         label: `${a.code} - ${a.name}`,
@@ -876,13 +944,13 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     </label>
                     <SearchableSelect
                       value={partyForm.receivableAccountId}
-                      onChange={val => setPartyForm({ ...partyForm, receivableAccountId: val })}
+                      onChange={val => setPartyForm(prev => ({ ...prev, receivableAccountId: val, receivable_account_id: val }))}
                       options={coaAccounts.filter(a => a.classification === 'ASSET').map(a => ({
                         value: a.code,
                         label: `${a.code} - ${a.name}`,
                         badge: 'ASSET'
                       }))}
-                      placeholder="Select Receivable Account (1120-00)..."
+                      placeholder="Select Receivable Account (1130-00)..."
                       searchPlaceholder="Search trade receivables..."
                       className="w-full bg-white"
                     />
@@ -895,7 +963,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     </label>
                     <SearchableSelect
                       value={partyForm.revenueAccountId}
-                      onChange={val => setPartyForm({ ...partyForm, revenueAccountId: val })}
+                      onChange={val => setPartyForm(prev => ({ ...prev, revenueAccountId: val, revenue_account_id: val }))}
                       options={coaAccounts.filter(a => a.classification === 'REVENUE').map(a => ({
                         value: a.code,
                         label: `${a.code} - ${a.name}`,
