@@ -346,6 +346,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       const delName = deletingParty.name;
       const delCode = deletingParty.code;
       await PartiesService.deleteParty(delId);
+
+      // 1. Immediately mutate local state so the party is removed from the screen instantaneously
+      setParties(prev => prev.filter(p => p.id !== delId));
       setShowDeletePartyModal(false);
       showMsg(`Party "${delName}" (${delCode}) and linked Chart of Accounts entry deleted from SQL database.`, 'success');
       setDeletingParty(null);
@@ -356,7 +359,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       await Promise.all([loadParties(), loadCoaAccounts()]);
       onRefreshAll();
     } catch (err: any) {
-      setDeleteError(err.message || 'Failed to delete party');
+      const errMsg = err.message || 'Failed to delete party';
+      setDeleteError(errMsg);
+      showMsg('Deletion Failed: ' + errMsg, 'error');
     } finally {
       setIsDeleting(false);
     }

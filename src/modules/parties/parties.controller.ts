@@ -18,6 +18,10 @@ export class PartiesController {
     return relationalStore.addParty(partyData);
   }
 
+  public static deleteParty(id: string): boolean {
+    return relationalStore.deleteParty(id);
+  }
+
   public static getPartyKhata(partyId: string): PartyKhataLog[] {
     return relationalStore.getPartyKhataLogs(partyId);
   }

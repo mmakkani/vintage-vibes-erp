@@ -374,7 +374,9 @@ export class PartiesService {
   }
 
   public static async deleteParty(id: string): Promise<void> {
-    // 1. Primary route: Express PostgreSQL backend (with accounting integrity checks)
+    let apiSuccess = false;
+
+    // 1. Primary route: Express PostgreSQL backend (with accounting integrity transaction)
     if (typeof window !== 'undefined') {
       try {
         const rawFetch = (window as any).__originalFetch || window.fetch;
@@ -382,31 +384,55 @@ export class PartiesService {
           method: 'DELETE'
         });
         if (apiRes.ok) {
-          // Immediately purge deleted party from localStorage cache
-          try {
-            const cached = localStorage.getItem('vibe_cached_parties');
-            if (cached) {
-              const list = JSON.parse(cached);
-              if (Array.isArray(list)) {
-                localStorage.setItem('vibe_cached_parties', JSON.stringify(list.filter((p: any) => p.id !== id)));
-              }
-            }
-          } catch {}
-          FinanceService.clearCoaCache();
-          return;
+          apiSuccess = true;
+        } else {
+          const errData = await apiRes.json().catch(() => ({}));
+          const errMsg = errData.error || errData.detail || errData.messageUrdu || `Server returned HTTP ${apiRes.status}`;
+          throw new Error(errMsg);
         }
-        const errData = await apiRes.json().catch(() => ({}));
-        if (errData.error || errData.messageUrdu) {
-          throw new Error(errData.messageUrdu ? `${errData.error}\n${errData.messageUrdu}` : errData.error);
-        }
-        throw new Error(`Server returned HTTP ${apiRes.status}`);
       } catch (err: any) {
-        if (err.message && !err.message.includes('fetch')) {
+        // If it was a real rejection from the server API, throw it directly to display to user
+        if (err.message && !err.message.includes('fetch') && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
           throw err;
         }
-        throw new Error('Database server is not reachable. Please make sure the local server is running on http://localhost:3000.');
       }
     }
+
+    // 2. Direct Supabase Fallback (if Express server is not reachable)
+    if (!apiSuccess) {
+      try {
+        // Step a: Disconnect foreign keys from child tables first
+        await supabase.from('coa_accounts').update({ party_id: null }).eq('party_id', id);
+        await supabase.from('ledgers').update({ party_id: null }).eq('party_id', id);
+        await supabase.from('party_khata_logs').delete().eq('party_id', id);
+        await supabase.from('purchase_invoices').delete().eq('supplier_id', id);
+        await supabase.from('sales_invoices').delete().eq('client_id', id);
+
+        // Step b: Delete linked COA account if exists
+        await supabase.from('coa_accounts').delete().or(`party_id.eq.${id},id.eq.acc-${id}`);
+
+        // Step c: Delete party record from parties table
+        const { error } = await supabase.from('parties').delete().eq('id', id);
+        if (error) {
+          throw new Error(`Database error deleting party: ${error.message}`);
+        }
+      } catch (supaErr: any) {
+        console.error('Supabase direct party delete error:', supaErr);
+        throw new Error(supaErr.message || 'Failed to delete party from database');
+      }
+    }
+
+    // 3. Immediately purge deleted party from localStorage cache
+    try {
+      const cached = localStorage.getItem('vibe_cached_parties');
+      if (cached) {
+        const list = JSON.parse(cached);
+        if (Array.isArray(list)) {
+          localStorage.setItem('vibe_cached_parties', JSON.stringify(list.filter((p: any) => p.id !== id)));
+        }
+      }
+    } catch {}
+    FinanceService.clearCoaCache();
   }
 
   // --- Khata Logs ---

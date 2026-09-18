@@ -1686,6 +1686,21 @@ class RelationalStore {
     return newParty;
   }
 
+  public deleteParty(id: string): boolean {
+    const idx = this.parties.findIndex(p => p.id === id);
+    if (idx !== -1) {
+      const party = this.parties[idx];
+      this.parties.splice(idx, 1);
+      this.partyKhataLogs = this.partyKhataLogs.filter(k => k.partyId !== id);
+      this.auditLogs.unshift(
+        AuditEngine.createLogEntry('PARTIES', 'CANCEL', party.code, 'CANCELLED', 'System CRM', `Deleted party ${party.name} (${party.type})`)
+      );
+      this.saveToDisk();
+      return true;
+    }
+    return false;
+  }
+
   public getPartyKhataLogs(partyId: string): PartyKhataLog[] {
     return this.partyKhataLogs.filter(p => p.partyId === partyId);
   }
