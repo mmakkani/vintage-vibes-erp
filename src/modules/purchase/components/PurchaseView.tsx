@@ -28,51 +28,6 @@ interface PurchaseViewProps {
   maintenanceModules?: Record<string, boolean>;
 }
 
-// Local storage cache keys
-const CACHE_KEYS = {
-  BALES: 'vibe_cached_purchase_bales',
-  INVOICES: 'vibe_cached_purchase_invoices',
-  PIECES: 'vibe_cached_purchase_pieces',
-  PARTIES: 'vibe_cached_parties',
-  ITEMS: 'vibe_cached_items',
-  BRANDS: 'vibe_cached_brands',
-  LABELS: 'vibe_cached_labels',
-  SHOPS: 'vibe_cached_shops',
-  CATEGORIES: 'vibe_cached_categories',
-  SIZES: 'vibe_cached_sizes'
-};
-
-const loadCached = <T,>(key: string, fallback: T): T => {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw);
-    return Array.isArray(fallback) && !Array.isArray(parsed) ? fallback : parsed;
-  } catch {
-    return fallback;
-  }
-};
-
-const saveCached = (key: string, data: any) => {
-  try {
-    localStorage.setItem(key, JSON.stringify(data));
-  } catch {
-    // quota exceeded or private mode
-  }
-};
-
-const fetchJsonSafely = async <T,>(url: string): Promise<T | null> => {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const ct = res.headers.get('content-type');
-    if (ct && !ct.includes('application/json')) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
-  }
-};
-
 type PurchaseSubTab = 'sorting_terminal' | 'inventory' | 'commercial_invoices' | 'settings';
 
 export const PurchaseView: React.FC<PurchaseViewProps> = ({
@@ -105,27 +60,44 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
     } catch {}
   };
 
-  // State Collections with offline localStorage initialization
-  const [bales, setBales] = useState<InwardGatePass[]>(() => loadCached(CACHE_KEYS.BALES, []));
-  const [invoices, setInvoices] = useState<PurchaseInvoice[]>(() => loadCached(CACHE_KEYS.INVOICES, []));
-  const [inventoryPieces, setInventoryPieces] = useState<PieceBreakdownItem[]>(() => loadCached(CACHE_KEYS.PIECES, []));
-  const [parties, setParties] = useState<Party[]>(() => loadCached(CACHE_KEYS.PARTIES, []));
-  const [items, setItems] = useState<ItemMaster[]>(() => loadCached(CACHE_KEYS.ITEMS, []));
-  const [brands, setBrands] = useState<BrandMaster[]>(() => loadCached(CACHE_KEYS.BRANDS, []));
-  const [labels, setLabels] = useState<LabelGrade[]>(() => loadCached(CACHE_KEYS.LABELS, []));
-  const [shops, setShops] = useState<ShopMaster[]>(() => loadCached(CACHE_KEYS.SHOPS, []));
-  const [categories, setCategories] = useState<CategoryMaster[]>(() => loadCached(CACHE_KEYS.CATEGORIES, []));
-  const [sizes, setSizes] = useState<SizeMaster[]>(() => loadCached(CACHE_KEYS.SIZES, []));
-  const [balePresets, setBalePresets] = useState<any[]>(() => {
-    try {
-      const cached = localStorage.getItem('vintage_bale_presets_cache');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    return [];
-  });
+  // State Collections initialized to empty arrays (Strict Supabase Database Source of Truth)
+  const [bales, setBales] = useState<InwardGatePass[]>([]);
+  const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
+  const [inventoryPieces, setInventoryPieces] = useState<PieceBreakdownItem[]>([]);
+  const [parties, setParties] = useState<Party[]>([]);
+  const [items, setItems] = useState<ItemMaster[]>([]);
+  const [brands, setBrands] = useState<BrandMaster[]>([]);
+  const [labels, setLabels] = useState<LabelGrade[]>([]);
+  const [shops, setShops] = useState<ShopMaster[]>([]);
+  const [categories, setCategories] = useState<CategoryMaster[]>([]);
+  const [sizes, setSizes] = useState<SizeMaster[]>([]);
+  const [balePresets, setBalePresets] = useState<any[]>([]);
+
+  // Purge lingering legacy localStorage entity caches on mount
+  useEffect(() => {
+    const legacyKeys = [
+      'vibe_cached_purchase_bales',
+      'vibe_cached_purchase_invoices',
+      'vibe_cached_purchase_pieces',
+      'vibe_cached_parties',
+      'vibe_cached_items',
+      'vibe_cached_brands',
+      'vibe_cached_labels',
+      'vibe_cached_shops',
+      'vibe_cached_categories',
+      'vibe_cached_sizes',
+      'vintage_bales_cache',
+      'vintage_bale_presets_cache',
+      'vv_cached_pieces',
+      'vintage_cached_pieces',
+      'vv_cached_inventory_pieces'
+    ];
+    if (typeof window !== 'undefined' && window.localStorage) {
+      legacyKeys.forEach(k => {
+        try { localStorage.removeItem(k); } catch {}
+      });
+    }
+  }, []);
 
   const [activeSortingBaleId, setActiveSortingBaleId] = useState<string | null>(null);
   const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
@@ -153,17 +125,11 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         PurchaseService.getBalePresets().catch(() => [])
       ]);
 
-      let hasLiveResponse = false;
-
       if (Array.isArray(balesRes)) {
         setBales(balesRes);
-        saveCached(CACHE_KEYS.BALES, balesRes);
-        hasLiveResponse = true;
       }
       if (Array.isArray(invRes)) {
         setInvoices(invRes);
-        saveCached(CACHE_KEYS.INVOICES, invRes);
-        hasLiveResponse = true;
       }
       let livePieces = Array.isArray(piecesRes) ? piecesRes : [];
       const invoiceCount = Array.isArray(invRes) ? invRes.length : 0;
@@ -184,14 +150,11 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         }
       }
       setInventoryPieces(livePieces);
-      saveCached(CACHE_KEYS.PIECES, livePieces);
-      hasLiveResponse = true;
+
       if (Array.isArray(partiesRes)) {
         setParties(partiesRes);
-        saveCached(CACHE_KEYS.PARTIES, partiesRes);
-        hasLiveResponse = true;
       }
-      if (Array.isArray(presetsRes) && presetsRes.length > 0) {
+      if (Array.isArray(presetsRes)) {
         setBalePresets(presetsRes);
       }
       if (Array.isArray(presetsRes) || Array.isArray(itemsRes)) {
@@ -202,44 +165,27 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
           ...itemsList.filter((it: any) => !presetsList.some((p: any) => p.id === it.id || p.code === it.code || (p.name && it.name && p.name.toLowerCase() === it.name.toLowerCase())))
         ];
         setItems(mergedItems);
-        saveCached(CACHE_KEYS.ITEMS, mergedItems);
-        hasLiveResponse = true;
       }
       if (Array.isArray(brandsRes)) {
         setBrands(brandsRes);
-        saveCached(CACHE_KEYS.BRANDS, brandsRes);
-        hasLiveResponse = true;
       }
       if (Array.isArray(labelsRes)) {
         setLabels(labelsRes);
-        saveCached(CACHE_KEYS.LABELS, labelsRes);
-        hasLiveResponse = true;
       }
       if (Array.isArray(shopsRes)) {
         setShops(shopsRes);
-        saveCached(CACHE_KEYS.SHOPS, shopsRes);
-        hasLiveResponse = true;
       }
       if (Array.isArray(catRes)) {
         setCategories(catRes);
-        saveCached(CACHE_KEYS.CATEGORIES, catRes);
-        hasLiveResponse = true;
       }
       if (Array.isArray(sizeRes)) {
         setSizes(sizeRes);
-        saveCached(CACHE_KEYS.SIZES, sizeRes);
-        hasLiveResponse = true;
-      }
-      if (Array.isArray(shopsRes)) {
-        setShops(shopsRes);
-        saveCached(CACHE_KEYS.SHOPS, shopsRes);
-        hasLiveResponse = true;
       }
 
-      setIsOfflineMode(!hasLiveResponse);
+      setIsOfflineMode(false);
 
       // Keep active sorting bale refreshed
-      const currentBales = Array.isArray(balesRes) ? balesRes : loadCached(CACHE_KEYS.BALES, bales);
+      const currentBales = Array.isArray(balesRes) ? balesRes : bales;
       if (activeSortingBaleId && Array.isArray(currentBales)) {
         const found = currentBales.find((b: InwardGatePass) => b.id === activeSortingBaleId);
         if (!found) {
@@ -247,7 +193,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         }
       }
     } catch (err: any) {
-      console.warn('Network unreachable; safely switching to local offline cache:', err);
+      console.warn('Purchase data sync error:', err);
       setIsOfflineMode(true);
     } finally {
       setIsLoading(false);

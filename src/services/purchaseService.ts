@@ -619,13 +619,13 @@ export class PurchaseService {
 
       // If zero invoices and zero bales exist, wipe all inventory pieces and items
       if (validInvoiceIds.size === 0 && validPassIds.size === 0) {
-        await supabase.from('inventory_pieces').delete().neq('id', 'placeholder_none');
-        await supabase.from('bale_sorted_pieces').delete().neq('id', 'placeholder_none');
+        const { count: c1 } = await supabase.from('inventory_pieces').delete({ count: 'exact' }).neq('id', 'placeholder_none');
+        const { count: c2 } = await supabase.from('bale_sorted_pieces').delete({ count: 'exact' }).neq('id', 'placeholder_none');
         try {
           localStorage.removeItem('vv_cached_pieces');
           localStorage.removeItem('vintage_cached_pieces');
         } catch (_) {}
-        return { deletedCount: 12 };
+        return { deletedCount: (c1 || 0) + (c2 || 0) };
       }
 
       // Find pieces with missing parent
@@ -753,32 +753,30 @@ export class PurchaseService {
         .from('inward_gate_passes')
         .select('*')
         .order('created_at', { ascending: false });
-      if (!res.error && res.data && res.data.length > 0) {
+      if (!res.error && Array.isArray(res.data)) {
         data = res.data;
       }
     } catch (_) {}
 
-    // If Supabase REST did not return bales (e.g. invalid anon key or offline), query server endpoint
-    if (!data || data.length === 0) {
+    // If Supabase REST errored, check server endpoint
+    if (data === null) {
       try {
         const apiRes = await fetch('/api/purchase/gate-passes');
         if (apiRes.ok) {
           const apiList = await apiRes.json();
-          if (Array.isArray(apiList) && apiList.length > 0) {
-            return apiList;
+          if (Array.isArray(apiList)) {
+            data = apiList;
           }
         }
       } catch (_) {}
+    }
 
-      // Check localStorage cache
-      try {
-        const cached = localStorage.getItem('vintage_bales_cache');
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        }
-      } catch (_) {}
+    // Always purge obsolete local storage cache key
+    try {
+      localStorage.removeItem('vintage_bales_cache');
+    } catch (_) {}
 
+    if (!data || data.length === 0) {
       return [];
     }
 
@@ -1398,41 +1396,26 @@ export class PurchaseService {
     } catch (_) {}
 
     try {
-      const cached = localStorage.getItem('vv_cached_pieces');
-      if (cached) {
-        const list = JSON.parse(cached);
-        if (Array.isArray(list)) {
-          localStorage.setItem('vv_cached_pieces', JSON.stringify(list.filter((p: any) => p.id !== id)));
-        }
-      }
+      localStorage.removeItem('vv_cached_pieces');
     } catch (_) {}
   }
 
   // --- Bale Presets Catalog ---
   public static async getBalePresets(): Promise<any[]> {
-    // 1. Query server endpoint directly connecting to PostgreSQL
+    // Purge obsolete local storage cache
     try {
-      const apiRes = await fetch('/api/purchase/bale-presets');
-      if (apiRes.ok) {
-        const list = await apiRes.json();
-        if (Array.isArray(list) && list.length > 0) {
-          try {
-            localStorage.setItem('vintage_bale_presets_cache', JSON.stringify(list));
-          } catch {}
-          return list;
-        }
-      }
-    } catch (_) {}
+      localStorage.removeItem('vintage_bale_presets_cache');
+    } catch {}
 
-    // 2. Fallback to Supabase REST
+    // 1. Fallback to Supabase REST
     try {
       const { data, error } = await supabase
         .from('bale_presets')
         .select('*')
         .order('name', { ascending: true });
 
-      if (!error && data && data.length > 0) {
-        const mapped = data.map((r: any) => ({
+      if (!error && Array.isArray(data)) {
+        return data.map((r: any) => ({
           id: r.id,
           code: r.item_code || r.code || `BALE-${r.id}`,
           name: r.name,
@@ -1446,22 +1429,21 @@ export class PurchaseService {
           status: 'POSTED',
           isActive: true
         }));
-
-        try {
-          localStorage.setItem('vintage_bale_presets_cache', JSON.stringify(mapped));
-        } catch {}
-
-        return mapped;
       }
     } catch (e) {
       console.warn('Failed to fetch bale presets via Supabase:', e);
     }
 
-    // 3. Fallback to localStorage cache
+    // 2. Query server endpoint directly connecting to PostgreSQL if Supabase REST failed
     try {
-      const cached = localStorage.getItem('vintage_bale_presets_cache');
-      if (cached) return JSON.parse(cached);
-    } catch {}
+      const apiRes = await fetch('/api/purchase/bale-presets');
+      if (apiRes.ok) {
+        const list = await apiRes.json();
+        if (Array.isArray(list)) {
+          return list;
+        }
+      }
+    } catch (_) {}
 
     return [];
   }

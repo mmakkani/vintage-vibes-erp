@@ -41,38 +41,6 @@ interface AIOcrScannerModalProps {
   }) => void;
 }
 
-// Sample demo documents with high quality realistic UAE legal layout representations
-const SAMPLE_DOCS = {
-  emiratesId: {
-    front: 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop',
-    back: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=600&auto=format&fit=crop',
-    name: 'Saeed Bin Haider Al-Nuaimi',
-    nameArabic: 'سعيد بن حيدر النعيمي',
-    eid: '784-1994-3403542-1',
-    cardNo: 'EID-849201948',
-    dob: '1994-08-22',
-    gender: 'MALE' as const,
-    nationality: 'United Arab Emirates',
-    expiry: '2028-08-21'
-  },
-  passport: {
-    image: 'https://images.unsplash.com/photo-1578575437130-527eed3abbec?w=600&auto=format&fit=crop',
-    passNo: 'UAE3610301',
-    country: 'United Arab Emirates',
-    issueDate: '2020-04-10',
-    expiryDate: '2030-04-09'
-  },
-  residency: {
-    image: 'https://images.unsplash.com/photo-1586281380349-632531db7ed4?w=600&auto=format&fit=crop',
-    fileNo: '201/2023/8493012',
-    uid: '748392019',
-    profession: 'Senior Apparel Sorter & Inspector',
-    sponsor: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
-    issueDate: '2023-09-01',
-    expiryDate: '2026-08-31'
-  }
-};
-
 export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, onClose, onApplyData }) => {
   const [docMode, setDocMode] = useState<'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA'>('EMIRATES_ID');
   
@@ -305,20 +273,6 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
       setter,
       docType
     });
-  };
-
-  const handleLoadSampleData = () => {
-    if (docMode === 'EMIRATES_ID') {
-      setFrontImage(SAMPLE_DOCS.emiratesId.front);
-      setBackImage(SAMPLE_DOCS.emiratesId.back);
-      setIsAutoCropped({ front: true, back: true });
-    } else if (docMode === 'PASSPORT') {
-      setPassportImage(SAMPLE_DOCS.passport.image);
-      setIsAutoCropped({ passport: true });
-    } else {
-      setResidencyImage(SAMPLE_DOCS.residency.image);
-      setIsAutoCropped({ residency: true });
-    }
   };
 
   const handleExecuteScan = async () => {
@@ -555,14 +509,6 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
               <span>Live AI Camera Scan</span>
             </button>
 
-            <button
-              type="button"
-              onClick={handleLoadSampleData}
-              className="text-[11px] font-bold text-slate-600 hover:text-blue-700 bg-slate-100 hover:bg-blue-50 px-2.5 py-1 rounded border border-slate-200 transition-all flex items-center gap-1 shrink-0"
-            >
-              <Sparkles className="w-3 h-3 text-amber-500" />
-              <span>Load Sample Preset</span>
-            </button>
           </div>
         </div>
 

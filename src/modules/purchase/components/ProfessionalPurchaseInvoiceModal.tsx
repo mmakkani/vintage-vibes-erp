@@ -94,18 +94,11 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
   // Dynamic Bale Presets fetched from public.bale_presets (Purchase Factory Settings Master Catalog)
   const [balePresets, setBalePresets] = useState<any[]>(() => {
     if (Array.isArray(balePresetsProp) && balePresetsProp.length > 0) return balePresetsProp;
-    try {
-      const cached = localStorage.getItem('vintage_bale_presets_cache');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
     return [];
   });
 
   useEffect(() => {
-    if (Array.isArray(balePresetsProp) && balePresetsProp.length > 0) {
+    if (Array.isArray(balePresetsProp)) {
       setBalePresets(balePresetsProp);
     }
   }, [balePresetsProp]);
@@ -114,7 +107,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
     const loadBalePresets = async () => {
       try {
         const data = await PurchaseService.getBalePresets();
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           setBalePresets(data);
         }
       } catch (err) {

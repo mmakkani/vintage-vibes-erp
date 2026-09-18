@@ -94,17 +94,7 @@ export const HardwareGadgetsHub: React.FC<HardwareGadgetsHubProps> = ({ onNotify
 
   // Diagnostics: Barcode Scanner Test Bench state
   const [scanInput, setScanInput] = useState<string>('');
-  const [scanLogs, setScanLogs] = useState<BarcodeScanTestEvent[]>([
-    {
-      id: 'scan-init-01',
-      timestamp: new Date().toLocaleTimeString(),
-      rawBarcode: 'VV-IGP20260001-0001',
-      detectedFormat: 'CODE128 (Piece ID)',
-      latencyMs: 32,
-      success: true,
-      prefixMatched: true
-    }
-  ]);
+  const [scanLogs, setScanLogs] = useState<BarcodeScanTestEvent[]>([]);
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const keyStrokeTimerRef = useRef<{ firstCharTime: number; keyCount: number } | null>(null);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);

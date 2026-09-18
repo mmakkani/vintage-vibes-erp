@@ -98,9 +98,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   // New Payment/Receipt form
   const [txForm, setTxForm] = useState({
     type: 'RECEIPT' as 'RECEIPT' | 'PAYMENT',
-    amount: 15000,
-    docRef: 'REC-2026-0091',
-    description: 'Direct bank transfer settlement against open invoice'
+    amount: '' as string | number,
+    docRef: '',
+    description: ''
   });
 
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -114,39 +114,43 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         const salC = Number(p.salesInvoicesCount ?? p.stats?.salesInvoicesCount ?? 0);
         const khtC = Number(p.khataLogsCount ?? p.stats?.khataTransactionsCount ?? 0);
         const glC = Number(p.glEntriesCount ?? p.stats?.glEntriesCount ?? 0);
-        const totalEnt = Number(p.totalEntriesCount ?? (purC + salC + khtC + glC));
-        const hasEnt = Boolean(p.hasEntries !== undefined ? p.hasEntries : (totalEnt > 0 || Math.abs(curBal) > 0.001));
+        const totC = Number(p.totalEntriesCount ?? p.stats?.totalEntriesCount ?? (purC + salC + khtC + glC));
+        const hasEnt = Boolean(p.hasEntries ?? (totC > 0 || Math.abs(curBal) > 0.001));
 
         return {
           ...p,
           currentBalance: curBal,
-          creditLimit: Number(p.creditLimit ?? p.credit_limit ?? 0),
           purchaseInvoicesCount: purC,
           salesInvoicesCount: salC,
           khataLogsCount: khtC,
           glEntriesCount: glC,
-          totalEntriesCount: totalEnt,
+          totalEntriesCount: totC,
           hasEntries: hasEnt
         };
       });
       setParties(safeData);
-      if (safeData.length > 0 && !selectedParty) {
-        selectParty(safeData[0]);
-      } else if (selectedParty) {
-        const updated = safeData.find((p: Party) => p.id === selectedParty.id);
-        if (updated) setSelectedParty(updated);
+
+      // Auto-select party if none selected or if selectedParty was deleted
+      if (safeData.length > 0) {
+        setSelectedParty((prev: any) => {
+          if (!prev) return safeData[0];
+          const exists = safeData.find((p: any) => p.id === prev.id);
+          return exists || safeData[0];
+        });
+      } else {
+        setSelectedParty(null);
       }
     } catch (err: any) {
-      console.error(err);
+      console.error('Failed to load parties:', err);
     }
   };
 
   const loadCoaAccounts = async () => {
     try {
       const data = await FinanceService.getCoaAccounts();
-      if (Array.isArray(data)) setCoaAccounts(data);
+      setCoaAccounts(data || []);
     } catch (err: any) {
-      console.warn('Failed to load COA for party provisioning:', err);
+      console.error('Failed to load COA accounts:', err);
     }
   };
 
@@ -199,10 +203,16 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     e.preventDefault();
     if (!selectedParty) return;
 
+    const numAmount = Number(txForm.amount);
+    if (!numAmount || numAmount <= 0) {
+      showMsg('Please enter a valid amount greater than 0.', 'error');
+      return;
+    }
+
     try {
       const isReceipt = txForm.type === 'RECEIPT';
-      const debit = isReceipt ? 0 : Number(txForm.amount);
-      const credit = isReceipt ? Number(txForm.amount) : 0;
+      const debit = isReceipt ? 0 : numAmount;
+      const credit = isReceipt ? numAmount : 0;
       const newBal = (selectedParty.currentBalance || 0) + debit - credit;
 
       await PartiesService.addKhataLog({
@@ -219,8 +229,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         currentBalance: newBal
       });
 
-      showMsg(`Recorded ${txForm.type} of AED ${txForm.amount}! Updated Khata statement.`);
+      showMsg(`Recorded ${txForm.type} of AED ${numAmount}! Updated Khata statement.`);
       setShowTransactionModal(false);
+      setTxForm({ type: 'RECEIPT', amount: '', docRef: '', description: '' });
       loadParties();
       selectParty({ ...selectedParty, currentBalance: newBal });
       onRefreshAll();
@@ -426,7 +437,14 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
         {/* Parties List (5 cols) */}
         <div className="lg:col-span-5 space-y-2">
-          {filteredParties.map(party => {
+          {filteredParties.length === 0 ? (
+            <div className="p-8 text-center bg-white rounded border border-dashed border-slate-200 text-slate-400">
+              <Users className="w-8 h-8 mx-auto mb-2 text-slate-300 stroke-[1.5]" />
+              <p className="font-semibold text-sm text-slate-600">No parties registered</p>
+              <p className="text-xs text-slate-400 mt-0.5">Database verified empty. Add a client or supplier above to begin.</p>
+            </div>
+          ) : (
+            filteredParties.map(party => {
             const isSelected = selectedParty?.id === party.id;
             return (
               <div
@@ -530,7 +548,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 </div>
               </div>
             );
-          })}
+          })
+          )}
         </div>
 
         {/* Khata Ledger Statement (7 cols) */}
@@ -936,8 +955,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <input
                   type="number"
                   value={txForm.amount}
-                  onChange={e => setTxForm({ ...txForm, amount: Number(e.target.value) })}
+                  onChange={e => setTxForm({ ...txForm, amount: e.target.value === '' ? '' : Number(e.target.value) })}
                   className="w-full border border-slate-300 rounded p-1.5 text-xs font-mono font-bold text-slate-900 focus:border-blue-500"
+                  placeholder="0.00"
                   required
                 />
               </div>

@@ -342,9 +342,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const [showQuickRegisterBale, setShowQuickRegisterBale] = useState(false);
   const [regInvoiceNo, setRegInvoiceNo] = useState('');
   const [regSupplier, setRegSupplier] = useState('');
-  const [regCategory, setRegCategory] = useState('90s Vintage Denim & American Knitwear');
-  const [regWeightKg, setRegWeightKg] = useState('50.0');
-  const [regCostAed, setRegCostAed] = useState('3000');
+  const [regCategory, setRegCategory] = useState('');
+  const [regWeightKg, setRegWeightKg] = useState('');
+  const [regCostAed, setRegCostAed] = useState('');
 
   // UI state
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -965,15 +965,19 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   // Register a new raw bale right from the terminal
   const handleQuickRegisterBale = async (e: React.FormEvent) => {
     e.preventDefault();
-    const wtNum = Number(regWeightKg) || 50;
-    const costNum = Number(regCostAed) || 3000;
+    const wtNum = Number(regWeightKg) || 0;
+    const costNum = Number(regCostAed) || 0;
+    if (wtNum <= 0) {
+      setFeedbackToast({ text: 'Please enter a valid bale weight (kg).', type: 'error' });
+      return;
+    }
     const invNo = regInvoiceNo.trim() || `COMM-INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
     const supp = regSupplier.trim() || 'Direct Import Consignment';
 
     const localId = `igp-${Date.now()}`;
     const gatePassNo = `IGP-2026-${Math.floor(1000 + Math.random() * 9000)}`;
     const baleCode = `BAL-${invNo.replace(/[^a-zA-Z0-9]/g, '')}-001`;
-    const cpg = wtNum > 0 ? Number((costNum / (wtNum * 1000)).toFixed(6)) : 0.06;
+    const cpg = wtNum > 0 ? Number((costNum / (wtNum * 1000)).toFixed(6)) : 0;
 
     const newBale: InwardGatePass = {
       id: localId,

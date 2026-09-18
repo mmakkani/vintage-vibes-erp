@@ -149,11 +149,8 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
   // =========================================================================
   const [selectedBooth, setSelectedBooth] = useState<string>('Booth 1: Vintage Outerwear & Jackets');
   const [isStreamingLive, setIsStreamingLive] = useState<boolean>(false);
-  const [liveClaimFeed, setLiveClaimFeed] = useState<Array<{ user: string; piece: string; price: number; time: string }>>([
-    { user: '@dubai_collector', piece: 'Carhartt Detroit J01', price: 490, time: '10s ago' },
-    { user: '@vintage_abu_dhabi', piece: 'Nirvana 1993 Tee', price: 420, time: '1m ago' }
-  ]);
-  const [vipCustomerPhone, setVipCustomerPhone] = useState<string>('+971 50 492 8812');
+  const [liveClaimFeed, setLiveClaimFeed] = useState<Array<{ user: string; piece: string; price: number; time: string }>>([]);
+  const [vipCustomerPhone, setVipCustomerPhone] = useState<string>('');
 
   const handleSendVipLockLink = () => {
     luxuryAudio.playWaxSealSound();
@@ -169,21 +166,18 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
   // =========================================================================
   // TAB 3: BALE INWARD & LIVE PROFITABILITY YIELD CALCULATOR
   // =========================================================================
-  const [baleCostAed, setBaleCostAed] = useState<number>(1400);
-  const [balePiecesCount, setBalePiecesCount] = useState<number>(45);
-  const [baleYieldValueAed, setBaleYieldValueAed] = useState<number>(4650);
+  const [baleCostAed, setBaleCostAed] = useState<number>(0);
+  const [balePiecesCount, setBalePiecesCount] = useState<number>(0);
+  const [baleYieldValueAed, setBaleYieldValueAed] = useState<number>(0);
   const baleProfitAed = Math.max(0, baleYieldValueAed - baleCostAed);
-  const baleRoiPercent = Math.round((baleProfitAed / baleCostAed) * 100);
+  const baleRoiPercent = baleCostAed > 0 ? Math.round((baleProfitAed / baleCostAed) * 100) : 0;
 
-  const [garmentStage, setGarmentStage] = useState<'RAW' | 'STEAMED' | 'TAGGED' | 'VAULT'>('STEAMED');
+  const [garmentStage, setGarmentStage] = useState<'RAW' | 'STEAMED' | 'TAGGED' | 'VAULT'>('RAW');
 
   // =========================================================================
   // TAB 4: ORDERS DISPATCH + 3-SECOND PACKING VIDEO PROOF + RTO RESTOCK
   // =========================================================================
-  const [pendingOrders, setPendingOrders] = useState([
-    { id: 'ORD-9821', customer: 'Hamdan Al-Maktoum', city: 'Dubai', items: 2, totalAed: 840, status: 'UNPACKED' },
-    { id: 'ORD-9822', customer: 'Sultan Al-Nuaimi', city: 'Al Ain', items: 1, totalAed: 380, status: 'PACKED' }
-  ]);
+  const [pendingOrders, setPendingOrders] = useState<Array<{ id: string; customer: string; city: string; items: number; totalAed: number; status: string }>>([]);
   const [isRecordingProof, setIsRecordingProof] = useState<boolean>(false);
   const [proofRecorded, setProofRecorded] = useState<boolean>(false);
   const [rtoBarcode, setRtoBarcode] = useState<string>('');
@@ -211,7 +205,7 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
   const [isBossUnlocked, setIsBossUnlocked] = useState<boolean>(false);
   const [bossPinInput, setBossPinInput] = useState<string>('');
   const [gpsTransferMode, setGpsTransferMode] = useState<string>('Al Ain Store ➔ Dubai Vault');
-  const [auditPiecesCount, setAuditPiecesCount] = useState<number>(184);
+  const [auditPiecesCount, setAuditPiecesCount] = useState<number>(0);
 
   const handleUnlockBoss = (e: React.FormEvent) => {
     e.preventDefault();
@@ -501,13 +495,17 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
               <div className="z-10 space-y-1">
                 <span className="text-[10px] text-amber-300 font-bold uppercase block">Recent Claims:</span>
                 <div className="space-y-1 max-h-16 overflow-y-auto">
-                  {liveClaimFeed.map((c, i) => (
-                    <div key={i} className="flex items-center justify-between text-[10px] bg-black/70 p-1.5 rounded border border-white/10 font-mono">
-                      <span className="text-emerald-400 font-bold">{c.user}</span>
-                      <span className="text-white truncate max-w-[120px]">{c.piece}</span>
-                      <span className="text-amber-300 font-bold">AED {c.price}</span>
-                    </div>
-                  ))}
+                  {liveClaimFeed.length === 0 ? (
+                    <div className="text-[10px] text-slate-400 italic py-1">No claims in stream yet.</div>
+                  ) : (
+                    liveClaimFeed.map((c, i) => (
+                      <div key={i} className="flex items-center justify-between text-[10px] bg-black/70 p-1.5 rounded border border-white/10 font-mono">
+                        <span className="text-emerald-400 font-bold">{c.user}</span>
+                        <span className="text-white truncate max-w-[120px]">{c.piece}</span>
+                        <span className="text-amber-300 font-bold">AED {c.price}</span>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -669,7 +667,12 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
 
             {/* Orders List */}
             <div className="space-y-2">
-              {pendingOrders.map(ord => (
+              {pendingOrders.length === 0 ? (
+                <div className="p-4 rounded-xl bg-white/5 border border-dashed border-white/10 text-center text-slate-400 text-xs">
+                  0 orders pending packaging or dispatch.
+                </div>
+              ) : (
+                pendingOrders.map(ord => (
                 <div
                   key={ord.id}
                   className="p-3 bg-white/5 rounded-xl border border-amber-400/30 space-y-2 text-xs"
@@ -719,7 +722,8 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
                     </button>
                   </div>
                 </div>
-              ))}
+              ))
+              )}
             </div>
 
             {/* Courier RTO Restock Barcode Scanner */}

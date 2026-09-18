@@ -56,16 +56,7 @@ export const PurchaseSettingsView: React.FC<PurchaseSettingsViewProps> = ({
   const [newCategoryInput, setNewCategoryInput] = useState('');
 
   // Bale Presets Catalog (bound to public.bale_presets)
-  const [balePresets, setBalePresets] = useState<BalePreset[]>(() => {
-    try {
-      const cached = localStorage.getItem('vintage_bale_presets_cache');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    return [];
-  });
+  const [balePresets, setBalePresets] = useState<BalePreset[]>([]);
   const [isLoadingPresets, setIsLoadingPresets] = useState(false);
 
   // Commercial Invoice Template Customizer
@@ -128,10 +119,10 @@ export const PurchaseSettingsView: React.FC<PurchaseSettingsViewProps> = ({
         .order('created_at', { ascending: false });
       if (!error && data) {
         setBalePresets(data);
-        try {
-          localStorage.setItem('vintage_bale_presets_cache', JSON.stringify(data));
-        } catch {}
       }
+      try {
+        localStorage.removeItem('vintage_bale_presets_cache');
+      } catch {}
     } catch (err) {
       console.error('Error loading bale presets:', err);
     } finally {
@@ -274,11 +265,7 @@ export const PurchaseSettingsView: React.FC<PurchaseSettingsViewProps> = ({
       triggerNotice('New Bale / Item registered in catalog & linked to Commercial Invoices!');
 
       if (data && data[0]) {
-        setBalePresets(prev => {
-          const next = [data[0], ...prev.filter(p => p.id !== data[0].id)];
-          try { localStorage.setItem('vintage_bale_presets_cache', JSON.stringify(next)); } catch {}
-          return next;
-        });
+        setBalePresets(prev => [data[0], ...prev.filter(p => p.id !== data[0].id)]);
       } else {
         loadBalePresets();
       }
@@ -297,11 +284,7 @@ export const PurchaseSettingsView: React.FC<PurchaseSettingsViewProps> = ({
     try {
       const { error } = await supabase.from('bale_presets').delete().eq('id', itemId);
       if (!error) {
-        setBalePresets(prev => {
-          const next = prev.filter(p => p.id !== itemId);
-          try { localStorage.setItem('vintage_bale_presets_cache', JSON.stringify(next)); } catch {}
-          return next;
-        });
+        setBalePresets(prev => prev.filter(p => p.id !== itemId));
         triggerNotice('Bale item removed from master catalog.');
         if (onRefreshItems) onRefreshItems();
       } else {

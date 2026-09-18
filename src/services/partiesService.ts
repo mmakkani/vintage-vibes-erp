@@ -38,11 +38,7 @@ export class PartiesService {
               createdAt: r.createdAt || r.created_at || new Date().toISOString()
             }));
             try {
-              if (normalized.length > 0) {
-                localStorage.setItem('vibe_cached_parties', JSON.stringify(normalized));
-              } else {
-                localStorage.removeItem('vibe_cached_parties');
-              }
+              localStorage.removeItem('vibe_cached_parties');
             } catch {}
             return normalized;
           }
@@ -106,7 +102,7 @@ export class PartiesService {
         });
 
         try {
-          localStorage.setItem('vibe_cached_parties', JSON.stringify(mapped));
+          localStorage.removeItem('vibe_cached_parties');
         } catch {}
 
         return mapped;
@@ -431,15 +427,9 @@ export class PartiesService {
       }
     }
 
-    // 3. Immediately purge deleted party from localStorage cache
+    // 3. Purge obsolete party cache
     try {
-      const cached = localStorage.getItem('vibe_cached_parties');
-      if (cached) {
-        const list = JSON.parse(cached);
-        if (Array.isArray(list)) {
-          localStorage.setItem('vibe_cached_parties', JSON.stringify(list.filter((p: any) => p.id !== id)));
-        }
-      }
+      localStorage.removeItem('vibe_cached_parties');
     } catch {}
     FinanceService.clearCoaCache();
   }

@@ -301,43 +301,37 @@ MANDATORY RULES:
       }
     }
 
-    // Intelligent Demo & Standalone Parser (Works without API key or on fallback)
+    // Clean response when AI Vision OCR extraction cannot be performed
     const detectedType = documentType === 'AUTO_DETECT' ? 'EMIRATES_ID' : documentType;
-    const sampleYear = 1990 + Math.floor(Math.random() * 12);
-    const randomEID = `784-${sampleYear}-${Math.floor(1000000 + Math.random() * 8999999)}-${Math.floor(1 + Math.random() * 8)}`;
-    const randomCardSerial = `EID-${Math.floor(100000000 + Math.random() * 899999999)}`;
-    const randomPass = `UAE${Math.floor(1000000 + Math.random() * 8999999)}`;
-    const randomRc = `201/${sampleYear + 32}/${Math.floor(1000000 + Math.random() * 8999999)}`;
-    const randomUid = `${Math.floor(100000000 + Math.random() * 899999999)}`;
 
     return {
-      success: true,
+      success: false,
       documentType: detectedType as 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA',
-      name: detectedType === 'PASSPORT' ? 'Faisal Al-Nuaimi' : detectedType === 'RESIDENCY_VISA' ? 'Mansoor Al-Ketbi' : 'Saeed Bin Haider',
-      nameArabic: detectedType === 'PASSPORT' ? 'فيصل النعيمي' : detectedType === 'RESIDENCY_VISA' ? 'منصور الكتبي' : 'سعيد بن حيدر',
-      emiratesId: randomEID,
-      idCardNo: randomCardSerial,
-      dob: `${sampleYear}-05-14`,
+      name: '',
+      nameArabic: '',
+      emiratesId: '',
+      idCardNo: '',
+      dob: '',
       gender: 'MALE',
-      nationality: 'United Arab Emirates',
-      emiratesIdExpiry: `${sampleYear + 36}-11-30`,
-      passportNo: randomPass,
-      passportCountry: 'United Arab Emirates',
-      passportIssueDate: `${sampleYear + 26}-02-10`,
-      passportExpiry: `${sampleYear + 36}-02-09`,
-      residencyCardNo: randomRc,
-      uidNo: randomUid,
-      residencyProfession: 'Senior Sorter & OCR Specialist',
-      residencySponsor: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
-      residencyIssueDate: `${sampleYear + 32}-06-15`,
-      residencyExpiryDate: `${sampleYear + 35}-06-14`,
-      confidence: 0.96,
-      source: 'DEMO_PRESET_PARSER',
-      idFrontImageUrl: imageBase64,
+      nationality: '',
+      emiratesIdExpiry: '',
+      passportNo: '',
+      passportCountry: '',
+      passportIssueDate: '',
+      passportExpiry: '',
+      residencyCardNo: '',
+      uidNo: '',
+      residencyProfession: '',
+      residencySponsor: '',
+      residencyIssueDate: '',
+      residencyExpiryDate: '',
+      confidence: 0,
+      source: 'MANUAL_ENTRY',
+      idFrontImageUrl: imageBase64 || '',
       idBackImageUrl: secondaryImageBase64 || '',
       passportImageUrl: detectedType === 'PASSPORT' ? imageBase64 : '',
       residencyImageUrl: detectedType === 'RESIDENCY_VISA' ? imageBase64 : '',
-      notes: apiKey ? 'OCR completed with fallback parser' : 'Sample preset mode (Configure Gemini API key for live AI OCR)'
+      notes: apiKey ? 'AI Vision extraction failed. Please enter document details manually.' : 'Gemini API key not configured. Please enter document details manually.'
     };
   }
 }

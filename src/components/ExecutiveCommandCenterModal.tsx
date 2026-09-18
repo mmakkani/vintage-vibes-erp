@@ -22,18 +22,13 @@ interface ExecutiveCommandCenterModalProps {
 export const ExecutiveCommandCenterModal: React.FC<ExecutiveCommandCenterModalProps> = ({
   isOpen,
   onClose,
-  initialGrossRevenue = 18450
+  initialGrossRevenue = 0
 }) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(soundEffects.isEnabled());
   const [grossRevenue, setGrossRevenue] = useState(initialGrossRevenue);
   const [liveClock, setLiveClock] = useState('');
-  const [recentClaims, setRecentClaims] = useState<Array<{ id: string; title: string; priceAed: number; buyer: string; time: string }>>([
-    { id: '1', title: '1994 Nirvana In Utero Tour Tee', priceAed: 850, buyer: '@sarah_dxb', time: '1 min ago' },
-    { id: '2', title: '1989 Carhartt Detroit Santa Fe Jacket', priceAed: 480, buyer: '@marcus_chen', time: '3 mins ago' },
-    { id: '3', title: '1996 Chicago Bulls Championship Bomber', priceAed: 290, buyer: '@tariq_uae', time: '6 mins ago' },
-    { id: '4', title: '1992 Harley 3D Emblem Eagle Tee', priceAed: 320, buyer: '@rashid_vintage', time: '9 mins ago' }
-  ]);
+  const [recentClaims, setRecentClaims] = useState<Array<{ id: string; title: string; priceAed: number; buyer: string; time: string }>>([]);
 
   // Clock in GST (Dubai Time)
   useEffect(() => {
@@ -357,22 +352,28 @@ export const ExecutiveCommandCenterModal: React.FC<ExecutiveCommandCenterModalPr
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-            {recentClaims.map(c => (
-              <div key={c.id} className="p-3 rounded-lg bg-stone-900 border border-slate-800 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
-                    <span className="text-amber-400 font-bold">{c.buyer}</span>
-                    <span>{c.time}</span>
+          {recentClaims.length === 0 ? (
+            <div className="p-6 rounded-lg bg-stone-900/50 border border-dashed border-slate-800 text-center text-slate-500 font-mono text-xs">
+              No sales logged yet. Live stream ready for incoming transactions.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {recentClaims.map(c => (
+                <div key={c.id} className="p-3 rounded-lg bg-stone-900 border border-slate-800 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+                      <span className="text-amber-400 font-bold">{c.buyer}</span>
+                      <span>{c.time}</span>
+                    </div>
+                    <h5 className="font-bold text-xs text-white mt-1 truncate">{c.title}</h5>
                   </div>
-                  <h5 className="font-bold text-xs text-white mt-1 truncate">{c.title}</h5>
+                  <div className="text-sm font-mono font-black text-emerald-400 mt-2">
+                    +AED {c.priceAed.toLocaleString()}.00
+                  </div>
                 </div>
-                <div className="text-sm font-mono font-black text-emerald-400 mt-2">
-                  +AED {c.priceAed.toLocaleString()}.00
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </main>
 
@@ -383,33 +384,17 @@ export const ExecutiveCommandCenterModal: React.FC<ExecutiveCommandCenterModalPr
         </div>
         <div className="overflow-hidden w-full relative">
           <div className="inline-flex whitespace-nowrap animate-ticker text-xs font-mono font-bold text-slate-300 space-x-6">
-            <span className="text-emerald-400">⚡ +AED 850: 1994 Nirvana Tee (@sarah_dxb)</span>
-            <span className="text-slate-600">•</span>
-            <span className="text-amber-300">⚡ +AED 480: Carhartt Santa Fe (@marcus_chen)</span>
-            <span className="text-slate-600">•</span>
-            <span className="text-emerald-400">⚡ +AED 290: 1996 Bulls Bomber (@tariq_uae)</span>
-            <span className="text-slate-600">•</span>
             <span className="text-blue-300">FX: 1 USD = 3.6725 AED</span>
             <span className="text-slate-600">•</span>
             <span className="text-blue-300">FX: 1 SAR = 0.9790 AED</span>
             <span className="text-slate-600">•</span>
             <span className="text-blue-300">FX: 1 EUR = 4.0210 AED</span>
             <span className="text-slate-600">•</span>
-            <span className="text-purple-300 font-black">GROSS BOOKED TODAY: AED {grossRevenue.toLocaleString()}.00</span>
-            <span className="text-slate-600">•</span>
-            <span className="text-emerald-400">⚡ +AED 850: 1994 Nirvana Tee (@sarah_dxb)</span>
-            <span className="text-slate-600">•</span>
-            <span className="text-amber-300">⚡ +AED 480: Carhartt Santa Fe (@marcus_chen)</span>
-            <span className="text-slate-600">•</span>
-            <span className="text-emerald-400">⚡ +AED 290: 1996 Bulls Bomber (@tariq_uae)</span>
-            <span className="text-slate-600">•</span>
-            <span className="text-blue-300">FX: 1 USD = 3.6725 AED</span>
-            <span className="text-slate-600">•</span>
-            <span className="text-blue-300">FX: 1 SAR = 0.9790 AED</span>
-            <span className="text-slate-600">•</span>
-            <span className="text-blue-300">FX: 1 EUR = 4.0210 AED</span>
+            <span className="text-emerald-400">DATABASE: Supabase PostgreSQL Connected</span>
             <span className="text-slate-600">•</span>
             <span className="text-purple-300 font-black">GROSS BOOKED TODAY: AED {grossRevenue.toLocaleString()}.00</span>
+            <span className="text-slate-600">•</span>
+            <span className="text-amber-300">LOGISTICS HUB: Al Ain Central Consignment Terminal Active</span>
           </div>
         </div>
       </footer>

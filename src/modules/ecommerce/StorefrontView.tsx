@@ -220,41 +220,63 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const [vanishingBarcodes, setVanishingBarcodes] = useState<string[]>([]);
   const [successToast, setSuccessToast] = useState<{ title: string; subtitle: string } | null>(null);
 
-  // Load active inventory directly from SQL /api/ecommerce/products (only available in-stock items)
+  // Load active inventory directly from SQL /api/ecommerce/products or Supabase (only available in-stock items)
   const fetchAvailableStock = async () => {
     setIsLoading(true);
+    try {
+      localStorage.removeItem('vv_cached_inventory_pieces');
+    } catch (_) {}
+
     try {
       // 1. Primary: Dedicated E-Commerce SQL Products Endpoint
       const res = await fetch('/api/ecommerce/products');
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           const available = data.filter(p => !p.isSold && p.status !== 'SOLD');
           setPieces(available);
           return;
         }
       }
 
-      // 2. Fallback: Purchase module inventory endpoint
-      const fallbackRes = await fetch('/api/purchase/inventory?soldStatus=IN_STOCK');
-      if (fallbackRes.ok) {
-        const data = await fallbackRes.json();
-        if (Array.isArray(data) && data.length > 0) {
-          const available = data.filter(p => !p.isSold && p.status !== 'SOLD');
-          setPieces(available);
-          return;
-        }
-      }
+      // 2. Secondary: Supabase client
+      const { data: supaData } = await supabase
+        .from('inventory_pieces')
+        .select('*')
+        .eq('is_sold', false)
+        .neq('status', 'SOLD')
+        .order('created_at', { ascending: false })
+        .limit(100);
 
-      // 3. Fallback to local storage cache if available
-      const cached = localStorage.getItem('vv_cached_inventory_pieces');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed)) {
-          const available = parsed.filter(p => !p.isSold && p.status !== 'SOLD');
-          setPieces(available);
-          return;
-        }
+      if (Array.isArray(supaData)) {
+        const available = supaData.map((r: any) => ({
+          id: r.id || r.barcode,
+          barcode: r.barcode,
+          itemId: r.item_id || 'ITM-01',
+          itemName: r.item_name || 'Vintage Garment',
+          brandId: r.brand_id,
+          brandName: r.brand_name || 'Vintage Archive',
+          sizeScanned: r.size_scanned || 'L',
+          countryOfOrigin: r.country_of_origin || 'USA',
+          style: r.style || 'Single-Stitch Vintage',
+          frontImageUrl: r.front_image_url || r.tag_image_url || '/studio_left_rack.png',
+          backImageUrl: r.back_image_url || r.front_image_url || '/studio_backdrop_noboy.png',
+          tagImageUrl: r.tag_image_url || '/studio_left_rack.png',
+          labelGrade: r.label_grade || 'Grade A+ (Pristine)',
+          brandTier: r.brand_tier || 'Grail',
+          shopLocation: r.shop_name || r.shop_location || 'Al Ain Vintage Hub',
+          pitToPitInches: r.pit_to_pit_inches ? Number(r.pit_to_pit_inches) : 22,
+          lengthInches: r.length_inches ? Number(r.length_inches) : 29,
+          weightKg: Number(r.weight_kg || 0.4),
+          estimatedPrice: Number(r.estimated_price || r.retail_price_aed || 295),
+          retailPriceAed: Number(r.retail_price_aed || r.estimated_price || 295),
+          isSold: Boolean(r.is_sold),
+          status: r.status || 'IN_STOCK',
+          isCartLocked: false,
+          createdAt: r.created_at
+        })).filter((p: any) => !p.isSold && p.status !== 'SOLD');
+        setPieces(available as PieceBreakdownItem[]);
+        return;
       }
 
       setPieces([]);

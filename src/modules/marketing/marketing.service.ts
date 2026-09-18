@@ -736,63 +736,8 @@ class MarketingService {
   }
 
   private initMockHistoryIfNeeded() {
-    if (this.claimLogs.length === 0) {
-      const now = new Date();
-      this.claimLogs = [
-        {
-          id: 'claim-init-1',
-          timestamp: new Date(now.getTime() - 1000 * 60 * 12).toLocaleTimeString(),
-          customerHandle: '@dubai_grail_hunter',
-          platform: 'tiktok',
-          rawComment: 'MINE VV-BAL-001-0001 please! Instant pay',
-          matchedKeyword: 'MINE',
-          sku: 'VV-BAL-001-0001',
-          itemName: '90s Carhartt Detroit Duck Jacket',
-          itemImage: 'https://vintagevibesllcspc.com/wp-content/uploads/2026/01/Premium-Vintage-Clothing-Store-in-UAE.webp',
-          priceAed: 240,
-          invoiceNo: 'SLS-DRAFT-LIVE-0081',
-          status: 'LOCK_ACTIVE',
-          replyDispatched: '🔥 CLAIM LOCKED @dubai_grail_hunter! You secured VV-BAL-001-0001 (90s Carhartt Detroit Duck Jacket) for AED 240. Lock valid for 15 mins.',
-          checkoutUrl: 'http://localhost:3000/?checkout=VV-BAL-001-0001',
-          lockExpiresAt: Date.now() + 1000 * 60 * 15,
-          boothId: 'booth-01'
-        },
-        {
-          id: 'claim-init-2',
-          timestamp: new Date(now.getTime() - 1000 * 60 * 35).toLocaleTimeString(),
-          customerHandle: '@layla_vintage_dxb',
-          platform: 'instagram',
-          rawComment: 'CLAIM VV-BAL-001-0002 for my collection',
-          matchedKeyword: 'CLAIM',
-          sku: 'VV-BAL-001-0002',
-          itemName: 'Vintage Levi 501 Single Stitch Denim',
-          itemImage: 'https://vintagevibesllcspc.com/wp-content/uploads/2026/01/Affordable-Thrift-Second-Hand-Fashion-in-Dubai.webp',
-          priceAed: 195,
-          invoiceNo: 'SLS-DRAFT-LIVE-0082',
-          status: 'CONFIRMED',
-          replyDispatched: '🔥 CLAIM LOCKED @layla_vintage_dxb! Invoice generated: SLS-DRAFT-LIVE-0082.',
-          checkoutUrl: 'http://localhost:3000/?checkout=VV-BAL-001-0002',
-          lockExpiresAt: Date.now() - 1000 * 60 * 10,
-          boothId: 'booth-01'
-        }
-      ];
-    }
-
-    if (this.vipDrops.length === 0) {
-      this.vipDrops = [
-        {
-          id: 'drop-vip-01',
-          campaignTitle: '✨ Dubai Gold VIP Vault Drop (Rare 90s Carhartt & Single-Stitch)',
-          targetGroup: 'VIP_GOLD_BUYERS',
-          recipientCount: 148,
-          pieceIds: ['VV-BAL-001-0001', 'VV-BAL-001-0002', 'VV-BAL-001-0003'],
-          customNote: 'Exclusive early access for top 50+ purchase tier before public TikTok live.',
-          generatedText: '🚨 *VINTAGE VIBES EXCLUSIVE VIP DROP* 🚨\n\nDear VIP Patron, our Dubai sorting facility just unsealed a Grade A container of rare 90s outerwear.\n\nBrowse & lock prior to live auction:\n• VV-BAL-001-0001 | 90s Carhartt Detroit (AED 240 / $65)\n• VV-BAL-001-0002 | Levis 501 Single Stitch (AED 195 / $53)\n\n👉 Direct VIP Checkout Link: http://localhost:3000/?vip=gold-drop',
-          sentAt: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
-          status: 'SENT'
-        }
-      ];
-    }
+    // Strictly no mock history - authentic live database events only
+    return;
   }
 
   // ==================== CHANNELS & QUICK STATS ====================
