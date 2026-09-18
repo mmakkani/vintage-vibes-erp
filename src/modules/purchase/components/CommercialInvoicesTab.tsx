@@ -290,11 +290,12 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   // 3. FIX DELETE BUTTON (Cascading Delete Handler)
   const handleDeleteInvoice = async (invoiceId: string, invoiceNo?: string) => {
     // a) Confirmation prompt:
-    if (!window.confirm("Are you sure you want to permanently delete this purchase invoice? All associated bales, sorting sessions, and auto-generated accounting vouchers will be completely removed from the SQL database.")) return;
+    if (!window.confirm("Are you sure you want to permanently delete this purchase invoice? All associated bales, generated inventory pieces, and auto-generated accounting vouchers will be completely removed from the database.")) return;
 
     try {
-      // b) Perform complete SQL cascade delete via PurchaseService
+      // b) Perform complete cascade delete via PurchaseService
       await PurchaseService.deletePurchaseInvoice(String(invoiceId), invoiceNo);
+      await PurchaseService.purgeOrphanedInventory();
 
       // c) Immediately remove the deleted invoice from React state:
       setInvoicesList(prev => prev.filter(inv => String(inv.id) !== String(invoiceId)));
@@ -302,10 +303,10 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
         onDeleteInvoice(String(invoiceId));
       }
 
-      setToastMessage("Purchase invoice and auto-vouchers deleted successfully from SQL");
+      setToastMessage("Purchase invoice and all associated inventory pieces deleted successfully");
       try {
         if (typeof (window as any).toast !== 'undefined') {
-          (window as any).toast.success("Purchase invoice & vouchers deleted successfully");
+          (window as any).toast.success("Purchase invoice & associated inventory deleted successfully");
         }
       } catch {}
 
@@ -324,14 +325,9 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
     const sortedKg = related.reduce((acc, b) => acc + (b.brokenDownWeight || 0), 0);
 
     if (sortedCount > 0 || sortedKg > 0) {
-      setLockedModalInfo({
-        invoiceNo: inv.invoiceNo,
-        actionType: 'DELETE',
-        sortedPiecesCount: sortedCount,
-        sortedWeightKg: sortedKg,
-        balesCount: related.length
-      });
-      return;
+      if (!window.confirm(`This commercial invoice (${inv.invoiceNo}) has ${sortedCount} generated inventory pieces across ${related.length} bales.\n\nAre you sure you want to CASCADE DELETE this invoice?\n\nThis will permanently remove:\n• The Commercial Invoice record\n• All ${related.length} associated bales\n• All ${sortedCount} generated inventory pieces/garments\n• All auto-generated accounting vouchers`)) {
+        return;
+      }
     }
 
     await handleDeleteInvoice(inv.id, inv.invoiceNo);
@@ -639,13 +635,27 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
               Please navigate to the <strong>Bale Sorting Operations Hub</strong> and delete all <strong>{lockedModalInfo.sortedPiecesCount}</strong> sorted pieces from these bales. Once all pieces are deleted (0 pieces remaining sorted), editing and deleting this invoice will automatically unlock!
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex justify-between items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const targetInv = invoicesList.find(i => i.invoiceNo === lockedModalInfo.invoiceNo);
+                  setLockedModalInfo(null);
+                  if (targetInv) {
+                    handleDeleteInvoice(targetInv.id, targetInv.invoiceNo);
+                  }
+                }}
+                className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Cascade Delete All (Invoice + Bales + Pieces)</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setLockedModalInfo(null)}
                 className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer"
               >
-                Understood (Close)
+                Cancel
               </button>
             </div>
           </div>

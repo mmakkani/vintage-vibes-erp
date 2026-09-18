@@ -780,10 +780,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     };
 
     try {
-      fetch(`/api/purchase/gate-passes/${activeBale.id}/pieces/${pieceId}`, {
-        method: 'DELETE'
-      }).catch(() => {});
-    } catch {}
+      // 1. Direct standard Supabase JS client deletion to prevent 404
+      await supabase.from('inventory_pieces').delete().eq('id', pieceId);
+      await supabase.from('bale_sorted_pieces').delete().eq('id', pieceId);
+    } catch (supaErr) {
+      console.warn('Supabase piece delete warning:', supaErr);
+    }
 
     onPieceDeleted(pieceId, updatedGatePass);
     setFeedbackToast({ text: 'Piece deleted; weights updated.', type: 'info' });

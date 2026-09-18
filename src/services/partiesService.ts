@@ -401,18 +401,30 @@ export class PartiesService {
     // 2. Direct Supabase Fallback (if Express server is not reachable)
     if (!apiSuccess) {
       try {
-        // Step a: Disconnect foreign keys from child tables first
-        await supabase.from('coa_accounts').update({ party_id: null }).eq('party_id', id);
+        // Step a: Break mutual foreign keys between parties and coa_accounts FIRST
+        await supabase.from('parties').update({ coa_account_id: null }).eq('id', id);
+        await supabase.from('coa_accounts').update({ party_id: null }).or(`party_id.eq.${id},id.eq.acc-${id}`);
+
+        // Step b: Unlink / delete from child references
         await supabase.from('ledgers').update({ party_id: null }).eq('party_id', id);
+        await supabase.from('general_ledger').update({ party_id: null }).eq('party_id', id);
+        await supabase.from('voucher_entries').update({ party_id: null }).eq('party_id', id);
         await supabase.from('party_khata_logs').delete().eq('party_id', id);
-        await supabase.from('purchase_invoices').delete().eq('supplier_id', id);
-        await supabase.from('sales_invoices').delete().eq('client_id', id);
+        await supabase.from('purchase_invoices').update({ supplier_id: null }).eq('supplier_id', id);
+        await supabase.from('sales_invoices').update({ client_id: null }).eq('client_id', id);
 
-        // Step b: Delete linked COA account if exists in coa_accounts and chart_of_accounts
+        // Step c: Unlink ledger entries pointing to the COA account before deleting COA
+        await supabase.from('ledgers').delete().or(`account_id.eq.acc-${id}`);
+        await supabase.from('general_ledger').delete().or(`account_id.eq.acc-${id}`);
+        await supabase.from('voucher_entries').delete().or(`account_id.eq.acc-${id}`);
+
+        // Step d: Delete linked COA account if exists in coa_accounts and chart_of_accounts
         await supabase.from('coa_accounts').delete().or(`party_id.eq.${id},id.eq.acc-${id}`);
-        await supabase.from('chart_of_accounts').delete().or(`code.ilike.%${id}%`);
+        try {
+          await supabase.from('chart_of_accounts').delete().or(`id.eq.acc-${id},code.ilike.%${id}%`);
+        } catch (_) {}
 
-        // Step c: Delete party record from parties table
+        // Step e: Delete party record from parties table
         const { error } = await supabase.from('parties').delete().eq('id', id);
         if (error) {
           throw new Error(`Database error deleting party: ${error.message}`);

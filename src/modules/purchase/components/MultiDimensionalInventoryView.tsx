@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { PieceBreakdownItem, InwardGatePass } from '../purchase.types.ts';
 import { StickerData } from '../../../components/ThermalBarcodeSticker.tsx';
+import { PurchaseService } from '../../../services/purchaseService.ts';
 import {
   Layers,
   Search,
@@ -18,6 +19,7 @@ import {
   Barcode,
   Sparkles,
   ExternalLink,
+  Trash2,
   X
 } from 'lucide-react';
 
@@ -26,6 +28,8 @@ interface MultiDimensionalInventoryViewProps {
   bales: InwardGatePass[];
   onPrintSticker: (sticker: StickerData) => void;
   onSelectBale?: (baleId: string) => void;
+  onRefresh?: () => void;
+  onPieceDeleted?: (pieceId: string) => void;
 }
 
 type ViewDimension = 'ITEM' | 'BRAND' | 'CATEGORY' | 'BALE_AUDIT';
@@ -34,13 +38,30 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   pieces,
   bales,
   onPrintSticker,
-  onSelectBale
+  onSelectBale,
+  onRefresh,
+  onPieceDeleted
 }) => {
   const [activeDimension, setActiveDimension] = useState<ViewDimension>('ITEM');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'IN_STOCK' | 'SOLD'>('ALL');
   const [brandFilter, setBrandFilter] = useState('ALL');
   const [previewLightboxImage, setPreviewLightboxImage] = useState<string | null>(null);
+  const [isPurging, setIsPurging] = useState(false);
+
+  const handlePurgeOrphaned = async () => {
+    if (!confirm('Are you sure you want to scan and purge all orphaned inventory pieces that have no active commercial invoice or inward bale? This will clean up the database.')) return;
+    setIsPurging(true);
+    try {
+      const result = await PurchaseService.purgeOrphanedInventory();
+      alert(`Purge completed: ${result.deletedCount} orphaned items purged from database.`);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      alert(`Purge failed: ${err.message}`);
+    } finally {
+      setIsPurging(false);
+    }
+  };
 
   // Map of bale ID / gatepass ID to bale info for reverse trace
   const baleMap = useMemo(() => {
@@ -250,6 +271,15 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
           >
             <Printer className="w-3.5 h-3.5 text-indigo-600" />
             Print Valuation Report
+          </button>
+          <button
+            onClick={handlePurgeOrphaned}
+            disabled={isPurging}
+            className="px-3 py-1.5 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 font-semibold text-xs rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Scan and purge orphaned finished goods pieces that have no active commercial invoice or inward bale"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+            <span>{isPurging ? 'Purging...' : 'Purge Orphaned Stock'}</span>
           </button>
         </div>
       </div>
@@ -540,27 +570,46 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onPrintSticker({
-                                itemCode: piece.barcode,
-                                description: `${piece.itemName} (${piece.sizeScanned || 'L'})`,
-                                brand: piece.brandName,
-                                grade: piece.labelGrade,
-                                retailPriceAed: price,
-                                weightKg: piece.weightKg || (grams / 1000),
-                                batchNo: piece.gatePassId || 'BALE',
-                                date: piece.createdAt?.slice(0, 10) || new Date().toISOString().slice(0, 10),
-                                origin: piece.countryOfOrigin,
-                                shopLocation: piece.shopLocation
-                              })
-                            }
-                            className="p-1.5 hover:bg-slate-100 text-slate-600 rounded cursor-pointer transition-colors"
-                            title="Print Thermal Barcode Label"
-                          >
-                            <Printer className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onPrintSticker({
+                                  itemCode: piece.barcode,
+                                  description: `${piece.itemName} (${piece.sizeScanned || 'L'})`,
+                                  brand: piece.brandName,
+                                  grade: piece.labelGrade,
+                                  retailPriceAed: price,
+                                  weightKg: piece.weightKg || (grams / 1000),
+                                  batchNo: piece.gatePassId || 'BALE',
+                                  date: piece.createdAt?.slice(0, 10) || new Date().toISOString().slice(0, 10),
+                                  origin: piece.countryOfOrigin,
+                                  shopLocation: piece.shopLocation
+                                })
+                              }
+                              className="p-1.5 hover:bg-slate-100 text-slate-600 rounded cursor-pointer transition-colors"
+                              title="Print Thermal Barcode Label"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!confirm(`Delete piece ${piece.barcode} (${piece.itemName}) from inventory?`)) return;
+                                try {
+                                  await PurchaseService.deleteInventoryPiece(piece.id);
+                                  if (onPieceDeleted) onPieceDeleted(piece.id, null as any);
+                                  if (onRefresh) onRefresh();
+                                } catch (e: any) {
+                                  alert(`Failed to delete piece: ${e.message}`);
+                                }
+                              }}
+                              className="p-1.5 hover:bg-rose-50 text-rose-500 hover:text-rose-700 rounded cursor-pointer transition-colors"
+                              title="Delete Piece from Inventory"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );

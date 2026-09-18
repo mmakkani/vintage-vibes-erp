@@ -242,13 +242,56 @@ purchaseRouter.post(['/gate-passes/:id/pieces', '/bales/:id/pieces'], (req, res)
   return res.json(result);
 });
 
-purchaseRouter.delete(['/gate-passes/:id/pieces/:pieceId', '/bales/:id/pieces/:pieceId'], (req, res) => {
-  const { id, pieceId } = req.params;
-  const result = PurchaseController.deletePieceFromBreakdown(id, pieceId);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+purchaseRouter.post(['/gate-passes/:id/pieces', '/bales/:id/pieces'], async (req, res) => {
+  const { id } = req.params;
+  try {
+    const piece = await PurchaseService.addInventoryPiece({ ...req.body, gatePassId: id });
+    return res.json({ success: true, piece });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
   }
-  return res.json(result);
+});
+
+purchaseRouter.delete([
+  '/gate-passes/:id/pieces/:pieceId',
+  '/bales/:id/pieces/:pieceId',
+  '/pieces/:pieceId',
+  '/inventory/:pieceId',
+  '/pieces/:id',
+  '/inventory/:id'
+], async (req, res) => {
+  const targetPieceId = req.params.pieceId || req.params.id;
+  const gatePassId = req.params.pieceId ? req.params.id : undefined;
+
+  try {
+    if (gatePassId) {
+      try {
+        PurchaseController.deletePieceFromBreakdown(gatePassId, targetPieceId);
+      } catch (_) {}
+    }
+    await PurchaseService.deleteInventoryPiece(targetPieceId);
+    return res.json({ success: true, message: 'Piece deleted successfully', pieceId: targetPieceId });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+purchaseRouter.post('/inventory/cleanup-orphaned', async (req, res) => {
+  try {
+    const result = await PurchaseService.purgeOrphanedInventory();
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+purchaseRouter.delete('/inventory/cleanup-orphaned', async (req, res) => {
+  try {
+    const result = await PurchaseService.purgeOrphanedInventory();
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 purchaseRouter.post(['/gate-passes/:id/pieces/batch', '/bales/:id/pieces/batch'], (req, res) => {

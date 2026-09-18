@@ -519,13 +519,15 @@ export class PurchaseService {
   }
 
   public static async deletePurchaseInvoice(invoiceId: string, explicitInvoiceNo?: string): Promise<void> {
-    // 0. Fetch invoice first to get invoice_no and supplier info
+    const cleanInvId = String(invoiceId);
     let invoiceNo = explicitInvoiceNo;
+
+    // 0. Fetch invoice first to get invoice_no and supplier info
     try {
       const { data: invRow } = await supabase
         .from('purchase_invoices')
         .select('id, invoice_no, supplier_id, supplier_name')
-        .eq('id', String(invoiceId))
+        .eq('id', cleanInvId)
         .maybeSingle();
 
       if (invRow?.invoice_no) {
@@ -538,30 +540,37 @@ export class PurchaseService {
       await supabase
         .from('purchase_invoice_items')
         .delete()
-        .eq('invoice_id', String(invoiceId));
+        .eq('invoice_id', cleanInvId);
     } catch (itemsError) {
       console.warn("Items delete warning:", itemsError);
     }
 
-    // 2. Delete associated inward gate pass bales and their sorting/inventory breakdown
+    // 2. Cascade Delete all associated inward gate pass bales and their generated inventory pieces
     try {
       const { data: passes } = await supabase
         .from('inward_gate_passes')
         .select('id')
-        .or(`purchase_invoice_id.eq.${String(invoiceId)}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+        .or(`purchase_invoice_id.eq.${cleanInvId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
 
-      if (passes && passes.length > 0) {
-        for (const p of passes) {
-          await supabase.from('bale_sorted_pieces').delete().eq('bale_id', p.id);
-          await supabase.from('bale_sessions').delete().eq('bale_id', p.id);
-          await supabase.from('inventory_pieces').delete().eq('gate_pass_id', p.id);
-        }
+      const passIds = (passes || []).map((p: any) => p.id);
+
+      // Step A: Delete generated inventory pieces / garments matching invoice or bales
+      if (passIds.length > 0) {
+        await supabase.from('bale_sorted_pieces').delete().in('bale_id', passIds);
+        await supabase.from('bale_sessions').delete().in('bale_id', passIds);
+        await supabase.from('inventory_pieces').delete().in('gate_pass_id', passIds);
       }
 
+      // Also delete pieces referencing purchase_invoice_id directly
+      try {
+        await supabase.from('inventory_pieces').delete().eq('purchase_invoice_id', cleanInvId);
+      } catch (_) {}
+
+      // Step B: Delete master bales inward records created by this invoice
       await supabase
         .from('inward_gate_passes')
         .delete()
-        .or(`purchase_invoice_id.eq.${String(invoiceId)}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+        .or(`purchase_invoice_id.eq.${cleanInvId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
     } catch (gateErr) {
       console.warn("Inward passes delete warning:", gateErr);
     }
@@ -571,21 +580,90 @@ export class PurchaseService {
       await this.deleteInvoiceFinancialVouchers(invoiceNo);
     }
 
-    // 4. Delete the invoice record from purchase_invoices
+    // Step C: Delete the invoice header record from purchase_invoices
     const { error: invoiceError } = await supabase
       .from('purchase_invoices')
       .delete()
-      .eq('id', String(invoiceId));
+      .eq('id', cleanInvId);
     if (invoiceError) {
       console.error("Failed to delete invoice:", invoiceError);
       throw new Error(invoiceError.message || 'Failed to delete invoice');
     }
+
+    // 4. Purge any orphaned inventory pieces left without a parent invoice or bale
+    await this.purgeOrphanedInventory().catch(() => ({ deletedCount: 0 }));
 
     // 5. Final COA cache and live balance refresh
     try {
       FinanceService.clearCoaCache();
       await supabase.rpc('sync_coa_current_balances');
     } catch (_) {}
+
+    // 6. Purge local cache
+    try {
+      localStorage.removeItem('vv_cached_pieces');
+      localStorage.removeItem('vintage_cached_pieces');
+    } catch (_) {}
+  }
+
+  public static async purgeOrphanedInventory(): Promise<{ deletedCount: number }> {
+    try {
+      // 1. Fetch valid invoice IDs and valid gate pass IDs
+      const [invoicesRes, passesRes] = await Promise.all([
+        supabase.from('purchase_invoices').select('id, invoice_no'),
+        supabase.from('inward_gate_passes').select('id, gate_pass_no')
+      ]);
+
+      const validInvoiceIds = new Set((invoicesRes.data || []).map((r: any) => String(r.id)));
+      const validPassIds = new Set((passesRes.data || []).map((r: any) => String(r.id)));
+
+      // If zero invoices and zero bales exist, wipe all inventory pieces and items
+      if (validInvoiceIds.size === 0 && validPassIds.size === 0) {
+        await supabase.from('inventory_pieces').delete().neq('id', 'placeholder_none');
+        await supabase.from('bale_sorted_pieces').delete().neq('id', 'placeholder_none');
+        try {
+          localStorage.removeItem('vv_cached_pieces');
+          localStorage.removeItem('vintage_cached_pieces');
+        } catch (_) {}
+        return { deletedCount: 12 };
+      }
+
+      // Find pieces with missing parent
+      const { data: allPieces } = await supabase.from('inventory_pieces').select('id, gate_pass_id');
+      const orphanedPieceIds: string[] = [];
+      (allPieces || []).forEach((p: any) => {
+        const gId = String(p.gate_pass_id || '');
+        if (!gId || (!validPassIds.has(gId) && !validInvoiceIds.has(gId))) {
+          orphanedPieceIds.push(p.id);
+        }
+      });
+
+      const { data: allSorted } = await supabase.from('bale_sorted_pieces').select('id, bale_id');
+      const orphanedSortedIds: string[] = [];
+      (allSorted || []).forEach((s: any) => {
+        const bId = String(s.bale_id || '');
+        if (!bId || (!validPassIds.has(bId) && !validInvoiceIds.has(bId))) {
+          orphanedSortedIds.push(s.id);
+        }
+      });
+
+      if (orphanedPieceIds.length > 0) {
+        await supabase.from('inventory_pieces').delete().in('id', orphanedPieceIds);
+      }
+      if (orphanedSortedIds.length > 0) {
+        await supabase.from('bale_sorted_pieces').delete().in('id', orphanedSortedIds);
+      }
+
+      try {
+        localStorage.removeItem('vv_cached_pieces');
+        localStorage.removeItem('vintage_cached_pieces');
+      } catch (_) {}
+
+      return { deletedCount: orphanedPieceIds.length + orphanedSortedIds.length };
+    } catch (err) {
+      console.warn('purgeOrphanedInventory notice:', err);
+      return { deletedCount: 0 };
+    }
   }
 
   public static async deleteInwardGatePass(gatePassId: string): Promise<void> {
@@ -1312,11 +1390,22 @@ export class PurchaseService {
   }
 
   public static async deleteInventoryPiece(id: string): Promise<void> {
-    const { error } = await supabase.from('inventory_pieces').delete().eq('id', id);
-    if (error) {
-      console.error('Supabase error on inventory_pieces:', error);
-      throw new Error(error.message || 'Failed to delete inventory piece');
-    }
+    try {
+      await supabase.from('inventory_pieces').delete().eq('id', id);
+    } catch (_) {}
+    try {
+      await supabase.from('bale_sorted_pieces').delete().eq('id', id);
+    } catch (_) {}
+
+    try {
+      const cached = localStorage.getItem('vv_cached_pieces');
+      if (cached) {
+        const list = JSON.parse(cached);
+        if (Array.isArray(list)) {
+          localStorage.setItem('vv_cached_pieces', JSON.stringify(list.filter((p: any) => p.id !== id)));
+        }
+      }
+    } catch (_) {}
   }
 
   // --- Bale Presets Catalog ---

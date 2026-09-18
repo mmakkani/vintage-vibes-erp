@@ -165,11 +165,27 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         saveCached(CACHE_KEYS.INVOICES, invRes);
         hasLiveResponse = true;
       }
-      if (Array.isArray(piecesRes)) {
-        setInventoryPieces(piecesRes);
-        saveCached(CACHE_KEYS.PIECES, piecesRes);
-        hasLiveResponse = true;
+      let livePieces = Array.isArray(piecesRes) ? piecesRes : [];
+      const invoiceCount = Array.isArray(invRes) ? invRes.length : 0;
+      const baleCount = Array.isArray(balesRes) ? balesRes.length : 0;
+      if (invoiceCount === 0 && baleCount === 0 && livePieces.length > 0) {
+        PurchaseService.purgeOrphanedInventory().catch(() => ({ deletedCount: 0 }));
+        livePieces = [];
+      } else if (invoiceCount > 0 || baleCount > 0) {
+        const validInvoiceIds = new Set((invRes || []).map((i: any) => String(i.id)));
+        const validBaleIds = new Set((balesRes || []).map((b: any) => String(b.id)));
+        const cleanPieces = livePieces.filter(p => {
+          const gId = String(p.gatePassId || '');
+          return gId && (validBaleIds.has(gId) || validInvoiceIds.has(gId));
+        });
+        if (cleanPieces.length !== livePieces.length) {
+          PurchaseService.purgeOrphanedInventory().catch(() => ({ deletedCount: 0 }));
+          livePieces = cleanPieces;
+        }
       }
+      setInventoryPieces(livePieces);
+      saveCached(CACHE_KEYS.PIECES, livePieces);
+      hasLiveResponse = true;
       if (Array.isArray(partiesRes)) {
         setParties(partiesRes);
         saveCached(CACHE_KEYS.PARTIES, partiesRes);
@@ -440,6 +456,8 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
               setActiveSortingBaleId(id);
               setIsTerminalModalOpen(true);
             }}
+            onRefresh={fetchPurchaseData}
+            onPieceDeleted={handlePieceDeleted}
           />
         </ModuleMaintenanceGuard>
       )}
