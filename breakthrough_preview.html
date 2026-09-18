@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vintage Vibes Dubai • Market Breakthrough Preview (4 Industry Firsts)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=JetBrains+Mono:wght@400;600;800&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: #06070b;
+      color: #f1f5f9;
+    }
+    .font-cinzel { font-family: 'Cinzel', serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+    /* Glowing animations */
+    @keyframes pulse-gold {
+      0%, 100% { box-shadow: 0 0 25px rgba(245, 158, 11, 0.2); }
+      50% { box-shadow: 0 0 50px rgba(245, 158, 11, 0.45); }
+    }
+    .gold-box-glow {
+      animation: pulse-gold 3s infinite ease-in-out;
+    }
+
+    /* X-Ray Scanner Sweep */
+    @keyframes xray-sweep {
+      0% { transform: translateY(-100%); opacity: 0.3; }
+      50% { opacity: 0.9; }
+      100% { transform: translateY(220%); opacity: 0.3; }
+    }
+    .xray-beam {
+      animation: xray-sweep 2s ease-in-out infinite alternate;
+    }
+
+    /* Floating NFC Phone */
+    @keyframes float-phone {
+      0%, 100% { transform: translateY(0px) rotate(-1deg); }
+      50% { transform: translateY(-8px) rotate(1deg); }
+    }
+    .phone-float {
+      animation: float-phone 4s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between selection:bg-amber-400 selection:text-black">
+
+  <!-- TOP BRAND HEADER -->
+  <header class="border-b border-amber-500/30 bg-[#090c14]/95 backdrop-blur-md sticky top-0 z-50 px-4 sm:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-400 via-yellow-500 to-amber-700 p-0.5 shadow-xl shadow-amber-500/25 flex items-center justify-center">
+        <div class="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
+          <span class="text-amber-400 font-cinzel font-black text-2xl">V</span>
+        </div>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-cinzel text-base sm:text-lg font-black tracking-widest text-amber-300 uppercase">
+            Vintage Vibes • Dubai
+          </h1>
+          <span class="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono font-black border border-amber-500/40">
+            MARKET BREAKTHROUGH SUITE
+          </span>
+        </div>
+        <p class="text-[11px] text-slate-400 font-mono">
+          4 Brand-New Industry Firsts: AI Bale X-Ray • WhatsApp Whisper • Smart NFC DNA • Consignment Cloud
+        </p>
+      </div>
+    </div>
+
+    <!-- TABS NAVIGATION -->
+    <nav class="flex items-center gap-1.5 bg-stone-900/90 p-1.5 rounded-xl border border-slate-800 overflow-x-auto max-w-full">
+      <button onclick="switchTab('xray')" id="tab-btn-xray" class="tab-btn active px-3.5 py-2 rounded-lg text-xs font-bold transition-all bg-amber-500 text-slate-950 shadow-md">
+        🔮 AI Bale X-Ray & Lottery
+      </button>
+      <button onclick="switchTab('whisper')" id="tab-btn-whisper" class="tab-btn px-3.5 py-2 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white">
+        📱 WhatsApp Silent Bidding
+      </button>
+      <button onclick="switchTab('nfc')" id="tab-btn-nfc" class="tab-btn px-3.5 py-2 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white">
+        🏷️ Digital NFC Garment DNA
+      </button>
+      <button onclick="switchTab('consignment')" id="tab-btn-consignment" class="tab-btn px-3.5 py-2 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white">
+        🤝 Dubai Consignment Cloud
+      </button>
+    </nav>
+  </header>
+
+
+  <!-- MAIN CONTAINER -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+
+    <!-- ================================================================================== -->
+    <!-- BREAKTHROUGH 1: AI BALE X-RAY & LOTTERY PREDICTOR -->
+    <!-- ================================================================================== -->
+    <section id="view-xray" class="tab-view block space-y-6 animate-in fade-in duration-200">
+      <div class="p-6 rounded-2xl bg-gradient-to-r from-amber-950/40 via-stone-900 to-stone-950 border border-amber-500/40 gold-box-glow flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-amber-400 tracking-widest block mb-1">
+            INDUSTRY FIRST 01 • BEFORE BREAKING STEEL WIRE
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            AI Bale X-Ray & Lottery Yield Predictor
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            Solves the vintage industry's #1 gambling risk. Enter origin port, supplier code, container bill of lading and bale photo — the AI predicts hidden Grails, total retail yield, and ROI before unbaling!
+          </p>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button onclick="runBaleXRay()" id="btn-xray-scan" class="px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs font-mono uppercase tracking-wider flex items-center gap-2 shadow-xl shadow-amber-500/25 cursor-pointer active:scale-95 transition-all">
+            <span>🔮</span>
+            <span id="xray-btn-label">Run AI Bale X-Ray Scan</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- X-Ray Simulator Stage -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Visual Burlap Bale & Laser Scanner -->
+        <div class="lg:col-span-6 rounded-2xl bg-stone-950 border border-slate-800 p-6 flex flex-col items-center justify-between relative overflow-hidden min-h-[440px]">
+          <div class="w-full flex items-center justify-between text-xs font-mono border-b border-slate-800 pb-3">
+            <span class="text-amber-400 font-bold">SEALED IMPORT BALE #US-TX-9920</span>
+            <span class="text-slate-400">450 KG • BURLAP & STEEL WIRE</span>
+          </div>
+
+          <!-- The Bale Graphic Box -->
+          <div class="my-auto relative w-72 h-56 rounded-2xl bg-gradient-to-b from-[#45321b] via-[#2c1f11] to-[#1a1209] border-4 border-[#8c6537] shadow-2xl flex flex-col items-center justify-between p-4 overflow-hidden">
+            <!-- Simulated Burlap Texture & Steel Straps -->
+            <div class="absolute inset-0 bg-[repeating-linear-gradient(45deg,#00000022,#00000022_10px,#ffffff08_10px,#ffffff08_20px)] pointer-events-none"></div>
+            <!-- Horizontal Steel Straps -->
+            <div class="absolute top-12 left-0 right-0 h-2 bg-gradient-to-r from-slate-400 via-slate-200 to-slate-500 shadow-md"></div>
+            <div class="absolute bottom-12 left-0 right-0 h-2 bg-gradient-to-r from-slate-400 via-slate-200 to-slate-500 shadow-md"></div>
+
+            <!-- Stamped Shipping Text on Burlap -->
+            <div class="relative z-10 text-center space-y-1">
+              <span class="text-[9px] font-mono text-amber-200/80 font-black tracking-widest uppercase block">
+                PORT OF HOUSTON, TX ➔ JEBEL ALI, DUBAI
+              </span>
+              <div class="text-sm font-black text-amber-100 font-mono tracking-wider">
+                RAW VINTAGE GRAPHIC TEES & WORKWEAR
+              </div>
+            </div>
+
+            <!-- Dynamic X-Ray Laser Beam -->
+            <div id="xray-laser" class="hidden absolute left-0 right-0 h-1 bg-cyan-400 shadow-[0_0_20px_#22d3ee] xray-beam z-20"></div>
+
+            <!-- Detected Hidden Silhouette Ghost -->
+            <div id="xray-ghost" class="hidden relative z-10 text-center bg-black/70 backdrop-blur-xs p-3 rounded-xl border border-cyan-400/50 space-y-1">
+              <span class="text-cyan-300 font-mono font-black text-xs block animate-pulse">
+                ⚡ 6 RARE GRAILS DETECTED INSIDE!
+              </span>
+              <p class="text-[10px] text-slate-300 font-mono">
+                1993 Nirvana • Carhartt Detroit • Harley 3D Eagle
+              </p>
+            </div>
+
+            <div class="relative z-10 text-[9px] font-mono text-amber-300/60 uppercase">
+              CONTAINER: MSCU-49102-8
+            </div>
+          </div>
+
+          <div class="w-full text-center text-xs font-mono text-slate-500 pt-2">
+            Click 'Run AI Bale X-Ray Scan' to predict contents based on 50,000+ historical unpacking records
+          </div>
+        </div>
+
+        <!-- Predictive AI Intelligence Output Card -->
+        <div class="lg:col-span-6 space-y-4">
+          <div class="p-6 rounded-2xl bg-stone-950 border border-amber-500/30 space-y-5">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div class="flex items-center gap-2">
+                <span class="text-xl">🎰</span>
+                <h3 class="font-cinzel text-base font-black text-amber-300">
+                  AI Bale Lottery Prediction
+                </h3>
+              </div>
+              <span id="xray-probability-badge" class="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-mono font-black">
+                88.4% HIGH ALPHA
+              </span>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs font-mono">
+              <div class="p-3 rounded-xl bg-stone-900 border border-slate-800">
+                <span class="text-[10px] text-slate-400 uppercase block">Landed Cost</span>
+                <span class="text-base font-bold text-white mt-1 block">AED 7,200</span>
+              </div>
+              <div class="p-3 rounded-xl bg-stone-900 border border-slate-800">
+                <span class="text-[10px] text-slate-400 uppercase block">Predicted Yield</span>
+                <span id="xray-yield-val" class="text-base font-bold text-amber-300 mt-1 block">AED 28,400</span>
+              </div>
+              <div class="p-3 rounded-xl bg-stone-900 border border-slate-800 col-span-2 sm:col-span-1">
+                <span class="text-[10px] text-slate-400 uppercase block">Projected ROI</span>
+                <span class="text-base font-black text-emerald-400 mt-1 block flex items-center gap-1">
+                  ▲ 3.94x
+                </span>
+              </div>
+            </div>
+
+            <!-- Predicted Grails Probability Matrix -->
+            <div class="space-y-2 text-xs font-mono">
+              <span class="text-slate-400 font-bold block text-[11px] uppercase">
+                Predicted Grail Category Breakdown:
+              </span>
+              <div class="space-y-1.5">
+                <div class="flex justify-between items-center text-[11px] bg-stone-900 p-2 rounded-lg border border-slate-800">
+                  <span class="text-white">90s Rock / Band Tour Tees:</span>
+                  <span class="text-amber-400 font-bold">4 - 6 pcs (92% Confidence)</span>
+                </div>
+                <div class="flex justify-between items-center text-[11px] bg-stone-900 p-2 rounded-lg border border-slate-800">
+                  <span class="text-white">Carhartt / Workwear Jackets:</span>
+                  <span class="text-amber-400 font-bold">2 - 3 pcs (84% Confidence)</span>
+                </div>
+                <div class="flex justify-between items-center text-[11px] bg-stone-900 p-2 rounded-lg border border-slate-800">
+                  <span class="text-white">Vintage Nike / Jordan 80s:</span>
+                  <span class="text-amber-400 font-bold">1 - 2 pcs (71% Confidence)</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- AI Risk Mitigation Warning -->
+            <div class="p-3 rounded-xl bg-amber-950/30 border border-amber-500/30 text-xs font-mono text-amber-200/90 flex items-start gap-2.5">
+              <span class="text-base">⚠️</span>
+              <div>
+                <strong class="text-amber-300 block">AI Sorter Advisory:</strong>
+                Moisture index is optimal (3.8%). Prioritize opening this bale first on tonight's TikTok Live broadcast for maximum viewer engagement.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ================================================================================== -->
+    <!-- BREAKTHROUGH 2: WHATSAPP SILENT WHISPER BIDDING -->
+    <!-- ================================================================================== -->
+    <section id="view-whisper" class="tab-view hidden space-y-6 animate-in fade-in duration-200">
+      <div class="p-6 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-stone-900 to-stone-950 border border-emerald-500/40 gold-box-glow flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-emerald-400 tracking-widest block mb-1">
+            INDUSTRY FIRST 02 • HIGH-ROLLER PRIVACY BRIDGE
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            WhatsApp Silent Whisper Bidding
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            For Dubai & GCC Sheikhs who never bid in public chat rooms. System pushes private interactive lots via WhatsApp; their reply instantly outbids the live stream in real-time!
+          </p>
+        </div>
+
+        <div class="px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 font-mono text-xs text-emerald-300 font-bold">
+          ● TWO-WAY WHATSAPP SOCKET CONNECTED
+        </div>
+      </div>
+
+      <!-- Split Screen: Live Stream on Left vs VIP WhatsApp on Right -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Left: Broadcaster Live Stream View -->
+        <div class="lg:col-span-7 rounded-2xl bg-stone-950 border border-slate-800 p-5 space-y-4 relative overflow-hidden">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div class="flex items-center gap-2">
+              <span class="w-3 h-3 rounded-full bg-red-600 animate-ping"></span>
+              <span class="font-mono text-xs font-black text-white">PUBLIC BROADCAST FLOOR</span>
+            </div>
+            <span class="text-xs font-mono text-slate-400">1,248 Viewers Online</span>
+          </div>
+
+          <!-- Broadcast Screen with Whisper Alert Overlay -->
+          <div class="h-64 rounded-xl bg-gradient-to-br from-stone-900 to-[#080a10] border border-slate-800 p-5 relative flex flex-col items-center justify-between text-center overflow-hidden">
+            <span class="text-[10px] font-mono text-amber-400 font-black uppercase">
+              ACTIVE ITEM: 1985 NIKE AIR JORDAN FLIGHT JACKET
+            </span>
+
+            <!-- Public Bid Box -->
+            <div class="p-3 rounded-xl bg-black/60 backdrop-blur-md border border-slate-700">
+              <span class="text-[10px] font-mono text-slate-400 block uppercase">Public TikTok Highest Bid</span>
+              <span id="public-bid-val" class="text-xl font-mono font-black text-white">AED 850 (@sarah_dxb)</span>
+            </div>
+
+            <!-- Golden Royal Whisper Alert (Triggered by WhatsApp) -->
+            <div id="whisper-banner" class="hidden absolute inset-4 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 p-4 shadow-2xl flex flex-col items-center justify-center space-y-1 animate-in zoom-in-95 duration-200">
+              <span class="text-xs font-black uppercase font-mono tracking-widest">
+                👑 ROYAL WHISPER OUTBID!
+              </span>
+              <div class="text-2xl font-black font-cinzel tracking-tight">
+                NEW BID: AED 1,400.00
+              </div>
+              <p class="text-xs font-bold font-mono">
+                Received via Encrypted WhatsApp Concierge from VIP Collector
+              </p>
+            </div>
+
+            <div class="text-[10px] font-mono text-slate-500">
+              Broadcaster camera live • High-speed audio synthesis ready
+            </div>
+          </div>
+
+          <div class="text-xs font-mono text-slate-400 flex items-center justify-between">
+            <span>Broadcaster: Sarah Al-Maktoum</span>
+            <span class="text-emerald-400 font-bold">Latency: 14ms WebSocket</span>
+          </div>
+        </div>
+
+        <!-- Right: VIP WhatsApp Phone Simulator -->
+        <div class="lg:col-span-5 rounded-2xl bg-stone-900 border-2 border-emerald-500/40 p-5 space-y-3">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
+            <div class="flex items-center gap-2">
+              <div class="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center font-bold text-white text-xs">
+                VV
+              </div>
+              <div>
+                <span class="font-bold text-xs text-white block">Vintage Vibes VIP Concierge</span>
+                <span class="text-[10px] text-emerald-400 font-mono">Online • Official Business</span>
+              </div>
+            </div>
+            <span class="text-xs">🔒 End-to-End</span>
+          </div>
+
+          <!-- WhatsApp Chat History -->
+          <div class="h-64 rounded-xl bg-[#0b141a] p-3 overflow-y-auto space-y-3 text-xs font-sans">
+            <!-- Incoming Bot Message -->
+            <div class="p-2.5 rounded-xl rounded-tl-xs bg-[#202c33] text-slate-200 max-w-[85%] space-y-1 shadow-sm">
+              <span class="text-[10px] text-amber-400 font-mono font-bold block">
+                👑 PRIVATE VIP LOT ALERT
+              </span>
+              <p class="text-[11px] leading-snug">
+                Your Excellency, Lot #042 (1985 Nike Air Jordan Flight Jacket) is on air. Public floor is currently at 850 AED.
+              </p>
+              <span class="text-[9px] text-slate-400 block text-right">19:35</span>
+            </div>
+
+            <!-- Dynamic User Reply Bubble -->
+            <div id="wa-reply-bubble" class="hidden ml-auto p-2.5 rounded-xl rounded-tr-xs bg-[#005c4b] text-white max-w-[85%] space-y-0.5 shadow-sm">
+              <span id="wa-reply-text" class="text-xs font-mono font-bold block">1400 AED Whisper Bid</span>
+              <span class="text-[9px] text-emerald-200 block text-right">Just now ✓✓</span>
+            </div>
+          </div>
+
+          <!-- Interactive Reply Bar -->
+          <div class="flex gap-2">
+            <input
+              id="wa-bid-input"
+              type="text"
+              placeholder="Type private bid (e.g. 1400)..."
+              value="1400"
+              class="flex-1 bg-stone-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-emerald-400"
+            />
+            <button
+              onclick="sendWhatsAppWhisperBid()"
+              class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs font-mono cursor-pointer transition-all active:scale-95"
+            >
+              Send Bid ➔
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ================================================================================== -->
+    <!-- BREAKTHROUGH 3: DIGITAL NFC / SMART QR GARMENT PASSPORT -->
+    <!-- ================================================================================== -->
+    <section id="nfc" class="tab-view hidden space-y-6 animate-in fade-in duration-200">
+      <div class="p-6 rounded-2xl bg-gradient-to-r from-blue-950/40 via-stone-900 to-stone-950 border border-blue-500/40 gold-box-glow flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-blue-400 tracking-widest block mb-1">
+            INDUSTRY FIRST 03 • PHYSICAL-DIGITAL CLOTHING CHIP
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            Digital NFC & QR Smart Garment Passport
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            Customer taps their phone against the shirt's physical NFC tag anywhere in the world. It opens a 3D animated ownership certificate with blockchain-grade serial verification.
+          </p>
+        </div>
+
+        <button onclick="simulateNfcTap()" class="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs font-mono uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-blue-600/25 cursor-pointer active:scale-95 transition-all">
+          <span>📲</span>
+          <span>Simulate Phone Tap to Tag</span>
+        </button>
+      </div>
+
+      <!-- NFC Demonstration Scene -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Physical Garment Tag with NFC Chip -->
+        <div class="lg:col-span-5 p-6 rounded-2xl bg-stone-950 border border-slate-800 flex flex-col items-center justify-between text-center min-h-[420px]">
+          <span class="text-xs font-mono text-slate-400 uppercase tracking-widest">
+            PHYSICAL EMBEDDED CHIP TAG
+          </span>
+
+          <!-- The Physical Tag Graphic -->
+          <div class="my-auto w-56 h-72 rounded-2xl bg-gradient-to-b from-stone-900 via-neutral-900 to-stone-950 border-2 border-amber-400/80 p-5 shadow-2xl flex flex-col items-center justify-between relative overflow-hidden">
+            <!-- Brass Eyelet -->
+            <div class="w-5 h-5 rounded-full bg-amber-400 border-2 border-amber-700 mx-auto shadow-inner"></div>
+
+            <div class="space-y-1">
+              <span class="text-[9px] font-mono text-amber-300 tracking-widest font-black uppercase block">
+                VINTAGE VIBES DUBAI
+              </span>
+              <div class="text-xs font-bold text-white">GENUINE HERITAGE PASS</div>
+            </div>
+
+            <!-- NFC Wireless Waves Icon -->
+            <div class="w-16 h-16 rounded-full bg-blue-500/10 border border-blue-400/30 flex items-center justify-center text-blue-400 text-2xl animate-pulse">
+              📶
+            </div>
+
+            <!-- Chip Serial -->
+            <div class="text-[9px] font-mono text-slate-400">
+              NFC NTAG215 • #VV-94021
+            </div>
+          </div>
+
+          <button onclick="simulateNfcTap()" class="w-full py-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-amber-300 border border-slate-700 text-xs font-mono font-bold cursor-pointer">
+            Tap iPhone Against Tag ➔
+          </button>
+        </div>
+
+        <!-- Simulated Mobile Screen Displaying Digital Twin -->
+        <div class="lg:col-span-7 rounded-2xl bg-stone-950 border-2 border-amber-500/40 p-6 flex flex-col justify-between space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <span class="text-xs font-mono font-black text-amber-400 uppercase">
+              SMARTPHONE EXPERIENCE (NO APP DOWNLOAD NEEDED)
+            </span>
+            <span id="nfc-status-pill" class="text-xs font-mono text-slate-500">
+              Ready for Tap
+            </span>
+          </div>
+
+          <!-- Digital Twin Passport Card -->
+          <div id="nfc-passport-card" class="rounded-xl bg-gradient-to-b from-stone-900 to-black border border-amber-500/30 p-6 space-y-4 shadow-xl">
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-[10px] font-mono text-slate-400 uppercase block">AUTHENTICATED GARMENT</span>
+                <h4 class="text-base font-black text-white font-cinzel">1994 Nirvana In Utero Original World Tour</h4>
+              </div>
+              <div class="w-10 h-10 rounded-full bg-amber-500 text-slate-950 font-black text-lg flex items-center justify-center shadow-lg">
+                ✓
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 text-xs font-mono">
+              <div class="p-2.5 rounded-lg bg-stone-950 border border-slate-800">
+                <span class="text-[10px] text-slate-400 block">GCC Scarcity:</span>
+                <span class="text-amber-300 font-bold">1 of 4 in UAE</span>
+              </div>
+              <div class="p-2.5 rounded-lg bg-stone-950 border border-slate-800">
+                <span class="text-[10px] text-slate-400 block">Current Registered Owner:</span>
+                <span class="text-white font-bold">Sarah Al-Maktoum</span>
+              </div>
+            </div>
+
+            <div class="p-3 rounded-lg bg-emerald-950/40 border border-emerald-500/40 text-xs font-mono text-emerald-300">
+              🔒 Digital DNA Hash: #0x94A1F82B • Guaranteed Authentic by Vintage Vibes Dubai
+            </div>
+
+            <button onclick="alert('Ownership Transfer QR generated! New buyer can scan to claim digital ownership.')" class="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs font-mono uppercase cursor-pointer">
+              Transfer Digital Ownership (Secondary Market)
+            </button>
+          </div>
+
+          <div class="text-[11px] font-mono text-slate-400">
+            Works instantly with iOS & Android Apple Wallet / Web App without downloading anything from App Store.
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ================================================================================== -->
+    <!-- BREAKTHROUGH 4: DUBAI CONSIGNMENT CLOUD (THE STOCKX OF MIDDLE EAST) -->
+    <!-- ================================================================================== -->
+    <section id="consignment" class="tab-view hidden space-y-6 animate-in fade-in duration-200">
+      <div class="p-6 rounded-2xl bg-gradient-to-r from-purple-950/40 via-stone-900 to-stone-950 border border-purple-500/40 gold-box-glow flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-purple-400 tracking-widest block mb-1">
+            INDUSTRY FIRST 04 • SCALABLE PEER-TO-PEER COMMERCE
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            Dubai Vintage Consignment Cloud (StockX Model)
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            Scale beyond your own warehouse inventory. Smaller collectors and shops in Dubai deposit their rare grails; you broadcast them on your live stream and take an automatic 20% cut!
+          </p>
+        </div>
+
+        <button onclick="simulateConsignmentSale()" class="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs font-mono uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-purple-600/25 cursor-pointer active:scale-95 transition-all">
+          <span>🤝</span>
+          <span>Simulate Consignment Sale</span>
+        </button>
+      </div>
+
+      <!-- Consignor Dashboard Scene -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Live Consignor Vault Table -->
+        <div class="lg:col-span-8 p-6 rounded-2xl bg-stone-950 border border-slate-800 space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h3 class="font-mono text-xs font-black text-slate-200 uppercase tracking-wider">
+              CONSIGNOR INTAKE & SETTLEMENT ENGINE
+            </h3>
+            <span class="text-xs font-mono text-purple-400 font-bold">84 Registered Consignors in UAE</span>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs font-mono text-left">
+              <thead class="text-slate-400 bg-stone-900 border-b border-slate-800">
+                <tr>
+                  <th class="p-2.5">Consignor</th>
+                  <th class="p-2.5">Garment Lot</th>
+                  <th class="p-2.5 text-right">Sold Price</th>
+                  <th class="p-2.5 text-right text-amber-400">VV Fee (20%)</th>
+                  <th class="p-2.5 text-right text-emerald-400">Payout (80%)</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-800/80">
+                <tr class="hover:bg-stone-900/50">
+                  <td class="p-2.5 font-bold text-white">@tariq_vintage (Al Barsha)</td>
+                  <td class="p-2.5 text-slate-300">1996 Bulls Finals Bomber</td>
+                  <td class="p-2.5 text-right font-bold text-white">AED 850</td>
+                  <td class="p-2.5 text-right font-bold text-amber-400">AED 170</td>
+                  <td class="p-2.5 text-right font-black text-emerald-400">AED 680</td>
+                </tr>
+                <tr class="hover:bg-stone-900/50">
+                  <td class="p-2.5 font-bold text-white">@khalid_denim (Sharjah)</td>
+                  <td class="p-2.5 text-slate-300">1978 Levis Redline 501</td>
+                  <td class="p-2.5 text-right font-bold text-white">AED 920</td>
+                  <td class="p-2.5 text-right font-bold text-amber-400">AED 184</td>
+                  <td class="p-2.5 text-right font-black text-emerald-400">AED 736</td>
+                </tr>
+                <tr class="hover:bg-stone-900/50">
+                  <td class="p-2.5 font-bold text-white">@vintage_dxb_vault</td>
+                  <td class="p-2.5 text-slate-300">1993 Metallica Tour Tee</td>
+                  <td class="p-2.5 text-right font-bold text-white">AED 420</td>
+                  <td class="p-2.5 text-right font-bold text-amber-400">AED 84</td>
+                  <td class="p-2.5 text-right font-black text-emerald-400">AED 336</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Right: Automated Payout Simulator -->
+        <div class="lg:col-span-4 p-6 rounded-2xl bg-stone-950 border border-slate-800 flex flex-col justify-between space-y-4">
+          <div>
+            <span class="text-[10px] font-mono font-black uppercase text-purple-400 tracking-wider block mb-1">
+              AUTOMATED UAE IBAN WIRE ENGINE
+            </span>
+            <h4 class="font-bold text-sm text-white">Instant Payout Engine</h4>
+            <p class="text-xs text-slate-400 mt-1 font-mono leading-relaxed">
+              Consignors get instant WhatsApp notification the exact millisecond their item is claimed on your live show.
+            </p>
+          </div>
+
+          <div class="p-3 rounded-xl bg-purple-950/30 border border-purple-500/30 text-xs font-mono space-y-1.5">
+            <span class="text-purple-300 font-bold block">Consignor WhatsApp Digest:</span>
+            <p class="text-[11px] text-slate-300">
+              "Hi Tariq! Your 1996 Bulls Bomber just sold on live stream for 850 AED. Your 680 AED payout is queued to Emirates NBD."
+            </p>
+          </div>
+
+          <button onclick="simulateConsignmentSale()" class="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs font-mono uppercase cursor-pointer transition-all active:scale-95">
+            Test Payout Wire (1-Click)
+          </button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="border-t border-slate-800/80 bg-black/80 p-4 text-center text-xs font-mono text-slate-500">
+    VINTAGE VIBES DUBAI • PROPRIETARY BREAKTHROUGH ARCHITECTURE 2026
+  </footer>
+
+  <!-- SCRIPT LOGIC -->
+  <script>
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-view').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('bg-amber-500', 'text-slate-950', 'shadow-md');
+        btn.classList.add('text-slate-400');
+      });
+
+      const activeView = document.getElementById('view-' + tabId);
+      const activeBtn = document.getElementById('tab-btn-' + tabId);
+      if (activeView) activeView.classList.remove('hidden');
+      if (activeBtn) {
+        activeBtn.classList.add('bg-amber-500', 'text-slate-950', 'shadow-md');
+        activeBtn.classList.remove('text-slate-400');
+      }
+    }
+
+    // 1. BALE X-RAY
+    function runBaleXRay() {
+      const laser = document.getElementById('xray-laser');
+      const ghost = document.getElementById('xray-ghost');
+      const btn = document.getElementById('xray-btn-label');
+      laser.classList.remove('hidden');
+      btn.innerText = 'Scanning Neural Burlap...';
+
+      setTimeout(() => {
+        laser.classList.add('hidden');
+        ghost.classList.remove('hidden');
+        btn.innerText = 'Scan Complete (88.4% Alpha)';
+        alert('🔮 AI BALE X-RAY COMPLETE: 6 High-Value Grails identified inside sealed bale! Projected yield: AED 28,400 (3.94x ROI).');
+      }, 1500);
+    }
+
+    // 2. WHATSAPP SILENT WHISPER
+    function sendWhatsAppWhisperBid() {
+      const input = document.getElementById('wa-bid-input');
+      const val = input.value || '1400';
+      const bubble = document.getElementById('wa-reply-bubble');
+      const bubbleText = document.getElementById('wa-reply-text');
+      const banner = document.getElementById('whisper-banner');
+
+      bubbleText.innerText = `AED ${val} Secret Whisper Bid`;
+      bubble.classList.remove('hidden');
+
+      setTimeout(() => {
+        banner.classList.remove('hidden');
+        // Play Chime
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.frequency.setValueAtTime(880, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.3);
+          gain.gain.setValueAtTime(0.5, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.35);
+        } catch (_) {}
+      }, 400);
+    }
+
+    // 3. NFC SIMULATOR
+    function simulateNfcTap() {
+      const pill = document.getElementById('nfc-status-pill');
+      pill.innerHTML = '<span class="text-emerald-400 font-bold">✓ NFC CHIP READ (0.04s)</span>';
+      alert('📲 NFC TAP DETECTED: iPhone authenticated garment! Certified digital ownership opened in Apple Wallet.');
+    }
+
+    // 4. CONSIGNMENT SALE SIMULATOR
+    function simulateConsignmentSale() {
+      alert('🤝 CONSIGNMENT PAYOUT ISSUED: 680 AED wired to Tariq via Emirates NBD! Vintage Vibes retained 170 AED (20% fee). Instant WhatsApp receipt dispatched.');
+    }
+  </script>
+</body>
+</html>

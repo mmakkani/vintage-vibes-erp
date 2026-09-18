@@ -178,7 +178,20 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const [bankQrModalOpen, setBankQrModalOpen] = useState(false);
   const [isProcessingCheckout, setIsProcessingCheckout] = useState(false);
 
-  // Multi-Item Vault Cart State
+  // Multi-Item Vault Cart State & 10-Minute Lock Session
+  const [sessionId] = useState<string>(() => {
+    try {
+      let id = sessionStorage.getItem('vv_ecommerce_session');
+      if (!id) {
+        id = 'sess-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+        sessionStorage.setItem('vv_ecommerce_session', id);
+      }
+      return id;
+    } catch {
+      return 'sess-' + Date.now();
+    }
+  });
+
   const [cart, setCart] = useState<PieceBreakdownItem[]>(() => {
     try {
       const saved = localStorage.getItem('vv_cart_items');
@@ -189,25 +202,51 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   });
   const [isCartOpen, setIsCartOpen] = useState(false);
 
+  // Grail Bounty Hunter Wishlist Modal State
+  const [bountyModalOpen, setBountyModalOpen] = useState(false);
+  const [bountyForm, setBountyForm] = useState({
+    customerName: '',
+    customerPhone: '',
+    customerEmail: '',
+    desiredBrand: '',
+    desiredCategory: 'T-Shirts',
+    desiredSize: 'L (Boxy)',
+    maxBudgetAed: '',
+    notes: ''
+  });
+  const [bountySubmitting, setBountySubmitting] = useState(false);
+
   // Vanishing piece animation tracking
   const [vanishingBarcodes, setVanishingBarcodes] = useState<string[]>([]);
   const [successToast, setSuccessToast] = useState<{ title: string; subtitle: string } | null>(null);
 
-  // Load active inventory (only available in-stock items)
+  // Load active inventory directly from SQL /api/ecommerce/products (only available in-stock items)
   const fetchAvailableStock = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/purchase/inventory?soldStatus=IN_STOCK');
+      // 1. Primary: Dedicated E-Commerce SQL Products Endpoint
+      const res = await fetch('/api/ecommerce/products');
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data)) {
+        if (Array.isArray(data) && data.length > 0) {
           const available = data.filter(p => !p.isSold && p.status !== 'SOLD');
           setPieces(available);
           return;
         }
       }
 
-      // Fallback to local storage if available
+      // 2. Fallback: Purchase module inventory endpoint
+      const fallbackRes = await fetch('/api/purchase/inventory?soldStatus=IN_STOCK');
+      if (fallbackRes.ok) {
+        const data = await fallbackRes.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const available = data.filter(p => !p.isSold && p.status !== 'SOLD');
+          setPieces(available);
+          return;
+        }
+      }
+
+      // 3. Fallback to local storage cache if available
       const cached = localStorage.getItem('vv_cached_inventory_pieces');
       if (cached) {
         const parsed = JSON.parse(cached);
@@ -353,9 +392,34 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     });
   }, [pieces, selectedCategory, searchQuery]);
 
-  // Cart Management Handlers
-  const handleAddToCart = (piece: PieceBreakdownItem) => {
+  // Cart Management Handlers with 10-Minute Lock Reservation in SQL Database
+  const handleAddToCart = async (piece: PieceBreakdownItem) => {
     luxuryAudio.playChime();
+
+    // 1. Check & reserve 1-of-1 piece in SQL database cart_reservations
+    try {
+      const res = await fetch('/api/ecommerce/cart/reserve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          barcode: piece.barcode,
+          sessionId,
+          pieceTitle: piece.itemName || piece.brandName,
+          priceAed: piece.estimatedPrice || piece.retailPriceAed || 295
+        })
+      });
+
+      if (res.status === 423) {
+        const errData = await res.json();
+        setSuccessToast({
+          title: '⚠️ Piece Currently Held!',
+          subtitle: errData.error || 'This 1-of-1 piece is currently held in another cart.'
+        });
+        setTimeout(() => setSuccessToast(null), 5000);
+        return;
+      }
+    } catch (_) {}
+
     setCart(prev => {
       if (prev.some(p => p.barcode === piece.barcode)) {
         setIsCartOpen(true);
@@ -370,12 +434,19 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
     setSuccessToast({
       title: `Added ${piece.brandName} (${piece.barcode}) to Cart!`,
-      subtitle: '1-of-1 Vault reservation held for 10 minutes.'
+      subtitle: '1-of-1 Vault reservation locked in SQL database for 10 minutes.'
     });
     setTimeout(() => setSuccessToast(null), 4000);
   };
 
   const handleRemoveFromCart = (barcode: string) => {
+    // Release SQL reservation
+    fetch('/api/ecommerce/cart/release', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ barcode, sessionId })
+    }).catch(() => {});
+
     setCart(prev => {
       const updated = prev.filter(p => p.barcode !== barcode);
       try {
@@ -407,43 +478,69 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     const barcodesToVanish = piecesToBuy.map(p => p.barcode);
     setVanishingBarcodes(barcodesToVanish);
 
+    const totalAmount = piecesToBuy.reduce(
+      (s, i) => s + (i.estimatedPrice || i.retailPriceAed || 295),
+      0
+    );
+
     try {
-      const totalAmount = piecesToBuy.reduce(
-        (s, i) => s + (i.estimatedPrice || i.retailPriceAed || 295),
-        0
-      );
-
-      const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
-      const deliveryFee = totalAmount >= (companyProfile.freeShippingThresholdAed ?? 350) ? 0 : (companyProfile.standardShippingFeeAed ?? 25);
-
-      // 1. Record into public.orders
-      await SalesService.createOnlineOrder({
-        order_number: orderNumber,
-        customer_name: customerInfo?.name || 'Online Boutique Collector',
-        customer_phone: customerInfo?.phone || '+971 50 000 0000',
-        customer_address: customerInfo?.shippingAddress || '',
-        city: customerInfo?.city || 'Dubai',
-        items: piecesToBuy.map(piece => ({
-          pieceId: piece.id,
-          barcode: piece.barcode,
-          description: `${piece.brandName} ${piece.itemName} (${piece.sizeScanned || 'L'}) - Ref ${paymentRef || paymentMethod}`,
-          weightKg: piece.weightKg || 0.4,
-          unitPrice: piece.estimatedPrice || piece.retailPriceAed || 295
-        })),
-        total_amount: totalAmount,
-        delivery_fee: deliveryFee,
-        payment_method: paymentMethod,
-        payment_status: paymentMethod === 'COD' ? 'PENDING' : 'PAID',
-        order_status: 'CONFIRMED',
-        source: 'STOREFRONT'
+      // 1. Execute Atomic E-Commerce SQL Checkout via Backend API
+      const checkoutRes = await fetch('/api/ecommerce/orders/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerName: customerInfo?.name || 'Online Boutique Collector',
+          customerPhone: customerInfo?.phone || '+971 50 000 0000',
+          customerEmail: customerInfo?.email || '',
+          shippingAddress: customerInfo?.shippingAddress || '',
+          city: customerInfo?.city || customerInfo?.emirate || 'Dubai',
+          country: 'UAE',
+          items: piecesToBuy.map(piece => ({
+            pieceId: piece.id,
+            barcode: piece.barcode,
+            description: `${piece.brandName} ${piece.itemName} (${piece.sizeScanned || 'L'}) - Ref ${paymentRef || paymentMethod}`,
+            weightKg: piece.weightKg || 0.4,
+            unitPrice: piece.estimatedPrice || piece.retailPriceAed || 295
+          })),
+          paymentMethod,
+          paymentRef,
+          sessionId
+        })
       });
 
-      // 2. Mark pieces as sold in Supabase inventory_pieces
-      for (const piece of piecesToBuy) {
-        await supabase
-          .from('inventory_pieces')
-          .update({ is_sold: true, status: 'SOLD' })
-          .or(`id.eq.${piece.id},barcode.eq.${piece.barcode}`);
+      let openedWa = false;
+      if (checkoutRes.ok) {
+        const checkoutData = await checkoutRes.json();
+        if (checkoutData.whatsappUrl) {
+          // Open pre-filled WhatsApp confirmation in new tab
+          window.open(checkoutData.whatsappUrl, '_blank');
+          openedWa = true;
+        }
+      } else {
+        // Fallback to legacy SalesService if needed
+        const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
+        const deliveryFee = totalAmount >= (companyProfile.freeShippingThresholdAed ?? 350) ? 0 : (companyProfile.standardShippingFeeAed ?? 25);
+
+        await SalesService.createOnlineOrder({
+          order_number: orderNumber,
+          customer_name: customerInfo?.name || 'Online Boutique Collector',
+          customer_phone: customerInfo?.phone || '+971 50 000 0000',
+          customer_address: customerInfo?.shippingAddress || '',
+          city: customerInfo?.city || 'Dubai',
+          items: piecesToBuy.map(piece => ({
+            pieceId: piece.id,
+            barcode: piece.barcode,
+            description: `${piece.brandName} ${piece.itemName} (${piece.sizeScanned || 'L'}) - Ref ${paymentRef || paymentMethod}`,
+            weightKg: piece.weightKg || 0.4,
+            unitPrice: piece.estimatedPrice || piece.retailPriceAed || 295
+          })),
+          total_amount: totalAmount,
+          delivery_fee: deliveryFee,
+          payment_method: paymentMethod,
+          payment_status: paymentMethod === 'COD' ? 'PENDING' : 'PAID',
+          order_status: 'CONFIRMED',
+          source: 'STOREFRONT'
+        });
       }
 
       // Remove pieces from local active list after vanishing animation completes
@@ -472,7 +569,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       // Send Instant WhatsApp Order Notification to configured WhatsApp number
       const rawPhone = companyProfile.whatsappOrderNumber || companyProfile.phone || '+971554186086';
       const cleanPhone = rawPhone.replace(/[^0-9]/g, '');
-      if (cleanPhone && customerInfo) {
+      if (cleanPhone && customerInfo && !openedWa) {
         const itemsList = piecesToBuy
           .map(p => `• ${p.brandName} ${p.itemName} (${p.sizeScanned || 'L'}) [${p.barcode}] - AED ${p.estimatedPrice || p.retailPriceAed || 295}`)
           .join('\n');
@@ -634,6 +731,20 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 {cart.length}
               </span>
             )}
+          </button>
+
+          {/* GRAIL BOUNTY WISHLIST BUTTON */}
+          <button
+            type="button"
+            onClick={() => {
+              luxuryAudio.playMechanicalClick();
+              setBountyModalOpen(true);
+            }}
+            className="hidden sm:flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-100 to-amber-200 hover:from-amber-200 hover:to-amber-300 text-amber-950 font-bold text-xs uppercase tracking-wider rounded-xl border border-amber-400 shadow-xs transition-all active:scale-95 cursor-pointer"
+            title="Request a vintage piece not found in store"
+          >
+            <span>🎯</span>
+            <span className="hidden md:inline">Request Grail</span>
           </button>
 
           {/* ERP Access Button (Prominently Highlighted 3D Button) */}
@@ -1403,6 +1514,159 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         onClose={() => setFitGuideOpen(false)}
         initialSilhouetteId={fitGuideSilhouetteId}
       />
+
+      {/* 16. GRAIL BOUNTY WISHLIST MODAL (SQL BACKED) */}
+      {bountyModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="relative w-full max-w-lg bg-gradient-to-b from-[#FFFFFF] to-[#FAF5EA] border-2 border-amber-400 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-5 text-slate-900 font-sans">
+            <button
+              onClick={() => setBountyModalOpen(false)}
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 rounded-full hover:bg-amber-100 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div>
+              <div className="flex items-center gap-2 text-amber-800 font-mono text-xs font-black uppercase tracking-wider mb-1">
+                <span>🎯</span>
+                <span>VINTAGE GRAIL BOUNTY HUNTER</span>
+              </div>
+              <h3 className="font-cinzel text-xl sm:text-2xl font-black text-amber-950">
+                اپنا من پسند ونٹیج پیس مانگیں (Request a Grail)
+              </h3>
+              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                اگر آپ کو اپنی پسند کی ونٹیج ٹی شرٹ یا کارہارٹ جیکٹ اسٹور میں نہیں ملی، تو اپنی فرمائش درج کریں۔ جیسے ہی امریکہ سے آنے والے اگلے کنٹینر بیل میں یہ پیس اسکین ہوگا، سسٹم آپ کے واٹس ایپ پر لائیو میسج بھیجے گا!
+              </p>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setBountySubmitting(true);
+                try {
+                  const res = await fetch('/api/ecommerce/bounty', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(bountyForm)
+                  });
+                  const data = await res.json();
+                  if (res.ok && data.success) {
+                    luxuryAudio.playWaxSealSound();
+                    setSuccessToast({
+                      title: '🎯 Grail Bounty Registered in SQL Database!',
+                      subtitle: `We will alert ${bountyForm.customerPhone} on WhatsApp when your ${bountyForm.desiredBrand} arrives!`
+                    });
+                    setBountyModalOpen(false);
+                    setBountyForm({
+                      customerName: '',
+                      customerPhone: '',
+                      customerEmail: '',
+                      desiredBrand: '',
+                      desiredCategory: 'T-Shirts',
+                      desiredSize: 'L (Boxy)',
+                      maxBudgetAed: '',
+                      notes: ''
+                    });
+                    setTimeout(() => setSuccessToast(null), 7000);
+                  } else {
+                    alert(data.error || 'Failed to submit bounty.');
+                  }
+                } catch (err: any) {
+                  alert(err?.message || 'Error submitting bounty');
+                } finally {
+                  setBountySubmitting(false);
+                }
+              }}
+              className="space-y-3.5 font-mono text-xs"
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Your Name *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Tariq Al Qasimi"
+                    value={bountyForm.customerName}
+                    onChange={e => setBountyForm({ ...bountyForm, customerName: e.target.value })}
+                    className="w-full p-2.5 rounded-xl bg-white border border-amber-300 text-slate-900 focus:outline-none focus:border-amber-500 shadow-inner"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">WhatsApp Phone *</label>
+                  <input
+                    type="tel"
+                    required
+                    placeholder="+971 50 000 0000"
+                    value={bountyForm.customerPhone}
+                    onChange={e => setBountyForm({ ...bountyForm, customerPhone: e.target.value })}
+                    className="w-full p-2.5 rounded-xl bg-white border border-amber-300 text-slate-900 focus:outline-none focus:border-amber-500 shadow-inner"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Desired Brand / Band *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Carhartt Detroit, Nirvana, Harley"
+                    value={bountyForm.desiredBrand}
+                    onChange={e => setBountyForm({ ...bountyForm, desiredBrand: e.target.value })}
+                    className="w-full p-2.5 rounded-xl bg-white border border-amber-300 text-slate-900 focus:outline-none focus:border-amber-500 shadow-inner"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Preferred Size</label>
+                  <select
+                    value={bountyForm.desiredSize}
+                    onChange={e => setBountyForm({ ...bountyForm, desiredSize: e.target.value })}
+                    className="w-full p-2.5 rounded-xl bg-white border border-amber-300 text-slate-900 focus:outline-none focus:border-amber-500 shadow-inner"
+                  >
+                    <option value="S">Small (S)</option>
+                    <option value="M">Medium (M)</option>
+                    <option value="L (Boxy)">Large (Boxy Vintage Fit)</option>
+                    <option value="XL (Oversized)">XL (Oversized 90s Drape)</option>
+                    <option value="XXL">XXL Big & Heavy</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">Max Budget (AED)</label>
+                <input
+                  type="number"
+                  placeholder="e.g. 1500"
+                  value={bountyForm.maxBudgetAed}
+                  onChange={e => setBountyForm({ ...bountyForm, maxBudgetAed: e.target.value })}
+                  className="w-full p-2.5 rounded-xl bg-white border border-amber-300 text-slate-900 focus:outline-none focus:border-amber-500 shadow-inner"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">Special Details / Year / Era</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Must be 1994 In Utero with Single Stitch"
+                  value={bountyForm.notes}
+                  onChange={e => setBountyForm({ ...bountyForm, notes: e.target.value })}
+                  className="w-full p-2.5 rounded-xl bg-white border border-amber-300 text-slate-900 focus:outline-none focus:border-amber-500 shadow-inner"
+                />
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={bountySubmitting}
+                  className="w-full btn-3d btn-3d-amber py-3 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                >
+                  <span>{bountySubmitting ? 'Recording in Database...' : '🎯 Submit Grail Bounty Request'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

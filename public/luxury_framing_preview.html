@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vintage Vibes Dubai • Luxury Framing & Aesthetics Showcase</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;800;900&family=Cormorant+Garamond:ital,wght@0,600;0,700;1,600&family=JetBrains+Mono:wght@400;600;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --gold-primary: #C5A059;
+      --gold-light: #DFCA8D;
+      --gold-dark: #8C6A2E;
+      --gold-deep: #5E4417;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      transition: background 0.4s ease, color 0.4s ease;
+    }
+
+    .font-cinzel { font-family: 'Cinzel', serif; }
+    .font-cormorant { font-family: 'Cormorant Garamond', serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+    /* =========================================================================
+       1. LUXURY DOUBLE-BEZEL FRAMING (Swiss Watch & Fine Jewelry Bezel)
+       ========================================================================= */
+    .luxury-frame-gold {
+      background: linear-gradient(180deg, #FFFFFF 0%, #FAF6EE 100%);
+      border: 1px solid rgba(197, 160, 89, 0.45);
+      box-shadow: 
+        0 0 0 1px rgba(255, 255, 255, 0.8) inset,
+        0 1px 3px rgba(140, 106, 46, 0.1),
+        0 10px 30px -5px rgba(94, 68, 23, 0.12);
+      position: relative;
+    }
+
+    .luxury-frame-gold::before {
+      content: '';
+      position: absolute;
+      inset: 3px;
+      border: 1px solid rgba(197, 160, 89, 0.22);
+      border-radius: inherit;
+      pointer-events: none;
+    }
+
+    /* Dark Mode Double Bezel */
+    .dark-mode .luxury-frame-gold {
+      background: linear-gradient(180deg, #182232 0%, #111a27 100%);
+      border: 1px solid rgba(197, 160, 89, 0.4);
+      box-shadow: 
+        0 0 0 1px rgba(255, 255, 255, 0.05) inset,
+        0 12px 35px rgba(0, 0, 0, 0.45);
+    }
+    .dark-mode .luxury-frame-gold::before {
+      border-color: rgba(197, 160, 89, 0.2);
+    }
+
+    /* =========================================================================
+       2. ROYAL CORNER BRACKETS (Heritage Trunk & Safe Box Rivets)
+       ========================================================================= */
+    .corner-bracket-tl, .corner-bracket-tr, .corner-bracket-bl, .corner-bracket-br {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-color: #C5A059;
+      pointer-events: none;
+    }
+    .corner-bracket-tl { top: 4px; left: 4px; border-top: 2px solid; border-left: 2px solid; }
+    .corner-bracket-tr { top: 4px; right: 4px; border-top: 2px solid; border-right: 2px solid; }
+    .corner-bracket-bl { bottom: 4px; left: 4px; border-bottom: 2px solid; border-left: 2px solid; }
+    .corner-bracket-br { bottom: 4px; right: 4px; border-bottom: 2px solid; border-right: 2px solid; }
+
+    /* =========================================================================
+       3. METALLIC GOLD SHIMMER & LIQUID BORDER HOVER
+       ========================================================================= */
+    .gold-metallic-text {
+      background: linear-gradient(135deg, #DFCA8D 0%, #C5A059 50%, #8C6A2E 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .luxury-card-interactive {
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .luxury-card-interactive:hover {
+      transform: translateY(-3px);
+      box-shadow: 
+        0 0 0 1px rgba(197, 160, 89, 0.75) inset,
+        0 14px 34px -4px rgba(94, 68, 23, 0.2);
+    }
+    .dark-mode .luxury-card-interactive:hover {
+      box-shadow: 
+        0 0 0 1px rgba(223, 202, 141, 0.6) inset,
+        0 16px 40px rgba(0, 0, 0, 0.65);
+    }
+
+    /* Guilloché Subtle Royal Background */
+    .royal-linen-bg {
+      background-color: #F8F4EB;
+      background-image: 
+        radial-gradient(circle at 50% 50%, rgba(197, 160, 89, 0.08) 1.5px, transparent 1.5px),
+        linear-gradient(135deg, #FBF8F1 0%, #F5EFE0 50%, #EFE7D2 100%);
+      background-size: 28px 28px, 100% 100%;
+    }
+
+    .dark-mode .royal-linen-bg {
+      background-color: #0c121c;
+      background-image: 
+        radial-gradient(circle at 50% 50%, rgba(197, 160, 89, 0.05) 1.5px, transparent 1.5px),
+        linear-gradient(135deg, #141c28 0%, #0e1520 50%, #080d15 100%);
+      background-size: 28px 28px, 100% 100%;
+    }
+
+    /* Beveled Divider */
+    .luxury-hairline {
+      height: 1px;
+      background: linear-gradient(90deg, transparent 0%, rgba(197, 160, 89, 0.6) 50%, transparent 100%);
+    }
+  </style>
+</head>
+<body id="page-body" class="royal-linen-bg min-h-screen text-slate-800 flex flex-col justify-between selection:bg-[#C5A059] selection:text-white">
+
+  <!-- =========================================================================
+       TOP LUXURY HEADER: DUBAI BOUTIQUE ATELIER FRAMING
+       ========================================================================= -->
+  <header class="sticky top-0 z-50 backdrop-blur-md bg-white/85 dark:bg-[#121b27]/90 border-b border-[#C5A059]/40 shadow-sm px-4 sm:px-8 py-3 transition-colors">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      
+      <!-- Left Brand & Crest -->
+      <div class="flex items-center gap-3.5">
+        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-[#DFCA8D] via-[#C5A059] to-[#8C6A2E] p-[1.5px] shadow-md">
+          <div class="w-full h-full bg-[#121924] rounded-[10px] flex items-center justify-center">
+            <span class="font-cinzel text-xl font-black text-[#DFCA8D] tracking-wider">V</span>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-cinzel text-base sm:text-lg font-black tracking-[0.2em] text-[#8C6A2E] dark:text-[#DFCA8D] uppercase">
+              Vintage Vibes • Dubai
+            </h1>
+            <span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#C5A059]/15 text-[#8C6A2E] dark:text-[#DFCA8D] border border-[#C5A059]/35">
+              HAUTE ATELIER OS
+            </span>
+          </div>
+          <p class="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+            ای آر پی کو شاندار، لگژری اور شاہانہ فریمنگ لُک دینے کی تجاویز اور لائیو نمونے
+          </p>
+        </div>
+      </div>
+
+      <!-- Right Controls: Theme Switcher -->
+      <div class="flex items-center gap-2">
+        <button onclick="toggleLuxuryTheme('light')" id="btn-theme-light" class="px-3.5 py-1.5 rounded-lg text-xs font-bold border border-[#C5A059] bg-[#C5A059] text-white shadow-sm cursor-pointer transition-all">
+          ☀️ Royal Champagne (دن کا شاہانہ انداز)
+        </button>
+        <button onclick="toggleLuxuryTheme('dark')" id="btn-theme-dark" class="px-3.5 py-1.5 rounded-lg text-xs font-bold border border-slate-300 dark:border-slate-700 bg-transparent text-slate-600 dark:text-slate-300 hover:border-[#C5A059] cursor-pointer transition-all">
+          🌙 Maybach Obsidian (رات کا ڈارک لگژری انداز)
+        </button>
+      </div>
+    </div>
+  </header>
+
+
+  <!-- =========================================================================
+       MAIN SHOWCASE: 5 CORE LUXURY FRAMING CONCEPTS
+       ========================================================================= -->
+  <main class="max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-8 flex-1">
+
+    <!-- HERO INTRO: WHAT MAKES A SOFTWARE LOOK 100X MORE LUXURIOUS -->
+    <section class="luxury-frame-gold rounded-2xl p-6 sm:p-8">
+      <div class="corner-bracket-tl"></div>
+      <div class="corner-bracket-tr"></div>
+      <div class="corner-bracket-bl"></div>
+      <div class="corner-bracket-br"></div>
+
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div class="space-y-2 max-w-3xl">
+          <span class="text-[11px] font-mono font-extrabold uppercase tracking-[0.25em] text-[#C5A059] block">
+            ROYAL FRAMING & HIGH-END ARCHITECTURE
+          </span>
+          <h2 class="font-cinzel text-2xl sm:text-3xl font-black text-slate-900 dark:text-white leading-tight">
+            ای آر پی کو عام سافٹ ویئر سے <span class="gold-metallic-text">شاہانہ لگژری ڈیسک</span> بنانے کے 5 طریقے
+          </h2>
+          <p class="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed pt-1">
+            جب ایک دیسی یا سادہ سافٹ ویئر میں بیولڈ گولڈ بارڈرز، فلوٹنگ کارڈز، اور رولیکس / سوئس گھڑیوں جیسی خوبصورت فریمنگ اور باریک لکیریں شامل کی جاتی ہیں تو پورا سسٹم ایک ملٹی ملین ڈالر پرائیویٹ بینک یا دبئی فیشن ہاؤس کا شاہکار لگنے لگتا ہے۔ نیچے دیے گئے 5 ماڈلز دیکھیں:
+          </p>
+        </div>
+
+        <div class="text-right shrink-0">
+          <div class="inline-block p-4 rounded-xl bg-[#C5A059]/10 border border-[#C5A059]/40 text-center">
+            <span class="text-[10px] font-mono uppercase tracking-widest text-[#8C6A2E] dark:text-[#DFCA8D] font-bold block">CURRENT STANDARD</span>
+            <span class="font-cinzel text-xl font-black text-slate-900 dark:text-white block mt-0.5">DUBAI GOLD CLASS</span>
+            <span class="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold block mt-1">✓ 100% Bespoke Aesthetic</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- =========================================================================
+         SECTION 1: THE 3 DISTINCT FRAMING STYLES (COMPARE THEM)
+         ========================================================================= -->
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="font-cinzel text-lg font-bold text-slate-900 dark:text-white">
+            1. کارڈز اور باکسز کے 3 شاہانہ فریمنگ اسٹائلز (Framing Styles)
+          </h3>
+          <p class="text-xs text-slate-500 dark:text-slate-400 font-mono">
+            دیکھیں کہ ایک ہی کارڈ کو تین الگ الگ لگژری بارڈرز سے کیسی مختلف شاہی لُک ملتی ہے:
+          </p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+        <!-- FRAME STYLE A: DOUBLE-BEZEL SWISS WATCH FRAME -->
+        <div class="luxury-frame-gold luxury-card-interactive rounded-2xl p-5 space-y-4">
+          <div class="flex items-center justify-between pb-3 border-b border-[#C5A059]/25">
+            <span class="text-[10px] font-mono font-black uppercase text-[#8C6A2E] dark:text-[#DFCA8D] tracking-wider">
+              اسٹائل 1: سوئس بیزل (Double Bezel)
+            </span>
+            <span class="text-amber-500 text-sm">✦</span>
+          </div>
+
+          <div>
+            <span class="text-[11px] text-slate-500 dark:text-slate-400 block font-mono">کل یومیہ سیل (Daily Gross Sales)</span>
+            <div class="font-cinzel text-2xl font-black text-slate-900 dark:text-white mt-1">
+              AED 48,250.00
+            </div>
+            <div class="flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-bold font-mono mt-1">
+              <span>▲ +18.4%</span>
+              <span class="text-slate-400 font-normal">بمقابلہ کل</span>
+            </div>
+          </div>
+
+          <div class="luxury-hairline"></div>
+
+          <p class="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+            <strong>خصوصیت:</strong> باہر باریک سنہری لکیر، اندر 3px کا گیپ اور ایک اور اندرونی باریک ہیر لائن۔ بالکل جیسے رولیکس یا پیٹیک فلپ گھڑی کا گولڈ بیزل ہوتا ہے۔
+          </p>
+        </div>
+
+        <!-- FRAME STYLE B: HERITAGE TRUNK CORNER RIVETS -->
+        <div class="luxury-frame-gold luxury-card-interactive rounded-2xl p-5 space-y-4 relative">
+          <!-- The 4 Antique Corner Brackets -->
+          <div class="corner-bracket-tl"></div>
+          <div class="corner-bracket-tr"></div>
+          <div class="corner-bracket-bl"></div>
+          <div class="corner-bracket-br"></div>
+
+          <div class="flex items-center justify-between pb-3 border-b border-[#C5A059]/25">
+            <span class="text-[10px] font-mono font-black uppercase text-[#8C6A2E] dark:text-[#DFCA8D] tracking-wider">
+              اسٹائل 2: رائل کارنر بریکٹس (Heritage Rivets)
+            </span>
+            <span class="text-amber-500 text-sm">⚜️</span>
+          </div>
+
+          <div>
+            <span class="text-[11px] text-slate-500 dark:text-slate-400 block font-mono">والٹ کیش بیلنس (Vault Cash Reserve)</span>
+            <div class="font-cinzel text-2xl font-black text-[#8C6A2E] dark:text-[#DFCA8D] mt-1">
+              AED 312,400.00
+            </div>
+            <div class="flex items-center gap-1.5 text-[11px] text-purple-600 dark:text-purple-400 font-bold font-mono mt-1">
+              <span>● محفوظ تجوری لاکڈ</span>
+              <span class="text-slate-400 font-normal">العین مین برانچ</span>
+            </div>
+          </div>
+
+          <div class="luxury-hairline"></div>
+
+          <p class="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+            <strong>خصوصیت:</strong> کونوں پر 90 ڈگری کے گولڈ بریکٹس (Corner Brackets) جیسے Louis Vuitton یا Goyard کے پرانے شاہی ٹرنک اور سیف باکسز پر لگے ہوتے ہیں۔
+          </p>
+        </div>
+
+        <!-- FRAME STYLE C: FLOATING GLASS WITH GOLD SHADOW -->
+        <div class="rounded-2xl p-5 space-y-4 bg-white dark:bg-[#15202e] border-2 border-[#C5A059]/50 shadow-[0_15px_35px_rgba(197,160,89,0.18)] dark:shadow-[0_15px_35px_rgba(0,0,0,0.5)] luxury-card-interactive">
+          <div class="flex items-center justify-between pb-3 border-b border-[#C5A059]/25">
+            <span class="text-[10px] font-mono font-black uppercase text-[#8C6A2E] dark:text-[#DFCA8D] tracking-wider">
+              اسٹائل 3: فلوٹنگ گولڈ ایلیویشن (Floating Gold)
+            </span>
+            <span class="text-amber-500 text-sm">🏛️</span>
+          </div>
+
+          <div>
+            <span class="text-[11px] text-slate-500 dark:text-slate-400 block font-mono">انوینٹری اثاثہ مالیت (Total Asset Valuation)</span>
+            <div class="font-cinzel text-2xl font-black text-slate-900 dark:text-white mt-1">
+              AED 1,845,000.00
+            </div>
+            <div class="flex items-center gap-1.5 text-[11px] text-blue-600 dark:text-blue-400 font-bold font-mono mt-1">
+              <span>📦 4,820 پیسز رجسٹرڈ</span>
+            </div>
+          </div>
+
+          <div class="luxury-hairline"></div>
+
+          <p class="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+            <strong>خصوصیت:</strong> ڈیپ ایمبیئنٹ گلو شیڈو جو اسکرین پر کارڈ کو ایسا ظاہر کرتا ہے جیسے یہ ہوا میں تیرتا ہوا پالش شدہ سلیب ہو جس کے نیچے نرم سنہری روشنی ہے۔
+          </p>
+        </div>
+
+      </div>
+    </div>
+
+
+    <!-- =========================================================================
+         SECTION 2: LUXURY TABLE FRAMING & DATA PRESENTATION
+         ========================================================================= -->
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="font-cinzel text-lg font-bold text-slate-900 dark:text-white">
+            2. شاہانہ ٹیبل اور لیجر فریمنگ (Haute Horlogerie Ledger & Table)
+          </h3>
+          <p class="text-xs text-slate-500 dark:text-slate-400 font-mono">
+            عام ایکسل شیٹ جیسی ٹیبلز کے بجائے، دبئی کے پرائیویٹ فنانس ہاؤس جیسی نفیس ڈیزائننگ:
+          </p>
+        </div>
+      </div>
+
+      <div class="luxury-frame-gold rounded-2xl overflow-hidden shadow-xl">
+        <div class="p-4 sm:p-5 border-b border-[#C5A059]/30 flex flex-wrap items-center justify-between gap-3 bg-[#C5A059]/5">
+          <div class="flex items-center gap-2.5">
+            <span class="w-3 h-3 rounded-full bg-[#C5A059] ring-4 ring-[#C5A059]/20"></span>
+            <span class="font-cinzel text-sm font-bold tracking-wider text-slate-900 dark:text-white uppercase">
+              RECENT HIGH-VALUE GRAIL INVOICES • شاہانہ رسیدیں
+            </span>
+          </div>
+          <span class="text-xs font-mono text-[#8C6A2E] dark:text-[#DFCA8D] font-bold">
+            CURRENCY: UNITED ARAB EMIRATES DIRHAM (AED)
+          </span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left font-mono text-xs">
+            <thead class="bg-[#C5A059]/10 text-[#8C6A2E] dark:text-[#DFCA8D] border-b border-[#C5A059]/30 text-[11px] uppercase tracking-wider">
+              <tr>
+                <th class="py-3 px-4 font-black">انوائس / تاریخ (Ref)</th>
+                <th class="py-3 px-4 font-black">وی آئی پی کلائنٹ (Client)</th>
+                <th class="py-3 px-4 font-black">ونٹیج آئٹم (Vintage Grail Piece)</th>
+                <th class="py-3 px-4 font-black text-right">رقم (Amount AED)</th>
+                <th class="py-3 px-4 font-black text-center">اسٹیٹس (Status)</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[#C5A059]/15">
+              <tr class="hover:bg-[#C5A059]/5 transition-colors">
+                <td class="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                  #VV-DXB-9841
+                  <span class="text-[10px] text-slate-400 block font-normal">Today • 18:24</span>
+                </td>
+                <td class="py-3.5 px-4">
+                  <strong class="text-slate-900 dark:text-white block">Sheikh Mansoor Al Qasimi</strong>
+                  <span class="text-[10px] text-slate-500 dark:text-slate-400">VIP Private Collector (Dubai)</span>
+                </td>
+                <td class="py-3.5 px-4 text-slate-800 dark:text-slate-200">
+                  1994 Nirvana In Utero Original Promo Tee
+                  <span class="text-[10px] text-amber-600 dark:text-amber-400 block">Single Stitch • Mint Archive</span>
+                </td>
+                <td class="py-3.5 px-4 text-right font-cinzel text-sm font-black text-[#8C6A2E] dark:text-[#DFCA8D]">
+                  AED 3,850.00
+                </td>
+                <td class="py-3.5 px-4 text-center">
+                  <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                    ✓ Paid Wire (ENBD)
+                  </span>
+                </td>
+              </tr>
+              <tr class="hover:bg-[#C5A059]/5 transition-colors">
+                <td class="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                  #VV-DXB-9840
+                  <span class="text-[10px] text-slate-400 block font-normal">Today • 16:10</span>
+                </td>
+                <td class="py-3.5 px-4">
+                  <strong class="text-slate-900 dark:text-white block">Rashid Bin Fahad</strong>
+                  <span class="text-[10px] text-slate-500 dark:text-slate-400">Riyadh Guild Partner (KSA)</span>
+                </td>
+                <td class="py-3.5 px-4 text-slate-800 dark:text-slate-200">
+                  1989 Carhartt Detroit Duck Brown J97 Jacket
+                  <span class="text-[10px] text-amber-600 dark:text-amber-400 block">Distressed Heavyweight Canvas</span>
+                </td>
+                <td class="py-3.5 px-4 text-right font-cinzel text-sm font-black text-[#8C6A2E] dark:text-[#DFCA8D]">
+                  AED 1,450.00
+                </td>
+                <td class="py-3.5 px-4 text-center">
+                  <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                    ✓ Paid Wire (Al Rajhi)
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- =========================================================================
+         SECTION 3: CONCRETE RECOMMENDATIONS TO TRANSFORM THE ERP
+         ========================================================================= -->
+    <section class="luxury-frame-gold rounded-2xl p-6 sm:p-8 space-y-6">
+      <div class="corner-bracket-tl"></div>
+      <div class="corner-bracket-tr"></div>
+      <div class="corner-bracket-bl"></div>
+      <div class="corner-bracket-br"></div>
+
+      <div class="border-b border-[#C5A059]/30 pb-4">
+        <span class="text-[10px] font-mono uppercase tracking-[0.2em] text-[#C5A059] font-bold block mb-1">
+          EXPERT ARCHITECTURAL RECOMMENDATIONS
+        </span>
+        <h3 class="font-cinzel text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
+          مین ERP میں ہم یہ 4 لگژری تبدیلیاں کیسے نافذ کریں گے؟
+        </h3>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs leading-relaxed">
+        
+        <!-- Rec 1 -->
+        <div class="p-4 rounded-xl bg-[#C5A059]/5 border border-[#C5A059]/25 space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="w-6 h-6 rounded-full bg-[#C5A059] text-white flex items-center justify-center font-bold text-[11px]">1</span>
+            <strong class="font-cinzel text-sm text-slate-900 dark:text-white">تمام کارڈز کو Double-Bezel فریم دینا:</strong>
+          </div>
+          <p class="text-slate-600 dark:text-slate-300">
+            مین ڈیش بورڈ، سیلز، پرچیز اور فنانس کے ہر باکس پر عام فلیٹ بارڈر کی جگہ باریک ڈبل گولڈ بیزل لگے گا، جس سے پورا ای آر پی عام ویب سائٹ نہیں بلکہ سوئس گھڑی یا اعلیٰ فریم جیسا محسوس ہو گا۔
+          </p>
+        </div>
+
+        <!-- Rec 2 -->
+        <div class="p-4 rounded-xl bg-[#C5A059]/5 border border-[#C5A059]/25 space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="w-6 h-6 rounded-full bg-[#C5A059] text-white flex items-center justify-center font-bold text-[11px]">2</span>
+            <strong class="font-cinzel text-sm text-slate-900 dark:text-white">شاہی کارنر بریکٹس (Heritage Corner Rivets):</strong>
+          </div>
+          <p class="text-slate-600 dark:text-slate-300">
+            اہم ترین کارڈز (جیسے کل کیش بیلنس، روزانہ منافع، اور وی آئی پی گاہک لسٹ) کے چاروں کونوں پر 90 ڈگری کے سنہری ایل-بریکٹس لگائے جائیں گے جیسے پرانے قیمتی تجوریوں اور رائل ٹرنکوں پر ہوتے ہیں۔
+          </p>
+        </div>
+
+        <!-- Rec 3 -->
+        <div class="p-4 rounded-xl bg-[#C5A059]/5 border border-[#C5A059]/25 space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="w-6 h-6 rounded-full bg-[#C5A059] text-white flex items-center justify-center font-bold text-[11px]">3</span>
+            <strong class="font-cinzel text-sm text-slate-900 dark:text-white">ٹائپوگرافی: روئل سرف (Cinzel + Cormorant):</strong>
+          </div>
+          <p class="text-slate-600 dark:text-slate-300">
+            سادہ اور بورنگ ہینڈلز کی جگہ تمام بڑی کرنسی ویلیوز (AED 1,450,000) کو ہائی-کنٹراسٹ لگژری سرف فونٹ میں دکھایا جائے گا، جو کارٹیئر اور رولیکس کی دستاویزات جیسا تاثر دیتا ہے۔
+          </p>
+        </div>
+
+        <!-- Rec 4 -->
+        <div class="p-4 rounded-xl bg-[#C5A059]/5 border border-[#C5A059]/25 space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="w-6 h-6 rounded-full bg-[#C5A059] text-white flex items-center justify-center font-bold text-[11px]">4</span>
+            <strong class="font-cinzel text-sm text-slate-900 dark:text-white">مے بیک ڈارک اور رائل شیمپین کا پرفیکٹ سویچ:</strong>
+          </div>
+          <p class="text-slate-600 dark:text-slate-300">
+            سسٹم میں کالا رنگ کڑوا اور بے جان نہیں ہو گا، بلکہ مے بیک کار کی لیدر جیسا ڈیپ سلیٹ اور ٹائٹینیم گولڈ ہو گا، اور دن کا انداز اصلی شیمپین ماربل جیسا ہو گا۔
+          </p>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+
+  <!-- FOOTER -->
+  <footer class="border-t border-[#C5A059]/30 bg-white/70 dark:bg-[#0c121c]/80 p-4 text-center text-xs font-mono text-slate-500">
+    VINTAGE VIBES DUBAI • HAUTE LUXURY ATELIER FRAMING SYSTEM • ARCHITECTURAL PROPOSAL
+  </footer>
+
+
+  <script>
+    function toggleLuxuryTheme(theme) {
+      const body = document.getElementById('page-body');
+      const btnLight = document.getElementById('btn-theme-light');
+      const btnDark = document.getElementById('btn-theme-dark');
+
+      if (theme === 'dark') {
+        body.classList.add('dark', 'dark-mode');
+        btnDark.classList.add('bg-[#C5A059]', 'text-white', 'border-[#C5A059]');
+        btnDark.classList.remove('bg-transparent', 'text-slate-300');
+        btnLight.classList.remove('bg-[#C5A059]', 'text-white');
+        btnLight.classList.add('bg-transparent', 'text-slate-600');
+      } else {
+        body.classList.remove('dark', 'dark-mode');
+        btnLight.classList.add('bg-[#C5A059]', 'text-white', 'border-[#C5A059]');
+        btnLight.classList.remove('bg-transparent', 'text-slate-600');
+        btnDark.classList.remove('bg-[#C5A059]', 'text-white');
+        btnDark.classList.add('bg-transparent', 'text-slate-300');
+      }
+    }
+  </script>
+</body>
+</html>

@@ -170,7 +170,44 @@ export class PartiesService {
     return coaId;
   }
 
+  public static async getPartyById(id: string): Promise<Party | null> {
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const res = await rawFetch(`/api/parties/${id}`);
+        if (res.ok) {
+          const p = await res.json();
+          return p;
+        }
+      } catch (_) {}
+    }
+    const { data } = await supabase.from('parties').select('*').eq('id', id).maybeSingle();
+    return data as any;
+  }
+
   public static async addParty(party: Partial<Party>): Promise<Party> {
+    // 1. Primary route: Express PostgreSQL backend
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const apiRes = await rawFetch('/api/parties', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(party)
+        });
+        if (apiRes.ok) {
+          const created = await apiRes.json();
+          return created;
+        } else {
+          const errData = await apiRes.json().catch(() => ({}));
+          if (errData.error) throw new Error(errData.error);
+        }
+      } catch (err: any) {
+        if (err.message && !err.message.includes('fetch')) throw err;
+      }
+    }
+
+    // 2. Fallback route: Supabase client
     const id = party.id || `pty-${Date.now()}`;
     const code = party.code || `P-${Date.now().toString().slice(-4)}`;
     const coaId = `acc-${id}`;
@@ -250,6 +287,28 @@ export class PartiesService {
   }
 
   public static async updateParty(id: string, updates: Partial<Party>): Promise<Party> {
+    // 1. Primary route: Express PostgreSQL backend
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const apiRes = await rawFetch(`/api/parties/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates)
+        });
+        if (apiRes.ok) {
+          const resJson = await apiRes.json();
+          return resJson.party || resJson;
+        } else {
+          const errData = await apiRes.json().catch(() => ({}));
+          if (errData.error) throw new Error(errData.error);
+        }
+      } catch (err: any) {
+        if (err.message && !err.message.includes('fetch')) throw err;
+      }
+    }
+
+    // 2. Fallback route: Supabase client
     const payload: any = {};
     if (updates.name !== undefined) payload.name = updates.name;
     if (updates.type !== undefined) payload.type = updates.type;
@@ -308,6 +367,22 @@ export class PartiesService {
   }
 
   public static async deleteParty(id: string): Promise<void> {
+    // 1. Primary route: Express PostgreSQL backend (with safety verification)
+    if (typeof window !== 'undefined') {
+      const rawFetch = (window as any).__originalFetch || window.fetch;
+      const apiRes = await rawFetch(`/api/parties/${id}`, {
+        method: 'DELETE'
+      });
+      if (apiRes.ok) {
+        return;
+      }
+      const errData = await apiRes.json().catch(() => ({}));
+      if (errData.error) {
+        throw new Error(errData.error);
+      }
+    }
+
+    // 2. Fallback route: Supabase client
     const { error } = await supabase.from('parties').delete().eq('id', id);
     if (error) {
       console.error('Supabase error on parties:', error);
@@ -319,7 +394,21 @@ export class PartiesService {
   public static async getKhataLogs(partyId?: string): Promise<any[]> {
     if (!partyId) return [];
 
-    // 1. Fetch from party_khata_logs
+    // 1. Primary route: Express PostgreSQL backend
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const apiRes = await rawFetch(`/api/parties/${partyId}/khata`);
+        if (apiRes.ok) {
+          const logs = await apiRes.json();
+          if (Array.isArray(logs) && logs.length > 0) {
+            return logs;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 2. Fallback: Fetch from Supabase party_khata_logs
     const { data: logs } = await supabase
       .from('party_khata_logs')
       .select('*')
@@ -339,7 +428,7 @@ export class PartiesService {
       }));
     }
 
-    // 2. Direct SQL Ledger Fallback for party transactions
+    // 3. Fallback: General Ledger entries
     try {
       const { data: partyRow } = await supabase.from('parties').select('code, coa_account_id').eq('id', partyId).maybeSingle();
       const cleanCode = (partyRow?.code || '').replace(/[^A-Za-z0-9]/g, '');
@@ -376,6 +465,33 @@ export class PartiesService {
   }
 
   public static async addKhataLog(log: Partial<PartyKhataLog>): Promise<PartyKhataLog> {
+    // 1. Primary route: Express PostgreSQL backend
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const apiRes = await rawFetch(`/api/parties/${log.partyId}/khata`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: Number(log.debit || 0) > 0 ? log.debit : log.credit,
+            type: Number(log.debit || 0) > 0 ? 'PAYMENT' : 'RECEIPT',
+            docRef: log.reference,
+            description: log.notes,
+            date: log.date
+          })
+        });
+        if (apiRes.ok) {
+          const resJson = await apiRes.json();
+          if (resJson.khataLog) {
+            return resJson.khataLog;
+          }
+        }
+      } catch (err: any) {
+        if (err.message && !err.message.includes('fetch')) throw err;
+      }
+    }
+
+    // 2. Fallback route: Supabase client
     const id = log.id || `kht-${Date.now()}`;
     const payload = {
       id,

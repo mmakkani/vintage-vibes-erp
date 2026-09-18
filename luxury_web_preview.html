@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vintage Vibes Dubai • Haute Luxury Enterprise OS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800;900&family=Cormorant+Garamond:ital,wght@0,600;0,700;1,600&family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --gold-primary: #C5A059;
+      --gold-light: #E5D5A6;
+      --gold-dark: #8C6A2E;
+      --gold-deep: #5E4417;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      transition: background-color 0.4s cubic-bezier(0.16, 1, 0.3, 1), color 0.4s ease;
+    }
+
+    .font-cinzel { font-family: 'Cinzel', serif; }
+    .font-cormorant { font-family: 'Cormorant Garamond', serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+    /* =========================================================================
+       1. LUXURY DOUBLE-BEZEL FRAMING (Swiss Watch & Fine Jewelry Bezel)
+       ========================================================================= */
+    .luxury-frame {
+      background: linear-gradient(180deg, #FFFFFF 0%, #FAF7F0 100%);
+      border: 1px solid rgba(197, 160, 89, 0.42);
+      box-shadow: 
+        0 0 0 1px rgba(255, 255, 255, 0.9) inset,
+        0 1px 3px rgba(140, 106, 46, 0.08),
+        0 16px 36px -6px rgba(94, 68, 23, 0.12);
+      position: relative;
+    }
+
+    .luxury-frame::before {
+      content: '';
+      position: absolute;
+      inset: 3px;
+      border: 1px solid rgba(197, 160, 89, 0.2);
+      border-radius: inherit;
+      pointer-events: none;
+    }
+
+    /* Dark Mode Double Bezel (Maybach Midnight Slate) */
+    .dark-mode .luxury-frame {
+      background: linear-gradient(180deg, #16202e 0%, #101824 100%);
+      border: 1px solid rgba(197, 160, 89, 0.38);
+      box-shadow: 
+        0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+        0 18px 40px rgba(0, 0, 0, 0.55);
+    }
+    .dark-mode .luxury-frame::before {
+      border-color: rgba(197, 160, 89, 0.18);
+    }
+
+    /* =========================================================================
+       2. ROYAL CORNER BRACKETS (Heritage Trunk ⚜️ Rivets)
+       ========================================================================= */
+    .corner-bracket-tl, .corner-bracket-tr, .corner-bracket-bl, .corner-bracket-br {
+      position: absolute;
+      width: 11px;
+      height: 11px;
+      border-color: #C5A059;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .corner-bracket-tl { top: 4px; left: 4px; border-top: 2px solid; border-left: 2px solid; }
+    .corner-bracket-tr { top: 4px; right: 4px; border-top: 2px solid; border-right: 2px solid; }
+    .corner-bracket-bl { bottom: 4px; left: 4px; border-bottom: 2px solid; border-left: 2px solid; }
+    .corner-bracket-br { bottom: 4px; right: 4px; border-bottom: 2px solid; border-right: 2px solid; }
+
+    /* =========================================================================
+       3. METALLIC GOLD SHIMMER & LIQUID BORDER HOVER
+       ========================================================================= */
+    .gold-metallic-text {
+      background: linear-gradient(135deg, #E5D5A6 0%, #C5A059 50%, #8C6A2E 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .luxury-card-interactive {
+      transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s ease;
+    }
+    .luxury-card-interactive:hover {
+      transform: translateY(-3.5px);
+      box-shadow: 
+        0 0 0 1px rgba(197, 160, 89, 0.75) inset,
+        0 18px 42px -4px rgba(94, 68, 23, 0.22);
+    }
+    .dark-mode .luxury-card-interactive:hover {
+      box-shadow: 
+        0 0 0 1px rgba(229, 213, 166, 0.6) inset,
+        0 20px 48px rgba(0, 0, 0, 0.7);
+    }
+
+    /* Royal Linen Textured Day Background */
+    .royal-linen-bg {
+      background-color: #F8F5EE;
+      background-image: 
+        radial-gradient(circle at 50% 50%, rgba(197, 160, 89, 0.08) 1.5px, transparent 1.5px),
+        linear-gradient(135deg, #FDFBF7 0%, #F6F1E5 50%, #EFE7D5 100%);
+      background-size: 32px 32px, 100% 100%;
+      background-attachment: fixed;
+    }
+
+    /* Maybach Obsidian Midnight Night Background */
+    .dark-mode.royal-linen-bg {
+      background-color: #0b111a;
+      background-image: 
+        radial-gradient(circle at 50% 50%, rgba(197, 160, 89, 0.05) 1.5px, transparent 1.5px),
+        linear-gradient(135deg, #121a26 0%, #0c131d 50%, #070a10 100%);
+      background-size: 32px 32px, 100% 100%;
+      background-attachment: fixed;
+    }
+
+    /* Hairline Gold Divider */
+    .luxury-hairline {
+      height: 1px;
+      background: linear-gradient(90deg, transparent 0%, rgba(197, 160, 89, 0.5) 50%, transparent 100%);
+    }
+
+    /* Custom Scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(197, 160, 89, 0.4);
+      border-radius: 999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(197, 160, 89, 0.8);
+    }
+  </style>
+</head>
+<body id="page-body" class="royal-linen-bg min-h-screen text-slate-800 flex flex-col justify-between selection:bg-[#C5A059] selection:text-white">
+
+  <!-- =========================================================================
+       1. LIVE DUBAI GOLD SOUK, FX & INBOUND CARGO TOP TICKER
+       ========================================================================= -->
+  <div class="bg-[#101724] text-[#E5D5A6] text-[11px] font-mono border-b border-[#C5A059]/35 px-4 py-1.5 flex items-center justify-between overflow-hidden shadow-inner">
+    <div class="flex items-center gap-6 overflow-x-auto whitespace-nowrap scrollbar-none">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+        <strong class="text-white uppercase tracking-wider font-bold">DUBAI LIVE SOUK:</strong>
+      </div>
+      <span>GOLD 24K: <strong class="text-white">AED 314.80/g</strong> <span class="text-emerald-400">▲ +0.4%</span></span>
+      <span class="text-slate-600">|</span>
+      <span>USD / AED: <strong class="text-white">3.6725</strong> (PEGGED)</span>
+      <span class="text-slate-600">|</span>
+      <span>US WEST COAST CARGO: <strong class="text-cyan-300">#MSCU-49102 (350 BALES)</strong> • AT JEBEL ALI PORT</span>
+      <span class="text-slate-600">|</span>
+      <span>SAFE VAULT RESERVE: <strong class="text-amber-300">AED 1,420,500.00</strong></span>
+    </div>
+
+    <!-- Quick Live Status Indicator -->
+    <div class="hidden sm:flex items-center gap-3 shrink-0 pl-4 border-l border-slate-800 text-[10px]">
+      <span class="text-emerald-400 font-bold">● AL AIN HUB CONNECTED</span>
+      <span class="text-slate-400">ENBD WIRE SYNC: 100%</span>
+    </div>
+  </div>
+
+
+  <!-- =========================================================================
+       2. TOP LUXURY ATELIER HEADER (CREST + BRAND + ACTIONS + THEME SWITCH)
+       ========================================================================= -->
+  <header class="sticky top-0 z-50 backdrop-blur-md bg-white/85 dark:bg-[#121a26]/90 border-b border-[#C5A059]/40 shadow-sm px-4 sm:px-8 py-3 transition-colors">
+    <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-4">
+      
+      <!-- Brand Logo & Royal Title -->
+      <div class="flex items-center gap-3.5">
+        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-[#E5D5A6] via-[#C5A059] to-[#8C6A2E] p-[1.5px] shadow-lg shadow-[#C5A059]/20">
+          <div class="w-full h-full bg-[#0d141e] rounded-[10px] flex items-center justify-center">
+            <span class="font-cinzel text-2xl font-black text-[#E5D5A6] tracking-wider drop-shadow">V</span>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-cinzel text-base sm:text-xl font-black tracking-[0.18em] text-[#8C6A2E] dark:text-[#E5D5A6] uppercase">
+              Vintage Vibes • Dubai
+            </h1>
+            <span class="px-2 py-0.5 rounded text-[10px] font-mono font-black bg-[#C5A059]/15 text-[#8C6A2E] dark:text-[#E5D5A6] border border-[#C5A059]/40 tracking-wider">
+              HAUTE ATELIER ERP
+            </span>
+          </div>
+          <p class="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+            Royal Flagship • Al Ain Central Warehouse & Dubai Design District Boutique
+          </p>
+        </div>
+      </div>
+
+      <!-- Center / Right: Operator Profile & Theme Switcher -->
+      <div class="flex items-center gap-3">
+        <!-- Operator Card -->
+        <div class="hidden md:flex items-center gap-3 px-3.5 py-1.5 rounded-xl bg-slate-50 dark:bg-[#182333] border border-slate-200 dark:border-slate-700/80 font-mono text-xs">
+          <div class="w-8 h-8 rounded-lg bg-[#C5A059]/20 border border-[#C5A059]/50 flex items-center justify-center text-sm">
+            👑
+          </div>
+          <div>
+            <div class="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+              <span>Sheikh Tariq</span>
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            </div>
+            <span class="text-[10px] text-slate-500 dark:text-slate-400 block">Managing Director (Al Ain Main)</span>
+          </div>
+        </div>
+
+        <!-- Day / Night Mode Toggle Switch -->
+        <div class="flex items-center p-1 rounded-xl bg-slate-100 dark:bg-[#0e1520] border border-slate-200 dark:border-slate-800">
+          <button onclick="setThemeMode('light')" id="theme-btn-light" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-[#8C6A2E] shadow-sm border border-[#C5A059]/40 flex items-center gap-1.5 cursor-pointer transition-all">
+            <span>☀️</span>
+            <span class="hidden sm:inline">Royal Champagne</span>
+          </button>
+          <button onclick="setThemeMode('dark')" id="theme-btn-dark" class="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white flex items-center gap-1.5 cursor-pointer transition-all">
+            <span>🌙</span>
+            <span class="hidden sm:inline">Maybach Obsidian</span>
+          </button>
+        </div>
+
+        <!-- Fast POS Terminal Button -->
+        <button onclick="alert('Opening Fullscreen POS Terminal...')" class="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black font-mono text-xs uppercase tracking-wider shadow-md shadow-amber-500/20 cursor-pointer active:scale-95 transition-all">
+          ⚡ POS Cashier
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+
+  <!-- =========================================================================
+       3. LUXURY HORIZONTAL TAB NAVIGATION (BEVELED HAIRCUT TABS)
+       ========================================================================= -->
+  <nav class="bg-white/90 dark:bg-[#101724]/95 border-b border-[#C5A059]/30 px-4 sm:px-8 py-2 sticky top-[73px] z-40 backdrop-blur-md">
+    <div class="max-w-[1600px] mx-auto flex items-center gap-1.5 overflow-x-auto scrollbar-none font-mono text-xs">
+      
+      <button class="px-4 py-2 rounded-xl bg-[#C5A059] text-slate-950 font-black flex items-center gap-2 shadow-sm border border-[#E5D5A6] cursor-pointer">
+        <span>🏛️</span>
+        <span>Executive Dashboard</span>
+      </button>
+
+      <button class="px-4 py-2 rounded-xl hover:bg-[#C5A059]/10 text-slate-600 dark:text-slate-300 font-bold flex items-center gap-2 transition-all cursor-pointer">
+        <span>📦</span>
+        <span>Purchase & Bales</span>
+      </button>
+
+      <button class="px-4 py-2 rounded-xl hover:bg-[#C5A059]/10 text-slate-600 dark:text-slate-300 font-bold flex items-center gap-2 transition-all cursor-pointer">
+        <span>🏷️</span>
+        <span>Sales & Invoicing</span>
+      </button>
+
+      <button class="px-4 py-2 rounded-xl hover:bg-[#C5A059]/10 text-slate-600 dark:text-slate-300 font-bold flex items-center gap-2 transition-all cursor-pointer">
+        <span>💎</span>
+        <span>Grail Inventory Vault</span>
+      </button>
+
+      <button class="px-4 py-2 rounded-xl hover:bg-[#C5A059]/10 text-slate-600 dark:text-slate-300 font-bold flex items-center gap-2 transition-all cursor-pointer">
+        <span>⚖️</span>
+        <span>Financial Ledger (COA)</span>
+      </button>
+
+      <button class="px-4 py-2 rounded-xl hover:bg-[#C5A059]/10 text-slate-600 dark:text-slate-300 font-bold flex items-center gap-2 transition-all cursor-pointer">
+        <span>🤝</span>
+        <span>Parties & Khata</span>
+      </button>
+
+      <button class="px-4 py-2 rounded-xl hover:bg-[#C5A059]/10 text-slate-600 dark:text-slate-300 font-bold flex items-center gap-2 transition-all cursor-pointer">
+        <span>👥</span>
+        <span>Staff & Payroll</span>
+      </button>
+
+      <button class="px-4 py-2 rounded-xl hover:bg-[#C5A059]/10 text-slate-600 dark:text-slate-300 font-bold flex items-center gap-2 transition-all cursor-pointer">
+        <span>⚙️</span>
+        <span>System Setup</span>
+      </button>
+
+      <div class="ml-auto pl-4 hidden xl:flex items-center gap-2 text-[11px] text-slate-400">
+        <span>VAT TRN: <strong class="text-slate-700 dark:text-slate-200">100293847200003</strong></span>
+      </div>
+
+    </div>
+  </nav>
+
+
+  <!-- =========================================================================
+       4. MAIN DASHBOARD CONTENT AREA
+       ========================================================================= -->
+  <main class="max-w-[1600px] w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6 flex-1">
+
+    <!-- TOP EXECUTIVE HORIZON: 4 HIGH-DENSITY LUXURY FRAMED KPIS -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+
+      <!-- KPI 1: DAILY REVENUE (Double-Bezel) -->
+      <div class="luxury-frame luxury-card-interactive rounded-2xl p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-mono font-black uppercase text-[#8C6A2E] dark:text-[#E5D5A6] tracking-widest">
+            DAILY GROSS REVENUE
+          </span>
+          <span class="p-1.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs">
+            🪙 AED
+          </span>
+        </div>
+
+        <div>
+          <div class="font-cinzel text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+            AED 84,650.00
+          </div>
+          <div class="flex items-center gap-2 mt-1.5 text-xs font-mono">
+            <span class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold">
+              ▲ +24.8%
+            </span>
+            <span class="text-slate-500 dark:text-slate-400 text-[11px]">بمقابلہ کل کا ہدف</span>
+          </div>
+        </div>
+
+        <div class="luxury-hairline"></div>
+
+        <div class="flex justify-between text-[11px] font-mono text-slate-500 dark:text-slate-400">
+          <span>Counter POS: 38%</span>
+          <span>B2B GCC: 62%</span>
+        </div>
+      </div>
+
+      <!-- KPI 2: VAULT CASH & LIQUIDITY (With Heritage Corner Rivets ⚜️) -->
+      <div class="luxury-frame luxury-card-interactive rounded-2xl p-5 space-y-3 relative">
+        <div class="corner-bracket-tl"></div>
+        <div class="corner-bracket-tr"></div>
+        <div class="corner-bracket-bl"></div>
+        <div class="corner-bracket-br"></div>
+
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-mono font-black uppercase text-[#8C6A2E] dark:text-[#E5D5A6] tracking-widest">
+            SAFE VAULT LIQUID RESERVE
+          </span>
+          <span class="text-amber-500 text-xs">⚜️</span>
+        </div>
+
+        <div>
+          <div class="font-cinzel text-3xl font-black text-[#8C6A2E] dark:text-[#E5D5A6] tracking-tight">
+            AED 412,800.00
+          </div>
+          <div class="flex items-center gap-2 mt-1.5 text-xs font-mono">
+            <span class="text-purple-600 dark:text-purple-400 font-bold">● والٹ محفوظ و لاکڈ</span>
+            <span class="text-slate-400 text-[11px]">Al Ain Safe #01</span>
+          </div>
+        </div>
+
+        <div class="luxury-hairline"></div>
+
+        <div class="flex justify-between text-[11px] font-mono text-slate-500 dark:text-slate-400">
+          <span>Emirates NBD: 284k</span>
+          <span>Physical Safe: 128k</span>
+        </div>
+      </div>
+
+      <!-- KPI 3: VINTAGE GRAIL INVENTORY VALUATION (Floating Gold Elevation) -->
+      <div class="luxury-frame luxury-card-interactive rounded-2xl p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-mono font-black uppercase text-[#8C6A2E] dark:text-[#E5D5A6] tracking-widest">
+            TOTAL ACTIVE INVENTORY
+          </span>
+          <span class="p-1.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-mono">
+            4,850 PCS
+          </span>
+        </div>
+
+        <div>
+          <div class="font-cinzel text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+            AED 2,340,000.00
+          </div>
+          <div class="flex items-center gap-2 mt-1.5 text-xs font-mono">
+            <span class="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold">
+              350 Bales Staged
+            </span>
+            <span class="text-slate-500 dark:text-slate-400 text-[11px]">94% Authenticated</span>
+          </div>
+        </div>
+
+        <div class="luxury-hairline"></div>
+
+        <div class="flex justify-between text-[11px] font-mono text-slate-500 dark:text-slate-400">
+          <span>Grail Tees: 1,820</span>
+          <span>Carhartt / Denim: 3,030</span>
+        </div>
+      </div>
+
+      <!-- KPI 4: NET MARGIN HORIZON -->
+      <div class="luxury-frame luxury-card-interactive rounded-2xl p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-mono font-black uppercase text-[#8C6A2E] dark:text-[#E5D5A6] tracking-widest">
+            NET PROFIT MARGIN (MTD)
+          </span>
+          <span class="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-bold font-mono">
+            68.4%
+          </span>
+        </div>
+
+        <div>
+          <div class="font-cinzel text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+            AED 318,200.00
+          </div>
+          <div class="flex items-center gap-2 mt-1.5 text-xs font-mono">
+            <span class="text-emerald-600 dark:text-emerald-400 font-bold">✓ Zero Debt • Fully Self-Funded</span>
+          </div>
+        </div>
+
+        <div class="luxury-hairline"></div>
+
+        <div class="flex justify-between text-[11px] font-mono text-slate-500 dark:text-slate-400">
+          <span>Bale COGS: 31.6%</span>
+          <span>Net Carry: 68.4%</span>
+        </div>
+      </div>
+
+    </div>
+
+
+    <!-- =========================================================================
+         5. TWO-COLUMN SPLIT: REVENUE WAVEFORM + RECENT GRAIL INVOICES & ACTIONS
+         ========================================================================= -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- LEFT COLUMN: REVENUE HORIZON & LIVE GRAIL TRANSACTIONS (8 COLS) -->
+      <div class="lg:col-span-8 space-y-6">
+
+        <!-- A. 7-DAY REVENUE VELOCITY CHART -->
+        <div class="luxury-frame rounded-2xl p-6 space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-[#C5A059]/25 pb-4">
+            <div>
+              <span class="text-[10px] font-mono font-black uppercase tracking-[0.2em] text-[#C5A059] block">
+                7-DAY LIQUID REVENUE WAVEFORM
+              </span>
+              <h3 class="font-cinzel text-lg font-black text-slate-900 dark:text-white">
+                سیلز اور نقدی بہاؤ کا لائیو گراف (Weekly Revenue Flow)
+              </h3>
+            </div>
+            <div class="flex items-center gap-2 font-mono text-xs">
+              <span class="px-2.5 py-1 rounded-lg bg-[#C5A059]/15 text-[#8C6A2E] dark:text-[#E5D5A6] font-bold border border-[#C5A059]/30">
+                Peak: Sat (AED 92,400)
+              </span>
+            </div>
+          </div>
+
+          <!-- SVG Revenue Waveform Chart with Gold Gradient Fill -->
+          <div class="w-full h-48 relative">
+            <svg viewBox="0 0 700 180" class="w-full h-full overflow-visible">
+              <defs>
+                <linearGradient id="chart-gold-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stop-color="#C5A059" stop-opacity="0.45" />
+                  <stop offset="100%" stop-color="#C5A059" stop-opacity="0.0" />
+                </linearGradient>
+              </defs>
+
+              <!-- Grid horizontal lines -->
+              <line x1="0" y1="30" x2="700" y2="30" stroke="currentColor" class="text-slate-200 dark:text-slate-800" stroke-dasharray="4,4" />
+              <line x1="0" y1="80" x2="700" y2="80" stroke="currentColor" class="text-slate-200 dark:text-slate-800" stroke-dasharray="4,4" />
+              <line x1="0" y1="130" x2="700" y2="130" stroke="currentColor" class="text-slate-200 dark:text-slate-800" stroke-dasharray="4,4" />
+
+              <!-- Area Fill -->
+              <path d="
+                M 20,130 
+                Q 110,80 160,110 
+                T 300,50 
+                T 440,90 
+                T 580,25 
+                T 680,45 
+                L 680,165 
+                L 20,165 Z" 
+                fill="url(#chart-gold-grad)" 
+              />
+
+              <!-- Stroke Line -->
+              <path d="
+                M 20,130 
+                Q 110,80 160,110 
+                T 300,50 
+                T 440,90 
+                T 580,25 
+                T 680,45" 
+                fill="none" 
+                stroke="#C5A059" 
+                stroke-width="3.5" 
+                stroke-linecap="round"
+              />
+
+              <!-- Peak Dots -->
+              <circle cx="20" cy="130" r="4.5" fill="#C5A059" />
+              <circle cx="160" cy="110" r="4.5" fill="#C5A059" />
+              <circle cx="300" cy="50" r="4.5" fill="#C5A059" />
+              <circle cx="440" cy="90" r="4.5" fill="#C5A059" />
+              <circle cx="580" cy="25" r="6" fill="#f59e0b" stroke="#fff" stroke-width="2" />
+              <circle cx="680" cy="45" r="5" fill="#C5A059" />
+            </svg>
+
+            <!-- Day Labels -->
+            <div class="flex justify-between font-mono text-[10px] text-slate-400 pt-1">
+              <span>Mon (42k)</span>
+              <span>Tue (51k)</span>
+              <span>Wed (68k)</span>
+              <span>Thu (59k)</span>
+              <span class="text-amber-500 font-bold">Fri (92.4k ★)</span>
+              <span>Sat (84.6k)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- B. RECENT VIP TRANSACTIONS & GRAIL LEDGER -->
+        <div class="luxury-frame rounded-2xl overflow-hidden shadow-xl">
+          <div class="p-5 border-b border-[#C5A059]/30 flex flex-wrap items-center justify-between gap-3 bg-[#C5A059]/5">
+            <div class="flex items-center gap-2.5">
+              <span class="w-3 h-3 rounded-full bg-[#C5A059] ring-4 ring-[#C5A059]/20"></span>
+              <span class="font-cinzel text-sm sm:text-base font-bold tracking-wider text-slate-900 dark:text-white uppercase">
+                HAUTE GRAIL INVOICES • شاہانہ رسیدیں اور فروخت
+              </span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="alert('Exporting Luxury Gold Statement PDF...')" class="px-3 py-1 rounded-lg text-xs font-mono font-bold bg-[#C5A059]/20 text-[#8C6A2E] dark:text-[#E5D5A6] border border-[#C5A059]/40 hover:bg-[#C5A059]/30 cursor-pointer">
+                📄 Export Gold PDF
+              </button>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left font-mono text-xs">
+              <thead class="bg-[#C5A059]/10 text-[#8C6A2E] dark:text-[#E5D5A6] border-b border-[#C5A059]/30 text-[11px] uppercase tracking-wider">
+                <tr>
+                  <th class="py-3 px-4 font-black">انوائس / وقت (Ref)</th>
+                  <th class="py-3 px-4 font-black">وی آئی پی کلائنٹ (Client)</th>
+                  <th class="py-3 px-4 font-black">ونٹیج آئٹم (Vintage Grail Piece)</th>
+                  <th class="py-3 px-4 font-black text-right">رقم (Amount AED)</th>
+                  <th class="py-3 px-4 font-black text-center">ادائیگی (Status)</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-[#C5A059]/15">
+                
+                <!-- Row 1 -->
+                <tr class="hover:bg-[#C5A059]/5 transition-colors">
+                  <td class="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                    #VV-DXB-9842
+                    <span class="text-[10px] text-slate-400 block font-normal">Just now • 19:42</span>
+                  </td>
+                  <td class="py-3.5 px-4">
+                    <strong class="text-slate-900 dark:text-white block">Sheikh Mansoor Al Qasimi</strong>
+                    <span class="text-[10px] text-slate-500 dark:text-slate-400">VIP Private Collector (Dubai)</span>
+                  </td>
+                  <td class="py-3.5 px-4 text-slate-800 dark:text-slate-200">
+                    1994 Nirvana In Utero Promo Grail Tee
+                    <span class="text-[10px] text-amber-600 dark:text-amber-400 block">Single-Stitch • Boxy Cut • Mint</span>
+                  </td>
+                  <td class="py-3.5 px-4 text-right font-cinzel text-sm font-black text-[#8C6A2E] dark:text-[#E5D5A6]">
+                    AED 3,850.00
+                  </td>
+                  <td class="py-3.5 px-4 text-center">
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                      ✓ Paid Wire (ENBD)
+                    </span>
+                  </td>
+                </tr>
+
+                <!-- Row 2 -->
+                <tr class="hover:bg-[#C5A059]/5 transition-colors">
+                  <td class="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                    #VV-DXB-9841
+                    <span class="text-[10px] text-slate-400 block font-normal">Today • 17:15</span>
+                  </td>
+                  <td class="py-3.5 px-4">
+                    <strong class="text-slate-900 dark:text-white block">Al Barsha Vintage Boutique</strong>
+                    <span class="text-[10px] text-slate-500 dark:text-slate-400">B2B Merchant Wholesale (Dubai)</span>
+                  </td>
+                  <td class="py-3.5 px-4 text-slate-800 dark:text-slate-200">
+                    Bale #BL-491-A: 90s Carhartt Workwear (50kg)
+                    <span class="text-[10px] text-blue-600 dark:text-blue-400 block">70 Units • Unopened Bale</span>
+                  </td>
+                  <td class="py-3.5 px-4 text-right font-cinzel text-sm font-black text-[#8C6A2E] dark:text-[#E5D5A6]">
+                    AED 14,200.00
+                  </td>
+                  <td class="py-3.5 px-4 text-center">
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                      ✓ Cleared (Cheque #4012)
+                    </span>
+                  </td>
+                </tr>
+
+                <!-- Row 3 -->
+                <tr class="hover:bg-[#C5A059]/5 transition-colors">
+                  <td class="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                    #VV-DXB-9840
+                    <span class="text-[10px] text-slate-400 block font-normal">Today • 14:02</span>
+                  </td>
+                  <td class="py-3.5 px-4">
+                    <strong class="text-slate-900 dark:text-white block">Rashid Bin Fahad</strong>
+                    <span class="text-[10px] text-slate-500 dark:text-slate-400">Riyadh Guild Partner (KSA)</span>
+                  </td>
+                  <td class="py-3.5 px-4 text-slate-800 dark:text-slate-200">
+                    1996 Chicago Bulls Championship Varsity Bomber
+                    <span class="text-[10px] text-amber-600 dark:text-amber-400 block">Heavyweight Wool & Leather</span>
+                  </td>
+                  <td class="py-3.5 px-4 text-right font-cinzel text-sm font-black text-[#8C6A2E] dark:text-[#E5D5A6]">
+                    AED 2,900.00
+                  </td>
+                  <td class="py-3.5 px-4 text-center">
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                      ✓ Paid Wire (Al Rajhi)
+                    </span>
+                  </td>
+                </tr>
+
+                <!-- Row 4 -->
+                <tr class="hover:bg-[#C5A059]/5 transition-colors">
+                  <td class="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                    #VV-DXB-9839
+                    <span class="text-[10px] text-slate-400 block font-normal">Today • 11:20</span>
+                  </td>
+                  <td class="py-3.5 px-4">
+                    <strong class="text-slate-900 dark:text-white block">Tariq Al Ain Walk-in</strong>
+                    <span class="text-[10px] text-slate-500 dark:text-slate-400">Counter Sale POS Terminal</span>
+                  </td>
+                  <td class="py-3.5 px-4 text-slate-800 dark:text-slate-200">
+                    1989 Harley-Davidson 3D Emblem Washed Tee
+                    <span class="text-[10px] text-amber-600 dark:text-amber-400 block">Original American Thunder</span>
+                  </td>
+                  <td class="py-3.5 px-4 text-right font-cinzel text-sm font-black text-[#8C6A2E] dark:text-[#E5D5A6]">
+                    AED 1,250.00
+                  </td>
+                  <td class="py-3.5 px-4 text-center">
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30">
+                      ✓ Cash at Counter
+                    </span>
+                  </td>
+                </tr>
+
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+
+      <!-- RIGHT COLUMN: VAULT STATUS + QUICK ATELIER ACTIONS (4 COLS) -->
+      <div class="lg:col-span-4 space-y-6">
+
+        <!-- 1. QUICK VIP ATELIER ACTIONS (Framed Control Dock) -->
+        <div class="luxury-frame rounded-2xl p-5 space-y-3 font-mono text-xs">
+          <div class="flex items-center justify-between border-b border-[#C5A059]/30 pb-3">
+            <span class="text-[#8C6A2E] dark:text-[#E5D5A6] font-bold uppercase tracking-wider">
+              ⚡ QUICK ATELIER ACTIONS
+            </span>
+            <span class="text-[10px] text-slate-400">1-Tap Direct</span>
+          </div>
+
+          <div class="space-y-2.5">
+            <button onclick="alert('⚡ NEW VIP INVOICE MODAL OPENED: Ready for barcode scan and instant payment receipt.')" class="w-full p-3 rounded-xl bg-gradient-to-r from-[#C5A059] to-[#8C6A2E] hover:from-[#DFCA8D] hover:to-[#C5A059] text-white font-black uppercase text-xs flex items-center justify-between shadow-md cursor-pointer transition-all">
+              <span class="flex items-center gap-2">
+                <span>✨</span>
+                <span>نئی وی آئی پی رسید (New Sale)</span>
+              </span>
+              <span>➔</span>
+            </button>
+
+            <button onclick="alert('📦 CONTAINER BALE INWARD: Scanning 350-bale packing list from US West Coast.')" class="w-full p-3 rounded-xl bg-slate-100 dark:bg-[#162232] hover:bg-[#C5A059]/15 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold flex items-center justify-between cursor-pointer transition-all">
+              <span class="flex items-center gap-2">
+                <span>📦</span>
+                <span>امریکہ سے بیلز انورڈ کریں (Inward Bale)</span>
+              </span>
+              <span>➔</span>
+            </button>
+
+            <button onclick="alert('🖨️ ROYAL CERTIFICATE OF AUTHENTICITY: Printing 3D Wax Seal Passport for Nirvana Grail.')" class="w-full p-3 rounded-xl bg-slate-100 dark:bg-[#162232] hover:bg-[#C5A059]/15 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold flex items-center justify-between cursor-pointer transition-all">
+              <span class="flex items-center gap-2">
+                <span>📜</span>
+                <span>رائل سرٹیفکیٹ پرنٹ کریں (Print Passport)</span>
+              </span>
+              <span>➔</span>
+            </button>
+
+            <button onclick="alert('📲 CLIENT WHATSAPP KHATA: Sending digital statement to Sheikh Mansoor.')" class="w-full p-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center justify-between shadow cursor-pointer transition-all">
+              <span class="flex items-center gap-2">
+                <span>💬</span>
+                <span>گاہک کو واٹس ایپ کھاتہ بھیجیں</span>
+              </span>
+              <span>➔</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 2. WAREHOUSE & SAFE VAULT STATUS -->
+        <div class="luxury-frame rounded-2xl p-5 space-y-4 font-mono text-xs">
+          <div class="flex items-center justify-between border-b border-[#C5A059]/30 pb-3">
+            <span class="text-[#8C6A2E] dark:text-[#E5D5A6] font-bold uppercase tracking-wider">
+              🏛️ STORAGE & HUB CAPACITY
+            </span>
+            <span class="text-emerald-500 font-bold">● ACTIVE</span>
+          </div>
+
+          <div class="space-y-3">
+            <div>
+              <div class="flex justify-between text-slate-700 dark:text-slate-300 mb-1">
+                <span>Al Ain Central Warehouse:</span>
+                <strong class="text-[#8C6A2E] dark:text-[#E5D5A6]">92% Full</strong>
+              </div>
+              <div class="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                <div class="w-[92%] h-full bg-gradient-to-r from-amber-500 to-[#C5A059] rounded-full"></div>
+              </div>
+              <span class="text-[10px] text-slate-400 mt-0.5 block">32 Bales Staged • 4,200 Hangers Occupied</span>
+            </div>
+
+            <div class="pt-2 border-t border-slate-200 dark:border-slate-800">
+              <div class="flex justify-between text-slate-700 dark:text-slate-300 mb-1">
+                <span>Dubai Boutique Display:</span>
+                <strong class="text-emerald-600 dark:text-emerald-400">180 Grails on Rack</strong>
+              </div>
+              <div class="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                <div class="w-[75%] h-full bg-emerald-500 rounded-full"></div>
+              </div>
+              <span class="text-[10px] text-slate-400 mt-0.5 block">VIP Lounge Ready • Temperature 21°C</span>
+            </div>
+
+            <div class="pt-2 border-t border-slate-200 dark:border-slate-800">
+              <div class="flex justify-between text-slate-700 dark:text-slate-300 mb-1">
+                <span>Safe Box #01 (High Value):</span>
+                <strong class="text-purple-600 dark:text-purple-400">12 Certified Grails</strong>
+              </div>
+              <span class="text-[10px] text-slate-400 mt-0.5 block">Dual-Key Electronic Lock • Biometric Logged</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. B2B GCC SYNDICATE CARRIER STATUS -->
+        <div class="luxury-frame rounded-2xl p-5 space-y-3 font-mono text-xs">
+          <span class="text-[10px] font-mono font-black uppercase text-[#8C6A2E] dark:text-[#E5D5A6] tracking-widest block">
+            GCC CONTAINER SYNDICATE (#49102)
+          </span>
+          <p class="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+            امریکہ سے 350 بیلز کنٹینر جبل علی پر آ چکا ہے۔ ریاض اور کویت کے 105 بیلز کیش ایڈوانس پر بک ہیں، جس سے 21,000 AED کمیشن کمپنی کے کھاتے میں محفوظ ہو چکا ہے۔
+          </p>
+          <div class="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 font-bold flex justify-between">
+            <span>Syndicate Management Fee:</span>
+            <span>+21,000 AED Cash</span>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+
+  <!-- =========================================================================
+       6. ROYAL FOOTER
+       ========================================================================= -->
+  <footer class="border-t border-[#C5A059]/30 bg-white/70 dark:bg-[#0c121c]/80 py-4 px-8 text-center text-xs font-mono text-slate-500 flex flex-wrap justify-between items-center gap-4">
+    <div class="flex items-center gap-2">
+      <span class="font-cinzel font-black text-[#8C6A2E] dark:text-[#E5D5A6]">VINTAGE VIBES DUBAI</span>
+      <span>•</span>
+      <span>HAUTE LUXURY ATELIER OPERATING SYSTEM</span>
+    </div>
+    <div class="text-[11px]">
+      LICENSED UNDER UAE COMMERCIAL COMPANY LAW • AL AIN & DUBAI HUBS
+    </div>
+  </footer>
+
+
+  <!-- SCRIPT: LIVE DAY / NIGHT LUXURY SWITCH -->
+  <script>
+    function setThemeMode(mode) {
+      const body = document.getElementById('page-body');
+      const btnLight = document.getElementById('theme-btn-light');
+      const btnDark = document.getElementById('theme-btn-dark');
+
+      if (mode === 'dark') {
+        body.classList.add('dark', 'dark-mode');
+        btnDark.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-[#182333] text-[#E5D5A6] shadow-sm border border-[#C5A059]/60 flex items-center gap-1.5 cursor-pointer transition-all';
+        btnLight.className = 'px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1.5 cursor-pointer transition-all';
+      } else {
+        body.classList.remove('dark', 'dark-mode');
+        btnLight.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-[#8C6A2E] shadow-sm border border-[#C5A059]/40 flex items-center gap-1.5 cursor-pointer transition-all';
+        btnDark.className = 'px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500 hover:text-slate-800 flex items-center gap-1.5 cursor-pointer transition-all';
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vintage Vibes Dubai • 4 Next-Gen Breakthrough Engines</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=JetBrains+Mono:wght@400;600;800&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: #06070a;
+      color: #f1f5f9;
+    }
+    .font-cinzel { font-family: 'Cinzel', serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+    /* Custom neon & gold glows */
+    .cyan-glow {
+      box-shadow: 0 0 30px rgba(6, 182, 212, 0.3);
+    }
+    .gold-glow {
+      box-shadow: 0 0 35px rgba(245, 158, 11, 0.25);
+    }
+
+    /* Radar beacon ping */
+    @keyframes ping-slow {
+      0% { transform: scale(0.9); opacity: 1; }
+      50% { transform: scale(1.6); opacity: 0.4; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+    .beacon-ping {
+      animation: ping-slow 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+    }
+
+    /* Shimmer animation */
+    @keyframes shimmer {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+    .animate-shimmer {
+      animation: shimmer 2s infinite;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between selection:bg-cyan-400 selection:text-black">
+
+  <!-- TOP APP BAR -->
+  <header class="border-b border-cyan-500/30 bg-[#080a10]/95 backdrop-blur-md sticky top-0 z-50 px-4 sm:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-cyan-400 via-emerald-500 to-amber-500 p-0.5 shadow-xl shadow-cyan-500/20 flex items-center justify-center">
+        <div class="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
+          <span class="text-cyan-400 font-cinzel font-black text-2xl">V</span>
+        </div>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-cinzel text-base sm:text-lg font-black tracking-widest text-cyan-300 uppercase">
+            Vintage Vibes • Dubai
+          </h1>
+          <span class="px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 text-[10px] font-mono font-black border border-cyan-500/40">
+            NEXT-GEN REVOLUTION
+          </span>
+        </div>
+        <p class="text-[11px] text-slate-400 font-mono">
+          AI Arbitrage Sniper • Instant Virtual Try-On • Container Syndicate • Smart Beacon Locator
+        </p>
+      </div>
+    </div>
+
+    <!-- TABS SWITCHER -->
+    <nav class="flex items-center gap-1.5 bg-stone-900/90 p-1.5 rounded-xl border border-slate-800 overflow-x-auto max-w-full">
+      <button onclick="switchTab('sniper')" id="tab-btn-sniper" class="tab-btn active px-3.5 py-2 rounded-lg text-xs font-bold transition-all bg-cyan-500 text-slate-950 shadow-md">
+        🤖 AI Global Arbitrage Sniper
+      </button>
+      <button onclick="switchTab('tryon')" id="tab-btn-tryon" class="tab-btn px-3.5 py-2 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white">
+        👗 AI Instant Virtual Try-On
+      </button>
+      <button onclick="switchTab('syndicate')" id="tab-btn-syndicate" class="tab-btn px-3.5 py-2 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white">
+        📦 B2B Container Syndicate
+      </button>
+      <button onclick="switchTab('beacon')" id="tab-btn-beacon" class="tab-btn px-3.5 py-2 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white">
+        🔍 Smart Warehouse Beacon Locator
+      </button>
+    </nav>
+  </header>
+
+
+  <!-- MAIN CONTAINER -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+
+    <!-- ================================================================================== -->
+    <!-- TAB 1: 🤖 AI GLOBAL ARBITRAGE SNIPER (MONEY-MAKER BOT) -->
+    <!-- ================================================================================== -->
+    <section id="view-sniper" class="tab-view block space-y-6 animate-in fade-in duration-200">
+      <div class="p-6 rounded-2xl bg-gradient-to-r from-cyan-950/40 via-stone-900 to-stone-950 border border-cyan-500/40 cyan-glow flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-cyan-400 tracking-widest block mb-1">
+            MONEY-MAKING ENGINE 01 • 24/7 GLOBAL PROFIT BOT
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            AI Global Arbitrage Sourcing Sniper
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            Crawls Tokyo (Mercari, Yahoo Auctions), US (eBay, Goodwill), and EU 24/7. Detects mispriced vintage grails listed by amateurs for $20-$30 that sell for 1,000+ AED in Dubai!
+          </p>
+        </div>
+
+        <button onclick="scanGlobalMarkets()" id="btn-sniper-scan" class="px-5 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs font-mono uppercase tracking-wider flex items-center gap-2 shadow-xl shadow-cyan-500/25 cursor-pointer active:scale-95 transition-all">
+          <span>⚡</span>
+          <span>Scan Tokyo & US Markets Now</span>
+        </button>
+      </div>
+
+      <!-- Live Arbitrage Feed Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Live Discovered Arbitrage Deals -->
+        <div class="lg:col-span-8 p-6 rounded-2xl bg-stone-950 border border-slate-800 space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div class="flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+              <h3 class="font-mono text-xs font-black text-white uppercase tracking-wider">
+                LIVE ARBITRAGE RADAR • 3 ACTIVE DEALS FOUND
+              </h3>
+            </div>
+            <span class="text-xs font-mono text-cyan-400 font-bold">Auto-Buy Ready</span>
+          </div>
+
+          <div id="arbitrage-cards" class="space-y-3">
+            <!-- Deal 1 -->
+            <div class="p-4 rounded-xl bg-stone-900 border border-cyan-500/30 hover:border-cyan-400 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                  <span class="px-2 py-0.5 rounded bg-red-500/20 text-red-300 text-[10px] font-mono font-bold">
+                    🇯🇵 Mercari Tokyo
+                  </span>
+                  <span class="text-[10px] text-slate-400 font-mono">Listed 4 mins ago</span>
+                </div>
+                <h4 class="text-sm font-bold text-white">1991 Metallica 'Nowhere Else To Roam' Tour Tee</h4>
+                <div class="text-xs font-mono text-slate-400">
+                  Seller Price: <strong class="text-red-400">¥3,800 (~$25 / 92 AED)</strong>
+                  • Dubai Resale: <strong class="text-emerald-400">950 AED</strong>
+                </div>
+              </div>
+
+              <div class="text-right flex sm:flex-col items-center sm:items-end justify-between gap-2">
+                <div class="text-sm font-mono font-black text-emerald-400">
+                  +858 AED PROFIT (932%)
+                </div>
+                <button onclick="snipeDeal(this, 'Metallica Tour Tee', 92, 950)" class="px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs font-mono uppercase shadow-md cursor-pointer transition-all active:scale-95">
+                  1-Tap Snipe & Buy
+                </button>
+              </div>
+            </div>
+
+            <!-- Deal 2 -->
+            <div class="p-4 rounded-xl bg-stone-900 border border-slate-800 hover:border-amber-500/40 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                  <span class="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[10px] font-mono font-bold">
+                    🇺🇸 Goodwill US
+                  </span>
+                  <span class="text-[10px] text-slate-400 font-mono">Listed 12 mins ago</span>
+                </div>
+                <h4 class="text-sm font-bold text-white">1989 Carhartt Detroit J97 Moss Green Jacket</h4>
+                <div class="text-xs font-mono text-slate-400">
+                  Seller Price: <strong class="text-red-400">$35 (~128 AED)</strong>
+                  • Dubai Resale: <strong class="text-emerald-400">750 AED</strong>
+                </div>
+              </div>
+
+              <div class="text-right flex sm:flex-col items-center sm:items-end justify-between gap-2">
+                <div class="text-sm font-mono font-black text-emerald-400">
+                  +622 AED PROFIT (485%)
+                </div>
+                <button onclick="snipeDeal(this, 'Carhartt Detroit', 128, 750)" class="px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs font-mono uppercase shadow-md cursor-pointer transition-all active:scale-95">
+                  1-Tap Snipe & Buy
+                </button>
+              </div>
+            </div>
+
+            <!-- Deal 3 -->
+            <div class="p-4 rounded-xl bg-stone-900 border border-slate-800 hover:border-amber-500/40 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                  <span class="px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300 text-[10px] font-mono font-bold">
+                    🇬🇧 Vinted London
+                  </span>
+                  <span class="text-[10px] text-slate-400 font-mono">Listed 22 mins ago</span>
+                </div>
+                <h4 class="text-sm font-bold text-white">1996 Chicago Bulls Finals Championship Bomber</h4>
+                <div class="text-xs font-mono text-slate-400">
+                  Seller Price: <strong class="text-red-400">£28 (~132 AED)</strong>
+                  • Dubai Resale: <strong class="text-emerald-400">680 AED</strong>
+                </div>
+              </div>
+
+              <div class="text-right flex sm:flex-col items-center sm:items-end justify-between gap-2">
+                <div class="text-sm font-mono font-black text-emerald-400">
+                  +548 AED PROFIT (415%)
+                </div>
+                <button onclick="snipeDeal(this, 'Bulls Bomber', 132, 680)" class="px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs font-mono uppercase shadow-md cursor-pointer transition-all active:scale-95">
+                  1-Tap Snipe & Buy
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Cumulative Sniper P&L -->
+        <div class="lg:col-span-4 space-y-4">
+          <div class="p-6 rounded-2xl bg-stone-950 border border-cyan-500/30 space-y-4">
+            <span class="text-[10px] font-mono font-black uppercase text-cyan-400 tracking-widest block">
+              SNIPER FINANCIAL LEDGER
+            </span>
+            <div class="space-y-3 font-mono">
+              <div class="p-3 rounded-xl bg-stone-900 border border-slate-800">
+                <span class="text-[10px] text-slate-400 uppercase block">Total Sniped This Week</span>
+                <span class="text-xl font-bold text-white mt-1 block">18 Grails</span>
+              </div>
+              <div class="p-3 rounded-xl bg-stone-900 border border-slate-800">
+                <span class="text-[10px] text-slate-400 uppercase block">Total Capital Invested</span>
+                <span class="text-xl font-bold text-amber-300 mt-1 block">AED 1,940</span>
+              </div>
+              <div class="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/40">
+                <span class="text-[10px] text-emerald-300 uppercase block">Projected Dubai Gross</span>
+                <span class="text-2xl font-black text-emerald-400 mt-1 block">AED 14,850</span>
+                <span class="text-[11px] text-emerald-300 font-bold mt-1 block">▲ +12,910 AED Pure Alpha</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="p-4 rounded-xl bg-stone-900 border border-slate-800 text-xs font-mono text-slate-300 space-y-1">
+            <span class="text-cyan-400 font-bold block">Autonomous Logistics:</span>
+            <p class="text-[11px] text-slate-400 leading-relaxed">
+              Sniped items automatically ship to our freight forwarder in Tokyo / Delaware and consolidate into weekly air cargo directly to Al Ain warehouse.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ================================================================================== -->
+    <!-- TAB 2: 👗 AI INSTANT VIRTUAL TRY-ON (ZERO-RETURN FITTING ENGINE) -->
+    <!-- ================================================================================== -->
+    <section id="view-tryon" class="tab-view hidden space-y-6 animate-in fade-in duration-200">
+      <div class="p-6 rounded-2xl bg-gradient-to-r from-purple-950/40 via-stone-900 to-stone-950 border border-purple-500/40 gold-glow flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-purple-400 tracking-widest block mb-1">
+            CONVERSION ENGINE 02 • ZERO-RETURN FITTING ROOM
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            AI Instant Virtual Try-On & Fit Simulator
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            Customers upload 1 photo or select their body profile. The neural cloth diffusion engine instantly drapes the exact vintage garment onto their body, eliminating sizing fear!
+          </p>
+        </div>
+
+        <button onclick="renderTryOn()" class="px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs font-mono uppercase tracking-wider flex items-center gap-2 shadow-xl shadow-purple-600/25 cursor-pointer active:scale-95 transition-all">
+          <span>✨</span>
+          <span>Generate AI Fit Preview</span>
+        </button>
+      </div>
+
+      <!-- Try-On Interactive Dressing Room -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Center Dressing Room Canvas -->
+        <div class="lg:col-span-8 rounded-2xl bg-stone-950 border border-slate-800 p-6 flex flex-col items-center justify-between min-h-[460px] relative overflow-hidden">
+          <div class="w-full flex items-center justify-between text-xs font-mono border-b border-slate-800 pb-3">
+            <span class="text-purple-400 font-bold">VIRTUAL FITTING MIRROR (NEURAL DIFFUSION)</span>
+            <span class="text-slate-400">Garment: 1994 Nirvana In Utero Tee</span>
+          </div>
+
+          <!-- The Virtual Model Mannequin / Person Frame -->
+          <div class="my-auto relative w-72 h-88 rounded-2xl bg-gradient-to-b from-stone-900 via-stone-950 to-black border-2 border-purple-500/40 p-4 shadow-2xl flex flex-col items-center justify-between overflow-hidden">
+            <!-- Simulated Human Silhouette -->
+            <div class="w-20 h-20 rounded-full bg-stone-800 border-2 border-stone-700 flex items-center justify-center text-3xl">
+              👤
+            </div>
+
+            <!-- Draped Garment Box on Body -->
+            <div id="tryon-garment-layer" class="w-56 h-52 rounded-xl bg-gradient-to-br from-amber-500/20 via-stone-800 to-stone-900 border-2 border-amber-400/80 p-3 shadow-xl flex flex-col items-center justify-center text-center relative overflow-hidden transition-all duration-700">
+              <span class="text-[9px] font-mono text-amber-300 uppercase tracking-widest block font-bold">
+                DRAPED ON CUSTOMER BODY
+              </span>
+              <div class="text-base font-black text-white font-cinzel my-auto">
+                NIRVANA IN UTERO 1994
+              </div>
+              <span class="text-[10px] font-mono text-emerald-400 font-black">
+                BOX DROP: 94% PERFECT FIT
+              </span>
+            </div>
+
+            <div class="text-[10px] font-mono text-slate-400">
+              Customer: Ahmed (5'10" • 74 KG)
+            </div>
+          </div>
+
+          <!-- Fit Measurement Telemetry Strip -->
+          <div class="w-full grid grid-cols-3 gap-3 text-xs font-mono pt-3 border-t border-slate-800 text-center">
+            <div>
+              <span class="text-[10px] text-slate-400 block">Chest / Pit-to-Pit:</span>
+              <span class="text-white font-bold">22.5" (Relaxed Vintage)</span>
+            </div>
+            <div>
+              <span class="text-[10px] text-slate-400 block">Length:</span>
+              <span class="text-white font-bold">28.0" (At Waistline)</span>
+            </div>
+            <div>
+              <span class="text-[10px] text-slate-400 block">Fit Recommendation:</span>
+              <span class="text-emerald-400 font-black">True to Boxy M/L</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Garment & Customer Selection Controls -->
+        <div class="lg:col-span-4 space-y-4">
+          <div class="p-5 rounded-2xl bg-stone-950 border border-slate-800 space-y-3 text-xs font-mono">
+            <span class="text-purple-400 font-bold block uppercase tracking-wider">
+              Select Garment on Air:
+            </span>
+            <div class="space-y-2">
+              <button onclick="selectGarment('Nirvana 1994', '850 AED')" class="w-full text-left p-2.5 rounded-lg bg-stone-900 border border-purple-500/40 hover:bg-stone-800 flex justify-between cursor-pointer">
+                <span class="text-white font-bold">1994 Nirvana Tee</span>
+                <span class="text-amber-400 font-mono">850 AED</span>
+              </button>
+              <button onclick="selectGarment('Carhartt Detroit 1989', '480 AED')" class="w-full text-left p-2.5 rounded-lg bg-stone-900 border border-slate-800 hover:bg-stone-800 flex justify-between cursor-pointer">
+                <span class="text-white font-bold">Carhartt Detroit Moss</span>
+                <span class="text-amber-400 font-mono">480 AED</span>
+              </button>
+              <button onclick="selectGarment('Bulls Bomber 1996', '290 AED')" class="w-full text-left p-2.5 rounded-lg bg-stone-900 border border-slate-800 hover:bg-stone-800 flex justify-between cursor-pointer">
+                <span class="text-white font-bold">1996 Bulls Bomber</span>
+                <span class="text-amber-400 font-mono">290 AED</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="p-5 rounded-2xl bg-stone-950 border border-slate-800 space-y-3 text-xs font-mono">
+            <span class="text-slate-400 font-bold block uppercase tracking-wider">
+              1-Click Claim with Fit Guarantee:
+            </span>
+            <button onclick="alert('⚡ ITEM CLAIMED: Locked for Ahmed with 100% Guaranteed Fit Certification.')" class="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg cursor-pointer">
+              Claim Now (No Sizing Doubts)
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ================================================================================== -->
+    <!-- TAB 3: 📦 B2B CONTAINER SYNDICATE (GCC CROWD-BUYING) -->
+    <!-- ================================================================================== -->
+    <section id="view-syndicate" class="tab-view hidden space-y-6 animate-in fade-in duration-200">
+      <div class="p-6 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-stone-900 to-stone-950 border border-emerald-500/40 gold-glow flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-emerald-400 tracking-widest block mb-1">
+            SCALE ENGINE 03 • ZERO-CAPITAL CONTAINER FINANCING
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            B2B Container Syndicate & Crowd-Buying
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            Never risk 300,000 AED alone. 10 to 15 GCC shops pool money together to fund full USA shipping containers. Vintage Vibes manages the intake and pockets a 15% carry fee risk-free!
+          </p>
+        </div>
+
+        <button onclick="pledgeSyndicate()" class="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs font-mono uppercase tracking-wider flex items-center gap-2 shadow-xl shadow-emerald-600/25 cursor-pointer active:scale-95 transition-all">
+          <span>🤝</span>
+          <span>Pledge 14,000 AED to Syndicate</span>
+        </button>
+      </div>
+
+      <!-- Syndicate Dashboard Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Container Pool Progress & Details -->
+        <div class="lg:col-span-8 p-6 rounded-2xl bg-stone-950 border border-slate-800 space-y-5">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div>
+              <span class="text-[10px] font-mono text-slate-400 uppercase block">ACTIVE SYNDICATE LOT</span>
+              <h3 class="text-base font-black text-white font-cinzel">
+                40FT HIGH-CUBE CONTAINER #MSCU-49102-8 (LONG BEACH ➔ JEBEL ALI)
+              </h3>
+            </div>
+            <span class="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-mono font-bold">
+              80% FUNDED
+            </span>
+          </div>
+
+          <!-- Progress Funding Bar -->
+          <div class="space-y-2">
+            <div class="flex justify-between text-xs font-mono">
+              <span class="text-slate-400">Total Capital Pledged to UAE Escrow:</span>
+              <span id="syndicate-pledged-val" class="text-emerald-400 font-black">AED 112,000 / 140,000</span>
+            </div>
+            <div class="w-full h-5 rounded-full bg-stone-900 border border-slate-700 overflow-hidden relative">
+              <div id="syndicate-bar" class="h-full bg-gradient-to-r from-amber-500 via-emerald-400 to-emerald-500 transition-all duration-500" style="width: 80%"></div>
+            </div>
+            <div class="flex justify-between text-[10px] font-mono text-slate-500">
+              <span>0 AED (0 Bales)</span>
+              <span>Only 70 Bales Remaining for GCC Traders</span>
+              <span>140,000 AED (350 Bales Target)</span>
+            </div>
+          </div>
+
+          <!-- Syndicate Merchant Allocation Table -->
+          <div class="space-y-2 pt-2">
+            <span class="text-xs font-mono text-slate-400 font-bold block uppercase">
+              Confirmed Syndicate Co-Investors (UAE Escrow Protected):
+            </span>
+            <div class="space-y-1.5 text-xs font-mono">
+              <div class="flex justify-between p-2.5 rounded-lg bg-stone-900 border border-slate-800">
+                <span class="text-white font-bold">Vintage Vibes Dubai (Lead Manager)</span>
+                <span class="text-amber-400 font-bold">30% (105 Bales) • AED 42,000</span>
+              </div>
+              <div class="flex justify-between p-2.5 rounded-lg bg-stone-900 border border-slate-800">
+                <span class="text-slate-300">Al Barsha Vintage Boutique (Dubai)</span>
+                <span class="text-slate-300">20% (70 Bales) • AED 28,000</span>
+              </div>
+              <div class="flex justify-between p-2.5 rounded-lg bg-stone-900 border border-slate-800">
+                <span class="text-slate-300">Riyadh Streetwear Guild (KSA)</span>
+                <span class="text-slate-300">20% (70 Bales) • AED 28,000</span>
+              </div>
+              <div class="flex justify-between p-2.5 rounded-lg bg-stone-900 border border-slate-800">
+                <span class="text-slate-300">Kuwait Denim Collectors (Kuwait)</span>
+                <span class="text-slate-300">10% (35 Bales) • AED 14,000</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Vintage Vibes Management Carry Profit -->
+        <div class="lg:col-span-4 p-6 rounded-2xl bg-stone-950 border border-emerald-500/30 flex flex-col justify-between space-y-4">
+          <div>
+            <span class="text-[10px] font-mono font-black uppercase text-emerald-400 tracking-wider block mb-1">
+              VINTAGE VIBES SYNDICATE CARRY
+            </span>
+            <h4 class="font-bold text-sm text-white">Guaranteed Management Carry</h4>
+            <p class="text-xs text-slate-400 mt-1 font-mono leading-relaxed">
+              As the syndicate leader, Vintage Vibes charges a 15% procurement & clearance fee.
+            </p>
+          </div>
+
+          <div class="p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/40 space-y-2 font-mono">
+            <span class="text-[10px] text-emerald-300 uppercase block">Zero-Risk Management Fee</span>
+            <span class="text-2xl font-black text-emerald-400 block">AED 21,000.00</span>
+            <span class="text-[11px] text-slate-300 block">
+              Direct deposit upon container vessel arrival at Jebel Ali Port.
+            </span>
+          </div>
+
+          <button onclick="pledgeSyndicate()" class="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs font-mono uppercase cursor-pointer transition-all">
+            Join Container Syndicate
+          </button>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ================================================================================== -->
+    <!-- TAB 4: 🔍 SMART WAREHOUSE AUDIO / LED BEACON LOCATOR -->
+    <!-- ================================================================================== -->
+    <section id="view-beacon" class="tab-view hidden space-y-6 animate-in fade-in duration-200">
+      <div class="p-6 rounded-2xl bg-gradient-to-r from-blue-950/40 via-stone-900 to-stone-950 border border-blue-500/40 cyan-glow flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-cyan-400 tracking-widest block mb-1">
+            OPERATIONS ENGINE 04 • 3-SECOND WAREHOUSE DISCOVERY
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            Smart Warehouse Audio / LED Beacon Locator
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            Never search through 5,000 hangers again. Click any SKU: the exact rack in Al Ain warehouse beeps with audio audio ping and illuminates in neon cyan on the warehouse grid!
+          </p>
+        </div>
+
+        <button onclick="pingWarehouseBeacon('Rack D-04')" class="px-5 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs font-mono uppercase tracking-wider flex items-center gap-2 shadow-xl shadow-cyan-500/25 cursor-pointer active:scale-95 transition-all">
+          <span>📍</span>
+          <span>Ping Rack D-04 (1994 Nirvana)</span>
+        </button>
+      </div>
+
+      <!-- Warehouse Interactive Grid Scene -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- 2D Warehouse Interactive Map -->
+        <div class="lg:col-span-8 p-6 rounded-2xl bg-stone-950 border border-slate-800 space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <span class="text-xs font-mono font-black text-white uppercase">
+              AL AIN CENTRAL WAREHOUSE • 2D RACK MATRIX (ZONE A - F)
+            </span>
+            <span id="beacon-status" class="text-xs font-mono text-slate-400">
+              Beacon Status: Idle
+            </span>
+          </div>
+
+          <!-- Warehouse Floor Racks Grid -->
+          <div class="grid grid-cols-6 gap-2.5 p-4 rounded-xl bg-[#090b10] border border-slate-800 min-h-[300px] select-none">
+            <!-- Row A -->
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">A-01</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">A-02</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">A-03</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">A-04</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">A-05</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">A-06</div>
+
+            <!-- Row B -->
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">B-01</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">B-02</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">B-03</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">B-04</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">B-05</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">B-06</div>
+
+            <!-- Row C -->
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">C-01</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">C-02</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">C-03</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">C-04</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">C-05</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">C-06</div>
+
+            <!-- Row D (D-04 is Target) -->
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">D-01</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">D-02</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">D-03</div>
+
+            <!-- THE TARGET BEACON RACK D-04 -->
+            <div id="target-rack-d04" class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-400 font-bold relative transition-all duration-300 flex flex-col items-center justify-center cursor-pointer">
+              <span id="beacon-dot" class="hidden w-3 h-3 rounded-full bg-cyan-400 shadow-[0_0_15px_#22d3ee] mb-1 animate-ping"></span>
+              <span>D-04</span>
+            </div>
+
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">D-05</div>
+            <div class="p-3 rounded-lg bg-stone-900 border border-slate-800 text-center text-xs font-mono text-slate-500">D-06</div>
+          </div>
+        </div>
+
+        <!-- Right: Discovery Telemetry -->
+        <div class="lg:col-span-4 p-6 rounded-2xl bg-stone-950 border border-slate-800 space-y-4 font-mono">
+          <div>
+            <span class="text-[10px] text-cyan-400 uppercase font-black tracking-wider block mb-1">
+              SEARCH REVOLUTION
+            </span>
+            <h4 class="font-bold text-sm text-white">Zero-Search Retrieval</h4>
+            <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+              Warehouse pickers walk directly to the illuminated rack with zero guessing or paper picking lists.
+            </p>
+          </div>
+
+          <div class="p-4 rounded-xl bg-stone-900 border border-slate-800 space-y-2 text-xs">
+            <div class="flex justify-between">
+              <span class="text-slate-400">Target SKU:</span>
+              <span class="text-amber-400 font-bold">VV-BAL-001-0042</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-400">Location:</span>
+              <span class="text-white font-bold">Rack D-04 • Tier 2 • Bin 18</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-400">Time to Locate:</span>
+              <span class="text-emerald-400 font-bold">3.2 Seconds</span>
+            </div>
+          </div>
+
+          <button onclick="pingWarehouseBeacon('Rack D-04')" class="w-full py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs uppercase cursor-pointer transition-all">
+            Test Hardware Audio Ping
+          </button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="border-t border-slate-800/80 bg-black/80 p-4 text-center text-xs font-mono text-slate-500">
+    VINTAGE VIBES DUBAI • PROPRIETARY 2026 NEXT-GEN PLATFORM
+  </footer>
+
+  <!-- SCRIPT ENGINE -->
+  <script>
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-view').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('bg-cyan-500', 'text-slate-950', 'shadow-md');
+        btn.classList.add('text-slate-400');
+      });
+
+      const activeView = document.getElementById('view-' + tabId);
+      const activeBtn = document.getElementById('tab-btn-' + tabId);
+      if (activeView) activeView.classList.remove('hidden');
+      if (activeBtn) {
+        activeBtn.classList.add('bg-cyan-500', 'text-slate-950', 'shadow-md');
+        activeBtn.classList.remove('text-slate-400');
+      }
+    }
+
+    // TAB 1: SNIPER BUY
+    function scanGlobalMarkets() {
+      alert("⚡ AI GLOBAL SNIPER: Scanned 4,200 newly listed vintage garments in Tokyo, Los Angeles, and London. 3 high-profit deals isolated!");
+    }
+
+    function snipeDeal(btn, title, buyPrice, sellPrice) {
+      btn.innerText = "✓ Sniped!";
+      btn.classList.remove('bg-cyan-500', 'hover:bg-cyan-400');
+      btn.classList.add('bg-emerald-600', 'text-white');
+      alert(`🎉 DEAL SNIPED! ${title} purchased automatically for ${buyPrice} AED. Air freight dispatched to Al Ain warehouse. Estimated Profit: +${sellPrice - buyPrice} AED!`);
+    }
+
+    // TAB 2: VIRTUAL TRY ON
+    function selectGarment(name, price) {
+      const layer = document.getElementById('tryon-garment-layer');
+      layer.querySelector('.font-cinzel').innerText = name;
+      alert(`Selected: ${name} (${price}). Click 'Generate AI Fit Preview' to drape on model.`);
+    }
+
+    function renderTryOn() {
+      const layer = document.getElementById('tryon-garment-layer');
+      layer.classList.add('scale-105', 'border-emerald-400');
+      setTimeout(() => {
+        layer.classList.remove('scale-105');
+        alert("✨ AI VIRTUAL TRY-ON COMPLETE: Draped onto body with 94% boxy vintage fit accuracy. Zero return risk!");
+      }, 500);
+    }
+
+    // TAB 3: CONTAINER SYNDICATE
+    let pledged = 112000;
+    function pledgeSyndicate() {
+      pledged += 14000;
+      document.getElementById('syndicate-pledged-val').innerText = `AED ${pledged.toLocaleString()} / 140,000`;
+      const pct = Math.min(100, Math.round((pledged / 140000) * 100));
+      document.getElementById('syndicate-bar').style.width = pct + '%';
+      alert(`🤝 SYNDICATE PLEDGE CONFIRMED: 14,000 AED deposited into UAE Escrow. 35 Bales allocated to merchant! Container is now ${pct}% funded.`);
+    }
+
+    // TAB 4: BEACON LOCATOR WITH REAL AUDIO BEEP
+    function pingWarehouseBeacon(rack) {
+      const rackEl = document.getElementById('target-rack-d04');
+      const dot = document.getElementById('beacon-dot');
+      const status = document.getElementById('beacon-status');
+
+      rackEl.classList.remove('bg-stone-900', 'border-slate-800');
+      rackEl.classList.add('bg-cyan-500/20', 'border-cyan-400', 'shadow-[0_0_20px_#06b6d4]');
+      dot.classList.remove('hidden');
+      status.innerHTML = '<span class="text-cyan-400 font-bold">● PINGING HARDWARE BEACON (BEEPING)</span>';
+
+      // Web Audio Beep
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        [0, 0.25, 0.5].forEach(delay => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(1200, ctx.currentTime + delay);
+          gain.gain.setValueAtTime(0.3, ctx.currentTime + delay);
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + delay + 0.15);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(ctx.currentTime + delay);
+          osc.stop(ctx.currentTime + delay + 0.16);
+        });
+      } catch (_) {}
+
+      setTimeout(() => {
+        alert("📍 BEACON PING ACTIVE: Rack D-04 in Al Ain warehouse is beeping and flashing blue LED light! Garment located in 3.2 seconds.");
+      }, 600);
+    }
+  </script>
+</body>
+</html>

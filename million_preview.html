@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vintage Vibes Dubai • Million-Dollar AI Architecture Preview</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=JetBrains+Mono:wght@400;600;800&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: #06070a;
+      color: #f1f5f9;
+    }
+    .font-cinzel { font-family: 'Cinzel', serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+    /* Custom Glass & Gold Glow */
+    .gold-glow {
+      box-shadow: 0 0 35px -5px rgba(245, 158, 11, 0.25);
+    }
+    .gold-border {
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+    .gold-text-gradient {
+      background: linear-gradient(135deg, #fef08a 0%, #f59e0b 50%, #b45309 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    /* 3D Turntable Scene */
+    .perspective-1000 {
+      perspective: 1000px;
+    }
+    .rotate-pedestal {
+      transform-style: preserve-3d;
+      transition: transform 0.1s ease-out;
+    }
+
+    /* Waveform Audio Bars */
+    @keyframes wave {
+      0%, 100% { height: 6px; }
+      50% { height: 38px; }
+    }
+    .wave-bar {
+      animation: wave 1.2s ease-in-out infinite;
+    }
+
+    /* Radar sweep */
+    @keyframes radar-sweep {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .radar-beam {
+      animation: radar-sweep 4s linear infinite;
+    }
+
+    /* Laser scan line */
+    @keyframes scanline {
+      0% { top: 0%; opacity: 0.8; }
+      50% { opacity: 1; }
+      100% { top: 96%; opacity: 0.8; }
+    }
+    .scan-line {
+      animation: scanline 2.2s ease-in-out infinite alternate;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between selection:bg-amber-400 selection:text-black">
+
+  <!-- TOP HEADER -->
+  <header class="border-b border-amber-500/30 bg-[#0a0d14]/90 backdrop-blur-md sticky top-0 z-50 px-4 sm:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-amber-700 p-0.5 shadow-lg shadow-amber-500/20">
+        <div class="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
+          <span class="text-amber-400 font-cinzel font-black text-xl">V</span>
+        </div>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-cinzel text-base sm:text-lg font-black tracking-widest text-amber-300 uppercase">
+            Vintage Vibes • Dubai
+          </h1>
+          <span class="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono font-black border border-amber-500/40">
+            $1,000,000 ARCHITECTURE
+          </span>
+        </div>
+        <p class="text-[11px] text-slate-400 font-mono">
+          Autonomous AI Auctioneer • 3D Hologram • Dynamic Surge • Computer Vision
+        </p>
+      </div>
+    </div>
+
+    <!-- TAB SELECTORS -->
+    <nav class="flex items-center gap-1.5 bg-stone-900/90 p-1.5 rounded-xl border border-slate-800 overflow-x-auto max-w-full">
+      <button onclick="switchTab('auctioneer')" id="tab-btn-auctioneer" class="tab-btn active px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all bg-amber-500 text-slate-950 shadow-md">
+        🎙️ AI Voice Auctioneer
+      </button>
+      <button onclick="switchTab('hologram')" id="tab-btn-hologram" class="tab-btn px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white">
+        🏛️ 3D Fabric & Stitch Inspector
+      </button>
+      <button onclick="switchTab('surge')" id="tab-btn-surge" class="tab-btn px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white">
+        📈 Dynamic Surge & Whale Radar
+      </button>
+      <button onclick="switchTab('vision')" id="tab-btn-vision" class="tab-btn px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white">
+        👁️ Zero-Touch Computer Vision
+      </button>
+      <button onclick="switchTab('vault')" id="tab-btn-vault" class="tab-btn px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-white">
+        👑 Royal VIP Vault
+      </button>
+    </nav>
+  </header>
+
+  <!-- MAIN VIEWPORT CONTAINER -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+
+    <!-- ================================================================================== -->
+    <!-- FEATURE 1: AI AUTONOMOUS VOICE AUCTIONEER & CO-HOST ("CHRISTIE'S AI") -->
+    <!-- ================================================================================== -->
+    <section id="view-auctioneer" class="tab-view block space-y-6 animate-in fade-in duration-200">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl bg-gradient-to-r from-amber-950/30 via-stone-900 to-stone-950 border border-amber-500/40 gold-glow">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-amber-400 tracking-widest block mb-1">
+            FEATURE 01 • AUTONOMOUS VOICE CO-HOST & AUCTIONEER
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            The Christie's Dubai AI Voice Auctioneer
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            Speaks out loud through browser audio in real-time. Detects live chat bids, calls out increments, creates urgency, and conducts full hammer auctions with zero human voice fatigue.
+          </p>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button id="btn-voice-toggle" onclick="testVoiceAuctioneer()" class="px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-xl shadow-amber-500/25 cursor-pointer active:scale-95 transition-all">
+            <span class="text-base">▶️</span>
+            <span id="voice-btn-text">Start Live Voice Auction</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Auction Floor Stage -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Center Stage: Current Lot on Air -->
+        <div class="lg:col-span-8 rounded-2xl bg-stone-950 border border-slate-800 p-6 flex flex-col justify-between relative overflow-hidden">
+          <div class="flex items-center justify-between border-b border-slate-800/80 pb-4 mb-4">
+            <div class="flex items-center gap-2.5">
+              <span class="w-3 h-3 rounded-full bg-red-500 animate-pulse"></span>
+              <span class="font-mono text-xs font-black text-white uppercase tracking-wider">
+                LOT #094 • 1994 NIRVANA IN UTERO ORIGINAL
+              </span>
+            </div>
+            <span class="px-2.5 py-1 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-mono font-bold">
+              Floor Status: LIVE BIDDING IN PROGRESS
+            </span>
+          </div>
+
+          <!-- Central Garment Display & AI Waveform Visualizer -->
+          <div class="h-64 rounded-xl bg-gradient-to-b from-[#0f1422] to-[#090b10] border border-amber-500/20 relative flex flex-col items-center justify-center p-6 text-center">
+            <!-- Simulated AI Audio Waveform -->
+            <div id="ai-waveform" class="flex items-center gap-1.5 h-12 mb-3">
+              <span class="w-1.5 bg-amber-400 rounded-full wave-bar" style="animation-delay: 0.1s"></span>
+              <span class="w-1.5 bg-amber-400 rounded-full wave-bar" style="animation-delay: 0.3s"></span>
+              <span class="w-1.5 bg-amber-400 rounded-full wave-bar" style="animation-delay: 0.2s"></span>
+              <span class="w-1.5 bg-amber-400 rounded-full wave-bar" style="animation-delay: 0.5s"></span>
+              <span class="w-1.5 bg-amber-400 rounded-full wave-bar" style="animation-delay: 0.4s"></span>
+              <span class="w-1.5 bg-amber-400 rounded-full wave-bar" style="animation-delay: 0.6s"></span>
+              <span class="w-1.5 bg-amber-400 rounded-full wave-bar" style="animation-delay: 0.15s"></span>
+            </div>
+
+            <!-- Voice Transcript Card -->
+            <div class="bg-black/60 backdrop-blur-md px-5 py-3 rounded-xl border border-amber-500/30 max-w-lg shadow-xl">
+              <span class="text-[9px] font-mono text-amber-400 font-bold uppercase tracking-widest block mb-0.5">
+                🎙️ AI VOICE SPEECH SYNTHESIS (NEURAL BROADCASTER)
+              </span>
+              <p id="auctioneer-speech-text" class="text-sm font-serif italic text-amber-100 leading-snug">
+                "Waiting for your command. Click 'Start Live Voice Auction' above to hear the AI conduct real bidding out loud!"
+              </p>
+            </div>
+
+            <!-- Floor Price Banner -->
+            <div class="mt-4 flex items-center gap-3">
+              <div class="px-4 py-1.5 rounded-lg bg-emerald-950/80 border border-emerald-500/40 font-mono text-xs font-black text-emerald-300">
+                CURRENT BID: <span id="current-bid-amount" class="text-sm text-white">850 AED</span>
+              </div>
+              <div class="px-3 py-1.5 rounded-lg bg-stone-900 border border-slate-800 font-mono text-xs text-slate-300">
+                HOLD: <span id="current-bid-holder" class="text-amber-300 font-bold">@sarah_dxb</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Interactive Bid Testing Trigger -->
+          <div class="mt-4 pt-4 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
+            <div class="text-xs font-mono text-slate-400">
+              Simulate Instant Chat Bidder:
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="injectLiveBid('@khalid_vintage', 900)" class="px-3 py-1.5 rounded-lg bg-stone-900 hover:bg-stone-800 border border-slate-700 text-xs font-mono font-bold text-amber-300 cursor-pointer">
+                +900 AED (@khalid)
+              </button>
+              <button onclick="injectLiveBid('@marcus_dubai', 950)" class="px-3 py-1.5 rounded-lg bg-stone-900 hover:bg-stone-800 border border-slate-700 text-xs font-mono font-bold text-amber-300 cursor-pointer">
+                +950 AED (@marcus)
+              </button>
+              <button onclick="triggerAuctionHammer()" class="px-3 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-700/60 text-xs font-mono font-bold text-red-300 cursor-pointer">
+                🔨 SOLD (Hammer Call)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Real-time Audio Settings & Speech Engine Status -->
+        <div class="lg:col-span-4 space-y-4">
+          <div class="p-5 rounded-2xl bg-stone-950 border border-slate-800 space-y-3">
+            <h4 class="text-xs font-mono font-black uppercase text-amber-400 tracking-wider">
+              Speech Engine Config
+            </h4>
+            <div class="space-y-2 text-xs font-mono">
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Voice Persona:</span>
+                <span class="text-white font-bold">British Luxury Auctioneer</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Latency:</span>
+                <span class="text-emerald-400 font-bold">0.12s (Sub-200ms)</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Chat Intent Parsing:</span>
+                <span class="text-amber-300 font-bold">Regex + Heuristic NLP</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Audio Synthesis:</span>
+                <span class="text-blue-400 font-bold">Native Web Speech API</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="p-5 rounded-2xl bg-gradient-to-br from-stone-950 to-stone-900 border border-amber-500/20 space-y-2">
+            <span class="text-[10px] font-mono font-black text-emerald-400 uppercase tracking-widest block">
+              WHY THIS IS $1,000,000 GRADE
+            </span>
+            <p class="text-xs text-slate-300 leading-relaxed">
+              No other live selling software on TikTok or Whatnot has an autonomous voice auctioneer. It doubles sales conversion during host fatigue and keeps auctions running 24/7.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ================================================================================== -->
+    <!-- FEATURE 2: 3D HOLOGRAPHIC FABRIC & MICRO-STITCH INSPECTOR ("APPLE VISION PRO GRADE") -->
+    <!-- ================================================================================== -->
+    <section id="view-hologram" class="tab-view hidden space-y-6 animate-in fade-in duration-200">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl bg-gradient-to-r from-amber-950/30 via-stone-900 to-stone-950 border border-amber-500/40 gold-glow">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-amber-400 tracking-widest block mb-1">
+            FEATURE 02 • SPATIAL 3D PRODUCT DIGITAL TWIN
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            3D Holographic Micro-Stitch Inspector
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            Interactive 360° rotating black marble pedestal with microscopic verification pins: Single-stitch hem analysis, Brockum tag RN registration, and screenprint distress patina.
+          </p>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button onclick="rotateModel(-45)" class="p-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 border border-slate-700 text-xs font-mono font-bold text-amber-300 cursor-pointer">
+            ↺ Rotate -45°
+          </button>
+          <button onclick="rotateModel(45)" class="p-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 border border-slate-700 text-xs font-mono font-bold text-amber-300 cursor-pointer">
+            ↻ Rotate +45°
+          </button>
+        </div>
+      </div>
+
+      <!-- 3D Pedestal Stage -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- 3D Canvas / Stage -->
+        <div class="lg:col-span-8 rounded-2xl bg-gradient-to-b from-[#0a0d16] via-[#0e1220] to-[#08090f] border-2 border-amber-500/30 p-8 relative overflow-hidden flex flex-col items-center justify-center min-h-[460px] select-none perspective-1000">
+          <!-- Ambient Lighting Radial Glow -->
+          <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(217,119,6,0.15)_0%,transparent_70%)] pointer-events-none"></div>
+
+          <!-- Rotating 3D Object Pedestal -->
+          <div id="pedestal-object" class="relative transition-transform duration-500 ease-out flex flex-col items-center">
+            <!-- Simulated 3D Garment Box -->
+            <div class="w-64 h-80 rounded-2xl bg-gradient-to-br from-stone-900 via-neutral-900 to-black border-2 border-amber-400/50 shadow-2xl relative flex flex-col items-center justify-between p-5 overflow-hidden">
+              <div class="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.03)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.03)_50%,rgba(255,255,255,0.03)_75%,transparent_75%,transparent)] bg-[length:12px_12px] opacity-40"></div>
+
+              <!-- Top: Tag Verification Pin -->
+              <div class="relative z-10 w-full flex justify-between items-start">
+                <button onclick="showMicroPin('tag')" class="group px-2.5 py-1 rounded-full bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-400 text-[10px] font-mono font-black flex items-center gap-1 shadow-lg transition-all cursor-pointer">
+                  <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                  <span>PIN 1: Tag OCR</span>
+                </button>
+                <span class="text-[10px] font-mono text-slate-500">360° 3D</span>
+              </div>
+
+              <!-- Center: Graphic Screenprint -->
+              <div class="text-center z-10 my-auto">
+                <div class="w-28 h-28 mx-auto rounded-full bg-amber-400/10 border border-amber-400/30 flex items-center justify-center text-amber-300 font-cinzel font-black text-2xl drop-shadow-lg">
+                  NIRVANA
+                </div>
+                <button onclick="showMicroPin('graphic')" class="mt-3 px-2.5 py-1 rounded-full bg-blue-500/20 hover:bg-blue-500 text-blue-300 hover:text-white border border-blue-400 text-[10px] font-mono font-black flex items-center gap-1 shadow-lg mx-auto transition-all cursor-pointer">
+                  <span class="w-2 h-2 rounded-full bg-blue-400 animate-ping"></span>
+                  <span>PIN 2: Screenprint Fade</span>
+                </button>
+              </div>
+
+              <!-- Bottom: Single Stitch Pin -->
+              <div class="relative z-10 w-full flex justify-center">
+                <button onclick="showMicroPin('stitch')" class="px-2.5 py-1 rounded-full bg-emerald-500/20 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border border-emerald-400 text-[10px] font-mono font-black flex items-center gap-1 shadow-lg transition-all cursor-pointer">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                  <span>PIN 3: Single Stitch Hem</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Black Marble Pedestal Base with Gold Trim -->
+            <div class="w-80 h-10 rounded-[50%] bg-gradient-to-r from-stone-900 via-stone-800 to-stone-950 border-2 border-amber-400 shadow-[0_15px_30px_rgba(0,0,0,0.8)] mt-[-10px] flex items-center justify-center">
+              <span class="text-[9px] font-mono text-amber-400 tracking-widest font-black uppercase">
+                ★ NERO MARQUINA MARBLE PEDESTAL • 360° TURNTABLE ★
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Microscopic Verification Loupe -->
+        <div class="lg:col-span-4 space-y-4">
+          <div class="p-5 rounded-2xl bg-stone-950 border border-amber-500/30 space-y-3">
+            <span class="text-[10px] font-mono font-black uppercase text-amber-400 tracking-widest block">
+              MICROSCOPIC VERIFICATION LOUPE (100X)
+            </span>
+            <div id="loupe-container" class="h-44 rounded-xl bg-slate-900 border border-slate-700 p-4 flex flex-col justify-between text-xs font-mono relative overflow-hidden">
+              <div id="loupe-content" class="space-y-2">
+                <span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                  PIN 3: SINGLE STITCH HEM (ACTIVE)
+                </span>
+                <p class="text-slate-300 text-[11px] leading-relaxed">
+                  Microscopic weave analysis confirms authentic 1993 single thread chain lockstitch. No double hem modern reproduction detected.
+                </p>
+                <div class="text-[10px] text-amber-400 font-bold">
+                  Thread Tension: 4.2 N/m | Needle Gauge: #14 Vintage
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="p-4 rounded-xl bg-stone-900 border border-slate-800 text-xs font-mono space-y-2">
+            <span class="text-slate-400 block font-bold">Provenance Score:</span>
+            <div class="w-full h-3 bg-stone-950 rounded-full overflow-hidden border border-slate-700">
+              <div class="w-[98%] h-full bg-gradient-to-r from-amber-400 to-emerald-400"></div>
+            </div>
+            <div class="flex justify-between text-[11px]">
+              <span class="text-emerald-400 font-bold">98.8% Museum Grade</span>
+              <span class="text-slate-400">Certified by Dubai Vault</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ================================================================================== -->
+    <!-- FEATURE 3: VINTAGE WALL STREET DYNAMIC SURGE PRICING & WHALE RADAR -->
+    <!-- ================================================================================== -->
+    <section id="view-surge" class="tab-view hidden space-y-6 animate-in fade-in duration-200">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl bg-gradient-to-r from-amber-950/30 via-stone-900 to-stone-950 border border-amber-500/40 gold-glow">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-amber-400 tracking-widest block mb-1">
+            FEATURE 03 • ALGORITHMIC HIGH-FREQUENCY RETAIL ENGINE
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            Dynamic Surge Pricing & VIP Whale Radar
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            Live supply-demand elasticity algorithm automatically drives prices up as viewer interest peaks, while real-time radar flags high-net-worth buyers entering the room.
+          </p>
+        </div>
+
+        <button onclick="simulateWhaleEntry()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg cursor-pointer transition-all">
+          <span>🐋</span>
+          <span>Simulate VIP Whale Entry</span>
+        </button>
+      </div>
+
+      <!-- Main Surge Dashboard Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Live Ticker & Surge Meter -->
+        <div class="lg:col-span-8 space-y-6">
+          <div class="p-6 rounded-2xl bg-stone-950 border border-slate-800 space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest block">
+                  ACTIVE SPECULATION LOT
+                </span>
+                <h3 class="text-lg font-black text-white font-cinzel">
+                  1989 Carhartt Santa Fe Faded Moss Jacket
+                </h3>
+              </div>
+              <div class="text-right">
+                <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest block">
+                  DYNAMIC MARKET PRICE
+                </span>
+                <div id="surge-price-display" class="text-2xl font-mono font-black text-amber-300">
+                  AED 480.00
+                </div>
+              </div>
+            </div>
+
+            <!-- Price Velocity Surge Bar -->
+            <div class="space-y-1.5">
+              <div class="flex justify-between text-xs font-mono">
+                <span class="text-slate-400">Demand Pressure Index:</span>
+                <span id="surge-multiplier-text" class="text-amber-400 font-bold">1.15x (High Liquidity)</span>
+              </div>
+              <div class="w-full h-4 rounded-full bg-stone-900 border border-slate-700 overflow-hidden relative">
+                <div id="surge-bar" class="h-full bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 transition-all duration-500" style="width: 58%"></div>
+              </div>
+            </div>
+
+            <!-- Interactive Click Rush Simulation -->
+            <div class="pt-3 border-t border-slate-800/80 flex items-center justify-between">
+              <span class="text-xs font-mono text-slate-400">
+                Click to simulate viral traffic rush:
+              </span>
+              <button onclick="boostDemand()" class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs font-mono uppercase cursor-pointer transition-all active:scale-95 shadow-md">
+                ⚡ Spike Demand (+25 Viewers)
+              </button>
+            </div>
+          </div>
+
+          <!-- Whale Alert Notification Banner -->
+          <div id="whale-banner" class="hidden p-5 rounded-2xl bg-gradient-to-r from-purple-950/80 via-indigo-950 to-stone-950 border-2 border-purple-500/60 shadow-xl shadow-purple-500/10 animate-in slide-in-from-top-4 duration-300">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center text-xl font-black shadow-lg">
+                  🐋
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="font-black text-sm text-purple-200">WHALE ALERT DETECTED</span>
+                    <span class="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 text-[10px] font-mono font-bold">
+                      TIER 1 COLLECTOR
+                    </span>
+                  </div>
+                  <p class="text-xs text-slate-300 font-mono mt-0.5">
+                    @sheikh_vintage joined stream • Lifetime Spent: AED 94,500 • High-Probability Buyer
+                  </p>
+                </div>
+              </div>
+              <button onclick="document.getElementById('whale-banner').classList.add('hidden')" class="text-slate-400 hover:text-white text-sm">✕</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Radar Visualizer -->
+        <div class="lg:col-span-4 p-6 rounded-2xl bg-stone-950 border border-slate-800 flex flex-col items-center justify-center relative overflow-hidden text-center min-h-[340px]">
+          <!-- Circular Radar Screen -->
+          <div class="w-48 h-48 rounded-full border border-emerald-500/30 relative flex items-center justify-center">
+            <div class="w-36 h-36 rounded-full border border-emerald-500/20"></div>
+            <div class="w-24 h-24 rounded-full border border-emerald-500/20"></div>
+            <div class="w-12 h-12 rounded-full border border-emerald-500/30"></div>
+
+            <!-- Radar Rotating Beam -->
+            <div class="absolute inset-0 rounded-full bg-[conic-gradient(from_0deg,transparent_0deg,transparent_270deg,rgba(52,211,153,0.3)_360deg)] radar-beam pointer-events-none"></div>
+
+            <!-- Radar Blips -->
+            <div class="absolute top-8 left-12 w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399] animate-ping"></div>
+            <div class="absolute bottom-10 right-14 w-2 h-2 rounded-full bg-purple-400 shadow-[0_0_8px_#c084fc]"></div>
+          </div>
+
+          <span class="text-xs font-mono text-emerald-400 font-bold mt-4 block">
+            LIVE RADAR: 1,420 ACTIVE BUYERS IN ORBIT
+          </span>
+          <span class="text-[10px] text-slate-500 font-mono">
+            3 High-Roller Whales in Dubai Central Zone
+          </span>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ================================================================================== -->
+    <!-- FEATURE 4: ZERO-TOUCH COMPUTER VISION ("THE MAGIC CAMERA") -->
+    <!-- ================================================================================== -->
+    <section id="view-vision" class="tab-view hidden space-y-6 animate-in fade-in duration-200">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl bg-gradient-to-r from-amber-950/30 via-stone-900 to-stone-950 border border-amber-500/40 gold-glow">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-amber-400 tracking-widest block mb-1">
+            FEATURE 04 • AUTONOMOUS EDGE COMPUTER VISION
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            Zero-Touch AI Computer Vision Camera
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            Host holds any garment in front of the camera. The neural vision engine recognizes the silhouette, brand logo, and colorway in 0.1s — automatically putting it on air with zero barcode scanning!
+          </p>
+        </div>
+
+        <button onclick="simulateVisionScan()" class="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg cursor-pointer transition-all active:scale-95">
+          <span>📸</span>
+          <span>Hold Garment to Camera</span>
+        </button>
+      </div>
+
+      <!-- Vision Camera Frame -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Live AI Viewfinder -->
+        <div class="lg:col-span-8 rounded-2xl bg-black border-2 border-amber-500/40 p-4 relative overflow-hidden min-h-[420px] flex flex-col justify-between">
+          <!-- Laser Scan Line -->
+          <div id="vision-scanline" class="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-amber-400 to-transparent shadow-[0_0_15px_#f59e0b] scan-line z-20 pointer-events-none"></div>
+
+          <!-- Top HUD Overlay -->
+          <div class="flex items-center justify-between z-10 text-[11px] font-mono text-slate-400 bg-black/60 backdrop-blur-xs p-2 rounded-lg border border-slate-800">
+            <span class="flex items-center gap-1.5 text-emerald-400 font-bold">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              CV ENGINE ACTIVE (60 FPS)
+            </span>
+            <span>MODEL: VINTAGE-YOLO-V9-DUBAI</span>
+          </div>
+
+          <!-- Center: Neural Bounding Box Target -->
+          <div class="my-auto mx-auto relative w-72 h-64 border-2 border-dashed border-amber-400/70 rounded-xl flex flex-col items-center justify-center p-4 bg-amber-500/5">
+            <!-- Corner Brackets -->
+            <div class="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-amber-400"></div>
+            <div class="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-amber-400"></div>
+            <div class="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-amber-400"></div>
+            <div class="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-amber-400"></div>
+
+            <div id="vision-status-center" class="text-center space-y-1.5">
+              <span class="text-[10px] font-mono text-amber-400 font-bold uppercase tracking-widest block">
+                ALIGN GARMENT IN RETICLE
+              </span>
+              <div class="text-xs text-slate-400 font-mono">
+                Click 'Hold Garment to Camera' to test instant 0.1s recognition
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Detection Telemetry Card -->
+          <div id="vision-result-card" class="z-10 p-3 rounded-xl bg-stone-900/90 border border-emerald-500/40 flex items-center justify-between text-xs font-mono">
+            <div>
+              <span class="text-emerald-400 font-bold block">✓ MATCH IDENTIFIED (0.08s)</span>
+              <span class="text-white font-bold text-sm">1996 Chicago Bulls Championship Jacket</span>
+            </div>
+            <span class="px-3 py-1 rounded bg-emerald-500 text-slate-950 font-black text-xs uppercase">
+              LOCKED ON AIR 🔴
+            </span>
+          </div>
+        </div>
+
+        <!-- Right: Real-time Feature Extraction Matrix -->
+        <div class="lg:col-span-4 space-y-4">
+          <div class="p-5 rounded-2xl bg-stone-950 border border-slate-800 space-y-3">
+            <h4 class="text-xs font-mono font-black uppercase text-amber-400 tracking-wider">
+              Computer Vision Vectors
+            </h4>
+            <div class="space-y-2 text-xs font-mono">
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Silhouette:</span>
+                <span class="text-white font-bold">Bomber / Varsity Outerwear</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Primary Color:</span>
+                <span class="text-white font-bold">Black / Scarlet Red</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Logo Signature:</span>
+                <span class="text-amber-300 font-bold">Bulls 1996 Finals Patch</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800">
+                <span class="text-slate-400">Confidence:</span>
+                <span class="text-emerald-400 font-black">99.4% (Zero-Error)</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="p-4 rounded-xl bg-stone-900 border border-slate-800 text-xs font-mono text-slate-300 space-y-1.5">
+            <span class="text-amber-400 font-bold block">Workflow Transformation:</span>
+            <p class="text-[11px] text-slate-400 leading-relaxed">
+              Broadcasters save 8 seconds per garment. In a 3-hour live stream of 200 items, this saves 26 minutes of barcode fiddling.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ================================================================================== -->
+    <!-- FEATURE 5: ROYAL VIP PRIVATE VAULT (HIGH-NET-WORTH CONCIERGE) -->
+    <!-- ================================================================================== -->
+    <section id="view-vault" class="tab-view hidden space-y-6 animate-in fade-in duration-200">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl bg-gradient-to-r from-amber-950/30 via-stone-900 to-stone-950 border border-amber-500/40 gold-glow">
+        <div>
+          <span class="text-[10px] font-mono font-black uppercase text-amber-400 tracking-widest block mb-1">
+            FEATURE 05 • HIGH-NET-WORTH ENCRYPTED CONCIERGE
+          </span>
+          <h2 class="font-cinzel text-xl sm:text-2xl font-black text-white">
+            Royal VIP Private Vault & 1-Tap Wire
+          </h2>
+          <p class="text-xs text-slate-300 font-mono mt-1 max-w-2xl">
+            For Dubai VIPs & Sheikhs who never bid in public chat rooms. Private secret link with biometric PIN, unreleased raw bale access, and 1-tap wire reservation.
+          </p>
+        </div>
+
+        <button onclick="unlockVault()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-xl shadow-amber-500/25 cursor-pointer transition-all active:scale-95">
+          <span>🗝️</span>
+          <span>Unlock Royal Vault</span>
+        </button>
+      </div>
+
+      <!-- Private Vault Canvas -->
+      <div class="rounded-2xl bg-gradient-to-b from-stone-950 via-neutral-950 to-stone-950 border-2 border-amber-500/40 p-6 sm:p-8 space-y-6">
+        <div class="text-center max-w-lg mx-auto space-y-2">
+          <div class="w-16 h-16 rounded-full bg-amber-500/10 border-2 border-amber-400/50 mx-auto flex items-center justify-center text-2xl shadow-xl">
+            👑
+          </div>
+          <h3 class="font-cinzel text-xl font-black text-amber-200 tracking-wider">
+            UNRELEASED BALE VAULT • AL AIN CENTRAL
+          </h3>
+          <p class="text-xs font-mono text-slate-400">
+            Exclusive pre-broadcast inventory allocation. Protected by 256-bit VIP token.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="p-4 rounded-xl bg-stone-900 border border-amber-500/20 space-y-3">
+            <span class="text-[10px] font-mono text-amber-400 font-bold uppercase block">
+              LOT #001 • RAW UNOPENED BALE
+            </span>
+            <h4 class="font-bold text-sm text-white">1990s Japanese Selvedge Denim (45 KG)</h4>
+            <div class="text-xs font-mono text-emerald-400 font-bold">
+              EST. YIELD: AED 18,500
+            </div>
+            <button onclick="alert('Wire Reservation Initiated: 14,000 AED locked via Private Concierge Desk.')" class="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs font-mono uppercase cursor-pointer">
+              1-Tap VIP Reserve (AED 14,000)
+            </button>
+          </div>
+
+          <div class="p-4 rounded-xl bg-stone-900 border border-amber-500/20 space-y-3">
+            <span class="text-[10px] font-mono text-amber-400 font-bold uppercase block">
+              LOT #002 • VINTAGE LEATHER
+            </span>
+            <h4 class="font-bold text-sm text-white">Schott & Harley Biker Archive (30 PCS)</h4>
+            <div class="text-xs font-mono text-emerald-400 font-bold">
+              EST. YIELD: AED 24,000
+            </div>
+            <button onclick="alert('Wire Reservation Initiated: 18,000 AED locked via Private Concierge Desk.')" class="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs font-mono uppercase cursor-pointer">
+              1-Tap VIP Reserve (AED 18,000)
+            </button>
+          </div>
+
+          <div class="p-4 rounded-xl bg-stone-900 border border-amber-500/20 space-y-3">
+            <span class="text-[10px] font-mono text-amber-400 font-bold uppercase block">
+              LOT #003 • RAP & BAND TEES
+            </span>
+            <h4 class="font-bold text-sm text-white">Tupac, Biggie & Nirvana Grails (15 PCS)</h4>
+            <div class="text-xs font-mono text-emerald-400 font-bold">
+              EST. YIELD: AED 16,000
+            </div>
+            <button onclick="alert('Wire Reservation Initiated: 12,500 AED locked via Private Concierge Desk.')" class="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs font-mono uppercase cursor-pointer">
+              1-Tap VIP Reserve (AED 12,500)
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="border-t border-slate-800/80 bg-black/80 p-4 text-center text-xs font-mono text-slate-500">
+    VINTAGE VIBES DUBAI • MULTI-MILLION DOLLAR AI PROPRIETARY ENGINE • ALL RIGHTS RESERVED 2026
+  </footer>
+
+  <!-- SCRIPT LOGIC FOR ALL 5 PREVIEWS -->
+  <script>
+    // Tab switcher
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-view').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('bg-amber-500', 'text-slate-950', 'shadow-md');
+        btn.classList.add('text-slate-400');
+      });
+
+      const activeView = document.getElementById('view-' + tabId);
+      const activeBtn = document.getElementById('tab-btn-' + tabId);
+      if (activeView) activeView.classList.remove('hidden');
+      if (activeBtn) {
+        activeBtn.classList.add('bg-amber-500', 'text-slate-950', 'shadow-md');
+        activeBtn.classList.remove('text-slate-400');
+      }
+    }
+
+    // FEATURE 1: AI VOICE AUCTIONEER WITH REAL WEB SPEECH SYNTHESIS
+    let currentBid = 850;
+    let isVoiceActive = false;
+
+    function speakText(text) {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 1.05;
+        utterance.pitch = 1.0;
+        // Try to pick a British or deep English voice if available
+        const voices = window.speechSynthesis.getVoices();
+        const britishVoice = voices.find(v => v.lang.includes('GB') || v.name.includes('UK') || v.name.includes('Oliver') || v.name.includes('Daniel'));
+        if (britishVoice) utterance.voice = britishVoice;
+        window.speechSynthesis.speak(utterance);
+      }
+    }
+
+    function testVoiceAuctioneer() {
+      const speechBox = document.getElementById('auctioneer-speech-text');
+      const text = "Ladies and gentlemen, on camera right now is Lot 94: The 1994 Nirvana In Utero original world tour tee. Single stitch hem, mint condition. We have 850 AED from Sarah in Dubai... Going once... Going twice... Do I hear 900 from the room?";
+      speechBox.innerText = `"${text}"`;
+      speakText(text);
+    }
+
+    function injectLiveBid(buyer, amount) {
+      currentBid = amount;
+      document.getElementById('current-bid-amount').innerText = amount + ' AED';
+      document.getElementById('current-bid-holder').innerText = buyer;
+      const speechBox = document.getElementById('auctioneer-speech-text');
+      const text = `New bid! ${amount} AED from ${buyer}! We have ${amount}! Who will take it to ${amount + 50}? Going once!`;
+      speechBox.innerText = `"${text}"`;
+      speakText(text);
+    }
+
+    function triggerAuctionHammer() {
+      const buyer = document.getElementById('current-bid-holder').innerText;
+      const speechBox = document.getElementById('auctioneer-speech-text');
+      const text = `Fair warning... Going once... Going twice... SOLD! To ${buyer} for ${currentBid} AED! Congratulations!`;
+      speechBox.innerText = `"${text}"`;
+      speakText(text);
+
+      // Web Audio Gavel Knock
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.setValueAtTime(140, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(35, ctx.currentTime + 0.12);
+        gain.gain.setValueAtTime(0.7, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.12);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.13);
+      } catch (_) {}
+    }
+
+    // FEATURE 2: 3D MODEL ROTATION & PIN ZOOM
+    let currentAngle = 0;
+    function rotateModel(delta) {
+      currentAngle += delta;
+      const el = document.getElementById('pedestal-object');
+      if (el) {
+        el.style.transform = `rotateY(${currentAngle}deg)`;
+      }
+    }
+
+    function showMicroPin(pin) {
+      const container = document.getElementById('loupe-content');
+      if (pin === 'tag') {
+        container.innerHTML = `
+          <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">PIN 1: TAG OCR VERIFICATION</span>
+          <p class="text-slate-300 text-[11px] leading-relaxed">
+            Tag identifies as 'Giant by Tee Jays' 100% Pre-shrunk Cotton, RN 15763. Genuine 1994 fabric blend verified against historical Brockum archive.
+          </p>
+          <div class="text-[10px] text-amber-400 font-bold">Registration Match: 99.8% Authentic</div>
+        `;
+      } else if (pin === 'graphic') {
+        container.innerHTML = `
+          <span class="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-bold">PIN 2: SCREENPRINT DISTRESS PATINA</span>
+          <p class="text-slate-300 text-[11px] leading-relaxed">
+            Authentic micro-fissuring and ink crackle on the winged anatomical angel. No digital DTG reprint pattern detected.
+          </p>
+          <div class="text-[10px] text-blue-400 font-bold">Ink Matrix: Plastisol Vintage 1994</div>
+        `;
+      } else {
+        container.innerHTML = `
+          <span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">PIN 3: SINGLE STITCH HEM</span>
+          <p class="text-slate-300 text-[11px] leading-relaxed">
+            Microscopic weave analysis confirms authentic 1993 single thread chain lockstitch. No double hem modern reproduction detected.
+          </p>
+          <div class="text-[10px] text-emerald-400 font-bold">Thread Tension: 4.2 N/m | Needle Gauge: #14</div>
+        `;
+      }
+    }
+
+    // FEATURE 3: DYNAMIC SURGE PRICING
+    let surgePrice = 480;
+    let surgeMultiplier = 1.15;
+    function boostDemand() {
+      surgePrice += 35;
+      surgeMultiplier += 0.08;
+      document.getElementById('surge-price-display').innerText = `AED ${surgePrice}.00`;
+      document.getElementById('surge-multiplier-text').innerText = `${surgeMultiplier.toFixed(2)}x (Extreme Demand Spike!)`;
+      const bar = document.getElementById('surge-bar');
+      const newWidth = Math.min(100, parseInt(bar.style.width) + 12);
+      bar.style.width = newWidth + '%';
+    }
+
+    function simulateWhaleEntry() {
+      const banner = document.getElementById('whale-banner');
+      banner.classList.remove('hidden');
+      banner.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // FEATURE 4: ZERO-TOUCH COMPUTER VISION
+    function simulateVisionScan() {
+      const card = document.getElementById('vision-result-card');
+      const center = document.getElementById('vision-status-center');
+      center.innerHTML = `
+        <span class="text-xs font-mono text-emerald-400 font-black animate-pulse block">
+          ⚡ SCANNING NEURAL PATTERNS...
+        </span>
+        <div class="text-[10px] text-slate-300 font-mono">
+          Matching against 8,500 archive silhouettes...
+        </div>
+      `;
+      setTimeout(() => {
+        center.innerHTML = `
+          <span class="text-sm font-black text-white block">
+            MATCH FOUND: 1996 BULLS VARSITY
+          </span>
+          <div class="text-[10px] text-emerald-400 font-bold font-mono">
+            CONFIDENCE: 99.4% • AUTO-LOCKED ON AIR
+          </div>
+        `;
+        speakText("Garment detected: 1996 Chicago Bulls Championship Varsity. Opening bids at 290 AED.");
+      }, 900);
+    }
+
+    // FEATURE 5: ROYAL VAULT
+    function unlockVault() {
+      alert("👑 VIP Concierge Session Activated: Connecting directly to Private Banker WhatsApp Desk for Sheikhs & High-Rollers.");
+    }
+  </script>
+</body>
+</html>

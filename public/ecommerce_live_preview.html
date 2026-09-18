@@ -1,0 +1,1195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vintage Vibes Dubai - Luxury E-Commerce & SQL Database</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-cream: #FAF4E6;
+      --card-cream: #FDF9EE;
+      --gold-primary: #C99738;
+      --gold-border: #DFC78E;
+      --gold-dark: #8F6822;
+      --gold-sheen: #FFF8E7;
+      --text-dark: #1E1B15;
+    }
+    body {
+      background-color: var(--bg-cream);
+      color: var(--text-dark);
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+    }
+    .font-cinzel { font-family: 'Cinzel', serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+    /* Perspective & 3D Card */
+    .perspective-1000 { perspective: 1200px; }
+    .preserve-3d { transform-style: preserve-3d; }
+    .backface-hidden { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+    .rotate-y-180 { transform: rotateY(180deg); }
+
+    /* Royal Golden Theme Accents */
+    .royal-border {
+      border: 1.5px solid var(--gold-border);
+    }
+    .royal-card {
+      background: linear-gradient(180deg, #FFFDF8 0%, #FAF3E0 50%, #F5EADB 100%);
+      border: 1.5px solid var(--gold-border);
+      box-shadow: 0 10px 30px rgba(180, 130, 40, 0.08);
+    }
+    .royal-card:hover {
+      border-color: #B8860B;
+      box-shadow: 0 16px 40px rgba(180, 130, 40, 0.18);
+    }
+    .gold-badge {
+      background: linear-gradient(135deg, #DFB76C 0%, #C19234 100%);
+      color: #1A1305;
+      font-weight: 800;
+    }
+    .gold-btn {
+      background: linear-gradient(135deg, #DFC78E 0%, #C99738 50%, #B8860B 100%);
+      color: #1A1305;
+      font-weight: 800;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 15px rgba(201, 151, 56, 0.3);
+    }
+    .gold-btn:hover {
+      background: linear-gradient(135deg, #EAD7A5 0%, #D8A647 50%, #C99738 100%);
+      box-shadow: 0 6px 22px rgba(201, 151, 56, 0.45);
+      transform: translateY(-1px);
+    }
+    .gold-btn:active {
+      transform: translateY(1px);
+    }
+    .ticker-bar {
+      background: #1A160F;
+      color: #EED8A1;
+      border-bottom: 1px solid #DFC78E33;
+    }
+    /* Smooth Scrollbar */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #FAF4E6; }
+    ::-webkit-scrollbar-thumb { background: #DFC78E; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #C99738; }
+  </style>
+</head>
+<body>
+
+  <!-- TOP ROYAL LIVE TICKER -->
+  <div class="ticker-bar py-2 px-4 text-xs font-mono flex items-center justify-between overflow-hidden whitespace-nowrap">
+    <div class="flex items-center gap-3">
+      <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/50 text-[10px] font-bold">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+        SQL DATABASE CONNECTED
+      </span>
+      <span>🇦🇪 DUBAI LUXURY VINTAGE ARCHIVE • AL AIN DISTRIBUTION HUB • ALL PIECES 1-OF-1 AUTHENTIC</span>
+    </div>
+    <div class="hidden md:flex items-center gap-4 text-amber-200/90 text-xs">
+      <span>⚡ 10-Min Vault Piece Reservation</span>
+      <span>📦 Free UAE Express Delivery over AED 350</span>
+      <span>🛡️ Guaranteed Single-Stitch & Authentic</span>
+    </div>
+  </div>
+
+  <!-- ROYAL HEADER -->
+  <header class="sticky top-0 z-40 bg-[#FAF4E6]/95 backdrop-blur-md border-b border-[#DFC78E]/70 shadow-xs">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between">
+      
+      <!-- Brand Logo -->
+      <div class="flex items-center gap-3">
+        <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-[#DFC78E] via-[#C99738] to-[#976B17] p-[1.5px] shadow-md flex items-center justify-center">
+          <div class="w-full h-full bg-[#FAF4E6] rounded-[10px] flex items-center justify-center text-[#8F6822] font-cinzel font-black text-xl">
+            V
+          </div>
+        </div>
+        <div>
+          <h1 class="font-cinzel text-xl sm:text-2xl font-black tracking-wider text-[#2A2315] uppercase">
+            Vintage Vibes
+          </h1>
+          <p class="text-[10px] font-mono tracking-widest text-[#8F6822] uppercase">
+            Dubai Vault • Relational SQL E-Commerce
+          </p>
+        </div>
+      </div>
+
+      <!-- Action Nav Buttons -->
+      <div class="flex items-center gap-2 sm:gap-3">
+        
+        <!-- Live SQL Schema Inspector Button -->
+        <button onclick="toggleSqlModal()" class="px-3 py-2 rounded-xl bg-[#F4E9CF] hover:bg-[#EBDDBB] border border-[#DFC78E] text-[#543E12] text-xs font-bold font-mono flex items-center gap-1.5 transition-all">
+          <span>🗄️</span>
+          <span class="hidden sm:inline">SQL Tables</span>
+          <span class="px-1.5 py-0.2 rounded bg-[#DFC78E] text-[#2A2315] text-[10px] font-bold">4</span>
+        </button>
+
+        <!-- Grail Bounty Button -->
+        <button onclick="openBountyModal()" class="px-3 py-2 rounded-xl bg-[#FAF1DC] hover:bg-[#F2E5C5] border border-[#DFC78E] text-[#7A5616] text-xs font-bold flex items-center gap-1.5 transition-all">
+          <span>🎯</span>
+          <span>Request Grail</span>
+        </button>
+
+        <!-- Vault Cart Button -->
+        <button onclick="toggleCartDrawer()" class="relative px-4 py-2 rounded-xl gold-btn text-xs font-black flex items-center gap-2 cursor-pointer">
+          <span>🛍️ Vault Cart</span>
+          <span id="cart-count-badge" class="w-5 h-5 rounded-full bg-[#1A160F] text-[#DFC78E] text-[11px] font-mono font-bold flex items-center justify-center">0</span>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- DATABASE TELEMETRY STRIP -->
+  <div class="bg-gradient-to-r from-[#F4E9CF] via-[#FAF4E6] to-[#F4E9CF] border-b border-[#DFC78E]/50 px-4 py-2">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-[#5C4517]">
+      <div class="flex items-center gap-4">
+        <span>● Active Inventory: <strong id="stat-inventory">12 Pieces</strong></span>
+        <span>● Total Orders: <strong id="stat-orders">1 Confirmed</strong></span>
+        <span>● Active Cart Locks: <strong id="stat-locks">0 Reserved</strong></span>
+        <span>● Bounties Registered: <strong id="stat-bounties">1 Searching</strong></span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold">
+          PostgreSQL Row-Locking: ACTIVE
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- HERO SECTION -->
+  <section class="max-w-7xl mx-auto px-4 sm:px-6 pt-8 pb-6">
+    <div class="royal-card rounded-3xl p-6 sm:p-10 relative overflow-hidden border-2 border-[#DFC78E]">
+      <div class="relative z-10 max-w-2xl">
+        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EBDDBB] border border-[#DFC78E] text-[#7A5616] text-xs font-mono font-bold uppercase mb-3">
+          ✨ Live Dubai & Al Ain Vault Drop
+        </span>
+        <h2 class="font-cinzel text-3xl sm:text-4xl font-black text-[#261E0E] leading-tight mb-3">
+          1-of-1 Authentic Vintage Pieces. Locked in SQL.
+        </h2>
+        <p class="text-sm sm:text-base text-[#5A4520] leading-relaxed mb-6">
+          Every piece is a unique one-of-one item scanned from curated bales. When you add a piece to your cart, our PostgreSQL relational database locks the barcode for <strong>10 minutes</strong> to protect it from double-selling.
+        </p>
+        <div class="flex flex-wrap items-center gap-3">
+          <a href="#collection" class="gold-btn px-6 py-3 rounded-xl text-sm font-black inline-flex items-center gap-2">
+            <span>Explore The Collection</span>
+            <span>↓</span>
+          </a>
+          <button onclick="toggleSqlModal()" class="px-5 py-3 rounded-xl bg-white/80 hover:bg-white border border-[#DFC78E] text-[#543E12] text-sm font-bold flex items-center gap-2 shadow-xs transition-all">
+            <span>🔍 View PostgreSQL Queries</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CATEGORY FILTER & SEARCH BAR -->
+  <section id="collection" class="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6">
+      
+      <!-- Category Tabs -->
+      <div class="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs font-bold scrollbar-none" id="category-chips">
+        <button onclick="setCategory('ALL')" class="cat-chip active px-4 py-2 rounded-xl gold-btn text-xs font-bold whitespace-nowrap">All Items (12)</button>
+        <button onclick="setCategory('t-shirts')" class="cat-chip px-4 py-2 rounded-xl bg-white/70 hover:bg-white border border-[#DFC78E] text-[#473615] whitespace-nowrap">T-Shirts (3)</button>
+        <button onclick="setCategory('jackets')" class="cat-chip px-4 py-2 rounded-xl bg-white/70 hover:bg-white border border-[#DFC78E] text-[#473615] whitespace-nowrap">Jackets & Coats (3)</button>
+        <button onclick="setCategory('hoodies')" class="cat-chip px-4 py-2 rounded-xl bg-white/70 hover:bg-white border border-[#DFC78E] text-[#473615] whitespace-nowrap">Hoodies & Sweaters (2)</button>
+        <button onclick="setCategory('denim')" class="cat-chip px-4 py-2 rounded-xl bg-white/70 hover:bg-white border border-[#DFC78E] text-[#473615] whitespace-nowrap">Denim & Pants (1)</button>
+        <button onclick="setCategory('caps')" class="cat-chip px-4 py-2 rounded-xl bg-white/70 hover:bg-white border border-[#DFC78E] text-[#473615] whitespace-nowrap">Caps & Hats (1)</button>
+        <button onclick="setCategory('fleece')" class="cat-chip px-4 py-2 rounded-xl bg-white/70 hover:bg-white border border-[#DFC78E] text-[#473615] whitespace-nowrap">Fleece (1)</button>
+      </div>
+
+      <!-- Search Input -->
+      <div class="relative w-full md:w-64">
+        <input
+          type="text"
+          id="search-input"
+          oninput="handleSearch(this.value)"
+          placeholder="Search brand, style, size..."
+          class="w-full px-3.5 py-2 pl-9 rounded-xl bg-white/90 border border-[#DFC78E] text-xs text-[#2A2315] placeholder-[#8F6822]/60 focus:outline-none focus:ring-2 focus:ring-[#C99738]"
+        />
+        <span class="absolute left-3 top-2.5 text-xs text-[#8F6822]">🔍</span>
+      </div>
+
+    </div>
+
+    <!-- PRODUCT GRID -->
+    <div id="product-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      <!-- Injected via JavaScript -->
+    </div>
+  </section>
+
+  <!-- 10-MINUTE CART VAULT DRAWER -->
+  <div id="cart-drawer" class="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-[#FAF4E6] border-l-2 border-[#DFC78E] shadow-2xl transform translate-x-full transition-transform duration-300 flex flex-col">
+    
+    <!-- Drawer Header -->
+    <div class="p-4 border-b border-[#DFC78E] bg-[#F4E9CF] flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-xl">🛍️</span>
+        <div>
+          <h3 class="font-cinzel font-black text-sm text-[#261E0E] uppercase">1-of-1 Vault Cart</h3>
+          <p class="text-[10px] font-mono text-emerald-800 font-bold flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-ping"></span>
+            PostgreSQL Lock Active: <span id="cart-timer" class="font-mono text-amber-900">09:58</span>
+          </p>
+        </div>
+      </div>
+      <button onclick="toggleCartDrawer()" class="w-8 h-8 rounded-lg bg-white/60 hover:bg-white text-[#473615] flex items-center justify-center font-bold text-sm">✕</button>
+    </div>
+
+    <!-- Cart Items List -->
+    <div id="cart-items-container" class="flex-1 overflow-y-auto p-4 space-y-3">
+      <div class="text-center py-12 text-[#8F6822] text-xs font-mono">
+        Your Vault Cart is empty.<br />Click "+ Add to Cart" to lock a 1-of-1 piece!
+      </div>
+    </div>
+
+    <!-- Drawer Footer / Checkout -->
+    <div class="p-4 border-t border-[#DFC78E] bg-[#FAF3E0]">
+      <div class="space-y-1.5 mb-3 text-xs font-mono">
+        <div class="flex justify-between text-[#5C4517]">
+          <span>Subtotal</span>
+          <span id="cart-subtotal">AED 0.00</span>
+        </div>
+        <div class="flex justify-between text-[#5C4517]">
+          <span>UAE Delivery (Free &gt; 350 AED)</span>
+          <span id="cart-delivery">AED 0.00</span>
+        </div>
+        <div class="flex justify-between text-sm font-bold text-[#2A2315] pt-1 border-t border-[#DFC78E]/60">
+          <span>Total Payable</span>
+          <span id="cart-total" class="text-[#8F6822]">AED 0.00</span>
+        </div>
+      </div>
+
+      <button onclick="openCheckoutModal()" id="btn-proceed-checkout" disabled class="w-full py-3 rounded-xl gold-btn text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+        <span>Proceed to Secure Checkout</span>
+        <span>→</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- CHECKOUT MODAL -->
+  <div id="checkout-modal" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-gradient-to-b from-[#FFFDF8] via-[#FAF4E6] to-[#F5EADB] border-2 border-[#DFC78E] rounded-3xl max-w-lg w-full p-6 shadow-2xl relative">
+      <button onclick="closeCheckoutModal()" class="absolute top-4 right-4 text-[#543E12] hover:text-black font-bold text-sm">✕</button>
+      
+      <div class="flex items-center gap-2 mb-4">
+        <span class="text-xl">💳</span>
+        <div>
+          <h3 class="font-cinzel font-black text-lg text-[#261E0E]">Complete Vault Order</h3>
+          <p class="text-[11px] font-mono text-[#7A5616]">Atomic SQL transaction writes to `orders` &amp; updates stock</p>
+        </div>
+      </div>
+
+      <form id="checkout-form" onsubmit="handleExecuteCheckout(event)" class="space-y-3 text-xs">
+        <div>
+          <label class="block font-bold text-[#473615] mb-1">Collector Full Name *</label>
+          <input type="text" id="cust-name" required value="Rashid Al Mansoori" class="w-full px-3 py-2 rounded-xl bg-white border border-[#DFC78E] focus:ring-1 focus:ring-[#C99738]" />
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block font-bold text-[#473615] mb-1">WhatsApp Phone *</label>
+            <input type="tel" id="cust-phone" required value="+971 50 883 9120" class="w-full px-3 py-2 rounded-xl bg-white border border-[#DFC78E] focus:ring-1 focus:ring-[#C99738]" />
+          </div>
+          <div>
+            <label class="block font-bold text-[#473615] mb-1">Emirate / City *</label>
+            <select id="cust-city" class="w-full px-3 py-2 rounded-xl bg-white border border-[#DFC78E]">
+              <option>Dubai</option>
+              <option>Abu Dhabi</option>
+              <option selected>Al Ain</option>
+              <option>Sharjah</option>
+              <option>Ajman</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="block font-bold text-[#473615] mb-1">Delivery Address *</label>
+          <input type="text" id="cust-address" required value="Villa 28, Al Muwaiji, Al Ain" class="w-full px-3 py-2 rounded-xl bg-white border border-[#DFC78E] focus:ring-1 focus:ring-[#C99738]" />
+        </div>
+        <div>
+          <label class="block font-bold text-[#473615] mb-1">Payment Method</label>
+          <div class="grid grid-cols-3 gap-2">
+            <label class="flex items-center gap-1.5 p-2 rounded-xl bg-white border border-[#DFC78E] cursor-pointer">
+              <input type="radio" name="paymethod" value="COD" checked />
+              <span class="font-bold">Cash on Delivery</span>
+            </label>
+            <label class="flex items-center gap-1.5 p-2 rounded-xl bg-white border border-[#DFC78E] cursor-pointer">
+              <input type="radio" name="paymethod" value="BANK_TRANSFER" />
+              <span class="font-bold">Bank QR Transfer</span>
+            </label>
+            <label class="flex items-center gap-1.5 p-2 rounded-xl bg-white border border-[#DFC78E] cursor-pointer">
+              <input type="radio" name="paymethod" value="CARD_POS" />
+              <span class="font-bold">Card POS</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="pt-3 border-t border-[#DFC78E] flex items-center justify-between">
+          <div>
+            <span class="block text-[10px] font-mono text-[#7A5616]">Total with Delivery:</span>
+            <span id="modal-checkout-total" class="text-base font-black text-[#8F6822]">AED 0.00</span>
+          </div>
+          <button type="submit" id="btn-submit-order" class="gold-btn px-6 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2">
+            <span>Confirm &amp; Place Order</span>
+            <span>✓</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- GRAIL BOUNTY MODAL -->
+  <div id="bounty-modal" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-gradient-to-b from-[#FFFDF8] via-[#FAF4E6] to-[#F5EADB] border-2 border-[#DFC78E] rounded-3xl max-w-md w-full p-6 shadow-2xl relative">
+      <button onclick="closeBountyModal()" class="absolute top-4 right-4 text-[#543E12] hover:text-black font-bold text-sm">✕</button>
+      
+      <div class="flex items-center gap-2 mb-3">
+        <span class="text-2xl">🎯</span>
+        <div>
+          <h3 class="font-cinzel font-black text-lg text-[#261E0E]">Grail Bounty Hunter</h3>
+          <p class="text-[11px] font-mono text-[#7A5616]">Saved in `grail_bounties` SQL table</p>
+        </div>
+      </div>
+      <p class="text-xs text-[#5A4520] mb-4">
+        Tell us which rare vintage piece you're hunting for. As soon as a matching item is scanned during our bale sorting in Al Ain, you'll receive an instant WhatsApp VIP notification!
+      </p>
+
+      <form onsubmit="handleExecuteBounty(event)" class="space-y-3 text-xs">
+        <div>
+          <label class="block font-bold text-[#473615] mb-1">Desired Brand / Grail Item *</label>
+          <input type="text" id="bounty-brand" required placeholder="e.g. 1994 Pink Floyd Pulse Tee or Carhartt Detroit" class="w-full px-3 py-2 rounded-xl bg-white border border-[#DFC78E]" />
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block font-bold text-[#473615] mb-1">Category</label>
+            <select id="bounty-cat" class="w-full px-3 py-2 rounded-xl bg-white border border-[#DFC78E]">
+              <option>T-Shirts</option>
+              <option>Jackets</option>
+              <option>Varsity</option>
+              <option>Hoodies</option>
+              <option>Caps</option>
+              <option>Denim</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-bold text-[#473615] mb-1">Max Budget (AED)</label>
+            <input type="number" id="bounty-budget" placeholder="1500" class="w-full px-3 py-2 rounded-xl bg-white border border-[#DFC78E]" />
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block font-bold text-[#473615] mb-1">Your Name *</label>
+            <input type="text" id="bounty-name" required placeholder="Collector Name" class="w-full px-3 py-2 rounded-xl bg-white border border-[#DFC78E]" />
+          </div>
+          <div>
+            <label class="block font-bold text-[#473615] mb-1">WhatsApp Number *</label>
+            <input type="tel" id="bounty-phone" required placeholder="+971 50 123 4567" class="w-full px-3 py-2 rounded-xl bg-white border border-[#DFC78E]" />
+          </div>
+        </div>
+
+        <button type="submit" class="w-full py-3 rounded-xl gold-btn text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 mt-4">
+          <span>Register Bounty in SQL</span>
+          <span>🎯</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- SQL TABLES & LIVE QUERIES MODAL -->
+  <div id="sql-modal" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-[#1A160F] text-amber-200 border-2 border-[#DFC78E] rounded-3xl max-w-4xl w-full p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
+      <button onclick="toggleSqlModal()" class="absolute top-4 right-4 text-amber-300 hover:text-white font-bold text-sm">✕</button>
+
+      <div class="flex items-center gap-3 mb-4 pb-3 border-b border-amber-800/60">
+        <span class="text-2xl">🗄️</span>
+        <div>
+          <h3 class="font-cinzel text-lg font-black text-amber-300">Live PostgreSQL Relational Database</h3>
+          <p class="text-xs font-mono text-amber-400/80">AWS Supabase Pooler • Schema Architecture &amp; Data Arrays []</p>
+        </div>
+      </div>
+
+      <!-- SQL Tabs -->
+      <div class="flex items-center gap-2 mb-4 font-mono text-xs">
+        <button onclick="switchSqlTab('inventory')" id="sqltab-inventory" class="px-3 py-1.5 rounded-lg bg-amber-500 text-black font-bold">1. inventory_pieces [12]</button>
+        <button onclick="switchSqlTab('orders')" id="sqltab-orders" class="px-3 py-1.5 rounded-lg bg-amber-950 hover:bg-amber-900 border border-amber-700/50 text-amber-300">2. orders [1]</button>
+        <button onclick="switchSqlTab('cart')" id="sqltab-cart" class="px-3 py-1.5 rounded-lg bg-amber-950 hover:bg-amber-900 border border-amber-700/50 text-amber-300">3. cart_reservations [0]</button>
+        <button onclick="switchSqlTab('bounties')" id="sqltab-bounties" class="px-3 py-1.5 rounded-lg bg-amber-950 hover:bg-amber-900 border border-amber-700/50 text-amber-300">4. grail_bounties [1]</button>
+      </div>
+
+      <!-- SQL Content Window -->
+      <div id="sql-tab-content" class="flex-1 overflow-y-auto bg-black/60 rounded-xl p-4 border border-amber-800/50 font-mono text-xs text-amber-100 whitespace-pre">
+        <!-- Content injected dynamically -->
+      </div>
+
+      <div class="pt-3 border-t border-amber-800/60 flex items-center justify-between text-[11px] font-mono text-amber-400/70">
+        <span>✓ All tables indexed on barcode, created_at, status</span>
+        <span>Row Locking: SELECT ... FOR UPDATE on checkout</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- GARMENT 360 INSPECTOR MODAL -->
+  <div id="inspector-modal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-md hidden flex items-center justify-center p-3 sm:p-6">
+    <div class="bg-gradient-to-b from-[#FFFDF8] via-[#FAF4E6] to-[#F5EADB] border-2 border-[#DFC78E] rounded-3xl max-w-4xl w-full p-6 shadow-2xl relative flex flex-col max-h-[92vh]">
+      <button onclick="closeInspectorModal()" class="absolute top-4 right-4 text-[#543E12] hover:text-black font-bold text-base">✕</button>
+
+      <div class="flex items-center gap-2 mb-3">
+        <span class="text-xl">🔍</span>
+        <div>
+          <h3 id="insp-title" class="font-cinzel font-black text-base sm:text-lg text-[#261E0E]">Garment Inspector</h3>
+          <p id="insp-sub" class="text-[11px] font-mono text-[#7A5616]">Barcode &amp; Authenticity Verification</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1 overflow-y-auto">
+        <!-- Image with Angle Toggles -->
+        <div class="flex flex-col gap-3">
+          <div class="aspect-[3/4] rounded-2xl overflow-hidden border-2 border-[#DFC78E] bg-white relative">
+            <img id="insp-img" src="" alt="Garment Preview" class="w-full h-full object-cover" />
+            <span class="absolute top-3 left-3 px-2 py-0.5 rounded-full bg-black/80 text-amber-300 text-[10px] font-mono font-bold">1-of-1 Vault Verified</span>
+          </div>
+          <div class="flex items-center justify-center gap-2">
+            <button onclick="setInspectorAngle('FRONT')" id="btn-ang-front" class="px-3 py-1.5 rounded-lg gold-btn text-xs font-bold">Front View</button>
+            <button onclick="setInspectorAngle('BACK')" id="btn-ang-back" class="px-3 py-1.5 rounded-lg bg-white border border-[#DFC78E] text-xs font-bold text-[#543E12]">Back View</button>
+            <button onclick="setInspectorAngle('LABEL')" id="btn-ang-label" class="px-3 py-1.5 rounded-lg bg-white border border-[#DFC78E] text-xs font-bold text-[#543E12]">Neck Tag / OCR</button>
+          </div>
+        </div>
+
+        <!-- Garment Specifications -->
+        <div class="space-y-4 text-xs font-mono">
+          <div class="p-3.5 rounded-2xl bg-white/70 border border-[#DFC78E]">
+            <h4 class="font-cinzel text-sm font-bold text-[#2A2315] mb-2 uppercase">Physical Measurements (Inches)</h4>
+            <div class="grid grid-cols-2 gap-2 text-[#5A4520]">
+              <div>Pit-to-Pit: <strong id="insp-pit" class="text-[#2A2315]">22.5"</strong></div>
+              <div>Total Length: <strong id="insp-len" class="text-[#2A2315]">29.5"</strong></div>
+              <div>Scanned Size: <strong id="insp-size" class="text-[#2A2315]">L</strong></div>
+              <div>Garment Weight: <strong id="insp-wt" class="text-[#2A2315]">0.38 KG</strong></div>
+            </div>
+          </div>
+
+          <div class="p-3.5 rounded-2xl bg-white/70 border border-[#DFC78E]">
+            <h4 class="font-cinzel text-sm font-bold text-[#2A2315] mb-2 uppercase">Provenance &amp; Origin</h4>
+            <div class="space-y-1 text-[#5A4520]">
+              <div>Origin: <strong id="insp-origin" class="text-[#2A2315]">Made in USA</strong></div>
+              <div>Style: <strong id="insp-style" class="text-[#2A2315]">Single-Stitch Washed</strong></div>
+              <div>Condition Grade: <strong id="insp-grade" class="text-[#8F6822]">Vintage Grail (A+)</strong></div>
+              <div>Tier: <strong id="insp-tier" class="text-[#8F6822]">Ultra Grail</strong></div>
+            </div>
+          </div>
+
+          <div class="p-4 rounded-2xl bg-[#F4E9CF] border border-[#DFC78E] flex items-center justify-between">
+            <div>
+              <span class="block text-[10px] text-[#7A5616]">Vault Price (AED)</span>
+              <span id="insp-price" class="text-xl font-black text-[#8F6822]">AED 3,850</span>
+            </div>
+            <button onclick="handleAddToCartFromInspector()" class="gold-btn px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-1.5">
+              <span>Add to Vault Cart</span>
+              <span>🛍️</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div id="toast" class="fixed bottom-6 right-6 z-50 bg-[#1A160F] text-amber-200 border-2 border-[#DFC78E] px-4 py-3 rounded-2xl shadow-2xl transform translate-y-24 opacity-0 transition-all duration-300 flex items-center gap-3 text-xs">
+    <span id="toast-icon" class="text-lg">✓</span>
+    <div>
+      <h4 id="toast-title" class="font-bold text-amber-300">Added to Cart</h4>
+      <p id="toast-sub" class="text-[11px] font-mono text-amber-400/80">10-Minute Vault Lock active</p>
+    </div>
+  </div>
+
+  <!-- SCRIPT -->
+  <script>
+    // Live PostgreSQL Stock Array []
+    const inventoryPieces = [
+      {
+        id: 'VV-9842',
+        barcode: 'VV-9842',
+        itemName: '1994 Nirvana In Utero Promo Grail Tee',
+        brandName: 'Nirvana',
+        category: 't-shirts',
+        sizeScanned: 'L (Boxy)',
+        countryOfOrigin: 'Made in USA',
+        style: 'Single-Stitch Washed Black',
+        frontImageUrl: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=800&q=80',
+        backImageUrl: 'https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=800&q=80',
+        tagImageUrl: '/studio_left_rack.png',
+        labelGrade: 'Vintage Grail (A+)',
+        brandTier: 'Ultra Grail',
+        retailPriceAed: 3850.00,
+        pitToPitInches: 22.5,
+        lengthInches: 29.5,
+        weightKg: 0.38,
+        isSold: false
+      },
+      {
+        id: 'VV-9841',
+        barcode: 'VV-9841',
+        itemName: '1989 Carhartt Detroit Duck Brown J97 Jacket',
+        brandName: 'Carhartt',
+        category: 'jackets',
+        sizeScanned: 'XL (Boxy)',
+        countryOfOrigin: 'Made in USA',
+        style: 'Blanket Lined Heavy Duck Canvas',
+        frontImageUrl: 'https://images.unsplash.com/photo-1551028719-00167b16eac5?auto=format&fit=crop&w=800&q=80',
+        backImageUrl: 'https://images.unsplash.com/photo-1548883354-7622d03aca27?auto=format&fit=crop&w=800&q=80',
+        tagImageUrl: '/studio_left_rack.png',
+        labelGrade: 'Authentic Distress Workwear',
+        brandTier: 'Heritage Workwear',
+        retailPriceAed: 1450.00,
+        pitToPitInches: 25.0,
+        lengthInches: 27.5,
+        weightKg: 1.45,
+        isSold: false
+      },
+      {
+        id: 'VV-9840',
+        barcode: 'VV-9840',
+        itemName: '1996 Chicago Bulls 72-10 Championship Varsity Bomber',
+        brandName: 'Starter / Bulls',
+        category: 'jackets',
+        sizeScanned: 'L',
+        countryOfOrigin: 'Made in USA',
+        style: 'Championship Wool & Leather Varsity',
+        frontImageUrl: 'https://images.unsplash.com/photo-1544441893-675973e31985?auto=format&fit=crop&w=800&q=80',
+        backImageUrl: 'https://images.unsplash.com/photo-1544441892-794166f1e3be?auto=format&fit=crop&w=800&q=80',
+        tagImageUrl: '/studio_left_rack.png',
+        labelGrade: 'Deadstock Grade A',
+        brandTier: 'Grail Sports',
+        retailPriceAed: 2900.00,
+        pitToPitInches: 23.5,
+        lengthInches: 28.0,
+        weightKg: 1.20,
+        isSold: false
+      },
+      {
+        id: 'VV-9839',
+        barcode: 'VV-9839',
+        itemName: '1993 Snoop Dogg DoggyStyle Death Row Rap Tee',
+        brandName: 'Death Row Records',
+        category: 't-shirts',
+        sizeScanned: 'XL (Oversized)',
+        countryOfOrigin: 'Made in USA',
+        style: 'Washed Ash Single-Stitch Grail',
+        frontImageUrl: 'https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=800&q=80',
+        backImageUrl: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=800&q=80',
+        tagImageUrl: '/studio_left_rack.png',
+        labelGrade: 'Museum Archive Grade',
+        brandTier: 'Ultra Grail Rap',
+        retailPriceAed: 4800.00,
+        pitToPitInches: 24.0,
+        lengthInches: 30.5,
+        weightKg: 0.42,
+        isSold: false
+      },
+      {
+        id: 'VV-9838',
+        barcode: 'VV-9838',
+        itemName: '1989 Harley-Davidson 3D Emblem Eagle Washed Tee',
+        brandName: 'Harley-Davidson',
+        category: 't-shirts',
+        sizeScanned: 'M',
+        countryOfOrigin: 'Made in USA',
+        style: 'American Thunder Sun Fade Single-Stitch',
+        frontImageUrl: 'https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?auto=format&fit=crop&w=800&q=80',
+        backImageUrl: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=800&q=80',
+        tagImageUrl: '/studio_left_rack.png',
+        labelGrade: 'Sun-Faded Vintage',
+        brandTier: 'Biker Archive',
+        retailPriceAed: 1250.00,
+        pitToPitInches: 20.5,
+        lengthInches: 27.5,
+        weightKg: 0.35,
+        isSold: false
+      },
+      {
+        id: 'VV-9837',
+        barcode: 'VV-9837',
+        itemName: '1995 Nike Center Swoosh Spellout Heavyweight Hoodie',
+        brandName: 'Nike Vintage',
+        category: 'hoodies',
+        sizeScanned: 'L (Boxy Oversized)',
+        countryOfOrigin: 'Made in USA',
+        style: 'Heavy Cotton Fleece Trapeze Cut',
+        frontImageUrl: 'https://images.unsplash.com/photo-1556905055-8f358a7a47b2?auto=format&fit=crop&w=800&q=80',
+        backImageUrl: 'https://images.unsplash.com/photo-1556905055-8f358a7a47b2?auto=format&fit=crop&w=800&q=80',
+        tagImageUrl: '/studio_left_rack.png',
+        labelGrade: 'Grade A+ (Pristine)',
+        brandTier: 'Streetwear Icon',
+        retailPriceAed: 850.00,
+        pitToPitInches: 23.5,
+        lengthInches: 28.5,
+        weightKg: 0.85,
+        isSold: false
+      },
+      {
+        id: 'VV-9836',
+        barcode: 'VV-9836',
+        itemName: '1992 Patagonia Retro-X Deep Pile Fleece Pullover',
+        brandName: 'Patagonia',
+        category: 'fleece',
+        sizeScanned: 'M (Generous)',
+        countryOfOrigin: 'Made in USA',
+        style: 'Deep Pile Synchilla Windproof',
+        frontImageUrl: 'https://images.unsplash.com/photo-1576995853123-5a10305d93c0?auto=format&fit=crop&w=800&q=80',
+        backImageUrl: 'https://images.unsplash.com/photo-1576995853123-5a10305d93c0?auto=format&fit=crop&w=800&q=80',
+        tagImageUrl: '/studio_left_rack.png',
+        labelGrade: 'Grade A (Excellent)',
+        brandTier: 'Outdoor Archive',
+        retailPriceAed: 1100.00,
+        pitToPitInches: 22.0,
+        lengthInches: 27.0,
+        weightKg: 0.72,
+        isSold: false
+      },
+      {
+        id: 'VV-9835',
+        barcode: 'VV-9835',
+        itemName: '1998 The North Face Nuptse 700 Down Puffer Jacket',
+        brandName: 'The North Face',
+        category: 'jackets',
+        sizeScanned: 'L',
+        countryOfOrigin: 'Bangladesh',
+        style: '700-Fill Goose Down Ripstop',
+        frontImageUrl: 'https://images.unsplash.com/photo-1548883354-7622d03aca27?auto=format&fit=crop&w=800&q=80',
+        backImageUrl: 'https://images.unsplash.com/photo-1551028719-00167b16eac5?auto=format&fit=crop&w=800&q=80',
+        tagImageUrl: '/studio_left_rack.png',
+        labelGrade: 'Grade A (High Loft)',
+        brandTier: 'Winter Outerwear',
+        retailPriceAed: 1650.00,
+        pitToPitInches: 24.0,
+        lengthInches: 28.0,
+        weightKg: 1.10,
+        isSold: false
+      },
+      {
+        id: 'VV-9834',
+        barcode: 'VV-9834',
+        itemName: '1990 Polo Ralph Lauren Bear Knit Wool Sweater',
+        brandName: 'Polo Ralph Lauren',
+        category: 'hoodies',
+        sizeScanned: 'L',
+        countryOfOrigin: 'Hand Knit USA',
+        style: 'Iconic Martini Bear Intarsia Knit',
+        frontImageUrl: 'https://images.unsplash.com/photo-1620799140408-edc6dcb6d633?auto=format&fit=crop&w=800&q=80',
+        backImageUrl: 'https://images.unsplash.com/photo-1620799140408-edc6dcb6d633?auto=format&fit=crop&w=800&q=80',
+        tagImageUrl: '/studio_left_rack.png',
+        labelGrade: 'Collector Condition',
+        brandTier: 'Luxury Archive',
+        retailPriceAed: 2400.00,
+        pitToPitInches: 23.0,
+        lengthInches: 27.5,
+        weightKg: 0.65,
+        isSold: false
+      },
+      {
+        id: 'VV-9833',
+        barcode: 'VV-9833',
+        itemName: '1993 Levi’s 501 Original Selvedge Indigo Denim Jeans',
+        brandName: 'Levi’s',
+        category: 'denim',
+        sizeScanned: '32x32',
+        countryOfOrigin: 'Made in USA (Valencia St)',
+        style: 'Red Tab Straight Cut Heavy Denim Pants',
+        frontImageUrl: 'https://images.unsplash.com/photo-1542272604-787c3835535d?auto=format&fit=crop&w=800&q=80',
+        backImageUrl: 'https://images.unsplash.com/photo-1582552938357-32b906df40cb?auto=format&fit=crop&w=800&q=80',
+        tagImageUrl: '/studio_left_rack.png',
+        labelGrade: 'Grade A+ Raw Fade',
+        brandTier: 'Vintage Denim',
+        retailPriceAed: 950.00,
+        pitToPitInches: 16.0,
+        lengthInches: 42.0,
+        weightKg: 0.78,
+        isSold: false
+      },
+      {
+        id: 'VV-9832',
+        barcode: 'VV-9832',
+        itemName: 'Vintage Al Neyadi Signature Embroidered Strapback Cap',
+        brandName: 'Al Neyadi Archive',
+        category: 'caps',
+        sizeScanned: 'OSFA',
+        countryOfOrigin: 'Curated in UAE',
+        style: 'Heavy Brushed Twill Retro Crown Cap',
+        frontImageUrl: 'https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&w=800&q=80',
+        backImageUrl: 'https://images.unsplash.com/photo-1588850561407-ed78c282e89b?auto=format&fit=crop&w=800&q=80',
+        tagImageUrl: '/studio_left_rack.png',
+        labelGrade: 'Deadstock New Old Stock',
+        brandTier: 'Signature UAE Series',
+        retailPriceAed: 320.00,
+        pitToPitInches: 0,
+        lengthInches: 0,
+        weightKg: 0.18,
+        isSold: false
+      },
+      {
+        id: 'VV-9831',
+        barcode: 'VV-9831',
+        itemName: '1997 Champion Reverse Weave Boston Celtics Longsleeve',
+        brandName: 'Champion',
+        category: 't-shirts',
+        sizeScanned: 'XL',
+        countryOfOrigin: 'Made in USA',
+        style: 'Heavyweight Ribbed Gusset Longsleeve Tee',
+        frontImageUrl: 'https://images.unsplash.com/photo-1618354691373-d851c5c3a990?auto=format&fit=crop&w=800&q=80',
+        backImageUrl: 'https://images.unsplash.com/photo-1618354691373-d851c5c3a990?auto=format&fit=crop&w=800&q=80',
+        tagImageUrl: '/studio_left_rack.png',
+        labelGrade: 'Grade A',
+        brandTier: 'Athletic Heritage',
+        retailPriceAed: 490.00,
+        pitToPitInches: 24.0,
+        lengthInches: 30.0,
+        weightKg: 0.45,
+        isSold: false
+      }
+    ];
+
+    let activeCategory = 'ALL';
+    let currentSearch = '';
+    let cart = [];
+    let activeInspectorPiece = null;
+    let inspectorAngle = 'FRONT';
+    let cartSecondsRemaining = 600;
+    let timerInterval = null;
+
+    // Render Product Cards
+    function renderProducts() {
+      const grid = document.getElementById('product-grid');
+      const filtered = inventoryPieces.filter(p => {
+        if (p.isSold) return false;
+        if (activeCategory !== 'ALL' && p.category !== activeCategory) return false;
+        if (currentSearch) {
+          const q = currentSearch.toLowerCase();
+          const match = p.itemName.toLowerCase().includes(q) || p.brandName.toLowerCase().includes(q) || p.barcode.toLowerCase().includes(q);
+          if (!match) return false;
+        }
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        grid.innerHTML = '<div class="col-span-full py-16 text-center text-xs font-mono text-[#8F6822]">No vintage pieces match this search in the database.</div>';
+        return;
+      }
+
+      grid.innerHTML = filtered.map(p => {
+        const inCart = cart.some(item => item.barcode === p.barcode);
+        return `
+          <div class="royal-card rounded-2xl overflow-hidden flex flex-col justify-between group transition-all duration-300">
+            <!-- Image Frame -->
+            <div class="relative aspect-[3/4] bg-stone-200 overflow-hidden cursor-pointer" onclick="openInspector('${p.barcode}')">
+              <img src="${p.frontImageUrl}" alt="${p.itemName}" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+              
+              <!-- Badges -->
+              <div class="absolute top-2.5 inset-x-2.5 flex items-center justify-between">
+                <span class="px-2 py-0.5 rounded-full bg-black/85 text-amber-300 text-[10px] font-mono font-bold">1-of-1 Grail</span>
+                <span class="px-2 py-0.5 rounded-md bg-white/95 text-slate-900 text-[10px] font-mono font-black border border-amber-300">SIZE ${p.sizeScanned}</span>
+              </div>
+
+              <!-- Viewers Scarcity -->
+              <div class="absolute bottom-2.5 left-2.5">
+                <span class="px-2 py-0.5 rounded-full bg-black/80 text-rose-300 text-[9.5px] font-mono font-bold flex items-center gap-1 border border-rose-500/40">
+                  <span class="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping"></span>
+                  <span>3 viewing now</span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Details -->
+            <div class="p-4 flex-1 flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between text-[11px] font-mono text-[#7A5616] mb-1">
+                  <span>${p.brandName}</span>
+                  <span>${p.barcode}</span>
+                </div>
+                <h3 class="font-cinzel font-bold text-sm text-[#261E0E] line-clamp-1 mb-1" title="${p.itemName}">${p.itemName}</h3>
+                <p class="text-[11px] text-[#634E27] font-mono line-clamp-1 mb-3">${p.style} • ${p.countryOfOrigin}</p>
+              </div>
+
+              <div class="pt-3 border-t border-[#DFC78E]/60 flex items-center justify-between">
+                <div>
+                  <span class="block text-[9.5px] font-mono text-[#7A5616]">Vault Price</span>
+                  <span class="text-base font-black text-[#8F6822]">AED ${p.retailPriceAed.toLocaleString()}</span>
+                </div>
+                
+                <button
+                  onclick="toggleCartItem('${p.barcode}')"
+                  class="px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                    inCart 
+                      ? 'bg-emerald-600 text-white shadow-md' 
+                      : 'gold-btn'
+                  }"
+                >
+                  ${inCart ? '✓ Locked in Cart' : '+ Add to Cart'}
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Category Filter
+    function setCategory(cat) {
+      activeCategory = cat;
+      document.querySelectorAll('.cat-chip').forEach(btn => {
+        btn.classList.remove('gold-btn', 'active');
+        btn.classList.add('bg-white/70', 'border');
+      });
+      event.target.classList.remove('bg-white/70');
+      event.target.classList.add('gold-btn', 'active');
+      renderProducts();
+    }
+
+    function handleSearch(val) {
+      currentSearch = val;
+      renderProducts();
+    }
+
+    // Cart Management & 10-Minute Lock
+    function toggleCartItem(barcode) {
+      const existing = cart.find(i => i.barcode === barcode);
+      if (existing) {
+        cart = cart.filter(i => i.barcode !== barcode);
+        showToast('Cart Lock Released', `Piece ${barcode} is no longer reserved.`);
+      } else {
+        const piece = inventoryPieces.find(p => p.barcode === barcode);
+        if (piece) {
+          cart.push(piece);
+          showToast(`Vault Reserved: ${piece.brandName}`, '10-Minute lock registered in cart_reservations table.');
+          startCartTimer();
+        }
+      }
+      updateCartUI();
+      renderProducts();
+    }
+
+    function updateCartUI() {
+      document.getElementById('cart-count-badge').innerText = cart.length;
+      document.getElementById('stat-locks').innerText = `${cart.length} Reserved`;
+
+      const container = document.getElementById('cart-items-container');
+      const checkoutBtn = document.getElementById('btn-proceed-checkout');
+
+      if (cart.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-12 text-[#8F6822] text-xs font-mono">
+            Your Vault Cart is empty.<br />Click "+ Add to Cart" to lock a 1-of-1 piece!
+          </div>
+        `;
+        document.getElementById('cart-subtotal').innerText = 'AED 0.00';
+        document.getElementById('cart-delivery').innerText = 'AED 0.00';
+        document.getElementById('cart-total').innerText = 'AED 0.00';
+        checkoutBtn.disabled = true;
+        return;
+      }
+
+      container.innerHTML = cart.map(item => `
+        <div class="p-3 rounded-2xl bg-white border border-[#DFC78E] flex items-center justify-between gap-3 shadow-xs">
+          <img src="${item.frontImageUrl}" alt="" class="w-14 h-14 rounded-xl object-cover border border-[#DFC78E]" />
+          <div class="flex-1 min-w-0">
+            <h4 class="font-cinzel text-xs font-bold text-[#2A2315] truncate">${item.itemName}</h4>
+            <p class="text-[10px] font-mono text-[#7A5616]">${item.barcode} • Size ${item.sizeScanned}</p>
+            <span class="text-xs font-black text-[#8F6822]">AED ${item.retailPriceAed.toLocaleString()}</span>
+          </div>
+          <button onclick="toggleCartItem('${item.barcode}')" class="text-red-600 hover:text-red-800 text-xs font-mono p-1">✕</button>
+        </div>
+      `).join('');
+
+      const subtotal = cart.reduce((s, i) => s + i.retailPriceAed, 0);
+      const delivery = subtotal >= 350 ? 0 : 25;
+      const total = subtotal + delivery;
+
+      document.getElementById('cart-subtotal').innerText = `AED ${subtotal.toLocaleString()}`;
+      document.getElementById('cart-delivery').innerText = delivery === 0 ? 'FREE (UAE Express)' : `AED ${delivery.toFixed(2)}`;
+      document.getElementById('cart-total').innerText = `AED ${total.toLocaleString()}`;
+      document.getElementById('modal-checkout-total').innerText = `AED ${total.toLocaleString()}`;
+      checkoutBtn.disabled = false;
+    }
+
+    function toggleCartDrawer() {
+      const drawer = document.getElementById('cart-drawer');
+      drawer.classList.toggle('translate-x-full');
+    }
+
+    function startCartTimer() {
+      if (timerInterval) clearInterval(timerInterval);
+      cartSecondsRemaining = 600;
+      timerInterval = setInterval(() => {
+        if (cartSecondsRemaining <= 0) {
+          clearInterval(timerInterval);
+          cart = [];
+          updateCartUI();
+          renderProducts();
+          showToast('10-Minute Lock Expired', 'Vault pieces have returned to available public stock.');
+          return;
+        }
+        cartSecondsRemaining--;
+        const mins = String(Math.floor(cartSecondsRemaining / 60)).padStart(2, '0');
+        const secs = String(cartSecondsRemaining % 60).padStart(2, '0');
+        const timerEl = document.getElementById('cart-timer');
+        if (timerEl) timerEl.innerText = `${mins}:${secs}`;
+      }, 1000);
+    }
+
+    // Checkout Modal
+    function openCheckoutModal() {
+      toggleCartDrawer();
+      document.getElementById('checkout-modal').classList.remove('hidden');
+    }
+
+    function closeCheckoutModal() {
+      document.getElementById('checkout-modal').classList.add('hidden');
+    }
+
+    function handleExecuteCheckout(e) {
+      e.preventDefault();
+      const name = document.getElementById('cust-name').value;
+      const phone = document.getElementById('cust-phone').value;
+      const address = document.getElementById('cust-address').value;
+      const city = document.getElementById('cust-city').value;
+      const paymethod = document.querySelector('input[name="paymethod"]:checked')?.value || 'COD';
+
+      const orderNumber = 'ORD-' + Math.floor(100000 + Math.random() * 900000);
+      const invoiceNo = 'SINV-' + Math.floor(100000 + Math.random() * 900000);
+
+      // Mark pieces sold in local state
+      cart.forEach(c => {
+        const found = inventoryPieces.find(p => p.barcode === c.barcode);
+        if (found) found.isSold = true;
+      });
+
+      const totalAmount = cart.reduce((s, i) => s + i.retailPriceAed, 0) + (cart.reduce((s, i) => s + i.retailPriceAed, 0) >= 350 ? 0 : 25);
+      const itemsPurchased = [...cart];
+      cart = [];
+      updateCartUI();
+      renderProducts();
+      closeCheckoutModal();
+
+      document.getElementById('stat-orders').innerText = '2 Confirmed';
+      document.getElementById('stat-inventory').innerText = `${inventoryPieces.filter(p => !p.isSold).length} Pieces`;
+
+      showToast(`Order Confirmed: #${orderNumber}!`, `ERP Invoice ${invoiceNo} generated. Opening WhatsApp confirmation...`);
+
+      // Open pre-filled WhatsApp confirmation receipt
+      const itemsList = itemsPurchased.map(i => `• ${i.itemName} (${i.sizeScanned}) [${i.barcode}] - AED ${i.retailPriceAed}`).join('\n');
+      const waText = encodeURIComponent(
+        `*Vintage Vibes Dubai - Order Confirmation*\n` +
+        `Order Ref: *#${orderNumber}*\n` +
+        `Customer: ${name}\n` +
+        `Phone: ${phone}\n` +
+        `Address: ${address}, ${city}\n\n` +
+        `*Items:*\n${itemsList}\n\n` +
+        `*Total Payable:* AED ${totalAmount.toLocaleString()} (${paymethod})\n\n` +
+        `Thank you for shopping authentic vintage!`
+      );
+      setTimeout(() => {
+        window.open(`https://wa.me/971508839120?text=${waText}`, '_blank');
+      }, 800);
+    }
+
+    // Bounty Modal
+    function openBountyModal() {
+      document.getElementById('bounty-modal').classList.remove('hidden');
+    }
+    function closeBountyModal() {
+      document.getElementById('bounty-modal').classList.add('hidden');
+    }
+    function handleExecuteBounty(e) {
+      e.preventDefault();
+      const brand = document.getElementById('bounty-brand').value;
+      const phone = document.getElementById('bounty-phone').value;
+      closeBountyModal();
+      document.getElementById('stat-bounties').innerText = '2 Searching';
+      showToast('🎯 Grail Bounty Registered', `We will notify ${phone} as soon as ${brand} is scanned in a bale.`);
+    }
+
+    // Inspector Modal
+    function openInspector(barcode) {
+      const piece = inventoryPieces.find(p => p.barcode === barcode);
+      if (!piece) return;
+      activeInspectorPiece = piece;
+      inspectorAngle = 'FRONT';
+      document.getElementById('insp-title').innerText = piece.itemName;
+      document.getElementById('insp-sub').innerText = `${piece.brandName} • SKU: ${piece.barcode}`;
+      document.getElementById('insp-img').src = piece.frontImageUrl;
+      document.getElementById('insp-pit').innerText = piece.pitToPitInches ? `${piece.pitToPitInches}"` : 'N/A';
+      document.getElementById('insp-len').innerText = piece.lengthInches ? `${piece.lengthInches}"` : 'N/A';
+      document.getElementById('insp-size').innerText = piece.sizeScanned;
+      document.getElementById('insp-wt').innerText = `${piece.weightKg} KG`;
+      document.getElementById('insp-origin').innerText = piece.countryOfOrigin;
+      document.getElementById('insp-style').innerText = piece.style;
+      document.getElementById('insp-grade').innerText = piece.labelGrade;
+      document.getElementById('insp-tier').innerText = piece.brandTier;
+      document.getElementById('insp-price').innerText = `AED ${piece.retailPriceAed.toLocaleString()}`;
+
+      document.getElementById('inspector-modal').classList.remove('hidden');
+    }
+    function closeInspectorModal() {
+      document.getElementById('inspector-modal').classList.add('hidden');
+    }
+    function setInspectorAngle(angle) {
+      if (!activeInspectorPiece) return;
+      inspectorAngle = angle;
+      const img = document.getElementById('insp-img');
+      ['btn-ang-front', 'btn-ang-back', 'btn-ang-label'].forEach(id => {
+        document.getElementById(id).className = 'px-3 py-1.5 rounded-lg bg-white border border-[#DFC78E] text-xs font-bold text-[#543E12]';
+      });
+      if (angle === 'FRONT') {
+        img.src = activeInspectorPiece.frontImageUrl;
+        document.getElementById('btn-ang-front').className = 'px-3 py-1.5 rounded-lg gold-btn text-xs font-bold';
+      } else if (angle === 'BACK') {
+        img.src = activeInspectorPiece.backImageUrl;
+        document.getElementById('btn-ang-back').className = 'px-3 py-1.5 rounded-lg gold-btn text-xs font-bold';
+      } else {
+        img.src = activeInspectorPiece.frontImageUrl;
+        document.getElementById('btn-ang-label').className = 'px-3 py-1.5 rounded-lg gold-btn text-xs font-bold';
+      }
+    }
+    function handleAddToCartFromInspector() {
+      if (activeInspectorPiece) {
+        toggleCartItem(activeInspectorPiece.barcode);
+        closeInspectorModal();
+        toggleCartDrawer();
+      }
+    }
+
+    // Toast
+    function showToast(title, sub) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toast-title').innerText = title;
+      document.getElementById('toast-sub').innerText = sub;
+      toast.classList.remove('translate-y-24', 'opacity-0');
+      setTimeout(() => {
+        toast.classList.add('translate-y-24', 'opacity-0');
+      }, 4000);
+    }
+
+    // SQL Modal Tabs
+    function toggleSqlModal() {
+      const m = document.getElementById('sql-modal');
+      m.classList.toggle('hidden');
+      if (!m.classList.contains('hidden')) {
+        switchSqlTab('inventory');
+      }
+    }
+
+    function switchSqlTab(tab) {
+      const content = document.getElementById('sql-tab-content');
+      ['inventory', 'orders', 'cart', 'bounties'].forEach(t => {
+        const btn = document.getElementById(`sqltab-${t}`);
+        if (t === tab) {
+          btn.className = 'px-3 py-1.5 rounded-lg bg-amber-500 text-black font-bold';
+        } else {
+          btn.className = 'px-3 py-1.5 rounded-lg bg-amber-950 hover:bg-amber-900 border border-amber-700/50 text-amber-300';
+        }
+      });
+
+      if (tab === 'inventory') {
+        content.innerText = 
+`-- Query: SELECT barcode, item_name, retail_price_aed, is_sold, status FROM inventory_pieces;
+-- Active Rows in PostgreSQL: 12 in-stock pieces
+
+[
+  {
+    "barcode": "VV-9842",
+    "item_name": "1994 Nirvana In Utero Promo Grail Tee",
+    "brand_name": "Nirvana",
+    "retail_price_aed": 3850.00,
+    "size_scanned": "L (Boxy)",
+    "country_of_origin": "Made in USA",
+    "is_sold": false,
+    "status": "IN_STOCK"
+  },
+  {
+    "barcode": "VV-9841",
+    "item_name": "1989 Carhartt Detroit Duck Brown J97 Jacket",
+    "brand_name": "Carhartt",
+    "retail_price_aed": 1450.00,
+    "size_scanned": "XL (Boxy)",
+    "country_of_origin": "Made in USA",
+    "is_sold": false,
+    "status": "IN_STOCK"
+  },
+  {
+    "barcode": "VV-9840",
+    "item_name": "1996 Chicago Bulls 72-10 Varsity Bomber",
+    "brand_name": "Chicago Bulls",
+    "retail_price_aed": 2900.00,
+    "size_scanned": "L",
+    "country_of_origin": "Made in USA",
+    "is_sold": false,
+    "status": "IN_STOCK"
+  }
+  -- ... 9 more authentic pieces in active SQL table
+]`;
+      } else if (tab === 'orders') {
+        content.innerText =
+`-- Query: SELECT order_number, customer_name, total_amount, payment_method, order_status, created_at FROM orders;
+-- Recent Confirmed Orders:
+
+[
+  {
+    "order_number": "ORD-584391",
+    "customer_name": "Humaid Al Shamsi",
+    "customer_phone": "+971509876543",
+    "customer_address": "Villa 14, Al Jimi, Al Ain",
+    "subtotal": 320.00,
+    "delivery_fee": 25.00,
+    "total_amount": 345.00,
+    "currency": "AED",
+    "payment_method": "COD",
+    "payment_status": "PENDING",
+    "order_status": "CONFIRMED",
+    "source": "STOREFRONT",
+    "items": [
+      {
+        "barcode": "VV-9832",
+        "description": "Vintage Al Neyadi Signature Strapback Cap",
+        "unitPrice": 320.00
+      }
+    ]
+  }
+]`;
+      } else if (tab === 'cart') {
+        content.innerText =
+`-- Query: SELECT barcode, session_id, expires_at, is_active FROM cart_reservations WHERE is_active = true;
+-- Cart 10-Minute Vault Locks:
+
+${cart.length > 0 ? JSON.stringify(cart.map(c => ({
+  barcode: c.barcode,
+  piece_title: c.itemName,
+  price_aed: c.retailPriceAed,
+  session_id: 'session-collector-dxb',
+  expires_at: new Date(Date.now() + cartSecondsRemaining * 1000).toISOString(),
+  is_active: true
+})), null, 2) : '-- No active cart locks held at this moment.'}`;
+      } else if (tab === 'bounties') {
+        content.innerText =
+`-- Query: SELECT desired_brand, customer_name, customer_phone, max_budget_aed, status FROM grail_bounties;
+-- Customer Wishlist Grails:
+
+[
+  {
+    "desired_brand": "Carhartt",
+    "desired_category": "Jackets",
+    "desired_size": "XL",
+    "max_budget_aed": 1600.00,
+    "customer_name": "Sultan Al Falasi",
+    "customer_phone": "+971501112233",
+    "status": "SEARCHING",
+    "notes": "Looking for Detroit J97 Moss or Duck Brown in good fade"
+  }
+]`;
+      }
+    }
+
+    // Initial render
+    renderProducts();
+  </script>
+</body>
+</html>

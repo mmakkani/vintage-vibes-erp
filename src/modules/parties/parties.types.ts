@@ -38,4 +38,10 @@ export interface Party {
   coaAccountId?: string;
   coa_account_id?: string;
   createdAt: string;
+  purchaseInvoicesCount?: number;
+  salesInvoicesCount?: number;
+  khataLogsCount?: number;
+  glEntriesCount?: number;
+  totalEntriesCount?: number;
+  hasEntries?: boolean;
 }
