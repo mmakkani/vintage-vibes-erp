@@ -37,22 +37,15 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
 
   // Find Bank and Cash accounts from COA
   const bankAccounts = useMemo(() => {
-    const list = accounts.filter(a => a.code?.startsWith('111') || a.code?.startsWith('112') || a.sub_type?.includes('Bank') || a.sub_type?.includes('Cash'));
-    if (list.length > 0) return list;
-    return [
-      { id: 'acc-1120', code: '1120-00', name: 'Primary Bank Account (Current Account)' },
-      { id: 'acc-1110', code: '1110-00', name: 'Cash in Hand (Counter 1 POS Drawer)' }
-    ];
+    return accounts.filter(a => a.code?.startsWith('111') || a.code?.startsWith('112') || a.sub_type?.includes('Bank') || a.sub_type?.includes('Cash') || a.name?.toLowerCase().includes('bank') || a.name?.toLowerCase().includes('cash'));
   }, [accounts]);
 
   // Find Courier COD Clearing account from COA (1128-00)
   const codClearingAccount = useMemo(() => {
-    const acc = accounts.find(a => a.code === '1128-00' || a.name?.toLowerCase().includes('cod clearing'));
-    if (acc) return acc;
-    return { id: 'acc-1128', code: '1128-00', name: 'Courier COD Clearing (Pending Remittance - Aramex / iMile / TCS)' };
+    return accounts.find(a => a.code === '1128-00' || a.name?.toLowerCase().includes('cod clearing')) || null;
   }, [accounts]);
 
-  const [settlementBankId, setSettlementBankId] = useState<string>(() => bankAccounts[0]?.id || 'acc-1120');
+  const [settlementBankId, setSettlementBankId] = useState<string>(() => bankAccounts[0]?.id || '');
   const [remittanceRef, setRemittanceRef] = useState<string>(`REMIT-DHL-${new Date().toISOString().slice(0, 10)}`);
   const [processing, setProcessing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -158,6 +151,11 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
       setProcessing(true);
 
       const chosenBank = bankAccounts.find(b => b.id === settlementBankId) || bankAccounts[0];
+      if (!chosenBank || !codClearingAccount) {
+        setStatusMessage({ text: 'Settlement Bank Account or Courier COD Clearing Account not found in Chart of Accounts. Please create them first.', type: 'error' });
+        setProcessing(false);
+        return;
+      }
 
       // Create a double-entry Voucher:
       // DEBIT: Bank Checking (1120-00) -> Cash inflow

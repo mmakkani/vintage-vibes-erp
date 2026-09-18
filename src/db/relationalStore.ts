@@ -299,7 +299,12 @@ class RelationalStore {
       if (Array.isArray(data.shopMasters)) this.shopMasters = data.shopMasters;
       if (Array.isArray(data.categories)) this.categories = data.categories;
       if (Array.isArray(data.sizes)) this.sizes = data.sizes;
-      if (Array.isArray(data.coaAccounts)) this.coaAccounts = data.coaAccounts;
+      if (Array.isArray(data.coaAccounts)) {
+        const rootCodes = new Set(['1000-00', '2000-00', '3000-00', '4000-00', '5000-00']);
+        const legacyMockIds = new Set(['acc-1110', 'acc-1115', 'acc-1120', 'acc-1125', 'acc-1128', 'acc-1130', 'acc-1135', 'acc-1140', 'acc-1150', 'acc-1160', 'acc-1210', 'acc-1220', 'acc-2110', 'acc-2120', 'acc-2140', 'acc-2150', 'acc-2310', 'acc-2410', 'acc-3110', 'acc-3210', 'acc-3310', 'acc-4110', 'acc-4120', 'acc-4130', 'acc-4140', 'acc-4210', 'acc-4310', 'acc-5110', 'acc-5120', 'acc-5210', 'acc-5220', 'acc-5230', 'acc-5240', 'acc-5250', 'acc-5310', 'acc-5410', 'acc-5420', 'acc-5510']);
+        this.coaAccounts = data.coaAccounts.filter((a: any) => rootCodes.has(a.code) || !legacyMockIds.has(a.id));
+      }
+      this.ensureStandardCOAAccounts();
       if (Array.isArray(data.vouchers)) this.vouchers = data.vouchers;
       if (Array.isArray(data.ledgers)) this.ledgers = data.ledgers;
       if (Array.isArray(data.budgets)) this.budgets = data.budgets;
@@ -648,7 +653,7 @@ class RelationalStore {
    * live streaming sales, walk-in POS counter sales, bank & clearing accounts, and essential expenses.
    */
   public ensureStandardCOAAccounts(): void {
-    const defaultStandardAccounts: Array<{
+    const defaultRootAccounts: Array<{
       id: string;
       code: string;
       name: string;
@@ -661,59 +666,17 @@ class RelationalStore {
     }> = [
       // 1000 - ASSETS
       { id: 'acc-1000', code: '1000-00', name: 'Assets', classification: 'ASSET', tierLevel: 1, parentCode: '', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-1110', code: '1110-00', name: 'Cash in Hand (Counter 1 POS Drawer)', classification: 'ASSET', tierLevel: 2, parentCode: '1000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-1115', code: '1115-00', name: 'Cash in Vault (Main Safe Reserve)', classification: 'ASSET', tierLevel: 2, parentCode: '1000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-1120', code: '1120-00', name: 'Primary Bank Account (Current Account)', classification: 'ASSET', tierLevel: 2, parentCode: '1000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-1125', code: '1125-00', name: 'POS Terminal Card Clearing (Sunmi / PAX PED)', classification: 'ASSET', tierLevel: 2, parentCode: '1000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-1128', code: '1128-00', name: 'Courier COD Clearing (Pending Remittance - Aramex / iMile / TCS)', classification: 'ASSET', tierLevel: 2, parentCode: '1000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-1130', code: '1130-00', name: 'Accounts Receivable (Trade & Live Stream Claimants)', classification: 'ASSET', tierLevel: 2, parentCode: '1000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-1135', code: '1135-00', name: 'Staff Advance & Loan Receivables', classification: 'ASSET', tierLevel: 2, parentCode: '1000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-1140', code: '1140-00', name: 'Inventory - Raw Bulk Bales (Unopened Sacks & Containers)', classification: 'ASSET', tierLevel: 2, parentCode: '1000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-1150', code: '1150-00', name: 'Inventory - Sorting Work-in-Progress (WIP Bales Under Grading)', classification: 'ASSET', tierLevel: 2, parentCode: '1000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-1160', code: '1160-00', name: 'Inventory - Sorted & Tagged Garments (Retail & Live Stream Ready)', classification: 'ASSET', tierLevel: 2, parentCode: '1000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-1210', code: '1210-00', name: 'Security Deposits (Store & Warehouse Leases)', classification: 'ASSET', tierLevel: 2, parentCode: '1000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-1220', code: '1220-00', name: 'Warehouse, Steaming & Sorting Equipment', classification: 'ASSET', tierLevel: 2, parentCode: '1000-00', currency: 'AED', isSystem: true, isActive: true },
-
       // 2000 - LIABILITIES
       { id: 'acc-2000', code: '2000-00', name: 'Liabilities', classification: 'LIABILITY', tierLevel: 1, parentCode: '', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-2110', code: '2110-00', name: 'Accounts Payable - Trade Suppliers (Bale Exporters)', classification: 'LIABILITY', tierLevel: 2, parentCode: '2000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-2120', code: '2120-00', name: 'Accounts Payable - Courier & Logistics Partners', classification: 'LIABILITY', tierLevel: 2, parentCode: '2000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-2140', code: '2140-00', name: 'UAE VAT Output Tax Payable (5% FTA)', classification: 'LIABILITY', tierLevel: 2, parentCode: '2000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-2150', code: '2150-00', name: 'UAE VAT Input Tax Recoverable (5% FTA)', classification: 'LIABILITY', tierLevel: 2, parentCode: '2000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-2310', code: '2310-00', name: 'Accrued Staff Payroll & End-of-Service Gratuity', classification: 'LIABILITY', tierLevel: 2, parentCode: '2000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-2410', code: '2410-00', name: 'Provision for UAE Corporate Tax (9% FTA)', classification: 'LIABILITY', tierLevel: 2, parentCode: '2000-00', currency: 'AED', isSystem: true, isActive: true },
-
       // 3000 - EQUITY
       { id: 'acc-3000', code: '3000-00', name: 'Equity', classification: 'EQUITY', tierLevel: 1, parentCode: '', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-3110', code: '3110-00', name: 'Owner / Partner Capital', classification: 'EQUITY', tierLevel: 2, parentCode: '3000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-3210', code: '3210-00', name: 'Retained Earnings / Accumulated Profit & Loss', classification: 'EQUITY', tierLevel: 2, parentCode: '3000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-3310', code: '3310-00', name: 'Current Year Net Profit / (Loss)', classification: 'EQUITY', tierLevel: 2, parentCode: '3000-00', currency: 'AED', isSystem: true, isActive: true },
-
       // 4000 - REVENUE
       { id: 'acc-4000', code: '4000-00', name: 'Revenue', classification: 'REVENUE', tierLevel: 1, parentCode: '', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-4110', code: '4110-00', name: 'Walk-in Counter POS Sales Revenue', classification: 'REVENUE', tierLevel: 2, parentCode: '4000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-4120', code: '4120-00', name: 'Live Streaming Sales Revenue (TikTok / IG / FB Drops)', classification: 'REVENUE', tierLevel: 2, parentCode: '4000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-4130', code: '4130-00', name: 'E-Commerce & Online Storefront Sales Revenue', classification: 'REVENUE', tierLevel: 2, parentCode: '4000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-4140', code: '4140-00', name: 'Wholesale B2B Bulk Sales Revenue', classification: 'REVENUE', tierLevel: 2, parentCode: '4000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-4210', code: '4210-00', name: 'Luxury Packaging & Gift Box Revenue', classification: 'REVENUE', tierLevel: 2, parentCode: '4000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-4310', code: '4310-00', name: 'Delivery & Shipping Fee Revenue', classification: 'REVENUE', tierLevel: 2, parentCode: '4000-00', currency: 'AED', isSystem: true, isActive: true },
-
       // 5000 - EXPENSES
-      { id: 'acc-5000', code: '5000-00', name: 'Expenses', classification: 'EXPENSE', tierLevel: 1, parentCode: '', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-5110', code: '5110-00', name: 'Cost of Goods Sold (COGS) - Finished Garments', classification: 'EXPENSE', tierLevel: 2, parentCode: '5000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-5120', code: '5120-00', name: 'Cost of Goods Sold (COGS) - Bulk Bales Sold', classification: 'EXPENSE', tierLevel: 2, parentCode: '5000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-5210', code: '5210-00', name: 'Ocean Freight & International Container Shipping', classification: 'EXPENSE', tierLevel: 2, parentCode: '5000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-5220', code: '5220-00', name: 'Customs Duty & Dubai Port Clearance Charges', classification: 'EXPENSE', tierLevel: 2, parentCode: '5000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-5230', code: '5230-00', name: 'Bale Sorting, Grading & Steaming Direct Labor', classification: 'EXPENSE', tierLevel: 2, parentCode: '5000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-5240', code: '5240-00', name: 'Courier Delivery & Last-Mile Shipping Expense', classification: 'EXPENSE', tierLevel: 2, parentCode: '5000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-5250', code: '5250-00', name: 'Packaging Supplies, Hang-Tags & Barcode Labels', classification: 'EXPENSE', tierLevel: 2, parentCode: '5000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-5310', code: '5310-00', name: 'Staff Salaries, Live Host Commissions & Overtime', classification: 'EXPENSE', tierLevel: 2, parentCode: '5000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-5410', code: '5410-00', name: 'Warehouse Rent, Retail Store Lease & Utilities (DEWA)', classification: 'EXPENSE', tierLevel: 2, parentCode: '5000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-5420', code: '5420-00', name: 'Payment Gateway & POS Card Terminal Fees (2%)', classification: 'EXPENSE', tierLevel: 2, parentCode: '5000-00', currency: 'AED', isSystem: true, isActive: true },
-      { id: 'acc-5510', code: '5510-00', name: 'UAE Corporate Tax Provision Expense', classification: 'EXPENSE', tierLevel: 2, parentCode: '5000-00', currency: 'AED', isSystem: true, isActive: true }
+      { id: 'acc-5000', code: '5000-00', name: 'Expenses', classification: 'EXPENSE', tierLevel: 1, parentCode: '', currency: 'AED', isSystem: true, isActive: true }
     ];
 
-    for (const def of defaultStandardAccounts) {
+    for (const def of defaultRootAccounts) {
       const existing = this.coaAccounts.find(a => a.code === def.code || a.id === def.id);
       if (!existing) {
         this.coaAccounts.push({
@@ -728,13 +691,6 @@ class RelationalStore {
           isSystem: def.isSystem,
           isActive: def.isActive
         });
-      } else {
-        if (def.code === '1140-00' && existing.name.includes('Finished Garments & Bales')) {
-          existing.name = def.name;
-        }
-        if (!existing.parentCode && def.parentCode) {
-          existing.parentCode = def.parentCode;
-        }
       }
     }
 
@@ -747,7 +703,7 @@ class RelationalStore {
    * into the Chart of Accounts (COA) under Assets (1000-00)
    */
   public syncBankAndPOSToCOA(): void {
-    // 0. Ensure all standard accounts across 5 pillars exist
+    // 0. Ensure root 5 pillars exist
     this.ensureStandardCOAAccounts();
 
     // 1. Ensure master Assets folder 1000-00 exists
@@ -765,46 +721,6 @@ class RelationalStore {
         isActive: true
       };
       this.coaAccounts.unshift(assetFolder);
-    }
-
-    // 2. Ensure Cash in Hand 1110-00 exists
-    let cashAcc = this.coaAccounts.find(a => a.code === '1110-00' || a.code.startsWith('1110'));
-    if (!cashAcc) {
-      cashAcc = {
-        id: 'acc-1110',
-        code: '1110-00',
-        name: 'Cash in Hand (Counter 1 Drawer)',
-        classification: 'ASSET',
-        tierLevel: 2,
-        parentCode: '1000-00',
-        currency: 'AED',
-        currentBalance: 0,
-        isSystem: true,
-        isActive: true
-      };
-      this.coaAccounts.push(cashAcc);
-    }
-
-    // 3. Ensure POS Card Terminal Clearing 1125-00 exists and has machine label
-    const posConfig = this.companyProfile.posTerminalConfig;
-    const termLabel = posConfig?.terminalName || posConfig?.model || 'Smart PED Machine';
-    let posAcc = this.coaAccounts.find(a => a.code === '1125-00' || a.code.startsWith('1125'));
-    if (!posAcc) {
-      posAcc = {
-        id: 'acc-1125',
-        code: '1125-00',
-        name: `POS Terminal Card Clearing (${termLabel})`,
-        classification: 'ASSET',
-        tierLevel: 2,
-        parentCode: '1000-00',
-        currency: 'AED',
-        currentBalance: 0,
-        isSystem: true,
-        isActive: true
-      };
-      this.coaAccounts.push(posAcc);
-    } else {
-      posAcc.name = `POS Terminal Card Clearing (${termLabel})`;
     }
 
     // 4. Normalize & Sync Bank Accounts

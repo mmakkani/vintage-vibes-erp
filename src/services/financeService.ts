@@ -5,7 +5,6 @@ export class FinanceService {
   private static cachedCoaAccounts: COAAccount[] | null = null;
   private static coaAccountsPromise: Promise<COAAccount[]> | null = null;
   private static lastCoaFetched: number = 0;
-  private static readonly COA_TTL_MS = 5 * 60 * 1000; // 5 mins cache
 
   public static clearCoaCache(): void {
     this.cachedCoaAccounts = null;
@@ -27,7 +26,8 @@ export class FinanceService {
 
   // --- Chart of Accounts (COA) ---
   public static async getCoaAccounts(forceRefresh: boolean = false): Promise<COAAccount[]> {
-    if (!forceRefresh && this.cachedCoaAccounts && (Date.now() - this.lastCoaFetched < this.COA_TTL_MS)) {
+    // If not forcing refresh, check short-lived cache (1 second to prevent duplicate parallel calls during single render)
+    if (!forceRefresh && this.cachedCoaAccounts && (Date.now() - this.lastCoaFetched < 1000)) {
       return this.cachedCoaAccounts;
     }
     if (this.coaAccountsPromise) {
@@ -36,14 +36,14 @@ export class FinanceService {
 
     this.coaAccountsPromise = (async () => {
       try {
-        // 1. Primary route: Query Express backend directly connected to PostgreSQL chart_of_accounts
+        // 1. Primary route: Query Express backend connected directly to PostgreSQL accounts table
         if (typeof window !== 'undefined') {
           try {
             const rawFetch = (window as any).__originalFetch || window.fetch;
             const apiRes = await rawFetch('/api/finance/coa?_t=' + Date.now());
             if (apiRes && apiRes.ok) {
               const apiData = await apiRes.json();
-              if (Array.isArray(apiData) && apiData.length > 0) {
+              if (Array.isArray(apiData)) {
                 this.cachedCoaAccounts = apiData;
                 this.lastCoaFetched = Date.now();
                 return apiData;
@@ -52,65 +52,66 @@ export class FinanceService {
           } catch (_) {}
         }
 
-        // 2. Secondary fallback: Query Supabase database tables directly
-        let rows: any[] = [];
-        let querySucceeded = false;
-
-        // Try 'chart_of_accounts' first (verified primary table)
+        // 2. Secondary fallback: Direct Supabase query to PostgreSQL 'accounts' table
         try {
-          const { data: coaData, error: coaErr } = await supabase
-            .from('chart_of_accounts')
-            .select('*')
-            .order('code', { ascending: true });
-          if (!coaErr && Array.isArray(coaData) && coaData.length > 0) {
-            rows = coaData;
-            querySucceeded = true;
+          const { data: accData, error: accErr } = await supabase
+            .from('accounts')
+            .select(`
+              account_id,
+              account_code,
+              account_name,
+              account_type_id,
+              parent_id,
+              is_active,
+              is_transactional,
+              account_level,
+              account_types (
+                type_name
+              )
+            `)
+            .order('account_code', { ascending: true });
+
+          if (!accErr && Array.isArray(accData)) {
+            const mapped = accData.map((row: any) => {
+              const typeName = row.account_types?.type_name || 'Asset';
+              const normType = typeName.toUpperCase() === 'INCOME' ? 'REVENUE' : typeName.toUpperCase();
+              const tierLevel = row.account_level || 1;
+
+              return {
+                id: String(row.account_id),
+                code: row.account_code,
+                name: row.account_name,
+                type: normType,
+                classification: normType as any,
+                account_type: normType,
+                subType: '',
+                sub_type: '',
+                currency: 'AED',
+                currentBalance: 0,
+                current_balance: 0,
+                isActive: Boolean(row.is_active),
+                is_active: Boolean(row.is_active),
+                parentId: row.parent_id ? String(row.parent_id) : null,
+                parent_id: row.parent_id ? String(row.parent_id) : null,
+                parentCode: '',
+                parent_code: '',
+                tierLevel,
+                tier_level: tierLevel,
+                isTransactional: Boolean(row.is_transactional),
+                is_transactional: Boolean(row.is_transactional),
+                isSystem: tierLevel === 1,
+                createdAt: new Date().toISOString(),
+                created_at: new Date().toISOString()
+              };
+            });
+
+            this.cachedCoaAccounts = mapped;
+            this.lastCoaFetched = Date.now();
+            return mapped;
           }
         } catch (_) {}
 
-        if (querySucceeded) {
-          const mapped = rows.map((row: any) => {
-            const rawType = (row.account_type || row.type || 'ASSET').toUpperCase();
-            const normalizedType = rawType === 'INCOME' ? 'REVENUE' : rawType;
-            const codeStr = row.code || '';
-            const isMaster = codeStr === '1000-00' || codeStr === '2000-00' || codeStr === '3000-00' || codeStr === '4000-00' || codeStr === '5000-00' || !codeStr.includes('-');
-            const isSub = codeStr.endsWith('-00') && !isMaster;
-            const tierLevel = isMaster ? 1 : (isSub ? 2 : 3);
-
-            return {
-              id: row.id,
-              code: row.code,
-              name: row.name,
-              type: normalizedType,
-              classification: normalizedType as any,
-              account_type: rawType,
-              subType: row.sub_type || '',
-              sub_type: row.sub_type || '',
-              currency: row.currency || 'AED',
-              currentBalance: Number(row.current_balance ?? 0),
-              current_balance: Number(row.current_balance ?? 0),
-              isActive: true,
-              is_active: true,
-              parentId: row.parent_id || null,
-              parent_id: row.parent_id || null,
-              partyId: row.party_id,
-              party_id: row.party_id,
-              tierLevel,
-              tier_level: tierLevel,
-              parentCode: row.parent_code || '',
-              parent_code: row.parent_code || '',
-              isSystem: Boolean(row.is_system),
-              createdAt: row.created_at,
-              created_at: row.created_at
-            };
-          });
-
-          this.cachedCoaAccounts = mapped;
-          this.lastCoaFetched = Date.now();
-          return mapped;
-        }
-
-        return this.cachedCoaAccounts || [];
+        return [];
       } finally {
         this.coaAccountsPromise = null;
       }
@@ -133,7 +134,7 @@ export class FinanceService {
         });
         if (res && res.ok) {
           const created = await res.json();
-          if (created && created.id) {
+          if (created && (created.id || created.code)) {
             this.clearCoaCache();
             return created;
           }
@@ -143,60 +144,88 @@ export class FinanceService {
       }
     }
 
-    // 2. Direct Supabase insert into chart_of_accounts
-    const rawType = (acc.account_type || acc.type || acc.classification || 'ASSET').toUpperCase();
-    const account_type = rawType === 'REVENUE' ? 'INCOME' : rawType;
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const parent_id = (acc.parent_id && uuidRegex.test(acc.parent_id)) ? acc.parent_id : (acc.parentId && uuidRegex.test(acc.parentId) ? acc.parentId : null);
-
-    const payload: any = {
-      code: acc.code?.trim(),
-      name: acc.name?.trim(),
-      account_type,
-      parent_id,
-      current_balance: Number(acc.current_balance ?? acc.currentBalance ?? 0)
+    // 2. Direct Supabase insert into 'accounts' table
+    const rawType = (acc.classification || acc.type || acc.account_type || 'ASSET').toUpperCase();
+    const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
+    const typeMap: Record<string, number> = {
+      ASSET: 1,
+      LIABILITY: 2,
+      EQUITY: 3,
+      REVENUE: 4,
+      EXPENSE: 5
     };
-    if (acc.id && uuidRegex.test(acc.id)) {
-      payload.id = acc.id;
+    const account_type_id = typeMap[normType] || 1;
+
+    let parent_id: number | null = null;
+    if (acc.parent_id && !isNaN(Number(acc.parent_id))) {
+      parent_id = Number(acc.parent_id);
+    } else if (acc.parentId && !isNaN(Number(acc.parentId))) {
+      parent_id = Number(acc.parentId);
     }
 
+    const tierLevel = Number(acc.tierLevel || acc.tier_level || (parent_id ? 2 : 1));
+
+    const payload: any = {
+      account_code: (acc.code || '').trim(),
+      account_name: (acc.name || '').trim(),
+      account_type_id,
+      parent_id,
+      account_level: tierLevel,
+      is_transactional: acc.is_active !== false && tierLevel > 1,
+      is_active: acc.isActive !== false && acc.is_active !== false
+    };
+
     const { data, error } = await supabase
-      .from('chart_of_accounts')
+      .from('accounts')
       .insert(payload)
-      .select()
+      .select(`
+        account_id,
+        account_code,
+        account_name,
+        account_type_id,
+        parent_id,
+        is_active,
+        is_transactional,
+        account_level,
+        account_types (
+          type_name
+        )
+      `)
       .single();
 
     if (error) {
-      console.error('Supabase error on chart_of_accounts:', error);
+      console.error('Supabase error on accounts table:', error);
       throw new Error(error.message || 'Failed to add COA Account');
     }
 
-    const normType = data.account_type === 'INCOME' ? 'REVENUE' : (data.account_type || 'ASSET');
-    const codeStr = data.code || '';
-    const isMaster = codeStr === '1000-00' || codeStr === '2000-00' || codeStr === '3000-00' || codeStr === '4000-00' || codeStr === '5000-00' || !codeStr.includes('-');
-    const isSub = codeStr.endsWith('-00') && !isMaster;
-    const tierLevel = isMaster ? 1 : (isSub ? 2 : 3);
+    const typeName = data.account_types?.type_name || normType;
+    const finalType = typeName.toUpperCase() === 'INCOME' ? 'REVENUE' : typeName.toUpperCase();
 
     return {
-      id: data.id,
-      code: data.code,
-      name: data.name,
-      type: normType,
-      classification: normType as any,
-      account_type: data.account_type,
+      id: String(data.account_id),
+      code: data.account_code,
+      name: data.account_name,
+      type: finalType,
+      classification: finalType as any,
+      account_type: finalType,
       subType: '',
       sub_type: '',
       currency: 'AED',
-      currentBalance: Number(data.current_balance ?? 0),
-      current_balance: Number(data.current_balance ?? 0),
-      isActive: true,
-      is_active: true,
-      parentId: data.parent_id || null,
-      parent_id: data.parent_id || null,
-      tierLevel,
-      tier_level: tierLevel,
-      createdAt: data.created_at,
-      created_at: data.created_at
+      currentBalance: 0,
+      current_balance: 0,
+      isActive: Boolean(data.is_active),
+      is_active: Boolean(data.is_active),
+      parentId: data.parent_id ? String(data.parent_id) : null,
+      parent_id: data.parent_id ? String(data.parent_id) : null,
+      parentCode: '',
+      parent_code: '',
+      tierLevel: data.account_level,
+      tier_level: data.account_level,
+      isTransactional: Boolean(data.is_transactional),
+      is_transactional: Boolean(data.is_transactional),
+      isSystem: data.account_level === 1,
+      createdAt: new Date().toISOString(),
+      created_at: new Date().toISOString()
     };
   }
 

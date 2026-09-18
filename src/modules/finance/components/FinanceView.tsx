@@ -216,10 +216,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
   // New Account Modal state
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
-  const [newAccClassification, setNewAccClassification] = useState<AccountClassification>('EXPENSE');
-  const [newAccTierLevel, setNewAccTierLevel] = useState<number>(3); // 2: Sub-Account, 3: Transaction Account
-  const [newAccParentCode, setNewAccParentCode] = useState<string>('5200');
-  const [newAccCode, setNewAccCode] = useState<string>('5220-00');
+  const [newAccClassification, setNewAccClassification] = useState<AccountClassification>('ASSET');
+  const [newAccTierLevel, setNewAccTierLevel] = useState<number>(2); // 2: Sub-Account, 3: Transaction Account
+  const [newAccParentCode, setNewAccParentCode] = useState<string>('1000-00');
+  const [newAccCode, setNewAccCode] = useState<string>('1100-00');
   const [newAccName, setNewAccName] = useState<string>('');
   const [newAccOpeningBalance, setNewAccOpeningBalance] = useState<string>('0');
   const [newAccCurrency, setNewAccCurrency] = useState<string>('AED');
@@ -1413,6 +1413,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <button
                   type="button"
                   onClick={() => {
+                    const defaultRoot = accounts.find(a => a.code === '1000-00') || accounts[0];
+                    setNewAccClassification((defaultRoot?.classification || 'ASSET') as AccountClassification);
+                    setNewAccTierLevel(2);
+                    setNewAccParentCode(defaultRoot?.code || '1000-00');
                     setNewAccCode('');
                     setNewAccName('');
                     setNewAccOpeningBalance('0');
@@ -2519,11 +2523,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     onChange={e => {
                       const val = e.target.value as AccountClassification;
                       setNewAccClassification(val);
-                      if (val === 'ASSET') setNewAccCode('1140-00');
-                      if (val === 'LIABILITY') setNewAccCode('2140-00');
-                      if (val === 'EQUITY') setNewAccCode('3130-00');
-                      if (val === 'REVENUE') setNewAccCode('4130-00');
-                      if (val === 'EXPENSE') setNewAccCode('5220-00');
+                      const rootAcc = accounts.find(a => {
+                        const c = (a.classification || a.type || a.account_type || '').toUpperCase();
+                        const normC = c === 'INCOME' ? 'REVENUE' : c;
+                        const targetC = val.toUpperCase();
+                        const normTarget = targetC === 'INCOME' ? 'REVENUE' : targetC;
+                        return normC === normTarget && (a.tierLevel === 1 || a.tier_level === 1 || (a.code || '').endsWith('000-00'));
+                      });
+                      if (rootAcc) setNewAccParentCode(rootAcc.code);
                     }}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-amber-200 text-xs font-bold bg-[#fdfcf9] focus:ring-2 focus:ring-amber-500"
                   >
