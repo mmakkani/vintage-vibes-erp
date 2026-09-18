@@ -2210,50 +2210,14 @@ export default async function handler(req: any, res: any) {
         }
 
         // GET /api/finance/coa
-        const countRes = await client.query('SELECT count(*)::int AS cnt FROM accounts');
-        if (countRes.rows[0]?.cnt === 0) {
-          const rootAccounts = [
-            { code: '1000-00', name: 'Assets', typeId: 1, level: 1, isTransactional: false },
-            { code: '2000-00', name: 'Liabilities', typeId: 2, level: 1, isTransactional: false },
-            { code: '3000-00', name: 'Equity', typeId: 3, level: 1, isTransactional: false },
-            { code: '4000-00', name: 'Revenue', typeId: 4, level: 1, isTransactional: false },
-            { code: '5000-00', name: 'Expenses', typeId: 5, level: 1, isTransactional: false }
-          ];
-          for (const acc of rootAccounts) {
-            await client.query(`
-              INSERT INTO accounts (account_code, account_name, account_type_id, parent_id, is_active, is_transactional, account_level)
-              VALUES ($1, $2, $3, NULL, true, $4, $5)
-              ON CONFLICT (account_code) DO NOTHING;
-            `, [acc.code, acc.name, acc.typeId, acc.isTransactional, acc.level]);
-          }
-        }
-
-        let rows: any[] = [];
-        try {
-          const result = await client.query(`
-            SELECT a.*, t.type_name, p.account_code AS parent_code, 0.00 AS current_balance
-            FROM accounts a
-            LEFT JOIN account_types t ON a.account_type_id = t.type_id
-            LEFT JOIN accounts p ON a.parent_id = p.account_id
-            ORDER BY a.account_code ASC;
-          `);
-          rows = result.rows;
-        } catch (queryErr) {
-          const directResult = await client.query('SELECT * FROM accounts ORDER BY account_code ASC;');
-          rows = directResult.rows;
-        }
-
-        if (rows.length === 0) {
-          const directResult = await client.query('SELECT * FROM accounts ORDER BY account_code ASC;');
-          rows = directResult.rows;
-        }
-
+        const result = await client.query('SELECT * FROM accounts ORDER BY account_code ASC;');
+        const rawRows = result.rows || [];
         await client.end();
 
         const typeMapById: Record<number, string> = { 1: 'ASSET', 2: 'LIABILITY', 3: 'EQUITY', 4: 'REVENUE', 5: 'EXPENSE' };
         const typeMapByDigit: Record<string, string> = { '1': 'ASSET', '2': 'LIABILITY', '3': 'EQUITY', '4': 'REVENUE', '5': 'EXPENSE' };
 
-        const accounts = rows.map((r: any) => {
+        const rows = rawRows.map((r: any) => {
           const detected = r.type_name || typeMapById[Number(r.account_type_id)] || typeMapByDigit[String(r.account_code || r.code || '')[0]] || 'ASSET';
           const rawType = String(detected).toUpperCase();
           const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
@@ -2264,6 +2228,7 @@ export default async function handler(req: any, res: any) {
           const name = String(r.account_name || r.name || '');
 
           return {
+            ...r,
             id: String(r.account_id || r.id || code),
             account_id: String(r.account_id || r.id || code),
             code: code,
@@ -2301,13 +2266,13 @@ export default async function handler(req: any, res: any) {
 
         return res.status(200).json({
           success: true,
-          data: accounts,
-          accounts: accounts
+          data: rows,
+          accounts: rows
         });
       } catch (err: any) {
         if (client) await client.end().catch(() => {});
-        console.error('[Serverless COA] Error fetching from Postgres accounts table:', err.message);
-        return res.status(500).json({ error: 'Failed to fetch accounts from database: ' + err.message });
+        console.error('[Serverless COA] Error fetching from Postgres accounts table:', err);
+        return res.status(500).json({ error: err.message, stack: err.stack });
       }
     }
 
