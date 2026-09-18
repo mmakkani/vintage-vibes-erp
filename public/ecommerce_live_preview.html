@@ -1132,29 +1132,7 @@
 `-- Query: SELECT order_number, customer_name, total_amount, payment_method, order_status, created_at FROM orders;
 -- Recent Confirmed Orders:
 
-[
-  {
-    "order_number": "ORD-584391",
-    "customer_name": "Humaid Al Shamsi",
-    "customer_phone": "+971509876543",
-    "customer_address": "Villa 14, Al Jimi, Al Ain",
-    "subtotal": 320.00,
-    "delivery_fee": 25.00,
-    "total_amount": 345.00,
-    "currency": "AED",
-    "payment_method": "COD",
-    "payment_status": "PENDING",
-    "order_status": "CONFIRMED",
-    "source": "STOREFRONT",
-    "items": [
-      {
-        "barcode": "VV-9832",
-        "description": "Vintage Al Neyadi Signature Strapback Cap",
-        "unitPrice": 320.00
-      }
-    ]
-  }
-]`;
+[]`;
       } else if (tab === 'cart') {
         content.innerText =
 `-- Query: SELECT barcode, session_id, expires_at, is_active FROM cart_reservations WHERE is_active = true;
