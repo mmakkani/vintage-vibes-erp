@@ -172,8 +172,20 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
   const handleCreateParty = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanName = partyForm.name.trim();
+    if (!cleanName) {
+      showMsg('Party / Company Name cannot be empty.', 'error');
+      return;
+    }
+
+    const dup = parties.find(p => p.name.trim().toLowerCase() === cleanName.toLowerCase());
+    if (dup) {
+      showMsg(`Duplicate Name: A party named "${cleanName}" already exists (${dup.code})! Duplicate client/supplier names are strictly prohibited.`, 'error');
+      return;
+    }
+
     try {
-      const newParty = await PartiesService.addParty(partyForm);
+      const newParty = await PartiesService.addParty({ ...partyForm, name: cleanName });
       setShowNewPartyModal(false);
       showMsg(`Added ${newParty.name} (${newParty.code}) and auto-provisioned COA sub-accounts!`);
       loadParties();
@@ -252,9 +264,21 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   // Save Edit to SQL
   const handleSaveEditParty = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanName = editPartyForm.name.trim();
+    if (!cleanName) {
+      showMsg('Party / Company Name cannot be empty.', 'error');
+      return;
+    }
+
+    const dup = parties.find(p => p.id !== editPartyForm.id && p.name.trim().toLowerCase() === cleanName.toLowerCase());
+    if (dup) {
+      showMsg(`Duplicate Name: Another party named "${cleanName}" already exists in the system (${dup.code})! Duplicate client/supplier names are prohibited.`, 'error');
+      return;
+    }
+
     try {
       const updated = await PartiesService.updateParty(editPartyForm.id, {
-        name: editPartyForm.name,
+        name: cleanName,
         type: editPartyForm.type,
         contactPerson: editPartyForm.contactPerson,
         phone: editPartyForm.phone,
@@ -703,9 +727,27 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   value={partyForm.name}
                   onChange={e => setPartyForm({ ...partyForm, name: e.target.value })}
                   placeholder="e.g. Dubai Vintage Archive Ltd"
-                  className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500"
+                  className={`w-full border rounded p-1.5 text-xs text-slate-800 ${
+                    partyForm.name.trim() && parties.some(p => p.name.trim().toLowerCase() === partyForm.name.trim().toLowerCase())
+                      ? 'border-red-500 bg-red-50/40 focus:border-red-600'
+                      : 'border-slate-300 focus:border-blue-500'
+                  }`}
                   required
                 />
+                {(() => {
+                  const clean = partyForm.name.trim().toLowerCase();
+                  if (!clean) return null;
+                  const dup = parties.find(p => p.name.trim().toLowerCase() === clean);
+                  if (dup) {
+                    return (
+                      <div className="text-[10px] text-red-600 font-bold mt-1 flex items-center gap-1 bg-red-50 p-1.5 rounded border border-red-200">
+                        <AlertCircle className="w-3 h-3 text-red-600 shrink-0" />
+                        <span>Duplicate Name: "{dup.name}" already exists ({dup.code}). Duplicate names are strictly prohibited.</span>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -1158,9 +1200,27 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   value={editPartyForm.name}
                   onChange={e => setEditPartyForm({ ...editPartyForm, name: e.target.value })}
                   placeholder="e.g. GOLDTEX FZC"
-                  className="w-full border border-slate-300 rounded p-1.5 text-xs font-semibold text-slate-800 focus:border-blue-500"
+                  className={`w-full border rounded p-1.5 text-xs font-semibold text-slate-800 ${
+                    editPartyForm.name.trim() && parties.some(p => p.id !== editPartyForm.id && p.name.trim().toLowerCase() === editPartyForm.name.trim().toLowerCase())
+                      ? 'border-red-500 bg-red-50/40 focus:border-red-600'
+                      : 'border-slate-300 focus:border-blue-500'
+                  }`}
                   required
                 />
+                {(() => {
+                  const clean = editPartyForm.name.trim().toLowerCase();
+                  if (!clean) return null;
+                  const dup = parties.find(p => p.id !== editPartyForm.id && p.name.trim().toLowerCase() === clean);
+                  if (dup) {
+                    return (
+                      <div className="text-[10px] text-red-600 font-bold mt-1 flex items-center gap-1 bg-red-50 p-1.5 rounded border border-red-200">
+                        <AlertCircle className="w-3 h-3 text-red-600 shrink-0" />
+                        <span>Duplicate Name: Another party named "{dup.name}" is already registered as {dup.code} ({dup.type}). Cannot use this name.</span>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
 
               <div className="grid grid-cols-2 gap-3">

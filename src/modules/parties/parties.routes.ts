@@ -246,9 +246,27 @@ partiesRouter.post('/', async (req, res) => {
     const partyData = req.body;
     const id = partyData.id || `pty-${Date.now()}`;
     const code = partyData.code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
-    const name = partyData.name;
-    if (!name || !name.trim()) {
-      return res.status(400).json({ error: 'Party Name is required' });
+    const cleanName = String(partyData.name || '').trim();
+    if (!cleanName) {
+      return res.status(400).json({ error: 'Party company/customer name is required' });
+    }
+
+    client = await getDbClient();
+
+    // 0. Strict Duplicate Name Check (Case-insensitive & Trimmed)
+    const dupCheck = await client.query(
+      'SELECT id, code, name, type FROM parties WHERE UPPER(TRIM(name)) = UPPER(TRIM($1)) LIMIT 1',
+      [cleanName]
+    );
+    if (dupCheck.rows.length > 0) {
+      const ex = dupCheck.rows[0];
+      return res.status(409).json({
+        success: false,
+        error: `Party with name "${cleanName}" already exists in the system (Code: ${ex.code}, Type: ${ex.type}). Duplicate customer/supplier names are strictly prohibited.`,
+        messageUrdu: `اس نام (${cleanName}) کے ساتھ کسٹمر/سپلائر پہلے سے موجود ہے (کوڈ: ${ex.code})۔ ڈپلیکیٹ نام رکھنے کی اجازت نہیں ہے۔`,
+        isDuplicate: true,
+        existingParty: ex
+      });
     }
 
     const type = (partyData.type || 'CLIENT').toUpperCase();
@@ -273,7 +291,7 @@ partiesRouter.post('/', async (req, res) => {
     const coaType = isSupplier ? 'LIABILITY' : (isClient ? 'ASSET' : 'LIABILITY');
     const subType = isSupplier ? 'Accounts Payable - Trade' : (isClient ? 'Accounts Receivable - Trade' : 'Accounts Payable - Agent');
     const roleTag = isSupplier ? 'Supplier' : (isClient ? 'Customer' : 'Agent');
-    const coaName = `${name} (${roleTag})`;
+    const coaName = `${cleanName} (${roleTag})`;
 
     const initialMap = {
       ...(partyData.accountMap || {}),
@@ -283,7 +301,6 @@ partiesRouter.post('/', async (req, res) => {
       revenueAccountId: partyData.revenueAccountId || '4110-00'
     };
 
-    client = await getDbClient();
     await client.query('BEGIN');
 
     // 1. Insert into parties
@@ -375,7 +392,30 @@ partiesRouter.put('/:id', async (req, res) => {
     }
     const current = checkRes.rows[0];
 
-    const name = updates.name !== undefined ? updates.name : current.name;
+    const name = updates.name !== undefined ? String(updates.name).trim() : current.name;
+    const cleanName = String(name || '').trim();
+    if (!cleanName) {
+      return res.status(400).json({ error: 'Party Name cannot be blank' });
+    }
+
+    // Duplicate Name Check (Case-insensitive, excluding current party)
+    if (updates.name !== undefined && cleanName.toLowerCase() !== String(current.name || '').trim().toLowerCase()) {
+      const dupCheck = await client.query(
+        'SELECT id, code, name, type FROM parties WHERE UPPER(TRIM(name)) = UPPER(TRIM($1)) AND id != $2 LIMIT 1',
+        [cleanName, id]
+      );
+      if (dupCheck.rows.length > 0) {
+        const ex = dupCheck.rows[0];
+        return res.status(409).json({
+          success: false,
+          error: `Another party with name "${cleanName}" already exists (Code: ${ex.code}, Type: ${ex.type}). Duplicate customer/supplier names are prohibited.`,
+          messageUrdu: `اس نام (${cleanName}) کے ساتھ دوسری پارٹی پہلے سے موجود ہے (کوڈ: ${ex.code})۔ ڈپلیکیٹ نام کی اجازت نہیں ہے۔`,
+          isDuplicate: true,
+          existingParty: ex
+        });
+      }
+    }
+
     const type = updates.type !== undefined ? String(updates.type).toUpperCase() : current.type;
     const contactPerson = updates.contactPerson !== undefined ? updates.contactPerson : (updates.contact_person !== undefined ? updates.contact_person : current.contact_person);
     const phone = updates.phone !== undefined ? updates.phone : current.phone;
@@ -404,12 +444,12 @@ partiesRouter.put('/:id', async (req, res) => {
         is_active = $10,
         account_map = $11
       WHERE id = $12
-    `, [name, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, isActive, JSON.stringify(accountMap), id]);
+    `, [cleanName, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, isActive, JSON.stringify(accountMap), id]);
 
     // 2. Keep linked COA account updated
     if (current.coa_account_id) {
       const roleTag = type === 'SUPPLIER' ? 'Supplier' : (type === 'CLIENT' ? 'Customer' : 'Agent');
-      const coaName = `${name} (${roleTag})`;
+      const coaName = `${cleanName} (${roleTag})`;
       await client.query(`
         UPDATE coa_accounts SET
           name = $1,
@@ -529,9 +569,17 @@ partiesRouter.delete('/:id', async (req, res) => {
 
     // 3. Clean up / unlink COA sub-account (only if 0 balance & clean)
     await client.query('UPDATE coa_accounts SET party_id = NULL WHERE party_id = $1', [id]);
-    await client.query('DELETE FROM coa_accounts WHERE id = $1 AND (current_balance = 0 OR current_balance IS NULL)', [party.coa_account_id]).catch(() => {});
+    if (party.coa_account_id) {
+      await client.query('DELETE FROM coa_accounts WHERE id = $1 AND (current_balance = 0 OR current_balance IS NULL)', [party.coa_account_id]).catch(() => {});
+    }
 
-    // 4. Delete from parties
+    // 4. Unlink and clean ledgers
+    await client.query('UPDATE ledgers SET party_id = NULL WHERE party_id = $1', [id]).catch(() => {});
+
+    // 5. Clean up empty khata logs if any
+    await client.query('DELETE FROM party_khata_logs WHERE party_id = $1', [id]).catch(() => {});
+
+    // 6. Delete from parties
     await client.query('DELETE FROM parties WHERE id = $1', [id]);
 
     await client.query('COMMIT');

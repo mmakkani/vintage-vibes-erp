@@ -369,20 +369,29 @@ export class PartiesService {
   public static async deleteParty(id: string): Promise<void> {
     // 1. Primary route: Express PostgreSQL backend (with safety verification)
     if (typeof window !== 'undefined') {
-      const rawFetch = (window as any).__originalFetch || window.fetch;
-      const apiRes = await rawFetch(`/api/parties/${id}`, {
-        method: 'DELETE'
-      });
-      if (apiRes.ok) {
-        return;
-      }
-      const errData = await apiRes.json().catch(() => ({}));
-      if (errData.error) {
-        throw new Error(errData.error);
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const apiRes = await rawFetch(`/api/parties/${id}`, {
+          method: 'DELETE'
+        });
+        if (apiRes.ok) {
+          return;
+        }
+        const errData = await apiRes.json().catch(() => ({}));
+        if (errData.error) {
+          throw new Error(errData.error);
+        }
+      } catch (err: any) {
+        if (err.message && !err.message.includes('fetch')) {
+          throw err;
+        }
       }
     }
 
-    // 2. Fallback route: Supabase client
+    // 2. Fallback route: Supabase client (unlinking foreign keys first)
+    await supabase.from('coa_accounts').update({ party_id: null }).eq('party_id', id);
+    await supabase.from('ledgers').update({ party_id: null }).eq('party_id', id);
+    await supabase.from('party_khata_logs').delete().eq('party_id', id);
     const { error } = await supabase.from('parties').delete().eq('id', id);
     if (error) {
       console.error('Supabase error on parties:', error);
