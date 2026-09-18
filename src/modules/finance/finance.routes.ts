@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Router } from 'express';
 import { Client } from 'pg';
 import { FinanceController } from './finance.controller.ts';
@@ -7,8 +8,7 @@ import { relationalStore } from '../../db/relationalStore.ts';
 export const financeRouter = Router();
 
 async function getDbClient(): Promise<Client> {
-  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
-  if (!dbUrl) throw new Error('Database connection URL not configured');
+  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
   const client = new Client({
     connectionString: dbUrl,
     ssl: { rejectUnauthorized: false }
@@ -17,7 +17,7 @@ async function getDbClient(): Promise<Client> {
   return client;
 }
 
-async function ensureFiveRootAccounts(client: Client): Promise<void> {
+async function ensureAccountTypes(client: Client): Promise<void> {
   await client.query(`
     INSERT INTO account_types (type_id, type_name) VALUES
       (1, 'Asset'),
@@ -26,7 +26,11 @@ async function ensureFiveRootAccounts(client: Client): Promise<void> {
       (4, 'Revenue'),
       (5, 'Expense')
     ON CONFLICT (type_id) DO UPDATE SET type_name = EXCLUDED.type_name;
-  `);
+  `).catch(err => console.warn('[Finance COA] ensureAccountTypes error:', err.message));
+}
+
+async function ensureFiveRootAccounts(client: Client): Promise<void> {
+  await ensureAccountTypes(client);
 
   const rootAccounts = [
     { code: '1000-00', name: 'Assets', typeId: 1, level: 1, isTransactional: false },
@@ -50,52 +54,85 @@ financeRouter.get('/coa', async (req, res) => {
   try {
     client = await getDbClient();
 
-    // Ensure root accounts exist if table is empty
+    // 1. Ensure account_types table has the 5 root categories
+    await ensureAccountTypes(client);
+
+    // 2. Ensure root accounts exist if table is empty
     const countRes = await client.query('SELECT count(*)::int AS cnt FROM accounts');
     if (countRes.rows[0].cnt === 0) {
       await ensureFiveRootAccounts(client);
     }
 
-    const result = await client.query(`
-      SELECT 
-        a.account_id,
-        a.account_code,
-        a.account_name,
-        a.account_type_id,
-        t.type_name,
-        a.parent_id,
-        p.account_code AS parent_code,
-        a.is_active,
-        a.is_transactional,
-        a.account_level,
-        COALESCE(
-          ROUND(
-            CASE 
-              WHEN UPPER(t.type_name) IN ('ASSET', 'EXPENSE') THEN 
-                COALESCE(SUM(entries.debit), 0) - COALESCE(SUM(entries.credit), 0)
-              ELSE 
-                COALESCE(SUM(entries.credit), 0) - COALESCE(SUM(entries.debit), 0)
-            END, 2
-          ), 0.00
-        ) AS current_balance
-      FROM accounts a
-      JOIN account_types t ON a.account_type_id = t.type_id
-      LEFT JOIN accounts p ON a.parent_id = p.account_id
-      LEFT JOIN (
-        SELECT account_id::text AS acc_id, account_code, SUM(debit) AS debit, SUM(credit) AS credit 
-        FROM voucher_entries 
-        GROUP BY account_id, account_code
-        UNION ALL
-        SELECT account_id::text AS acc_id, NULL AS account_code, SUM(debit_amount) AS debit, SUM(credit_amount) AS credit 
-        FROM journal_items 
-        GROUP BY account_id
-      ) entries ON (entries.acc_id = a.account_id::text OR (entries.account_code IS NOT NULL AND entries.account_code = a.account_code))
-      GROUP BY a.account_id, a.account_code, a.account_name, a.account_type_id, t.type_name, a.parent_id, p.account_code, a.is_active, a.is_transactional, a.account_level
-      ORDER BY a.account_code ASC
-    `);
+    let rows: any[] = [];
+    try {
+      const result = await client.query(`
+        SELECT 
+          a.account_id,
+          a.account_code,
+          a.account_name,
+          a.account_type_id,
+          t.type_name,
+          a.parent_id,
+          p.account_code AS parent_code,
+          a.is_active,
+          a.is_transactional,
+          a.account_level,
+          COALESCE(
+            ROUND(
+              CASE 
+                WHEN UPPER(COALESCE(t.type_name, '')) IN ('ASSET', 'EXPENSE') OR a.account_code LIKE '1%' OR a.account_code LIKE '5%' THEN 
+                  COALESCE(SUM(entries.debit), 0) - COALESCE(SUM(entries.credit), 0)
+                ELSE 
+                  COALESCE(SUM(entries.credit), 0) - COALESCE(SUM(entries.debit), 0)
+              END, 2
+            ), 0.00
+          ) AS current_balance
+        FROM accounts a
+        LEFT JOIN account_types t ON a.account_type_id = t.type_id
+        LEFT JOIN accounts p ON a.parent_id = p.account_id
+        LEFT JOIN (
+          SELECT account_id::text AS acc_id, account_code, SUM(debit) AS debit, SUM(credit) AS credit 
+          FROM voucher_entries 
+          GROUP BY account_id, account_code
+          UNION ALL
+          SELECT account_id::text AS acc_id, NULL AS account_code, SUM(debit_amount) AS debit, SUM(credit_amount) AS credit 
+          FROM journal_items 
+          GROUP BY account_id
+        ) entries ON (entries.acc_id = a.account_id::text OR (entries.account_code IS NOT NULL AND entries.account_code = a.account_code))
+        GROUP BY a.account_id, a.account_code, a.account_name, a.account_type_id, t.type_name, a.parent_id, p.account_code, a.is_active, a.is_transactional, a.account_level
+        ORDER BY a.account_code ASC
+      `);
+      rows = result.rows;
+    } catch (queryErr: any) {
+      console.warn('[Finance COA] Aggregate query fallback to simple SELECT * FROM accounts:', queryErr.message);
+      const simpleResult = await client.query(`
+        SELECT a.*, t.type_name, p.account_code AS parent_code, 0.00 AS current_balance
+        FROM accounts a
+        LEFT JOIN account_types t ON a.account_type_id = t.type_id
+        LEFT JOIN accounts p ON a.parent_id = p.account_id
+        ORDER BY a.account_code ASC
+      `);
+      rows = simpleResult.rows;
+    }
 
-    const accounts = result.rows.map((r: any) => {
-      const rawType = (r.type_name || 'ASSET').toUpperCase();
+    const typeMapById: Record<number, string> = {
+      1: 'ASSET',
+      2: 'LIABILITY',
+      3: 'EQUITY',
+      4: 'REVENUE',
+      5: 'EXPENSE'
+    };
+    const typeMapByDigit: Record<string, string> = {
+      '1': 'ASSET',
+      '2': 'LIABILITY',
+      '3': 'EQUITY',
+      '4': 'REVENUE',
+      '5': 'EXPENSE'
+    };
+
+    const accounts = rows.map((r: any) => {
+      const detected = r.type_name || typeMapById[Number(r.account_type_id)] || typeMapByDigit[String(r.account_code || '')[0]] || 'ASSET';
+      const rawType = String(detected).toUpperCase();
       const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
       const tierLevel = r.account_level || 1;
 
@@ -129,7 +166,7 @@ financeRouter.get('/coa', async (req, res) => {
     return res.json(accounts);
   } catch (err: any) {
     console.error('[Finance COA] Error fetching from Postgres accounts table:', err.message);
-    return res.status(500).json({ error: 'Failed to fetch accounts from database' });
+    return res.status(500).json({ error: 'Failed to fetch accounts from database: ' + err.message });
   } finally {
     if (client) await client.end().catch(() => {});
   }
