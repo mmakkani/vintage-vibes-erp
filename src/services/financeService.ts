@@ -43,11 +43,28 @@ export class FinanceService {
             const apiRes = await rawFetch('/api/finance/coa?_t=' + Date.now());
             if (apiRes && apiRes.ok) {
               const apiData = await apiRes.json();
-              const list = Array.isArray(apiData) ? apiData : (apiData?.accounts || apiData?.data || []);
+              const list = Array.isArray(apiData) ? apiData : (apiData?.data || apiData?.accounts || []);
               if (Array.isArray(list) && list.length > 0) {
-                this.cachedCoaAccounts = list;
+                const normalized = list.map((r: any) => ({
+                  ...r,
+                  code: r.code || r.account_code || '',
+                  account_code: r.account_code || r.code || '',
+                  name: r.name || r.account_name || '',
+                  account_name: r.account_name || r.name || '',
+                  type: r.type || r.pillar_category || r.classification || 'ASSET',
+                  pillar_category: r.pillar_category || r.type || r.classification || 'ASSET',
+                  tierLevel: Number(r.tierLevel || r.tier_level || r.account_level || 1),
+                  tier_level: Number(r.tier_level || r.tierLevel || r.account_level || 1),
+                  currency: r.currency || 'AED',
+                  currentBalance: typeof r.currentBalance === 'number' ? r.currentBalance : (Number(r.current_balance) || 0),
+                  current_balance: typeof r.current_balance === 'number' ? r.current_balance : (Number(r.currentBalance) || 0),
+                  isActive: r.isActive !== false && r.is_active !== false,
+                  is_active: r.is_active !== false && r.isActive !== false,
+                  status: r.status || ((r.isActive !== false && r.is_active !== false) ? 'ACTIVE' : 'INACTIVE')
+                }));
+                this.cachedCoaAccounts = normalized;
                 this.lastCoaFetched = Date.now();
-                return list;
+                return normalized;
               }
             }
           } catch (_) {}
@@ -81,10 +98,14 @@ export class FinanceService {
               return {
                 id: String(row.account_id),
                 code: row.account_code,
+                account_code: row.account_code,
                 name: row.account_name,
+                account_name: row.account_name,
                 type: normType,
                 classification: normType as any,
                 account_type: normType,
+                pillar_category: normType,
+                pillar: normType,
                 subType: '',
                 sub_type: '',
                 currency: 'AED',
@@ -92,6 +113,7 @@ export class FinanceService {
                 current_balance: 0,
                 isActive: Boolean(row.is_active),
                 is_active: Boolean(row.is_active),
+                status: Boolean(row.is_active) ? 'ACTIVE' : 'INACTIVE',
                 parentId: row.parent_id ? String(row.parent_id) : null,
                 parent_id: row.parent_id ? String(row.parent_id) : null,
                 parentCode: '',

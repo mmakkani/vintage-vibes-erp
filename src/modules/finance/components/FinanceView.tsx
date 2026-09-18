@@ -54,16 +54,16 @@ interface COARowProps {
 }
 
 const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, onViewLedger }) => {
-  const code = acc.code || '';
-  const name = acc.name || '';
-  const rawType = (acc.type || acc.classification || acc.account_type || 'ASSET').toString().toUpperCase();
+  const code = (acc as any).account_code || acc.code || '';
+  const name = (acc as any).account_name || acc.name || '';
+  const rawType = ((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || acc.account_type || 'ASSET').toString().toUpperCase();
   const type = rawType === 'INCOME' ? 'REVENUE' : rawType;
-  const currentBalance = typeof acc.current_balance === 'number' ? acc.current_balance : (Number(acc.currentBalance) || 0);
+  const currentBalance = typeof (acc as any).current_balance === 'number' ? (acc as any).current_balance : (Number(acc.currentBalance) || 0);
   const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
   const isSub = code.endsWith('-00') && !isMaster;
-  const tierLevel = acc.tierLevel || acc.tier_level || (isMaster ? 1 : (isSub ? 2 : 3));
+  const tierLevel = (acc as any).tier_level || acc.tierLevel || (acc as any).account_level || (isMaster ? 1 : (isSub ? 2 : 3));
   const isDebit = type === 'ASSET' || type === 'EXPENSE';
-  const isActive = acc.is_active !== false && acc.isActive !== false;
+  const isActive = (acc as any).status ? String((acc as any).status).toUpperCase() === 'ACTIVE' : (acc.is_active !== false && acc.isActive !== false);
   const isPartyAccount = Boolean(
     acc.party_id ||
     acc.partyId ||
@@ -102,7 +102,7 @@ const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, onViewLe
       <td className="px-3.5 py-2.5 text-slate-600 font-sans text-[11px]">
         {tierLevel === 1 ? 'Tier 1: Master Folder' : tierLevel === 2 ? 'Tier 2: Sub-Folder' : 'Tier 3: Transaction Account'}
       </td>
-      <td className="px-3.5 py-2.5 text-slate-700">{acc.currency || 'AED'}</td>
+      <td className="px-3.5 py-2.5 text-slate-700">{acc.currency || (acc as any).currency_code || 'AED'}</td>
       <td className="px-3.5 py-2.5 text-right font-bold text-slate-900">
         AED {Number(currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
         <span className="text-[9px] text-slate-500 ml-1 font-sans">
@@ -119,7 +119,7 @@ const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, onViewLe
           {onViewLedger && (
             <button
               type="button"
-              onClick={() => onViewLedger(acc.id)}
+              onClick={() => onViewLedger(acc.id || (acc as any).account_id || '')}
               title="View General Ledger for this account"
               className="text-[10px] text-amber-700 hover:text-amber-900 font-bold hover:underline cursor-pointer ml-1"
             >
@@ -357,7 +357,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       const eDate = customParams?.endDate !== undefined ? customParams.endDate : (reportPeriod === 'ALL' ? undefined : (reportEndDate || undefined));
 
       const [coaRes, vchRes, ledRes, repRes, ptyRes] = await Promise.all([
-        FinanceService.getCoaAccounts(true).catch(() => safeFetchJson<COAAccount[]>('/api/finance/coa', undefined, 3, 300)),
+        fetch('/api/finance/coa')
+          .then(r => r.ok ? r.json() : null)
+          .catch(() => null)
+          .then(res => {
+            if (res) return res;
+            return FinanceService.getCoaAccounts(true).catch(() => safeFetchJson<any>('/api/finance/coa', undefined, 3, 300));
+          }),
         FinanceService.getVouchers().catch(() => safeFetchJson<Voucher[]>('/api/finance/vouchers', undefined, 3, 300)),
         FinanceService.getGeneralLedgerEntries({
           accountId: glSelectedTarget.startsWith('ACC:') ? glSelectedTarget.replace('ACC:', '') : undefined,
@@ -374,7 +380,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         PartiesService.getParties().catch(() => safeFetchJson<Party[]>('/api/parties', undefined, 3, 300))
       ]);
 
-      const finalCoa = Array.isArray(coaRes) ? coaRes : [];
+      const list = Array.isArray(coaRes) ? coaRes : ((coaRes as any)?.data || (coaRes as any)?.accounts || []);
+      const finalCoa = Array.isArray(list) ? list : [];
       setAccounts(finalCoa);
       setVouchers(Array.isArray(vchRes) ? vchRes : []);
       setLedgers(Array.isArray(ledRes) ? ledRes : []);
@@ -385,9 +392,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       if (finalCoa.length >= 2) {
         setVoucherLines(prev => {
           if (!prev[0].accountId) {
+            const acc0Code = (finalCoa[0] as any).account_code || finalCoa[0].code || '';
+            const acc0Name = (finalCoa[0] as any).account_name || finalCoa[0].name || '';
+            const acc1Code = (finalCoa[1] as any).account_code || finalCoa[1].code || '';
+            const acc1Name = (finalCoa[1] as any).account_name || finalCoa[1].name || '';
             return [
-              { ...prev[0], accountId: finalCoa[0].id, accountCode: finalCoa[0].code, accountName: finalCoa[0].name },
-              { ...prev[1], accountId: finalCoa[1].id, accountCode: finalCoa[1].code, accountName: finalCoa[1].name }
+              { ...prev[0], accountId: finalCoa[0].id, accountCode: acc0Code, accountName: acc0Name },
+              { ...prev[1], accountId: finalCoa[1].id, accountCode: acc1Code, accountName: acc1Name }
             ];
           }
           return prev;
@@ -1036,7 +1047,9 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const filteredAccounts = useMemo(() => {
     const safeAccountsList = Array.isArray(accounts) ? accounts : [];
     const matches = safeAccountsList.filter(acc => {
-      const rawType = (acc.type || acc.classification || acc.account_type || '').toString().toUpperCase();
+      const code = ((acc as any).account_code || acc.code || '').toString();
+      const name = ((acc as any).account_name || acc.name || '').toString();
+      const rawType = ((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || acc.account_type || '').toString().toUpperCase();
       const normAccType = rawType === 'INCOME' ? 'REVENUE' : rawType;
       const normFilter = (coaFilterPillar || 'ALL').toUpperCase();
       const effectiveFilter = normFilter === 'INCOME' ? 'REVENUE' : normFilter;
@@ -1047,16 +1060,20 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       if (coaSearchText.trim()) {
         const query = coaSearchText.toLowerCase();
         return (
-          (acc.code || '').toLowerCase().includes(query) ||
-          (acc.name || '').toLowerCase().includes(query) ||
+          code.toLowerCase().includes(query) ||
+          name.toLowerCase().includes(query) ||
           normAccType.toLowerCase().includes(query) ||
-          (acc.sub_type || acc.subType || '').toLowerCase().includes(query)
+          ((acc as any).sub_type || acc.subType || '').toLowerCase().includes(query)
         );
       }
       return true;
     });
 
-    return [...matches].sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true }));
+    return [...matches].sort((a, b) => {
+      const codeA = ((a as any).account_code || a.code || '').toString();
+      const codeB = ((b as any).account_code || b.code || '').toString();
+      return codeA.localeCompare(codeB, undefined, { numeric: true });
+    });
   }, [accounts, coaFilterPillar, coaSearchText]);
 
   // General Ledger Entries strictly queried and aggregated via PostgreSQL window functions
@@ -1338,13 +1355,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               const pKey = p.key.toUpperCase();
               const normKey = pKey === 'INCOME' ? 'REVENUE' : pKey;
               const pillarAccounts = safeAcc.filter(a => {
-                const t = (a.type || a.classification || a.account_type || '').toString().toUpperCase();
+                const t = ((a as any).pillar_category || (a as any).pillar || a.type || a.classification || a.account_type || '').toString().toUpperCase();
                 const normT = t === 'INCOME' ? 'REVENUE' : t;
                 return normT === normKey;
               });
               const count = pillarAccounts.length;
               const totalVal = pillarAccounts
-                .reduce((sum, a) => sum + (typeof a.current_balance === 'number' ? a.current_balance : (Number(a.currentBalance) || 0)), 0);
+                .reduce((sum, a) => sum + (typeof (a as any).current_balance === 'number' ? (a as any).current_balance : (Number(a.currentBalance) || 0)), 0);
 
               const isSelected = coaFilterPillar === p.key;
 
@@ -1413,10 +1430,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <button
                   type="button"
                   onClick={() => {
-                    const defaultRoot = accounts.find(a => a.code === '1000-00') || accounts[0];
-                    setNewAccClassification((defaultRoot?.classification || 'ASSET') as AccountClassification);
+                    const defaultRoot = accounts.find(a => ((a as any).account_code || a.code) === '1000-00') || accounts[0];
+                    setNewAccClassification(((defaultRoot as any)?.pillar_category || defaultRoot?.classification || 'ASSET') as AccountClassification);
                     setNewAccTierLevel(2);
-                    setNewAccParentCode(defaultRoot?.code || '1000-00');
+                    setNewAccParentCode((defaultRoot as any)?.account_code || defaultRoot?.code || '1000-00');
                     setNewAccCode('');
                     setNewAccName('');
                     setNewAccOpeningBalance('0');
@@ -1453,11 +1470,11 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   ) : (
                     filteredAccounts.map(acc => (
                       <COARow
-                        key={acc.id}
+                        key={acc.id || (acc as any).account_id || (acc as any).account_code || acc.code}
                         acc={acc}
                         isDebitNormal={
-                          (acc.type || acc.classification || '').toString().toUpperCase() === 'ASSET' ||
-                          (acc.type || acc.classification || '').toString().toUpperCase() === 'EXPENSE'
+                          (((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || '').toString().toUpperCase()) === 'ASSET' ||
+                          (((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || '').toString().toUpperCase()) === 'EXPENSE'
                         }
                         onViewLedger={(accId) => {
                           setGlSelectedTarget(accId);

@@ -66,53 +66,21 @@ financeRouter.get('/coa', async (req, res) => {
     let rows: any[] = [];
     try {
       const result = await client.query(`
-        SELECT 
-          a.account_id,
-          a.account_code,
-          a.account_name,
-          a.account_type_id,
-          t.type_name,
-          a.parent_id,
-          p.account_code AS parent_code,
-          a.is_active,
-          a.is_transactional,
-          a.account_level,
-          COALESCE(
-            ROUND(
-              CASE 
-                WHEN UPPER(COALESCE(t.type_name, '')) IN ('ASSET', 'EXPENSE') OR a.account_code LIKE '1%' OR a.account_code LIKE '5%' THEN 
-                  COALESCE(SUM(entries.debit), 0) - COALESCE(SUM(entries.credit), 0)
-                ELSE 
-                  COALESCE(SUM(entries.credit), 0) - COALESCE(SUM(entries.debit), 0)
-              END, 2
-            ), 0.00
-          ) AS current_balance
-        FROM accounts a
-        LEFT JOIN account_types t ON a.account_type_id = t.type_id
-        LEFT JOIN accounts p ON a.parent_id = p.account_id
-        LEFT JOIN (
-          SELECT account_id::text AS acc_id, account_code, SUM(debit) AS debit, SUM(credit) AS credit 
-          FROM voucher_entries 
-          GROUP BY account_id, account_code
-          UNION ALL
-          SELECT account_id::text AS acc_id, NULL AS account_code, SUM(debit_amount) AS debit, SUM(credit_amount) AS credit 
-          FROM journal_items 
-          GROUP BY account_id
-        ) entries ON (entries.acc_id = a.account_id::text OR (entries.account_code IS NOT NULL AND entries.account_code = a.account_code))
-        GROUP BY a.account_id, a.account_code, a.account_name, a.account_type_id, t.type_name, a.parent_id, p.account_code, a.is_active, a.is_transactional, a.account_level
-        ORDER BY a.account_code ASC
-      `);
-      rows = result.rows;
-    } catch (queryErr: any) {
-      console.warn('[Finance COA] Aggregate query fallback to simple SELECT * FROM accounts:', queryErr.message);
-      const simpleResult = await client.query(`
         SELECT a.*, t.type_name, p.account_code AS parent_code, 0.00 AS current_balance
         FROM accounts a
         LEFT JOIN account_types t ON a.account_type_id = t.type_id
         LEFT JOIN accounts p ON a.parent_id = p.account_id
         ORDER BY a.account_code ASC
       `);
-      rows = simpleResult.rows;
+      rows = result.rows;
+    } catch (queryErr: any) {
+      const directResult = await client.query('SELECT * FROM accounts ORDER BY account_code ASC');
+      rows = directResult.rows;
+    }
+
+    if (rows.length === 0) {
+      const directResult = await client.query('SELECT * FROM accounts ORDER BY account_code ASC');
+      rows = directResult.rows;
     }
 
     const typeMapById: Record<number, string> = {
@@ -131,39 +99,55 @@ financeRouter.get('/coa', async (req, res) => {
     };
 
     const accounts = rows.map((r: any) => {
-      const detected = r.type_name || typeMapById[Number(r.account_type_id)] || typeMapByDigit[String(r.account_code || '')[0]] || 'ASSET';
+      const detected = r.type_name || typeMapById[Number(r.account_type_id)] || typeMapByDigit[String(r.account_code || r.code || '')[0]] || 'ASSET';
       const rawType = String(detected).toUpperCase();
       const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
-      const tierLevel = r.account_level || 1;
+      const tierLevel = Number(r.account_level || r.tier_level || r.tierLevel || 1);
+      const balance = Number(r.current_balance || r.currentBalance || 0);
+      const active = r.is_active !== false && r.isActive !== false;
+      const code = String(r.account_code || r.code || '');
+      const name = String(r.account_name || r.name || '');
 
       return {
-        id: String(r.account_id),
-        code: r.account_code,
-        name: r.account_name,
+        id: String(r.account_id || r.id || code),
+        account_id: String(r.account_id || r.id || code),
+        code: code,
+        account_code: code,
+        name: name,
+        account_name: name,
         type: normType,
         classification: normType,
         account_type: normType,
-        subType: '',
-        sub_type: '',
-        currency: 'AED',
-        currentBalance: Number(r.current_balance || 0),
-        current_balance: Number(r.current_balance || 0),
-        isActive: Boolean(r.is_active),
-        is_active: Boolean(r.is_active),
+        pillar_category: normType,
+        pillar: normType,
+        subType: r.sub_type || r.subType || '',
+        sub_type: r.sub_type || r.subType || '',
+        currency: r.currency || 'AED',
+        currentBalance: balance,
+        current_balance: balance,
+        isActive: active,
+        is_active: active,
+        status: active ? 'ACTIVE' : 'INACTIVE',
         parentId: r.parent_id ? String(r.parent_id) : null,
         parent_id: r.parent_id ? String(r.parent_id) : null,
-        parentCode: r.parent_code || '',
-        parent_code: r.parent_code || '',
+        parentCode: r.parent_code || r.parentCode || '',
+        parent_code: r.parent_code || r.parentCode || '',
         tierLevel,
         tier_level: tierLevel,
-        isTransactional: Boolean(r.is_transactional),
-        is_transactional: Boolean(r.is_transactional),
+        account_level: tierLevel,
+        isTransactional: Boolean(r.is_transactional ?? r.isTransactional ?? (tierLevel > 1)),
+        is_transactional: Boolean(r.is_transactional ?? r.isTransactional ?? (tierLevel > 1)),
         isSystem: tierLevel === 1,
-        createdAt: new Date().toISOString(),
-        created_at: new Date().toISOString()
+        is_system: tierLevel === 1,
+        createdAt: r.created_at || new Date().toISOString(),
+        created_at: r.created_at || new Date().toISOString()
       };
     });
-    return res.json(accounts);
+    return res.json({
+      success: true,
+      data: accounts,
+      accounts: accounts
+    });
   } catch (err: any) {
     console.error('[Finance COA] Error fetching from Postgres accounts table:', err.message);
     return res.status(500).json({ error: 'Failed to fetch accounts from database: ' + err.message });

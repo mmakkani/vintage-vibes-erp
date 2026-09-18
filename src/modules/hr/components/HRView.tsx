@@ -246,9 +246,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       setOcrLogs(Array.isArray(ocrLogsRes) ? ocrLogsRes : []);
       const hrLogs = Array.isArray(auditLogsRes) ? auditLogsRes.filter((l: any) => l.module === 'HR') : [];
       setHrAuditLogs(hrLogs);
-      if (Array.isArray(coaRes)) {
-        setCoaAccounts(coaRes);
-      }
+      const coaList = Array.isArray(coaRes) ? coaRes : (coaRes?.data || coaRes?.accounts || []);
+      setCoaAccounts(Array.isArray(coaList) ? coaList : []);
     } catch (err) {
       console.error(err);
     }

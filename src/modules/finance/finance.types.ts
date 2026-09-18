@@ -13,6 +13,11 @@ export interface COAAccount {
   parentCode?: string;
   parentId?: string;
   parent_id?: string;
+  account_code?: string;
+  account_name?: string;
+  pillar_category?: string;
+  pillar?: string;
+  status?: string;
   partyId?: string;
   party_id?: string;
   currency: CurrencyCode | string;

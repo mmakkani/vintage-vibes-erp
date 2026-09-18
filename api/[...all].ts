@@ -2254,40 +2254,56 @@ export default async function handler(req: any, res: any) {
         const typeMapByDigit: Record<string, string> = { '1': 'ASSET', '2': 'LIABILITY', '3': 'EQUITY', '4': 'REVENUE', '5': 'EXPENSE' };
 
         const accounts = rows.map((r: any) => {
-          const detected = r.type_name || typeMapById[Number(r.account_type_id)] || typeMapByDigit[String(r.account_code || '')[0]] || 'ASSET';
+          const detected = r.type_name || typeMapById[Number(r.account_type_id)] || typeMapByDigit[String(r.account_code || r.code || '')[0]] || 'ASSET';
           const rawType = String(detected).toUpperCase();
           const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
-          const tierLevel = r.account_level || 1;
+          const tierLevel = Number(r.account_level || r.tier_level || r.tierLevel || 1);
+          const balance = Number(r.current_balance || r.currentBalance || 0);
+          const active = r.is_active !== false && r.isActive !== false;
+          const code = String(r.account_code || r.code || '');
+          const name = String(r.account_name || r.name || '');
 
           return {
-            id: String(r.account_id),
-            code: r.account_code,
-            name: r.account_name,
+            id: String(r.account_id || r.id || code),
+            account_id: String(r.account_id || r.id || code),
+            code: code,
+            account_code: code,
+            name: name,
+            account_name: name,
             type: normType,
             classification: normType,
             account_type: normType,
-            subType: '',
-            sub_type: '',
-            currency: 'AED',
-            currentBalance: Number(r.current_balance || 0),
-            current_balance: Number(r.current_balance || 0),
-            isActive: Boolean(r.is_active),
-            is_active: Boolean(r.is_active),
+            pillar_category: normType,
+            pillar: normType,
+            subType: r.sub_type || r.subType || '',
+            sub_type: r.sub_type || r.subType || '',
+            currency: r.currency || 'AED',
+            currentBalance: balance,
+            current_balance: balance,
+            isActive: active,
+            is_active: active,
+            status: active ? 'ACTIVE' : 'INACTIVE',
             parentId: r.parent_id ? String(r.parent_id) : null,
             parent_id: r.parent_id ? String(r.parent_id) : null,
-            parentCode: r.parent_code || '',
-            parent_code: r.parent_code || '',
+            parentCode: r.parent_code || r.parentCode || '',
+            parent_code: r.parent_code || r.parentCode || '',
             tierLevel,
             tier_level: tierLevel,
-            isTransactional: Boolean(r.is_transactional),
-            is_transactional: Boolean(r.is_transactional),
+            account_level: tierLevel,
+            isTransactional: Boolean(r.is_transactional ?? r.isTransactional ?? (tierLevel > 1)),
+            is_transactional: Boolean(r.is_transactional ?? r.isTransactional ?? (tierLevel > 1)),
             isSystem: tierLevel === 1,
-            createdAt: new Date().toISOString(),
-            created_at: new Date().toISOString()
+            is_system: tierLevel === 1,
+            createdAt: r.created_at || new Date().toISOString(),
+            created_at: r.created_at || new Date().toISOString()
           };
         });
 
-        return res.status(200).json(accounts);
+        return res.status(200).json({
+          success: true,
+          data: accounts,
+          accounts: accounts
+        });
       } catch (err: any) {
         if (client) await client.end().catch(() => {});
         console.error('[Serverless COA] Error fetching from Postgres accounts table:', err.message);

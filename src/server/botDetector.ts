@@ -261,16 +261,6 @@ export const BotDetector = {
       ''
     ).toString().trim();
 
-    const rawUrl = (
-      explicitPath ||
-      req.originalUrl ||
-      req.url ||
-      req.path ||
-      ''
-    ).toString();
-
-    const normalizedPath = rawUrl.toLowerCase();
-
     // 1. Honeypot & Attack Path Traps
     for (const trap of HONEYPOT_TRAP_PATHS) {
       if (normalizedPath.includes(trap)) {
