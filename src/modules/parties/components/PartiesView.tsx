@@ -28,6 +28,7 @@ import {
 import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
 import { SearchableSelect } from '../../../components/SearchableSelect.tsx';
+import { supabase } from '../../../supabaseClient.ts';
 
 interface PartiesViewProps {
   onRefreshAll: () => void;
@@ -183,40 +184,73 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     setTimeout(() => setActionMessage(null), 5000);
   };
 
+  const toast = {
+    error: (msg: string) => showMsg(msg, 'error'),
+    success: (msg: string) => showMsg(msg, 'success')
+  };
+
+  const queryClient = {
+    invalidateQueries: async ({ queryKey }: { queryKey: string[] }) => {
+      if (queryKey.includes('parties')) {
+        await loadParties();
+      }
+      if (queryKey.includes('chart_of_accounts') || queryKey.includes('coa')) {
+        await loadCoaAccounts();
+        FinanceService.clearCoaCache();
+      }
+    }
+  };
+
   const handleCreateParty = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanName = String(partyForm.name || (partyForm as any).company_name || '').trim();
-    const cleanType = String(partyForm.type || (partyForm as any).party_type || 'CLIENT').trim().toUpperCase() as 'CLIENT' | 'SUPPLIER' | 'AGENT';
+    const cleanType = String(partyForm.type || (partyForm as any).party_type || 'CLIENT').trim().toUpperCase();
 
     if (!cleanName) {
-      showMsg('Party / Company Name cannot be empty or undefined.', 'error');
+      toast.error('Party / Company Name cannot be empty or undefined.');
       return;
     }
     if (!cleanType) {
-      showMsg('Party Entity Type cannot be empty or undefined.', 'error');
+      toast.error('Party Entity Type cannot be empty or undefined.');
       return;
     }
 
     const dup = parties.find(p => p.name.trim().toLowerCase() === cleanName.toLowerCase());
     if (dup) {
-      showMsg(`Duplicate Name: A party named "${cleanName}" already exists (${dup.code})! Duplicate client/supplier names are strictly prohibited.`, 'error');
+      toast.error(`Duplicate Name: A party named "${cleanName}" already exists (${dup.code})! Duplicate client/supplier names are strictly prohibited.`);
       return;
     }
 
+    const formData = {
+      name: cleanName,
+      party_type: cleanType,
+      phone: partyForm.phone || (partyForm as any).contact_no || null,
+      trn: partyForm.trnNo || (partyForm as any).trn || (partyForm as any).trn_no || null,
+      credit_limit: Number(partyForm.creditLimit ?? (partyForm as any).credit_limit ?? 0),
+      inventory_account_id: (partyForm as any).inventory_account_id || null
+    };
+
     try {
-      const newParty = await PartiesService.addParty({
-        ...partyForm,
-        name: cleanName,
-        company_name: cleanName,
-        type: cleanType,
-        party_type: cleanType
+      const { data, error } = await supabase.rpc('create_party_with_coa', {
+        p_name: formData.name,
+        p_type: formData.party_type,
+        p_phone: formData.phone || null,
+        p_trn: formData.trn || null,
+        p_credit_limit: Number(formData.credit_limit) || 0,
+        p_inventory_account_id: formData.inventory_account_id || null
       });
 
-      const partyName = newParty?.name || (newParty as any)?.company_name || cleanName;
-      const partyCode = newParty?.code || 'P-NEW';
+      if (error) {
+        toast.error(error.message);
+        console.error("Party Creation Failed:", error);
+        return;
+      }
+
+      toast.success(`Created party & provisioned account ${data.code}`);
+      await queryClient.invalidateQueries({ queryKey: ['parties'] });
+      await queryClient.invalidateQueries({ queryKey: ['chart_of_accounts'] });
 
       setShowNewPartyModal(false);
-      showMsg(`Added ${partyName} (${partyCode}) and auto-provisioned COA sub-accounts!`);
 
       // Reset form
       setPartyForm({
@@ -244,11 +278,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         revenue_account_id: '4110-00'
       });
 
-      await loadParties();
-      await loadCoaAccounts();
-      onRefreshAll();
+      onRefreshAll?.();
     } catch (err: any) {
-      showMsg(err?.message || 'Failed to add party', 'error');
+      toast.error(err?.message || 'Failed to add party');
+      console.error("Party Creation Failed:", err);
     }
   };
 

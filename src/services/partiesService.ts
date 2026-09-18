@@ -290,86 +290,51 @@ export class PartiesService {
       }
     }
 
-    // 2. Fallback route: Supabase client
-    const id = party.id || (party as any).party_id || `pty-${Date.now()}`;
-    const code = party.code || `P-${Math.floor(1000 + Math.random() * 9000)}`;
-    const cleanCode = code.replace(/[^A-Za-z0-9]/g, '');
-    const isSupplier = type === 'SUPPLIER';
-    const isClient = type === 'CLIENT' || type === 'CUSTOMER';
-    const coaCode = isSupplier ? `2110-${cleanCode}` : (isClient ? `1130-${cleanCode}` : `2120-${cleanCode}`);
-
-    const initialMap = {
-      ...(party.accountMap || (party as any).account_map || {}),
-      payableAccountId: isSupplier ? coaCode : payableAccountId,
-      receivableAccountId: isClient ? coaCode : receivableAccountId,
-      clearingAccountId,
-      revenueAccountId
-    };
-
-    const payload = {
-      id,
-      code,
-      name: cleanName,
-      type,
-      contact_person: party.contactPerson || (party as any).contact_person || '',
-      phone,
-      email: party.email || '',
-      address: party.address || '',
-      trn_no: trnNo,
-      credit_limit: creditLimit,
-      current_balance: Number(party.currentBalance || (party as any).current_balance || 0),
-      currency: party.currency || 'AED',
-      is_active: party.isActive !== false && (party as any).is_active !== false,
-      account_map: initialMap,
-      coa_account_id: coaCode
-    };
-
-    const { data, error } = await supabase
-      .from('parties')
-      .insert(payload)
-      .select()
-      .single();
+    // 2. Direct RPC call to PostgreSQL create_party_with_coa
+    const { data, error } = await supabase.rpc('create_party_with_coa', {
+      p_name: cleanName,
+      p_type: type,
+      p_phone: phone || null,
+      p_trn: trnNo || null,
+      p_credit_limit: creditLimit || 0,
+      p_inventory_account_id: (party as any).inventory_account_id || null
+    });
 
     if (error) {
-      console.error('Supabase error on parties:', error);
+      console.error('RPC Error on create_party_with_coa:', error);
       throw new Error(error.message || 'Failed to save party');
     }
-
-    // Auto-provision COA account immediately in chart_of_accounts and coa_accounts
-    await PartiesService.ensurePartyCoaAccount({
-      id: data.id,
-      code: data.code,
-      name: data.name,
-      type: data.type,
-      currentBalance: Number(data.current_balance || 0),
-      currency: data.currency,
-      isActive: data.is_active,
-      accountMap: initialMap
-    });
 
     FinanceService.clearCoaCache();
     try {
       localStorage.removeItem('vibe_cached_parties');
     } catch {}
 
+    const partyId = data?.party_id || `pty-${Date.now()}`;
+    const partyCode = data?.party_code || 'P-NEW';
+    const coaCode = data?.code || (type === 'SUPPLIER' ? '2110-00' : '1130-00');
+
     return {
-      id: data.id,
-      code: data.code,
-      name: data.name,
-      type: data.type,
-      contactPerson: data.contact_person,
-      phone: data.phone,
-      email: data.email,
-      address: data.address,
-      trnNo: data.trn_no,
-      creditLimit: Number(data.credit_limit),
-      currentBalance: Number(data.current_balance),
-      currency: data.currency,
-      isActive: data.is_active,
-      accountMap: initialMap,
+      id: partyId,
+      code: partyCode,
+      name: cleanName,
+      type,
+      contactPerson: party.contactPerson || '',
+      phone: phone || '',
+      email: party.email || '',
+      address: party.address || '',
+      trnNo: trnNo || '',
+      creditLimit,
+      currentBalance: 0,
+      currency: party.currency || 'AED',
+      isActive: true,
+      accountMap: {
+        payableAccountId: type === 'SUPPLIER' ? coaCode : '2110-00',
+        receivableAccountId: type !== 'SUPPLIER' ? coaCode : '1130-00'
+      },
       coaAccountId: coaCode,
       coa_account_id: coaCode,
-      createdAt: data.created_at
+      createdAt: data?.created_at || new Date().toISOString()
     };
   }
 

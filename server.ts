@@ -182,6 +182,57 @@ async function startServer() {
     return res.json(SetupController.globalSearch((req.query.q as string) || ''));
   });
 
+  // Database RPC Proxy Endpoint (executes PostgreSQL stored procedures directly)
+  app.post('/api/rpc/:fnName', async (req, res) => {
+    const { fnName } = req.params;
+    const body = req.body || {};
+    let dbClient: Client | null = null;
+    try {
+      let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+      try {
+        const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+        if (match) {
+          let [_, user, rawPwd, host, port, rest] = match;
+          if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
+          dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+        }
+      } catch (e) {}
+
+      dbClient = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+      await dbClient.connect();
+
+      if (fnName === 'create_party_with_coa') {
+        const p_name = body.p_name;
+        const p_type = body.p_type;
+        const p_phone = body.p_phone || null;
+        const p_trn = body.p_trn || null;
+        const p_credit_limit = Number(body.p_credit_limit) || 0;
+        const p_inventory_account_id = body.p_inventory_account_id || null;
+
+        const result = await dbClient.query(
+          `SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6) as data;`,
+          [p_name, p_type, p_phone, p_trn, p_credit_limit, p_inventory_account_id]
+        );
+        const data = result.rows[0]?.data;
+        return res.json({ data, error: null });
+      } else {
+        const keys = Object.keys(body);
+        const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
+        const values = keys.map(k => body[k]);
+        const result = await dbClient.query(
+          `SELECT public.${fnName}(${placeholders}) as data;`,
+          values
+        );
+        return res.json({ data: result.rows[0]?.data, error: null });
+      }
+    } catch (err: any) {
+      console.error(`[RPC Proxy] Error executing ${fnName}:`, err?.message || err);
+      return res.status(400).json({ data: null, error: { message: err?.message || 'RPC execution failed' } });
+    } finally {
+      if (dbClient) await dbClient.end().catch(() => {});
+    }
+  });
+
   // Multi-User Real-time SSE Sync Endpoints
   app.get('/api/events/subscribe', (req, res) => {
     eventHub.subscribe(req, res);

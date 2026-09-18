@@ -295,72 +295,28 @@ partiesRouter.post('/', async (req, res) => {
     const roleTag = isSupplier ? 'Supplier' : (isClient ? 'Customer' : 'Agent');
     const coaName = `${cleanName} (${roleTag})`;
 
+    // Execute unified create_party_with_coa PostgreSQL database routine
+    const rpcRes = await client.query(
+      `SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6) as data;`,
+      [cleanName, type, phone || null, trnNo || null, creditLimit, (partyData as any).inventory_account_id || null]
+    );
+
+    const rpcData = rpcRes.rows[0]?.data;
+    const finalPartyId = rpcData?.party_id || id;
+    const finalPartyCode = rpcData?.party_code || code;
+    const finalCoaCode = rpcData?.code || coaCode;
+
     const initialMap = {
       ...(partyData.accountMap || partyData.account_map || {}),
-      payableAccountId: isSupplier ? coaCode : (partyData.payableAccountId || partyData.payable_account_id || '2110-00'),
-      receivableAccountId: isClient ? coaCode : (partyData.receivableAccountId || partyData.receivable_account_id || '1130-00'),
+      payableAccountId: isSupplier ? finalCoaCode : (partyData.payableAccountId || partyData.payable_account_id || '2110-00'),
+      receivableAccountId: isClient ? finalCoaCode : (partyData.receivableAccountId || partyData.receivable_account_id || '1130-00'),
       clearingAccountId: partyData.clearingAccountId || partyData.clearing_account_id || '1310-00',
       revenueAccountId: partyData.revenueAccountId || partyData.revenue_account_id || '4110-00'
     };
 
-    await client.query('BEGIN');
-
-    // 1. Insert into parties
-    await client.query(`
-      INSERT INTO parties (
-        id, code, name, type, contact_person, phone, email, address, trn_no,
-        credit_limit, current_balance, currency, is_active, account_map, coa_account_id, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
-      ON CONFLICT (id) DO UPDATE SET
-        name = EXCLUDED.name,
-        type = EXCLUDED.type,
-        contact_person = EXCLUDED.contact_person,
-        phone = EXCLUDED.phone,
-        email = EXCLUDED.email,
-        address = EXCLUDED.address,
-        trn_no = EXCLUDED.trn_no,
-        credit_limit = EXCLUDED.credit_limit,
-        current_balance = EXCLUDED.current_balance,
-        is_active = EXCLUDED.is_active,
-        account_map = EXCLUDED.account_map,
-        coa_account_id = EXCLUDED.coa_account_id;
-    `, [id, code, cleanName, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, currency, isActive, JSON.stringify(initialMap), coaCode]);
-
-    // 2. Auto-provision in chart_of_accounts (Standard 5-Tier PostgreSQL table)
-    try {
-      const parentLookup = await client.query('SELECT id FROM chart_of_accounts WHERE code = $1 LIMIT 1', [parentCode]);
-      const parentId = parentLookup.rows[0]?.id || null;
-
-      await client.query(`
-        INSERT INTO chart_of_accounts (code, name, account_type, parent_id, current_balance)
-        VALUES ($1, $2, $3, $4, 0)
-        ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name;
-      `, [coaCode, coaName, coaType, parentId]);
-    } catch (coaErr: any) {
-      console.warn('chart_of_accounts auto-provision notice:', coaErr?.message);
-    }
-
-    // 3. Also maintain coa_accounts for compatibility
-    try {
-      await client.query(`
-        INSERT INTO coa_accounts (
-          id, code, name, type, sub_type, currency, current_balance, is_active,
-          parent_id, parent_code, party_id, tier_level
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 3)
-        ON CONFLICT (id) DO UPDATE SET
-          name = EXCLUDED.name,
-          current_balance = EXCLUDED.current_balance,
-          is_active = EXCLUDED.is_active;
-      `, [coaId, coaCode, coaName, coaType, subType, currency, currentBalance, isActive, `acc-${parentCode.replace('-00', '')}`, parentCode, id]);
-    } catch (coaErr: any) {
-      console.warn('Non-blocking coa_accounts insert notice:', coaErr?.message);
-    }
-
-    await client.query('COMMIT');
-
     const createdParty = {
-      id,
-      code,
+      id: finalPartyId,
+      code: finalPartyCode,
       name: cleanName,
       company_name: cleanName,
       type,
@@ -383,8 +339,8 @@ partiesRouter.post('/', async (req, res) => {
       is_active: isActive,
       accountMap: initialMap,
       account_map: initialMap,
-      coaAccountId: coaCode,
-      coa_account_id: coaCode,
+      coaAccountId: finalCoaCode,
+      coa_account_id: finalCoaCode,
       createdAt: new Date().toISOString()
     };
 
