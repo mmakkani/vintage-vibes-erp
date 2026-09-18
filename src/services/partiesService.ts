@@ -383,11 +383,11 @@ export class PartiesService {
         const apiRes = await rawFetch(`/api/parties/${id}`, {
           method: 'DELETE'
         });
-        if (apiRes.ok) {
+        const resData = await apiRes.json().catch(() => ({}));
+        if (apiRes.ok && resData.success !== false) {
           apiSuccess = true;
         } else {
-          const errData = await apiRes.json().catch(() => ({}));
-          const errMsg = errData.error || errData.detail || errData.messageUrdu || `Server returned HTTP ${apiRes.status}`;
+          const errMsg = resData.error || resData.detail || resData.messageUrdu || `Server returned HTTP ${apiRes.status}`;
           throw new Error(errMsg);
         }
       } catch (err: any) {
@@ -408,8 +408,9 @@ export class PartiesService {
         await supabase.from('purchase_invoices').delete().eq('supplier_id', id);
         await supabase.from('sales_invoices').delete().eq('client_id', id);
 
-        // Step b: Delete linked COA account if exists
+        // Step b: Delete linked COA account if exists in coa_accounts and chart_of_accounts
         await supabase.from('coa_accounts').delete().or(`party_id.eq.${id},id.eq.acc-${id}`);
+        await supabase.from('chart_of_accounts').delete().or(`code.ilike.%${id}%`);
 
         // Step c: Delete party record from parties table
         const { error } = await supabase.from('parties').delete().eq('id', id);

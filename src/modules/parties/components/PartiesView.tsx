@@ -359,8 +359,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       await Promise.all([loadParties(), loadCoaAccounts()]);
       onRefreshAll();
     } catch (err: any) {
-      const errMsg = err.message || 'Failed to delete party';
+      const errMsg = err.message || 'Server rejected deletion';
       setDeleteError(errMsg);
+      alert("Deletion failed: " + errMsg);
       showMsg('Deletion Failed: ' + errMsg, 'error');
     } finally {
       setIsDeleting(false);

@@ -159,6 +159,8 @@ async function startServer() {
   app.use('/api/auth', authRouter);
   app.use('/api/setup', setupRouter);
   app.use('/api/finance', financeRouter);
+  app.use('/api/chart-of-accounts', financeRouter);
+  app.use('/api/coa', financeRouter);
   app.use('/api/parties', partiesRouter);
   app.use('/api/hr', hrRouter);
   app.use('/api/purchase', purchaseRouter);
