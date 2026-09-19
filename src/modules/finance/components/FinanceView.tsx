@@ -1907,7 +1907,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       </td>
                     </tr>
                   ) : (
-                    (reports?.trialBalance || []).map((row, idx) => (
+                    (reports?.trialBalance || []).filter((r: any) => !r.accountCode?.endsWith('-00')).map((row, idx) => (
                       <tr key={idx} className="hover:bg-amber-50/40">
                         <td className="py-2 px-3 font-bold text-slate-900">{row.accountCode}</td>
                         <td className="py-2 px-3 font-sans font-medium text-slate-900">{row.accountName}</td>
@@ -1996,9 +1996,9 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
                 {/* Sub-categories or flat accounts */}
                 {(() => {
-                  const salesAccs = (reports?.incomeStatement?.revenue?.categories?.sales?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0);
-                  const otherAccs = (reports?.incomeStatement?.revenue?.categories?.otherIncome?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0);
-                  const allRev = (reports?.incomeStatement?.revenue?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0);
+                  const salesAccs = (reports?.incomeStatement?.revenue?.categories?.sales?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
+                  const otherAccs = (reports?.incomeStatement?.revenue?.categories?.otherIncome?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
+                  const allRev = (reports?.incomeStatement?.revenue?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
 
                   if (reports?.incomeStatement?.revenue?.categories) {
                     return (
@@ -2069,7 +2069,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 </div>
                 <div className="divide-y divide-slate-100 pl-4 pr-2">
                   {(() => {
-                    const cogsAccs = (reports?.incomeStatement?.cogs?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0);
+                    const cogsAccs = (reports?.incomeStatement?.cogs?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
                     if (cogsAccs.length === 0) {
                       return <div className="py-2 text-slate-400 font-sans italic text-center">No cost of goods sold recorded in this period</div>;
                     }
@@ -2103,7 +2103,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 </div>
                 <div className="divide-y divide-slate-100 pl-4 pr-2">
                   {(() => {
-                    const opAccs = ((reports?.incomeStatement?.operatingExpenses?.accounts ?? reports?.incomeStatement?.expenses?.accounts) || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0);
+                    const opAccs = ((reports?.incomeStatement?.operatingExpenses?.accounts ?? reports?.incomeStatement?.expenses?.accounts) || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
                     if (opAccs.length === 0) {
                       return <div className="py-2 text-slate-400 font-sans italic text-center">No operating expenses recorded in this period</div>;
                     }
@@ -2187,7 +2187,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                         <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.cashAndBank?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                       </div>
                       <div className="divide-y divide-slate-100 pl-2">
-                        {(reports.balanceSheet.assets.categories.cashAndBank?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                        {(reports.balanceSheet.assets.categories.cashAndBank?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                           <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                             <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
                             <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -2203,7 +2203,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                         <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.clearing?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                       </div>
                       <div className="divide-y divide-slate-100 pl-2">
-                        {(reports.balanceSheet.assets.categories.clearing?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                        {(reports.balanceSheet.assets.categories.clearing?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                           <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                             <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
                             <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -2219,7 +2219,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                         <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.receivables?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                       </div>
                       <div className="divide-y divide-slate-100 pl-2">
-                        {(reports.balanceSheet.assets.categories.receivables?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                        {(reports.balanceSheet.assets.categories.receivables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                           <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                             <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
                             <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -2235,7 +2235,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                         <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.inventory?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                       </div>
                       <div className="divide-y divide-slate-100 pl-2">
-                        {(reports.balanceSheet.assets.categories.inventory?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                        {(reports.balanceSheet.assets.categories.inventory?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                           <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                             <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
                             <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -2251,7 +2251,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                         <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.fixedAssets?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                       </div>
                       <div className="divide-y divide-slate-100 pl-2">
-                        {(reports.balanceSheet.assets.categories.fixedAssets?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                        {(reports.balanceSheet.assets.categories.fixedAssets?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                           <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                             <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
                             <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -2262,7 +2262,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   </div>
                 ) : (
                   <div className="divide-y divide-slate-100 pl-2">
-                    {(reports?.balanceSheet?.assets?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                    {(reports?.balanceSheet?.assets?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                       <div key={i} className="py-2 flex justify-between">
                         <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
                         <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
@@ -2292,7 +2292,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                           <span className="font-mono">AED {Number(reports.balanceSheet.liabilities.categories.payables?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                         </div>
                         <div className="divide-y divide-slate-100 pl-2">
-                          {(reports.balanceSheet.liabilities.categories.payables?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                          {(reports.balanceSheet.liabilities.categories.payables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                             <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                               <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
                               <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -2308,7 +2308,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                           <span className="font-mono">AED {Number(reports.balanceSheet.liabilities.categories.taxPayables?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                         </div>
                         <div className="divide-y divide-slate-100 pl-2">
-                          {(reports.balanceSheet.liabilities.categories.taxPayables?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                          {(reports.balanceSheet.liabilities.categories.taxPayables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                             <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                               <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
                               <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -2324,7 +2324,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                           <span className="font-mono">AED {Number(reports.balanceSheet.liabilities.categories.accruedPayroll?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                         </div>
                         <div className="divide-y divide-slate-100 pl-2">
-                          {(reports.balanceSheet.liabilities.categories.accruedPayroll?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                          {(reports.balanceSheet.liabilities.categories.accruedPayroll?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                             <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                               <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
                               <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -2335,7 +2335,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     </div>
                   ) : (
                     <div className="divide-y divide-slate-100 pl-2">
-                      {(reports?.balanceSheet?.liabilities?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                      {(reports?.balanceSheet?.liabilities?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                         <div key={i} className="py-1.5 flex justify-between">
                           <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
                           <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
@@ -2363,7 +2363,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                           <span className="font-mono">AED {Number(reports.balanceSheet.equity.categories.capital?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                         </div>
                         <div className="divide-y divide-slate-100 pl-2">
-                          {(reports.balanceSheet.equity.categories.capital?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                          {(reports.balanceSheet.equity.categories.capital?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                             <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                               <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
                               <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -2379,7 +2379,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                           <span className="font-mono">AED {Number(reports.balanceSheet.equity.categories.retainedEarnings?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                         </div>
                         <div className="divide-y divide-slate-100 pl-2">
-                          {(reports.balanceSheet.equity.categories.retainedEarnings?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                          {(reports.balanceSheet.equity.categories.retainedEarnings?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                             <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                               <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
                               <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -2404,7 +2404,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     </div>
                   ) : (
                     <div className="divide-y divide-slate-100 pl-2">
-                      {(reports?.balanceSheet?.equity?.accounts || []).filter((a: any) => showAllCoaAccounts || Number(a.balance || 0) !== 0).map((a: any, i: number) => (
+                      {(reports?.balanceSheet?.equity?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                         <div key={i} className="py-1.5 flex justify-between">
                           <span className="font-sans text-slate-800">{a.code ? `${a.code} - ` : ''}{a.name}</span>
                           <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>

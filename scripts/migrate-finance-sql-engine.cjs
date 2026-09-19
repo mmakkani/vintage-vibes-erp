@@ -88,7 +88,60 @@ async function main() {
   await client.query(`SELECT sync_coa_current_balances();`);
   console.log('Initial COA balances synchronized!');
 
-  // 3. Trial Balance View & Function
+  // 3. Ensure all parent accounts ending in -00 or level < 3 have is_transactional = false
+  console.log('Setting is_transactional = false for parent accounts in accounts table...');
+  await client.query(`
+    UPDATE accounts 
+    SET is_transactional = false 
+    WHERE account_code LIKE '%-00' OR account_level < 3;
+  `);
+
+  // Provision missing -01 transactional sub-accounts
+  const missingChildren = [
+    { code: '1115-01', name: 'Cash in Vault (Main Safe Reserve)', parent: '1115-00', type_id: 1, sub_type: 'Cash & Cash Equivalents' },
+    { code: '1125-01', name: 'POS Terminal & Card Clearing', parent: '1125-00', type_id: 1, sub_type: 'Clearing Account' },
+    { code: '1128-01', name: 'Courier COD Clearing (Pending Remittance)', parent: '1128-00', type_id: 1, sub_type: 'Clearing Account' },
+    { code: '1135-01', name: 'Staff Advance & Loan Receivables', parent: '1135-00', type_id: 1, sub_type: 'Accounts Receivable' },
+    { code: '1210-01', name: 'Security Deposits (Store & Warehouse Leases)', parent: '1210-00', type_id: 1, sub_type: 'Fixed & Non-Current Assets' },
+    { code: '1220-01', name: 'Warehouse, Steaming & Sorting Equipment', parent: '1220-00', type_id: 1, sub_type: 'Fixed & Non-Current Assets' },
+    { code: '1310-01', name: 'Goods In-Transit & Port Clearing Account', parent: '1310-00', type_id: 1, sub_type: 'Goods In-Transit' },
+    { code: '2320-01', name: 'End-of-Service Gratuity & Benefits Payable', parent: '2320-00', type_id: 2, sub_type: 'Accrued Payroll' },
+    { code: '2410-01', name: 'Provision for Corporate Tax (9% FTA)', parent: '2410-00', type_id: 2, sub_type: 'Tax Payable' },
+    { code: '5210-01', name: 'Salaries, Wages & Labour Sorter Expense', parent: '5210-00', type_id: 5, sub_type: 'Operating Expenses' }
+  ];
+
+  for (const item of missingChildren) {
+    const pAcc = await client.query('SELECT account_id, account_type_id FROM accounts WHERE account_code = $1', [item.parent]);
+    const parentAccId = pAcc.rows[0]?.account_id;
+    const typeId = pAcc.rows[0]?.account_type_id || item.type_id;
+
+    const pCoa = await client.query('SELECT id, account_type FROM chart_of_accounts WHERE code = $1', [item.parent]);
+    const coaParentId = pCoa.rows[0]?.id;
+    const coaAccType = pCoa.rows[0]?.account_type || (item.type_id === 1 ? 'ASSET' : (item.type_id === 2 ? 'LIABILITY' : 'EXPENSE'));
+
+    await client.query(`
+      INSERT INTO accounts (account_code, account_name, account_type_id, parent_id, is_active, is_transactional, account_level)
+      VALUES ($1, $2, $3, $4, true, true, 3)
+      ON CONFLICT (account_code) DO UPDATE 
+      SET account_name = EXCLUDED.account_name, is_transactional = true, account_level = 3, parent_id = EXCLUDED.parent_id;
+    `, [item.code, item.name, typeId, parentAccId]);
+
+    await client.query(`
+      INSERT INTO chart_of_accounts (code, name, account_type, parent_id, current_balance)
+      VALUES ($1, $2, $3, $4, 0.00)
+      ON CONFLICT (code) DO UPDATE 
+      SET name = EXCLUDED.name, account_type = EXCLUDED.account_type, parent_id = EXCLUDED.parent_id;
+    `, [item.code, item.name, coaAccType, coaParentId]);
+
+    await client.query(`
+      INSERT INTO coa_accounts (id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, parent_code, tier_level)
+      VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'AED', 0.00, true, $5, $6, 3)
+      ON CONFLICT (code) DO UPDATE 
+      SET name = EXCLUDED.name, type = EXCLUDED.type, sub_type = EXCLUDED.sub_type, is_active = true;
+    `, [item.code, item.name, coaAccType, item.sub_type, coaParentId ? coaParentId.toString() : null, item.parent]);
+  }
+
+  // 4. Trial Balance View & Function (Strictly posting accounts, no -00 parent accounts)
   console.log('Creating get_trial_balance RPC...');
   await client.query(`
     CREATE OR REPLACE FUNCTION get_trial_balance(p_start_date text DEFAULT NULL, p_end_date text DEFAULT NULL)
@@ -115,24 +168,28 @@ async function main() {
           ve.credit
         FROM voucher_entries ve
         INNER JOIN (
-          SELECT id, voucher_no, status, date FROM vouchers WHERE status = 'POSTED'
+          SELECT id::text, voucher_no, status, date FROM vouchers WHERE status = 'POSTED'
           UNION
-          SELECT id, voucher_no, status, date FROM financial_vouchers WHERE status = 'POSTED'
+          SELECT id::text, voucher_no, status, date FROM financial_vouchers WHERE status = 'POSTED'
         ) v ON (v.id = ve.voucher_id OR v.voucher_no = ve.voucher_no)
         WHERE (v_start IS NULL OR COALESCE(ve.date::date, v.date::date) >= v_start)
           AND (v_end IS NULL OR COALESCE(ve.date::date, v.date::date) <= v_end)
       ),
       acc_totals AS (
         SELECT 
-          c.id as account_id,
-          c.code as account_code,
-          c.name as account_name,
-          c.type as classification,
+          COALESCE(c.id::text, a.account_id::text) as account_id,
+          a.account_code,
+          a.account_name,
+          UPPER(at.type_name) as classification,
           COALESCE(SUM(fe.debit), 0)::numeric as tot_debit,
           COALESCE(SUM(fe.credit), 0)::numeric as tot_credit
-        FROM coa_accounts c
-        LEFT JOIN filtered_entries fe ON (fe.account_id = c.id OR fe.account_code = c.code)
-        GROUP BY c.id, c.code, c.name, c.type
+        FROM accounts a
+        JOIN account_types at ON a.account_type_id = at.type_id
+        LEFT JOIN chart_of_accounts c ON c.code = a.account_code
+        LEFT JOIN filtered_entries fe ON (fe.account_code = a.account_code OR fe.account_id = a.account_id::text OR (c.id IS NOT NULL AND fe.account_id = c.id::text))
+        WHERE a.is_transactional = TRUE 
+          AND a.account_code NOT LIKE '%-00'
+        GROUP BY c.id, a.account_id, a.account_code, a.account_name, at.type_name
       ),
       computed AS (
         SELECT 
@@ -163,7 +220,6 @@ async function main() {
             END, 2
           ) as closing_balance
         FROM acc_totals
-        WHERE tot_debit > 0 OR tot_credit > 0
         ORDER BY account_code ASC
       )
       SELECT 
@@ -194,7 +250,7 @@ async function main() {
     $$;
   `);
 
-  // 4. Income Statement Function
+  // 5. Income Statement Function (Strictly posting accounts, no -00 parent accounts)
   console.log('Creating get_income_statement RPC...');
   await client.query(`
     CREATE OR REPLACE FUNCTION get_income_statement(p_start_date text DEFAULT NULL, p_end_date text DEFAULT NULL)
@@ -232,53 +288,59 @@ async function main() {
           ve.credit
         FROM voucher_entries ve
         INNER JOIN (
-          SELECT id, voucher_no, status, date FROM vouchers WHERE status = 'POSTED'
+          SELECT id::text, voucher_no, status, date FROM vouchers WHERE status = 'POSTED'
           UNION
-          SELECT id, voucher_no, status, date FROM financial_vouchers WHERE status = 'POSTED'
+          SELECT id::text, voucher_no, status, date FROM financial_vouchers WHERE status = 'POSTED'
         ) v ON (v.id = ve.voucher_id OR v.voucher_no = ve.voucher_no)
         WHERE (v_start IS NULL OR COALESCE(ve.date::date, v.date::date) >= v_start)
           AND (v_end IS NULL OR COALESCE(ve.date::date, v.date::date) <= v_end)
       ),
       acc_activity AS (
         SELECT 
-          c.id as account_id,
-          c.code as account_code,
-          c.name as account_name,
-          c.type as account_type,
-          c.sub_type,
+          COALESCE(c.id::text, a.account_id::text) as account_id,
+          a.account_code,
+          a.account_name,
+          UPPER(at.type_name) as account_type,
+          p.account_code as parent_code,
+          p.account_name as parent_name,
           ROUND(
             CASE 
-              WHEN c.type = 'REVENUE' THEN (COALESCE(SUM(fe.credit), 0) - COALESCE(SUM(fe.debit), 0))
-              WHEN c.type = 'EXPENSE' THEN (COALESCE(SUM(fe.debit), 0) - COALESCE(SUM(fe.credit), 0))
+              WHEN UPPER(at.type_name) = 'REVENUE' THEN (COALESCE(SUM(fe.credit), 0) - COALESCE(SUM(fe.debit), 0))
+              WHEN UPPER(at.type_name) = 'EXPENSE' THEN (COALESCE(SUM(fe.debit), 0) - COALESCE(SUM(fe.credit), 0))
               ELSE 0
             END, 2
           ) as net_balance
-        FROM coa_accounts c
-        LEFT JOIN filtered_entries fe ON (fe.account_id = c.id OR fe.account_code = c.code)
-        WHERE c.type IN ('REVENUE', 'EXPENSE')
-        GROUP BY c.id, c.code, c.name, c.type, c.sub_type
+        FROM accounts a
+        JOIN account_types at ON a.account_type_id = at.type_id
+        LEFT JOIN accounts p ON a.parent_id = p.account_id
+        LEFT JOIN chart_of_accounts c ON c.code = a.account_code
+        LEFT JOIN filtered_entries fe ON (fe.account_code = a.account_code OR fe.account_id = a.account_id::text OR (c.id IS NOT NULL AND fe.account_id = c.id::text))
+        WHERE a.is_transactional = TRUE 
+          AND a.account_code NOT LIKE '%-00'
+          AND UPPER(at.type_name) IN ('REVENUE', 'EXPENSE')
+        GROUP BY c.id, a.account_id, a.account_code, a.account_name, at.type_name, p.account_code, p.account_name
       )
       SELECT 
-        -- 1. All Revenue Accounts
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'REVENUE'), '[]'::jsonb),
+        -- 1. All Revenue Accounts (Strictly posting, no parent -00 accounts)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'REVENUE'), '[]'::jsonb),
         COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'REVENUE'), 0),
-        -- 1a. Sales Revenue
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'REVENUE' AND (sub_type ILIKE '%Sales%' OR account_code LIKE '41%')), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'REVENUE' AND (sub_type ILIKE '%Sales%' OR account_code LIKE '41%')), 0),
-        -- 1b. Other Revenue
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'REVENUE' AND NOT (sub_type ILIKE '%Sales%' OR account_code LIKE '41%')), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'REVENUE' AND NOT (sub_type ILIKE '%Sales%' OR account_code LIKE '41%')), 0),
+        -- 1a. Sales Revenue (4110, 4120)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'REVENUE' AND account_code LIKE '41%'), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'REVENUE' AND account_code LIKE '41%'), 0),
+        -- 1b. Other Revenue (4200)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'REVENUE' AND NOT (account_code LIKE '41%')), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'REVENUE' AND NOT (account_code LIKE '41%')), 0),
 
-        -- 2. COGS (Cost of Goods Sold & Direct Import Costs)
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'EXPENSE' AND (account_code LIKE '51%' OR account_code IN ('5210-00', '5220-00', '5230-00') OR sub_type ILIKE '%Cost of Goods%' OR sub_type ILIKE '%Direct Labor%')), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EXPENSE' AND (account_code LIKE '51%' OR account_code IN ('5210-00', '5220-00', '5230-00') OR sub_type ILIKE '%Cost of Goods%' OR sub_type ILIKE '%Direct Labor%')), 0),
+        -- 2. COGS (5100, 5110, 5120, 5150)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'EXPENSE' AND account_code LIKE '51%'), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EXPENSE' AND account_code LIKE '51%'), 0),
 
-        -- 3. Operating & Administrative Expenses
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'EXPENSE' AND NOT (account_code LIKE '51%' OR account_code IN ('5210-00', '5220-00', '5230-00') OR sub_type ILIKE '%Cost of Goods%' OR sub_type ILIKE '%Direct Labor%')), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EXPENSE' AND NOT (account_code LIKE '51%' OR account_code IN ('5210-00', '5220-00', '5230-00') OR sub_type ILIKE '%Cost of Goods%' OR sub_type ILIKE '%Direct Labor%')), 0),
+        -- 3. Operating & Administrative Expenses (5200+, 5300+, 5400+)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'EXPENSE' AND NOT (account_code LIKE '51%')), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EXPENSE' AND NOT (account_code LIKE '51%')), 0),
 
         -- 4. All Expenses combined
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'EXPENSE'), '[]'::jsonb),
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'EXPENSE'), '[]'::jsonb),
         COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EXPENSE'), 0)
       INTO 
         v_revenue_rows, v_total_revenue,
@@ -312,7 +374,7 @@ async function main() {
     $$;
   `);
 
-  // 5. Balance Sheet Function
+  // 6. Balance Sheet Function (Strictly posting accounts, no -00 parent accounts)
   console.log('Creating get_balance_sheet RPC...');
   await client.query(`
     CREATE OR REPLACE FUNCTION get_balance_sheet(p_as_of_date text DEFAULT NULL)
@@ -360,81 +422,97 @@ async function main() {
           ve.account_id,
           ve.account_code,
           ve.debit,
-          ve.credit
+          ve.credit,
+          COALESCE(ve.date::date, v.date::date) as entry_date
         FROM voucher_entries ve
         INNER JOIN (
-          SELECT id, voucher_no, status, date FROM vouchers WHERE status = 'POSTED'
+          SELECT id::text, voucher_no, status, date FROM vouchers WHERE status = 'POSTED'
           UNION
-          SELECT id, voucher_no, status, date FROM financial_vouchers WHERE status = 'POSTED'
+          SELECT id::text, voucher_no, status, date FROM financial_vouchers WHERE status = 'POSTED'
         ) v ON (v.id = ve.voucher_id OR v.voucher_no = ve.voucher_no)
         WHERE (v_as_of IS NULL OR COALESCE(ve.date::date, v.date::date) <= v_as_of)
       ),
       acc_totals AS (
         SELECT 
-          c.id as account_id,
-          c.code as account_code,
-          c.name as account_name,
-          c.type as account_type,
-          c.sub_type,
+          COALESCE(c.id::text, a.account_id::text) as account_id,
+          a.account_code,
+          a.account_name,
+          UPPER(at.type_name) as account_type,
+          p.account_code as parent_code,
+          p.account_name as parent_name,
           ROUND(
             CASE 
-              WHEN c.type = 'ASSET' THEN (COALESCE(SUM(fe.debit), 0) - COALESCE(SUM(fe.credit), 0))
-              WHEN c.type = 'LIABILITY' THEN (COALESCE(SUM(fe.credit), 0) - COALESCE(SUM(fe.debit), 0))
-              WHEN c.type = 'EQUITY' THEN (COALESCE(SUM(fe.credit), 0) - COALESCE(SUM(fe.debit), 0))
-              WHEN c.type = 'REVENUE' THEN (COALESCE(SUM(fe.credit), 0) - COALESCE(SUM(fe.debit), 0))
-              WHEN c.type = 'EXPENSE' THEN (COALESCE(SUM(fe.debit), 0) - COALESCE(SUM(fe.credit), 0))
-              ELSE 0
+              WHEN UPPER(at.type_name) = 'ASSET' THEN (COALESCE(SUM(fe.debit), 0) - COALESCE(SUM(fe.credit), 0))
+              ELSE (COALESCE(SUM(fe.credit), 0) - COALESCE(SUM(fe.debit), 0))
             END, 2
           ) as net_balance
-        FROM coa_accounts c
-        LEFT JOIN filtered_entries fe ON (fe.account_id = c.id OR fe.account_code = c.code)
-        GROUP BY c.id, c.code, c.name, c.type, c.sub_type
+        FROM accounts a
+        JOIN account_types at ON a.account_type_id = at.type_id
+        LEFT JOIN accounts p ON a.parent_id = p.account_id
+        LEFT JOIN chart_of_accounts c ON c.code = a.account_code
+        LEFT JOIN filtered_entries fe ON (fe.account_code = a.account_code OR fe.account_id = a.account_id::text OR (c.id IS NOT NULL AND fe.account_id = c.id::text))
+        WHERE a.is_transactional = TRUE 
+          AND a.account_code NOT LIKE '%-00'
+          AND UPPER(at.type_name) IN ('ASSET', 'LIABILITY', 'EQUITY')
+        GROUP BY c.id, a.account_id, a.account_code, a.account_name, at.type_name, p.account_code, p.account_name
       )
       SELECT 
-        -- Net Profit YTD from P&L accounts (Revenue - Expense)
-        COALESCE(SUM(CASE WHEN account_type = 'REVENUE' THEN net_balance WHEN account_type = 'EXPENSE' THEN -net_balance ELSE 0 END), 0),
-        
-        -- All Assets
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET'), '[]'::jsonb),
+        -- Net Profit YTD calculation (REVENUE credits - EXPENSE debits from posted vouchers)
+        COALESCE((
+          SELECT ROUND(
+            COALESCE(SUM(CASE WHEN UPPER(at_inc.type_name) = 'REVENUE' THEN (fe_inc.credit - fe_inc.debit) ELSE 0 END), 0) -
+            COALESCE(SUM(CASE WHEN UPPER(at_inc.type_name) = 'EXPENSE' THEN (fe_inc.debit - fe_inc.credit) ELSE 0 END), 0), 2
+          )
+          FROM accounts a_inc
+          JOIN account_types at_inc ON a_inc.account_type_id = at_inc.type_id
+          LEFT JOIN chart_of_accounts c_inc ON c_inc.code = a_inc.account_code
+          INNER JOIN filtered_entries fe_inc ON (fe_inc.account_code = a_inc.account_code OR fe_inc.account_id = a_inc.account_id::text OR (c_inc.id IS NOT NULL AND fe_inc.account_id = c_inc.id::text))
+          WHERE a_inc.is_transactional = TRUE
+            AND a_inc.account_code NOT LIKE '%-00'
+            AND UPPER(at_inc.type_name) IN ('REVENUE', 'EXPENSE')
+        ), 0),
+
+        -- All Assets (Strictly posting accounts, no parent -00 accounts)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET'), '[]'::jsonb),
         COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'ASSET'), 0),
-        -- 1. Cash & Bank
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET' AND (sub_type ILIKE '%Cash%' OR sub_type ILIKE '%Bank%' OR account_code IN ('1110-00', '1115-00', '1120-00'))), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'ASSET' AND (sub_type ILIKE '%Cash%' OR sub_type ILIKE '%Bank%' OR account_code IN ('1110-00', '1115-00', '1120-00'))), 0),
-        -- 2. Payment & COD Clearing
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET' AND (sub_type ILIKE '%Clearing%' OR account_code IN ('1125-00', '1128-00'))), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'ASSET' AND (sub_type ILIKE '%Clearing%' OR account_code IN ('1125-00', '1128-00'))), 0),
-        -- 3. Receivables
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET' AND (sub_type ILIKE '%Receivable%' OR account_code LIKE '113%')), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'ASSET' AND (sub_type ILIKE '%Receivable%' OR account_code LIKE '113%')), 0),
-        -- 4. Inventory (Raw Bales, WIP Sorting, Finished Goods)
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET' AND (sub_type ILIKE '%Inventory%' OR account_code IN ('1140-00', '1150-00', '1160-00'))), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'ASSET' AND (sub_type ILIKE '%Inventory%' OR account_code IN ('1140-00', '1150-00', '1160-00'))), 0),
-        -- 5. Fixed & Non-Current Assets
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET' AND (sub_type ILIKE '%Fixed%' OR sub_type ILIKE '%Non-Current%' OR account_code LIKE '12%')), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'ASSET' AND (sub_type ILIKE '%Fixed%' OR sub_type ILIKE '%Non-Current%' OR account_code LIKE '12%')), 0),
+        -- 1. Cash & Bank (1110, 1115, 1120)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET' AND (account_code LIKE '111%' OR account_code LIKE '1120%')), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'ASSET' AND (account_code LIKE '111%' OR account_code LIKE '1120%')), 0),
+        -- 2. Clearing Accounts (1125, 1128, 1310)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET' AND (account_code LIKE '1125%' OR account_code LIKE '1128%' OR account_code LIKE '131%')), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'ASSET' AND (account_code LIKE '1125%' OR account_code LIKE '1128%' OR account_code LIKE '131%')), 0),
+        -- 3. Receivables (1130, 1135)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET' AND account_code LIKE '113%'), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'ASSET' AND account_code LIKE '113%'), 0),
+        -- 4. Inventory (1140, 1150, 1160)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET' AND (account_code LIKE '114%' OR account_code LIKE '115%' OR account_code LIKE '116%' OR account_name ILIKE '%Inventory%')), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'ASSET' AND (account_code LIKE '114%' OR account_code LIKE '115%' OR account_code LIKE '116%' OR account_name ILIKE '%Inventory%')), 0),
+        -- 5. Fixed Assets (1210, 1220)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'ASSET' AND account_code LIKE '12%'), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'ASSET' AND account_code LIKE '12%'), 0),
 
         -- All Liabilities
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'LIABILITY'), '[]'::jsonb),
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'LIABILITY'), '[]'::jsonb),
         COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'LIABILITY'), 0),
-        -- 1. Payables
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'LIABILITY' AND (sub_type ILIKE '%Payable%' AND sub_type NOT ILIKE '%Tax%')), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'LIABILITY' AND (sub_type ILIKE '%Payable%' AND sub_type NOT ILIKE '%Tax%')), 0),
-        -- 2. Statutory / Tax Liabilities
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'LIABILITY' AND (sub_type ILIKE '%Tax%' OR account_code IN ('2140-00', '2150-00', '2410-00'))), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'LIABILITY' AND (sub_type ILIKE '%Tax%' OR account_code IN ('2140-00', '2150-00', '2410-00'))), 0),
-        -- 3. Accrued Payroll
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'LIABILITY' AND (sub_type ILIKE '%Accrued%' OR account_code LIKE '23%')), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'LIABILITY' AND (sub_type ILIKE '%Accrued%' OR account_code LIKE '23%')), 0),
+        -- 1. Payables (2110, 2120)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'LIABILITY' AND (account_code LIKE '211%' OR account_code LIKE '212%')), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'LIABILITY' AND (account_code LIKE '211%' OR account_code LIKE '212%')), 0),
+        -- 2. Tax Liabilities (2140, 2150, 2410)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'LIABILITY' AND (account_code LIKE '214%' OR account_code LIKE '215%' OR account_code LIKE '241%' OR account_name ILIKE '%VAT%' OR account_name ILIKE '%Tax%')), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'LIABILITY' AND (account_code LIKE '214%' OR account_code LIKE '215%' OR account_code LIKE '241%' OR account_name ILIKE '%VAT%' OR account_name ILIKE '%Tax%')), 0),
+        -- 3. Accrued Payroll (2310, 2320)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'LIABILITY' AND (account_code LIKE '23%' OR account_name ILIKE '%Payroll%' OR account_name ILIKE '%Gratuity%' OR account_name ILIKE '%Salaries%')), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'LIABILITY' AND (account_code LIKE '23%' OR account_name ILIKE '%Payroll%' OR account_name ILIKE '%Gratuity%' OR account_name ILIKE '%Salaries%')), 0),
 
-        -- All Equity (Base)
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'EQUITY'), '[]'::jsonb),
+        -- All Equity
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'EQUITY'), '[]'::jsonb),
         COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EQUITY'), 0),
-        -- 1. Capital
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'EQUITY' AND (sub_type ILIKE '%Capital%' OR account_code LIKE '31%')), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EQUITY' AND (sub_type ILIKE '%Capital%' OR account_code LIKE '31%')), 0),
-        -- 2. Reserves
-        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', sub_type, 'balance', net_balance) ORDER BY account_code) FILTER (WHERE account_type = 'EQUITY' AND (sub_type ILIKE '%Reserves%' OR sub_type ILIKE '%Retained%' OR account_code LIKE '32%')), '[]'::jsonb),
-        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EQUITY' AND (sub_type ILIKE '%Reserves%' OR sub_type ILIKE '%Retained%' OR account_code LIKE '32%')), 0)
+        -- 1. Capital (3100, 3300)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'EQUITY' AND (account_code LIKE '31%' OR account_code LIKE '33%')), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EQUITY' AND (account_code LIKE '31%' OR account_code LIKE '33%')), 0),
+        -- 2. Reserves (3200)
+        COALESCE(jsonb_agg(jsonb_build_object('id', account_id, 'code', account_code, 'name', account_name, 'subType', '', 'balance', net_balance, 'parentCode', parent_code, 'parentName', parent_name) ORDER BY account_code) FILTER (WHERE account_type = 'EQUITY' AND account_code LIKE '32%'), '[]'::jsonb),
+        COALESCE(SUM(net_balance) FILTER (WHERE account_type = 'EQUITY' AND account_code LIKE '32%'), 0)
       INTO 
         v_net_profit_ytd,
         v_asset_rows, v_total_assets,
@@ -465,7 +543,6 @@ async function main() {
         )
       );
       v_total_equity := ROUND(v_total_equity + v_net_profit_ytd, 2);
-
       v_is_balanced := (ABS(v_total_assets - (v_total_liabilities + v_total_equity)) < 0.05);
 
       RETURN jsonb_build_object(
