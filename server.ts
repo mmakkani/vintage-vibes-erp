@@ -25,6 +25,7 @@ import { BotDetector } from './src/server/botDetector.ts';
 import { Client } from 'pg';
 import { createClient } from '@supabase/supabase-js';
 import { ecommerceRouter } from './src/modules/ecommerce/ecommerce.routes.ts';
+import { sortingRouter } from './src/modules/sorting/sorting.routes.ts';
 
 const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
@@ -179,6 +180,7 @@ async function startServer() {
   app.use('/api/devices', devicesRouter);
   app.use('/api/presence', presenceRouter);
   app.use('/api/ecommerce', ecommerceRouter);
+  app.use('/api/sorting', sortingRouter);
   app.get('/api/search', (req, res) => {
     return res.json(SetupController.globalSearch((req.query.q as string) || ''));
   });

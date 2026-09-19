@@ -213,7 +213,9 @@ function analyzeBotRequest(req: any, explicitPath?: string, explicitUa?: string)
     normalizedPath.includes('/api/access-control') ||
     normalizedPath.includes('/access-control') ||
     normalizedPath.includes('/api/finance') ||
-    normalizedPath.includes('/finance')
+    normalizedPath.includes('/finance') ||
+    normalizedPath.includes('/api/sorting') ||
+    normalizedPath.includes('/sorting')
   ) {
     return {
       isBadBot: false,
@@ -864,7 +866,9 @@ export default async function handler(req: any, res: any) {
       pathname.includes('/api/access-control') ||
       pathname.includes('/access-control') ||
       pathname.includes('/api/finance') ||
-      pathname.includes('/finance');
+      pathname.includes('/finance') ||
+      pathname.includes('/api/sorting') ||
+      pathname.includes('/sorting');
 
     if (!isWhitelistedRoute) {
       const botCheck = analyzeBotRequest(req, pathname);
@@ -4889,6 +4893,136 @@ export default async function handler(req: any, res: any) {
       // 13. Live Selling Pool / Inventory items
       if (pathname.includes('/live-stream/pool')) {
         return res.status(200).json({ success: true, pools: [] });
+      }
+
+      // 14. Sorting Workflow Endpoints (Start Sorting / Issue to WIP & Complete Sorting / Capitalize FG)
+      if (pathname.includes('/sorting/start') && method === 'POST') {
+        const batchId = body.batchId || body.batch_id || body.p_batch_id || parsedUrl.searchParams.get('batchId');
+        if (!batchId) {
+          return res.status(400).json({ success: false, error: 'Missing required parameter: batchId' });
+        }
+        const client = await getPgClient();
+        if (!client) {
+          return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        }
+        try {
+          const rpcRes = await client.query('SELECT public.start_sorting_batch_and_post_wip($1::uuid) as result;', [batchId]);
+          return res.status(200).json(rpcRes.rows[0]?.result);
+        } catch (dbErr: any) {
+          return res.status(400).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if (pathname.includes('/sorting/complete') && method === 'POST') {
+        const batchId = body.batchId || body.batch_id || body.p_batch_id || parsedUrl.searchParams.get('batchId');
+        const finishedItems = body.finishedItems || body.finished_items || body.p_finished_items || [];
+        if (!batchId) {
+          return res.status(400).json({ success: false, error: 'Missing required parameter: batchId' });
+        }
+        if (!Array.isArray(finishedItems) || finishedItems.length === 0) {
+          return res.status(400).json({ success: false, error: 'finishedItems must be a non-empty array' });
+        }
+        const client = await getPgClient();
+        if (!client) {
+          return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        }
+        try {
+          const rpcRes = await client.query(
+            'SELECT public.complete_sorting_batch_and_post_fg($1::uuid, $2::jsonb) as result;',
+            [batchId, JSON.stringify(finishedItems)]
+          );
+          return res.status(200).json(rpcRes.rows[0]?.result);
+        } catch (dbErr: any) {
+          return res.status(400).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if ((pathname.endsWith('/sorting/batches') || pathname.endsWith('/sorting')) && method === 'GET') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ error: 'Database connection unavailable' });
+        try {
+          const query = `
+            SELECT 
+              id,
+              batch_number AS "batchNumber",
+              inward_pass_id AS "inwardPassId",
+              raw_bales_count AS "rawBalesCount",
+              raw_weight_kg::numeric AS "rawWeightKg",
+              raw_cost_value::numeric AS "rawCostValue",
+              finished_weight_kg::numeric AS "finishedWeightKg",
+              wastage_weight_kg::numeric AS "wastageWeightKg",
+              status,
+              wip_voucher_id AS "wipVoucherId",
+              fg_voucher_id AS "fgVoucherId",
+              notes,
+              created_at AS "createdAt",
+              updated_at AS "updatedAt"
+            FROM public.sorting_batches
+            ORDER BY created_at DESC;
+          `;
+          const r = await client.query(query);
+          return res.status(200).json(r.rows);
+        } catch (dbErr: any) {
+          return res.status(500).json({ error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if (pathname.includes('/sorting/batches/') && method === 'GET') {
+        const bId = pathname.split('/').pop();
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ error: 'Database connection unavailable' });
+        try {
+          const bRes = await client.query('SELECT * FROM public.sorting_batches WHERE id = $1', [bId]);
+          if (bRes.rows.length === 0) return res.status(404).json({ error: 'Batch not found' });
+          const batch = bRes.rows[0];
+          const itemsRes = await client.query('SELECT * FROM public.sorting_batch_items WHERE batch_id = $1 ORDER BY created_at ASC', [bId]);
+          batch.items = itemsRes.rows;
+          return res.status(200).json(batch);
+        } catch (dbErr: any) {
+          return res.status(500).json({ error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if ((pathname.endsWith('/sorting/batches') || pathname.endsWith('/sorting')) && method === 'POST') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ error: 'Database connection unavailable' });
+        try {
+          let batchNo = (body.batchNumber || '').trim();
+          if (!batchNo) {
+            const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+            const rnd = Math.floor(1000 + Math.random() * 9000);
+            batchNo = `SRT-${dateStr}-${rnd}`;
+          }
+          const query = `
+            INSERT INTO public.sorting_batches (
+              batch_number, inward_pass_id, raw_bales_count, raw_weight_kg, raw_cost_value, notes, status
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, 'DRAFT'
+            ) RETURNING *;
+          `;
+          const params = [
+            batchNo,
+            body.inwardPassId || null,
+            Number(body.rawBalesCount) || 1,
+            Number(body.rawWeightKg) || 0,
+            Number(body.rawCostValue) || 0,
+            body.notes || null
+          ];
+          const r = await client.query(query, params);
+          return res.status(201).json(r.rows[0]);
+        } catch (dbErr: any) {
+          return res.status(400).json({ error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
       }
 
     return res.status(200).json({
