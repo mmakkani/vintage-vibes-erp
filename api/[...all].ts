@@ -5210,27 +5210,152 @@ export default async function handler(req: any, res: any) {
       }
 
       if ((pathname.endsWith('/sales/courier-settlement') || pathname.includes('/sales/courier-settlement')) && method === 'POST') {
-        const { courierPartyId, bankAccountId, grossCodCleared, courierFeeDeducted, netBankReceived, referenceNo } = body;
+        const { courierPartyId, bankAccountId, grossCodCleared, courierFeeDeducted, netBankReceived, referenceNo, bankRemittanceCode, accountantPinVerified, pinCode } = body;
         if (!courierPartyId || !bankAccountId || grossCodCleared === undefined || netBankReceived === undefined) {
           return res.status(400).json({ success: false, error: 'courierPartyId, bankAccountId, grossCodCleared, and netBankReceived are required' });
         }
+        const remittanceCode = bankRemittanceCode || referenceNo;
+        const isPinVerified = accountantPinVerified === true || Boolean(pinCode);
+        if (!isPinVerified || !remittanceCode || !remittanceCode.trim()) {
+          return res.status(400).json({ success: false, error: 'Security Exception: Remittance settlement requires valid Bank PIN / Transaction Reference verification.' });
+        }
+
         const client = await getPgClient();
         if (!client) return res.status(500).json({ success: false, error: 'Database connection unavailable' });
         try {
           const rpcRes = await client.query(
-            'SELECT public.settle_courier_cod_remittance($1, $2, $3, $4, $5, $6) as result;',
+            'SELECT public.settle_courier_cod_remittance($1, $2, $3, $4, $5, $6, $7) as result;',
             [
               courierPartyId,
               bankAccountId,
               Number(grossCodCleared),
               Number(courierFeeDeducted || 0),
               Number(netBankReceived),
-              referenceNo || `REMIT-${Date.now()}`
+              remittanceCode,
+              isPinVerified
             ]
           );
           return res.status(200).json(rpcRes.rows[0]?.result);
         } catch (dbErr: any) {
           return res.status(400).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if (pathname.includes('/grail-bounties/auto-match') && method === 'GET') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+        try {
+          const brand = parsedUrl.searchParams.get('brand') || '';
+          const category = parsedUrl.searchParams.get('category') || '';
+          let query = `
+            SELECT barcode, brand_name, item_name, style, size_scanned, estimated_price, retail_price_aed, status
+            FROM inventory_pieces 
+            WHERE (is_sold = false OR is_sold IS NULL) 
+              AND (status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT')
+          `;
+          const params: any[] = [];
+          if (brand) {
+            params.push(`%${brand}%`);
+            query += ` AND (brand_name ILIKE $${params.length} OR item_name ILIKE $${params.length} OR style ILIKE $${params.length})`;
+          }
+          if (category && category !== 'ALL') {
+            params.push(`%${category}%`);
+            query += ` AND (item_name ILIKE $${params.length} OR style ILIKE $${params.length})`;
+          }
+          query += ' ORDER BY created_at DESC LIMIT 20';
+          const result = await client.query(query, params);
+          return res.status(200).json({ success: true, matches: result.rows || [] });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if (pathname.includes('/grail-bounties') && pathname.includes('/status') && method === 'PATCH') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+        try {
+          const pathParts = pathname.split('/');
+          const statusIdx = pathParts.indexOf('status');
+          const id = statusIdx > 0 ? pathParts[statusIdx - 1] : null;
+          const { status, matchedBarcode, matchedPieceId } = body;
+          if (!id) return res.status(400).json({ success: false, error: 'Bounty ID missing' });
+
+          await client.query(`
+            UPDATE public.grail_bounties 
+            SET status = COALESCE($1, status),
+                matched_barcode = COALESCE($2, matched_barcode),
+                matched_piece_id = COALESCE($3, matched_piece_id),
+                updated_at = NOW()
+            WHERE id = $4
+          `, [status, matchedBarcode || null, matchedPieceId || null, id]);
+
+          return res.status(200).json({ success: true, message: `Bounty ${id} updated to ${status}` });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if ((pathname.includes('/grail-bounties') || pathname.endsWith('/ecommerce/bounty') || pathname.includes('/ecommerce/bounty')) && method === 'POST') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+        try {
+          const { customerName, customerPhone, whatsappPhone, desiredBrand, desiredCategory, desiredSize, preferredSize, maxBudgetAed, eraNotes, notes } = body;
+          if (!customerName || !customerPhone || !desiredBrand) {
+            return res.status(400).json({ success: false, error: 'Customer name, phone, and desired brand are required' });
+          }
+          const insRes = await client.query(`
+            INSERT INTO public.grail_bounties (
+              customer_name, customer_phone, whatsapp_phone, desired_brand, desired_category,
+              desired_size, preferred_size, max_budget_aed, era_notes, notes, status, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'OPEN', NOW(), NOW())
+            RETURNING *;
+          `, [
+            customerName,
+            customerPhone,
+            whatsappPhone || customerPhone,
+            desiredBrand,
+            desiredCategory || null,
+            desiredSize || preferredSize || null,
+            preferredSize || desiredSize || null,
+            maxBudgetAed ? Number(maxBudgetAed) : null,
+            eraNotes || notes || null,
+            notes || eraNotes || null
+          ]);
+          return res.status(201).json({ success: true, bounty: insRes.rows[0] });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if (pathname.includes('/grail-bounties') && method === 'GET') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+        try {
+          const status = parsedUrl.searchParams.get('status') || '';
+          const search = parsedUrl.searchParams.get('search') || '';
+          let query = 'SELECT * FROM public.grail_bounties WHERE 1=1';
+          const params: any[] = [];
+          if (status && status !== 'ALL') {
+            params.push(status);
+            query += ` AND status = $${params.length}`;
+          }
+          if (search) {
+            params.push(`%${search}%`);
+            query += ` AND (desired_brand ILIKE $${params.length} OR customer_name ILIKE $${params.length} OR customer_phone ILIKE $${params.length} OR whatsapp_phone ILIKE $${params.length})`;
+          }
+          query += ' ORDER BY created_at DESC LIMIT 200;';
+          const result = await client.query(query, params);
+          return res.status(200).json({ success: true, bounties: result.rows || [] });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
         } finally {
           try { await client.end(); } catch (_) {}
         }

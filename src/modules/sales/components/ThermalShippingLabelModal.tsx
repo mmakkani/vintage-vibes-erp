@@ -155,27 +155,34 @@ export const ThermalShippingLabelModal: React.FC<ThermalShippingLabelModalProps>
               </div>
             </div>
 
-            {/* COD vs PREPAID Box */}
-            <div className="border-2 border-black p-2.5 bg-slate-50">
+            {/* COD vs PREPAID Anti-Fraud Waybill Banner */}
+            <div className={`border-2 border-black p-2.5 ${!isCOD ? 'bg-emerald-50 text-emerald-950' : 'bg-rose-50 text-rose-950'}`}>
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-[9px] font-bold text-slate-500 uppercase">COLLECTION MODE:</div>
-                  <div className="text-sm font-black text-black">
-                    {isCOD ? '💵 CASH ON DELIVERY (COD)' : '✅ PREPAID (DO NOT COLLECT)'}
+                  <div className="text-[9px] font-black uppercase tracking-wider">
+                    {!isCOD ? '🟢 PREPAID SHIPMENT' : '🔴 CASH ON DELIVERY'}
+                  </div>
+                  <div className="text-sm font-black tracking-tight">
+                    {!isCOD ? 'DO NOT COLLECT ANY CASH' : `MUST COLLECT EXACT AED ${totalAmount.toFixed(2)}`}
+                  </div>
+                  <div className="text-[10px] font-mono font-bold mt-0.5">
+                    {!isCOD 
+                      ? `Ref: ${invoice.paymentReference || 'ONLINE-VERIFIED'}` 
+                      : 'Handover parcel ONLY upon receipt of gross cash balance'}
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-[9px] font-bold text-slate-500 uppercase">TOTAL TO COLLECT:</div>
-                  <div className="text-base font-black text-black">
-                    {isCOD ? `AED ${totalAmount.toFixed(2)}` : 'AED 0.00'}
+                  <div className="text-[9px] font-black uppercase">COD AMOUNT:</div>
+                  <div className="text-xl font-black font-mono">
+                    {!isCOD ? 'AED 0.00' : `AED ${totalAmount.toFixed(2)}`}
                   </div>
                 </div>
               </div>
-              <div className="flex justify-between text-[10px] text-slate-600 mt-1 pt-1 border-t border-slate-300">
+              <div className="flex justify-between text-[10px] text-slate-700 mt-1 pt-1 border-t border-black/20 font-medium">
                 <span>
-                  Shipping: {invoice.shippingBearer === 'COMPANY' ? 'Absorbed by Company (FREE to Buyer)' : `AED ${shippingFee.toFixed(2)} (Buyer Paid)`}
+                  Delivery: {invoice.shippingBearer === 'COMPANY' ? 'Company Absorbed (FREE)' : `AED ${shippingFee.toFixed(2)} (Customer Paid)`}
                 </span>
-                <span>Status: {invoice.paymentStatus === 'PREPAID_VERIFIED' ? 'Verified' : 'Pending'}</span>
+                <span>Carrier: {courier}</span>
               </div>
             </div>
 

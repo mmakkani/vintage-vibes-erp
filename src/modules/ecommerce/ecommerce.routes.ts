@@ -248,13 +248,20 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
     const orderId = crypto.randomUUID();
     const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
 
-    // 3. Insert into orders table
+    // 3. Compute payment classification
+    const isOnlinePaid = paymentMethod && paymentMethod !== 'COD' && paymentMethod !== 'CASH_ON_DELIVERY';
+    const computedPaymentStatus = isOnlinePaid ? 'PAID' : 'UNPAID_PENDING_COD';
+    const computedPaymentRef = isOnlinePaid
+      ? (paymentRef || `TXN-${Date.now().toString().slice(-6)}`)
+      : 'COD-PAY-ON-DELIVERY';
+
+    // 4. Insert into orders table
     await client.query(`
       INSERT INTO orders (
         id, order_number, customer_name, customer_phone, customer_email, customer_address, 
         city, country, items, subtotal, delivery_fee, total_amount, currency, 
-        payment_method, payment_status, order_status, source, notes, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW())
+        payment_method, payment_status, payment_reference, order_status, source, notes, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW())
     `, [
       orderId,
       orderNumber,
@@ -270,57 +277,52 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
       totalAmount,
       'AED',
       paymentMethod || 'COD',
-      paymentMethod === 'COD' ? 'PENDING' : 'PAID',
+      computedPaymentStatus,
+      computedPaymentRef,
       'CONFIRMED',
       'STOREFRONT',
-      paymentRef ? `Payment Ref: ${paymentRef}` : ''
+      isOnlinePaid ? `Online Payment Ref: ${computedPaymentRef}` : `Cash on Delivery (Collect AED ${totalAmount.toFixed(2)})`
     ]);
 
-    // 4. Mark all items as sold in inventory_pieces
+    // 5. Atomically lock pieces: status = 'CLAIMED_PENDING', is_sold = true
     await client.query(`
       UPDATE inventory_pieces 
-      SET is_sold = true, status = 'SOLD' 
+      SET is_sold = true, status = 'CLAIMED_PENDING' 
       WHERE barcode = ANY($1)
     `, [barcodes]);
 
-    // 5. Deactivate cart reservations
+    // 6. Deactivate cart reservations
     await client.query(`
       UPDATE cart_reservations 
       SET is_active = false 
       WHERE barcode = ANY($1)
     `, [barcodes]);
 
-    // 6. Automatically record sales invoice in ERP's sales_invoices table
+    // 7. Queue active DRAFT sales invoice in Dispatch Hub (DraftInvoicesManager)
     const invoiceId = `inv-${Date.now()}`;
     const invoiceNo = `SINV-${Date.now().toString().slice(-6)}`;
     await client.query(`
       INSERT INTO sales_invoices (
         id, invoice_no, customer_name, customer_phone, invoice_date, channel, 
-        payment_method, subtotal, discount_amount, tax_amount, total_amount, status, items, created_at
-      ) VALUES ($1, $2, $3, $4, CURRENT_DATE, $5, $6, $7, 0, 0, $8, 'PAID', $9, NOW())
+        payment_method, payment_status, payment_reference, shipping_address, city,
+        subtotal, discount_amount, tax_amount, total_amount, status, items, order_id, created_at
+      ) VALUES ($1, $2, $3, $4, CURRENT_DATE, 'ECOMMERCE', $5, $6, $7, $8, $9, $10, 0, 0, $11, 'DRAFT', $12, $13, NOW())
       ON CONFLICT (id) DO NOTHING;
     `, [
       invoiceId,
       invoiceNo,
       customerName,
       customerPhone,
-      'STOREFRONT',
-      paymentMethod || 'ONLINE',
+      paymentMethod || 'COD',
+      computedPaymentStatus,
+      computedPaymentRef,
+      shippingAddress || '',
+      city || 'Dubai',
       subtotal,
       totalAmount,
-      JSON.stringify(items)
+      JSON.stringify(items),
+      orderId
     ]);
-
-    // 6b. Automatically trigger omnichannel dispatch voucher & COGS derecognition
-    try {
-      const bearer = deliveryFee > 0 ? 'Customer Bears' : 'Company Free';
-      await client.query(
-        'SELECT public.post_sales_dispatch_and_cogs_voucher($1::uuid, $2, NULL, NULL, $3::numeric, $4) as result;',
-        [orderId, 'ECOMMERCE', deliveryFee, bearer]
-      );
-    } catch (dispatchErr) {
-      console.warn('Post-checkout auto-dispatch voucher note:', dispatchErr);
-    }
 
     await client.query('COMMIT');
 
@@ -372,24 +374,125 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
 ecommerceRouter.post('/bounty', async (req: Request, res: Response) => {
   let client: Client | null = null;
   try {
-    const { customerName, customerPhone, customerEmail, desiredBrand, desiredCategory, desiredSize, maxBudgetAed, notes } = req.body;
-    if (!customerName || !customerPhone || !desiredBrand) {
-      return res.status(400).json({ error: 'customerName, customerPhone and desiredBrand are required' });
+    const { customerName, customerPhone, whatsappPhone, customerEmail, desiredBrand, desiredCategory, desiredSize, preferredSize, maxBudgetAed, notes, eraNotes } = req.body;
+    const phone = whatsappPhone || customerPhone;
+    if (!customerName || !phone || !desiredBrand) {
+      return res.status(400).json({ error: 'customerName, phone and desiredBrand are required' });
     }
 
     client = await getDbClient();
     const id = `bounty-${Date.now()}`;
+    const size = preferredSize || desiredSize || 'L';
+    const era = eraNotes || notes || '';
+
     await client.query(`
       INSERT INTO grail_bounties (
-        id, customer_name, customer_phone, customer_email, desired_brand, desired_category, desired_size, max_budget_aed, notes, status, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'SEARCHING', NOW())
-    `, [id, customerName, customerPhone, customerEmail || '', desiredBrand, desiredCategory || 'T-Shirts', desiredSize || 'L', Number(maxBudgetAed || 0), notes || '']);
+        id, customer_name, customer_phone, whatsapp_phone, customer_email, 
+        desired_brand, desired_category, desired_size, preferred_size, 
+        max_budget_aed, notes, era_notes, status, created_at, updated_at
+      ) VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $7, $8, $9, $9, 'OPEN', NOW(), NOW())
+    `, [id, customerName, phone, customerEmail || '', desiredBrand, desiredCategory || 'T-Shirts', size, Number(maxBudgetAed || 0), era]);
 
     return res.json({
       success: true,
       bountyId: id,
-      message: `Grail bounty registered! We will notify ${customerPhone} as soon as a matching ${desiredBrand} is scanned in a bale.`
+      message: `Grail bounty registered! We will notify ${phone} as soon as a matching ${desiredBrand} is scanned in a bale.`
     });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// -------------------------------------------------------------
+// 5b. GET /api/ecommerce/bounties - List Grail Bounties
+// -------------------------------------------------------------
+ecommerceRouter.get('/bounties', async (req: Request, res: Response) => {
+  let client: Client | null = null;
+  try {
+    const status = (req.query.status as string) || '';
+    const search = (req.query.search as string) || '';
+
+    client = await getDbClient();
+    let query = 'SELECT * FROM grail_bounties WHERE 1=1';
+    const params: any[] = [];
+
+    if (status && status !== 'ALL') {
+      params.push(status);
+      query += ` AND status = $${params.length}`;
+    }
+    if (search) {
+      params.push(`%${search}%`);
+      query += ` AND (desired_brand ILIKE $${params.length} OR customer_name ILIKE $${params.length} OR customer_phone ILIKE $${params.length} OR whatsapp_phone ILIKE $${params.length})`;
+    }
+
+    query += ' ORDER BY created_at DESC LIMIT 200';
+    const result = await client.query(query, params);
+    return res.json({ success: true, bounties: result.rows || [] });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// -------------------------------------------------------------
+// 5c. PATCH /api/ecommerce/bounties/:id/status - Update Lifecycle Status
+// -------------------------------------------------------------
+ecommerceRouter.patch('/bounties/:id/status', async (req: Request, res: Response) => {
+  let client: Client | null = null;
+  try {
+    const { id } = req.params;
+    const { status, matchedBarcode, matchedPieceId } = req.body;
+
+    client = await getDbClient();
+    await client.query(`
+      UPDATE grail_bounties 
+      SET status = COALESCE($1, status),
+          matched_barcode = COALESCE($2, matched_barcode),
+          matched_piece_id = COALESCE($3, matched_piece_id),
+          updated_at = NOW()
+      WHERE id = $4
+    `, [status, matchedBarcode || null, matchedPieceId || null, id]);
+
+    return res.json({ success: true, message: `Bounty ${id} updated to ${status}` });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// -------------------------------------------------------------
+// 5d. GET /api/ecommerce/bounties/auto-match - Match Available Inventory
+// -------------------------------------------------------------
+ecommerceRouter.get('/bounties/auto-match', async (req: Request, res: Response) => {
+  let client: Client | null = null;
+  try {
+    const brand = (req.query.brand as string) || '';
+    const category = (req.query.category as string) || '';
+
+    client = await getDbClient();
+    let query = `
+      SELECT barcode, brand_name, item_name, style, size_scanned, estimated_price, retail_price_aed, status
+      FROM inventory_pieces 
+      WHERE (is_sold = false OR is_sold IS NULL) 
+        AND (status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT')
+    `;
+    const params: any[] = [];
+    if (brand) {
+      params.push(`%${brand}%`);
+      query += ` AND (brand_name ILIKE $${params.length} OR item_name ILIKE $${params.length} OR style ILIKE $${params.length})`;
+    }
+    if (category && category !== 'ALL') {
+      params.push(`%${category}%`);
+      query += ` AND (item_name ILIKE $${params.length} OR style ILIKE $${params.length})`;
+    }
+
+    query += ' ORDER BY created_at DESC LIMIT 20';
+    const result = await client.query(query, params);
+    return res.json({ success: true, matches: result.rows || [] });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message });
   } finally {
@@ -406,7 +509,7 @@ ecommerceRouter.get('/orders/:orderNumber', async (req: Request, res: Response) 
     const { orderNumber } = req.params;
     client = await getDbClient();
 
-    const result = await client.query('SELECT * FROM orders WHERE order_number = $1', [orderNumber]);
+    const result = await client.query('SELECT * FROM orders WHERE order_number = $1 OR id::text = $1', [orderNumber]);
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Order not found' });
     }

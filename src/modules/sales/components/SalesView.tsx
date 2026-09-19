@@ -14,6 +14,7 @@ import { CounterSalePOSTerminal } from './CounterSalePOSTerminal.tsx';
 import { CounterSaleLogView } from './CounterSaleLogView.tsx';
 import { CustomCompanySalesView } from './CustomCompanySalesView.tsx';
 import { SalesChannelSettingsView } from './SalesChannelSettingsView.tsx';
+import { GrailBountyRadarView } from './GrailBountyRadarView.tsx';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { SalesService } from '../../../services/salesService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
@@ -38,7 +39,8 @@ import {
   Zap,
   RotateCcw,
   Building2,
-  Settings
+  Settings,
+  Target
 } from 'lucide-react';
 
 interface SalesViewProps {
@@ -49,22 +51,22 @@ interface SalesViewProps {
 
 export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserRole, onSubTabChange }) => {
   const { syncVersion } = useSync();
-  const [subTab, setSubTabState] = useState<'counterSale' | 'customSale' | 'liveSelling' | 'drafts' | 'masterLog' | 'returns' | 'salesSettings'>(() => {
+  const [subTab, setSubTabState] = useState<'counterSale' | 'customSale' | 'liveSelling' | 'drafts' | 'bounties' | 'masterLog' | 'returns' | 'salesSettings'>(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const sub = urlParams.get('subTab') as any;
-      if (sub && ['counterSale', 'customSale', 'liveSelling', 'drafts', 'masterLog', 'returns', 'salesSettings'].includes(sub)) {
+      if (sub && ['counterSale', 'customSale', 'liveSelling', 'drafts', 'bounties', 'masterLog', 'returns', 'salesSettings'].includes(sub)) {
         return sub;
       }
       const saved = localStorage.getItem('vintage_sales_subtab') as any;
-      if (saved && ['counterSale', 'customSale', 'liveSelling', 'drafts', 'masterLog', 'returns', 'salesSettings'].includes(saved)) {
+      if (saved && ['counterSale', 'customSale', 'liveSelling', 'drafts', 'bounties', 'masterLog', 'returns', 'salesSettings'].includes(saved)) {
         return saved;
       }
     } catch {}
     return 'counterSale';
   });
 
-  const setSubTab = (tab: 'counterSale' | 'customSale' | 'liveSelling' | 'drafts' | 'masterLog' | 'returns' | 'salesSettings') => {
+  const setSubTab = (tab: 'counterSale' | 'customSale' | 'liveSelling' | 'drafts' | 'bounties' | 'masterLog' | 'returns' | 'salesSettings') => {
     setSubTabState(tab);
     try {
       localStorage.setItem('vintage_sales_subtab', tab);
@@ -387,6 +389,18 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
             <span>📦 Live Drafts & Dispatch Hub ({invoices.filter(i => i.status === 'DRAFT').length})</span>
           </button>
           <button
+            id="subtab-sales-bounties"
+            onClick={() => setSubTab('bounties')}
+            className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+              subTab === 'bounties'
+                ? 'bg-purple-700 text-white shadow-xs'
+                : 'bg-purple-50 text-purple-800 hover:bg-purple-100 border border-purple-200'
+            }`}
+          >
+            <Target className="w-3.5 h-3.5 text-purple-600" />
+            <span>🎯 Grail Bounty Radar</span>
+          </button>
+          <button
             id="subtab-sales-master-log"
             onClick={() => setSubTab('masterLog')}
             className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 ${
@@ -517,6 +531,11 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
             onRefreshAll();
           }}
         />
+      )}
+
+      {/* ===================== SUBTAB: GRAIL BOUNTY RADAR ===================== */}
+      {subTab === 'bounties' && (
+        <GrailBountyRadarView />
       )}
 
       {/* ===================== SUBTAB: SALES & COA SETTINGS ===================== */}

@@ -1551,13 +1551,13 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             <div>
               <div className="flex items-center gap-2 text-amber-800 font-mono text-xs font-black uppercase tracking-wider mb-1">
                 <span>🎯</span>
-                <span>VINTAGE GRAIL BOUNTY HUNTER</span>
+                <span>PRIVATE ARCHIVE SOURCING</span>
               </div>
               <h3 className="font-cinzel text-xl sm:text-2xl font-black text-amber-950">
-                اپنا من پسند ونٹیج پیس مانگیں (Request a Grail)
+                Request a Vintage Grail (Custom Sourcing)
               </h3>
               <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                اگر آپ کو اپنی پسند کی ونٹیج ٹی شرٹ یا کارہارٹ جیکٹ اسٹور میں نہیں ملی، تو اپنی فرمائش درج کریں۔ جیسے ہی امریکہ سے آنے والے اگلے کنٹینر بیل میں یہ پیس اسکین ہوگا، سسٹم آپ کے واٹس ایپ پر لائیو میسج بھیجے گا!
+                Can't find your coveted 90s band tee or archival Carhartt jacket? Post a bounty with our sourcing team. As soon as your grail is graded and scanned from incoming American bales, we will alert you on WhatsApp with first-look priority.
               </p>
             </div>
 

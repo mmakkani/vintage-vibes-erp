@@ -26,12 +26,14 @@ import {
   Barcode,
   Zap,
   Edit,
-  MessageSquare
+  MessageSquare,
+  Building2
 } from 'lucide-react';
 import { EditParcelLogisticsModal } from './EditParcelLogisticsModal.tsx';
 import { ThermalShippingLabelModal } from './ThermalShippingLabelModal.tsx';
 import { WhatsAppOrderModal } from './WhatsAppOrderModal.tsx';
 import { LiveClaimModal } from './LiveClaimModal.tsx';
+import { RealTimeCourierSettlementModal } from './RealTimeCourierSettlementModal.tsx';
 
 interface CourierOption {
   partyId?: number;
@@ -132,6 +134,8 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
   const [bundleBarcodeInput, setBundleBarcodeInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [channelFilter, setChannelFilter] = useState<'ALL' | 'LIVE' | 'ECOMMERCE'>('ALL');
+  const [showSettlementModal, setShowSettlementModal] = useState<boolean>(false);
 
   // Filter only DRAFT invoices
   const draftInvoices = useMemo(() => {
@@ -154,13 +158,17 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
         (inv.customerName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (inv.buyerHandle || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (inv.trackingNumber || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (inv.paymentReference || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (inv.items || []).some(it => it.barcode.toLowerCase().includes(searchTerm.toLowerCase()));
 
       if (!matchesSearch) return false;
       if (boothFilter !== 'ALL' && inv.boothId !== boothFilter) return false;
+      const isEcom = (inv as any).channel === 'ECOMMERCE' || (inv as any).channel === 'STOREFRONT';
+      if (channelFilter === 'LIVE' && isEcom) return false;
+      if (channelFilter === 'ECOMMERCE' && !isEcom) return false;
       return true;
     });
-  }, [draftInvoices, searchTerm, boothFilter]);
+  }, [draftInvoices, searchTerm, boothFilter, channelFilter]);
 
   // Available pieces for bundling / new claims (not sold, not claimed)
   const availableStock = useMemo(() => {
@@ -388,6 +396,15 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
             </button>
           )}
           <button
+            type="button"
+            onClick={() => setShowSettlementModal(true)}
+            className="px-3.5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-1.5 transition-all cursor-pointer border border-indigo-400/40"
+            title="Real-Time Bank PIN Courier COD Remittance Settlement"
+          >
+            <Building2 className="w-4 h-4 text-indigo-300" />
+            <span>🏦 Settle Courier COD</span>
+          </button>
+          <button
             onClick={() => setShowNewDraftModal(true)}
             className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg flex items-center gap-2 transition-all active:scale-95 cursor-pointer ring-2 ring-amber-400/50"
           >
@@ -445,6 +462,16 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
               </div>
 
               <select
+                value={channelFilter}
+                onChange={e => setChannelFilter(e.target.value as any)}
+                className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs bg-white font-bold text-slate-700 focus:outline-none"
+              >
+                <option value="ALL">All Channels</option>
+                <option value="LIVE">🔴 Live Claims</option>
+                <option value="ECOMMERCE">🌐 E-Commerce</option>
+              </select>
+
+              <select
                 value={boothFilter}
                 onChange={e => setBoothFilter(e.target.value)}
                 className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs bg-white focus:outline-none"
@@ -484,13 +511,31 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                   >
                     <div className="flex items-start justify-between">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-mono font-bold text-xs text-slate-900">
                             {inv.invoiceNo}
                           </span>
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
                             DRAFT HOLD
                           </span>
+                          {(inv as any).channel === 'ECOMMERCE' || (inv as any).channel === 'STOREFRONT' ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                              🌐 STOREFRONT
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-800">
+                              {inv.socialPlatform || 'TIKTOK'}
+                            </span>
+                          )}
+                          {inv.paymentStatus === 'PAID' || inv.paymentStatus === 'PREPAID_VERIFIED' || (inv.paymentMethod && inv.paymentMethod !== 'COD' && inv.paymentMethod !== 'CASH_ON_DELIVERY') ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white font-mono">
+                              🟢 PAID ONLINE
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500 text-stone-950 font-mono">
+                              🟠 COD
+                            </span>
+                          )}
                           {inv.expiresAt && (() => {
                             const diffMs = new Date(inv.expiresAt).getTime() - Date.now();
                             const isExp = diffMs <= 0;
@@ -504,15 +549,12 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                               </span>
                             );
                           })()}
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-800">
-                            {inv.socialPlatform || 'TIKTOK'}
-                          </span>
                         </div>
                         <div className="text-sm font-bold text-slate-900 mt-1">
                           {inv.buyerHandle || inv.customerName}
                         </div>
                         <div className="text-[11px] text-slate-500">
-                          {inv.boothId ? `Booth ${inv.boothId.replace(/[^0-9]/g, '')}` : 'Mobile Host'} &bull;{' '}
+                          {inv.boothId ? `Booth ${inv.boothId.replace(/[^0-9]/g, '')}` : 'Web Customer'} &bull;{' '}
                           {inv.customerPhone || 'No phone recorded'}
                         </div>
                       </div>
@@ -521,8 +563,13 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                         <div className="text-sm font-bold font-mono text-indigo-700">
                           AED {inv.totalAmount.toFixed(2)}
                         </div>
-                        <div className="text-[10px] text-slate-400">
-                          {inv.shippingBearer === 'CUSTOMER' ? '+Incl. Shipping' : 'Free Shipping'}
+                        {inv.paymentReference && inv.paymentReference !== 'COD-PAY-ON-DELIVERY' && (
+                          <div className="text-[10px] font-mono text-emerald-700 font-bold truncate max-w-[120px]" title={inv.paymentReference}>
+                            Ref: {inv.paymentReference}
+                          </div>
+                        )}
+                        <div className="text-[10px] text-slate-500 font-medium">
+                          {inv.paymentStatus === 'PAID' || inv.paymentStatus === 'PREPAID_VERIFIED' ? 'COD: AED 0.00' : `Collect: AED ${inv.totalAmount.toFixed(2)}`}
                         </div>
                       </div>
                     </div>
@@ -532,8 +579,8 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                         <Package className="w-3.5 h-3.5 text-indigo-600" />
                         <strong>{inv.items.length}</strong> items bundled ({(totalGrams / 1000).toFixed(2)} KG)
                       </span>
-                      <span className="font-mono text-[11px] text-slate-400">
-                        {inv.courierPartner || 'DHL'} &bull; {inv.paymentStatus || 'Pending COD'}
+                      <span className="font-mono text-[11px] text-slate-500">
+                        {inv.courierPartner || 'DHL Express'} &bull; {inv.paymentStatus || 'Pending COD'}
                       </span>
                     </div>
                   </div>
@@ -562,14 +609,14 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                       DRAFT SALE &bull; CONCURRENT HOLD
                     </span>
                   </div>
-                  <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
+                  <div className="text-xs text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
                     <span>
-                      Buyer: <strong className="text-slate-800">{selectedInvoice.buyerHandle}</strong>
+                      Buyer: <strong className="text-slate-800">{selectedInvoice.customerName || selectedInvoice.buyerHandle}</strong>
                     </span>
                     &bull;
-                    <span>Channel: <strong>{selectedInvoice.socialPlatform}</strong></span>
+                    <span>Channel: <strong>{(selectedInvoice as any).channel === 'ECOMMERCE' ? '🌐 E-Commerce Storefront' : (selectedInvoice.socialPlatform || '🔴 Live Stream')}</strong></span>
                     &bull;
-                    <span>Booth: <strong>{selectedInvoice.boothId}</strong></span>
+                    <span>Destination: <strong>{selectedInvoice.shippingAddress || selectedInvoice.city || 'Dubai, UAE'}</strong></span>
                   </div>
                 </div>
 
@@ -602,6 +649,49 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                     <Trash2 className="w-3.5 h-3.5" />
                     Cancel Hold
                   </button>
+                </div>
+              </div>
+
+              {/* Payment Classification Status Banner */}
+              <div className={`p-3.5 rounded-xl border flex flex-wrap items-center justify-between gap-3 text-xs ${
+                selectedInvoice.paymentStatus === 'PAID' || selectedInvoice.paymentStatus === 'PREPAID_VERIFIED' || (selectedInvoice.paymentMethod && selectedInvoice.paymentMethod !== 'COD' && selectedInvoice.paymentMethod !== 'CASH_ON_DELIVERY')
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                  : 'bg-amber-50 border-amber-300 text-amber-950'
+              }`}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wide font-mono ${
+                    selectedInvoice.paymentStatus === 'PAID' || selectedInvoice.paymentStatus === 'PREPAID_VERIFIED' || (selectedInvoice.paymentMethod && selectedInvoice.paymentMethod !== 'COD' && selectedInvoice.paymentMethod !== 'CASH_ON_DELIVERY')
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-amber-500 text-stone-950 shadow-xs'
+                  }`}>
+                    {selectedInvoice.paymentStatus === 'PAID' || selectedInvoice.paymentStatus === 'PREPAID_VERIFIED' || (selectedInvoice.paymentMethod && selectedInvoice.paymentMethod !== 'COD' && selectedInvoice.paymentMethod !== 'CASH_ON_DELIVERY')
+                      ? '🟢 PREPAID ONLINE — DO NOT COLLECT ANY CASH'
+                      : '🔴 CASH ON DELIVERY — MUST COLLECT EXACT CASH'}
+                  </span>
+                  {selectedInvoice.paymentReference && selectedInvoice.paymentReference !== 'COD-PAY-ON-DELIVERY' && (
+                    <span className="font-mono font-bold text-emerald-900 bg-white/90 px-2 py-0.5 rounded border border-emerald-300 text-[11px]">
+                      Ref: {selectedInvoice.paymentReference}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-5 text-xs">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Total Order:</span>
+                    <strong className="font-mono text-slate-900">AED {selectedInvoice.totalAmount.toFixed(2)}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-black block text-slate-600">COD Due at Handover:</span>
+                    <strong className={`font-mono font-black text-sm ${
+                      selectedInvoice.paymentStatus === 'PAID' || selectedInvoice.paymentStatus === 'PREPAID_VERIFIED' || (selectedInvoice.paymentMethod && selectedInvoice.paymentMethod !== 'COD' && selectedInvoice.paymentMethod !== 'CASH_ON_DELIVERY')
+                        ? 'text-emerald-700'
+                        : 'text-rose-700'
+                    }`}>
+                      {selectedInvoice.paymentStatus === 'PAID' || selectedInvoice.paymentStatus === 'PREPAID_VERIFIED' || (selectedInvoice.paymentMethod && selectedInvoice.paymentMethod !== 'COD' && selectedInvoice.paymentMethod !== 'CASH_ON_DELIVERY')
+                        ? 'AED 0.00'
+                        : `AED ${selectedInvoice.totalAmount.toFixed(2)}`}
+                    </strong>
+                  </div>
                 </div>
               </div>
 
@@ -991,6 +1081,13 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
           onClose={() => setWhatsAppInvoice(null)}
         />
       )}
+
+      {/* Modal: Real-Time Courier COD Remittance Settlement with Bank PIN */}
+      <RealTimeCourierSettlementModal
+        isOpen={showSettlementModal}
+        onClose={() => setShowSettlementModal(false)}
+        onSettlementSuccess={onRefresh}
+      />
     </div>
   );
 };

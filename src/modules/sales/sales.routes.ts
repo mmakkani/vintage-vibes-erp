@@ -419,28 +419,139 @@ salesRouter.post('/dispatch', async (req, res) => {
 
 // POST /api/sales/courier-settlement
 salesRouter.post('/courier-settlement', async (req, res) => {
-  const { courierPartyId, bankAccountId, grossCodCleared, courierFeeDeducted, netBankReceived, referenceNo } = req.body;
+  const {
+    courierPartyId,
+    bankAccountId,
+    grossCodCleared,
+    courierFeeDeducted,
+    netBankReceived,
+    referenceNo,
+    bankRemittanceCode,
+    accountantPinVerified,
+    pinCode
+  } = req.body;
+
   if (!courierPartyId || !bankAccountId || grossCodCleared === undefined || netBankReceived === undefined) {
     return res.status(400).json({ success: false, error: 'courierPartyId, bankAccountId, grossCodCleared, and netBankReceived are required' });
   }
+
+  const remittanceCode = bankRemittanceCode || referenceNo;
+  const isPinVerified = accountantPinVerified === true || Boolean(pinCode);
+
+  if (!isPinVerified || !remittanceCode || !remittanceCode.trim()) {
+    return res.status(400).json({
+      success: false,
+      error: 'Security Exception: Remittance settlement requires valid Bank PIN / Transaction Reference verification.'
+    });
+  }
+
   let client;
   try {
     client = await getDbClient();
     const rpcRes = await client.query(
-      'SELECT settle_courier_cod_remittance($1, $2, $3, $4, $5, $6) as result;',
+      'SELECT settle_courier_cod_remittance($1, $2, $3, $4, $5, $6, $7) as result;',
       [
         courierPartyId,
         bankAccountId,
         Number(grossCodCleared),
         Number(courierFeeDeducted || 0),
         Number(netBankReceived),
-        referenceNo || `REMIT-${Date.now()}`
+        remittanceCode,
+        isPinVerified
       ]
     );
     return res.json(rpcRes.rows[0]?.result);
   } catch (err: any) {
     console.error('Error running settle_courier_cod_remittance:', err);
     return res.status(400).json({ success: false, error: err.message || 'Settlement failed' });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// GET /api/sales/grail-bounties
+salesRouter.get('/grail-bounties', async (req, res) => {
+  let client;
+  try {
+    const status = (req.query.status as string) || '';
+    const search = (req.query.search as string) || '';
+    client = await getDbClient();
+
+    let query = 'SELECT * FROM grail_bounties WHERE 1=1';
+    const params: any[] = [];
+    if (status && status !== 'ALL') {
+      params.push(status);
+      query += ` AND status = $${params.length}`;
+    }
+    if (search) {
+      params.push(`%${search}%`);
+      query += ` AND (desired_brand ILIKE $${params.length} OR customer_name ILIKE $${params.length} OR customer_phone ILIKE $${params.length} OR whatsapp_phone ILIKE $${params.length})`;
+    }
+    query += ' ORDER BY created_at DESC LIMIT 200';
+
+    const result = await client.query(query, params);
+    return res.json({ success: true, bounties: result.rows || [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || 'Failed to fetch grail bounties' });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// PATCH /api/sales/grail-bounties/:id/status
+salesRouter.patch('/grail-bounties/:id/status', async (req, res) => {
+  let client;
+  try {
+    const { id } = req.params;
+    const { status, matchedBarcode, matchedPieceId } = req.body;
+    client = await getDbClient();
+
+    await client.query(`
+      UPDATE grail_bounties 
+      SET status = COALESCE($1, status),
+          matched_barcode = COALESCE($2, matched_barcode),
+          matched_piece_id = COALESCE($3, matched_piece_id),
+          updated_at = NOW()
+      WHERE id = $4
+    `, [status, matchedBarcode || null, matchedPieceId || null, id]);
+
+    return res.json({ success: true, message: `Bounty ${id} updated to ${status}` });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || 'Failed to update bounty' });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// GET /api/sales/grail-bounties/auto-match
+salesRouter.get('/grail-bounties/auto-match', async (req, res) => {
+  let client;
+  try {
+    const brand = (req.query.brand as string) || '';
+    const category = (req.query.category as string) || '';
+    client = await getDbClient();
+
+    let query = `
+      SELECT barcode, brand_name, item_name, style, size_scanned, estimated_price, retail_price_aed, status
+      FROM inventory_pieces 
+      WHERE (is_sold = false OR is_sold IS NULL) 
+        AND (status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT')
+    `;
+    const params: any[] = [];
+    if (brand) {
+      params.push(`%${brand}%`);
+      query += ` AND (brand_name ILIKE $${params.length} OR item_name ILIKE $${params.length} OR style ILIKE $${params.length})`;
+    }
+    if (category && category !== 'ALL') {
+      params.push(`%${category}%`);
+      query += ` AND (item_name ILIKE $${params.length} OR style ILIKE $${params.length})`;
+    }
+    query += ' ORDER BY created_at DESC LIMIT 20';
+
+    const result = await client.query(query, params);
+    return res.json({ success: true, matches: result.rows || [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || 'Failed to match inventory' });
   } finally {
     if (client) await client.end().catch(() => {});
   }
