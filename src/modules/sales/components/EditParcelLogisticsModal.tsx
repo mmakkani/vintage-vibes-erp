@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SalesInvoice } from '../sales.types.ts';
 import { useFormAutoSave } from '../../../hooks/useFormAutoSave.ts';
 import { AutoSaveDraftBanner, AutoSaveIndicator } from '../../../components/AutoSaveNotice.tsx';
@@ -18,6 +18,20 @@ import {
   ArrowRight
 } from 'lucide-react';
 
+interface CourierOption {
+  partyId?: number;
+  id: string;
+  name: string;
+  accountCode: string;
+}
+
+const DEFAULT_COURIERS: CourierOption[] = [
+  { partyId: 23, id: '813f3f28-d541-4e4d-ad3e-ca6ca2824b21', name: 'DHL Express UAE', accountCode: '2120-01' },
+  { partyId: 24, id: '9b1e1713-39d2-4309-8488-81203f5ad602', name: 'Aramex Logistics UAE', accountCode: '2120-02' },
+  { partyId: 25, id: 'a8291f04-89f1-46bb-ba22-81203f5ad603', name: 'SMSA Express GCC', accountCode: '2120-03' },
+  { partyId: 26, id: 'c5713e89-11ba-47ee-99aa-81203f5ad604', name: 'Emirates Post Premium', accountCode: '2120-04' }
+];
+
 interface EditParcelLogisticsModalProps {
   invoice: SalesInvoice;
   onClose: () => void;
@@ -33,12 +47,82 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
   onPrintThermalSlip,
   onFinalizeAndPost
 }) => {
+  const [courierList, setCourierList] = useState<CourierOption[]>(DEFAULT_COURIERS);
   const [courierPartner, setCourierPartner] = useState<string>(
-    invoice.courierPartner || 'DHL Express'
+    invoice.courierPartner || 'DHL Express UAE'
+  );
+  const [courierPartnerId, setCourierPartnerId] = useState<number | string | undefined>(
+    invoice.courierPartnerId
+  );
+  const [courierPartyId, setCourierPartyId] = useState<string | undefined>(
+    invoice.courierPartyId
   );
   const [trackingNumber, setTrackingNumber] = useState<string>(
     invoice.trackingNumber || `DHL-${Math.floor(100000000 + Math.random() * 900000000)}`
   );
+
+  // Fetch active couriers dynamically from Registry
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchCouriers() {
+      try {
+        const res = await fetch('/api/parties');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const filtered = data
+            .filter((p: any) => {
+              const type = (p.type || p.party_type || '').toUpperCase();
+              const name = (p.name || p.company_name || '').toUpperCase();
+              return (
+                p.is_active !== false &&
+                (type === 'COURIER' ||
+                  type === 'LOGISTICS_AGENT' ||
+                  type === 'AGENT' ||
+                  name.includes('DHL') ||
+                  name.includes('ARAMEX') ||
+                  name.includes('SMSA') ||
+                  name.includes('POST') ||
+                  name.includes('COURIER') ||
+                  name.includes('EXPRESS'))
+              );
+            })
+            .map((p: any): CourierOption => {
+              const accountCode =
+                p.account_map?.payableAccountId ||
+                p.account_map?.payable_account_id ||
+                p.coa_account_id ||
+                '2120-00';
+              return {
+                partyId: p.party_id,
+                id: p.id,
+                name: p.name || p.company_name,
+                accountCode
+              };
+            });
+          if (isMounted && filtered.length > 0) {
+            setCourierList(filtered);
+          }
+        }
+      } catch (err) {
+        console.warn('Could not fetch couriers in EditParcelLogisticsModal:', err);
+      }
+    }
+    fetchCouriers();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleCourierSelect = (name: string) => {
+    setCourierPartner(name);
+    const sel = courierList.find(c => c.name === name);
+    if (sel) {
+      setCourierPartnerId(sel.partyId);
+      setCourierPartyId(sel.id);
+    }
+  };
+
   const [shippingFeeAed, setShippingFeeAed] = useState<number>(
     invoice.shippingFeeAed !== undefined ? invoice.shippingFeeAed : (invoice.shippingCharge !== undefined ? invoice.shippingCharge : 25)
   );
@@ -122,6 +206,8 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
     try {
       const payload = {
         courierPartner,
+        courierPartnerId,
+        courierPartyId,
         trackingNumber: trackingNumber.trim(),
         shippingFeeAed: Number(shippingFeeAed) || 0,
         shippingCharge: Number(shippingFeeAed) || 0,
@@ -168,6 +254,8 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           courierPartner,
+          courierPartnerId,
+          courierPartyId,
           trackingNumber: trackingNumber.trim(),
           shippingFeeAed: Number(shippingFeeAed) || 0,
           shippingBearer,
@@ -268,19 +356,20 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Courier Partner */}
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Courier Partner *
+                <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>Courier Partner *</span>
+                  <span className="text-[10px] text-indigo-600 font-bold">Registry Linked</span>
                 </label>
                 <select
                   value={courierPartner}
-                  onChange={e => setCourierPartner(e.target.value)}
+                  onChange={e => handleCourierSelect(e.target.value)}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-semibold text-slate-900 focus:ring-2 focus:ring-amber-500 focus:outline-none"
                 >
-                  <option value="DHL Express">DHL Express (Default Priority)</option>
-                  <option value="Emirates Post">Emirates Post</option>
-                  <option value="Aramex">Aramex</option>
-                  <option value="Fetchr">Fetchr</option>
-                  <option value="Local Rider">Local Rider (Same-Day Direct)</option>
+                  {courierList.map(c => (
+                    <option key={c.id || c.name} value={c.name}>
+                      {c.name} {c.accountCode ? `(${c.accountCode})` : ''}
+                    </option>
+                  ))}
                 </select>
               </div>
 

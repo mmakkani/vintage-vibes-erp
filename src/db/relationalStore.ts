@@ -4817,6 +4817,8 @@ class RelationalStore {
       }
 
       if (updates.courierPartner !== undefined) invoice.courierPartner = updates.courierPartner;
+      if (updates.courierPartnerId !== undefined) invoice.courierPartnerId = updates.courierPartnerId;
+      if (updates.courierPartyId !== undefined) invoice.courierPartyId = updates.courierPartyId;
       if (updates.trackingNumber !== undefined) invoice.trackingNumber = updates.trackingNumber;
       if (updates.shippingBearer !== undefined) invoice.shippingBearer = updates.shippingBearer;
       if (updates.shippingFeeAed !== undefined || updates.shippingCharge !== undefined) {
@@ -5710,6 +5712,8 @@ class RelationalStore {
     paymentMethod?: 'CASH' | 'BANK_TRANSFER' | 'CREDIT_ACCOUNT' | 'COD' | 'CARD_POS';
     paymentStatus?: 'UNPAID_PENDING_COD' | 'PREPAID_VERIFIED' | 'PARTIAL_ADVANCE';
     courierPartner?: string;
+    courierPartnerId?: number | string;
+    courierPartyId?: string;
     shippingAddress?: string;
     channel?: string;
     expiresAt?: string;
@@ -5810,6 +5814,8 @@ class RelationalStore {
         shippingFeeAed: shippingCharge,
         shippingBearer,
         courierPartner,
+        courierPartnerId: params.courierPartnerId,
+        courierPartyId: params.courierPartyId || (typeof params.courierPartnerId === 'string' ? params.courierPartnerId : undefined),
         grossProfitAed: Number((salePrice - (invoiceItem.calculatedCostPrice || 20)).toFixed(2)),
         grossProfitPercent: salePrice > 0 ? Math.round(((salePrice - (invoiceItem.calculatedCostPrice || 20)) / salePrice) * 100) : 0,
         expiresAt: params.expiresAt,

@@ -91,9 +91,9 @@ const SETTING_LABELS: Record<string, { label: string; sub: string; defaultCode: 
     defaultCode: '1128-01'
   },
   courier_payable: {
-    label: 'Courier Delivery & Commission Payable',
-    sub: 'Credited with delivery fees payable to logistics partner',
-    defaultCode: '2120-01'
+    label: 'Default / Control Courier Payable Account',
+    sub: 'Control liability account (2120-00 / 2120-01) used as fallback if courier has no specific sub-ledger',
+    defaultCode: '2120-00'
   },
   delivery_expense: {
     label: 'Company Borne Delivery Expense',

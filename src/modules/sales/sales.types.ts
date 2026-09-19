@@ -105,6 +105,8 @@ export interface SalesInvoice {
   shippingBearer?: 'COMPANY' | 'CUSTOMER';
   shippingAddress?: string;
   courierPartner?: 'DHL' | 'EMIRATES_POST' | 'ARAMEX' | 'FETCHR' | 'LOCAL_DELIVERY' | string;
+  courierPartnerId?: number | string;
+  courierPartyId?: string;
   grossProfitAed?: number;
   grossProfitPercent?: number;
   expiresAt?: string;

@@ -389,20 +389,21 @@ salesRouter.get('/accounts', async (req, res) => {
 
 // POST /api/sales/dispatch
 salesRouter.post('/dispatch', async (req, res) => {
-  const { orderId, channel, clientId, courierPartyId, shippingFee, shippingBearer } = req.body;
+  const { orderId, channel, clientId, courierPartyId, courierPartnerId, shippingFee, shippingBearer } = req.body;
   if (!orderId || !channel) {
     return res.status(400).json({ success: false, error: 'orderId and channel are required' });
   }
   let client;
   try {
     client = await getDbClient();
+    const resolvedCourier = courierPartyId || (courierPartnerId !== undefined && courierPartnerId !== null ? String(courierPartnerId) : null);
     const rpcRes = await client.query(
       'SELECT post_sales_dispatch_and_cogs_voucher($1, $2, $3, $4, $5, $6) as result;',
       [
         orderId,
         channel,
         clientId || null,
-        courierPartyId || null,
+        resolvedCourier,
         Number(shippingFee || 0),
         shippingBearer || 'Customer Bears'
       ]

@@ -5182,20 +5182,21 @@ export default async function handler(req: any, res: any) {
       }
 
       if ((pathname.endsWith('/sales/dispatch') || pathname.includes('/sales/dispatch')) && method === 'POST') {
-        const { orderId, channel, clientId, courierPartyId, shippingFee, shippingBearer } = body;
+        const { orderId, channel, clientId, courierPartyId, courierPartnerId, shippingFee, shippingBearer } = body;
         if (!orderId || !channel) {
           return res.status(400).json({ success: false, error: 'orderId and channel are required' });
         }
         const client = await getPgClient();
         if (!client) return res.status(500).json({ success: false, error: 'Database connection unavailable' });
         try {
+          const resolvedCourier = courierPartyId || (courierPartnerId !== undefined && courierPartnerId !== null ? String(courierPartnerId) : null);
           const rpcRes = await client.query(
             'SELECT public.post_sales_dispatch_and_cogs_voucher($1, $2, $3, $4, $5, $6) as result;',
             [
               orderId,
               channel,
               clientId || null,
-              courierPartyId || null,
+              resolvedCourier,
               Number(shippingFee || 0),
               shippingBearer || 'Customer Bears'
             ]
