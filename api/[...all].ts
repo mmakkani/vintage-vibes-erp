@@ -896,6 +896,611 @@ export default async function handler(req: any, res: any) {
     }
 
     // ========================================================================
+    // HR & WORKFORCE MANAGEMENT MODULE (Direct PostgreSQL / Pooler Persistence)
+    // ========================================================================
+
+    const cleanDate = (d: any): string | null => {
+      if (!d || typeof d !== 'string') return null;
+      const trimmed = d.trim();
+      if (!trimmed || trimmed === '' || trimmed === 'null' || trimmed === 'undefined') return null;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+      const parsed = new Date(trimmed);
+      return !isNaN(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null;
+    };
+
+    const formatDateStr = (val: any): string => {
+      if (!val) return '';
+      if (typeof val === 'string') return val.slice(0, 10);
+      if (val instanceof Date) return val.toISOString().slice(0, 10);
+      return String(val).slice(0, 10);
+    };
+
+    const cleanNullableUnique = (val: any): string | null => {
+      if (!val || typeof val !== 'string') return null;
+      const trimmed = val.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    };
+
+    const mapEmployeeRow = (row: any) => {
+      const basicSalary = Number(row.basic_salary ?? row.base_salary ?? row.salary ?? 0);
+      const housingAllow = Number(row.housing_allowance ?? row.housing_allow ?? 0);
+      const transportAllow = Number(row.transport_allowance ?? row.transport_allow ?? 0);
+      const otherAllow = Number(row.other_allow ?? 0);
+      const totalPackage = Number(row.total_package ?? row.gross_salary ?? (basicSalary + housingAllow + transportAllow + otherAllow));
+
+      const empCode = row.employee_code || row.emp_code || 'EMP-0786';
+      const fullName = (`${row.first_name || ''} ${row.last_name || ''}`).trim() || row.full_name || row.name || 'Staff Member';
+      const firstName = row.first_name || fullName.split(' ')[0] || '';
+      const lastName = row.last_name || fullName.split(' ').slice(1).join(' ') || '';
+      const arabicName = row.name_arabic || row.arabic_name || row.full_name_arabic || '';
+
+      return {
+        id: String(row.id),
+        code: empCode,
+        empCode: empCode,
+        employee_code: empCode,
+        emp_code: empCode,
+        name: fullName,
+        fullName: fullName,
+        full_name: fullName,
+        first_name: firstName,
+        last_name: lastName,
+        name_arabic: arabicName,
+        nameArabic: arabicName,
+        arabic_name: arabicName,
+        designation: row.designation || 'Staff',
+        department: row.department || 'Operations',
+        baseSalary: basicSalary,
+        basic_salary: basicSalary,
+        base_salary: basicSalary,
+        salary: basicSalary,
+        housingAllow: housingAllow,
+        housing_allow: housingAllow,
+        housing_allowance: housingAllow,
+        transportAllow: transportAllow,
+        transport_allow: transportAllow,
+        transport_allowance: transportAllow,
+        otherAllow: otherAllow,
+        other_allow: otherAllow,
+        totalPackage: totalPackage,
+        gross_salary: totalPackage,
+        total_package: totalPackage,
+        workingHoursPerDay: Number(row.working_hours_per_day || 8),
+        working_hours_per_day: Number(row.working_hours_per_day || 8),
+        isActive: row.is_active !== false,
+        is_active: row.is_active !== false,
+        joiningDate: formatDateStr(row.joining_date || row.date_of_joining) || new Date().toISOString().slice(0, 10),
+        joining_date: formatDateStr(row.joining_date || row.date_of_joining) || new Date().toISOString().slice(0, 10),
+        status: row.status || 'POSTED',
+        emiratesId: row.emirates_id || row.emirates_id_no || '',
+        emirates_id: row.emirates_id || row.emirates_id_no || '',
+        idCardNo: row.id_card_no || '',
+        id_card_no: row.id_card_no || '',
+        emiratesIdExpiry: formatDateStr(row.emirates_id_expiry),
+        emirates_id_expiry: formatDateStr(row.emirates_id_expiry),
+        passportNo: row.passport_no || row.passport_number || '',
+        passport_no: row.passport_no || row.passport_number || '',
+        passportCountry: row.passport_country || '',
+        passport_country: row.passport_country || '',
+        passportIssueDate: formatDateStr(row.passport_issue_date),
+        passport_issue_date: formatDateStr(row.passport_issue_date),
+        passportExpiry: formatDateStr(row.passport_expiry || row.passport_expiry_date),
+        passport_expiry: formatDateStr(row.passport_expiry || row.passport_expiry_date),
+        passportImageUrl: row.passport_image_url || '',
+        passport_image_url: row.passport_image_url || '',
+        residencyCardNo: row.residency_card_no || row.residency_no || '',
+        residency_card_no: row.residency_card_no || row.residency_no || '',
+        uidNo: row.uid_no || row.visa_uid || '',
+        visaUid: row.uid_no || row.visa_uid || '',
+        uid_no: row.uid_no || row.visa_uid || '',
+        visa_uid: row.uid_no || row.visa_uid || '',
+        residencyProfession: row.residency_profession || row.profession_on_visa || '',
+        residency_profession: row.residency_profession || row.profession_on_visa || '',
+        residencySponsor: row.residency_sponsor || row.sponsor || '',
+        residency_sponsor: row.residency_sponsor || row.sponsor || '',
+        residencyIssueDate: formatDateStr(row.residency_issue_date || row.visa_issue_date),
+        residency_issue_date: formatDateStr(row.residency_issue_date || row.visa_issue_date),
+        residencyExpiryDate: formatDateStr(row.residency_expiry_date || row.visa_expiry_date),
+        residency_expiry_date: formatDateStr(row.residency_expiry_date || row.visa_expiry_date),
+        residencyImageUrl: row.residency_image_url || row.visa_image_url || '',
+        residency_image_url: row.residency_image_url || row.visa_image_url || '',
+        photoUrl: row.photo_url || '',
+        photo_url: row.photo_url || '',
+        idFrontImageUrl: row.id_front_image_url || '',
+        id_front_image_url: row.id_front_image_url || '',
+        idBackImageUrl: row.id_back_image_url || '',
+        id_back_image_url: row.id_back_image_url || '',
+        nationality: row.nationality || '',
+        gender: row.gender || 'MALE',
+        dob: formatDateStr(row.dob || row.date_of_birth),
+        email: row.email || '',
+        address: row.address || '',
+        notes: row.notes || ''
+      };
+    };
+
+    // 1. GET /api/hr/employees - Retrieve all active employees
+    if ((pathname === '/api/hr/employees' || pathname.endsWith('/hr/employees') || pathname === '/api/employees') && method === 'GET') {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          await client.query("UPDATE employees SET email = NULL WHERE email = '' OR email = ' ';").catch(() => {});
+          const result = await client.query(`
+            SELECT * FROM public.employees 
+            WHERE is_deleted IS NOT TRUE 
+            ORDER BY created_at DESC;
+          `);
+          const mapped = result.rows.map(mapEmployeeRow);
+          return res.status(200).json(mapped);
+        } catch (dbErr: any) {
+          console.warn('[Serverless HR] DB query error:', dbErr?.message);
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      try {
+        const { data, error } = await supabaseAdmin.from('employees').select('*').order('created_at', { ascending: false });
+        if (!error && Array.isArray(data)) {
+          return res.status(200).json(data.map(mapEmployeeRow));
+        }
+      } catch (_) {}
+      return res.status(200).json([]);
+    }
+
+    // 2. POST /api/hr/employees - Create new employee
+    if ((pathname === '/api/hr/employees' || pathname.endsWith('/hr/employees')) && method === 'POST') {
+      const emp = body;
+      const client = await getPgClient();
+      if (client) {
+        try {
+          await client.query("UPDATE employees SET email = NULL WHERE email = '' OR email = ' ';").catch(() => {});
+
+          let empCode = (emp.empCode || emp.emp_code || emp.employee_code || '').trim();
+          if (!empCode) {
+            const codeRes = await client.query(`
+              SELECT emp_code, employee_code FROM employees 
+              WHERE emp_code LIKE 'EMP-%' OR employee_code LIKE 'EMP-%' 
+              ORDER BY created_at DESC LIMIT 50;
+            `);
+            let maxNum = 0;
+            for (const row of codeRes.rows) {
+              const code = row.emp_code || row.employee_code || '';
+              const match = code.match(/EMP-(\d+)/i);
+              if (match) {
+                const num = parseInt(match[1], 10);
+                if (!isNaN(num) && num > maxNum) maxNum = num;
+              }
+            }
+            empCode = `EMP-${String(maxNum + 1).padStart(4, '0')}`;
+          }
+
+          const basicSalary = Number(emp.basic_salary ?? emp.baseSalary ?? emp.base_salary ?? 0);
+          const housingAllowance = Number(emp.housing_allowance ?? emp.housingAllow ?? emp.housing_allow ?? 0);
+          const transportAllowance = Number(emp.transport_allowance ?? emp.transportAllow ?? emp.transport_allow ?? 0);
+          const otherAllowance = Number(emp.other_allow ?? emp.otherAllow ?? 0);
+          const totalPackage = Number(emp.total_package ?? emp.totalPackage ?? (basicSalary + housingAllowance + transportAllowance + otherAllowance));
+          const workingHoursPerDay = Number(emp.working_hours_per_day ?? emp.workingHoursPerDay ?? 8);
+
+          const resolvedFullName = emp.full_name || emp.fullName || emp.fullNameEnglish || emp.name || emp.full_name_english || 'Staff Member';
+          const firstName = resolvedFullName.split(' ')[0] || resolvedFullName;
+          const lastName = resolvedFullName.split(' ').slice(1).join(' ') || '';
+          const resolvedArabicName = emp.nameArabic || emp.full_name_arabic || emp.fullNameArabic || emp.name_arabic || '';
+          const safeJoiningDate = cleanDate(emp.joiningDate || emp.joining_date) || new Date().toISOString().slice(0, 10);
+          const cleanEmail = cleanNullableUnique(emp.email);
+
+          const cols = [
+            'emp_code', 'employee_code', 'name', 'full_name', 'first_name', 'last_name',
+            'name_arabic', 'arabic_name', 'full_name_arabic',
+            'designation', 'department',
+            'base_salary', 'basic_salary', 'salary',
+            'housing_allow', 'housing_allowance',
+            'transport_allow', 'transport_allowance',
+            'other_allow', 'total_package', 'gross_salary',
+            'working_hours_per_day', 'is_active', 'status',
+            'joining_date', 'date_of_joining',
+            'dob', 'date_of_birth',
+            'emirates_id', 'emirates_id_no', 'id_card_no', 'emirates_id_expiry',
+            'passport_no', 'passport_number', 'passport_country', 'passport_issue_date', 'passport_expiry', 'passport_expiry_date',
+            'residency_card_no', 'residency_no', 'uid_no', 'visa_uid',
+            'residency_sponsor', 'sponsor', 'residency_profession', 'profession_on_visa',
+            'residency_issue_date', 'visa_issue_date', 'residency_expiry_date', 'visa_expiry_date',
+            'nationality', 'gender', 'email', 'address', 'notes',
+            'id_front_image_url', 'id_back_image_url', 'passport_image_url', 'residency_image_url', 'visa_image_url', 'photo_url',
+            'created_at', 'updated_at'
+          ];
+
+          const values = [
+            empCode, empCode, resolvedFullName, resolvedFullName, firstName, lastName,
+            resolvedArabicName, resolvedArabicName, resolvedArabicName,
+            emp.designation || 'Staff', emp.department || 'Operations',
+            basicSalary, basicSalary, basicSalary,
+            housingAllowance, housingAllowance,
+            transportAllowance, transportAllowance,
+            otherAllowance, totalPackage, totalPackage,
+            workingHoursPerDay, emp.isActive !== false, emp.status || 'POSTED',
+            safeJoiningDate, safeJoiningDate,
+            cleanDate(emp.dob || emp.date_of_birth), cleanDate(emp.dob || emp.date_of_birth),
+            emp.emiratesId || emp.emirates_id || '', emp.emiratesId || emp.emirates_id || '', emp.idCardNo || emp.id_card_no || '', cleanDate(emp.emiratesIdExpiry || emp.emirates_id_expiry),
+            emp.passportNo || emp.passport_no || '', emp.passportNo || emp.passport_no || '', emp.passportCountry || emp.passport_country || '', cleanDate(emp.passportIssueDate || emp.passport_issue_date), cleanDate(emp.passportExpiry || emp.passport_expiry), cleanDate(emp.passportExpiry || emp.passport_expiry),
+            emp.residencyCardNo || emp.residency_card_no || '', emp.residencyCardNo || emp.residency_card_no || '', emp.uidNo || emp.uid_no || '', emp.uidNo || emp.uid_no || '',
+            emp.residencySponsor || emp.residency_sponsor || '', emp.residencySponsor || emp.residency_sponsor || '', emp.residencyProfession || emp.residency_profession || '', emp.residencyProfession || emp.residency_profession || '',
+            cleanDate(emp.residencyIssueDate || emp.residency_issue_date), cleanDate(emp.residencyIssueDate || emp.residency_issue_date), cleanDate(emp.residencyExpiryDate || emp.residency_expiry_date), cleanDate(emp.residencyExpiryDate || emp.residency_expiry_date),
+            emp.nationality || '', emp.gender || 'MALE', cleanEmail, emp.address || '', emp.notes || '',
+            emp.idFrontImageUrl || emp.id_front_image_url || '', emp.idBackImageUrl || emp.id_back_image_url || '', emp.passportImageUrl || emp.passport_image_url || '', emp.residencyImageUrl || emp.residency_image_url || '', emp.residencyImageUrl || emp.residency_image_url || '', emp.photoUrl || emp.photo_url || '',
+            new Date(), new Date()
+          ];
+
+          const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
+          const insRes = await client.query(`INSERT INTO employees (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *;`, values);
+          return res.status(200).json(mapEmployeeRow(insRes.rows[0]));
+        } catch (dbErr: any) {
+          console.warn('[Serverless HR] Create employee error:', dbErr?.message);
+          return res.status(400).json({ error: dbErr?.message || 'Failed to save employee' });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      return res.status(400).json({ error: 'Database unavailable' });
+    }
+
+    // 3. POST /api/hr/employees/:id/post - Post / Approve employee
+    if (pathname.includes('/api/hr/employees/') && pathname.endsWith('/post') && method === 'POST') {
+      const segments = pathname.split('/').filter(Boolean);
+      const id = segments[segments.length - 2];
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const updRes = await client.query(`
+            UPDATE employees SET status = 'POSTED', updated_at = NOW() 
+            WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1 
+            RETURNING *;
+          `, [id]);
+          return res.status(200).json({ success: true, employee: mapEmployeeRow(updRes.rows[0] || {}) });
+        } catch (dbErr: any) {
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      return res.status(200).json({ success: true });
+    }
+
+    // 4. POST /api/hr/employees/:id/unpost - Unpost / Draft employee
+    if (pathname.includes('/api/hr/employees/') && pathname.endsWith('/unpost') && method === 'POST') {
+      const segments = pathname.split('/').filter(Boolean);
+      const id = segments[segments.length - 2];
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const updRes = await client.query(`
+            UPDATE employees SET status = 'DRAFT', updated_at = NOW() 
+            WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1 
+            RETURNING *;
+          `, [id]);
+          return res.status(200).json({ success: true, employee: mapEmployeeRow(updRes.rows[0] || {}) });
+        } catch (dbErr: any) {
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      return res.status(200).json({ success: true });
+    }
+
+    // 5. DELETE /api/hr/employees/:id - Delete employee
+    if (pathname.includes('/api/hr/employees/') && method === 'DELETE') {
+      const segments = pathname.split('/').filter(Boolean);
+      const id = segments[segments.length - 1];
+      const client = await getPgClient();
+      if (client) {
+        try {
+          await client.query(`DELETE FROM employee_attendance WHERE employee_id = $1 OR emp_code = $1;`, [id]).catch(() => {});
+          await client.query(`DELETE FROM employee_loans WHERE employee_id = $1 OR emp_code = $1;`, [id]).catch(() => {});
+          await client.query(`DELETE FROM employee_payroll WHERE employee_id = $1 OR emp_code = $1;`, [id]).catch(() => {});
+          await client.query(`DELETE FROM employees WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1;`, [id]);
+          return res.status(200).json({ success: true });
+        } catch (dbErr: any) {
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      return res.status(200).json({ success: true });
+    }
+
+    // 6. PUT /api/hr/employees/:id - Update existing employee
+    if (pathname.includes('/api/hr/employees/') && method === 'PUT') {
+      const segments = pathname.split('/').filter(Boolean);
+      const id = segments[segments.length - 1];
+      const emp = body;
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const sets: string[] = [];
+          const values: any[] = [];
+          let idx = 1;
+
+          const addCol = (colName: string, val: any) => {
+            if (val !== undefined) {
+              sets.push(`${colName} = $${idx++}`);
+              values.push(val);
+            }
+          };
+
+          const resolvedName = emp.full_name || emp.fullName || emp.name;
+          if (resolvedName !== undefined) {
+            addCol('name', resolvedName);
+            addCol('full_name', resolvedName);
+            addCol('first_name', resolvedName.split(' ')[0] || resolvedName);
+            addCol('last_name', resolvedName.split(' ').slice(1).join(' ') || '');
+          }
+
+          const resolvedArabic = emp.nameArabic || emp.full_name_arabic || emp.name_arabic;
+          if (resolvedArabic !== undefined) {
+            addCol('name_arabic', resolvedArabic);
+            addCol('arabic_name', resolvedArabic);
+            addCol('full_name_arabic', resolvedArabic);
+          }
+
+          if (emp.empCode !== undefined || emp.emp_code !== undefined) {
+            const c = emp.empCode || emp.emp_code;
+            addCol('emp_code', c);
+            addCol('employee_code', c);
+          }
+
+          if (emp.designation !== undefined) addCol('designation', emp.designation);
+          if (emp.department !== undefined) addCol('department', emp.department);
+
+          const basicSal = emp.basic_salary ?? emp.baseSalary ?? emp.base_salary;
+          if (basicSal !== undefined) {
+            const num = Number(basicSal);
+            addCol('base_salary', num);
+            addCol('basic_salary', num);
+            addCol('salary', num);
+          }
+
+          const houseAllow = emp.housing_allowance ?? emp.housingAllow ?? emp.housing_allow;
+          if (houseAllow !== undefined) {
+            const num = Number(houseAllow);
+            addCol('housing_allow', num);
+            addCol('housing_allowance', num);
+          }
+
+          const transAllow = emp.transport_allowance ?? emp.transportAllow ?? emp.transport_allow;
+          if (transAllow !== undefined) {
+            const num = Number(transAllow);
+            addCol('transport_allow', num);
+            addCol('transport_allowance', num);
+          }
+
+          const totPkg = emp.total_package ?? emp.totalPackage;
+          if (totPkg !== undefined) {
+            const num = Number(totPkg);
+            addCol('total_package', num);
+            addCol('gross_salary', num);
+          }
+
+          if (emp.status !== undefined) addCol('status', emp.status);
+          if (emp.nationality !== undefined) addCol('nationality', emp.nationality);
+          if (emp.gender !== undefined) addCol('gender', emp.gender);
+          if (emp.email !== undefined) addCol('email', cleanNullableUnique(emp.email));
+
+          if (emp.emiratesId !== undefined || emp.emirates_id !== undefined) {
+            const eid = emp.emiratesId || emp.emirates_id;
+            addCol('emirates_id', eid);
+            addCol('emirates_id_no', eid);
+          }
+          if (emp.passportNo !== undefined || emp.passport_no !== undefined) {
+            const pNo = emp.passportNo || emp.passport_no;
+            addCol('passport_no', pNo);
+            addCol('passport_number', pNo);
+          }
+
+          sets.push('updated_at = NOW()');
+          values.push(id);
+
+          const query = `UPDATE employees SET ${sets.join(', ')} WHERE id::text = $${idx} OR emp_code = $${idx} OR employee_code = $${idx} RETURNING *;`;
+          const result = await client.query(query, values);
+          return res.status(200).json(mapEmployeeRow(result.rows[0] || {}));
+        } catch (dbErr: any) {
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      return res.status(400).json({ error: 'Database unavailable' });
+    }
+
+    // 7. GET /api/hr/attendance/sheets
+    if (pathname.includes('/api/hr/attendance/sheets') && method === 'GET') {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const result = await client.query(`SELECT * FROM hr_attendance_sheets ORDER BY created_at DESC;`);
+          const sheets = result.rows.map(r => ({
+            id: r.id,
+            monthYear: r.month_year,
+            totalEmployees: Number(r.total_employees || 0),
+            status: r.status,
+            createdAt: r.created_at
+          }));
+          return res.status(200).json(sheets);
+        } catch (dbErr: any) {
+          console.warn('[Serverless HR] attendance sheets error:', dbErr?.message);
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      return res.status(200).json([]);
+    }
+
+    // 8. GET /api/hr/attendance - Attendance records for month
+    if ((pathname === '/api/hr/attendance' || pathname.endsWith('/hr/attendance')) && method === 'GET') {
+      const month = parsedUrl.searchParams.get('month') || new Date().toISOString().slice(0, 7);
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const result = await client.query(`
+            SELECT * FROM employee_attendance 
+            WHERE month_year = $1 
+            ORDER BY emp_code ASC;
+          `, [month]);
+          const records = result.rows.map(r => ({
+            id: String(r.id),
+            employeeId: String(r.employee_id),
+            employeeName: r.employee_name || '',
+            empCode: r.emp_code || '',
+            monthYear: r.month_year || '',
+            daysWorked: Number(r.days_worked || 0),
+            overtimeHours: Number(r.overtime_hours || 0),
+            status: r.status || 'DRAFT',
+            lockedAt: r.locked_at ? new Date(r.locked_at).toISOString() : undefined,
+            lockedBy: r.locked_by || undefined
+          }));
+          return res.status(200).json(records);
+        } catch (dbErr: any) {
+          console.warn('[Serverless HR] attendance error:', dbErr?.message);
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      return res.status(200).json([]);
+    }
+
+    // 9. GET /api/hr/payroll/sheets
+    if (pathname.includes('/api/hr/payroll/sheets') && method === 'GET') {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const result = await client.query(`SELECT * FROM hr_payroll_sheets ORDER BY created_at DESC;`);
+          const sheets = result.rows.map(r => ({
+            id: r.id,
+            monthYear: r.month_year,
+            totalEmployees: Number(r.total_employees || 0),
+            totalGross: Number(r.total_gross || 0),
+            totalDeductions: Number(r.total_deductions || 0),
+            totalNet: Number(r.total_net || 0),
+            status: r.status,
+            postedAt: r.posted_at,
+            voucherNo: r.voucher_no,
+            createdAt: r.created_at
+          }));
+          return res.status(200).json(sheets);
+        } catch (dbErr: any) {
+          console.warn('[Serverless HR] payroll sheets error:', dbErr?.message);
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      return res.status(200).json([]);
+    }
+
+    // 10. GET /api/hr/payroll - Individual payroll slips for month
+    if ((pathname === '/api/hr/payroll' || pathname.endsWith('/hr/payroll')) && method === 'GET') {
+      const month = parsedUrl.searchParams.get('month') || new Date().toISOString().slice(0, 7);
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const result = await client.query(`
+            SELECT * FROM employee_payroll 
+            WHERE month_year = $1 
+            ORDER BY emp_code ASC;
+          `, [month]);
+          const slips = result.rows.map(r => ({
+            id: String(r.id),
+            employeeId: String(r.employee_id),
+            employeeName: r.employee_name || '',
+            empCode: r.emp_code || '',
+            designation: r.designation || '',
+            monthYear: r.month_year || '',
+            status: r.status || 'DRAFT',
+            baseSalary: Number(r.base_salary || 0),
+            allowances: Number(r.allowances || 0),
+            dailyRate: Number(r.daily_rate || 0),
+            hourlyRate: Number(r.hourly_rate || 0),
+            daysWorked: Number(r.days_worked || 30),
+            overtimeHours: Number(r.overtime_hours || 0),
+            earnedBasic: Number(r.earned_basic || 0),
+            overtimePay: Number(r.overtime_pay || 0),
+            grossPay: Number(r.gross_pay || 0),
+            advanceDeduction: Number(r.advance_deduction || 0),
+            loanEmiDeduction: Number(r.loan_emi_deduction || 0),
+            totalDeductions: Number(r.total_deductions || 0),
+            netPay: Number(r.net_pay || 0),
+            paymentMethod: r.payment_method || 'BANK_TRANSFER',
+            bankAccountId: r.bank_account_id || '',
+            bankAccountName: r.bank_account_name || '',
+            postedAt: r.posted_at ? new Date(r.posted_at).toISOString() : undefined,
+            postedBy: r.posted_by || undefined
+          }));
+          return res.status(200).json(slips);
+        } catch (dbErr: any) {
+          console.warn('[Serverless HR] payroll error:', dbErr?.message);
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      return res.status(200).json([]);
+    }
+
+    // 11. GET /api/hr/loans - Employee loans list
+    if ((pathname === '/api/hr/loans' || pathname.endsWith('/hr/loans')) && method === 'GET') {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const result = await client.query(`SELECT * FROM employee_loans ORDER BY created_at DESC;`);
+          const loans = result.rows.map(r => ({
+            id: String(r.id),
+            employeeId: String(r.employee_id),
+            employeeName: r.employee_name || '',
+            empCode: r.emp_code || '',
+            type: r.type || 'LOAN',
+            principalAmount: Number(r.principal_amount || 0),
+            emiAmount: Number(r.emi_amount || 0),
+            totalMonths: Number(r.total_months || 0),
+            startMonth: r.start_month || '',
+            remainingAmount: Number(r.remaining_amount || 0),
+            status: r.status || 'ACTIVE',
+            disbursementAccount: r.disbursement_account || '',
+            disbursementMethod: r.disbursement_method || 'BANK_TRANSFER',
+            notes: r.notes || '',
+            createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()
+          }));
+          return res.status(200).json(loans);
+        } catch (dbErr: any) {
+          console.warn('[Serverless HR] loans error:', dbErr?.message);
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      return res.status(200).json([]);
+    }
+
+    // 12. GET /api/hr/ocr/logs
+    if (pathname.includes('/api/hr/ocr/logs') && method === 'GET') {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const result = await client.query(`SELECT * FROM hr_ocr_logs ORDER BY scanned_at DESC LIMIT 50;`);
+          return res.status(200).json(result.rows || []);
+        } catch (_) {}
+        finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+      return res.status(200).json([]);
+    }
+
+    // 13. GET /api/hr/ocr/status
+    if (pathname.includes('/api/hr/ocr/status') && method === 'GET') {
+      return res.status(200).json({
+        configured: true,
+        model: 'gemini-2.5-flash',
+        status: 'READY'
+      });
+    }
+
+    // ========================================================================
     // WHATSAPP BROADCASTER & PAIRING ENDPOINTS
     // ========================================================================
 

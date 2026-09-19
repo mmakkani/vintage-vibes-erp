@@ -43,6 +43,61 @@ export interface Employee {
   
   // Photo preview / Avatar
   photoUrl?: string;
+
+  // Casing & Naming Aliases for universal compatibility
+  code?: string;
+  employee_code?: string;
+  emp_code?: string;
+  first_name?: string;
+  last_name?: string;
+  full_name?: string;
+  fullName?: string;
+  name_arabic?: string;
+  arabic_name?: string;
+  basic_salary?: number;
+  base_salary?: number;
+  salary?: number;
+  totalPackage?: number;
+  gross_salary?: number;
+  total_package?: number;
+  housing_allow?: number;
+  housing_allowance?: number;
+  transport_allow?: number;
+  transport_allowance?: number;
+  otherAllow?: number;
+  other_allow?: number;
+  emirates_id?: string;
+  emirates_id_no?: string;
+  id_card_no?: string;
+  emirates_id_expiry?: string;
+  passport_no?: string;
+  passport_number?: string;
+  passport_country?: string;
+  passport_issue_date?: string;
+  passport_expiry?: string;
+  passport_expiry_date?: string;
+  passport_image_url?: string;
+  residency_card_no?: string;
+  residency_no?: string;
+  visaUid?: string;
+  visa_uid?: string;
+  uid_no?: string;
+  residency_profession?: string;
+  profession_on_visa?: string;
+  residency_sponsor?: string;
+  sponsor?: string;
+  residency_issue_date?: string;
+  visa_issue_date?: string;
+  residency_expiry_date?: string;
+  visa_expiry_date?: string;
+  residency_image_url?: string;
+  visa_image_url?: string;
+  id_front_image_url?: string;
+  id_back_image_url?: string;
+  photo_url?: string;
+  email?: string;
+  address?: string;
+  notes?: string;
 }
 
 export interface AttendanceRecord {

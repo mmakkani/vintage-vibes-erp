@@ -71,6 +71,23 @@ export class HrService {
         }
       } catch (_) {}
 
+      // 1. Try fetching from direct API endpoint first (PostgreSQL Pooler)
+      try {
+        const fetchFn = (typeof window !== 'undefined' && (window as any).__originalFetch) || (typeof fetch !== 'undefined' ? fetch : null);
+        if (fetchFn) {
+          const res = await fetchFn('/api/hr/employees');
+          if (res.ok) {
+            const json = await res.json();
+            const list = Array.isArray(json) ? json : (json?.employees || json?.data || []);
+            if (Array.isArray(list) && list.length > 0) {
+              this.cachedEmployees = list;
+              this.lastEmployeesFetched = Date.now();
+              return list;
+            }
+          }
+        }
+      } catch (_) {}
+
       try {
         const { data, error } = await supabase
           .from('employees')
@@ -84,42 +101,96 @@ export class HrService {
             return [];
           }
 
-          const mapped = data.map((row: any) => ({
-            id: String(row.id),
-            empCode: row.emp_code || '',
-            name: row.name || '',
-            designation: row.designation || '',
-            department: row.department || '',
-            baseSalary: Number(row.base_salary || 0),
-            housingAllow: Number(row.housing_allow || 0),
-            transportAllow: Number(row.transport_allow || 0),
-            workingHoursPerDay: Number(row.working_hours_per_day || 8),
-            isActive: row.is_active !== false,
-            joiningDate: row.joining_date || new Date().toISOString().slice(0, 10),
-            status: row.status || 'POSTED',
-            emiratesId: row.emirates_id || '',
-            residencyCardNo: row.residency_card_no || '',
-            passportNo: row.passport_no || '',
-            idFrontImageUrl: row.id_front_image_url || '',
-            idBackImageUrl: row.id_back_image_url || '',
-            nameArabic: row.name_arabic || '',
-            nationality: row.nationality || '',
-            gender: row.gender || 'MALE',
-            dob: row.dob || '',
-            emiratesIdExpiry: row.emirates_id_expiry || '',
-            idCardNo: row.id_card_no || '',
-            passportExpiry: row.passport_expiry || '',
-            passportIssueDate: row.passport_issue_date || '',
-            passportCountry: row.passport_country || '',
-            passportImageUrl: row.passport_image_url || '',
-            uidNo: row.uid_no || '',
-            residencyIssueDate: row.residency_issue_date || '',
-            residencyExpiryDate: row.residency_expiry_date || '',
-            residencySponsor: row.residency_sponsor || '',
-            residencyProfession: row.residency_profession || '',
-            residencyImageUrl: row.residency_image_url || '',
-            photoUrl: row.photo_url || ''
-          }));
+          const mapped = data.map((row: any) => {
+            const empCode = row.emp_code || row.employee_code || '';
+            const fullName = (row.name || `${row.first_name || ''} ${row.last_name || ''}`).trim() || row.full_name || 'Staff Member';
+            const basicSal = Number(row.basic_salary || row.base_salary || row.salary || 0);
+            const housingAllow = Number(row.housing_allowance || row.housing_allow || 0);
+            const transAllow = Number(row.transport_allowance || row.transport_allow || 0);
+            const otherAllow = Number(row.other_allow || 0);
+            const totPkg = Number(row.total_package || row.gross_salary || (basicSal + housingAllow + transAllow + otherAllow));
+
+            return {
+              id: String(row.id),
+              code: empCode,
+              empCode: empCode,
+              employee_code: empCode,
+              emp_code: empCode,
+              name: fullName,
+              fullName: fullName,
+              full_name: fullName,
+              first_name: row.first_name || '',
+              last_name: row.last_name || '',
+              designation: row.designation || 'Staff',
+              department: row.department || 'Operations',
+              baseSalary: basicSal,
+              basic_salary: basicSal,
+              base_salary: basicSal,
+              salary: basicSal,
+              housingAllow: housingAllow,
+              housing_allow: housingAllow,
+              housing_allowance: housingAllow,
+              transportAllow: transAllow,
+              transport_allow: transAllow,
+              transport_allowance: transAllow,
+              otherAllow: otherAllow,
+              other_allow: otherAllow,
+              totalPackage: totPkg,
+              gross_salary: totPkg,
+              total_package: totPkg,
+              workingHoursPerDay: Number(row.working_hours_per_day || 8),
+              working_hours_per_day: Number(row.working_hours_per_day || 8),
+              isActive: row.is_active !== false,
+              is_active: row.is_active !== false,
+              joiningDate: row.joining_date || new Date().toISOString().slice(0, 10),
+              joining_date: row.joining_date || new Date().toISOString().slice(0, 10),
+              status: row.status || 'POSTED',
+              emiratesId: row.emirates_id || row.emirates_id_no || '',
+              emirates_id: row.emirates_id || row.emirates_id_no || '',
+              residencyCardNo: row.residency_card_no || row.residency_no || '',
+              residency_card_no: row.residency_card_no || row.residency_no || '',
+              passportNo: row.passport_no || row.passport_number || '',
+              passport_no: row.passport_no || row.passport_number || '',
+              idFrontImageUrl: row.id_front_image_url || '',
+              id_front_image_url: row.id_front_image_url || '',
+              idBackImageUrl: row.id_back_image_url || '',
+              id_back_image_url: row.id_back_image_url || '',
+              nameArabic: row.name_arabic || row.arabic_name || '',
+              name_arabic: row.name_arabic || row.arabic_name || '',
+              arabic_name: row.name_arabic || row.arabic_name || '',
+              nationality: row.nationality || '',
+              gender: row.gender || 'MALE',
+              dob: row.dob || '',
+              emiratesIdExpiry: row.emirates_id_expiry || '',
+              emirates_id_expiry: row.emirates_id_expiry || '',
+              idCardNo: row.id_card_no || '',
+              id_card_no: row.id_card_no || '',
+              passportExpiry: row.passport_expiry || row.passport_expiry_date || '',
+              passport_expiry: row.passport_expiry || row.passport_expiry_date || '',
+              passportIssueDate: row.passport_issue_date || '',
+              passport_issue_date: row.passport_issue_date || '',
+              passportCountry: row.passport_country || '',
+              passport_country: row.passport_country || '',
+              passportImageUrl: row.passport_image_url || '',
+              passport_image_url: row.passport_image_url || '',
+              uidNo: row.uid_no || row.visa_uid || '',
+              visaUid: row.uid_no || row.visa_uid || '',
+              uid_no: row.uid_no || row.visa_uid || '',
+              visa_uid: row.uid_no || row.visa_uid || '',
+              residencyIssueDate: row.residency_issue_date || row.visa_issue_date || '',
+              residency_issue_date: row.residency_issue_date || row.visa_issue_date || '',
+              residencyExpiryDate: row.residency_expiry_date || row.visa_expiry_date || '',
+              residency_expiry_date: row.residency_expiry_date || row.visa_expiry_date || '',
+              residencySponsor: row.residency_sponsor || row.sponsor || '',
+              residency_sponsor: row.residency_sponsor || row.sponsor || '',
+              residencyProfession: row.residency_profession || row.profession_on_visa || '',
+              residency_profession: row.residency_profession || row.profession_on_visa || '',
+              residencyImageUrl: row.residency_image_url || row.visa_image_url || '',
+              residency_image_url: row.residency_image_url || row.visa_image_url || '',
+              photoUrl: row.photo_url || '',
+              photo_url: row.photo_url || ''
+            };
+          });
 
           this.cachedEmployees = mapped;
           this.lastEmployeesFetched = Date.now();

@@ -242,9 +242,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         fetch('/api/audit').then(r => r.ok ? r.json() : []).catch(() => [])
       ]);
 
-      if (Array.isArray(empRes)) {
-        setEmployees(empRes);
-      }
+      const empList = Array.isArray(empRes) ? empRes : (empRes?.employees || empRes?.data || []);
+      setEmployees(empList);
       setAttendance(Array.isArray(attRes) ? attRes : []);
       setPayrollSlips(Array.isArray(payRes) ? payRes : []);
       setAttendanceSheetsLog(Array.isArray(sheetsLogRes) ? sheetsLogRes : []);
@@ -286,6 +285,16 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   // 1. Initial full data fetch on mount only: runs ONCE
   useEffect(() => {
     loadData();
+    // Direct dedicated fetch to ensure employee master state is loaded immediately
+    fetch('/api/hr/employees')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        const list = Array.isArray(data) ? data : (data?.employees || data?.data || []);
+        if (Array.isArray(list) && list.length > 0) {
+          setEmployees(list);
+        }
+      })
+      .catch(err => console.warn('[HRView] Mount fetch employees notice:', err));
   }, []);
 
   // 2. Month selector switch: ONLY re-fetches attendance and payroll for that specific month
@@ -1805,37 +1814,43 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
 
                   return (
                     <tr key={emp.id} className="hover:bg-blue-50/40 transition-colors">
-                      <td className="px-3 py-2 font-bold text-blue-900">{emp.empCode}</td>
+                      <td className="px-3 py-2 font-bold text-blue-900 font-mono">
+                        {emp.code || emp.empCode || emp.employee_code || emp.emp_code || 'EMP-0786'}
+                      </td>
                       <td className="px-3 py-2 font-sans font-semibold text-slate-800">
                         <div className="flex items-center gap-2">
-                          {emp.idFrontImageUrl ? (
-                            <img src={emp.idFrontImageUrl} alt="" className="w-8 h-8 rounded-full object-cover border border-slate-300 shrink-0" />
+                          {(emp.idFrontImageUrl || emp.id_front_image_url || emp.photoUrl || emp.photo_url) ? (
+                            <img src={emp.idFrontImageUrl || emp.id_front_image_url || emp.photoUrl || emp.photo_url} alt="" className="w-8 h-8 rounded-full object-cover border border-slate-300 shrink-0" />
                           ) : (
                             <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center font-bold text-[11px] shrink-0">
-                              {emp.name.charAt(0)}
+                              {((emp.name || emp.fullName || emp.full_name || 'Staff Member').trim().charAt(0) || 'S').toUpperCase()}
                             </div>
                           )}
                           <div>
-                            <div className="font-bold text-slate-900">{emp.name}</div>
-                            {emp.nameArabic && (
-                              <div className="text-[10px] text-slate-500 font-normal font-sans" dir="rtl">{emp.nameArabic}</div>
+                            <div className="font-bold text-slate-900">
+                              {emp.name || (emp.fullName || `${emp.first_name || ''} ${emp.last_name || ''}`).trim() || emp.full_name || 'Staff Member'}
+                            </div>
+                            {(emp.nameArabic || emp.name_arabic || emp.arabic_name) && (
+                              <div className="text-[10px] text-slate-500 font-normal font-sans" dir="rtl">
+                                {emp.nameArabic || emp.name_arabic || emp.arabic_name}
+                              </div>
                             )}
                           </div>
                         </div>
                       </td>
                       <td className="px-3 py-2 font-sans text-slate-600">
-                        <div className="font-medium text-slate-800">{emp.designation}</div>
-                        <div className="text-[10px] text-slate-400">{emp.department} • {emp.nationality || 'Pakistan'}</div>
+                        <div className="font-medium text-slate-800">{emp.designation || 'Staff'}</div>
+                        <div className="text-[10px] text-slate-400">{emp.department || 'Operations'} • {emp.nationality || 'United Arab Emirates'}</div>
                       </td>
 
                       {/* 1. EMIRATES ID COLUMN */}
                       <td className="px-3 py-2 text-[10px] bg-blue-50/30 border-x border-blue-100">
                         <div className="font-bold font-mono text-blue-950 flex items-center gap-1">
                           <CreditCard className="w-3 h-3 text-blue-700 shrink-0" />
-                          <span>{emp.emiratesId || 'N/A'}</span>
+                          <span>{emp.emiratesId || emp.emirates_id || emp.emirates_id_no || 'N/A'}</span>
                         </div>
                         <div className="text-[9px] text-slate-500 font-mono mt-0.5">
-                          Card No: <strong>{emp.idCardNo || 'N/A'}</strong>
+                          Card No: <strong>{emp.idCardNo || emp.id_card_no || 'N/A'}</strong>
                         </div>
                         <div className="flex items-center gap-1 mt-1 flex-wrap">
                           {emp.emiratesIdExpiry && (
@@ -1869,16 +1884,18 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       <td className="px-3 py-2 text-[10px] bg-indigo-50/30 border-r border-indigo-100">
                         <div className="font-bold font-mono text-indigo-950 flex items-center gap-1">
                           <Globe className="w-3 h-3 text-indigo-700 shrink-0" />
-                          <span>{emp.passportNo || 'N/A'}</span>
-                          {emp.passportCountry && <span className="text-slate-400 font-normal">({emp.passportCountry})</span>}
+                          <span>{emp.passportNo || emp.passport_no || emp.passport_number || 'N/A'}</span>
+                          {(emp.passportCountry || emp.passport_country) && (
+                            <span className="text-slate-400 font-normal">({emp.passportCountry || emp.passport_country})</span>
+                          )}
                         </div>
                         <div className="text-[9px] text-slate-500 font-mono mt-0.5">
-                          Issue: {emp.passportIssueDate || 'N/A'}
+                          Issue: {emp.passportIssueDate || emp.passport_issue_date || 'N/A'}
                         </div>
                         <div className="flex items-center gap-1 mt-1 flex-wrap">
-                          {emp.passportExpiry && (
+                          {(emp.passportExpiry || emp.passport_expiry || emp.passport_expiry_date) && (
                             <span className="text-[9px] text-slate-600 font-mono">
-                              Exp: {emp.passportExpiry}
+                              Exp: {emp.passportExpiry || emp.passport_expiry || emp.passport_expiry_date}
                             </span>
                           )}
                           {passAlarm && (
@@ -1887,9 +1904,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                             </span>
                           )}
                         </div>
-                        {emp.passportImageUrl && (
+                        {(emp.passportImageUrl || emp.passport_image_url) && (
                           <div className="mt-1">
-                            <a href={emp.passportImageUrl} target="_blank" rel="noreferrer" className="text-[8px] bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-1 py-0.2 rounded border border-indigo-200 font-bold">
+                            <a href={emp.passportImageUrl || emp.passport_image_url} target="_blank" rel="noreferrer" className="text-[8px] bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-1 py-0.2 rounded border border-indigo-200 font-bold">
                               Bio Page Scan ↗
                             </a>
                           </div>
@@ -1900,18 +1917,18 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       <td className="px-3 py-2 text-[10px] bg-emerald-50/30 border-r border-emerald-100">
                         <div className="font-bold font-mono text-emerald-950 flex items-center gap-1">
                           <Building2 className="w-3 h-3 text-emerald-700 shrink-0" />
-                          <span>File: {emp.residencyCardNo || 'N/A'}</span>
+                          <span>File: {emp.residencyCardNo || emp.residency_card_no || emp.residency_no || 'N/A'}</span>
                         </div>
                         <div className="text-[9px] text-slate-600 font-mono mt-0.5">
-                          UID: <strong>{emp.uidNo || 'N/A'}</strong>
+                          UID: <strong>{emp.uidNo || emp.visaUid || emp.uid_no || emp.visa_uid || 'N/A'}</strong>
                         </div>
-                        <div className="text-[9px] text-slate-500 truncate max-w-[150px]" title={emp.residencySponsor || ''}>
-                          {emp.residencySponsor || 'Sponsor N/A'}
+                        <div className="text-[9px] text-slate-500 truncate max-w-[150px]" title={emp.residencySponsor || emp.residency_sponsor || emp.sponsor || ''}>
+                          {emp.residencySponsor || emp.residency_sponsor || emp.sponsor || 'Sponsor N/A'}
                         </div>
                         <div className="flex items-center gap-1 mt-1 flex-wrap">
-                          {emp.residencyExpiryDate && (
+                          {(emp.residencyExpiryDate || emp.residency_expiry_date || emp.visa_expiry_date) && (
                             <span className="text-[9px] text-slate-600 font-mono">
-                              Exp: {emp.residencyExpiryDate}
+                              Exp: {emp.residencyExpiryDate || emp.residency_expiry_date || emp.visa_expiry_date}
                             </span>
                           )}
                           {resAlarm && (
@@ -1920,9 +1937,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                             </span>
                           )}
                         </div>
-                        {emp.residencyImageUrl && (
+                        {(emp.residencyImageUrl || emp.residency_image_url || emp.visa_image_url) && (
                           <div className="mt-1">
-                            <a href={emp.residencyImageUrl} target="_blank" rel="noreferrer" className="text-[8px] bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-1 py-0.2 rounded border border-emerald-200 font-bold">
+                            <a href={emp.residencyImageUrl || emp.residency_image_url || emp.visa_image_url} target="_blank" rel="noreferrer" className="text-[8px] bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-1 py-0.2 rounded border border-emerald-200 font-bold">
                               Visa Photo ↗
                             </a>
                           </div>
@@ -1932,10 +1949,10 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       {/* SALARY PACKAGE */}
                       <td className="px-3 py-2 text-[10px]">
                         <div className="font-bold text-slate-900 font-mono">
-                          AED {(Number(emp.baseSalary || 0) + Number(emp.housingAllow || 0) + Number(emp.transportAllow || 0)).toLocaleString()}
+                          AED {(Number(emp.totalPackage || emp.gross_salary || (Number(emp.baseSalary || emp.basic_salary || emp.base_salary || 0) + Number(emp.housingAllow || emp.housing_allow || emp.housing_allowance || 0) + Number(emp.transportAllow || emp.transport_allow || emp.transport_allowance || 0) + Number(emp.otherAllow || emp.other_allow || 0)))).toLocaleString()}
                         </div>
                         <div className="text-[9px] text-slate-400 font-mono">
-                          Base: AED {Number(emp.baseSalary || 0).toLocaleString()}
+                          Base: AED {Number(emp.baseSalary || emp.basic_salary || emp.base_salary || emp.salary || 0).toLocaleString()}
                         </div>
                       </td>
 

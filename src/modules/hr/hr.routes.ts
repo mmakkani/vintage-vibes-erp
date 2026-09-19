@@ -58,47 +58,102 @@ function cleanNullableUnique(val: any): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-// Map PostgreSQL `employees` row to frontend `Employee` interface
+// Map PostgreSQL `employees` row to frontend `Employee` interface with full casing support
 function mapEmployeeRow(row: any): Employee {
   const basicSalary = Number(row.basic_salary ?? row.base_salary ?? row.salary ?? 0);
   const housingAllow = Number(row.housing_allowance ?? row.housing_allow ?? 0);
   const transportAllow = Number(row.transport_allowance ?? row.transport_allow ?? 0);
+  const otherAllow = Number(row.other_allow ?? 0);
+  const totalPackage = Number(row.total_package ?? row.gross_salary ?? (basicSalary + housingAllow + transportAllow + otherAllow));
+
+  const empCode = row.employee_code || row.emp_code || 'EMP-0786';
+  const fullName = (`${row.first_name || ''} ${row.last_name || ''}`).trim() || row.full_name || row.name || 'Staff Member';
+  const firstName = row.first_name || fullName.split(' ')[0] || '';
+  const lastName = row.last_name || fullName.split(' ').slice(1).join(' ') || '';
+  const arabicName = row.name_arabic || row.arabic_name || row.full_name_arabic || '';
 
   return {
     id: String(row.id),
-    empCode: row.emp_code || row.employee_code || '',
-    name: row.full_name || row.name || 'Staff Member',
+    code: empCode,
+    empCode: empCode,
+    employee_code: empCode,
+    emp_code: empCode,
+    name: fullName,
+    fullName: fullName,
+    full_name: fullName,
+    first_name: firstName,
+    last_name: lastName,
+    name_arabic: arabicName,
+    nameArabic: arabicName,
+    arabic_name: arabicName,
     designation: row.designation || 'Staff',
     department: row.department || 'Operations',
     baseSalary: basicSalary,
+    basic_salary: basicSalary,
+    base_salary: basicSalary,
+    salary: basicSalary,
     housingAllow: housingAllow,
+    housing_allow: housingAllow,
+    housing_allowance: housingAllow,
     transportAllow: transportAllow,
+    transport_allow: transportAllow,
+    transport_allowance: transportAllow,
+    otherAllow: otherAllow,
+    other_allow: otherAllow,
+    totalPackage: totalPackage,
+    gross_salary: totalPackage,
+    total_package: totalPackage,
     workingHoursPerDay: Number(row.working_hours_per_day || 8),
+    working_hours_per_day: Number(row.working_hours_per_day || 8),
     isActive: row.is_active !== false,
+    is_active: row.is_active !== false,
     joiningDate: formatDateStr(row.joining_date || row.date_of_joining) || new Date().toISOString().slice(0, 10),
+    joining_date: formatDateStr(row.joining_date || row.date_of_joining) || new Date().toISOString().slice(0, 10),
     status: (row.status || 'POSTED') as any,
     emiratesId: row.emirates_id || row.emirates_id_no || '',
-    residencyCardNo: row.residency_card_no || row.residency_no || '',
+    emirates_id: row.emirates_id || row.emirates_id_no || '',
+    idCardNo: row.id_card_no || '',
+    id_card_no: row.id_card_no || '',
+    emiratesIdExpiry: formatDateStr(row.emirates_id_expiry),
+    emirates_id_expiry: formatDateStr(row.emirates_id_expiry),
     passportNo: row.passport_no || row.passport_number || '',
+    passport_no: row.passport_no || row.passport_number || '',
+    passportCountry: row.passport_country || '',
+    passport_country: row.passport_country || '',
+    passportIssueDate: formatDateStr(row.passport_issue_date),
+    passport_issue_date: formatDateStr(row.passport_issue_date),
+    passportExpiry: formatDateStr(row.passport_expiry || row.passport_expiry_date),
+    passport_expiry: formatDateStr(row.passport_expiry || row.passport_expiry_date),
+    passportImageUrl: row.passport_image_url || '',
+    passport_image_url: row.passport_image_url || '',
+    residencyCardNo: row.residency_card_no || row.residency_no || '',
+    residency_card_no: row.residency_card_no || row.residency_no || '',
+    uidNo: row.uid_no || row.visa_uid || '',
+    visaUid: row.uid_no || row.visa_uid || '',
+    uid_no: row.uid_no || row.visa_uid || '',
+    visa_uid: row.uid_no || row.visa_uid || '',
+    residencyProfession: row.residency_profession || row.profession_on_visa || '',
+    residency_profession: row.residency_profession || row.profession_on_visa || '',
+    residencySponsor: row.residency_sponsor || row.sponsor || '',
+    residency_sponsor: row.residency_sponsor || row.sponsor || '',
+    residencyIssueDate: formatDateStr(row.residency_issue_date || row.visa_issue_date),
+    residency_issue_date: formatDateStr(row.residency_issue_date || row.visa_issue_date),
+    residencyExpiryDate: formatDateStr(row.residency_expiry_date || row.visa_expiry_date),
+    residency_expiry_date: formatDateStr(row.residency_expiry_date || row.visa_expiry_date),
+    residencyImageUrl: row.residency_image_url || row.visa_image_url || '',
+    residency_image_url: row.residency_image_url || row.visa_image_url || '',
+    photoUrl: row.photo_url || '',
+    photo_url: row.photo_url || '',
     idFrontImageUrl: row.id_front_image_url || '',
+    id_front_image_url: row.id_front_image_url || '',
     idBackImageUrl: row.id_back_image_url || '',
-    nameArabic: row.name_arabic || row.arabic_name || row.full_name_arabic || '',
+    id_back_image_url: row.id_back_image_url || '',
     nationality: row.nationality || '',
     gender: row.gender || 'MALE',
     dob: formatDateStr(row.dob || row.date_of_birth),
-    emiratesIdExpiry: formatDateStr(row.emirates_id_expiry),
-    idCardNo: row.id_card_no || '',
-    passportExpiry: formatDateStr(row.passport_expiry || row.passport_expiry_date),
-    passportIssueDate: formatDateStr(row.passport_issue_date),
-    passportCountry: row.passport_country || '',
-    passportImageUrl: row.passport_image_url || '',
-    uidNo: row.uid_no || row.visa_uid || '',
-    residencyIssueDate: formatDateStr(row.residency_issue_date || row.visa_issue_date),
-    residencyExpiryDate: formatDateStr(row.residency_expiry_date || row.visa_expiry_date),
-    residencySponsor: row.residency_sponsor || row.sponsor || '',
-    residencyProfession: row.residency_profession || row.profession_on_visa || '',
-    residencyImageUrl: row.residency_image_url || row.visa_image_url || '',
-    photoUrl: row.photo_url || ''
+    email: row.email || '',
+    address: row.address || '',
+    notes: row.notes || ''
   };
 }
 
