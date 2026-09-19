@@ -57,14 +57,17 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     id: '',
     code: '',
     name: '',
+    company_name: '',
     type: 'CLIENT' as any,
     contactPerson: '',
     phone: '',
     email: '',
     address: '',
     trnNo: '',
+    trn_no: '',
     creditLimit: 50000,
     isActive: true,
+    linked_account_id: undefined as number | undefined,
     payableAccountId: '2110-00',
     clearingAccountId: '1310-00',
     receivableAccountId: '1130-00',
@@ -340,22 +343,26 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
   // Open Edit Modal
   const handleOpenEditParty = (party: Party) => {
+    const pAny = party as any;
     setEditPartyForm({
       id: party.id,
       code: party.code,
-      name: party.name,
-      type: party.type as any,
-      contactPerson: party.contactPerson || '',
+      name: party.name || pAny.company_name || '',
+      company_name: pAny.company_name || party.name || '',
+      type: (party.type || pAny.party_type || 'CLIENT') as any,
+      contactPerson: party.contactPerson || pAny.contact_person || '',
       phone: party.phone || '',
       email: party.email || '',
       address: party.address || '',
-      trnNo: party.trn_no || party.trnNo || '',
-      creditLimit: Number(party.creditLimit || 0),
-      isActive: party.isActive !== false,
-      payableAccountId: party.accountMap?.payableAccountId || (party.type === 'SUPPLIER' ? `2110-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : '2110-00'),
-      clearingAccountId: party.accountMap?.clearingAccountId || '1310-00',
-      receivableAccountId: party.accountMap?.receivableAccountId || (party.type === 'CLIENT' ? `1130-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : '1130-00'),
-      revenueAccountId: party.accountMap?.revenueAccountId || '4110-00'
+      trnNo: pAny.trn_no || party.trnNo || '',
+      trn_no: pAny.trn_no || party.trnNo || '',
+      creditLimit: Number(party.creditLimit || pAny.credit_limit || 0),
+      isActive: party.isActive !== false && pAny.is_active !== false,
+      linked_account_id: pAny.linked_account_id || pAny.linkedAccountId,
+      payableAccountId: party.accountMap?.payableAccountId || pAny.account_map?.payableAccountId || (party.type === 'SUPPLIER' ? `2110-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : '2110-00'),
+      clearingAccountId: party.accountMap?.clearingAccountId || pAny.account_map?.clearingAccountId || '1310-00',
+      receivableAccountId: party.accountMap?.receivableAccountId || pAny.account_map?.receivableAccountId || (party.type === 'CLIENT' ? `1130-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : '1130-00'),
+      revenueAccountId: party.accountMap?.revenueAccountId || pAny.account_map?.revenueAccountId || '4110-00'
     });
     setShowEditPartyModal(true);
   };
@@ -363,13 +370,13 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   // Save Edit to SQL
   const handleSaveEditParty = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanName = editPartyForm.name.trim();
+    const cleanName = (editPartyForm.name || editPartyForm.company_name || '').trim();
     if (!cleanName) {
       showMsg('Party / Company Name cannot be empty.', 'error');
       return;
     }
 
-    const dup = parties.find(p => p.id !== editPartyForm.id && p.name.trim().toLowerCase() === cleanName.toLowerCase());
+    const dup = parties.find(p => p.id !== editPartyForm.id && (p.name || '').trim().toLowerCase() === cleanName.toLowerCase());
     if (dup) {
       showMsg(`Duplicate Name: Another party named "${cleanName}" already exists in the system (${dup.code})! Duplicate client/supplier names are prohibited.`, 'error');
       return;
@@ -378,16 +385,27 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     try {
       const updated = await PartiesService.updateParty(editPartyForm.id, {
         name: cleanName,
+        company_name: cleanName,
         type: editPartyForm.type,
         contactPerson: editPartyForm.contactPerson,
+        contact_person: editPartyForm.contactPerson,
         phone: editPartyForm.phone,
         email: editPartyForm.email,
         address: editPartyForm.address,
-        trnNo: editPartyForm.trnNo,
-        trn_no: editPartyForm.trnNo,
+        trnNo: editPartyForm.trnNo || editPartyForm.trn_no,
+        trn_no: editPartyForm.trnNo || editPartyForm.trn_no,
         creditLimit: editPartyForm.creditLimit,
+        credit_limit: editPartyForm.creditLimit,
         isActive: editPartyForm.isActive,
+        is_active: editPartyForm.isActive,
+        linked_account_id: editPartyForm.linked_account_id,
         accountMap: {
+          payableAccountId: editPartyForm.payableAccountId,
+          clearingAccountId: editPartyForm.clearingAccountId,
+          receivableAccountId: editPartyForm.receivableAccountId,
+          revenueAccountId: editPartyForm.revenueAccountId
+        },
+        account_map: {
           payableAccountId: editPartyForm.payableAccountId,
           clearingAccountId: editPartyForm.clearingAccountId,
           receivableAccountId: editPartyForm.receivableAccountId,
@@ -395,10 +413,12 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         }
       });
       setShowEditPartyModal(false);
-      showMsg(`Party "${updated.name}" (${updated.code}) updated in SQL database!`, 'success');
+      const partyDisplayName = updated?.name || updated?.company_name || cleanName;
+      const partyDisplayCode = updated?.code || editPartyForm.code || 'P-SAVED';
+      showMsg(`Party "${partyDisplayName}" (${partyDisplayCode}) updated in SQL database!`, 'success');
       loadParties();
-      if (selectedParty?.id === updated.id) {
-        setSelectedParty(updated);
+      if (selectedParty?.id === (updated?.id || editPartyForm.id)) {
+        setSelectedParty(updated || { ...selectedParty, name: cleanName });
       }
       onRefreshAll();
     } catch (err: any) {

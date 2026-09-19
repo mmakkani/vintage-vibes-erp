@@ -155,34 +155,23 @@ export class PurchaseService {
 
     // Auto-create supplier party if not found
     if (!party) {
-      const pId = cleanSuppId || `pty-${Date.now()}`;
-      const pCode = `P-${Date.now().toString().slice(-4)}`;
-      const cleanCode = pCode.replace(/[^A-Za-z0-9]/g, '');
-      const coaId = `acc-${pId}`;
-      const coaCode = `2110-${cleanCode}`;
       const name = supplierName?.trim() || 'Trade Supplier';
 
       try {
-        const { data: newP, error: pErr } = await supabase.from('parties').insert([{
-          id: pId,
-          code: pCode,
-          name,
-          company_name: name,
-          type: 'SUPPLIER',
-          party_type: 'SUPPLIER',
-          linked_account_id: 5098,
-          currency: currency || 'AED',
-          current_balance: 0,
-          is_active: true,
-          coa_account_id: coaId,
-          account_map: {
-            payableAccountId: coaCode,
-            clearingAccountId: '1150-00'
-          }
-        }]).select().single();
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('create_party_with_coa', {
+          p_name: name,
+          p_type: 'SUPPLIER',
+          p_phone: null,
+          p_trn: null,
+          p_credit_limit: 50000,
+          p_inventory_account_id: null
+        });
 
-        if (!pErr && newP) {
-          party = newP;
+        if (!rpcErr && rpcData?.party_id) {
+          const { data: fetchedP } = await supabase.from('parties').select('*').eq('id', rpcData.party_id).maybeSingle();
+          if (fetchedP) {
+            party = fetchedP;
+          }
         }
       } catch (err) {
         console.warn('Auto-create party notice:', err);

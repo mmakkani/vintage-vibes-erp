@@ -377,7 +377,36 @@ export class PartiesService {
         });
         if (apiRes.ok) {
           const resJson = await apiRes.json();
-          return resJson.party || resJson;
+          const p = resJson.party || (Array.isArray(resJson) ? resJson[0] : resJson);
+          if (p && (p.name || p.id || p.company_name)) {
+            return {
+              id: p.id || id,
+              code: p.code || 'P-SAVED',
+              name: p.name || p.company_name || String(updates.name || ''),
+              company_name: p.company_name || p.name || String(updates.name || ''),
+              type: p.type || p.party_type || updates.type || 'CLIENT',
+              contactPerson: p.contactPerson || p.contact_person || updates.contactPerson || '',
+              contact_person: p.contact_person || p.contactPerson || updates.contactPerson || '',
+              phone: p.phone || updates.phone || '',
+              email: p.email || updates.email || '',
+              address: p.address || updates.address || '',
+              trnNo: p.trn_no || p.trnNo || updates.trnNo || '',
+              trn_no: p.trn_no || p.trnNo || updates.trnNo || '',
+              creditLimit: Number(p.creditLimit ?? p.credit_limit ?? updates.creditLimit ?? 0),
+              credit_limit: Number(p.creditLimit ?? p.credit_limit ?? updates.creditLimit ?? 0),
+              currentBalance: Number(p.currentBalance ?? p.current_balance ?? updates.currentBalance ?? 0),
+              current_balance: Number(p.currentBalance ?? p.current_balance ?? updates.currentBalance ?? 0),
+              currency: p.currency || updates.currency || 'AED',
+              isActive: p.isActive !== false && p.is_active !== false,
+              is_active: p.isActive !== false && p.is_active !== false,
+              accountMap: p.accountMap || p.account_map || updates.accountMap || {},
+              account_map: p.accountMap || p.account_map || updates.accountMap || {},
+              coaAccountId: p.coaAccountId || p.coa_account_id,
+              coa_account_id: p.coaAccountId || p.coa_account_id,
+              linked_account_id: p.linked_account_id || p.linkedAccountId || updates.linked_account_id,
+              createdAt: p.createdAt || p.created_at || new Date().toISOString()
+            };
+          }
         } else {
           const errData = await apiRes.json().catch(() => ({}));
           if (errData.error) throw new Error(errData.error);
@@ -389,17 +418,29 @@ export class PartiesService {
 
     // 2. Fallback route: Supabase client
     const payload: any = {};
-    if (updates.name !== undefined) payload.name = updates.name;
-    if (updates.type !== undefined) payload.type = updates.type;
+    if (updates.name !== undefined) {
+      payload.name = updates.name;
+      payload.company_name = updates.name;
+    }
+    if (updates.company_name !== undefined) payload.company_name = updates.company_name;
+    if (updates.type !== undefined) {
+      payload.type = updates.type;
+      payload.party_type = updates.type === 'SUPPLIER' ? 'SUPPLIER' : 'CUSTOMER';
+    }
     if (updates.contactPerson !== undefined) payload.contact_person = updates.contactPerson;
+    if (updates.contact_person !== undefined) payload.contact_person = updates.contact_person;
     if (updates.phone !== undefined) payload.phone = updates.phone;
     if (updates.email !== undefined) payload.email = updates.email;
     if (updates.address !== undefined) payload.address = updates.address;
     if (updates.trn_no !== undefined) payload.trn_no = updates.trn_no;
     if (updates.trnNo !== undefined) payload.trn_no = updates.trnNo;
     if (updates.creditLimit !== undefined) payload.credit_limit = Number(updates.creditLimit);
+    if (updates.credit_limit !== undefined) payload.credit_limit = Number(updates.credit_limit);
     if (updates.currentBalance !== undefined) payload.current_balance = Number(updates.currentBalance);
     if (updates.isActive !== undefined) payload.is_active = updates.isActive;
+    if (updates.accountMap !== undefined) payload.account_map = updates.accountMap;
+    if (updates.account_map !== undefined) payload.account_map = updates.account_map;
+    if (updates.linked_account_id !== undefined) payload.linked_account_id = updates.linked_account_id;
 
     const { data, error } = await supabase
       .from('parties')

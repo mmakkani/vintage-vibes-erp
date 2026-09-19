@@ -2488,6 +2488,120 @@ export default async function handler(req: any, res: any) {
           }
         }
 
+        if (method === 'PUT') {
+          const parts = pathname.split('/').filter(Boolean);
+          const updateId = parts[parts.length - 1];
+          const u = body || {};
+          const cleanName = String(u.name || u.company_name || u.companyName || '').trim();
+          const cleanType = String(u.type || u.party_type || 'CLIENT').toUpperCase();
+          const partyType = cleanType === 'SUPPLIER' ? 'SUPPLIER' : 'CUSTOMER';
+          const contactPerson = u.contactPerson || u.contact_person || '';
+          const phone = u.phone || null;
+          const email = u.email || null;
+          const address = u.address || null;
+          const trnNo = u.trn_no || u.trnNo || null;
+          const creditLimit = Number(u.creditLimit ?? u.credit_limit ?? 0);
+          const currentBalance = Number(u.currentBalance ?? u.current_balance ?? 0);
+          const isActive = u.isActive !== false && u.is_active !== false;
+          const accountMap = u.accountMap || u.account_map || {};
+          const linkedAccountId = u.linkedAccountId || u.linked_account_id || null;
+
+          try {
+            const updateRes = await client.query(`
+              UPDATE parties SET
+                name = COALESCE(NULLIF($1, ''), name),
+                company_name = COALESCE(NULLIF($1, ''), company_name),
+                type = $2,
+                party_type = $3,
+                contact_person = $4,
+                phone = $5,
+                email = $6,
+                address = $7,
+                trn_no = $8,
+                credit_limit = $9,
+                current_balance = $10,
+                is_active = $11,
+                account_map = COALESCE($12, account_map),
+                linked_account_id = COALESCE($13, linked_account_id)
+              WHERE id = $14 OR party_id::text = $14
+              RETURNING *;
+            `, [
+              cleanName, cleanType, partyType, contactPerson, phone, email, address, trnNo,
+              creditLimit, currentBalance, isActive, JSON.stringify(accountMap), linkedAccountId, updateId
+            ]);
+
+            const row = updateRes.rows[0];
+            if (row) {
+              if (row.linked_account_id && cleanName) {
+                await client.query(`UPDATE accounts SET account_name = $1 WHERE account_id = $2;`, [cleanName, row.linked_account_id]).catch(() => {});
+              }
+              if (row.coa_account_id && cleanName) {
+                const roleTag = row.party_type === 'SUPPLIER' ? ' (Supplier)' : ' (Customer)';
+                await client.query(`UPDATE chart_of_accounts SET name = $1 WHERE code = $2;`, [cleanName + roleTag, row.coa_account_id]).catch(() => {});
+                await client.query(`UPDATE coa_accounts SET name = $1 WHERE code = $2;`, [cleanName + roleTag, row.coa_account_id]).catch(() => {});
+              }
+
+              await client.end();
+              const updatedParty = {
+                id: row.id,
+                party_id: row.party_id,
+                code: row.code,
+                name: row.name,
+                company_name: row.company_name || row.name,
+                type: (row.type || 'CLIENT').toUpperCase(),
+                party_type: row.party_type || row.type,
+                contactPerson: row.contact_person,
+                contact_person: row.contact_person,
+                phone: row.phone,
+                email: row.email,
+                address: row.address,
+                trnNo: row.trn_no,
+                trn_no: row.trn_no,
+                creditLimit: Number(row.credit_limit || 0),
+                credit_limit: Number(row.credit_limit || 0),
+                currentBalance: Number(row.current_balance || 0),
+                current_balance: Number(row.current_balance || 0),
+                currency: row.currency || 'AED',
+                isActive: row.is_active !== false,
+                is_active: row.is_active !== false,
+                accountMap: row.account_map || {},
+                account_map: row.account_map || {},
+                coaAccountId: row.coa_account_id,
+                coa_account_id: row.coa_account_id,
+                linked_account_id: row.linked_account_id,
+                createdAt: row.created_at,
+                created_at: row.created_at
+              };
+
+              return res.status(200).json({
+                success: true,
+                party: updatedParty,
+                ...updatedParty
+              });
+            } else {
+              await client.end();
+              return res.status(404).json({ error: 'Party not found' });
+            }
+          } catch (updateErr: any) {
+            console.error('[Party Update Error]:', updateErr);
+            await client.end();
+            return res.status(500).json({ error: updateErr.message, stack: updateErr.stack });
+          }
+        }
+
+        if (method === 'DELETE') {
+          const parts = pathname.split('/').filter(Boolean);
+          const delId = parts[parts.length - 1];
+          try {
+            await client.query('DELETE FROM parties WHERE id = $1 OR party_id::text = $1;', [delId]);
+            await client.end();
+            return res.status(200).json({ success: true, id: delId });
+          } catch (delErr: any) {
+            await client.end();
+            return res.status(500).json({ error: delErr.message });
+          }
+        }
+
         const partiesRes = await client.query(`
           SELECT 
             COALESCE(id, party_id::text) as id,
