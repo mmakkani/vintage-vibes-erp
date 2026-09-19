@@ -1424,10 +1424,16 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json([]);
     }
 
-    // 8. GET /api/hr/attendance - Attendance records for month
+    // 8. GET /api/hr/attendance - Attendance records for month with automatic sync for missing active employees
     if ((pathname === '/api/hr/attendance' || pathname.endsWith('/hr/attendance')) && method === 'GET') {
       const month = parsedUrl.searchParams.get('month') || new Date().toISOString().slice(0, 7);
-      const client = await getPgClient();
+      let client: any = null;
+      try {
+        client = await borrowClient();
+      } catch (poolErr) {
+        console.warn('[Serverless HR] attendance borrowClient failed:', poolErr);
+      }
+
       if (client) {
         try {
           const result = await client.query(`
@@ -1435,6 +1441,7 @@ export default async function handler(req: any, res: any) {
             WHERE month_year = $1 
             ORDER BY emp_code ASC;
           `, [month]);
+
           const records = result.rows.map(r => ({
             id: String(r.id),
             employeeId: String(r.employee_id),
@@ -1447,15 +1454,282 @@ export default async function handler(req: any, res: any) {
             lockedAt: r.locked_at ? new Date(r.locked_at).toISOString() : undefined,
             lockedBy: r.locked_by || undefined
           }));
+
+          // If attendance sheet is in DRAFT (or unposted), check if any active employees are missing from this month's sheet
+          const isPosted = records.length > 0 && records.every(r => r.status === 'POSTED');
+          if (!isPosted) {
+            try {
+              const empRes = await client.query(`
+                SELECT * FROM employees 
+                WHERE is_deleted IS NOT TRUE 
+                  AND (is_active IS NULL OR is_active IS NOT FALSE)
+                  AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
+                ORDER BY emp_code ASC;
+              `);
+
+              const activeEmps = empRes.rows;
+              const existingEmpIds = new Set(records.map(r => String(r.employeeId || '')));
+              const existingCodes = new Set(records.map(r => String(r.empCode || '').trim().toLowerCase()));
+
+              const missing = activeEmps.filter(e => {
+                const idStr = String(e.id);
+                const codeStr = String(e.emp_code || e.employee_code || '').trim().toLowerCase();
+                const hasId = idStr && existingEmpIds.has(idStr);
+                const hasCode = codeStr && existingCodes.has(codeStr);
+                return !hasId && !hasCode;
+              });
+
+              if (missing.length > 0) {
+                for (const emp of missing) {
+                  const empId = String(emp.id);
+                  const empCode = emp.emp_code || emp.employee_code || '';
+                  const empName = emp.full_name || emp.name || 'Staff Member';
+                  const attId = `att-${empId}-${month}`;
+
+                  await client.query(`
+                    INSERT INTO employee_attendance (id, employee_id, employee_name, emp_code, month_year, days_worked, overtime_hours, status, created_at)
+                    VALUES ($1, $2, $3, $4, $5, 30, 0, 'DRAFT', NOW())
+                    ON CONFLICT (id) DO NOTHING;
+                  `, [attId, empId, empName, empCode, month]);
+
+                  records.push({
+                    id: attId,
+                    employeeId: empId,
+                    employeeName: empName,
+                    empCode: empCode,
+                    monthYear: month,
+                    daysWorked: 30,
+                    overtimeHours: 0,
+                    status: 'DRAFT',
+                    lockedAt: undefined,
+                    lockedBy: undefined
+                  });
+                }
+
+                await client.query(`
+                  INSERT INTO hr_attendance_sheets (id, month_year, total_employees, status, created_at)
+                  VALUES ($1, $2, $3, 'DRAFT', NOW())
+                  ON CONFLICT (id) DO UPDATE SET total_employees = hr_attendance_sheets.total_employees + $4;
+                `, [`att-sheet-${month}`, month, records.length, missing.length]);
+              }
+            } catch (syncErr: any) {
+              console.warn('[Serverless HR] auto-sync missing employees notice:', syncErr?.message);
+            }
+          }
+
           return res.status(200).json(records);
         } catch (dbErr: any) {
-          console.warn('[Serverless HR] attendance error:', dbErr?.message);
+          console.warn('[Serverless HR] attendance query error:', dbErr?.message);
         } finally {
-          try { await client.end(); } catch (_) {}
+          try { client.release(); } catch (_) {}
         }
       }
       return res.status(200).json([]);
     }
+
+    // 8a. PUT /api/hr/attendance/:id - Update days worked & overtime
+    if (pathname.startsWith('/api/hr/attendance/') && method === 'PUT') {
+      const segments = pathname.split('/').filter(Boolean);
+      const attId = segments[segments.length - 1];
+      const { daysWorked, overtimeHours } = body;
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) {}
+      if (client) {
+        try {
+          await client.query(`
+            UPDATE employee_attendance 
+            SET days_worked = $1, overtime_hours = $2 
+            WHERE id = $3;
+          `, [Number(daysWorked || 0), Number(overtimeHours || 0), attId]);
+          return res.status(200).json({ success: true });
+        } catch (dbErr: any) {
+          console.warn('[Serverless HR] update attendance error:', dbErr?.message);
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { client.release(); } catch (_) {}
+        }
+      }
+      return res.status(200).json({ success: true });
+    }
+
+    // 8b. POST /api/hr/attendance/create-sheet
+    if (pathname.includes('/api/hr/attendance/create-sheet') && method === 'POST') {
+      const { month } = body;
+      const targetMonth = month || new Date().toISOString().slice(0, 7);
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) {}
+      if (client) {
+        try {
+          const empRes = await client.query(`
+            SELECT * FROM employees 
+            WHERE is_deleted IS NOT TRUE 
+              AND (is_active IS NULL OR is_active IS NOT FALSE)
+              AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
+            ORDER BY emp_code ASC;
+          `);
+          const employees = empRes.rows;
+          for (const emp of employees) {
+            const empId = String(emp.id);
+            const empCode = emp.emp_code || emp.employee_code || '';
+            const empName = emp.full_name || emp.name || 'Staff Member';
+            const attId = `att-${empId}-${targetMonth}`;
+
+            await client.query(`
+              INSERT INTO employee_attendance (id, employee_id, employee_name, emp_code, month_year, days_worked, overtime_hours, status, created_at)
+              VALUES ($1, $2, $3, $4, $5, 30, 0, 'DRAFT', NOW())
+              ON CONFLICT (id) DO UPDATE SET employee_name = EXCLUDED.employee_name, emp_code = EXCLUDED.emp_code;
+            `, [attId, empId, empName, empCode, targetMonth]);
+          }
+
+          await client.query(`
+            INSERT INTO hr_attendance_sheets (id, month_year, total_employees, status, created_at)
+            VALUES ($1, $2, $3, 'DRAFT', NOW())
+            ON CONFLICT (id) DO UPDATE SET total_employees = EXCLUDED.total_employees;
+          `, [`att-sheet-${targetMonth}`, targetMonth, employees.length]);
+
+          const attRes = await client.query(`SELECT * FROM employee_attendance WHERE month_year = $1 ORDER BY emp_code ASC;`, [targetMonth]);
+          return res.status(200).json({ success: true, records: attRes.rows });
+        } catch (dbErr: any) {
+          console.warn('[Serverless HR] create-sheet error:', dbErr?.message);
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { client.release(); } catch (_) {}
+        }
+      }
+      return res.status(200).json({ success: true });
+    }
+
+    // 8c. POST /api/hr/attendance/sync-missing
+    if (pathname.includes('/api/hr/attendance/sync-missing') && method === 'POST') {
+      const { month } = body;
+      const targetMonth = month || new Date().toISOString().slice(0, 7);
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) {}
+      if (client) {
+        try {
+          const empRes = await client.query(`
+            SELECT * FROM employees 
+            WHERE is_deleted IS NOT TRUE 
+              AND (is_active IS NULL OR is_active IS NOT FALSE)
+              AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
+            ORDER BY emp_code ASC;
+          `);
+          const existingRes = await client.query(`SELECT * FROM employee_attendance WHERE month_year = $1;`, [targetMonth]);
+          const existingEmpIds = new Set(existingRes.rows.map(r => String(r.employee_id)));
+          const existingCodes = new Set(existingRes.rows.map(r => String(r.emp_code || '').trim().toLowerCase()));
+
+          const missing = empRes.rows.filter(e => {
+            const idStr = String(e.id);
+            const codeStr = String(e.emp_code || e.employee_code || '').trim().toLowerCase();
+            return (!idStr || !existingEmpIds.has(idStr)) && (!codeStr || !existingCodes.has(codeStr));
+          });
+
+          for (const emp of missing) {
+            const empId = String(emp.id);
+            const empCode = emp.emp_code || emp.employee_code || '';
+            const empName = emp.full_name || emp.name || 'Staff Member';
+            const attId = `att-${empId}-${targetMonth}`;
+
+            await client.query(`
+              INSERT INTO employee_attendance (id, employee_id, employee_name, emp_code, month_year, days_worked, overtime_hours, status, created_at)
+              VALUES ($1, $2, $3, $4, $5, 30, 0, 'DRAFT', NOW())
+              ON CONFLICT (id) DO NOTHING;
+            `, [attId, empId, empName, empCode, targetMonth]);
+          }
+
+          if (missing.length > 0) {
+            await client.query(`
+              INSERT INTO hr_attendance_sheets (id, month_year, total_employees, status, created_at)
+              VALUES ($1, $2, $3, 'DRAFT', NOW())
+              ON CONFLICT (id) DO UPDATE SET total_employees = hr_attendance_sheets.total_employees + $4;
+            `, [`att-sheet-${targetMonth}`, targetMonth, existingRes.rows.length + missing.length, missing.length]);
+          }
+
+          const updatedRes = await client.query(`SELECT * FROM employee_attendance WHERE month_year = $1 ORDER BY emp_code ASC;`, [targetMonth]);
+          return res.status(200).json({ success: true, syncedCount: missing.length, records: updatedRes.rows });
+        } catch (dbErr: any) {
+          console.warn('[Serverless HR] sync-missing error:', dbErr?.message);
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { client.release(); } catch (_) {}
+        }
+      }
+      return res.status(200).json({ success: true, syncedCount: 0 });
+    }
+
+    // 8d. POST /api/hr/attendance/post - Lock & Post attendance sheet
+    if (pathname.includes('/api/hr/attendance/post') && method === 'POST') {
+      const { month, postedBy } = body;
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) {}
+      if (client) {
+        try {
+          await client.query(`
+            UPDATE employee_attendance 
+            SET status = 'POSTED', locked_at = NOW(), locked_by = $2 
+            WHERE month_year = $1;
+          `, [month, postedBy || 'HR Manager']);
+          await client.query(`
+            UPDATE hr_attendance_sheets 
+            SET status = 'POSTED' 
+            WHERE month_year = $1;
+          `, [month]);
+          return res.status(200).json({ success: true });
+        } catch (dbErr: any) {
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { client.release(); } catch (_) {}
+        }
+      }
+      return res.status(200).json({ success: true });
+    }
+
+    // 8e. POST /api/hr/attendance/unpost - Unlock attendance sheet back to DRAFT
+    if (pathname.includes('/api/hr/attendance/unpost') && method === 'POST') {
+      const { month } = body;
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) {}
+      if (client) {
+        try {
+          await client.query(`
+            UPDATE employee_attendance 
+            SET status = 'DRAFT', locked_at = NULL, locked_by = NULL 
+            WHERE month_year = $1;
+          `, [month]);
+          await client.query(`
+            UPDATE hr_attendance_sheets 
+            SET status = 'DRAFT' 
+            WHERE month_year = $1;
+          `, [month]);
+          return res.status(200).json({ success: true });
+        } catch (dbErr: any) {
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { client.release(); } catch (_) {}
+        }
+      }
+      return res.status(200).json({ success: true });
+    }
+
+    // 8f. DELETE /api/hr/attendance/sheet - Delete attendance sheet
+    if (pathname.includes('/api/hr/attendance/sheet') && method === 'DELETE') {
+      const month = body?.month || parsedUrl.searchParams.get('month');
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) {}
+      if (client) {
+        try {
+          await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
+          await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1;`, [month]);
+          return res.status(200).json({ success: true });
+        } catch (dbErr: any) {
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { client.release(); } catch (_) {}
+        }
+      }
+      return res.status(200).json({ success: true });
+    }
+
 
     // 9. GET /api/hr/payroll/sheets
     if (pathname.includes('/api/hr/payroll/sheets') && method === 'GET') {

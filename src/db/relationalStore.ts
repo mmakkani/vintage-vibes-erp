@@ -1723,7 +1723,33 @@ class RelationalStore {
   }
 
   public getAttendance(monthYear: string): AttendanceRecord[] {
-    return this.attendances.filter(a => a.monthYear === monthYear);
+    const existing = this.attendances.filter(a => a.monthYear === monthYear);
+    const isPosted = existing.length > 0 && existing.every(a => a.status === 'POSTED');
+    if (!isPosted) {
+      const activeEmployees = this.employees.filter(e => (e as any).is_deleted !== true && (e as any).isDeleted !== true && e.isActive !== false && (e as any).is_active !== false && e.status !== 'TERMINATED' && e.status !== 'INACTIVE');
+      const existingIds = new Set(existing.map(a => String(a.employeeId)));
+      const existingCodes = new Set(existing.map(a => String(a.empCode).trim().toLowerCase()));
+
+      for (const emp of activeEmployees) {
+        const idStr = String(emp.id);
+        const codeStr = String(emp.empCode || (emp as any).code || '').trim().toLowerCase();
+        if ((!idStr || !existingIds.has(idStr)) && (!codeStr || !existingCodes.has(codeStr))) {
+          const newAtt: AttendanceRecord = {
+            id: `att-${emp.id}-${monthYear}`,
+            employeeId: String(emp.id),
+            employeeName: emp.name,
+            empCode: emp.empCode,
+            monthYear,
+            daysWorked: 30,
+            overtimeHours: 0,
+            status: 'DRAFT'
+          };
+          this.attendances.push(newAtt);
+          existing.push(newAtt);
+        }
+      }
+    }
+    return existing;
   }
 
   public getPayroll(monthYear: string): PayrollRecord[] {

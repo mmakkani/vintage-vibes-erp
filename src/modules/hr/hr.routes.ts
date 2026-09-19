@@ -654,7 +654,7 @@ hrRouter.get('/attendance/sheets', async (req, res) => {
   }
 });
 
-// GET /api/hr/attendance - Attendance records for selected month
+// GET /api/hr/attendance - Attendance records for selected month (auto-syncs missing active employees)
 hrRouter.get('/attendance', async (req, res) => {
   const { month } = req.query as { month?: string };
   const monthYear = month || new Date().toISOString().slice(0, 7);
@@ -665,11 +665,122 @@ hrRouter.get('/attendance', async (req, res) => {
         WHERE month_year = $1 
         ORDER BY emp_code ASC;
       `, [monthYear]);
-      return result.rows.map(mapAttendanceRow);
+
+      let records = result.rows.map(mapAttendanceRow);
+      const isPosted = records.length > 0 && records.every(r => r.status === 'POSTED');
+
+      if (!isPosted) {
+        const empRes = await client.query(`
+          SELECT * FROM employees 
+          WHERE is_deleted IS NOT TRUE 
+            AND (is_active IS NULL OR is_active IS NOT FALSE)
+            AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
+          ORDER BY emp_code ASC;
+        `);
+
+        const activeEmps = empRes.rows;
+        const existingEmpIds = new Set(records.map(r => String(r.employeeId)));
+        const existingCodes = new Set(records.map(r => String(r.empCode).trim().toLowerCase()));
+
+        const missing = activeEmps.filter(e => {
+          const idStr = String(e.id);
+          const codeStr = String(e.emp_code || e.employee_code || '').trim().toLowerCase();
+          const hasId = idStr && existingEmpIds.has(idStr);
+          const hasCode = codeStr && existingCodes.has(codeStr);
+          return !hasId && !hasCode;
+        });
+
+        if (missing.length > 0) {
+          for (const emp of missing) {
+            const empId = String(emp.id);
+            const empCode = emp.emp_code || emp.employee_code || '';
+            const empName = emp.full_name || emp.name || 'Staff Member';
+            const attId = `att-${empId}-${monthYear}`;
+
+            await client.query(`
+              INSERT INTO employee_attendance (id, employee_id, employee_name, emp_code, month_year, days_worked, overtime_hours, status, created_at)
+              VALUES ($1, $2, $3, $4, $5, 30, 0, 'DRAFT', NOW())
+              ON CONFLICT (id) DO NOTHING;
+            `, [attId, empId, empName, empCode, monthYear]);
+
+            records.push({
+              id: attId,
+              employeeId: empId,
+              employeeName: empName,
+              empCode: empCode,
+              monthYear: monthYear,
+              daysWorked: 30,
+              overtimeHours: 0,
+              status: 'DRAFT'
+            });
+          }
+
+          await client.query(`
+            INSERT INTO hr_attendance_sheets (id, month_year, total_employees, status, created_at)
+            VALUES ($1, $2, $3, 'DRAFT', NOW())
+            ON CONFLICT (id) DO UPDATE SET total_employees = hr_attendance_sheets.total_employees + $4;
+          `, [`att-sheet-${monthYear}`, monthYear, records.length, missing.length]);
+        }
+      }
+
+      return records;
     });
     return res.json(data);
   } catch (_) {
     return res.json(HRController.getAttendance(monthYear));
+  }
+});
+
+// POST /api/hr/attendance/sync-missing - Force sync missing active employees
+hrRouter.post('/attendance/sync-missing', async (req, res) => {
+  const { month } = req.body;
+  const monthYear = month || new Date().toISOString().slice(0, 7);
+  try {
+    const synced = await withDb(async (client) => {
+      const empRes = await client.query(`
+        SELECT * FROM employees 
+        WHERE is_deleted IS NOT TRUE 
+          AND (is_active IS NULL OR is_active IS NOT FALSE)
+          AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
+        ORDER BY emp_code ASC;
+      `);
+      const existingRes = await client.query(`SELECT * FROM employee_attendance WHERE month_year = $1;`, [monthYear]);
+      const existingEmpIds = new Set(existingRes.rows.map(r => String(r.employee_id)));
+      const existingCodes = new Set(existingRes.rows.map(r => String(r.emp_code || '').trim().toLowerCase()));
+
+      const missing = empRes.rows.filter(e => {
+        const idStr = String(e.id);
+        const codeStr = String(e.emp_code || e.employee_code || '').trim().toLowerCase();
+        return (!idStr || !existingEmpIds.has(idStr)) && (!codeStr || !existingCodes.has(codeStr));
+      });
+
+      for (const emp of missing) {
+        const empId = String(emp.id);
+        const empCode = emp.emp_code || emp.employee_code || '';
+        const empName = emp.full_name || emp.name || 'Staff Member';
+        const attId = `att-${empId}-${monthYear}`;
+
+        await client.query(`
+          INSERT INTO employee_attendance (id, employee_id, employee_name, emp_code, month_year, days_worked, overtime_hours, status, created_at)
+          VALUES ($1, $2, $3, $4, $5, 30, 0, 'DRAFT', NOW())
+          ON CONFLICT (id) DO NOTHING;
+        `, [attId, empId, empName, empCode, monthYear]);
+      }
+
+      if (missing.length > 0) {
+        await client.query(`
+          INSERT INTO hr_attendance_sheets (id, month_year, total_employees, status, created_at)
+          VALUES ($1, $2, $3, 'DRAFT', NOW())
+          ON CONFLICT (id) DO UPDATE SET total_employees = hr_attendance_sheets.total_employees + $4;
+        `, [`att-sheet-${monthYear}`, monthYear, existingRes.rows.length + missing.length, missing.length]);
+      }
+
+      const updatedRes = await client.query(`SELECT * FROM employee_attendance WHERE month_year = $1 ORDER BY emp_code ASC;`, [monthYear]);
+      return updatedRes.rows.map(mapAttendanceRow);
+    });
+    return res.json({ success: true, records: synced });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message });
   }
 });
 

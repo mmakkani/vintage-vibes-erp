@@ -639,13 +639,18 @@ export class HrService {
 
   public static async createAttendanceSheet(monthYear: string): Promise<AttendanceRecord[]> {
     const employees = await this.getEmployees();
-    const activeEmployees = employees.filter(e => e.isActive);
+    const activeEmployees = employees.filter(e => {
+      const isDeleted = (e as any).is_deleted === true || (e as any).isDeleted === true;
+      const isActive = e.isActive !== false && (e as any).is_active !== false;
+      const notTerminated = (e as any).status !== 'TERMINATED' && (e as any).status !== 'INACTIVE';
+      return !isDeleted && isActive && notTerminated;
+    });
 
     const records: any[] = activeEmployees.map(emp => ({
       id: generateId('att'),
       employee_id: String(emp.id),
-      employee_name: emp.name,
-      emp_code: emp.empCode,
+      employee_name: emp.name || (emp as any).fullName || 'Staff Member',
+      emp_code: emp.empCode || (emp as any).code || '',
       month_year: monthYear,
       days_worked: 30,
       overtime_hours: 0,
@@ -679,6 +684,66 @@ export class HrService {
     });
 
     return this.getAttendance(monthYear);
+  }
+
+  public static async syncMissingEmployeesToAttendance(monthYear: string): Promise<AttendanceRecord[]> {
+    const employees = await this.getEmployees();
+    const activeEmployees = employees.filter(e => {
+      const isDeleted = (e as any).is_deleted === true || (e as any).isDeleted === true;
+      const isActive = e.isActive !== false && (e as any).is_active !== false;
+      const notTerminated = (e as any).status !== 'TERMINATED' && (e as any).status !== 'INACTIVE';
+      return !isDeleted && isActive && notTerminated;
+    });
+
+    const currentAttendance = await this.getAttendance(monthYear);
+    const existingEmpIds = new Set(currentAttendance.map(a => String(a.employeeId || (a as any).employee_id || '')));
+    const existingCodes = new Set(currentAttendance.map(a => String(a.empCode || (a as any).emp_code || '').trim().toLowerCase()));
+
+    const missing = activeEmployees.filter(emp => {
+      const idStr = String(emp.id);
+      const codeStr = String(emp.empCode || (emp as any).code || (emp as any).employee_code || '').trim().toLowerCase();
+      const hasId = idStr && existingEmpIds.has(idStr);
+      const hasCode = codeStr && existingCodes.has(codeStr);
+      return !hasId && !hasCode;
+    });
+
+    if (missing.length > 0) {
+      const newRecords: any[] = missing.map(emp => ({
+        id: generateId('att'),
+        employee_id: String(emp.id),
+        employee_name: emp.name || (emp as any).fullName || `${(emp as any).first_name || ''} ${(emp as any).last_name || ''}`.trim() || 'Staff Member',
+        emp_code: emp.empCode || (emp as any).code || (emp as any).employee_code || '',
+        month_year: monthYear,
+        days_worked: 30,
+        overtime_hours: 0,
+        status: 'DRAFT',
+        created_at: new Date().toISOString()
+      }));
+
+      try {
+        const { error } = await supabase
+          .from('employee_attendance')
+          .insert(newRecords);
+
+        if (error) {
+          console.warn('[HrService] Error inserting synced missing attendance records to Supabase:', error);
+        }
+      } catch (insertErr) {
+        console.warn('[HrService] Supabase attendance insert error:', insertErr);
+      }
+
+      try {
+        await supabase.from('hr_attendance_sheets').upsert({
+          id: `sheet-${monthYear}`,
+          month_year: monthYear,
+          total_employees: currentAttendance.length + newRecords.length
+        });
+      } catch (_) {}
+
+      return this.getAttendance(monthYear);
+    }
+
+    return currentAttendance;
   }
 
   public static async updateAttendance(id: string, updates: { daysWorked?: number; overtimeHours?: number }): Promise<void> {
