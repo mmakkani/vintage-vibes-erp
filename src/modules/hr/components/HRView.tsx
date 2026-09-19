@@ -848,7 +848,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       loadData();
       fetch('/api/hr/employees')
         .then(r => r.ok ? r.json() : [])
-        .then(list => {
+        .then(data => {
+          const list = Array.isArray(data) ? data : (data?.employees || data?.data || []);
           if (Array.isArray(list) && list.length > 0) {
             setEmployees(list);
           }

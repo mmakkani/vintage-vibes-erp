@@ -249,7 +249,14 @@ hrRouter.get('/employees', async (req, res) => {
     return res.json(data);
   } catch (err: any) {
     console.error("Database query failed:", err);
-    return res.status(500).json({ error: err.message, detail: err.detail, stack: err.stack });
+    return res.status(200).json({
+      success: false,
+      diagnostic_error: err?.message || String(err),
+      detail: err?.detail,
+      stack: err?.stack,
+      has_db_url: !!process.env.DATABASE_URL,
+      employees: []
+    });
   }
 });
 

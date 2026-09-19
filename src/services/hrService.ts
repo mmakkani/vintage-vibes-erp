@@ -78,6 +78,12 @@ export class HrService {
           const res = await fetchFn('/api/hr/employees');
           if (res.ok) {
             const json = await res.json();
+            if (json && json.success === false && json.diagnostic_error) {
+              console.warn('[HrService] Vercel Serverless DB diagnostic warning:', json.diagnostic_error, {
+                has_db_url: json.has_db_url,
+                stack: json.stack
+              });
+            }
             const list = Array.isArray(json) ? json : (json?.employees || json?.data || []);
             if (Array.isArray(list) && list.length > 0) {
               this.cachedEmployees = list;

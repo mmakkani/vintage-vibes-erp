@@ -68,6 +68,9 @@ let pool: any = null;
 let pgPoolClass: any = null;
 
 export const getPgClient = async (): Promise<any> => {
+  if (!process.env.DATABASE_URL) {
+    console.warn("DATABASE_URL is undefined on Vercel Environment Variables");
+  }
   const DEFAULT_DB_URL = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
   let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL;
   try {
@@ -1071,7 +1074,29 @@ export default async function handler(req: any, res: any) {
     // 1. GET /api/hr/employees - Retrieve all active employees
     if ((pathname === '/api/hr/employees' || pathname.endsWith('/hr/employees') || pathname === '/api/employees') && method === 'GET') {
       try {
-        const client = await borrowClient();
+        let client: any = null;
+        try {
+          client = await borrowClient();
+        } catch (connErr: any) {
+          console.error("Database connection failed for employees:", connErr);
+          return res.status(200).json({
+            success: false,
+            diagnostic_error: connErr?.message || String(connErr),
+            stack: connErr?.stack,
+            has_db_url: !!process.env.DATABASE_URL,
+            employees: []
+          });
+        }
+
+        if (!client) {
+          return res.status(200).json({
+            success: false,
+            diagnostic_error: 'Database connection pool is not available.',
+            has_db_url: !!process.env.DATABASE_URL,
+            employees: []
+          });
+        }
+
         try {
           // Normalize empty string emails to NULL
           await client.query("UPDATE public.employees SET email = NULL WHERE email = '' OR email = ' ';").catch(() => {});
@@ -1091,14 +1116,24 @@ export default async function handler(req: any, res: any) {
               result = await client.query('SELECT * FROM public.employees;');
             }
           }
-          const mapped = result.rows.map(mapEmployeeRow);
+          const rows = Array.isArray(result?.rows) ? result.rows : [];
+          const mapped = rows.map(mapEmployeeRow);
           return res.status(200).json(mapped);
         } finally {
-          client.release();
+          if (client && typeof client.release === 'function') {
+            client.release();
+          }
         }
       } catch (err: any) {
         console.error("Database query failed:", err);
-        return res.status(500).json({ error: err.message, detail: err.detail, stack: err.stack });
+        return res.status(200).json({
+          success: false,
+          diagnostic_error: err?.message || String(err),
+          detail: err?.detail,
+          stack: err?.stack,
+          has_db_url: !!process.env.DATABASE_URL,
+          employees: []
+        });
       }
     }
 
@@ -6274,16 +6309,18 @@ export default async function handler(req: any, res: any) {
       timestamp: new Date().toISOString()
     });
 
-  } catch (err: any) {
-    console.error(`[Serverless Handler Error for ${pathname}]:`, err);
+  } catch (fatalErr: any) {
+    console.error("FATAL VERCEL GATEWAY ERROR:", fatalErr);
     try {
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Access-Control-Allow-Origin', '*');
     } catch (_) {}
-    return res.status(500).json({
-      error: err?.message || String(err),
-      stack: err?.stack,
-      details: String(err)
+    return res.status(200).json({
+      success: false,
+      diagnostic_error: fatalErr?.message || String(fatalErr),
+      stack: fatalErr?.stack,
+      has_db_url: !!process.env.DATABASE_URL,
+      employees: []
     });
   }
 }

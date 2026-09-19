@@ -24,6 +24,9 @@ function sanitizeDbUrl(rawUrl: string): string {
 let pool: pg.Pool | null = null;
 
 export const getPgClient = (): pg.Pool => {
+  if (!process.env.DATABASE_URL) {
+    console.warn("DATABASE_URL is undefined on Vercel Environment Variables");
+  }
   if (!pool) {
     const targetUrl = sanitizeDbUrl(process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL);
     pool = new Pool({
