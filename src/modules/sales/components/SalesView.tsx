@@ -13,6 +13,7 @@ import { LiveSalesMasterLog } from './LiveSalesMasterLog.tsx';
 import { CounterSalePOSTerminal } from './CounterSalePOSTerminal.tsx';
 import { CounterSaleLogView } from './CounterSaleLogView.tsx';
 import { CustomCompanySalesView } from './CustomCompanySalesView.tsx';
+import { SalesChannelSettingsView } from './SalesChannelSettingsView.tsx';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { SalesService } from '../../../services/salesService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
@@ -36,7 +37,8 @@ import {
   Tag,
   Zap,
   RotateCcw,
-  Building2
+  Building2,
+  Settings
 } from 'lucide-react';
 
 interface SalesViewProps {
@@ -47,22 +49,22 @@ interface SalesViewProps {
 
 export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserRole, onSubTabChange }) => {
   const { syncVersion } = useSync();
-  const [subTab, setSubTabState] = useState<'counterSale' | 'customSale' | 'liveSelling' | 'drafts' | 'masterLog' | 'returns'>(() => {
+  const [subTab, setSubTabState] = useState<'counterSale' | 'customSale' | 'liveSelling' | 'drafts' | 'masterLog' | 'returns' | 'salesSettings'>(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const sub = urlParams.get('subTab') as any;
-      if (sub && ['counterSale', 'customSale', 'liveSelling', 'drafts', 'masterLog', 'returns'].includes(sub)) {
+      if (sub && ['counterSale', 'customSale', 'liveSelling', 'drafts', 'masterLog', 'returns', 'salesSettings'].includes(sub)) {
         return sub;
       }
       const saved = localStorage.getItem('vintage_sales_subtab') as any;
-      if (saved && ['counterSale', 'customSale', 'liveSelling', 'drafts', 'masterLog', 'returns'].includes(saved)) {
+      if (saved && ['counterSale', 'customSale', 'liveSelling', 'drafts', 'masterLog', 'returns', 'salesSettings'].includes(saved)) {
         return saved;
       }
     } catch {}
     return 'counterSale';
   });
 
-  const setSubTab = (tab: 'counterSale' | 'customSale' | 'liveSelling' | 'drafts' | 'masterLog' | 'returns') => {
+  const setSubTab = (tab: 'counterSale' | 'customSale' | 'liveSelling' | 'drafts' | 'masterLog' | 'returns' | 'salesSettings') => {
     setSubTabState(tab);
     try {
       localStorage.setItem('vintage_sales_subtab', tab);
@@ -408,6 +410,18 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
             <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
             <span>🔄 Parcel Returns (RTO)</span>
           </button>
+          <button
+            id="subtab-sales-settings"
+            onClick={() => setSubTab('salesSettings')}
+            className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+              subTab === 'salesSettings'
+                ? 'bg-purple-700 text-white shadow-xs'
+                : 'bg-purple-50 text-purple-800 hover:bg-purple-100 border border-purple-200'
+            }`}
+          >
+            <Settings className="w-3.5 h-3.5 text-purple-600" />
+            <span>⚙️ Sales & COA Settings</span>
+          </button>
         </div>
 
         {subTab === 'gatePasses' && (
@@ -499,6 +513,16 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
             onRefreshAll();
           }}
           onPostSuccess={() => {
+            loadData();
+            onRefreshAll();
+          }}
+        />
+      )}
+
+      {/* ===================== SUBTAB: SALES & COA SETTINGS ===================== */}
+      {subTab === 'salesSettings' && (
+        <SalesChannelSettingsView
+          onRefreshAll={() => {
             loadData();
             onRefreshAll();
           }}

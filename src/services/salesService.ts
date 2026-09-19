@@ -445,5 +445,107 @@ export class SalesService {
     }
     return data;
   }
+
+  // ==========================================
+  // OMNICHANNEL SALES SETTINGS & DISPATCH
+  // ==========================================
+
+  public static async getSalesChannelSettings(): Promise<any[]> {
+    try {
+      const res = await fetch('/api/sales/settings');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.settings)) return json.settings;
+      }
+    } catch (_) {}
+
+    // Fallback to Supabase
+    const { data } = await supabase
+      .from('sales_channel_settings')
+      .select('*')
+      .order('setting_key');
+    return data || [];
+  }
+
+  public static async updateSalesChannelSetting(settingKey: string, accountCode: string): Promise<any> {
+    const res = await fetch('/api/sales/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settingKey, accountCode })
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'Failed to update sales setting');
+    }
+    return json.setting;
+  }
+
+  public static async resetSalesChannelSettings(): Promise<void> {
+    const res = await fetch('/api/sales/settings/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'Failed to reset sales settings');
+    }
+  }
+
+  public static async getTransactionalAccounts(): Promise<any[]> {
+    try {
+      const res = await fetch('/api/sales/accounts');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.accounts)) return json.accounts;
+      }
+    } catch (_) {}
+
+    // Fallback to chart_of_accounts via Supabase
+    const { data } = await supabase
+      .from('chart_of_accounts')
+      .select('id, code, name, account_type')
+      .order('code');
+    return data || [];
+  }
+
+  public static async dispatchSalesOrder(payload: {
+    orderId: string;
+    channel: string;
+    clientId?: string;
+    courierPartyId?: string;
+    shippingFee?: number;
+    shippingBearer?: string;
+  }): Promise<any> {
+    const res = await fetch('/api/sales/dispatch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const json = await res.json();
+    if (!res.ok || json.success === false) {
+      throw new Error(json.error || 'Sales dispatch failed');
+    }
+    return json;
+  }
+
+  public static async settleCourierCod(payload: {
+    courierPartyId: string;
+    bankAccountId: string;
+    grossCodCleared: number;
+    courierFeeDeducted: number;
+    netBankReceived: number;
+    referenceNo?: string;
+  }): Promise<any> {
+    const res = await fetch('/api/sales/courier-settlement', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const json = await res.json();
+    if (!res.ok || json.success === false) {
+      throw new Error(json.error || 'Courier COD settlement failed');
+    }
+    return json;
+  }
 }
 

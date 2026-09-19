@@ -217,7 +217,9 @@ function analyzeBotRequest(req: any, explicitPath?: string, explicitUa?: string)
     normalizedPath.includes('/api/sorting') ||
     normalizedPath.includes('/sorting') ||
     normalizedPath.includes('/api/hr') ||
-    normalizedPath.includes('/hr')
+    normalizedPath.includes('/hr') ||
+    normalizedPath.includes('/api/sales') ||
+    normalizedPath.includes('/sales')
   ) {
     return {
       isBadBot: false,
@@ -5061,6 +5063,170 @@ export default async function handler(req: any, res: any) {
         }
         try {
           const rpcRes = await client.query('SELECT public.unpost_payroll_batch_and_reverse_jv($1) as result;', [month]);
+          return res.status(200).json(rpcRes.rows[0]?.result);
+        } catch (dbErr: any) {
+          return res.status(400).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      // 16. Omnichannel Sales Settings, Dispatch & COD Courier Clearing
+      if ((pathname.endsWith('/sales/settings') || pathname.includes('/sales/settings')) && method === 'GET') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        try {
+          const result = await client.query(`
+            SELECT 
+              s.id,
+              s.setting_key as "settingKey",
+              s.account_code as "accountCode",
+              s.description,
+              s.updated_at as "updatedAt",
+              COALESCE(c.name, a.account_name, '') as "accountName",
+              COALESCE(c.account_type, at.type_name, 'ASSET') as "accountType"
+            FROM sales_channel_settings s
+            LEFT JOIN chart_of_accounts c ON c.code = s.account_code
+            LEFT JOIN accounts a ON a.account_code = s.account_code
+            LEFT JOIN account_types at ON at.type_id = a.account_type_id
+            ORDER BY s.setting_key;
+          `);
+          return res.status(200).json({ success: true, settings: result.rows });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if ((pathname.endsWith('/sales/settings') || pathname.includes('/sales/settings')) && method === 'POST') {
+        const { settingKey, accountCode } = body;
+        if (!settingKey || !accountCode) {
+          return res.status(400).json({ success: false, error: 'settingKey and accountCode are required' });
+        }
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        try {
+          const result = await client.query(`
+            UPDATE sales_channel_settings
+            SET account_code = $1, updated_at = NOW()
+            WHERE setting_key = $2
+            RETURNING *;
+          `, [accountCode, settingKey]);
+          return res.status(200).json({ success: true, setting: result.rows[0] });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if ((pathname.endsWith('/sales/settings/reset') || pathname.includes('/sales/settings/reset')) && method === 'POST') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        try {
+          const defaults = [
+            ['cogs_account', '5110-01', 'Cost of Goods Sold - Finished Goods'],
+            ['finished_goods_inventory', '1160-01', 'Finished Goods Inventory Asset'],
+            ['courier_cod_clearing', '1128-01', 'Courier COD Clearing (Pending Remittance)'],
+            ['courier_payable', '2140-01', 'Courier Delivery & Commission Payable'],
+            ['delivery_expense', '5140-01', 'Company Borne Delivery Expense'],
+            ['pos_cash_drawer', '1110-01', 'POS Cash Drawer'],
+            ['pos_terminal_clearing', '1125-01', 'POS Card / Terminal Clearing'],
+            ['live_sales_clearing', '1130-02', 'LIVE SALES Control Khata'],
+            ['ecommerce_sales_clearing', '1130-03', 'E-COMMERCE SALES Control Khata'],
+            ['pos_sales_clearing', '1130-04', 'POS SALES Control Khata'],
+            ['b2b_sales_receivable', '1130-01', 'Default B2B Wholesale Receivable'],
+            ['b2b_revenue', '4110-05', 'B2B Wholesale Revenue'],
+            ['omnichannel_retail_revenue', '4110-01', 'POS, Live & E-Commerce Revenue']
+          ];
+          for (const [key, code, desc] of defaults) {
+            await client.query(`
+              INSERT INTO sales_channel_settings (setting_key, account_code, description, updated_at)
+              VALUES ($1, $2, $3, NOW())
+              ON CONFLICT (setting_key) DO UPDATE
+              SET account_code = $2, description = $3, updated_at = NOW();
+            `, [key, code, desc]);
+          }
+          return res.status(200).json({ success: true, message: 'Settings reset to standard defaults' });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if ((pathname.endsWith('/sales/accounts') || pathname.includes('/sales/accounts')) && method === 'GET') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        try {
+          const result = await client.query(`
+            SELECT 
+              c.id,
+              c.code,
+              c.name,
+              COALESCE(c.account_type, 'ASSET') as "accountType",
+              COALESCE(c.current_balance, 0) as "currentBalance",
+              COALESCE(a.is_transactional, true) as "isTransactional"
+            FROM chart_of_accounts c
+            LEFT JOIN accounts a ON a.account_code = c.code
+            WHERE COALESCE(a.is_transactional, true) = true
+            ORDER BY c.code ASC;
+          `);
+          return res.status(200).json({ success: true, accounts: result.rows });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if ((pathname.endsWith('/sales/dispatch') || pathname.includes('/sales/dispatch')) && method === 'POST') {
+        const { orderId, channel, clientId, courierPartyId, shippingFee, shippingBearer } = body;
+        if (!orderId || !channel) {
+          return res.status(400).json({ success: false, error: 'orderId and channel are required' });
+        }
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        try {
+          const rpcRes = await client.query(
+            'SELECT public.post_sales_dispatch_and_cogs_voucher($1, $2, $3, $4, $5, $6) as result;',
+            [
+              orderId,
+              channel,
+              clientId || null,
+              courierPartyId || null,
+              Number(shippingFee || 0),
+              shippingBearer || 'Customer Bears'
+            ]
+          );
+          return res.status(200).json(rpcRes.rows[0]?.result);
+        } catch (dbErr: any) {
+          return res.status(400).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if ((pathname.endsWith('/sales/courier-settlement') || pathname.includes('/sales/courier-settlement')) && method === 'POST') {
+        const { courierPartyId, bankAccountId, grossCodCleared, courierFeeDeducted, netBankReceived, referenceNo } = body;
+        if (!courierPartyId || !bankAccountId || grossCodCleared === undefined || netBankReceived === undefined) {
+          return res.status(400).json({ success: false, error: 'courierPartyId, bankAccountId, grossCodCleared, and netBankReceived are required' });
+        }
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        try {
+          const rpcRes = await client.query(
+            'SELECT public.settle_courier_cod_remittance($1, $2, $3, $4, $5, $6) as result;',
+            [
+              courierPartyId,
+              bankAccountId,
+              Number(grossCodCleared),
+              Number(courierFeeDeducted || 0),
+              Number(netBankReceived),
+              referenceNo || `REMIT-${Date.now()}`
+            ]
+          );
           return res.status(200).json(rpcRes.rows[0]?.result);
         } catch (dbErr: any) {
           return res.status(400).json({ success: false, error: dbErr.message || String(dbErr) });

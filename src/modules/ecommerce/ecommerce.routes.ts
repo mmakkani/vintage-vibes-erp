@@ -311,6 +311,17 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
       JSON.stringify(items)
     ]);
 
+    // 6b. Automatically trigger omnichannel dispatch voucher & COGS derecognition
+    try {
+      const bearer = deliveryFee > 0 ? 'Customer Bears' : 'Company Free';
+      await client.query(
+        'SELECT public.post_sales_dispatch_and_cogs_voucher($1::uuid, $2, NULL, NULL, $3::numeric, $4) as result;',
+        [orderId, 'ECOMMERCE', deliveryFee, bearer]
+      );
+    } catch (dispatchErr) {
+      console.warn('Post-checkout auto-dispatch voucher note:', dispatchErr);
+    }
+
     await client.query('COMMIT');
 
     // 7. Format WhatsApp notification URL
