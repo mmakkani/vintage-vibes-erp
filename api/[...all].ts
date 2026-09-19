@@ -5430,6 +5430,27 @@ export default async function handler(req: any, res: any) {
         }
       }
 
+      if ((pathname.includes('/grail-bounties') || pathname.includes('/ecommerce/bounties') || pathname.includes('/ecommerce/bounty')) && method === 'DELETE') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+        try {
+          const segments = pathname.split('/').filter(Boolean);
+          let bountyId = body?.id || parsedUrl.searchParams.get('id') || '';
+          if (!bountyId && segments.length > 0) {
+            bountyId = segments[segments.length - 1];
+          }
+          if (!bountyId) {
+            return res.status(400).json({ success: false, error: 'Bounty ID required' });
+          }
+          await client.query('DELETE FROM public.grail_bounties WHERE id = $1;', [bountyId]);
+          return res.status(200).json({ success: true, message: `Bounty ${bountyId} deleted successfully` });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
     return res.status(200).json({
       success: true,
       message: 'Vintage Vibe ERP Serverless Gateway',

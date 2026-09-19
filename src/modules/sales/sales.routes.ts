@@ -562,6 +562,21 @@ salesRouter.patch('/grail-bounties/:id/status', async (req, res) => {
   }
 });
 
+// DELETE /api/sales/grail-bounties/:id
+salesRouter.delete('/grail-bounties/:id', async (req, res) => {
+  let client;
+  try {
+    const { id } = req.params;
+    client = await getDbClient();
+    await client.query('DELETE FROM grail_bounties WHERE id = $1', [id]);
+    return res.json({ success: true, message: `Bounty ${id} deleted successfully` });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || 'Failed to delete bounty' });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
 // GET /api/sales/grail-bounties/auto-match
 salesRouter.get('/grail-bounties/auto-match', async (req, res) => {
   let client;

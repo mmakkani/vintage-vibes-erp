@@ -467,6 +467,23 @@ ecommerceRouter.patch('/bounties/:id/status', async (req: Request, res: Response
 });
 
 // -------------------------------------------------------------
+// 5c2. DELETE /api/ecommerce/bounties/:id - Remove Bounty
+// -------------------------------------------------------------
+ecommerceRouter.delete('/bounties/:id', async (req: Request, res: Response) => {
+  let client: Client | null = null;
+  try {
+    const { id } = req.params;
+    client = await getDbClient();
+    await client.query('DELETE FROM grail_bounties WHERE id = $1', [id]);
+    return res.json({ success: true, message: `Bounty ${id} deleted successfully` });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// -------------------------------------------------------------
 // 5d. GET /api/ecommerce/bounties/auto-match - Match Available Inventory
 // -------------------------------------------------------------
 ecommerceRouter.get('/bounties/auto-match', async (req: Request, res: Response) => {

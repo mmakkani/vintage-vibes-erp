@@ -13,7 +13,10 @@ import {
   ExternalLink,
   ChevronRight,
   ShieldAlert,
-  Tag
+  Tag,
+  Check,
+  X,
+  Trash2
 } from 'lucide-react';
 
 interface GrailBountyItem {
@@ -28,7 +31,7 @@ interface GrailBountyItem {
   max_budget_aed?: number;
   notes?: string;
   era_notes?: string;
-  status: 'OPEN' | 'MATCHED' | 'CONTACTED' | 'FULFILLED' | 'CANCELLED';
+  status: 'OPEN' | 'APPROVED' | 'REJECTED' | 'MATCHED' | 'CONTACTED' | 'FULFILLED' | 'CANCELLED';
   matched_barcode?: string;
   created_at: string;
 }
@@ -137,6 +140,43 @@ export const GrailBountyRadarView: React.FC = () => {
     }
   };
 
+  // Delete bounty permanently
+  const handleDeleteBounty = async (e: React.MouseEvent, bountyId: string, customerName: string) => {
+    e.stopPropagation();
+    if (!window.confirm(`Are you sure you want to permanently delete the grail request for "${customerName}"?`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/sales/grail-bounties/${bountyId}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActionFeedback(`Bounty for "${customerName}" deleted successfully.`);
+        if (selectedBounty && selectedBounty.id === bountyId) {
+          setSelectedBounty(null);
+        }
+        loadBounties();
+      } else {
+        alert(data.error || 'Failed to delete bounty');
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Error deleting bounty');
+    }
+  };
+
+  // Quick Approve
+  const handleApproveBounty = async (e: React.MouseEvent, bountyId: string) => {
+    e.stopPropagation();
+    await handleUpdateStatus(bountyId, 'APPROVED');
+  };
+
+  // Quick Reject
+  const handleRejectBounty = async (e: React.MouseEvent, bountyId: string) => {
+    e.stopPropagation();
+    await handleUpdateStatus(bountyId, 'REJECTED');
+  };
+
   // Format 1-Click WhatsApp URL
   const getWhatsAppUrl = (bounty: GrailBountyItem) => {
     const rawPhone = bounty.whatsapp_phone || bounty.customer_phone || '';
@@ -181,6 +221,22 @@ export const GrailBountyRadarView: React.FC = () => {
         </div>
       </div>
 
+      {/* Action Feedback Banner */}
+      {actionFeedback && (
+        <div className="p-3 bg-amber-500/10 border border-amber-500/40 text-amber-900 rounded-xl text-xs flex items-center justify-between shadow-xs">
+          <div className="flex items-center gap-2 font-bold">
+            <Sparkles className="w-4 h-4 text-amber-600" />
+            <span>{actionFeedback}</span>
+          </div>
+          <button
+            onClick={() => setActionFeedback(null)}
+            className="text-amber-800 hover:text-amber-950 font-bold px-2 py-0.5 rounded cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
@@ -190,7 +246,7 @@ export const GrailBountyRadarView: React.FC = () => {
         <div className="bg-white p-4 rounded-xl border border-amber-200 bg-amber-50/30 shadow-xs">
           <div className="text-[11px] font-bold text-amber-800 uppercase">Open / Sourcing Now</div>
           <div className="text-2xl font-black text-amber-900 font-mono mt-1">
-            {bounties.filter(b => (b.status || '').toUpperCase() === 'OPEN' || (b.status || '').toUpperCase() === 'SEARCHING').length}
+            {bounties.filter(b => (b.status || '').toUpperCase() === 'OPEN' || (b.status || '').toUpperCase() === 'SEARCHING' || (b.status || '').toUpperCase() === 'APPROVED').length}
           </div>
         </div>
         <div className="bg-white p-4 rounded-xl border border-indigo-200 bg-indigo-50/30 shadow-xs">
@@ -230,10 +286,12 @@ export const GrailBountyRadarView: React.FC = () => {
                 className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white font-bold text-slate-700 focus:outline-none"
               >
                 <option value="ALL">All Statuses</option>
-                <option value="OPEN">🟡 Open (Searching)</option>
+                <option value="OPEN">🟡 Open (Pending Review)</option>
+                <option value="APPROVED">🟢 Approved (Sourcing)</option>
+                <option value="REJECTED">🔴 Rejected</option>
                 <option value="MATCHED">🔵 Matched in Bale</option>
                 <option value="CONTACTED">🟣 Contacted Client</option>
-                <option value="FULFILLED">🟢 Fulfilled / Sold</option>
+                <option value="FULFILLED">✨ Fulfilled / Sold</option>
                 <option value="CANCELLED">⚪ Cancelled</option>
               </select>
             </div>
@@ -273,13 +331,17 @@ export const GrailBountyRadarView: React.FC = () => {
                             className={`px-2 py-0.5 rounded-full text-[10px] font-bold font-mono ${
                               bounty.status === 'OPEN'
                                 ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                : bounty.status === 'APPROVED'
+                                ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                                : bounty.status === 'REJECTED'
+                                ? 'bg-rose-100 text-rose-900 border border-rose-300'
                                 : bounty.status === 'MATCHED'
                                 ? 'bg-indigo-100 text-indigo-900 border border-indigo-300'
                                 : bounty.status === 'CONTACTED'
                                 ? 'bg-purple-100 text-purple-900 border border-purple-300'
                                 : bounty.status === 'FULFILLED'
                                 ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                                : 'bg-slate-100 text-slate-600'
+                                : 'bg-slate-100 text-slate-600 border border-slate-200'
                             }`}
                           >
                             {bounty.status}
@@ -317,18 +379,57 @@ export const GrailBountyRadarView: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2">
+                    <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <a
                           href={getWhatsAppUrl(bounty)}
                           target="_blank"
                           rel="noreferrer"
                           onClick={e => e.stopPropagation()}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-xs transition"
+                          className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                          title="Contact Customer on WhatsApp"
                         >
                           <MessageCircle className="w-3.5 h-3.5" />
                           <span>1-Click WhatsApp</span>
                         </a>
+
+                        {/* Approve Button */}
+                        {bounty.status !== 'APPROVED' && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleApproveBounty(e, bounty.id)}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-bold text-[11px] flex items-center gap-1 shadow-xs transition cursor-pointer"
+                            title="Approve Sourcing Request"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Approve</span>
+                          </button>
+                        )}
+
+                        {/* Reject Button */}
+                        {bounty.status !== 'REJECTED' && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleRejectBounty(e, bounty.id)}
+                            className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 font-bold text-[11px] flex items-center gap-1 shadow-xs transition cursor-pointer"
+                            title="Reject Sourcing Request"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>Reject</span>
+                          </button>
+                        )}
+
+                        {/* Delete Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteBounty(e, bounty.id, bounty.customer_name)}
+                          className="px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 hover:border-red-300 font-bold text-[11px] flex items-center gap-1 shadow-xs transition cursor-pointer"
+                          title="Permanently Delete Wishlist"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete</span>
+                        </button>
+
                         {bounty.matched_barcode && (
                           <span className="px-2 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-900 font-mono text-[10px] font-bold">
                             SKU: {bounty.matched_barcode}
@@ -403,21 +504,43 @@ export const GrailBountyRadarView: React.FC = () => {
                   <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
                     Lifecycle Status:
                   </label>
-                  <div className="grid grid-cols-4 gap-1">
-                    {(['OPEN', 'MATCHED', 'CONTACTED', 'FULFILLED'] as const).map(st => (
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(['OPEN', 'APPROVED', 'REJECTED', 'MATCHED', 'CONTACTED', 'FULFILLED'] as const).map(st => (
                       <button
                         key={st}
+                        type="button"
                         onClick={() => handleUpdateStatus(selectedBounty.id, st)}
-                        className={`py-1.5 text-[10px] font-bold rounded-lg border transition ${
+                        className={`py-1.5 text-[10px] font-bold rounded-lg border transition cursor-pointer ${
                           selectedBounty.status === st
-                            ? 'bg-slate-900 text-white border-slate-900'
+                            ? st === 'APPROVED' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' :
+                              st === 'REJECTED' ? 'bg-rose-600 text-white border-rose-600 shadow-xs' :
+                              st === 'OPEN' ? 'bg-amber-600 text-white border-amber-600 shadow-xs' :
+                              'bg-slate-900 text-white border-slate-900 shadow-xs'
                             : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                         }`}
                       >
-                        {st}
+                        {st === 'OPEN' ? '🟡 OPEN' :
+                         st === 'APPROVED' ? '🟢 APPROVED' :
+                         st === 'REJECTED' ? '🔴 REJECTED' :
+                         st === 'MATCHED' ? '🔵 MATCHED' :
+                         st === 'CONTACTED' ? '🟣 CONTACTED' :
+                         '✨ FULFILLED'}
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Permanent Delete Action in Inspector */}
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-[11px] text-slate-400">Permanently remove record:</span>
+                  <button
+                    type="button"
+                    onClick={(e) => handleDeleteBounty(e, selectedBounty.id, selectedBounty.customer_name)}
+                    className="px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 hover:border-red-300 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Bounty</span>
+                  </button>
                 </div>
               </div>
 
