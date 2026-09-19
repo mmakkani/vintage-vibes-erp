@@ -469,6 +469,45 @@ salesRouter.post('/courier-settlement', async (req, res) => {
   }
 });
 
+// POST /api/sales/grail-bounties
+salesRouter.post('/grail-bounties', async (req, res) => {
+  let client;
+  try {
+    const { customerName, customerPhone, whatsappPhone, customerEmail, desiredBrand, desiredCategory, desiredSize, preferredSize, maxBudgetAed, notes, eraNotes } = req.body;
+    const phone = whatsappPhone || customerPhone || req.body.phone;
+    const name = customerName || req.body.name;
+    const brand = desiredBrand || req.body.brand;
+    if (!name || !phone || !brand) {
+      return res.status(400).json({ success: false, error: 'Customer name, phone and desired brand are required' });
+    }
+
+    client = await getDbClient();
+    const id = req.body.id || `bounty-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const size = preferredSize || desiredSize || 'L';
+    const era = eraNotes || notes || '';
+
+    const insRes = await client.query(`
+      INSERT INTO grail_bounties (
+        id, customer_name, customer_phone, whatsapp_phone, customer_email, 
+        desired_brand, desired_category, desired_size, preferred_size, 
+        max_budget_aed, notes, era_notes, status, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'OPEN', NOW(), NOW())
+      RETURNING *;
+    `, [id, name, phone, whatsappPhone || phone, customerEmail || '', brand, desiredCategory || 'T-Shirts', size, size, Number(maxBudgetAed || 0), era, era]);
+
+    return res.status(201).json({
+      success: true,
+      bounty: insRes.rows[0],
+      bountyId: id,
+      message: `Grail bounty registered! We will notify ${phone} as soon as a matching ${brand} is scanned in a bale.`
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to create grail bounty' });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
 // GET /api/sales/grail-bounties
 salesRouter.get('/grail-bounties', async (req, res) => {
   let client;

@@ -190,19 +190,19 @@ export const GrailBountyRadarView: React.FC = () => {
         <div className="bg-white p-4 rounded-xl border border-amber-200 bg-amber-50/30 shadow-xs">
           <div className="text-[11px] font-bold text-amber-800 uppercase">Open / Sourcing Now</div>
           <div className="text-2xl font-black text-amber-900 font-mono mt-1">
-            {bounties.filter(b => b.status === 'OPEN').length}
+            {bounties.filter(b => (b.status || '').toUpperCase() === 'OPEN' || (b.status || '').toUpperCase() === 'SEARCHING').length}
           </div>
         </div>
         <div className="bg-white p-4 rounded-xl border border-indigo-200 bg-indigo-50/30 shadow-xs">
           <div className="text-[11px] font-bold text-indigo-800 uppercase">Matched Pieces</div>
           <div className="text-2xl font-black text-indigo-900 font-mono mt-1">
-            {bounties.filter(b => b.status === 'MATCHED').length}
+            {bounties.filter(b => (b.status || '').toUpperCase() === 'MATCHED').length}
           </div>
         </div>
         <div className="bg-white p-4 rounded-xl border border-emerald-200 bg-emerald-50/30 shadow-xs">
           <div className="text-[11px] font-bold text-emerald-800 uppercase">Fulfilled Orders</div>
           <div className="text-2xl font-black text-emerald-900 font-mono mt-1">
-            {bounties.filter(b => b.status === 'FULFILLED').length}
+            {bounties.filter(b => (b.status || '').toUpperCase() === 'FULFILLED').length}
           </div>
         </div>
       </div>
@@ -241,8 +241,14 @@ export const GrailBountyRadarView: React.FC = () => {
 
           <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1">
             {filteredBounties.length === 0 ? (
-              <div className="text-center py-12 text-slate-400 text-xs bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                No customer wishlist demands recorded. As collectors request grails on vintagevibesgk.com, they will stream here!
+              <div className="text-center py-16 px-6 text-slate-500 text-xs bg-slate-50/80 rounded-2xl border border-dashed border-slate-300 flex flex-col items-center justify-center gap-2">
+                <div className="p-3 bg-amber-50 rounded-full border border-amber-200 text-amber-700 mb-1">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div className="font-bold text-slate-800 text-sm">No Customer Wishlists Yet</div>
+                <p className="text-slate-500 max-w-sm text-center">
+                  Live customer grail requests submitted from <strong className="text-slate-700">vintagevibesgk.com</strong> will stream here in real-time with verified collector details.
+                </p>
               </div>
             ) : (
               filteredBounties.map(bounty => {
@@ -306,7 +312,7 @@ export const GrailBountyRadarView: React.FC = () => {
                           AED {Number(bounty.max_budget_aed || 0).toLocaleString()}
                         </div>
                         <div className="text-[10px] text-slate-400 mt-0.5">
-                          {new Date(bounty.created_at).toLocaleDateString()}
+                          {bounty.created_at ? new Date(bounty.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Live'}
                         </div>
                       </div>
                     </div>
