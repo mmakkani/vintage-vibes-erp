@@ -2105,9 +2105,9 @@ class RelationalStore {
     const defaultBank = this.coaAccounts.find(a => a.code === '1120-00') || this.coaAccounts.find(a => a.classification === 'ASSET' && a.name.toLowerCase().includes('bank'));
     const defaultCash = this.coaAccounts.find(a => a.code === '1110-00') || this.coaAccounts.find(a => a.classification === 'ASSET' && a.name.toLowerCase().includes('cash'));
 
-    const payableAcc = this.coaAccounts.find(a => a.code === '2310-00') || this.coaAccounts.find(a => a.classification === 'LIABILITY' && a.name.toLowerCase().includes('payroll'));
-    const expenseAcc = this.coaAccounts.find(a => a.code === '5310-00') || this.coaAccounts.find(a => a.classification === 'EXPENSE' && a.name.toLowerCase().includes('salar'));
-    const loanAssetAcc = this.coaAccounts.find(a => a.code === '1135-00') || this.coaAccounts.find(a => a.name.toLowerCase().includes('advance'));
+    const payableAcc = this.coaAccounts.find(a => a.code === '2310-01') || this.coaAccounts.find(a => a.code === '2310-00');
+    const expenseAcc = this.coaAccounts.find(a => a.code === '5210-100') || this.coaAccounts.find(a => a.code === '5210-01');
+    const loanAssetAcc = this.coaAccounts.find(a => a.code === '1135-01') || this.coaAccounts.find(a => a.code === '1135-00');
 
     list.forEach(p => {
       p.status = 'POSTED';
@@ -2138,15 +2138,15 @@ class RelationalStore {
     const totalNet = list.reduce((sum, p) => sum + p.netPay, 0);
 
     // Double Entry Journal Voucher in General Ledger:
-    // Debit: 5310-00 Staff Salaries Expense (Total Gross)
-    // Credit: 1135-00 Staff Advance & Loan Receivables (Total Deductions recovered)
-    // Credit: 2310-00 Accrued Staff Payroll & End-of-Service Gratuity (Total Net Payable)
+    // Debit: 5210-100 SALARY EXPNSE (Total Gross)
+    // Credit: 1135-01 Staff Advance & Loan Receivables (Total Deductions recovered)
+    // Credit: 2310-01 Staff Salaries Payable (Total Net Payable)
     const voucherLines: VoucherLine[] = [
       {
         id: `vli-${Date.now()}-1-${Math.random().toString(36).substring(2, 7)}`,
-        accountId: expenseAcc?.id || 'acc-5310',
-        accountCode: expenseAcc?.code || '5310-00',
-        accountName: expenseAcc?.name || 'Staff Salaries, Live Host Commissions & Overtime',
+        accountId: expenseAcc?.id || '7829377d-6af0-42fb-bba4-22775afd7523',
+        accountCode: '5210-100',
+        accountName: expenseAcc?.name || 'SALARY EXPNSE',
         debitAmount: totalGross,
         creditAmount: 0
       }
@@ -2156,7 +2156,7 @@ class RelationalStore {
       voucherLines.push({
         id: `vli-${Date.now()}-ded-${Math.random().toString(36).substring(2, 7)}`,
         accountId: loanAssetAcc.id,
-        accountCode: loanAssetAcc.code,
+        accountCode: '1135-01',
         accountName: loanAssetAcc.name,
         debitAmount: 0,
         creditAmount: totalDeductions
@@ -2165,9 +2165,9 @@ class RelationalStore {
 
     voucherLines.push({
       id: `vli-${Date.now()}-2-${Math.random().toString(36).substring(2, 7)}`,
-      accountId: payableAcc?.id || 'acc-2310',
-      accountCode: payableAcc?.code || '2310-00',
-      accountName: payableAcc?.name || 'Accrued Staff Payroll & End-of-Service Gratuity',
+      accountId: payableAcc?.id || '411f47dd-068f-45f6-8978-df1b867f4fa5',
+      accountCode: '2310-01',
+      accountName: payableAcc?.name || 'Staff Salaries Payable',
       debitAmount: 0,
       creditAmount: totalNet
     });
@@ -2190,7 +2190,7 @@ class RelationalStore {
     });
 
     this.auditLogs.unshift(
-      AuditEngine.createLogEntry('HR', 'POST', `PAY-${identifier}`, 'POSTED', postedBy, `Posted payroll for ${identifier} (Gross: AED ${totalGross.toFixed(2)}, Net: AED ${totalNet.toFixed(2)}) and linked to General Ledger (Debit 5310-00, Credit 2310-00)`)
+      AuditEngine.createLogEntry('HR', 'POST', `PAY-${identifier}`, 'POSTED', postedBy, `Posted payroll for ${identifier} (Gross: AED ${totalGross.toFixed(2)}, Net: AED ${totalNet.toFixed(2)}) and linked to General Ledger (Debit 5210-100, Credit 2310-01)`)
     );
 
     this.saveToDisk();

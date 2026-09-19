@@ -912,6 +912,51 @@ export class HrService {
       .eq('month_year', monthYear);
 
     // 2. Fetch employee_payroll to get accurate totals
+    // 1. Check if payroll is already posted to prevent duplicate vouchers
+    const { data: existingSheet } = await supabase
+      .from('hr_payroll_sheets')
+      .select('status, voucher_no, voucher_id')
+      .eq('month_year', monthYear)
+      .maybeSingle();
+
+    if (existingSheet?.status === 'POSTED' && existingSheet?.voucher_id) {
+      throw new Error(`Monthly payroll for ${monthYear} is already POSTED (Voucher: ${existingSheet.voucher_no || existingSheet.voucher_id}). Unpost first before regenerating.`);
+    }
+
+    // 2. Try Atomic PostgreSQL Stored Procedure first
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('post_payroll_batch_and_post_jv', {
+        p_month_year: monthYear,
+        p_posted_by: postedBy
+      });
+
+      if (!rpcErr && rpcData?.success) {
+        try {
+          FinanceService.clearCoaCache();
+          await supabase.rpc('sync_coa_current_balances');
+        } catch (_) {}
+
+        try {
+          await AuditService.logAction({
+            action: 'POST',
+            entityType: 'PAYROLL',
+            entityId: `PAY-${monthYear}`,
+            details: `Posted monthly payroll for ${monthYear} (${rpcData.total_employees || 1} staff). Recorded Journal Voucher ${rpcData.voucher_no}: Debit 5210-100 AED ${Number(rpcData.total_gross || 0).toFixed(2)}, Credit 2310-01 AED ${Number(rpcData.total_net || 0).toFixed(2)}`
+          });
+        } catch (_) {}
+
+        return;
+      }
+
+      if (rpcErr && rpcErr.message?.includes('already posted')) {
+        throw new Error(rpcErr.message);
+      }
+    } catch (rpcEx: any) {
+      if (rpcEx.message?.includes('already posted')) throw rpcEx;
+      console.warn('[HrService] RPC post_payroll_batch_and_post_jv fallback to client engine:', rpcEx?.message || rpcEx);
+    }
+
+    // 3. Fallback: Query employee payroll records
     const { data: records } = await supabase
       .from('employee_payroll')
       .select('*')
@@ -922,7 +967,13 @@ export class HrService {
     const totalDeductions = Number(slips.reduce((sum: number, s: any) => sum + (Number(s.total_deductions) || 0), 0).toFixed(2));
     const totalNet = Number(slips.reduce((sum: number, s: any) => sum + (Number(s.net_pay) || 0), 0).toFixed(2));
 
-    // 3. Upsert hr_payroll_sheets
+    const voucherNo = `JV-PAY-${monthYear}`;
+    const voucherId = `vch-pay-${monthYear}`;
+    const voucherDate = (monthYear === new Date().toISOString().slice(0, 7))
+      ? new Date().toISOString().slice(0, 10)
+      : `${monthYear}-01`;
+
+    // 4. Upsert hr_payroll_sheets with voucher tracking
     await supabase
       .from('hr_payroll_sheets')
       .upsert({
@@ -933,26 +984,29 @@ export class HrService {
         total_deductions: totalDeductions,
         total_net: totalNet,
         status: 'POSTED',
+        voucher_id: voucherId,
+        voucher_no: voucherNo,
         posted_at: nowIso
       });
 
-    // 4. Double-Entry Journal Voucher in General Ledger & COA:
-    // DEBIT:  5310-00 Staff Salaries, Live Host Commissions & Overtime (totalGross)
-    // CREDIT: 1135-00 Staff Advances & Short-Term Loan Receivables (totalDeductions, if > 0)
-    // CREDIT: 2310-00 Accrued Staff Payroll & End-of-Service Gratuity (totalNet)
+    // 5. Double-Entry Journal Voucher in General Ledger & COA:
+    // DEBIT:  5210-100 SALARY EXPNSE (totalGross)
+    // CREDIT: 1135-01 Staff Advance & Loan Receivables (totalDeductions, if > 0)
+    // CREDIT: 2310-01 Staff Salaries Payable (totalNet)
     if (totalGross > 0) {
-      const voucherNo = `JV-PAY-${monthYear}`;
-      const voucherDate = (monthYear === new Date().toISOString().slice(0, 7))
-        ? new Date().toISOString().slice(0, 10)
-        : `${monthYear}-01`;
+      // Dynamic COA Lookups
+      const coaList = await FinanceService.getCoaAccounts();
+      const expAcc = coaList.find(a => a.code === '5210-100') || coaList.find(a => a.code === '5210-01');
+      const payAcc = coaList.find(a => a.code === '2310-01');
+      const dedAcc = coaList.find(a => a.code === '1135-01');
 
       // Clean up previous entries if re-posting
       try {
-        await supabase.from('voucher_entries').delete().eq('voucher_no', voucherNo);
-        await supabase.from('general_ledger').delete().eq('voucher_no', voucherNo);
-        await supabase.from('ledgers').delete().eq('voucher_no', voucherNo);
-        await supabase.from('financial_vouchers').delete().eq('voucher_no', voucherNo);
-        await supabase.from('vouchers').delete().eq('voucher_no', voucherNo);
+        await supabase.from('voucher_entries').delete().or(`voucher_no.eq.${voucherNo},voucher_id.eq.${voucherId}`);
+        await supabase.from('general_ledger').delete().or(`voucher_no.eq.${voucherNo},voucher_id.eq.${voucherId}`);
+        await supabase.from('ledgers').delete().or(`voucher_no.eq.${voucherNo},voucher_id.eq.${voucherId}`);
+        await supabase.from('financial_vouchers').delete().or(`voucher_no.eq.${voucherNo},id.eq.${voucherId}`);
+        await supabase.from('vouchers').delete().or(`voucher_no.eq.${voucherNo},id.eq.${voucherId}`);
       } catch (e) {
         console.warn('Voucher cleanup warning:', e);
       }
@@ -960,9 +1014,9 @@ export class HrService {
       const voucherLines: any[] = [
         {
           id: `vli-pay-dr-${monthYear}`,
-          accountId: 'acc-5310',
-          accountCode: '5310-00',
-          accountName: 'Staff Salaries, Live Host Commissions & Overtime',
+          accountId: expAcc?.id || '7829377d-6af0-42fb-bba4-22775afd7523',
+          accountCode: '5210-100',
+          accountName: expAcc?.name || 'SALARY EXPNSE',
           debitAmount: totalGross,
           creditAmount: 0,
           memo: `Staff Salaries Expense for ${monthYear}`
@@ -972,9 +1026,9 @@ export class HrService {
       if (totalDeductions > 0) {
         voucherLines.push({
           id: `vli-pay-ded-${monthYear}`,
-          accountId: 'acc-1135',
-          accountCode: '1135-00',
-          accountName: 'Staff Advances & Short-Term Loan Receivables',
+          accountId: dedAcc?.id || '7925f934-2f85-4141-a891-0c9e5c56dfdb',
+          accountCode: '1135-01',
+          accountName: dedAcc?.name || 'Staff Advance & Loan Receivables',
           debitAmount: 0,
           creditAmount: totalDeductions,
           memo: `Staff Loan & Advance Recoveries for ${monthYear}`
@@ -983,16 +1037,16 @@ export class HrService {
 
       voucherLines.push({
         id: `vli-pay-cr-${monthYear}`,
-        accountId: 'acc-2310',
-        accountCode: '2310-00',
-        accountName: 'Accrued Staff Payroll & End-of-Service Gratuity',
+        accountId: payAcc?.id || '411f47dd-068f-45f6-8978-df1b867f4fa5',
+        accountCode: '2310-01',
+        accountName: payAcc?.name || 'Staff Salaries Payable',
         debitAmount: 0,
         creditAmount: totalNet,
         memo: `Accrued Salaries Payable for ${monthYear}`
       });
 
       await FinanceService.addVoucher({
-        id: `vch-pay-${monthYear}`,
+        id: voucherId,
         voucherNo,
         date: voucherDate,
         type: 'JOURNAL',
@@ -1015,7 +1069,7 @@ export class HrService {
           action: 'POST',
           entityType: 'PAYROLL',
           entityId: `PAY-${monthYear}`,
-          details: `Posted monthly payroll for ${monthYear} (${slips.length} staff). Recorded Journal Voucher ${voucherNo}: Debit 5310-00 AED ${totalGross.toFixed(2)}, Credit 2310-00 AED ${totalNet.toFixed(2)}`
+          details: `Posted monthly payroll for ${monthYear} (${slips.length} staff). Recorded Journal Voucher ${voucherNo}: Debit 5210-100 AED ${totalGross.toFixed(2)}, Credit 2310-01 AED ${totalNet.toFixed(2)}`
         });
       } catch (_) {}
     }
@@ -1023,6 +1077,22 @@ export class HrService {
 
   public static async unpostPayrollSheet(monthYear: string): Promise<void> {
     this.clearPayrollSheetsCache();
+
+    // 1. Try atomic PostgreSQL procedure
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('unpost_payroll_batch_and_reverse_jv', {
+        p_month_year: monthYear
+      });
+      if (!rpcErr && rpcData?.success) {
+        try {
+          FinanceService.clearCoaCache();
+          await supabase.rpc('sync_coa_current_balances');
+        } catch (_) {}
+        return;
+      }
+    } catch (_) {}
+
+    // 2. Fallback direct update
     await supabase
       .from('employee_payroll')
       .update({
@@ -1037,17 +1107,21 @@ export class HrService {
       .upsert({
         id: `pay-sheet-${monthYear}`,
         month_year: monthYear,
-        status: 'DRAFT'
+        status: 'DRAFT',
+        voucher_id: null,
+        voucher_no: null,
+        posted_at: null
       });
 
     // Remove the associated Journal Voucher and entries
     const voucherNo = `JV-PAY-${monthYear}`;
+    const voucherId = `vch-pay-${monthYear}`;
     try {
-      await supabase.from('voucher_entries').delete().eq('voucher_no', voucherNo);
-      await supabase.from('general_ledger').delete().eq('voucher_no', voucherNo);
-      await supabase.from('ledgers').delete().eq('voucher_no', voucherNo);
-      await supabase.from('financial_vouchers').delete().eq('voucher_no', voucherNo);
-      await supabase.from('vouchers').delete().eq('voucher_no', voucherNo);
+      await supabase.from('voucher_entries').delete().or(`voucher_no.eq.${voucherNo},voucher_id.eq.${voucherId}`);
+      await supabase.from('general_ledger').delete().or(`voucher_no.eq.${voucherNo},voucher_id.eq.${voucherId}`);
+      await supabase.from('ledgers').delete().or(`voucher_no.eq.${voucherNo},voucher_id.eq.${voucherId}`);
+      await supabase.from('financial_vouchers').delete().or(`voucher_no.eq.${voucherNo},id.eq.${voucherId}`);
+      await supabase.from('vouchers').delete().or(`voucher_no.eq.${voucherNo},id.eq.${voucherId}`);
     } catch (e) {
       console.warn('Voucher deletion warning:', e);
     }

@@ -234,6 +234,9 @@ hrRouter.post(['/payroll/post', '/payroll/:id/post'], async (req, res) => {
     await HrService.postPayrollSheet(target, { postedBy, paymentMethod, bankAccountId });
     return res.json({ success: true });
   } catch (err: any) {
+    if (err.message?.toLowerCase().includes('already posted')) {
+      return res.status(400).json({ error: err.message });
+    }
     const result = HRController.postPayroll(target, postedBy || 'HR Director', paymentMethod, bankAccountId);
     if (!result.success) {
       return res.status(400).json({ error: result.error });

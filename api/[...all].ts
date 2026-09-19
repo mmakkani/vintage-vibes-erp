@@ -215,7 +215,9 @@ function analyzeBotRequest(req: any, explicitPath?: string, explicitUa?: string)
     normalizedPath.includes('/api/finance') ||
     normalizedPath.includes('/finance') ||
     normalizedPath.includes('/api/sorting') ||
-    normalizedPath.includes('/sorting')
+    normalizedPath.includes('/sorting') ||
+    normalizedPath.includes('/api/hr') ||
+    normalizedPath.includes('/hr')
   ) {
     return {
       isBadBot: false,
@@ -868,7 +870,9 @@ export default async function handler(req: any, res: any) {
       pathname.includes('/api/finance') ||
       pathname.includes('/finance') ||
       pathname.includes('/api/sorting') ||
-      pathname.includes('/sorting');
+      pathname.includes('/sorting') ||
+      pathname.includes('/api/hr') ||
+      pathname.includes('/hr');
 
     if (!isWhitelistedRoute) {
       const botCheck = analyzeBotRequest(req, pathname);
@@ -5020,6 +5024,46 @@ export default async function handler(req: any, res: any) {
           return res.status(201).json(r.rows[0]);
         } catch (dbErr: any) {
           return res.status(400).json({ error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      // 15. HR Payroll Endpoints (Post Payroll & Auto-generate balanced JV / Unpost Payroll)
+      if ((pathname.endsWith('/hr/payroll/post') || pathname.includes('/payroll/post')) && method === 'POST') {
+        const month = body.month || body.p_month_year || parsedUrl.searchParams.get('month');
+        const postedBy = body.postedBy || body.p_posted_by || 'Finance & HR Controller';
+        if (!month) {
+          return res.status(400).json({ success: false, error: 'Missing required parameter: month' });
+        }
+        const client = await getPgClient();
+        if (!client) {
+          return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        }
+        try {
+          const rpcRes = await client.query('SELECT public.post_payroll_batch_and_post_jv($1, $2) as result;', [month, postedBy]);
+          return res.status(200).json(rpcRes.rows[0]?.result);
+        } catch (dbErr: any) {
+          return res.status(400).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if ((pathname.endsWith('/hr/payroll/unpost') || pathname.includes('/payroll/unpost')) && method === 'POST') {
+        const month = body.month || body.p_month_year || parsedUrl.searchParams.get('month');
+        if (!month) {
+          return res.status(400).json({ success: false, error: 'Missing required parameter: month' });
+        }
+        const client = await getPgClient();
+        if (!client) {
+          return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        }
+        try {
+          const rpcRes = await client.query('SELECT public.unpost_payroll_batch_and_reverse_jv($1) as result;', [month]);
+          return res.status(200).json(rpcRes.rows[0]?.result);
+        } catch (dbErr: any) {
+          return res.status(400).json({ success: false, error: dbErr.message || String(dbErr) });
         } finally {
           try { await client.end(); } catch (_) {}
         }

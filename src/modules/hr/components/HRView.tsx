@@ -628,7 +628,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     }
   };
 
-  // Post Monthly Payroll directly to General Ledger: hits Salary Expense (5310-00) & Accrued Salaries Payable (2310-00)
+  // Post Monthly Payroll directly to General Ledger: hits Salary Expense (5210-100) & Staff Salaries Payable (2310-01)
   const handleConfirmPostMonthlyPayroll = async (targetMonthOverride?: string) => {
     const targetMonth = targetMonthOverride || activePayrollSheetMonth || selectedMonth;
     try {
@@ -644,7 +644,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       if (!res.ok || !data.success) {
         showMsg(data.error || 'Could not post monthly payroll', 'error');
       } else {
-        showMsg(`Monthly payroll for ${targetMonth} POSTED! Recorded in General Ledger & COA: Debit 5310-00 (Staff Salaries Expense) & Credit 2310-00 (Accrued Staff Payroll Payable).`);
+        showMsg(`Monthly payroll for ${targetMonth} POSTED! Recorded in General Ledger & COA: Debit 5210-100 (SALARY EXPNSE) & Credit 2310-01 (Staff Salaries Payable).`);
         HrService.clearPayrollSheetsCache();
         notifyMutation('HR', 'PAYROLL', 'POST', targetMonth);
         loadData();
@@ -3665,11 +3665,11 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 {isPayrollPosted ? (
                   <span className="text-emerald-700 font-bold flex items-center gap-1">
                     <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>POSTED to General Ledger (Debit 5310-00 / Credit 2310-00). Click "Unpost Month" if adjustments are required.</span>
+                    <span>POSTED to General Ledger (Debit 5210-100 / Credit 2310-01). Click "Unpost Month" if adjustments are required.</span>
                   </span>
                 ) : (
                   <span className="text-amber-800 font-medium">
-                    ⚠️ Review deductions above, then click "Post Month & Link GL" to record Salary Expense (5310-00) & Salaries Payable (2310-00) in General Ledger.
+                    ⚠️ Review deductions above, then click "Post Month & Link GL" to record Salary Expense (5210-100) & Staff Salaries Payable (2310-01) in General Ledger.
                   </span>
                 )}
               </div>
