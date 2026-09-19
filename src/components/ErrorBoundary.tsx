@@ -1,5 +1,6 @@
 import React from 'react';
-import { RefreshCw, ChevronDown, ChevronUp, ShieldAlert } from 'lucide-react';
+import { RefreshCw, ChevronDown, ChevronUp, ShieldAlert, Sparkles } from 'lucide-react';
+import { isChunkLoadError, purgeCachesAndServiceWorkers } from '../utils/lazyWithRetry.ts';
 
 export interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -13,6 +14,7 @@ export interface ErrorBoundaryState {
   error: Error | null;
   errorInfo: React.ErrorInfo | null;
   showDetails: boolean;
+  isChunkError: boolean;
 }
 
 export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
@@ -20,7 +22,8 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     hasError: false,
     error: null,
     errorInfo: null,
-    showDetails: false
+    showDetails: false,
+    isChunkError: false
   };
 
   constructor(props: ErrorBoundaryProps) {
@@ -28,15 +31,42 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   }
 
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
-    return { hasError: true, error };
+    const isChunk = isChunkLoadError(error);
+    return { hasError: true, error, isChunkError: isChunk };
   }
 
   override componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     this.setState({ errorInfo });
     console.error(`[ErrorBoundary - ${this.props.sectionName || 'Application'}] Captured Exception:`, error, errorInfo);
+
+    // If chunk 404 / dynamic import error, attempt auto-reload once with 15s cooldown
+    if (isChunkLoadError(error)) {
+      const RELOAD_KEY = 'vv_chunk_reload_cooldown';
+      const lastReload = Number(sessionStorage.getItem(RELOAD_KEY) || 0);
+      const now = Date.now();
+
+      if (now - lastReload > 15000) {
+        console.info('[ErrorBoundary] Detected outdated deployment chunk 404. Triggering auto-reload...');
+        sessionStorage.setItem(RELOAD_KEY, String(now));
+        purgeCachesAndServiceWorkers().then(() => {
+          window.location.reload();
+        }).catch(() => {
+          window.location.reload();
+        });
+      }
+    }
   }
 
+  handleHardRefresh = async () => {
+    await purgeCachesAndServiceWorkers();
+    window.location.reload();
+  };
+
   handleRetry = () => {
+    if (this.state.isChunkError) {
+      this.handleHardRefresh();
+      return;
+    }
     if (this.props.onReset) {
       this.props.onReset();
     }
@@ -44,7 +74,8 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
       hasError: false,
       error: null,
       errorInfo: null,
-      showDetails: false
+      showDetails: false,
+      isChunkError: false
     });
   };
 
@@ -55,6 +86,36 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
       }
 
       const sectionTitle = this.props.sectionName || 'ERP Module';
+
+      // Special UI for Deployment / Dynamic Chunk 404
+      if (this.state.isChunkError) {
+        return (
+          <div
+            role="alert"
+            className="my-4 p-6 rounded-2xl bg-amber-500/10 border-2 border-amber-500/80 shadow-lg text-slate-800 transition-all text-center max-w-xl mx-auto"
+          >
+            <div className="w-12 h-12 rounded-full bg-amber-100 border border-amber-400 flex items-center justify-center mx-auto mb-3 text-amber-800 shadow-xs">
+              <Sparkles className="w-6 h-6 animate-pulse" />
+            </div>
+            <h3 className="text-base font-black text-slate-900 font-serif tracking-tight">
+              New Deployment of {sectionTitle} is Live!
+            </h3>
+            <p className="mt-1.5 text-xs text-slate-700 leading-relaxed">
+              A fresh update has been deployed to the cloud. Please refresh to load the latest high-speed module chunks.
+            </p>
+            <div className="mt-4 flex items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={this.handleHardRefresh}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-md transition-colors cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Update / Refresh Now</span>
+              </button>
+            </div>
+          </div>
+        );
+      }
 
       return (
         <div

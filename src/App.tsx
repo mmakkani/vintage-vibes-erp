@@ -25,7 +25,7 @@ import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
 import { ModuleMaintenanceGuard } from './components/ModuleMaintenanceGuard.tsx';
 import { PWAUpdatePrompt } from './components/PWAUpdatePrompt.tsx';
 import { RoyalSplashScreen } from './components/RoyalSplashScreen.tsx';
-import { lazyWithRetry } from './utils/lazyWithRetry.ts';
+import { lazyWithRetry, isChunkLoadError, purgeCachesAndServiceWorkers } from './utils/lazyWithRetry.ts';
 
 // Code-Split Dynamic Views for 10x Load Speed with Deployment Chunk Auto-Retry
 const PurchaseView = lazyWithRetry(() => import('./modules/purchase/components/PurchaseView.tsx').then(m => ({ default: m.PurchaseView })));
@@ -132,6 +132,34 @@ export default function App() {
     };
     window.addEventListener('keydown', handleGlobalTerminalKey);
     return () => window.removeEventListener('keydown', handleGlobalTerminalKey);
+  }, []);
+
+  // Global Dynamic Chunk 404 / Failed Import Recovery
+  useEffect(() => {
+    const handleChunkError = (event: any) => {
+      const err = event?.reason || event?.error;
+      if (isChunkLoadError(err)) {
+        console.warn('[App] Unhandled dynamic chunk 404 / load error detected:', err);
+        const RELOAD_KEY = 'vv_chunk_reload_cooldown';
+        const lastReload = Number(sessionStorage.getItem(RELOAD_KEY) || 0);
+        const now = Date.now();
+        if (now - lastReload > 15000) {
+          sessionStorage.setItem(RELOAD_KEY, String(now));
+          purgeCachesAndServiceWorkers().then(() => {
+            window.location.reload();
+          }).catch(() => {
+            window.location.reload();
+          });
+        }
+      }
+    };
+
+    window.addEventListener('error', handleChunkError);
+    window.addEventListener('unhandledrejection', handleChunkError);
+    return () => {
+      window.removeEventListener('error', handleChunkError);
+      window.removeEventListener('unhandledrejection', handleChunkError);
+    };
   }, []);
   const [liveHostState, setLiveHostState] = useState<{ isHostMode: boolean; boothId: string }>(() => {
     try {

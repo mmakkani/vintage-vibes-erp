@@ -65,11 +65,8 @@ export default defineConfig(() => {
           globIgnores: [
             '**/assets/*.js',
             '**/assets/**/*.js',
-            '**/assets/*View*.js',
-            '**/assets/CounterSalePOSTerminal*.js',
-            '**/assets/StaffMobileAppView*.js',
-            '**/assets/ExecutiveCommandCenterModal*.js',
-            '**/assets/securityMasterPin*.js'
+            '**/sw.js',
+            '**/workbox-*.js'
           ],
           runtimeCaching: [
             {
@@ -77,9 +74,10 @@ export default defineConfig(() => {
               handler: 'NetworkFirst',
               options: {
                 cacheName: 'dynamic-chunks-cache',
+                networkTimeoutSeconds: 4,
                 expiration: {
-                  maxEntries: 60,
-                  maxAgeSeconds: 60 * 60 * 24 * 7,
+                  maxEntries: 100,
+                  maxAgeSeconds: 60 * 60 * 24 * 1,
                 },
                 cacheableResponse: {
                   statuses: [0, 200],
@@ -126,6 +124,9 @@ export default defineConfig(() => {
       chunkSizeWarningLimit: 1200,
       rollupOptions: {
         output: {
+          chunkFileNames: 'assets/[name]-[hash].js',
+          entryFileNames: 'assets/[name]-[hash].js',
+          assetFileNames: 'assets/[name]-[hash].[ext]',
           manualChunks(id) {
             if (id.includes('node_modules')) {
               if (id.includes('lucide-react')) return 'vendor-lucide';
@@ -134,6 +135,22 @@ export default defineConfig(() => {
               if (id.includes('qrcode') || id.includes('jsbarcode') || id.includes('jszip')) return 'vendor-barcode';
               if (id.includes('@google/genai')) return 'vendor-ai';
               return 'vendor-core';
+            }
+            // AI Vision & OCR: bundle all Gemini OCR, valuation, camera & cropper assets reliably together
+            if (
+              id.includes('geminiOcrService') ||
+              id.includes('geminiVintageValuation') ||
+              id.includes('documentCropper') ||
+              id.includes('AIOcrScannerModal')
+            ) {
+              return 'ai-vision-ocr';
+            }
+            // Shared security & audio utilities to prevent orphaned micro-chunks
+            if (
+              id.includes('securityMasterPin') ||
+              id.includes('soundEffects')
+            ) {
+              return 'shared-security-audio';
             }
           },
         },
