@@ -214,17 +214,24 @@ export class PartiesService {
   }
 
   public static async getPartyById(id: string): Promise<Party | null> {
+    if (!id || id === 'undefined' || id === 'null') return null;
     if (typeof window !== 'undefined') {
       try {
         const rawFetch = (window as any).__originalFetch || window.fetch;
-        const res = await rawFetch(`/api/parties/${id}`);
+        const res = await rawFetch(`/api/parties/${encodeURIComponent(id)}`);
         if (res.ok) {
           const p = await res.json();
-          return p;
+          if (Array.isArray(p)) {
+            const found = p.find((x: any) => x.id === id || String(x.party_id) === String(id));
+            return found || null;
+          }
+          if (p && (p.id || p.party_id || p.name)) {
+            return p;
+          }
         }
       } catch (_) {}
     }
-    const { data } = await supabase.from('parties').select('*').eq('id', id).maybeSingle();
+    const { data } = await supabase.from('parties').select('*').or(`id.eq.${id},party_id.eq.${id}`).maybeSingle();
     return data as any;
   }
 
@@ -492,66 +499,47 @@ export class PartiesService {
     };
   }
 
-  public static async deleteParty(id: string): Promise<void> {
-    let apiSuccess = false;
+  public static async deleteParty(id: string): Promise<any> {
+    if (!id || id === 'undefined' || id === 'null') {
+      throw new Error('Valid Party ID is required for deletion');
+    }
 
-    // 1. Primary route: Express PostgreSQL backend (with accounting integrity transaction)
+    let apiSuccess = false;
+    let resultData: any = null;
+
+    // 1. Primary route: Express PostgreSQL backend (invoking atomic delete_party_and_coa)
     if (typeof window !== 'undefined') {
       try {
         const rawFetch = (window as any).__originalFetch || window.fetch;
-        const apiRes = await rawFetch(`/api/parties/${id}`, {
+        const apiRes = await rawFetch(`/api/parties/${encodeURIComponent(id)}`, {
           method: 'DELETE'
         });
         const resData = await apiRes.json().catch(() => ({}));
         if (apiRes.ok && resData.success !== false) {
           apiSuccess = true;
+          resultData = resData;
         } else {
           const errMsg = resData.error || resData.detail || resData.messageUrdu || `Server returned HTTP ${apiRes.status}`;
           throw new Error(errMsg);
         }
       } catch (err: any) {
-        // If it was a real rejection from the server API, throw it directly to display to user
+        // If it was a real rejection from the server API, rethrow it directly
         if (err.message && !err.message.includes('fetch') && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
           throw err;
         }
       }
     }
 
-    // 2. Direct Supabase Fallback (if Express server is not reachable)
+    // 2. Direct Supabase RPC Fallback (calling atomic stored procedure delete_party_and_coa)
     if (!apiSuccess) {
-      try {
-        // Step a: Break mutual foreign keys between parties and coa_accounts FIRST
-        await supabase.from('parties').update({ coa_account_id: null }).eq('id', id);
-        await supabase.from('coa_accounts').update({ party_id: null }).or(`party_id.eq.${id},id.eq.acc-${id}`);
-
-        // Step b: Unlink / delete from child references
-        await supabase.from('ledgers').update({ party_id: null }).eq('party_id', id);
-        await supabase.from('general_ledger').update({ party_id: null }).eq('party_id', id);
-        await supabase.from('voucher_entries').update({ party_id: null }).eq('party_id', id);
-        await supabase.from('party_khata_logs').delete().eq('party_id', id);
-        await supabase.from('purchase_invoices').update({ supplier_id: null }).eq('supplier_id', id);
-        await supabase.from('sales_invoices').update({ client_id: null }).eq('client_id', id);
-
-        // Step c: Unlink ledger entries pointing to the COA account before deleting COA
-        await supabase.from('ledgers').delete().or(`account_id.eq.acc-${id}`);
-        await supabase.from('general_ledger').delete().or(`account_id.eq.acc-${id}`);
-        await supabase.from('voucher_entries').delete().or(`account_id.eq.acc-${id}`);
-
-        // Step d: Delete linked COA account if exists in coa_accounts and chart_of_accounts
-        await supabase.from('coa_accounts').delete().or(`party_id.eq.${id},id.eq.acc-${id}`);
-        try {
-          await supabase.from('chart_of_accounts').delete().or(`id.eq.acc-${id},code.ilike.%${id}%`);
-        } catch (_) {}
-
-        // Step e: Delete party record from parties table
-        const { error } = await supabase.from('parties').delete().eq('id', id);
-        if (error) {
-          throw new Error(`Database error deleting party: ${error.message}`);
-        }
-      } catch (supaErr: any) {
-        console.error('Supabase direct party delete error:', supaErr);
-        throw new Error(supaErr.message || 'Failed to delete party from database');
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('delete_party_and_coa', { p_party_id: String(id) });
+      if (rpcErr) {
+        throw new Error(rpcErr.message || 'Failed to delete party from database');
       }
+      if (rpcData && rpcData.success === false) {
+        throw new Error(rpcData.error || 'Failed to delete party');
+      }
+      resultData = rpcData;
     }
 
     // 3. Purge obsolete party cache
@@ -559,6 +547,8 @@ export class PartiesService {
       localStorage.removeItem('vibe_cached_parties');
     } catch {}
     FinanceService.clearCoaCache();
+
+    return resultData;
   }
 
   // --- Khata Logs ---

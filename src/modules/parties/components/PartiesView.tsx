@@ -428,24 +428,40 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
   // Open Delete Modal
   const handleOpenDeleteParty = async (party: Party) => {
-    setDeletingParty(party);
+    if (!party) return;
+    const pAny = party as any;
+    const safeParty = {
+      ...party,
+      id: String(party.id || pAny.party_id || ''),
+      party_id: pAny.party_id || party.id,
+      name: party.name || pAny.company_name || '',
+      company_name: pAny.company_name || party.name || '',
+      code: party.code || ''
+    };
+    setDeletingParty(safeParty);
     setDeleteError(null);
     setShowDeletePartyModal(true);
     try {
-      const detailed = await PartiesService.getPartyById(party.id);
-      if (detailed) {
-        setDeletingParty(prev => (prev && prev.id === detailed.id ? { ...prev, ...detailed } : detailed));
+      if (safeParty.id) {
+        const detailed = await PartiesService.getPartyById(safeParty.id);
+        if (detailed && !Array.isArray(detailed) && (detailed.id || (detailed as any).party_id)) {
+          setDeletingParty(prev => (prev ? { ...prev, ...detailed } : detailed));
+        }
       }
     } catch {}
   };
 
   // One-click Deactivate Party (recommended when party has financial entries)
   const handleDeactivateParty = async (party: Party) => {
+    const pAny = party as any;
+    const pId = String(party.id || pAny.party_id || '').trim();
+    const pName = party.name || pAny.company_name || 'Party';
+    const pCode = party.code || '';
     try {
       setIsDeleting(true);
-      await PartiesService.updateParty(party.id, { isActive: false });
+      await PartiesService.updateParty(pId, { isActive: false });
       setShowDeletePartyModal(false);
-      showMsg(`Party "${party.name}" (${party.code}) has been set to Inactive. It is safely archived in accounting.`, 'success');
+      showMsg(`Party "${pName}" (${pCode}) has been set to Inactive. It is safely archived in accounting.`, 'success');
       setDeletingParty(null);
       await loadParties();
       onRefreshAll();
@@ -459,20 +475,32 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   // Confirm Delete from SQL (strictly blocked if entries exist)
   const handleConfirmDeleteParty = async () => {
     if (!deletingParty) return;
+    const pAny = deletingParty as any;
+    const delId = String(deletingParty.id || pAny.party_id || '').trim();
+    const delName = deletingParty.name || pAny.company_name || 'Party';
+    const delCode = deletingParty.code || '';
+
+    if (!delId || delId === 'undefined' || delId === 'null') {
+      showMsg('Cannot delete: Missing or invalid party ID', 'error');
+      return;
+    }
+
     setIsDeleting(true);
     setDeleteError(null);
     try {
-      const delId = deletingParty.id;
-      const delName = deletingParty.name;
-      const delCode = deletingParty.code;
       await PartiesService.deleteParty(delId);
 
       // 1. Immediately mutate local state so the party is removed from the screen instantaneously
-      setParties(prev => prev.filter(p => p.id !== delId));
+      setParties(prev => prev.filter(p => {
+        const pId = String(p.id || (p as any).party_id || '');
+        const pCode = p.code || '';
+        return pId !== delId && pCode !== delCode;
+      }));
+
       setShowDeletePartyModal(false);
-      showMsg(`Party "${delName}" (${delCode}) and linked Chart of Accounts entry deleted from SQL database.`, 'success');
+      showMsg(`Party "${delName}" (${delCode}) and linked Chart of Accounts entry deleted from SQL database!`, 'success');
       setDeletingParty(null);
-      if (selectedParty?.id === delId) {
+      if (selectedParty?.id === delId || String((selectedParty as any)?.party_id) === delId) {
         setSelectedParty(null);
         setKhataLogs([]);
       }
@@ -481,7 +509,6 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     } catch (err: any) {
       const errMsg = err.message || 'Server rejected deletion';
       setDeleteError(errMsg);
-      alert("Deletion failed: " + errMsg);
       showMsg('Deletion Failed: ' + errMsg, 'error');
     } finally {
       setIsDeleting(false);

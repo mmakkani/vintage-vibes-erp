@@ -2488,9 +2488,100 @@ export default async function handler(req: any, res: any) {
           }
         }
 
+        const parts = pathname.split('/').filter(Boolean);
+        const lastPart = parts[parts.length - 1];
+        const isSinglePartyRoute = lastPart && lastPart !== 'parties' && !lastPart.includes('?');
+        const targetPartyId = isSinglePartyRoute ? decodeURIComponent(lastPart) : null;
+
+        if (method === 'DELETE') {
+          const delId = targetPartyId;
+          if (!delId || delId === 'undefined') {
+            await client.end();
+            return res.status(400).json({ error: 'Valid party ID is required for deletion' });
+          }
+          try {
+            const delRes = await client.query('SELECT public.delete_party_and_coa($1) as result;', [delId]);
+            await client.end();
+            const result = delRes.rows[0]?.result || {};
+            if (result.success === false) {
+              return res.status(400).json({ error: result.error, ...result });
+            }
+            return res.status(200).json({ success: true, ...result });
+          } catch (delErr: any) {
+            await client.end();
+            return res.status(500).json({ error: delErr.message });
+          }
+        }
+
+        if (method === 'GET' && targetPartyId) {
+          try {
+            const singleRes = await client.query(`
+              SELECT 
+                COALESCE(id, party_id::text) as id,
+                party_id,
+                COALESCE(code, CONCAT(CASE WHEN UPPER(COALESCE(type, party_type, '')) LIKE '%SUPP%' THEN 'SUP-' ELSE 'CLI-' END, LPAD(COALESCE(party_id, 1)::text, 4, '0'))) as code,
+                COALESCE(name, company_name, '') as name,
+                company_name,
+                COALESCE(type, party_type, 'CLIENT') as type,
+                party_type,
+                contact_person, phone, email, address,
+                COALESCE(trn_no, tin_or_ntn, '') as trn_no,
+                COALESCE(credit_limit, 0) as credit_limit,
+                COALESCE(current_balance, 0) as current_balance,
+                COALESCE(currency, 'AED') as currency,
+                COALESCE(is_active, true) as is_active,
+                account_map, coa_account_id, linked_account_id, created_at
+              FROM parties 
+              WHERE id = $1 OR party_id::text = $1
+              LIMIT 1;
+            `, [targetPartyId]);
+            await client.end();
+
+            const r = singleRes.rows[0];
+            if (!r) {
+              return res.status(404).json({ error: 'Party not found' });
+            }
+
+            const partyObj = {
+              id: r.id,
+              party_id: r.party_id,
+              code: r.code,
+              name: r.name,
+              company_name: r.company_name || r.name,
+              type: (r.type || 'CLIENT').toUpperCase(),
+              party_type: r.party_type || r.type,
+              contactPerson: r.contact_person,
+              contact_person: r.contact_person,
+              phone: r.phone,
+              email: r.email,
+              address: r.address,
+              trnNo: r.trn_no,
+              trn_no: r.trn_no,
+              creditLimit: Number(r.credit_limit || 0),
+              credit_limit: Number(r.credit_limit || 0),
+              currentBalance: Number(r.current_balance || 0),
+              current_balance: Number(r.current_balance || 0),
+              currency: r.currency || 'AED',
+              isActive: r.is_active !== false,
+              is_active: r.is_active !== false,
+              accountMap: r.account_map || {},
+              account_map: r.account_map || {},
+              coaAccountId: r.coa_account_id,
+              coa_account_id: r.coa_account_id,
+              linked_account_id: r.linked_account_id,
+              createdAt: r.created_at,
+              created_at: r.created_at
+            };
+
+            return res.status(200).json(partyObj);
+          } catch (getErr: any) {
+            await client.end();
+            return res.status(500).json({ error: getErr.message });
+          }
+        }
+
         if (method === 'PUT') {
-          const parts = pathname.split('/').filter(Boolean);
-          const updateId = parts[parts.length - 1];
+          const updateId = targetPartyId || parts[parts.length - 1];
           const u = body || {};
           const cleanName = String(u.name || u.company_name || u.companyName || '').trim();
           const cleanType = String(u.type || u.party_type || 'CLIENT').toUpperCase();
@@ -2586,19 +2677,6 @@ export default async function handler(req: any, res: any) {
             console.error('[Party Update Error]:', updateErr);
             await client.end();
             return res.status(500).json({ error: updateErr.message, stack: updateErr.stack });
-          }
-        }
-
-        if (method === 'DELETE') {
-          const parts = pathname.split('/').filter(Boolean);
-          const delId = parts[parts.length - 1];
-          try {
-            await client.query('DELETE FROM parties WHERE id = $1 OR party_id::text = $1;', [delId]);
-            await client.end();
-            return res.status(200).json({ success: true, id: delId });
-          } catch (delErr: any) {
-            await client.end();
-            return res.status(500).json({ error: delErr.message });
           }
         }
 
