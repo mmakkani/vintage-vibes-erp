@@ -380,7 +380,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         PartiesService.getParties().catch(() => safeFetchJson<Party[]>('/api/parties', undefined, 3, 300))
       ]);
 
-      const list = Array.isArray(coaRes) ? coaRes : ((coaRes as any)?.data || (coaRes as any)?.accounts || []);
+      const list = Array.isArray(coaRes) ? coaRes : ((coaRes as any)?.accounts || (coaRes as any)?.coa || (coaRes as any)?.data || []);
       const finalCoa = Array.isArray(list) ? list : [];
       setAccounts(finalCoa);
       setVouchers(Array.isArray(vchRes) ? vchRes : []);

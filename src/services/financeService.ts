@@ -43,7 +43,7 @@ export class FinanceService {
             const apiRes = await rawFetch('/api/finance/coa?_t=' + Date.now());
             if (apiRes && apiRes.ok) {
               const apiData = await apiRes.json();
-              const list = Array.isArray(apiData) ? apiData : (apiData?.data || apiData?.accounts || []);
+              const list = Array.isArray(apiData) ? apiData : (apiData?.accounts || apiData?.coa || apiData?.data || []);
               if (Array.isArray(list) && list.length > 0) {
                 const normalized = list.map((r: any) => ({
                   ...r,
