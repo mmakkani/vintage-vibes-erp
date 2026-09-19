@@ -168,12 +168,14 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   };
 
   const selectParty = async (party: Party) => {
-    setSelectedParty(party);
+    const memoryParty = parties.find(p => p.id === party.id || String((p as any).party_id) === String((party as any).party_id)) || party;
+    setSelectedParty(memoryParty);
     try {
-      const logs = await PartiesService.getKhataLogs(party.id);
+      const logs = await PartiesService.getKhataLogs(memoryParty.id);
       setKhataLogs(logs);
     } catch (err: any) {
       console.error(err);
+      setKhataLogs([]);
     }
   };
 
@@ -332,13 +334,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   };
 
   // Open View Modal
-  const handleOpenViewParty = async (party: Party) => {
-    setViewPartyData(party);
+  const handleOpenViewParty = (party: Party) => {
+    const memoryParty = parties.find(p => p.id === party.id || String((p as any).party_id) === String((party as any).party_id)) || party;
+    setViewPartyData(memoryParty);
     setShowViewPartyModal(true);
-    try {
-      const detailed = await PartiesService.getPartyById(party.id);
-      if (detailed) setViewPartyData(detailed);
-    } catch {}
   };
 
   // Open Edit Modal
@@ -427,28 +426,21 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   };
 
   // Open Delete Modal
-  const handleOpenDeleteParty = async (party: Party) => {
+  const handleOpenDeleteParty = (party: Party) => {
     if (!party) return;
-    const pAny = party as any;
+    const memoryParty = parties.find(p => p.id === party.id || String((p as any).party_id) === String((party as any).party_id)) || party;
+    const pAny = memoryParty as any;
     const safeParty = {
-      ...party,
-      id: String(party.id || pAny.party_id || ''),
-      party_id: pAny.party_id || party.id,
-      name: party.name || pAny.company_name || '',
-      company_name: pAny.company_name || party.name || '',
-      code: party.code || ''
+      ...memoryParty,
+      id: String(memoryParty.id || pAny.party_id || ''),
+      party_id: pAny.party_id || memoryParty.id,
+      name: memoryParty.name || pAny.company_name || '',
+      company_name: pAny.company_name || memoryParty.name || '',
+      code: memoryParty.code || ''
     };
     setDeletingParty(safeParty);
     setDeleteError(null);
     setShowDeletePartyModal(true);
-    try {
-      if (safeParty.id) {
-        const detailed = await PartiesService.getPartyById(safeParty.id);
-        if (detailed && !Array.isArray(detailed) && (detailed.id || (detailed as any).party_id)) {
-          setDeletingParty(prev => (prev ? { ...prev, ...detailed } : detailed));
-        }
-      }
-    } catch {}
   };
 
   // One-click Deactivate Party (recommended when party has financial entries)

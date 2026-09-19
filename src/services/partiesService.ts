@@ -562,7 +562,7 @@ export class PartiesService {
         const apiRes = await rawFetch(`/api/parties/${partyId}/khata`);
         if (apiRes.ok) {
           const logs = await apiRes.json();
-          if (Array.isArray(logs) && logs.length > 0) {
+          if (Array.isArray(logs)) {
             return logs;
           }
         }

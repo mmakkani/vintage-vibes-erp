@@ -825,7 +825,15 @@ export default async function handler(req: any, res: any) {
       return res.status(200).end();
     }
 
-    const rawUrl = req.url || '';
+    let rawUrl = (req.headers?.['x-matched-path'] as string) || req.url || '';
+    if (rawUrl.includes('[...all]')) {
+      const allParam = req.query?.all;
+      if (Array.isArray(allParam)) {
+        rawUrl = '/api/' + allParam.join('/');
+      } else if (typeof allParam === 'string') {
+        rawUrl = '/api/' + allParam;
+      }
+    }
     const parsedUrl = new URL(rawUrl, 'http://localhost');
     const pathname = parsedUrl.pathname;
     const method = req.method || 'GET';
@@ -2453,54 +2461,130 @@ export default async function handler(req: any, res: any) {
 
     // Parties (Suppliers & Clients) Endpoint
     if (pathname.includes('/parties')) {
-      try {
+      const parts = pathname.split('/').filter(Boolean);
+      const partiesIdx = parts.indexOf('parties');
+      let targetPartyId: string | null = null;
+      let subAction: string | null = null;
+
+      if (partiesIdx !== -1 && partiesIdx < parts.length - 1) {
+        targetPartyId = decodeURIComponent(parts[partiesIdx + 1]).split('?')[0];
+        if (partiesIdx < parts.length - 2) {
+          subAction = decodeURIComponent(parts[partiesIdx + 2]).split('?')[0];
+        }
+      }
+
+      // Safe party row formatter ensuring both camelCase and snake_case properties
+      const formatParty = (r: any) => ({
+        id: r.id || String(r.party_id),
+        party_id: r.party_id,
+        code: r.code || (r.party_id ? (String(r.type || r.party_type).toUpperCase().includes('SUPP') ? `SUP-${String(r.party_id).padStart(4, '0')}` : `CLI-${String(r.party_id).padStart(4, '0')}`) : ''),
+        name: r.name || r.company_name || '',
+        company_name: r.company_name || r.name || '',
+        type: (r.type || r.party_type || 'CLIENT').toUpperCase(),
+        party_type: r.party_type || r.type || 'CLIENT',
+        contactPerson: r.contact_person || r.contactPerson || '',
+        contact_person: r.contact_person || r.contactPerson || '',
+        phone: r.phone || '',
+        email: r.email || '',
+        address: r.address || '',
+        trnNo: r.trn_no || r.trnNo || r.tin_or_ntn || '',
+        trn_no: r.trn_no || r.trnNo || r.tin_or_ntn || '',
+        creditLimit: Number(r.credit_limit ?? r.creditLimit ?? 0),
+        credit_limit: Number(r.credit_limit ?? r.creditLimit ?? 0),
+        currentBalance: Number(r.current_balance ?? r.currentBalance ?? 0),
+        current_balance: Number(r.current_balance ?? r.currentBalance ?? 0),
+        currency: r.currency || 'AED',
+        isActive: r.is_active !== false && r.isActive !== false,
+        is_active: r.is_active !== false && r.isActive !== false,
+        accountMap: r.account_map || r.accountMap || {},
+        account_map: r.account_map || r.accountMap || {},
+        coaAccountId: r.coa_account_id || r.coaAccountId,
+        coa_account_id: r.coa_account_id || r.coaAccountId,
+        linked_account_id: r.linked_account_id,
+        createdAt: r.created_at || r.createdAt,
+        created_at: r.created_at || r.createdAt
+      });
+
+      // Sub-route: /api/parties/:id/khata or /api/parties/:id/transaction
+      if (targetPartyId && (subAction === 'khata' || subAction === 'transaction')) {
         const client = await getPgClient();
-        if (!client) {
-          throw new Error('Could not establish database connection for parties');
+        if (method === 'GET') {
+          if (client) {
+            try {
+              const logsRes = await client.query(`
+                SELECT * FROM party_khata_logs 
+                WHERE party_id = $1 OR party_id IN (SELECT id FROM parties WHERE id = $1 OR party_id::text = $1)
+                ORDER BY date ASC, created_at ASC;
+              `, [targetPartyId]);
+              await client.end();
+              return res.status(200).json(logsRes.rows.map((row: any) => ({
+                id: row.id,
+                partyId: row.party_id,
+                date: row.date ? new Date(row.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+                reference: row.reference || '',
+                description: row.notes || 'Khata Transaction',
+                debit: Number(row.debit || 0),
+                credit: Number(row.credit || 0),
+                runningBalance: Number(row.running_balance || 0),
+                notes: row.notes,
+                createdAt: row.created_at
+              })));
+            } catch (err: any) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          try {
+            const { data } = await supabaseAdmin
+              .from('party_khata_logs')
+              .select('*')
+              .eq('party_id', targetPartyId)
+              .order('date', { ascending: true });
+            return res.status(200).json(data || []);
+          } catch (_) {
+            return res.status(200).json([]);
+          }
         }
 
         if (method === 'POST') {
-          const p = body || {};
-          const partyName = (p.name || p.company_name || '').trim();
-          const partyType = (p.type || p.party_type || 'CLIENT').toUpperCase();
-          const phone = p.phone || null;
-          const trn = p.trn_no || p.trnNo || p.tin_or_ntn || null;
-          const creditLimit = Number(p.creditLimit || p.credit_limit || 0);
+          const { amount, type, docRef, description, date } = body || {};
+          const numAmount = Math.abs(Number(amount) || 0);
+          const txDate = date || new Date().toISOString().slice(0, 10);
+          const isDebit = type === 'DEBIT';
+          const debitVal = isDebit ? numAmount : 0;
+          const creditVal = isDebit ? 0 : numAmount;
+          const logId = `kht-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
-          try {
-            const rpcRes = await client.query(
-              'SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6) as data;',
-              [partyName, partyType, phone, trn, creditLimit, null]
-            );
-            await client.end();
-            const resData = rpcRes.rows[0]?.data || {};
-            return res.status(200).json({
-              success: true,
-              id: resData.party_id,
-              code: resData.party_code || resData.code,
-              coaAccountId: resData.account_id,
-              data: resData
-            });
-          } catch (fnErr: any) {
-            console.error('[Party Creation RPC Error]:', fnErr);
-            await client.end();
-            return res.status(500).json({ error: fnErr.message, stack: fnErr.stack, details: String(fnErr) });
+          if (client) {
+            try {
+              const pRes = await client.query('SELECT * FROM parties WHERE id = $1 OR party_id::text = $1 LIMIT 1', [targetPartyId]);
+              if (pRes.rows.length > 0) {
+                const curBal = Number(pRes.rows[0].current_balance || 0);
+                const newBal = curBal + debitVal - creditVal;
+                await client.query(`
+                  INSERT INTO party_khata_logs (id, party_id, date, reference, debit, credit, running_balance, notes, created_at)
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                `, [logId, pRes.rows[0].id, txDate, docRef || `TX-${Date.now().toString().slice(-4)}`, debitVal, creditVal, newBal, description || 'Khata Transaction']);
+                await client.query('UPDATE parties SET current_balance = $1 WHERE id = $2', [newBal, pRes.rows[0].id]);
+                await client.end();
+                return res.status(201).json({ success: true, logId, newBalance: newBal });
+              }
+            } catch (err: any) {
+              try { await client.end(); } catch (_) {}
+            }
           }
+          return res.status(200).json({ success: true, logId });
         }
+      }
 
-        const parts = pathname.split('/').filter(Boolean);
-        const lastPart = parts[parts.length - 1];
-        const isSinglePartyRoute = lastPart && lastPart !== 'parties' && !lastPart.includes('?');
-        const targetPartyId = isSinglePartyRoute ? decodeURIComponent(lastPart) : null;
-
-        if (method === 'DELETE') {
-          const delId = targetPartyId;
-          if (!delId || delId === 'undefined') {
-            await client.end();
-            return res.status(400).json({ error: 'Valid party ID is required for deletion' });
-          }
+      // Sub-route: DELETE /api/parties/:id
+      if (method === 'DELETE' && targetPartyId) {
+        if (targetPartyId === 'undefined' || targetPartyId === 'null') {
+          return res.status(400).json({ error: 'Valid party ID is required for deletion' });
+        }
+        const client = await getPgClient();
+        if (client) {
           try {
-            const delRes = await client.query('SELECT public.delete_party_and_coa($1) as result;', [delId]);
+            const delRes = await client.query('SELECT public.delete_party_and_coa($1) as result;', [targetPartyId]);
             await client.end();
             const result = delRes.rows[0]?.result || {};
             if (result.success === false) {
@@ -2508,12 +2592,23 @@ export default async function handler(req: any, res: any) {
             }
             return res.status(200).json({ success: true, ...result });
           } catch (delErr: any) {
-            await client.end();
+            try { await client.end(); } catch (_) {}
             return res.status(500).json({ error: delErr.message });
           }
         }
+        try {
+          const { data, error } = await supabaseAdmin.rpc('delete_party_and_coa', { p_party_id: targetPartyId });
+          if (error) throw error;
+          return res.status(200).json({ success: true, ...(data || {}) });
+        } catch (rpcErr: any) {
+          return res.status(500).json({ error: rpcErr.message });
+        }
+      }
 
-        if (method === 'GET' && targetPartyId) {
+      // Sub-route: GET /api/parties/:id (Single party lookup)
+      if (method === 'GET' && targetPartyId && !subAction) {
+        const client = await getPgClient();
+        if (client) {
           try {
             const singleRes = await client.query(`
               SELECT 
@@ -2538,65 +2633,50 @@ export default async function handler(req: any, res: any) {
             await client.end();
 
             const r = singleRes.rows[0];
-            if (!r) {
-              return res.status(404).json({ error: 'Party not found' });
+            if (r) {
+              return res.status(200).json(formatParty(r));
             }
-
-            const partyObj = {
-              id: r.id,
-              party_id: r.party_id,
-              code: r.code,
-              name: r.name,
-              company_name: r.company_name || r.name,
-              type: (r.type || 'CLIENT').toUpperCase(),
-              party_type: r.party_type || r.type,
-              contactPerson: r.contact_person,
-              contact_person: r.contact_person,
-              phone: r.phone,
-              email: r.email,
-              address: r.address,
-              trnNo: r.trn_no,
-              trn_no: r.trn_no,
-              creditLimit: Number(r.credit_limit || 0),
-              credit_limit: Number(r.credit_limit || 0),
-              currentBalance: Number(r.current_balance || 0),
-              current_balance: Number(r.current_balance || 0),
-              currency: r.currency || 'AED',
-              isActive: r.is_active !== false,
-              is_active: r.is_active !== false,
-              accountMap: r.account_map || {},
-              account_map: r.account_map || {},
-              coaAccountId: r.coa_account_id,
-              coa_account_id: r.coa_account_id,
-              linked_account_id: r.linked_account_id,
-              createdAt: r.created_at,
-              created_at: r.created_at
-            };
-
-            return res.status(200).json(partyObj);
           } catch (getErr: any) {
-            await client.end();
-            return res.status(500).json({ error: getErr.message });
+            try { await client.end(); } catch (_) {}
           }
         }
 
-        if (method === 'PUT') {
-          const updateId = targetPartyId || parts[parts.length - 1];
-          const u = body || {};
-          const cleanName = String(u.name || u.company_name || u.companyName || '').trim();
-          const cleanType = String(u.type || u.party_type || 'CLIENT').toUpperCase();
-          const partyType = cleanType === 'SUPPLIER' ? 'SUPPLIER' : 'CUSTOMER';
-          const contactPerson = u.contactPerson || u.contact_person || '';
-          const phone = u.phone || null;
-          const email = u.email || null;
-          const address = u.address || null;
-          const trnNo = u.trn_no || u.trnNo || null;
-          const creditLimit = Number(u.creditLimit ?? u.credit_limit ?? 0);
-          const currentBalance = Number(u.currentBalance ?? u.current_balance ?? 0);
-          const isActive = u.isActive !== false && u.is_active !== false;
-          const accountMap = u.accountMap || u.account_map || {};
-          const linkedAccountId = u.linkedAccountId || u.linked_account_id || null;
+        // Supabase fallback for single party lookup
+        try {
+          const { data: supaParty } = await supabaseAdmin
+            .from('parties')
+            .select('*')
+            .or(`id.eq.${targetPartyId},party_id.eq.${targetPartyId}`)
+            .maybeSingle();
 
+          if (supaParty) {
+            return res.status(200).json(formatParty(supaParty));
+          }
+        } catch (_) {}
+
+        return res.status(404).json({ error: 'Party not found' });
+      }
+
+      // Sub-route: PUT /api/parties/:id
+      if (method === 'PUT' && targetPartyId) {
+        const updateId = targetPartyId;
+        const u = body || {};
+        const cleanName = String(u.name || u.company_name || u.companyName || '').trim();
+        const cleanType = String(u.type || u.party_type || 'CLIENT').toUpperCase();
+        const partyType = cleanType === 'SUPPLIER' ? 'SUPPLIER' : 'CUSTOMER';
+        const contactPerson = u.contactPerson || u.contact_person || '';
+        const phone = u.phone || null;
+        const email = u.email || null;
+        const address = u.address || null;
+        const trnNo = u.trn_no || u.trnNo || null;
+        const creditLimit = Number(u.creditLimit ?? u.credit_limit ?? 0);
+        const currentBalance = Number(u.currentBalance ?? u.current_balance ?? 0);
+        const isActive = u.isActive !== false && u.is_active !== false;
+        const accountMap = u.accountMap || u.account_map || {};
+        const linkedAccountId = u.linkedAccountId || u.linked_account_id || null;
+
+        const client = await getPgClient();
+        if (client) {
           try {
             const updateRes = await client.query(`
               UPDATE parties SET
@@ -2633,37 +2713,7 @@ export default async function handler(req: any, res: any) {
               }
 
               await client.end();
-              const updatedParty = {
-                id: row.id,
-                party_id: row.party_id,
-                code: row.code,
-                name: row.name,
-                company_name: row.company_name || row.name,
-                type: (row.type || 'CLIENT').toUpperCase(),
-                party_type: row.party_type || row.type,
-                contactPerson: row.contact_person,
-                contact_person: row.contact_person,
-                phone: row.phone,
-                email: row.email,
-                address: row.address,
-                trnNo: row.trn_no,
-                trn_no: row.trn_no,
-                creditLimit: Number(row.credit_limit || 0),
-                credit_limit: Number(row.credit_limit || 0),
-                currentBalance: Number(row.current_balance || 0),
-                current_balance: Number(row.current_balance || 0),
-                currency: row.currency || 'AED',
-                isActive: row.is_active !== false,
-                is_active: row.is_active !== false,
-                accountMap: row.account_map || {},
-                account_map: row.account_map || {},
-                coaAccountId: row.coa_account_id,
-                coa_account_id: row.coa_account_id,
-                linked_account_id: row.linked_account_id,
-                createdAt: row.created_at,
-                created_at: row.created_at
-              };
-
+              const updatedParty = formatParty(row);
               return res.status(200).json({
                 success: true,
                 party: updatedParty,
@@ -2675,103 +2725,89 @@ export default async function handler(req: any, res: any) {
             }
           } catch (updateErr: any) {
             console.error('[Party Update Error]:', updateErr);
-            await client.end();
+            try { await client.end(); } catch (_) {}
             return res.status(500).json({ error: updateErr.message, stack: updateErr.stack });
           }
         }
-
-        const partiesRes = await client.query(`
-          SELECT 
-            COALESCE(id, party_id::text) as id,
-            party_id,
-            COALESCE(code, CONCAT(CASE WHEN UPPER(COALESCE(type, party_type, '')) LIKE '%SUPP%' THEN 'SUP-' ELSE 'CLI-' END, LPAD(COALESCE(party_id, 1)::text, 4, '0'))) as code,
-            COALESCE(name, company_name, '') as name,
-            company_name,
-            COALESCE(type, party_type, 'CLIENT') as type,
-            party_type,
-            contact_person, phone, email, address,
-            COALESCE(trn_no, tin_or_ntn, '') as trn_no,
-            COALESCE(credit_limit, 0) as credit_limit,
-            COALESCE(current_balance, 0) as current_balance,
-            COALESCE(currency, 'AED') as currency,
-            COALESCE(is_active, true) as is_active,
-            account_map, coa_account_id, linked_account_id, created_at
-          FROM parties 
-          ORDER BY COALESCE(name, company_name, '') ASC;
-        `);
-        await client.end();
-        if (partiesRes.rows && partiesRes.rows.length > 0) {
-          return res.status(200).json(partiesRes.rows.map((r: any) => ({
-            id: r.id,
-            party_id: r.party_id,
-            code: r.code,
-            name: r.name,
-            company_name: r.company_name || r.name,
-            type: (r.type || 'CLIENT').toUpperCase(),
-            party_type: r.party_type || r.type,
-            contactPerson: r.contact_person,
-            contact_person: r.contact_person,
-            phone: r.phone,
-            email: r.email,
-            address: r.address,
-            trnNo: r.trn_no,
-            trn_no: r.trn_no,
-            creditLimit: Number(r.credit_limit || 0),
-            credit_limit: Number(r.credit_limit || 0),
-            currentBalance: Number(r.current_balance || 0),
-            current_balance: Number(r.current_balance || 0),
-            currency: r.currency || 'AED',
-            isActive: r.is_active !== false,
-            is_active: r.is_active !== false,
-            accountMap: r.account_map || {},
-            account_map: r.account_map || {},
-            coaAccountId: r.coa_account_id,
-            coa_account_id: r.coa_account_id,
-            linked_account_id: r.linked_account_id,
-            createdAt: r.created_at,
-            created_at: r.created_at
-          })));
-        }
-      } catch (e: any) {
-        console.warn('Error querying parties in serverless gateway:', e?.message);
       }
 
-      // Supabase fallback
-      try {
-        const { data } = await supabaseAdmin.from('parties').select('*');
-        if (data && data.length > 0) {
-          return res.status(200).json(data.map((r: any) => ({
-            id: r.id || String(r.party_id),
-            party_id: r.party_id,
-            code: r.code || (r.party_id ? `P-${r.party_id}` : ''),
-            name: r.name || r.company_name || '',
-            company_name: r.company_name || r.name || '',
-            type: (r.type || r.party_type || 'CLIENT').toUpperCase(),
-            party_type: r.party_type || r.type,
-            contactPerson: r.contact_person || r.contactPerson || '',
-            contact_person: r.contact_person || r.contactPerson || '',
-            phone: r.phone || '',
-            email: r.email || '',
-            address: r.address || '',
-            trnNo: r.trn_no || r.trnNo || r.tin_or_ntn || '',
-            trn_no: r.trn_no || r.trnNo || r.tin_or_ntn || '',
-            creditLimit: Number(r.credit_limit ?? r.creditLimit ?? 0),
-            credit_limit: Number(r.credit_limit ?? r.creditLimit ?? 0),
-            currentBalance: Number(r.current_balance ?? r.currentBalance ?? 0),
-            current_balance: Number(r.current_balance ?? r.currentBalance ?? 0),
-            currency: r.currency || 'AED',
-            isActive: r.is_active !== false && r.isActive !== false,
-            is_active: r.is_active !== false && r.isActive !== false,
-            accountMap: r.account_map || r.accountMap || {},
-            account_map: r.account_map || r.accountMap || {},
-            coaAccountId: r.coa_account_id || r.coaAccountId || r.linked_account_id,
-            coa_account_id: r.coa_account_id || r.coaAccountId || r.linked_account_id,
-            linked_account_id: r.linked_account_id,
-            createdAt: r.created_at,
-            created_at: r.created_at
-          })));
+      // Sub-route: POST /api/parties (Create new party)
+      if (method === 'POST' && !targetPartyId) {
+        const client = await getPgClient();
+        if (client) {
+          const p = body || {};
+          const partyName = (p.name || p.company_name || '').trim();
+          const partyType = (p.type || p.party_type || 'CLIENT').toUpperCase();
+          const phone = p.phone || null;
+          const trn = p.trn_no || p.trnNo || p.tin_or_ntn || null;
+          const creditLimit = Number(p.creditLimit || p.credit_limit || 0);
+
+          try {
+            const rpcRes = await client.query(
+              'SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6) as data;',
+              [partyName, partyType, phone, trn, creditLimit, null]
+            );
+            await client.end();
+            const resData = rpcRes.rows[0]?.data || {};
+            return res.status(200).json({
+              success: true,
+              id: resData.party_id,
+              code: resData.party_code || resData.code,
+              coaAccountId: resData.account_id,
+              data: resData
+            });
+          } catch (fnErr: any) {
+            console.error('[Party Creation RPC Error]:', fnErr);
+            try { await client.end(); } catch (_) {}
+            return res.status(500).json({ error: fnErr.message, stack: fnErr.stack, details: String(fnErr) });
+          }
         }
-      } catch (_) {}
+      }
+
+      // Sub-route: GET /api/parties (List all parties)
+      if (method === 'GET' && !targetPartyId) {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const partiesRes = await client.query(`
+              SELECT 
+                COALESCE(id, party_id::text) as id,
+                party_id,
+                COALESCE(code, CONCAT(CASE WHEN UPPER(COALESCE(type, party_type, '')) LIKE '%SUPP%' THEN 'SUP-' ELSE 'CLI-' END, LPAD(COALESCE(party_id, 1)::text, 4, '0'))) as code,
+                COALESCE(name, company_name, '') as name,
+                company_name,
+                COALESCE(type, party_type, 'CLIENT') as type,
+                party_type,
+                contact_person, phone, email, address,
+                COALESCE(trn_no, tin_or_ntn, '') as trn_no,
+                COALESCE(credit_limit, 0) as credit_limit,
+                COALESCE(current_balance, 0) as current_balance,
+                COALESCE(currency, 'AED') as currency,
+                COALESCE(is_active, true) as is_active,
+                account_map, coa_account_id, linked_account_id, created_at
+              FROM parties 
+              ORDER BY COALESCE(name, company_name, '') ASC;
+            `);
+            await client.end();
+            if (partiesRes.rows && partiesRes.rows.length > 0) {
+              return res.status(200).json(partiesRes.rows.map(formatParty));
+            }
+          } catch (e: any) {
+            console.warn('Error querying parties in serverless gateway:', e?.message);
+            try { await client.end(); } catch (_) {}
+          }
+        }
+
+        // Supabase fallback for listing parties
+        try {
+          const { data } = await supabaseAdmin.from('parties').select('*');
+          if (data && data.length > 0) {
+            return res.status(200).json(data.map(formatParty));
+          }
+        } catch (_) {}
+
+        return res.status(200).json([]);
+      }
 
       return res.status(200).json([]);
     }
