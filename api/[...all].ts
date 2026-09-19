@@ -124,6 +124,36 @@ export const getPgClient = async (): Promise<any> => {
   }
 };
 
+export const borrowClient = async (): Promise<any> => {
+  const DEFAULT_DB_URL = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  const p = await getPgClient();
+  if (p) {
+    try {
+      const client = await p.connect();
+      return client;
+    } catch (connErr: any) {
+      console.warn('[Serverless PG] Primary pool connect failed, trying fallback pool:', connErr?.message);
+      if (pgPoolClass) {
+        try {
+          const fallbackPool = new pgPoolClass({
+            connectionString: DEFAULT_DB_URL,
+            max: 10,
+            ssl: { rejectUnauthorized: false },
+            connectionTimeoutMillis: 5000
+          });
+          fallbackPool.end = async () => {};
+          pool = fallbackPool;
+          return await fallbackPool.connect();
+        } catch (fbErr: any) {
+          console.error('[Serverless PG] Fallback pool connect also failed:', fbErr?.message);
+        }
+      }
+      throw connErr;
+    }
+  }
+  throw new Error('Database connection pool is not available.');
+};
+
 // ============================================================================
 // AUTOMATED BAD BOT DETECTION & AUTO-BLOCK SHIELD ENGINE
 // ============================================================================
@@ -1040,30 +1070,36 @@ export default async function handler(req: any, res: any) {
 
     // 1. GET /api/hr/employees - Retrieve all active employees
     if ((pathname === '/api/hr/employees' || pathname.endsWith('/hr/employees') || pathname === '/api/employees') && method === 'GET') {
-      const client = await getPgClient();
-      if (client) {
+      try {
+        const client = await borrowClient();
         try {
-          await client.query("UPDATE employees SET email = NULL WHERE email = '' OR email = ' ';").catch(() => {});
-          const result = await client.query(`
-            SELECT * FROM public.employees 
-            WHERE is_deleted IS NOT TRUE 
-            ORDER BY created_at DESC;
-          `);
+          // Normalize empty string emails to NULL
+          await client.query("UPDATE public.employees SET email = NULL WHERE email = '' OR email = ' ';").catch(() => {});
+
+          let result: any;
+          try {
+            result = await client.query(`
+              SELECT * FROM public.employees 
+              WHERE is_deleted IS NOT TRUE 
+              ORDER BY created_at DESC;
+            `);
+          } catch (colErr: any) {
+            console.warn('[Serverless HR] Column query failed, falling back to SELECT *:', colErr?.message);
+            try {
+              result = await client.query('SELECT * FROM public.employees ORDER BY id DESC;');
+            } catch {
+              result = await client.query('SELECT * FROM public.employees;');
+            }
+          }
           const mapped = result.rows.map(mapEmployeeRow);
           return res.status(200).json(mapped);
-        } catch (dbErr: any) {
-          console.warn('[Serverless HR] DB query error:', dbErr?.message);
         } finally {
-          try { await client.end(); } catch (_) {}
+          client.release();
         }
+      } catch (err: any) {
+        console.error("Database query failed:", err);
+        return res.status(500).json({ error: err.message, detail: err.detail, stack: err.stack });
       }
-      try {
-        const { data, error } = await supabaseAdmin.from('employees').select('*').order('created_at', { ascending: false });
-        if (!error && Array.isArray(data)) {
-          return res.status(200).json(data.map(mapEmployeeRow));
-        }
-      } catch (_) {}
-      return res.status(200).json([]);
     }
 
     // 2. POST /api/hr/employees - Create new employee

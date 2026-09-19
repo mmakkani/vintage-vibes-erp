@@ -229,17 +229,27 @@ hrRouter.get('/employees', async (req, res) => {
       // Ensure existing empty string emails are converted to NULL to prevent unique index conflicts
       await client.query("UPDATE employees SET email = NULL WHERE email = '' OR email = ' ';").catch(() => {});
 
-      const result = await client.query(`
-        SELECT * FROM employees 
-        WHERE is_deleted IS NOT TRUE 
-        ORDER BY created_at DESC;
-      `);
+      let result: any;
+      try {
+        result = await client.query(`
+          SELECT * FROM public.employees 
+          WHERE is_deleted IS NOT TRUE 
+          ORDER BY created_at DESC;
+        `);
+      } catch (colErr: any) {
+        console.warn('[HR Routes] Column query failed, falling back to SELECT *:', colErr?.message);
+        try {
+          result = await client.query('SELECT * FROM public.employees ORDER BY id DESC;');
+        } catch {
+          result = await client.query('SELECT * FROM public.employees;');
+        }
+      }
       return result.rows.map(mapEmployeeRow);
     });
     return res.json(data);
   } catch (err: any) {
-    console.warn('[HR Routes] Fallback fetching employees:', err?.message);
-    return res.json(HRController.getEmployees());
+    console.error("Database query failed:", err);
+    return res.status(500).json({ error: err.message, detail: err.detail, stack: err.stack });
   }
 });
 
