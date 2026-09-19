@@ -10,7 +10,7 @@ export default defineConfig(() => {
       react(),
       tailwindcss(),
       VitePWA({
-        registerType: 'prompt',
+        registerType: 'autoUpdate',
         includeAssets: ['vintage_logo.svg', 'apple-touch-icon.png', 'logo192.png', 'logo512.png', 'pwa-192x192.png', 'pwa-512x512.png', 'manifest.json'],
         manifest: {
           id: '/',
@@ -58,9 +58,31 @@ export default defineConfig(() => {
         workbox: {
           maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
           cleanupOutdatedCaches: true,
+          skipWaiting: true,
+          clientsClaim: true,
           navigateFallback: null,
           globPatterns: ['**/*.{js,css,ico,png,svg,woff,woff2}'],
+          globIgnores: [
+            '**/assets/*View*.js',
+            '**/assets/CounterSalePOSTerminal*.js',
+            '**/assets/StaffMobileAppView*.js',
+            '**/assets/ExecutiveCommandCenterModal*.js'
+          ],
           runtimeCaching: [
+            {
+              urlPattern: /\/assets\/.*\.js$/i,
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'dynamic-chunks-cache',
+                expiration: {
+                  maxEntries: 60,
+                  maxAgeSeconds: 60 * 60 * 24 * 7,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',
