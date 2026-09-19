@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Party, PartyKhataLog } from '../parties.types.ts';
 import {
   Users,
@@ -107,6 +107,52 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   });
 
   const [coaAccounts, setCoaAccounts] = useState<any[]>([]);
+
+  // Memoized options for Agent COA selection
+  const agentPayableOptions = useMemo(() => {
+    const list = coaAccounts
+      .filter(a => a.classification === 'LIABILITY' || a.type === 'LIABILITY' || (a.code && a.code.startsWith('2')))
+      .map(a => ({
+        value: a.code,
+        label: `${a.code} - ${a.name}`,
+        badge: 'LIABILITY'
+      }));
+
+    if (!list.some(o => o.value === '2120-00')) {
+      list.unshift({
+        value: '2120-00',
+        label: '2120-00 - Accounts Payable - Courier, Freight & Clearing Agents',
+        badge: 'LIABILITY'
+      });
+    }
+    return list;
+  }, [coaAccounts]);
+
+  const expenseAndClearingOptions = useMemo(() => {
+    const list = coaAccounts
+      .filter(a => {
+        const isExp = a.classification === 'EXPENSE' || a.type === 'EXPENSE' || (a.code && a.code.startsWith('5'));
+        const isClearingAsset = a.code === '1310-00' || a.code?.startsWith('1310') || (a.name && (a.name.toLowerCase().includes('clearing') || a.name.toLowerCase().includes('in-transit')));
+        return isExp || isClearingAsset;
+      })
+      .map(a => {
+        const isExp = a.classification === 'EXPENSE' || a.type === 'EXPENSE' || (a.code && a.code.startsWith('5'));
+        return {
+          value: a.code,
+          label: `${a.code} - ${a.name}`,
+          badge: isExp ? 'EXPENSE' : 'ASSET'
+        };
+      });
+
+    if (!list.some(o => o.value === '1310-00')) {
+      list.unshift({
+        value: '1310-00',
+        label: '1310-00 - Goods In-Transit & Port Clearing Account',
+        badge: 'ASSET'
+      });
+    }
+    return list;
+  }, [coaAccounts]);
 
   // New Payment/Receipt form
   const [txForm, setTxForm] = useState({
@@ -234,7 +280,14 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       phone: partyForm.phone || (partyForm as any).contact_no || null,
       trn_no: partyForm.trn_no || partyForm.trnNo || null,
       credit_limit: Number(partyForm.creditLimit ?? (partyForm as any).credit_limit ?? 0),
-      inventory_account_id: (partyForm as any).inventory_account_id || null
+      inventory_account_id: (partyForm as any).inventory_account_id || null,
+      payable_account_id: partyForm.payableAccountId || (partyForm as any).payable_account_id,
+      clearing_account_id: partyForm.clearingAccountId || (partyForm as any).clearing_account_id,
+      receivable_account_id: partyForm.receivableAccountId || (partyForm as any).receivable_account_id,
+      revenue_account_id: partyForm.revenueAccountId || (partyForm as any).revenue_account_id,
+      contact_person: partyForm.contactPerson || (partyForm as any).contact_person || '',
+      email: partyForm.email || null,
+      address: partyForm.address || null
     };
 
     try {
@@ -244,13 +297,39 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         p_phone: formData.phone || null,
         p_trn: formData.trn_no || null,
         p_credit_limit: Number(formData.credit_limit) || 0,
-        p_inventory_account_id: formData.inventory_account_id || null
+        p_inventory_account_id: formData.inventory_account_id || null,
+        p_expense_account: formData.clearing_account_id || null
       });
 
       if (error) {
         toast.error(error.message);
         console.error("Party Creation Failed:", error);
         return;
+      }
+
+      // Update party extra details (contact_person, email, address, account_map)
+      if (data?.party_id) {
+        const customMap = formData.party_type === 'AGENT' ? {
+          payableAccountId: data.code || data.account_code || '2120-01',
+          agentPayableAccountId: data.code || data.account_code || '2120-01',
+          clearingAccountId: formData.clearing_account_id || '1310-00',
+          expenseAccountId: formData.clearing_account_id || '5110-00'
+        } : formData.party_type === 'SUPPLIER' ? {
+          payableAccountId: data.code || data.account_code || '2110-01',
+          receivableAccountId: '1130-00',
+          clearingAccountId: formData.clearing_account_id || '1310-00'
+        } : {
+          payableAccountId: '2110-00',
+          receivableAccountId: data.code || data.account_code || '1130-01',
+          revenueAccountId: formData.revenue_account_id || '4110-00'
+        };
+
+        await supabase.from('parties').update({
+          contact_person: formData.contact_person,
+          email: formData.email,
+          address: formData.address,
+          account_map: customMap
+        }).eq('id', data.party_id).catch(() => {});
       }
 
       toast.success(`Created party & provisioned account ${data.code}`);
@@ -533,7 +612,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
               }`}
             >
-              {type === 'ALL' ? 'All Parties' : `${type}s`} ({parties.filter(p => type === 'ALL' || p.type === type).length})
+              {type === 'ALL' ? 'All Parties' : type === 'CLIENT' ? 'Clients' : type === 'SUPPLIER' ? 'Suppliers' : 'Agents'} ({parties.filter(p => type === 'ALL' || p.type === type).length})
             </button>
           ))}
         </div>
@@ -590,7 +669,11 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       <span className="font-mono text-[10px] font-bold text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
                         {party.code}
                       </span>
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 uppercase">
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                        party.type === 'AGENT' ? 'bg-purple-100 text-purple-800 border border-purple-200' :
+                        party.type === 'SUPPLIER' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                        'bg-blue-100 text-blue-800 border border-blue-200'
+                      }`}>
                         {party.type}
                       </span>
                       {party.hasEntries ? (
@@ -643,7 +726,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   <span className="flex items-center gap-1">
                     <span className="text-emerald-600 font-bold">✓ COA:</span>
                     <span className="font-bold text-slate-800">
-                      {party.accountMap?.payableAccountId || party.accountMap?.receivableAccountId || party.coaAccountId || (party.type === 'SUPPLIER' ? `2110-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : `1130-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}`)}
+                      {party.accountMap?.agentPayableAccountId || party.accountMap?.payableAccountId || party.accountMap?.receivableAccountId || party.coaAccountId || (party.type === 'AGENT' ? `2120-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : (party.type === 'SUPPLIER' ? `2110-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : `1130-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}`))}
                     </span>
                   </span>
                   
@@ -861,7 +944,27 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   value={partyForm.type || (partyForm as any).party_type}
                   onChange={e => {
                     const val = e.target.value as any;
-                    setPartyForm(prev => ({ ...prev, type: val, party_type: val }));
+                    setPartyForm(prev => ({
+                      ...prev,
+                      type: val,
+                      party_type: val,
+                      ...(val === 'AGENT' ? {
+                        payableAccountId: '2120-00',
+                        payable_account_id: '2120-00',
+                        clearingAccountId: '1310-00',
+                        clearing_account_id: '1310-00'
+                      } : val === 'SUPPLIER' ? {
+                        payableAccountId: '2110-00',
+                        payable_account_id: '2110-00',
+                        clearingAccountId: '1310-00',
+                        clearing_account_id: '1310-00'
+                      } : {
+                        receivableAccountId: '1130-00',
+                        receivable_account_id: '1130-00',
+                        revenueAccountId: '4110-00',
+                        revenue_account_id: '4110-00'
+                      })
+                    }));
                   }}
                   className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500"
                 >
@@ -1049,6 +1152,45 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       className="w-full bg-white"
                     />
                     <span className="text-[9px] text-slate-500">Credited when sales are finalized</span>
+                  </div>
+                </div>
+              )}
+
+              {partyForm.type === 'AGENT' && (
+                <div className="bg-indigo-50/70 p-3 rounded-lg border border-indigo-200 space-y-2 mt-2">
+                  <div className="text-[10px] font-bold text-indigo-900 uppercase flex items-center justify-between">
+                    <span>🛡️ Dual COA Accounting Link (Auto-Provisioned)</span>
+                    <span className="text-[9px] bg-indigo-200 text-indigo-900 px-1.5 py-0.5 rounded font-bold">AGENT / COURIER</span>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
+                      1. Accounts Payable / Agent Clearing Account (Liability):
+                    </label>
+                    <SearchableSelect
+                      value={partyForm.payableAccountId || '2120-00'}
+                      onChange={val => setPartyForm(prev => ({ ...prev, payableAccountId: val, payable_account_id: val }))}
+                      options={agentPayableOptions}
+                      placeholder="Select Agent Payable (2120-00)..."
+                      searchPlaceholder="Search agent liabilities..."
+                      className="w-full bg-white"
+                    />
+                    <span className="text-[9px] text-slate-500">Default Parent: 2120-00 - Accounts Payable - Courier, Freight & Clearing Agents</span>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
+                      2. Default Expense / Clearing Account:
+                    </label>
+                    <SearchableSelect
+                      value={partyForm.clearingAccountId || '1310-00'}
+                      onChange={val => setPartyForm(prev => ({ ...prev, clearingAccountId: val, clearing_account_id: val }))}
+                      options={expenseAndClearingOptions}
+                      placeholder="Select Expense or Clearing Asset Account..."
+                      searchPlaceholder="Search operating expenses or clearing assets..."
+                      className="w-full bg-white"
+                    />
+                    <span className="text-[9px] text-slate-500">Operating Expense (Courier/Demurrage/Duty) or Clearing Asset (1310-00)</span>
                   </div>
                 </div>
               )}
@@ -1248,7 +1390,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <div className="flex justify-between items-center pt-2">
                   <span className="font-semibold text-slate-500">Auto-Linked COA Code</span>
                   <span className="font-mono font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                    {viewPartyData.accountMap?.payableAccountId || viewPartyData.accountMap?.receivableAccountId || (viewPartyData.type === 'SUPPLIER' ? `2110-${viewPartyData.code.replace(/[^A-Za-z0-9]/g, '')}` : `1130-${viewPartyData.code.replace(/[^A-Za-z0-9]/g, '')}`)}
+                    {viewPartyData.accountMap?.agentPayableAccountId || viewPartyData.accountMap?.payableAccountId || viewPartyData.accountMap?.receivableAccountId || (viewPartyData.type === 'AGENT' ? `2120-${viewPartyData.code.replace(/[^A-Za-z0-9]/g, '')}` : (viewPartyData.type === 'SUPPLIER' ? `2110-${viewPartyData.code.replace(/[^A-Za-z0-9]/g, '')}` : `1130-${viewPartyData.code.replace(/[^A-Za-z0-9]/g, '')}`))}
                   </span>
                 </div>
 
@@ -1531,6 +1673,39 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                         badge: 'REVENUE'
                       }))}
                       placeholder="Select Sales Revenue Account..."
+                      className="w-full bg-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {editPartyForm.type === 'AGENT' && (
+                <div className="bg-indigo-50/70 p-3 rounded-lg border border-indigo-200 space-y-2 mt-2">
+                  <div className="text-[10px] font-bold text-indigo-900 uppercase flex items-center justify-between">
+                    <span>🛡️ Linked COA Accounts</span>
+                    <span className="text-[9px] bg-indigo-200 text-indigo-900 px-1.5 py-0.5 rounded font-bold">AGENT / COURIER</span>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
+                      Accounts Payable / Agent Clearing Account (Liability):
+                    </label>
+                    <SearchableSelect
+                      value={editPartyForm.payableAccountId || '2120-00'}
+                      onChange={val => setEditPartyForm({ ...editPartyForm, payableAccountId: val })}
+                      options={agentPayableOptions}
+                      placeholder="Select Agent Payable (2120-00)..."
+                      className="w-full bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
+                      Default Expense / Clearing Account:
+                    </label>
+                    <SearchableSelect
+                      value={editPartyForm.clearingAccountId || '1310-00'}
+                      onChange={val => setEditPartyForm({ ...editPartyForm, clearingAccountId: val })}
+                      options={expenseAndClearingOptions}
+                      placeholder="Select Expense or Clearing Asset Account..."
                       className="w-full bg-white"
                     />
                   </div>

@@ -284,21 +284,27 @@ partiesRouter.post('/', async (req, res) => {
     // Determine COA sub-account details
     const isSupplier = type === 'SUPPLIER';
     const isClient = type === 'CLIENT' || type === 'CUSTOMER';
+    const isAgent = type === 'AGENT';
     const cleanCode = code.replace(/[^A-Za-z0-9]/g, '');
     const coaCode = isSupplier ? `2110-${cleanCode}` : (isClient ? `1130-${cleanCode}` : `2120-${cleanCode}`);
     const coaId = `acc-${id}`;
-    const parentCode = isSupplier 
-      ? (partyData.payableAccountId || partyData.payable_account_id || '2110-00')
-      : (isClient ? (partyData.receivableAccountId || partyData.receivable_account_id || '1130-00') : '2120-00');
-    const coaType = isSupplier ? 'LIABILITY' : (isClient ? 'ASSET' : 'LIABILITY');
-    const subType = isSupplier ? 'Accounts Payable - Trade' : (isClient ? 'Accounts Receivable - Trade' : 'Accounts Payable - Agent');
+    const parentCode = isAgent
+      ? (partyData.payableAccountId || partyData.payable_account_id || '2120-00')
+      : (isSupplier 
+        ? (partyData.payableAccountId || partyData.payable_account_id || '2110-00')
+        : (partyData.receivableAccountId || partyData.receivable_account_id || '1130-00'));
+    const coaType = isClient ? 'ASSET' : 'LIABILITY';
+    const subType = isSupplier ? 'Accounts Payable - Trade' : (isClient ? 'Accounts Receivable - Trade' : 'Accounts Payable - Clearing & Courier Agent');
     const roleTag = isSupplier ? 'Supplier' : (isClient ? 'Customer' : 'Agent');
     const coaName = `${cleanName} (${roleTag})`;
 
+    const expenseAccount = partyData.clearingAccountId || partyData.clearing_account_id || partyData.expense_account || null;
+    const inventoryAccount = (partyData as any).inventory_account_id || null;
+
     // Execute unified create_party_with_coa PostgreSQL database routine
     const rpcRes = await client.query(
-      `SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6) as data;`,
-      [cleanName, type, phone || null, trnNo || null, creditLimit, (partyData as any).inventory_account_id || null]
+      `SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6, $7) as data;`,
+      [cleanName, type, phone || null, trnNo || null, creditLimit, inventoryAccount, expenseAccount]
     );
 
     const rpcData = rpcRes.rows[0]?.data;
@@ -306,7 +312,13 @@ partiesRouter.post('/', async (req, res) => {
     const finalPartyCode = rpcData?.party_code || code;
     const finalCoaCode = rpcData?.code || coaCode;
 
-    const initialMap = {
+    const initialMap = isAgent ? {
+      payableAccountId: finalCoaCode,
+      agentPayableAccountId: finalCoaCode,
+      clearingAccountId: partyData.clearingAccountId || partyData.clearing_account_id || '1310-00',
+      expenseAccountId: partyData.clearingAccountId || partyData.clearing_account_id || '5110-00',
+      ...(partyData.accountMap || partyData.account_map || {})
+    } : {
       ...(partyData.accountMap || partyData.account_map || {}),
       payableAccountId: isSupplier ? finalCoaCode : (partyData.payableAccountId || partyData.payable_account_id || '2110-00'),
       receivableAccountId: isClient ? finalCoaCode : (partyData.receivableAccountId || partyData.receivable_account_id || '1130-00'),

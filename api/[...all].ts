@@ -2707,7 +2707,7 @@ export default async function handler(req: any, res: any) {
                 await client.query(`UPDATE accounts SET account_name = $1 WHERE account_id = $2;`, [cleanName, row.linked_account_id]).catch(() => {});
               }
               if (row.coa_account_id && cleanName) {
-                const roleTag = row.party_type === 'SUPPLIER' ? ' (Supplier)' : ' (Customer)';
+                const roleTag = (row.type === 'AGENT' || cleanType === 'AGENT') ? ' (Agent)' : (row.party_type === 'SUPPLIER' ? ' (Supplier)' : ' (Customer)');
                 await client.query(`UPDATE chart_of_accounts SET name = $1 WHERE code = $2;`, [cleanName + roleTag, row.coa_account_id]).catch(() => {});
                 await client.query(`UPDATE coa_accounts SET name = $1 WHERE code = $2;`, [cleanName + roleTag, row.coa_account_id]).catch(() => {});
               }
@@ -2743,9 +2743,11 @@ export default async function handler(req: any, res: any) {
           const creditLimit = Number(p.creditLimit || p.credit_limit || 0);
 
           try {
+            const expenseAccount = p.clearingAccountId || p.clearing_account_id || p.expense_account || null;
+            const inventoryAccount = p.inventory_account_id || null;
             const rpcRes = await client.query(
-              'SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6) as data;',
-              [partyName, partyType, phone, trn, creditLimit, null]
+              'SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6, $7) as data;',
+              [partyName, partyType, phone, trn, creditLimit, inventoryAccount, expenseAccount]
             );
             await client.end();
             const resData = rpcRes.rows[0]?.data || {};
