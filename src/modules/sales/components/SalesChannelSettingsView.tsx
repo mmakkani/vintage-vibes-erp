@@ -78,7 +78,7 @@ const SETTING_LABELS: Record<string, { label: string; sub: string; defaultCode: 
   cogs_account: {
     label: 'Cost of Goods Sold (COGS) Account',
     sub: 'Debited with the item cost value upon dispatch',
-    defaultCode: '5110-01'
+    defaultCode: '5100-02'
   },
   finished_goods_inventory: {
     label: 'Finished Goods Inventory Asset',
@@ -93,7 +93,7 @@ const SETTING_LABELS: Record<string, { label: string; sub: string; defaultCode: 
   courier_payable: {
     label: 'Courier Delivery & Commission Payable',
     sub: 'Credited with delivery fees payable to logistics partner',
-    defaultCode: '2140-01'
+    defaultCode: '2120-01'
   },
   delivery_expense: {
     label: 'Company Borne Delivery Expense',
@@ -305,8 +305,8 @@ export const SalesChannelSettingsView: React.FC<{ onRefreshAll?: () => void }> =
             <p className="text-stone-600 text-[11px]">
               <span className="text-emerald-700 font-semibold">Debit:</span> Courier COD Clearing ({settings.courier_cod_clearing || '1128-01'}) = Price + Fee<br />
               <span className="text-indigo-700 font-semibold">Credit:</span> Sales Revenue ({settings.omnichannel_retail_revenue || '4110-01'}) = Item Price<br />
-              <span className="text-indigo-700 font-semibold">Credit:</span> Courier Payable ({settings.courier_payable || '2140-01'}) = Shipping Fee<br />
-              <span className="text-emerald-700 font-semibold">Debit:</span> COGS ({settings.cogs_account || '5110-01'}) = Cost Value<br />
+              <span className="text-indigo-700 font-semibold">Credit:</span> Courier Payable ({settings.courier_payable || '2120-01'}) = Shipping Fee<br />
+              <span className="text-emerald-700 font-semibold">Debit:</span> COGS ({settings.cogs_account || '5100-02'}) = Cost Value<br />
               <span className="text-indigo-700 font-semibold">Credit:</span> Finished Goods ({settings.finished_goods_inventory || '1160-01'}) = Cost Value
             </p>
           </div>
@@ -318,9 +318,9 @@ export const SalesChannelSettingsView: React.FC<{ onRefreshAll?: () => void }> =
             <p className="text-stone-600 text-[11px]">
               <span className="text-emerald-700 font-semibold">Debit:</span> Courier COD Clearing ({settings.courier_cod_clearing || '1128-01'}) = Item Price<br />
               <span className="text-emerald-700 font-semibold">Debit:</span> Delivery Expense ({settings.delivery_expense || '5140-01'}) = Shipping Fee<br />
-              <span className="text-indigo-700 font-semibold">Credit:</span> Courier Payable ({settings.courier_payable || '2140-01'}) = Shipping Fee<br />
+              <span className="text-indigo-700 font-semibold">Credit:</span> Courier Payable ({settings.courier_payable || '2120-01'}) = Shipping Fee<br />
               <span className="text-indigo-700 font-semibold">Credit:</span> Sales Revenue ({settings.omnichannel_retail_revenue || '4110-01'}) = Item Price<br />
-              <span className="text-emerald-700 font-semibold">Debit:</span> COGS ({settings.cogs_account || '5110-01'}) = Cost Value<br />
+              <span className="text-emerald-700 font-semibold">Debit:</span> COGS ({settings.cogs_account || '5100-02'}) = Cost Value<br />
               <span className="text-indigo-700 font-semibold">Credit:</span> Finished Goods ({settings.finished_goods_inventory || '1160-01'}) = Cost Value
             </p>
           </div>

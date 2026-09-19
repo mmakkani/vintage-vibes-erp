@@ -3,151 +3,47 @@ require('dotenv').config();
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-async function deploy() {
+async function updateMapping() {
   const client = await pool.connect();
   try {
-    console.log('🚀 Starting Omnichannel Sales & COA Migration...');
+    console.log('🚀 Updating Sales Channel Settings & Stored Procedures...');
     await client.query('BEGIN;');
 
-    // 1. Ensure all 14 mandatory Tier-3 accounts exist in accounts, chart_of_accounts, and coa_accounts
-    console.log('1. Checking and registering Tier-3 accounts...');
-
-    // 1a. Ensure in accounts table
-    // 4110-05 (B2B REVENUE) is already at account_id = 5185
+    // 1. Ensure 5100-02 is registered in chart_of_accounts and coa_accounts
+    console.log('1. Registering 5100-02 in chart_of_accounts and coa_accounts...');
     await client.query(`
-      INSERT INTO accounts (account_id, account_code, account_name, account_type_id, parent_id, is_active, is_transactional, account_level)
-      VALUES ((SELECT COALESCE(MAX(account_id), 5185) + 1 FROM accounts), '5140-01', 'Courier & Delivery Charges', 5, 5080, true, true, 3)
-      ON CONFLICT (account_code) DO NOTHING;
+      INSERT INTO chart_of_accounts (id, code, name, account_type, current_balance, created_at)
+      VALUES (gen_random_uuid(), '5100-02', 'Cost of Goods Sold - Finished Goods', 'EXPENSE', 0.00, NOW())
+      ON CONFLICT (code) DO UPDATE
+      SET name = 'Cost of Goods Sold - Finished Goods';
+
+      INSERT INTO coa_accounts (id, code, name, type, sub_type, currency, current_balance, is_active, tier_level, parent_code)
+      VALUES ('coa-5100-02', '5100-02', 'Cost of Goods Sold - Finished Goods', 'EXPENSE', 'OPERATING_EXPENSE', 'AED', 0.00, true, 3, '5100-00')
+      ON CONFLICT (code) DO UPDATE
+      SET name = 'Cost of Goods Sold - Finished Goods', is_active = true;
     `);
 
-    // 1b. Ensure in chart_of_accounts table
-    const coaList = [
-      { code: '1110-01', name: 'Cash in Hand (POS / Counter)', type: 'ASSET' },
-      { code: '1120-01', name: 'Cash in Bank (AED)', type: 'ASSET' },
-      { code: '1125-01', name: 'POS Terminal & Card Clearing', type: 'ASSET' },
-      { code: '1128-01', name: 'Courier COD Clearing (Pending Remittance)', type: 'ASSET' },
-      { code: '1130-01', name: 'EMIRATES WHOLESALE', type: 'ASSET' },
-      { code: '1130-02', name: 'LIVE SALES', type: 'ASSET' },
-      { code: '1130-03', name: 'E-COOMERCE SALES', type: 'ASSET' },
-      { code: '1130-04', name: 'POS SALES', type: 'ASSET' },
-      { code: '1160-01', name: 'Finished Goods', type: 'ASSET' },
-      { code: '2120-01', name: 'Courier Delivery & Commission Payable', type: 'LIABILITY' },
-      { code: '4110-01', name: 'Retail / Online / Live Stream Sales Revenue', type: 'INCOME' },
-      { code: '4110-05', name: 'B2B REVENUE', type: 'INCOME' },
-      { code: '5100-02', name: 'Cost of Goods Sold - Finished Goods', type: 'EXPENSE' },
-      { code: '5140-01', name: 'Courier & Delivery Charges', type: 'EXPENSE' }
-    ];
-
-    for (const acc of coaList) {
-      await client.query(`
-        INSERT INTO chart_of_accounts (id, code, name, account_type, current_balance, created_at)
-        VALUES (gen_random_uuid(), $1, $2, $3, 0.00, NOW())
-        ON CONFLICT (code) DO NOTHING;
-      `, [acc.code, acc.name, acc.type]);
-
-      await client.query(`
-        INSERT INTO coa_accounts (id, code, name, type, sub_type, currency, current_balance, is_active, tier_level, parent_code)
-        VALUES ($1, $2, $3, $4, $5, 'AED', 0.00, true, 3, $6)
-        ON CONFLICT (code) DO UPDATE
-        SET is_active = true
-        WHERE coa_accounts.code = $2;
-      `, [
-        `coa-${acc.code}`,
-        acc.code,
-        acc.name,
-        acc.type === 'INCOME' ? 'REVENUE' : acc.type,
-        acc.type === 'INCOME' ? 'OPERATING_REVENUE' : (acc.type === 'EXPENSE' ? 'OPERATING_EXPENSE' : acc.type),
-        acc.code.substring(0, 4) + '-00'
-      ]);
-    }
-
-    // 2. Create sales_channel_settings table
-    console.log('2. Creating sales_channel_settings table...');
+    // 2. Update sales_channel_settings default values
+    console.log('2. Updating sales_channel_settings...');
     await client.query(`
-      CREATE TABLE IF NOT EXISTS sales_channel_settings (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        setting_key TEXT UNIQUE NOT NULL,
-        account_code TEXT NOT NULL,
-        description TEXT,
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
+      UPDATE sales_channel_settings
+      SET account_code = '5100-02', description = 'Cost of Goods Sold - Finished Goods', updated_at = NOW()
+      WHERE setting_key = 'cogs_account';
+
+      UPDATE sales_channel_settings
+      SET account_code = '2120-01', description = 'Courier Delivery & Commission Payable (Logistics)', updated_at = NOW()
+      WHERE setting_key = 'courier_payable';
     `);
 
-    // Seed default settings
-    console.log('3. Seeding verified default settings...');
-    await client.query(`
-      INSERT INTO sales_channel_settings (setting_key, account_code, description)
-      VALUES 
-        ('cogs_account', '5100-02', 'Cost of Goods Sold - Finished Goods'),
-        ('finished_goods_inventory', '1160-01', 'Finished Goods Inventory Asset'),
-        ('courier_cod_clearing', '1128-01', 'Courier COD Clearing (Pending Remittance)'),
-        ('courier_payable', '2120-01', 'Courier Delivery & Commission Payable'),
-        ('delivery_expense', '5140-01', 'Company Borne Delivery Expense'),
-        ('pos_cash_drawer', '1110-01', 'POS Cash Drawer'),
-        ('pos_terminal_clearing', '1125-01', 'POS Card / Terminal Clearing'),
-        ('live_sales_clearing', '1130-02', 'LIVE SALES Control Khata'),
-        ('ecommerce_sales_clearing', '1130-03', 'E-COMMERCE SALES Control Khata'),
-        ('pos_sales_clearing', '1130-04', 'POS SALES Control Khata'),
-        ('b2b_sales_receivable', '1130-01', 'Default B2B Wholesale Receivable'),
-        ('b2b_revenue', '4110-05', 'B2B Wholesale Revenue'),
-        ('omnichannel_retail_revenue', '4110-01', 'POS, Live & E-Commerce Revenue')
-      ON CONFLICT (setting_key) DO NOTHING;
-    `);
-
-    // 4. Create journal_entries table
-    console.log('4. Ensuring journal_entries table exists...');
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS journal_entries (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        voucher_id TEXT NOT NULL,
-        account_id UUID,
-        party_id UUID,
-        debit NUMERIC(15,2) DEFAULT 0.00,
-        credit NUMERIC(15,2) DEFAULT 0.00,
-        description TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_journal_entries_voucher_id ON journal_entries(voucher_id);
-    `);
-
-    // 5. Ensure order_items table exists
-    console.log('5. Ensuring order_items table exists...');
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS order_items (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        order_id UUID REFERENCES orders(id) ON DELETE CASCADE,
-        item_id UUID,
-        quantity NUMERIC(15,2) DEFAULT 1,
-        unit_price NUMERIC(15,2) DEFAULT 0.00,
-        cost_price NUMERIC(15,2) DEFAULT 0.00,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
-    `);
-
-    // 6. Ensure orders and inventory_items columns exist
-    console.log('6. Ensuring required columns on orders and inventory_items...');
-    await client.query(`
-      ALTER TABLE orders ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'PENDING';
-      ALTER TABLE orders ADD COLUMN IF NOT EXISTS voucher_id TEXT;
-      ALTER TABLE orders ADD COLUMN IF NOT EXISTS courier_party_id UUID;
-      ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_fee NUMERIC(15,2) DEFAULT 0.00;
-      ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_bearer TEXT DEFAULT 'Customer Bears';
-      ALTER TABLE orders ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ;
-
-      ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'AVAILABLE';
-      ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ;
-
-      -- Ensure vouchers table has description column if needed
-      ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS description TEXT;
-    `);
-
-    // 7. Deploy post_sales_dispatch_and_cogs_voucher stored procedure
-    console.log('7. Deploying post_sales_dispatch_and_cogs_voucher stored procedure...');
+    // 3. Redeploy post_sales_dispatch_and_cogs_voucher with:
+    // - Default COGS = 5100-02
+    // - Default Courier Payable = 2120-01
+    // - POS Card / Apple Pay / Google Pay -> 1125-01 (POS Terminal & Card Clearing)
+    console.log('3. Redeploying post_sales_dispatch_and_cogs_voucher...');
     await client.query(`
       CREATE OR REPLACE FUNCTION post_sales_dispatch_and_cogs_voucher(
           p_order_id UUID,
-          p_channel TEXT, -- 'POS', 'B2B', 'LIVE_DISPATCH', 'ECOMMERCE'
+          p_channel TEXT, -- 'POS', 'POS_CARD', 'B2B', 'LIVE_DISPATCH', 'ECOMMERCE'
           p_client_id UUID DEFAULT NULL,
           p_courier_party_id UUID DEFAULT NULL,
           p_shipping_fee NUMERIC(15,2) DEFAULT 0.00,
@@ -209,8 +105,10 @@ async function deploy() {
           END IF;
 
           -- 1. Read Account Codes from Settings (with safe fallback to verified defaults)
+          -- Default COGS: 5100-02 (Cost of Goods Sold - Finished Goods)
           SELECT COALESCE((SELECT account_code FROM sales_channel_settings WHERE setting_key = 'cogs_account'), '5100-02') INTO v_cogs_code;
           SELECT COALESCE((SELECT account_code FROM sales_channel_settings WHERE setting_key = 'finished_goods_inventory'), '1160-01') INTO v_fg_code;
+          -- Default Courier Liability: 2120-01 (DHL / Courier Payable)
           SELECT COALESCE((SELECT account_code FROM sales_channel_settings WHERE setting_key = 'courier_payable'), '2120-01') INTO v_courier_payable_code;
           SELECT COALESCE((SELECT account_code FROM sales_channel_settings WHERE setting_key = 'delivery_expense'), '5140-01') INTO v_delivery_exp_code;
 
@@ -516,14 +414,17 @@ async function deploy() {
               'cogs_amount', v_total_cost,
               'cod_receivable', v_total_cod_receivable,
               'shipping_fee', p_shipping_fee,
-              'shipping_bearer', p_shipping_bearer
+              'shipping_bearer', p_shipping_bearer,
+              'receivable_code', v_receivable_code,
+              'cogs_code', v_cogs_code,
+              'courier_payable_code', v_courier_payable_code
           );
       END;
       $$;
     `);
 
-    // 8. Deploy settle_courier_cod_remittance stored procedure
-    console.log('8. Deploying settle_courier_cod_remittance stored procedure...');
+    // 4. Redeploy settle_courier_cod_remittance with default 2120-01 for courier liability
+    console.log('4. Redeploying settle_courier_cod_remittance...');
     await client.query(`
       CREATE OR REPLACE FUNCTION settle_courier_cod_remittance(
           p_courier_party_id UUID,
@@ -647,17 +548,18 @@ async function deploy() {
               'voucher_no', v_voucher_no,
               'net_received', p_net_bank_received,
               'fee_deducted', p_courier_fee_deducted,
-              'gross_cleared', p_gross_cod_cleared
+              'gross_cleared', p_gross_cod_cleared,
+              'courier_payable_code', v_courier_payable_code
           );
       END;
       $$;
     `);
 
     await client.query('COMMIT;');
-    console.log('✅ Omnichannel Sales & COA Migration successfully completed!');
+    console.log('✅ Sales Channel Settings and Stored Procedures successfully updated!');
   } catch (err) {
     await client.query('ROLLBACK;');
-    console.error('❌ Migration failed and rolled back:', err);
+    console.error('❌ Update failed and rolled back:', err);
     throw err;
   } finally {
     client.release();
@@ -665,7 +567,7 @@ async function deploy() {
   }
 }
 
-deploy().catch(err => {
-  console.error('Fatal deployment error:', err);
+updateMapping().catch(err => {
+  console.error('Fatal error:', err);
   process.exit(1);
 });

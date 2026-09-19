@@ -5126,10 +5126,10 @@ export default async function handler(req: any, res: any) {
         if (!client) return res.status(500).json({ success: false, error: 'Database connection unavailable' });
         try {
           const defaults = [
-            ['cogs_account', '5110-01', 'Cost of Goods Sold - Finished Goods'],
+            ['cogs_account', '5100-02', 'Cost of Goods Sold - Finished Goods'],
             ['finished_goods_inventory', '1160-01', 'Finished Goods Inventory Asset'],
             ['courier_cod_clearing', '1128-01', 'Courier COD Clearing (Pending Remittance)'],
-            ['courier_payable', '2140-01', 'Courier Delivery & Commission Payable'],
+            ['courier_payable', '2120-01', 'Courier Delivery & Commission Payable'],
             ['delivery_expense', '5140-01', 'Company Borne Delivery Expense'],
             ['pos_cash_drawer', '1110-01', 'POS Cash Drawer'],
             ['pos_terminal_clearing', '1125-01', 'POS Card / Terminal Clearing'],
