@@ -226,9 +226,14 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   const loadData = async () => {
     try {
       const [empRes, attRes, payRes, coaRes, sheetsLogRes, loansRes, paySheetsLogRes, ocrLogsRes, auditLogsRes] = await Promise.all([
-        fetch('/api/hr/employees').then(r => r.json()),
-        fetch(`/api/hr/attendance?month=${selectedMonth}`).then(r => r.json()),
-        fetch(`/api/hr/payroll?month=${selectedMonth}`).then(r => r.json()),
+        fetch('/api/hr/employees')
+          .then(r => r.ok ? r.json() : [])
+          .catch(err => {
+            console.warn('[HRView] Fetch employees notice:', err);
+            return [];
+          }),
+        fetch(`/api/hr/attendance?month=${selectedMonth}`).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`/api/hr/payroll?month=${selectedMonth}`).then(r => r.ok ? r.json() : []).catch(() => []),
         fetch('/api/finance/coa').then(r => r.ok ? r.json() : []).catch(() => []),
         fetch('/api/hr/attendance/sheets').then(r => r.ok ? r.json() : []).catch(() => []),
         fetch('/api/hr/loans').then(r => r.ok ? r.json() : []).catch(() => []),
@@ -237,7 +242,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         fetch('/api/audit').then(r => r.ok ? r.json() : []).catch(() => [])
       ]);
 
-      setEmployees(Array.isArray(empRes) ? empRes : []);
+      if (Array.isArray(empRes)) {
+        setEmployees(empRes);
+      }
       setAttendance(Array.isArray(attRes) ? attRes : []);
       setPayrollSlips(Array.isArray(payRes) ? payRes : []);
       setAttendanceSheetsLog(Array.isArray(sheetsLogRes) ? sheetsLogRes : []);
@@ -249,7 +256,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const coaList = Array.isArray(coaRes) ? coaRes : (coaRes?.data || coaRes?.accounts || []);
       setCoaAccounts(Array.isArray(coaList) ? coaList : []);
     } catch (err) {
-      console.error(err);
+      console.warn('[HRView] Safe loadData notice:', err);
     }
   };
 
@@ -830,6 +837,14 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     const fetchEmployees = () => {
       HrService.clearEmployeeCache();
       loadData();
+      fetch('/api/hr/employees')
+        .then(r => r.ok ? r.json() : [])
+        .then(list => {
+          if (Array.isArray(list) && list.length > 0) {
+            setEmployees(list);
+          }
+        })
+        .catch(err => console.warn('[HRView] fetchEmployees direct sync notice:', err));
       onRefreshAll?.();
     };
     const onClose = () => {
@@ -922,6 +937,20 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         alert("Employee registered successfully!");
         showMsg(editingEmpId ? 'Employee record updated & audit log registered!' : 'Employee registered successfully!');
         notifyMutation('HR', 'EMPLOYEES', editingEmpId ? 'EDIT' : 'CREATE', empForm.name);
+
+        // Optimistic State Update: Append or update newly created employee immediately in local state
+        const savedEmp: Employee | null = (data && data.id) ? data : (data?.employee || null);
+        if (savedEmp) {
+          setEmployees(prev => {
+            if (editingEmpId) {
+              return prev.map(e => (e.id === editingEmpId || e.empCode === editingEmpId) ? { ...e, ...savedEmp } : e);
+            } else {
+              const filtered = prev.filter(e => e.id !== savedEmp.id && e.empCode !== savedEmp.empCode);
+              return [savedEmp, ...filtered];
+            }
+          });
+        }
+
         fetchEmployees();
         onClose();
       }

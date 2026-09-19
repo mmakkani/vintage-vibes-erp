@@ -61,12 +61,15 @@ export default defineConfig(() => {
           skipWaiting: true,
           clientsClaim: true,
           navigateFallback: null,
-          globPatterns: ['**/*.{js,css,ico,png,svg,woff,woff2}'],
+          globPatterns: ['**/*.{css,ico,png,svg,woff,woff2}', 'index.html'],
           globIgnores: [
+            '**/assets/*.js',
+            '**/assets/**/*.js',
             '**/assets/*View*.js',
             '**/assets/CounterSalePOSTerminal*.js',
             '**/assets/StaffMobileAppView*.js',
-            '**/assets/ExecutiveCommandCenterModal*.js'
+            '**/assets/ExecutiveCommandCenterModal*.js',
+            '**/assets/securityMasterPin*.js'
           ],
           runtimeCaching: [
             {
