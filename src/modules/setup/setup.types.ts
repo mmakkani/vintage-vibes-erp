@@ -110,6 +110,8 @@ export interface CompanyProfile {
   whatsappOrderNumber?: string; // Direct WhatsApp order confirmation number
   whatsapp_orders_number?: string; // Database binding for WhatsApp orders number
   whatsappOrdersNumber?: string;
+  virtualHostVideoUrl?: string; // Virtual host video URL / path for collection drops (e.g. /mazi_video.mp4)
+  virtual_host_video_url?: string;
   posTerminalConfig?: POSTerminalConfig; // Physical Smart POS Card Machine link configuration
   paymentGateway?: PaymentGatewayConfig;
   tiktokLiveSocket?: TikTokLiveSocketConfig;

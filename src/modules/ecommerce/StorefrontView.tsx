@@ -883,6 +883,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           if (category) setSelectedCategory(category);
           scrollToVault();
         }}
+        videoUrl={companyProfile.virtual_host_video_url || companyProfile.virtualHostVideoUrl || '/mazi_video.mp4'}
       />
 
       {/* 6. SUCCESS TOAST BANNER */}

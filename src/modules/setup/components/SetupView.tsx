@@ -51,7 +51,8 @@ import {
   EyeOff,
   RefreshCw,
   Maximize2,
-  Wrench
+  Wrench,
+  Video
 } from 'lucide-react';
 import { BulkDataImportModal } from '../../../components/BulkDataImportModal.tsx';
 import { QRCodeCanvas } from 'qrcode.react';
@@ -95,6 +96,8 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   freeShippingThresholdAed: 350,
   standardShippingFeeAed: 25,
   whatsappOrderNumber: '+971554186086',
+  virtualHostVideoUrl: '/mazi_video.mp4',
+  virtual_host_video_url: '/mazi_video.mp4',
   paymentGateway: {
     provider: 'STRIPE_UAE',
     environment: 'SANDBOX',
@@ -1419,6 +1422,110 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* E-Commerce Collection Drop Video Showcase (Live Host Video) */}
+            <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-lg space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-amber-800 font-black text-xs uppercase tracking-wider flex items-center gap-1.5">
+                  <Video className="w-3.5 h-3.5 text-amber-600" />
+                  Storefront Collection Drop Showcase Video (Live Host Video)
+                </span>
+                <span className="text-[10px] bg-amber-200/80 text-amber-900 font-bold px-2 py-0.5 rounded">
+                  SQL Database Persisted
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600">
+                Configure the showcase video for the storefront collection drop (e.g. Winter Maazi host video). Whenever you launch a new collection, you can upload a new video or enter its URL here, and it will immediately update on the storefront screen.
+              </p>
+              <div>
+                <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">
+                  Collection Video URL or Path:
+                </label>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    placeholder="/mazi_video.mp4 or https://..."
+                    value={companyProfile.virtual_host_video_url || companyProfile.virtualHostVideoUrl || ''}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setCompanyProfile({
+                        ...companyProfile,
+                        virtual_host_video_url: val,
+                        virtualHostVideoUrl: val
+                      });
+                    }}
+                    className="flex-1 border border-slate-300 rounded p-1.5 font-mono text-slate-800 focus:border-amber-500 text-xs bg-white"
+                  />
+                  <label className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1">
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Upload Video</span>
+                    <input
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          try {
+                            showMsg('Uploading collection video to company_assets/videos...');
+                            const url = await CompanyProfileService.uploadAsset(file, 'company_assets', 'videos');
+                            setCompanyProfile(prev => ({
+                              ...prev,
+                              virtual_host_video_url: url,
+                              virtualHostVideoUrl: url
+                            }));
+                            showMsg('Collection video uploaded successfully! Click Save Company Profile to persist.');
+                          } catch (err: any) {
+                            showMsg(err?.message || 'Failed to upload video', 'error');
+                          }
+                        }
+                      }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCompanyProfile(prev => ({
+                        ...prev,
+                        virtual_host_video_url: '/mazi_video.mp4',
+                        virtualHostVideoUrl: '/mazi_video.mp4'
+                      }));
+                      showMsg('Reset to default /mazi_video.mp4');
+                    }}
+                    className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs font-medium cursor-pointer transition-colors shrink-0"
+                    title="Reset to local /mazi_video.mp4"
+                  >
+                    Default
+                  </button>
+                </div>
+              </div>
+              {(companyProfile.virtual_host_video_url || companyProfile.virtualHostVideoUrl) && (
+                <div className="mt-2 p-2.5 bg-slate-900 rounded-lg border border-slate-700 flex flex-col sm:flex-row items-center gap-3">
+                  <div className="w-36 h-24 bg-black rounded overflow-hidden flex items-center justify-center shrink-0 border border-amber-400/40">
+                    <video
+                      src={companyProfile.virtual_host_video_url || companyProfile.virtualHostVideoUrl}
+                      className="w-full h-full object-cover"
+                      muted
+                      autoPlay
+                      loop
+                      playsInline
+                    />
+                  </div>
+                  <div className="text-xs text-slate-300 space-y-1">
+                    <div className="flex items-center gap-1.5 text-amber-300 font-bold">
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Live Video Active on Storefront</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 font-mono break-all">
+                      {companyProfile.virtual_host_video_url || companyProfile.virtualHostVideoUrl}
+                    </p>
+                    <p className="text-[10px] text-amber-200/80">
+                      Plays automatically on the public storefront inside the collection showcase card.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* UAE VAT & Financial Period Closing Lock */}

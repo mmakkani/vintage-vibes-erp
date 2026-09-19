@@ -9,12 +9,14 @@ import {
   Radio,
   Tag,
   Check,
-  Volume2
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { luxuryAudio } from '../../utils/luxuryAudio.ts';
 
 interface WinterMaaziStoryHeroProps {
   onExploreCollection: (category?: string) => void;
+  videoUrl?: string;
 }
 
 interface TourProduct {
@@ -166,16 +168,17 @@ const TOUR_PRODUCTS: TourProduct[] = [
 ];
 
 export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
-  onExploreCollection
+  onExploreCollection,
+  videoUrl
 }) => {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [activeStepIndex, setActiveStepIndex] = useState<number>(0);
-  const [videoMode, setVideoMode] = useState<'INTERACTIVE_STAGE' | 'REAL_VIDEO'>('INTERACTIVE_STAGE');
-  const [customVideoUrl, setCustomVideoUrl] = useState<string | null>(null);
+  const [isHostVideoMuted, setIsHostVideoMuted] = useState<boolean>(true);
 
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const archedVideoRef = useRef<HTMLVideoElement | null>(null);
   const activeProduct = TOUR_PRODUCTS[activeStepIndex] || TOUR_PRODUCTS[0];
+  const activeVideoUrl = videoUrl || '/mazi_video.mp4';
 
   // Harmonic Bell Chime via Web Audio API
   const playIntroChime = () => {
@@ -502,129 +505,47 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
             </div>
           </div>
 
-          {/* Controls: Mode Toggle & Audio Controls */}
+          {/* Controls: Tour Voice Controls (Play, Pause, Replay) */}
           <div className="flex items-center gap-2.5 flex-wrap">
-            {/* Mode Switcher */}
-            <div className="bg-black/70 p-1 rounded-full border border-amber-400/60 flex items-center gap-1 shadow-inner">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setVideoMode('INTERACTIVE_STAGE')}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
-                  videoMode === 'INTERACTIVE_STAGE'
-                    ? 'bg-amber-400 text-slate-950 shadow-md font-black'
-                    : 'text-slate-300 hover:text-white'
+                onClick={isPlaying ? stopTour : startTour}
+                className={`px-5 py-2 rounded-full font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-xl transition-all transform active:scale-95 cursor-pointer ${
+                  isPlaying
+                    ? 'bg-rose-500 hover:bg-rose-600 text-white shadow-rose-500/40 ring-2 ring-rose-400'
+                    : 'bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-slate-950 shadow-amber-500/40 ring-2 ring-amber-300/80 animate-pulse'
                 }`}
               >
-                📸 Interactive Stage
+                {isPlaying ? (
+                  <>
+                    <Pause className="w-4 h-4 fill-current" />
+                    <span>Pause Tour</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 fill-current" />
+                    <span>Start Voice Tour</span>
+                  </>
+                )}
               </button>
+
               <button
                 type="button"
-                onClick={() => setVideoMode('REAL_VIDEO')}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
-                  videoMode === 'REAL_VIDEO'
-                    ? 'bg-amber-400 text-slate-950 shadow-md font-black'
-                    : 'text-slate-300 hover:text-white'
-                }`}
+                onClick={() => playStepAudio(activeStepIndex)}
+                className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-amber-300 hover:text-white transition-colors cursor-pointer border border-white/10 shadow-md"
+                title="Replay Narration"
               >
-                📹 Real Video Host
+                <RotateCcw className="w-4 h-4" />
               </button>
             </div>
-
-            {/* Tour Controls (Play, Pause, Replay) */}
-            {videoMode === 'INTERACTIVE_STAGE' && (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={isPlaying ? stopTour : startTour}
-                  className={`px-5 py-2 rounded-full font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-xl transition-all transform active:scale-95 cursor-pointer ${
-                    isPlaying
-                      ? 'bg-rose-500 hover:bg-rose-600 text-white shadow-rose-500/40 ring-2 ring-rose-400'
-                      : 'bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-slate-950 shadow-amber-500/40 ring-2 ring-amber-300/80 animate-pulse'
-                  }`}
-                >
-                  {isPlaying ? (
-                    <>
-                      <Pause className="w-4 h-4 fill-current" />
-                      <span>Pause Tour</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4 fill-current" />
-                      <span>Start Voice Tour</span>
-                    </>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => playStepAudio(activeStepIndex)}
-                  className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-amber-300 hover:text-white transition-colors cursor-pointer border border-white/10 shadow-md"
-                  title="Replay Narration"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                </button>
-              </div>
-            )}
           </div>
         </div>
 
         {/* 1. VISUAL STAGE LAYOUT: GOLD BORDERED CINEMA CARD */}
         <div className="relative w-full rounded-3xl overflow-hidden border-4 border-amber-400 shadow-[0_25px_80px_rgba(0,0,0,0.95)] bg-slate-950">
-          {videoMode === 'REAL_VIDEO' ? (
-            /* Dedicated Real Video Host View (Includes autoplay muted loop playsinline) */
-            <div className="relative w-full aspect-[16/9] min-h-[420px] max-h-[620px] bg-slate-950 flex flex-col items-center justify-center text-center p-6">
-              {customVideoUrl ? (
-                <div className="relative w-full h-full flex items-center justify-center">
-                  <video
-                    ref={videoRef}
-                    src={customVideoUrl}
-                    autoPlay
-                    muted
-                    loop
-                    playsInline
-                    controls
-                    className="w-full h-full object-contain"
-                  />
-                  <div className="absolute top-4 right-4 bg-black/80 backdrop-blur-md px-3 py-1 rounded-full border border-amber-400 text-[10px] text-amber-300 font-bold flex items-center gap-1.5 shadow-lg">
-                    <Volume2 className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Click 'Start Voice Tour' To Unmute</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="max-w-md space-y-4 bg-[#1E1910] p-6 rounded-2xl border-2 border-amber-400/80 shadow-2xl">
-                  <div className="w-16 h-16 rounded-full bg-amber-400/20 border border-amber-400 flex items-center justify-center text-amber-300 mx-auto">
-                    <Radio className="w-8 h-8 animate-pulse" />
-                  </div>
-                  <h3 className="font-black text-lg text-white font-serif">
-                    Connect Real Host Video of the Boy
-                  </h3>
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    Upload a 20-40 second video clip of the boy presenting the jackets to enable full live motion, real gestures, and native voice playback!
-                  </p>
-                  <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider cursor-pointer hover:from-amber-300 hover:to-amber-400 transition-all shadow-lg">
-                    <span>📹 Select / Upload Video of Boy</span>
-                    <input
-                      type="file"
-                      accept="video/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const url = URL.createObjectURL(file);
-                          setCustomVideoUrl(url);
-                        }
-                      }}
-                    />
-                  </label>
-                  <p className="text-[10px] text-slate-400">
-                    Supports .mp4, .mov, or .webm smartphone recordings
-                  </p>
-                </div>
-              )}
-            </div>
-          ) : (
-            /* INTERACTIVE VIRTUAL HOST STAGE WITH IMMEDIATE ANIMATIONS & 3D PARALLAX */
-            <div className="relative w-full aspect-[16/9] min-h-[460px] max-h-[640px] select-none overflow-hidden">
+          {/* INTERACTIVE VIRTUAL HOST STAGE WITH LIVE HOST VIDEO & 3D PARALLAX */}
+          <div className="relative w-full aspect-[16/9] min-h-[460px] max-h-[640px] select-none overflow-hidden">
               {/* 3. BACKGROUND DYNAMIC DEPTH: Subtle slow-panning & parallax zoom */}
               <div className="absolute -inset-4 w-[calc(100%+2rem)] h-[calc(100%+2rem)] animate-studio-pan pointer-events-none">
                 <img
@@ -805,13 +726,50 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
                     isPlaying ? 'animate-host-talk' : 'animate-host-breathe'
                   }`}
                 >
-                  {/* Arched Host Cinema Pod Frame */}
-                  <div className="relative w-full h-full rounded-t-full rounded-b-2xl overflow-hidden border-2 border-amber-400/90 shadow-[0_0_35px_rgba(245,158,11,0.45)] bg-slate-900/90 backdrop-blur-sm pointer-events-auto">
-                    <img
-                      src="/young_boy_host.png"
-                      alt="Virtual Young Host"
+                  {/* Arched Host Cinema Pod Frame - Real Video Host */}
+                  <div className="relative w-full h-full rounded-t-full rounded-b-2xl overflow-hidden border-2 border-amber-400/90 shadow-[0_0_35px_rgba(245,158,11,0.45)] bg-slate-900/90 backdrop-blur-sm pointer-events-auto group">
+                    <video
+                      ref={archedVideoRef}
+                      src={activeVideoUrl}
+                      autoPlay
+                      muted={isHostVideoMuted}
+                      loop
+                      playsInline
                       className="w-full h-full object-cover object-top"
                     />
+
+                    {/* Quick Sound Mute / Unmute Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsHostVideoMuted(prev => {
+                          const next = !prev;
+                          if (archedVideoRef.current) {
+                            archedVideoRef.current.muted = next;
+                            if (!next) {
+                              archedVideoRef.current.play().catch(() => {});
+                            }
+                          }
+                          return next;
+                        });
+                      }}
+                      className="absolute top-2.5 right-2.5 z-30 p-2 rounded-full bg-black/85 hover:bg-amber-400 text-amber-300 hover:text-slate-950 border border-amber-400/70 shadow-xl transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
+                      title={isHostVideoMuted ? "Tap to Unmute Video Voice" : "Tap to Mute"}
+                    >
+                      {isHostVideoMuted ? (
+                        <>
+                          <VolumeX className="w-3.5 h-3.5 text-amber-400" />
+                          <span className="text-[9px] font-mono font-black tracking-wider pr-0.5">UNMUTE</span>
+                        </>
+                      ) : (
+                        <>
+                          <Volume2 className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                          <span className="text-[9px] font-mono font-black tracking-wider pr-0.5 text-emerald-400">SOUND ON</span>
+                        </>
+                      )}
+                    </button>
+
                     {/* Subtle bottom vignette */}
                     <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black via-black/40 to-transparent pointer-events-none" />
                   </div>
@@ -862,7 +820,6 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
                 </svg>
               )}
             </div>
-          )}
 
           {/* 2. SYNCHRONIZED VOICE TOUR SUBTITLE BAR & PORTFOLIO CTA */}
           <div className="bg-gradient-to-r from-black via-[#18140E] to-black p-4 sm:p-5 border-t-4 border-amber-400 flex flex-col md:flex-row items-center justify-between gap-4">
