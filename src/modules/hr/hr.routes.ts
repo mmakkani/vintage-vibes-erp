@@ -1,38 +1,10 @@
 import { Router } from 'express';
-import { Client } from 'pg';
 import { HRController } from './hr.controller.ts';
 import { SetupService } from '../../services/setupService.ts';
 import { Employee, AttendanceRecord, PayrollRecord, EmployeeLoan } from './hr.types.ts';
+import { getPgClient, withDb } from '../../db/pgPool.ts';
 
 export const hrRouter = Router();
-
-// =============================================================
-// Direct PostgreSQL Connection Helper (Zero-Leak Connection Lifecycle)
-// =============================================================
-async function withDb<T>(fn: (client: Client) => Promise<T>): Promise<T> {
-  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-  try {
-    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-    if (match) {
-      let [_, user, rawPwd, host, port, rest] = match;
-      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
-      dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
-    }
-  } catch (e) {}
-
-  const client = new Client({
-    connectionString: dbUrl,
-    ssl: { rejectUnauthorized: false }
-  });
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    try {
-      await client.end();
-    } catch (_) {}
-  }
-}
 
 // Helper: strictly format valid ISO date (YYYY-MM-DD) or return null for PostgreSQL date columns
 function cleanDate(d: any): string | null {

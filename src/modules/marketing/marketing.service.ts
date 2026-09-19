@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { Client } from 'pg';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { streamController } from '../../server/streamController.ts';
 import { eventHub } from '../../server/events.ts';
@@ -25,33 +24,7 @@ import {
   AutoInvoiceRules
 } from './marketing.types.ts';
 import { WhatsAppGatewayConfig } from '../setup/setup.types.ts';
-
-async function getPgClient(): Promise<Client | null> {
-  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-  try {
-    if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
-      dbUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-    }
-    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-    if (match) {
-      let [_, u, rawPwd, host, port, rest] = match;
-      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
-      dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
-    }
-    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-    await client.connect();
-    return client;
-  } catch {
-    try {
-      const fallbackUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-      const fallbackClient = new Client({ connectionString: fallbackUrl, ssl: { rejectUnauthorized: false } });
-      await fallbackClient.connect();
-      return fallbackClient;
-    } catch {
-      return null;
-    }
-  }
-}
+import { getPgClient } from '../../db/pgPool.ts';
 
 class MarketingService {
   private dataFilePath = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)

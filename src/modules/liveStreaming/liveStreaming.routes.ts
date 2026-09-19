@@ -3,23 +3,12 @@ import { streamController } from '../../server/streamController.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { eventHub } from '../../server/events.ts';
 import { tikTokSocketService } from '../../server/tiktokSocketService.ts';
-import { Client } from 'pg';
 import { encryptCredential, maskCredential } from '../../utils/encryption.ts';
 import { supabase } from '../../supabaseClient.ts';
 import QRCode from 'qrcode';
+import { getPgClient } from '../../db/pgPool.ts';
 
 export const liveStreamingRouter = Router();
-
-async function getPgClient(): Promise<Client | null> {
-  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-  try {
-    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-    await client.connect();
-    return client;
-  } catch {
-    return null;
-  }
-}
 
 function getWorkerUrl(): string {
   return process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || 'https://vintage-vibes-erp-production.up.railway.app';

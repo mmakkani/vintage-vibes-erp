@@ -1,6 +1,6 @@
-import { Client } from 'pg';
 import { createClient } from '@supabase/supabase-js';
 import { BotDetector } from '../../server/botDetector.ts';
+import { getPgClient } from '../../db/pgPool.ts';
 
 const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
@@ -16,18 +16,6 @@ export function getClientIp(req: any): string {
          req.connection?.remoteAddress ||
          req.socket?.remoteAddress ||
          '127.0.0.1';
-}
-
-async function getPgClient(): Promise<Client | null> {
-  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-  try {
-    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-    await client.connect();
-    return client;
-  } catch (err) {
-    console.warn('[Devices Controller PG Notice]:', err);
-    return null;
-  }
 }
 
 export const DevicesController = {

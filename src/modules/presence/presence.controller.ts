@@ -1,17 +1,5 @@
-import { Client } from 'pg';
 import { getClientIp } from '../devices/devices.controller.ts';
-
-async function getPgClient(): Promise<Client | null> {
-  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-  try {
-    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-    await client.connect();
-    return client;
-  } catch (err) {
-    console.warn('[Presence PG Notice]:', err);
-    return null;
-  }
-}
+import { getPgClient } from '../../db/pgPool.ts';
 
 export const PresenceController = {
   async heartbeat(req: any, res: any) {

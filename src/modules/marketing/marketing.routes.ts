@@ -1,37 +1,8 @@
 import { Router } from 'express';
-import { Client } from 'pg';
 import { marketingService } from './marketing.service.ts';
 import { baileysManager } from './baileys.service.ts';
 import { WhatsAppChannelItem } from './marketing.types.ts';
-
-const RAILWAY_WORKER_URL = 'https://vintage-vibes-erp-production.up.railway.app';
-
-async function getPgClient(): Promise<Client | null> {
-  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-  try {
-    if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
-      dbUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-    }
-    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-    if (match) {
-      let [_, u, rawPwd, host, port, rest] = match;
-      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
-      dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
-    }
-    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-    await client.connect();
-    return client;
-  } catch (err) {
-    try {
-      const fallbackUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-      const fallbackClient = new Client({ connectionString: fallbackUrl, ssl: { rejectUnauthorized: false } });
-      await fallbackClient.connect();
-      return fallbackClient;
-    } catch {
-      return null;
-    }
-  }
-}
+import { getPgClient } from '../../db/pgPool.ts';
 
 export const marketingRouter = Router();
 export const publicFeedRouter = Router();

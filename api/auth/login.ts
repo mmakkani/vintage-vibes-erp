@@ -51,7 +51,9 @@ function generatePermissions(userId: string, role: string) {
       canUnpost
     };
   });
-}
+// global pool reuse pattern
+let loginPool: any = null;
+let pgPoolClass: any = null;
 
 export default async function handler(req: any, res: any) {
   // Always return application/json headers
@@ -103,15 +105,19 @@ export default async function handler(req: any, res: any) {
       }
 
       async function tryPgQuery(connStr: string) {
-        const pgMod: any = await import('pg');
-        const ClientClass = pgMod.Client || pgMod.default?.Client || pgMod.default;
-        const client = new ClientClass({
-          connectionString: connStr,
-          ssl: { rejectUnauthorized: false },
-          connectionTimeoutMillis: 5000
-        });
-        await client.connect();
-        const result = await client.query(
+        if (!pgPoolClass) {
+          const pgMod: any = await import('pg');
+          pgPoolClass = pgMod.Pool || pgMod.default?.Pool;
+        }
+        if (!loginPool) {
+          loginPool = new pgPoolClass({
+            connectionString: connStr,
+            max: 5,
+            ssl: { rejectUnauthorized: false },
+            connectionTimeoutMillis: 5000
+          });
+        }
+        const result = await loginPool.query(
           `SELECT id, username, email, name, role, is_active, password_hash, permissions
            FROM (
              SELECT id::text, username, email, name, UPPER(role) AS role, is_active, password_hash, permissions FROM users
@@ -122,7 +128,6 @@ export default async function handler(req: any, res: any) {
            LIMIT 1`,
           [username]
         );
-        await client.end().catch(() => {});
         return result.rows?.[0] || null;
       }
 

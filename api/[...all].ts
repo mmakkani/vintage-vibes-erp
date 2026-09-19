@@ -63,39 +63,58 @@ const supabaseAdmin = new Proxy({} as any, {
   }
 });
 
-let pgClientClass: any = null;
-async function getPgClient(): Promise<any> {
+// global pool reuse pattern
+let pool: any = null;
+let pgPoolClass: any = null;
+
+export const getPgClient = async (): Promise<any> => {
   const DEFAULT_DB_URL = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
   let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL;
   try {
-    if (!pgClientClass) {
+    if (!pgPoolClass) {
       try {
         const pgMod: any = await import('pg');
-        pgClientClass = pgMod.Client || pgMod.default?.Client || pgMod.default;
+        pgPoolClass = pgMod.Pool || pgMod.default?.Pool;
       } catch (importErr: any) {
         console.warn('[PG Dynamic Import Warning]:', importErr?.message);
       }
     }
-    if (!pgClientClass) return null;
+    if (!pgPoolClass) return null;
 
-    if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
-      dbUrl = DEFAULT_DB_URL;
+    if (!pool) {
+      if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
+        dbUrl = DEFAULT_DB_URL;
+      }
+      const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+      if (match) {
+        let [_, u, rawPwd, host, port, rest] = match;
+        if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
+        dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+      }
+      const rawPool = new pgPoolClass({
+        connectionString: dbUrl,
+        max: 10,
+        ssl: { rejectUnauthorized: false },
+        connectionTimeoutMillis: 5000
+      });
+      // Safety: intercept client.end() so legacy callers in route handlers do not drain the shared global pool
+      rawPool._originalEnd = rawPool.end.bind(rawPool);
+      rawPool.end = async () => {};
+      pool = rawPool;
     }
-    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-    if (match) {
-      let [_, u, rawPwd, host, port, rest] = match;
-      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
-      dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
-    }
-    const client = new pgClientClass({ connectionString: dbUrl, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 });
-    await client.connect();
-    return client;
+    return pool;
   } catch (err: any) {
     try {
-      if (pgClientClass) {
-        const fallbackClient = new pgClientClass({ connectionString: DEFAULT_DB_URL, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 });
-        await fallbackClient.connect();
-        return fallbackClient;
+      if (pgPoolClass && !pool) {
+        const fallbackPool = new pgPoolClass({
+          connectionString: DEFAULT_DB_URL,
+          max: 10,
+          ssl: { rejectUnauthorized: false },
+          connectionTimeoutMillis: 5000
+        });
+        fallbackPool.end = async () => {};
+        pool = fallbackPool;
+        return pool;
       }
       return null;
     } catch (fbErr: any) {
@@ -103,7 +122,7 @@ async function getPgClient(): Promise<any> {
       return null;
     }
   }
-}
+};
 
 // ============================================================================
 // AUTOMATED BAD BOT DETECTION & AUTO-BLOCK SHIELD ENGINE
