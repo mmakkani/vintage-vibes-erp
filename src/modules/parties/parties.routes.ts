@@ -162,7 +162,7 @@ partiesRouter.get('/:id', async (req, res) => {
 
   try {
     client = await getDbClient();
-    const partyRes = await client.query('SELECT * FROM parties WHERE id = $1', [id]);
+    const partyRes = await client.query('SELECT * FROM parties WHERE id = $1 OR party_id::text = $1 LIMIT 1', [id]);
     if (partyRes.rows.length === 0) {
       return res.status(404).json({ error: 'Party not found' });
     }
@@ -368,7 +368,7 @@ partiesRouter.put('/:id', async (req, res) => {
     client = await getDbClient();
 
     // Check existing
-    const checkRes = await client.query('SELECT * FROM parties WHERE id = $1', [id]);
+    const checkRes = await client.query('SELECT * FROM parties WHERE id = $1 OR party_id::text = $1 LIMIT 1', [id]);
     if (checkRes.rows.length === 0) {
       return res.status(404).json({ error: 'Party not found' });
     }
@@ -425,7 +425,7 @@ partiesRouter.put('/:id', async (req, res) => {
         current_balance = $9,
         is_active = $10,
         account_map = $11
-      WHERE id = $12
+      WHERE id = $12 OR party_id::text = $12
     `, [cleanName, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, isActive, JSON.stringify(accountMap), id]);
 
     // 2. Keep linked COA account updated
@@ -486,127 +486,31 @@ partiesRouter.delete('/:id', async (req, res) => {
 
   try {
     client = await getDbClient();
-
-    // Step A: Find the party details (retrieve id, party_code, and linked coa_account_id / coa_code)
-    const partyRes = await client.query('SELECT * FROM parties WHERE id = $1', [id]);
-    if (partyRes.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Party not found in database' });
-    }
-    const party = partyRes.rows[0];
-    const partyCode = party.code || '';
-    const cleanCode = String(partyCode).replace(/[^A-Za-z0-9]/g, '');
-    const coaId = party.coa_account_id || `acc-${id}`;
-    const coaCodeSupplier = `2110-${cleanCode}`;
-    const coaCodeClient = `1130-${cleanCode}`;
-
-    await client.query('BEGIN');
-
-    // Step B: Disconnect circular foreign keys between parties and coa_accounts FIRST
-    await client.query('UPDATE parties SET coa_account_id = NULL WHERE id = $1', [id]);
-    await client.query('UPDATE coa_accounts SET party_id = NULL WHERE party_id = $1 OR id = $2', [id, coaId]);
-
-    // Step C: Cascade delete or unlink child purchase and sales transactions:
-    // 1. Delete purchase invoice items & unlink gate passes before deleting invoices
-    await client.query(`
-      DELETE FROM purchase_invoice_items 
-      WHERE invoice_id IN (SELECT id FROM purchase_invoices WHERE supplier_id = $1)
-    `).catch(() => {});
-    await client.query(`
-      UPDATE inward_gate_passes 
-      SET purchase_invoice_id = NULL 
-      WHERE purchase_invoice_id IN (SELECT id FROM purchase_invoices WHERE supplier_id = $1)
-    `).catch(() => {});
-    await client.query('DELETE FROM purchase_invoices WHERE supplier_id = $1').catch(async () => {
-      await client!.query('UPDATE purchase_invoices SET supplier_id = NULL WHERE supplier_id = $1', [id]);
-    });
-
-    // 2. Delete or unlink sales invoices & returns
-    await client.query('DELETE FROM sales_invoices WHERE client_id = $1').catch(async () => {
-      await client!.query('UPDATE sales_invoices SET client_id = NULL WHERE client_id = $1', [id]);
-    });
-    await client.query('DELETE FROM sales_gate_passes WHERE party_id = $1', [id]).catch(() => {});
-    await client.query('DELETE FROM parcel_returns WHERE party_id = $1', [id]).catch(() => {});
-
-    // 3. Delete party khata logs
-    await client.query('DELETE FROM party_khata_logs WHERE party_id = $1', [id]).catch(() => {});
-
-    // 4. Any booth, voucher drafting, or ledger references where party_id matches
-    await client.query('UPDATE ledgers SET party_id = NULL WHERE party_id = $1', [id]).catch(() => {});
-    await client.query('UPDATE general_ledger SET party_id = NULL WHERE party_id = $1', [id]).catch(() => {});
-    await client.query('UPDATE voucher_entries SET party_id = NULL WHERE party_id = $1', [id]).catch(() => {});
-    await client.query('UPDATE financial_vouchers SET party_id = NULL WHERE party_id = $1', [id]).catch(() => {});
-    await client.query('UPDATE vouchers SET party_id = NULL WHERE party_id = $1', [id]).catch(() => {});
-    await client.query('UPDATE live_booths SET host_party_id = NULL WHERE host_party_id = $1', [id]).catch(() => {});
-    await client.query('UPDATE live_stream_sales SET party_id = NULL WHERE party_id = $1', [id]).catch(() => {});
-
-    // 5. Conditional deletion of junction tables if they exist in schema
-    await client.query(`
-      DO $$
-      BEGIN
-        IF to_regclass('public.party_contacts') IS NOT NULL THEN
-          EXECUTE 'DELETE FROM party_contacts WHERE party_id = ' || quote_literal('${id}');
-        END IF;
-        IF to_regclass('public.party_ledger_entries') IS NOT NULL THEN
-          EXECUTE 'DELETE FROM party_ledger_entries WHERE party_id = ' || quote_literal('${id}');
-        END IF;
-      END $$;
-    `).catch(() => {});
-
-    // Step D: Delete the corresponding Chart of Accounts record across BOTH tables:
-    // First find matching records in `coa_accounts`:
-    const coaRes = await client.query(`
-      SELECT id, code FROM coa_accounts 
-      WHERE party_id = $1 
-         OR id = $2 
-         OR (code IS NOT NULL AND ($3 != '' AND (code = '2110-' || $3 OR code = '1130-' || $3 OR code LIKE '%' || $3 || '%')))
-    `, [id, coaId, cleanCode]);
-    const coaIds = coaRes.rows.map((r: any) => r.id);
-
-    if (coaIds.length > 0) {
-      await client.query('UPDATE parties SET coa_account_id = NULL WHERE coa_account_id = ANY($1)', [coaIds]).catch(() => {});
-      await client.query('UPDATE coa_accounts SET parent_id = NULL WHERE parent_id = ANY($1)', [coaIds]).catch(() => {});
-      await client.query('DELETE FROM ledgers WHERE account_id = ANY($1)', [coaIds]).catch(() => {});
-      await client.query('DELETE FROM general_ledger WHERE account_id = ANY($1)', [coaIds]).catch(() => {});
-      await client.query('DELETE FROM voucher_entries WHERE account_id = ANY($1)', [coaIds]).catch(() => {});
-      await client.query('DELETE FROM coa_accounts WHERE id = ANY($1)', [coaIds]).catch(() => {});
+    const delRes = await client.query('SELECT public.delete_party_and_coa($1) as result;', [id]);
+    const result = delRes.rows[0]?.result || {};
+    if (result.success === false) {
+      return res.status(400).json({ error: result.error, ...result });
     }
 
-    // Also in `chart_of_accounts` table:
-    await client.query(`
-      DO $$
-      BEGIN
-        IF to_regclass('public.chart_of_accounts') IS NOT NULL THEN
-          EXECUTE 'DELETE FROM chart_of_accounts WHERE (code IS NOT NULL AND (' || quote_literal('${cleanCode}') || ' != '''' AND (code = ''2110-'' || ' || quote_literal('${cleanCode}') || ' OR code = ''1130-'' || ' || quote_literal('${cleanCode}') || ' OR code LIKE ''%'' || ' || quote_literal('${cleanCode}') || ' || ''%'')))';
-        END IF;
-      END $$;
-    `).catch(() => {});
-
-    // Step E: Delete the primary party record:
-    await client.query('DELETE FROM parties WHERE id = $1', [id]);
-
-    // Step F: Commit transaction and return { success: true, message: "Party and linked COA successfully deleted" }
-    await client.query('COMMIT');
-
-    // Also update in-memory store if active
     try {
       PartiesController.deleteParty(id);
     } catch {}
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       message: "Party and linked COA successfully deleted",
-      deletedPartyId: id
+      ...result
     });
-
   } catch (err: any) {
-    if (client) await client.query('ROLLBACK').catch(() => {});
     console.error('Error deleting party from PostgreSQL:', err);
     return res.status(500).json({
       success: false,
       error: err.message || 'Failed to delete party'
     });
   } finally {
-    if (client) await client.end().catch(() => {});
+    if (client) {
+      try { await client.end(); } catch (_) {}
+    }
   }
 });
 
