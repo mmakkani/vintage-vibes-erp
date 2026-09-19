@@ -963,7 +963,7 @@ setupRouter.get('/gemini-key', async (req, res) => {
         return res.json({
           success: true,
           apiKey: row.api_key,
-          model: row.model || 'gemini-3.6',
+          model: row.model || 'gemini-3.7-flash',
           status: row.status || 'ACTIVE',
           updatedAt: row.updated_at,
           configured: true
@@ -984,7 +984,7 @@ setupRouter.get('/gemini-key', async (req, res) => {
     return res.json({ success: true, ...config });
   } catch (_) {
     const envKey = process.env.GEMINI_API_KEY || '';
-    return res.json({ success: true, apiKey: envKey, model: 'gemini-3.6', configured: Boolean(envKey) });
+    return res.json({ success: true, apiKey: envKey, model: 'gemini-3.7-flash', configured: Boolean(envKey) });
   }
 });
 
@@ -994,7 +994,7 @@ setupRouter.put('/gemini-key', async (req, res) => {
     return res.status(400).json({ success: false, error: 'API key must be at least 8 characters' });
   }
   const cleanKey = apiKey.trim();
-  const selectedModel = (model || 'gemini-3.6').trim();
+  const selectedModel = (model || 'gemini-3.7-flash').trim();
 
   let pgClient: Client | null = null;
   let savedRecord = null;
@@ -1006,7 +1006,7 @@ setupRouter.put('/gemini-key', async (req, res) => {
         CREATE TABLE IF NOT EXISTS gemini_api_config (
           id VARCHAR(64) PRIMARY KEY,
           api_key TEXT NOT NULL,
-          model VARCHAR(64) DEFAULT 'gemini-2.5-flash',
+          model VARCHAR(64) DEFAULT 'gemini-3.7-flash',
           status VARCHAR(64) DEFAULT 'ACTIVE',
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );

@@ -9,6 +9,7 @@ export interface AIOCRScanPayload {
   imageBase64: string;
   secondaryImageBase64?: string;
   apiKey?: string;
+  model?: string;
 }
 
 export interface AIOCRScanResult {
@@ -39,6 +40,7 @@ export interface AIOCRScanResult {
   passportImageUrl?: string;
   residencyImageUrl?: string;
   notes?: string;
+  modelUsed?: string;
   error?: string;
 }
 
@@ -108,19 +110,43 @@ MANDATORY RULES:
 }`;
 
 /**
- * Validates a Google Gemini API Key by pinging the model
+ * Universally supported Google Gemini models in cascade order:
+ * Primary: 3.x series ('gemini-3.7-flash', 'gemini-3-flash', 'gemini-3.8-flash', 'gemini-3.6-flash')
+ * Fallback: 2.x & 1.5 series ('gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash')
  */
-export async function validateGeminiApiKey(apiKey: string): Promise<{ valid: boolean; model?: string; error?: string }> {
+export const GEMINI_CASCADE_MODELS: string[] = [
+  'gemini-3.7-flash',
+  'gemini-3-flash',
+  'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-3.6',
+  'gemini-2.0-flash',
+  'gemini-2.5-flash',
+  'gemini-1.5-flash',
+  'gemini-2.5-pro',
+  'gemini-1.5-pro'
+];
+
+/**
+ * Validates a Google Gemini API Key by pinging the model with automatic cascade fallback
+ */
+export async function validateGeminiApiKey(
+  apiKey: string,
+  preferredModel?: string
+): Promise<{ valid: boolean; model?: string; error?: string }> {
   if (!apiKey || apiKey.trim().length < 8) {
     return { valid: false, error: 'API Key must be at least 10 characters long (e.g. AIzaSy...)' };
   }
 
   const cleanKey = apiKey.trim();
-  // Universally supported active production Google Gemini models (Fastest & most reliable first)
-  const models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-3.6', 'gemini-3.6-flash'];
+  const modelsToTry = Array.from(new Set([
+    ...(preferredModel ? [preferredModel.trim()] : []),
+    ...GEMINI_CASCADE_MODELS
+  ]));
+
   let lastError = '';
 
-  for (const model of models) {
+  for (const model of modelsToTry) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${cleanKey}`;
       const res = await fetch(url, {
@@ -142,9 +168,17 @@ export async function validateGeminiApiKey(apiKey: string): Promise<{ valid: boo
         return { valid: false, error: 'API Key is not valid. Please check your key from Google AI Studio (aistudio.google.com).' };
       }
 
-      // If this specific model is deprecated or not available, continue to next model in list
-      if (msg.includes('not found') || msg.includes('no longer available') || msg.includes('deprecated')) {
-        lastError = msg;
+      // If 404 (model identifier not found / route mismatch / deprecated), immediately catch and fallback
+      if (
+        res.status === 404 ||
+        msg.toLowerCase().includes('not found') ||
+        msg.toLowerCase().includes('is not supported') ||
+        msg.toLowerCase().includes('no longer available') ||
+        msg.toLowerCase().includes('deprecated') ||
+        data?.error?.status === 'NOT_FOUND'
+      ) {
+        console.warn(`[Gemini Validation] Model '${model}' returned 404 (${msg}). Cascading to next fallback model...`);
+        lastError = msg || `Model ${model} returned 404`;
         continue;
       }
 
@@ -160,15 +194,23 @@ export async function validateGeminiApiKey(apiKey: string): Promise<{ valid: boo
 }
 
 /**
- * Executes direct Gemini Vision API call from browser
+ * Executes direct Gemini Vision API call from browser with automatic cascade fallback
  */
-async function callGeminiVisionApi(apiKey: string, parts: any[]): Promise<any> {
-  const models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-3.6', 'gemini-3.6-flash'];
+async function callGeminiVisionApi(
+  apiKey: string,
+  parts: any[],
+  preferredModel?: string
+): Promise<{ data: any; modelUsed: string }> {
+  const modelsToTry = Array.from(new Set([
+    ...(preferredModel ? [preferredModel.trim()] : []),
+    ...GEMINI_CASCADE_MODELS
+  ]));
+
   let lastError: any = null;
 
-  for (const model of models) {
+  for (const model of modelsToTry) {
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`;
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -191,6 +233,21 @@ async function callGeminiVisionApi(apiKey: string, parts: any[]): Promise<any> {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         const errMsg = errorData?.error?.message || response.statusText;
+
+        // Catch 404 (model identifier not found / route mismatch / not supported) and cascade immediately to fallback
+        if (
+          response.status === 404 ||
+          errMsg.toLowerCase().includes('not found') ||
+          errMsg.toLowerCase().includes('is not supported') ||
+          errMsg.toLowerCase().includes('no longer available') ||
+          errMsg.toLowerCase().includes('deprecated') ||
+          errorData?.error?.status === 'NOT_FOUND'
+        ) {
+          console.warn(`[Gemini Vision] Model '${model}' returned 404 / NOT_FOUND (${errMsg}). Cascading to next fallback model...`);
+          lastError = new Error(`Gemini ${model} 404: ${errMsg}`);
+          continue;
+        }
+
         lastError = new Error(`Gemini ${model} error: ${errMsg}`);
         continue;
       }
@@ -198,17 +255,21 @@ async function callGeminiVisionApi(apiKey: string, parts: any[]): Promise<any> {
       const resData = await response.json();
       const textContent = resData?.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!textContent) {
-        throw new Error('No text generated by Gemini Vision model.');
+        throw new Error(`No text generated by Gemini model ${model}.`);
       }
 
       const cleanJson = textContent.replace(/```json/gi, '').replace(/```/g, '').trim();
-      return JSON.parse(cleanJson);
+      return {
+        data: JSON.parse(cleanJson),
+        modelUsed: model
+      };
     } catch (e: any) {
       lastError = e;
+      console.warn(`[Gemini Vision] Attempt with '${model}' failed:`, e?.message || e);
     }
   }
 
-  throw lastError || new Error('Failed to reach Gemini Vision API.');
+  throw lastError || new Error('Failed to reach Gemini Vision API across all cascade models.');
 }
 
 /**
@@ -253,7 +314,8 @@ export async function executeDocumentOcr(payload: AIOCRScanPayload): Promise<AIO
   parts.push({ text: OCR_PROMPT });
 
   try {
-    const parsed = await callGeminiVisionApi(apiKey, parts);
+    const selectedModel = payload.model || (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_model') || '').trim() : '') || 'gemini-3.7-flash';
+    const { data: parsed, modelUsed } = await callGeminiVisionApi(apiKey, parts, selectedModel);
 
     return {
       success: true,
@@ -278,7 +340,12 @@ export async function executeDocumentOcr(payload: AIOCRScanPayload): Promise<AIO
       residencyExpiryDate: parsed.residencyExpiryDate || '',
       confidence: Number(parsed.confidence) || 0.98,
       source: 'GEMINI_AI_VISION',
-      notes: 'Extracted directly via Google Gemini 3.6 Flash Vision'
+      idFrontImageUrl: (documentType === 'EMIRATES_ID' || parsed.documentType === 'EMIRATES_ID') ? imageBase64 : undefined,
+      idBackImageUrl: secondaryImageBase64 ? secondaryImageBase64 : undefined,
+      passportImageUrl: (documentType === 'PASSPORT' || parsed.documentType === 'PASSPORT') ? imageBase64 : undefined,
+      residencyImageUrl: (documentType === 'RESIDENCY_VISA' || parsed.documentType === 'RESIDENCY_VISA') ? imageBase64 : undefined,
+      notes: `Extracted directly via Google Gemini Vision AI (${modelUsed})`,
+      modelUsed
     };
   } catch (apiErr: any) {
     console.error('[Gemini Direct OCR Failed]:', apiErr?.message);

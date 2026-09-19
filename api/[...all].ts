@@ -1495,7 +1495,7 @@ export default async function handler(req: any, res: any) {
     if (pathname.includes('/api/hr/ocr/status') && method === 'GET') {
       return res.status(200).json({
         configured: true,
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.7-flash',
         status: 'READY'
       });
     }
@@ -4058,9 +4058,9 @@ export default async function handler(req: any, res: any) {
         }
 
         try {
-          const testModels = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-3.6'];
+          const testModels = ['gemini-3.7-flash', 'gemini-3-flash', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
           let pingSuccess = false;
-          let pingModel = 'gemini-2.5-flash';
+          let pingModel = 'gemini-3.7-flash';
           let pingErr = '';
 
           for (const m of testModels) {

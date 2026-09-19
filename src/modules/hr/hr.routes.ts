@@ -1228,7 +1228,7 @@ hrRouter.get('/ocr/status', async (req, res) => {
   try {
     const config = await SetupService.getGeminiApiConfig();
     if (config.configured) {
-      return res.json({ configured: true, model: config.model || 'gemini-2.5-flash' });
+      return res.json({ configured: true, model: config.model || 'gemini-3.7-flash' });
     }
   } catch (_) {}
   return res.json(status);

@@ -858,7 +858,7 @@ export class SetupService {
           if (data && data.success && data.apiKey) {
             return {
               apiKey: data.apiKey,
-              model: data.model || 'gemini-2.5-flash',
+              model: data.model || 'gemini-3.7-flash',
               status: data.status || 'ACTIVE',
               configured: true,
               updatedAt: data.updatedAt
@@ -869,7 +869,7 @@ export class SetupService {
       const localKey = (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_api_key') || '') : '').trim();
       return {
         apiKey: localKey,
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.7-flash',
         configured: Boolean(localKey)
       };
     }
@@ -879,7 +879,7 @@ export class SetupService {
     if (envKey) {
       return {
         apiKey: envKey,
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.7-flash',
         configured: true
       };
     }
@@ -894,7 +894,7 @@ export class SetupService {
       if (!error && data && data.api_key) {
         return {
           apiKey: data.api_key,
-          model: data.model || 'gemini-2.5-flash',
+          model: data.model || 'gemini-3.7-flash',
           configured: true,
           updatedAt: data.updated_at
         };
@@ -903,19 +903,19 @@ export class SetupService {
 
     return {
       apiKey: '',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.7-flash',
       configured: false
     };
   }
 
-  public static async updateGeminiApiKey(apiKey: string, model: string = 'gemini-2.5-flash'): Promise<{ success: boolean; message: string }> {
+  public static async updateGeminiApiKey(apiKey: string, model: string = 'gemini-3.7-flash'): Promise<{ success: boolean; message: string }> {
     const trimmed = apiKey.trim();
 
     if (typeof window !== 'undefined') {
       const response = await fetch('/api/setup/gemini-key', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: trimmed, model: model || 'gemini-2.5-flash' })
+        body: JSON.stringify({ apiKey: trimmed, model: model || 'gemini-3.7-flash' })
       });
       const data = await response.json();
       if (!response.ok || !data.success) {
@@ -923,6 +923,7 @@ export class SetupService {
       }
       try {
         localStorage.setItem('vintage_gemini_api_key', trimmed);
+        localStorage.setItem('vintage_gemini_model', model || 'gemini-3.7-flash');
       } catch {}
       return { success: true, message: data.message || 'Gemini API key successfully saved.' };
     }
@@ -935,7 +936,7 @@ export class SetupService {
         .upsert({
           id: 'default',
           api_key: trimmed,
-          model: model || 'gemini-2.5-flash',
+          model: model || 'gemini-3.7-flash',
           status: 'ACTIVE',
           updated_at: new Date().toISOString()
         });

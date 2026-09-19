@@ -106,10 +106,31 @@ Return ONLY a pure JSON object matching this schema without markdown codeblocks 
 }`;
 
 /**
- * Direct Gemini 3.6 / 2.5 Flash Vision browser execution
+ * Universally supported Google Gemini models in cascade order:
+ * Primary: 3.x series ('gemini-3.7-flash', 'gemini-3-flash')
+ * Fallback: 2.x & 1.5 series ('gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash')
  */
-async function callGeminiVisionAppraisal(apiKey: string, imageBase64: string): Promise<VintageValuationResult> {
-  const models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-3.6', 'gemini-3.6-flash'];
+export const GEMINI_VALUATION_CASCADE_MODELS: string[] = [
+  'gemini-3.7-flash',
+  'gemini-3-flash',
+  'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-3.6',
+  'gemini-2.0-flash',
+  'gemini-2.5-flash',
+  'gemini-1.5-flash',
+  'gemini-2.5-pro',
+  'gemini-1.5-pro'
+];
+
+/**
+ * Direct Gemini 3.x / 2.x Flash Vision browser execution with automatic cascade fallback
+ */
+async function callGeminiVisionAppraisal(apiKey: string, imageBase64: string, preferredModel?: string): Promise<VintageValuationResult> {
+  const models = Array.from(new Set([
+    ...(preferredModel ? [preferredModel.trim()] : []),
+    ...GEMINI_VALUATION_CASCADE_MODELS
+  ]));
   const mime = detectMime(imageBase64);
   const data = cleanBase64(imageBase64);
 
@@ -144,7 +165,23 @@ async function callGeminiVisionAppraisal(apiKey: string, imageBase64: string): P
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        lastError = new Error(errData?.error?.message || response.statusText);
+        const errMsg = errData?.error?.message || response.statusText;
+
+        // Catch 404 (model identifier not found / route mismatch) and cascade immediately to fallback
+        if (
+          response.status === 404 ||
+          errMsg.toLowerCase().includes('not found') ||
+          errMsg.toLowerCase().includes('is not supported') ||
+          errMsg.toLowerCase().includes('no longer available') ||
+          errMsg.toLowerCase().includes('deprecated') ||
+          errData?.error?.status === 'NOT_FOUND'
+        ) {
+          console.warn(`[Gemini Vintage Valuation] Model '${model}' returned 404 (${errMsg}). Cascading to next fallback model...`);
+          lastError = new Error(`Gemini ${model} 404: ${errMsg}`);
+          continue;
+        }
+
+        lastError = new Error(errMsg);
         continue;
       }
 
@@ -368,10 +405,11 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
     (typeof window !== 'undefined' && (window as any).__ENV__?.VITE_GEMINI_API_KEY) ||
     (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_api_key') || '').trim() : '');
 
-  // 2. If API Key is available, execute direct neural appraisal
+  // 2. If API Key is available, execute direct neural appraisal with 3.x cascade fallback
   if (apiKey && apiKey.length > 10) {
     try {
-      const result = await callGeminiVisionAppraisal(apiKey, imageBase64);
+      const preferredModel = (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_model') || '').trim() : '') || 'gemini-3.7-flash';
+      const result = await callGeminiVisionAppraisal(apiKey, imageBase64, preferredModel);
       return result;
     } catch (apiErr: any) {
       console.warn('[Gemini Vision Appraisal failed, attempting backend route or heuristic]:', apiErr?.message);

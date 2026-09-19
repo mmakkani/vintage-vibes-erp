@@ -21,7 +21,7 @@ interface GeminiApiConfigCardProps {
 
 export const GeminiApiConfigCard: React.FC<GeminiApiConfigCardProps> = ({ onNotify }) => {
   const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('gemini-3.6');
+  const [model, setModel] = useState('gemini-3.7-flash');
   const [showKey, setShowKey] = useState(false);
   const [isConfigured, setIsConfigured] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
@@ -329,8 +329,12 @@ export const GeminiApiConfigCard: React.FC<GeminiApiConfigCardProps> = ({ onNoti
               onChange={e => setModel(e.target.value)}
               className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-xs font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
             >
-              <option value="gemini-3.6">gemini-3.6 (Next-Gen High Precision Vision - Recommended)</option>
+              <option value="gemini-3.7-flash">gemini-3.7-flash (Latest 3.x Flash - Highest Speed & Precision - Recommended)</option>
+              <option value="gemini-3-flash">gemini-3-flash (Google 3.x Flash Production)</option>
+              <option value="gemini-3.8-flash">gemini-3.8-flash (Preview High-Density Flash)</option>
               <option value="gemini-3.6-flash">gemini-3.6-flash (Ultra-Fast 3.6 Speed)</option>
+              <option value="gemini-3.6">gemini-3.6 (Next-Gen High Precision Vision)</option>
+              <option value="gemini-2.0-flash">gemini-2.0-flash (Stable Production Fallback)</option>
               <option value="gemini-2.5-flash">gemini-2.5-flash (Fast & Multimodal)</option>
               <option value="gemini-2.5-pro">gemini-2.5-pro (Deep Reasoning & Complex Tags)</option>
               <option value="gemini-1.5-flash">gemini-1.5-flash (Standard Production)</option>

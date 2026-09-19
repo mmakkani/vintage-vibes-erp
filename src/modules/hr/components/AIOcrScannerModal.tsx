@@ -143,7 +143,7 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
       const res = await fetch('/api/setup/gemini-key', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: trimmed, model: 'gemini-2.5-flash' })
+        body: JSON.stringify({ apiKey: trimmed, model: 'gemini-3.7-flash' })
       });
       const data = await res.json();
       if (res.ok && data?.success) {

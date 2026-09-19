@@ -207,10 +207,29 @@ Return ONLY pure JSON matching this schema:
 Only output pure JSON without markdown codeblocks or commentary.`
       });
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: { parts }
-      });
+      let response: any = null;
+      const candidateModels = [
+        'gemini-3.7-flash',
+        'gemini-3-flash',
+        'gemini-3.8-flash',
+        'gemini-3.6-flash',
+        'gemini-2.0-flash',
+        'gemini-2.5-flash',
+        'gemini-1.5-flash'
+      ];
+      let lastModelErr: any = null;
+      for (const m of candidateModels) {
+        try {
+          response = await ai.models.generateContent({
+            model: m,
+            contents: { parts }
+          });
+          if (response?.text) break;
+        } catch (mErr) {
+          lastModelErr = mErr;
+        }
+      }
+      if (!response?.text) throw lastModelErr || new Error('Vintage Garment valuation failed.');
 
       const text = response.text || '';
       const cleanJson = text.replace(/```json/gi, '').replace(/```/g, '').trim();
@@ -317,10 +336,29 @@ CRITICAL MANDATORY INSTRUCTIONS:
 Only output pure JSON. No markdown codeblocks, no commentary. Context hint: ${textPrompt || 'Supplier commercial invoice'}`
       });
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: { parts }
-      });
+      let response: any = null;
+      const candidateModels = [
+        'gemini-3.7-flash',
+        'gemini-3-flash',
+        'gemini-3.8-flash',
+        'gemini-3.6-flash',
+        'gemini-2.0-flash',
+        'gemini-2.5-flash',
+        'gemini-1.5-flash'
+      ];
+      let lastModelErr: any = null;
+      for (const m of candidateModels) {
+        try {
+          response = await ai.models.generateContent({
+            model: m,
+            contents: { parts }
+          });
+          if (response?.text) break;
+        } catch (mErr) {
+          lastModelErr = mErr;
+        }
+      }
+      if (!response?.text) throw lastModelErr || new Error('Supplier invoice OCR scan failed.');
 
       const text = response.text || '';
       const cleanJson = text.replace(/```json/gi, '').replace(/```/g, '').trim();
