@@ -5301,6 +5301,162 @@ export default async function handler(req: any, res: any) {
         }
       }
 
+      if ((pathname.includes('/ecommerce/orders/checkout') || pathname.endsWith('/orders/checkout')) && method === 'POST') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+        try {
+          await client.query('BEGIN');
+          const {
+            customerName,
+            customerPhone,
+            customerEmail,
+            shippingAddress,
+            city,
+            country,
+            items,
+            paymentMethod,
+            paymentRef
+          } = body;
+
+          if (!customerName || !customerPhone || !Array.isArray(items) || items.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ success: false, error: 'Customer name, phone and items array are required.' });
+          }
+
+          // 1. Verify pieces are still available
+          const barcodes = items.map((i: any) => i.barcode || i.id);
+          const checkQuery = await client.query(`
+            SELECT barcode, is_sold, status FROM public.inventory_pieces 
+            WHERE barcode = ANY($1) FOR UPDATE
+          `, [barcodes]);
+
+          for (const row of checkQuery.rows) {
+            if (row.is_sold || row.status === 'SOLD') {
+              await client.query('ROLLBACK');
+              return res.status(409).json({
+                success: false,
+                error: `Piece ${row.barcode} was just purchased by another collector!`
+              });
+            }
+          }
+
+          // 2. Compute financial totals
+          const subtotal = items.reduce((sum: number, item: any) => sum + Number(item.unitPrice || item.price || item.estimatedPrice || 0), 0);
+          const deliveryFee = subtotal >= 350 ? 0 : 25;
+          const totalAmount = subtotal + deliveryFee;
+          const orderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+          const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
+
+          // 3. Compute payment classification
+          const isOnlinePaid = paymentMethod && paymentMethod !== 'COD' && paymentMethod !== 'CASH_ON_DELIVERY';
+          const computedPaymentStatus = isOnlinePaid ? 'PAID' : 'UNPAID_PENDING_COD';
+          const computedPaymentRef = isOnlinePaid
+            ? (paymentRef || `TXN-${Date.now().toString().slice(-6)}`)
+            : 'COD-PAY-ON-DELIVERY';
+
+          // 4. Insert into orders table
+          await client.query(`
+            INSERT INTO public.orders (
+              id, order_number, customer_name, customer_phone, customer_email, customer_address, 
+              city, country, items, subtotal, delivery_fee, total_amount, currency, 
+              payment_method, payment_status, payment_reference, order_status, source, notes, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW())
+          `, [
+            orderId,
+            orderNumber,
+            customerName,
+            customerPhone,
+            customerEmail || '',
+            shippingAddress || '',
+            city || 'Dubai',
+            country || 'UAE',
+            JSON.stringify(items),
+            subtotal,
+            deliveryFee,
+            totalAmount,
+            'AED',
+            paymentMethod || 'COD',
+            computedPaymentStatus,
+            computedPaymentRef,
+            'CONFIRMED',
+            'STOREFRONT',
+            isOnlinePaid ? `Online Payment Ref: ${computedPaymentRef}` : `Cash on Delivery (Collect AED ${totalAmount.toFixed(2)})`
+          ]);
+
+          // 5. Atomically lock pieces: status = 'CLAIMED_PENDING', is_sold = true
+          await client.query(`
+            UPDATE public.inventory_pieces 
+            SET is_sold = true, status = 'CLAIMED_PENDING' 
+            WHERE barcode = ANY($1)
+          `, [barcodes]);
+
+          // 6. Queue active DRAFT sales invoice in Dispatch Hub (DraftInvoicesManager)
+          const invoiceId = `inv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+          const invoiceNo = `SINV-${Date.now().toString().slice(-6)}`;
+          await client.query(`
+            INSERT INTO public.sales_invoices (
+              id, invoice_no, customer_name, customer_phone, invoice_date, channel, 
+              payment_method, payment_status, payment_reference, shipping_address, city,
+              subtotal, discount_amount, tax_amount, total_amount, status, items, order_id, created_at
+            ) VALUES ($1, $2, $3, $4, CURRENT_DATE, 'ECOMMERCE', $5, $6, $7, $8, $9, $10, 0, 0, $11, 'DRAFT', $12, $13, NOW())
+            ON CONFLICT (id) DO NOTHING;
+          `, [
+            invoiceId,
+            invoiceNo,
+            customerName,
+            customerPhone,
+            paymentMethod || 'COD',
+            computedPaymentStatus,
+            computedPaymentRef,
+            shippingAddress || '',
+            city || 'Dubai',
+            subtotal,
+            totalAmount,
+            JSON.stringify(items),
+            orderId
+          ]);
+
+          await client.query('COMMIT');
+
+          const itemsList = items.map((it: any) => `• ${it.description || it.itemName || it.barcode} (AED ${it.unitPrice || it.price})`).join('\n');
+          const waText = encodeURIComponent(
+            `*Vintage Vibes Dubai - Order Confirmation*\n` +
+            `Order Ref: *#${orderNumber}*\n` +
+            `Customer: ${customerName}\n` +
+            `Phone: ${customerPhone}\n` +
+            `Address: ${shippingAddress || city}\n\n` +
+            `*Items:*\n${itemsList}\n\n` +
+            `*Total Payable:* AED ${totalAmount.toFixed(2)} (${paymentMethod})\n\n` +
+            `Thank you for shopping authentic vintage!`
+          );
+          const whatsappUrl = `https://wa.me/971508839120?text=${waText}`;
+
+          return res.status(200).json({
+            success: true,
+            order: {
+              id: orderId,
+              orderNumber,
+              customerName,
+              customerPhone,
+              totalAmount,
+              subtotal,
+              deliveryFee,
+              items,
+              paymentMethod,
+              orderStatus: 'CONFIRMED'
+            },
+            invoiceNo,
+            whatsappUrl,
+            message: `Order #${orderNumber} successfully confirmed and linked to Dispatch Hub!`
+          });
+        } catch (dbErr: any) {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
       if ((pathname.includes('/grail-bounties') || pathname.endsWith('/ecommerce/bounty') || pathname.includes('/ecommerce/bounty')) && method === 'POST') {
         const client = await getPgClient();
         if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
