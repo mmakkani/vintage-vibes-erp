@@ -291,7 +291,7 @@ export const SalesChannelSettingsView: React.FC<{ onRefreshAll?: () => void }> =
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-emerald-600" />
             <span className="text-xs font-black uppercase tracking-wider text-stone-800">
-              Automated Dispatch Journal Voucher Structure ($\sum \text{Debits} = \sum \text{Credits}$)
+              Automated Dispatch Journal Voucher Structure (Total Debits = Total Credits)
             </span>
           </div>
           <span className="text-[11px] text-stone-500 font-mono">Discrepancy: Exactly AED 0.00</span>
