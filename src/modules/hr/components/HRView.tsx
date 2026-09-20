@@ -9,6 +9,7 @@ import { AttendanceModal } from './AttendanceModal.tsx';
 import { RoyalWaxSeal } from '../../../components/RoyalWaxSeal.tsx';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { HrService } from '../../../services/hrService.ts';
+import { PayrollService } from '../../../services/payrollService.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import {
   Briefcase,
@@ -207,6 +208,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   // Dedicated Monthly Payroll Register Window (Puri month ki file window me khulay gi)
   const [showPayrollRegisterWindow, setShowPayrollRegisterWindow] = useState(false);
   const [activePayrollSheetMonth, setActivePayrollSheetMonth] = useState<string | null>(null);
+  const [isSyncingPayroll, setIsSyncingPayroll] = useState(false);
 
   // Employee Loans & Advances state
   const [employeeLoans, setEmployeeLoans] = useState<EmployeeLoan[]>([]);
@@ -422,11 +424,65 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     setActiveAttendanceSheetMonth(month);
   };
 
+  // Dedicated Payroll Window loader & auto-reconciler
+  const loadPayrollWindowData = async (month: string, forceSync: boolean = false) => {
+    try {
+      const [attRes, payRes] = await Promise.all([
+        fetch(`/api/hr/attendance?month=${month}`).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`/api/hr/payroll?month=${month}`).then(r => r.ok ? r.json() : []).catch(() => [])
+      ]);
+
+      const attRecords: AttendanceRecord[] = Array.isArray(attRes) ? attRes : [];
+      let payRecords: PayrollRecord[] = Array.isArray(payRes) ? payRes : [];
+
+      const isPosted = payRecords.length > 0 && payRecords.every(p => p.status === 'POSTED');
+
+      // Check if attendance has more staff than draft payroll slips (or missing employees)
+      const existingPayEmpIds = new Set(payRecords.map(p => String(p.employeeId || (p as any).employee_id || '')));
+      const existingPayCodes = new Set(payRecords.map(p => String(p.empCode || (p as any).emp_code || '').trim().toLowerCase()));
+
+      const hasMissingFromAtt = attRecords.some(a => {
+        const idStr = String(a.employeeId || (a as any).employee_id || '');
+        const codeStr = String(a.empCode || (a as any).emp_code || '').trim().toLowerCase();
+        return (!idStr || !existingPayEmpIds.has(idStr)) && (!codeStr || !existingPayCodes.has(codeStr));
+      });
+
+      if ((!isPosted && (hasMissingFromAtt || payRecords.length < attRecords.length)) || forceSync) {
+        setIsSyncingPayroll(true);
+        try {
+          const syncedSlips = await PayrollService.syncPayrollFromAttendance(month);
+          if (Array.isArray(syncedSlips) && syncedSlips.length > 0) {
+            payRecords = syncedSlips;
+            setPayrollSlips(syncedSlips);
+            if (forceSync) {
+              showMsg(`Synced ${syncedSlips.length} employees from Attendance into Payroll Sheet!`);
+            }
+          }
+        } finally {
+          setIsSyncingPayroll(false);
+        }
+      } else {
+        setPayrollSlips(payRecords);
+      }
+
+      // Refresh sheets log
+      fetch('/api/hr/payroll/sheets')
+        .then(r => r.ok ? r.json() : [])
+        .then(sheets => {
+          if (Array.isArray(sheets)) setPayrollSheetsLog(sheets);
+        })
+        .catch(() => {});
+    } catch (err) {
+      console.error('[HRView] loadPayrollWindowData error:', err);
+    }
+  };
+
   // Open dedicated payroll register window for any month
   const handleOpenPayrollRegisterWindow = async (month: string) => {
     setSelectedMonth(month);
     setActivePayrollSheetMonth(month);
     setShowPayrollRegisterWindow(true);
+    await loadPayrollWindowData(month);
   };
 
   // Update attendance inside the window
@@ -658,22 +714,22 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       return;
     }
     try {
-      const res = await fetch('/api/hr/payroll/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month: selectedMonth })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showMsg(data.error || 'Payroll engine failed', 'error');
-      } else {
-        showMsg(`Formula-based payroll engine calculated ${data.records?.length || 0} employee salary slips for ${selectedMonth}!`);
+      setIsSyncingPayroll(true);
+      const syncedSlips = await PayrollService.syncPayrollFromAttendance(selectedMonth);
+      if (Array.isArray(syncedSlips) && syncedSlips.length > 0) {
+        setPayrollSlips(syncedSlips);
+        showMsg(`Formula-based payroll engine calculated ${syncedSlips.length} employee salary slips for ${selectedMonth}!`);
         notifyMutation('HR', 'PAYROLL', 'CREATE', selectedMonth);
         loadData();
         onRefreshAll();
+      } else {
+        showMsg('Payroll calculated successfully.');
+        loadData();
       }
     } catch (err) {
       showMsg('Payroll engine error', 'error');
+    } finally {
+      setIsSyncingPayroll(false);
     }
   };
 
@@ -3455,14 +3511,30 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setShowPayrollRegisterWindow(false)}
-                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-sm font-bold transition-colors"
-                title="Close Window"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                {!isPayrollPosted && (
+                  <button
+                    type="button"
+                    id="btn-sync-payroll-from-attendance"
+                    onClick={() => loadPayrollWindowData(activePayrollSheetMonth || selectedMonth, true)}
+                    disabled={isSyncingPayroll}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                    title="Regenerate & sync all active employees and days worked from Posted Attendance"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingPayroll ? 'animate-spin' : ''}`} />
+                    <span>{isSyncingPayroll ? 'Syncing Roster...' : 'Regenerate / Sync from Attendance'}</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowPayrollRegisterWindow(false)}
+                  className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-sm font-bold transition-colors cursor-pointer"
+                  title="Close Window"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             {/* Register Window KPI Strip */}
@@ -3570,6 +3642,30 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                         </td>
                       </tr>
                     ))}
+                    {payrollSlips.length === 0 && (
+                      <tr>
+                        <td colSpan={11} className="px-4 py-8 text-center text-slate-500 font-sans">
+                          {isSyncingPayroll ? (
+                            <div className="flex items-center justify-center gap-2 text-blue-700 font-bold">
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              <span>Rebuilding payroll slips from attendance records...</span>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <div className="font-semibold text-slate-700">No payroll slips found for this month.</div>
+                              <button
+                                type="button"
+                                onClick={() => loadPayrollWindowData(activePayrollSheetMonth || selectedMonth, true)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-xs"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                                <span>Generate / Sync from Attendance</span>
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>

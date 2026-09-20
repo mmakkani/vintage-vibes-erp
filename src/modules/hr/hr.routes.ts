@@ -872,7 +872,151 @@ hrRouter.delete(['/attendance/sheet', '/attendance/:month'], async (req, res) =>
   }
 });
 
-// POST /api/hr/attendance/post - Lock & Post attendance sheet
+// Helper function to rebuild draft payroll slips from attendance records for a month
+async function rebuildPayrollFromAttendance(client: any, month: string) {
+  const attRes = await client.query(`
+    SELECT * FROM employee_attendance 
+    WHERE month_year = $1 
+    ORDER BY emp_code ASC;
+  `, [month]);
+  const attendanceRows = attRes.rows || [];
+  if (attendanceRows.length === 0) return [];
+
+  const empRes = await client.query(`
+    SELECT * FROM employees 
+    WHERE is_active IS NOT FALSE AND is_deleted IS NOT TRUE 
+    ORDER BY emp_code ASC;
+  `).catch(() => ({ rows: [] }));
+  const employees = empRes.rows || [];
+
+  const loanRes = await client.query(`
+    SELECT * FROM employee_loans 
+    WHERE status = 'ACTIVE' AND remaining_amount > 0;
+  `).catch(() => ({ rows: [] }));
+  const loans = loanRes.rows || [];
+
+  // Clear stale DRAFT slips for this month
+  await client.query(`
+    DELETE FROM employee_payroll 
+    WHERE month_year = $1 AND (status = 'DRAFT' OR status IS NULL);
+  `, [month]).catch(() => {});
+
+  let totalGross = 0;
+  let totalDeductions = 0;
+  let totalNet = 0;
+
+  for (const att of attendanceRows) {
+    const attEmpId = String(att.employee_id || '');
+    const attCode = String(att.emp_code || '').trim().toLowerCase();
+    const emp = employees.find((e: any) => 
+      (attEmpId && String(e.id) === attEmpId) || 
+      (attCode && (e.emp_code || e.employee_code || '').trim().toLowerCase() === attCode)
+    );
+
+    const empId = emp ? String(emp.id) : attEmpId;
+    const empCode = (emp?.emp_code || emp?.employee_code || att.emp_code || '').trim();
+    const empName = (emp?.full_name || emp?.name || att.employee_name || 'Staff Member').trim();
+    const desig = emp?.designation || 'Staff';
+
+    const daysWorked = Number(att.days_worked ?? 30);
+    const otHours = Number(att.overtime_hours ?? 0);
+
+    const baseSalary = Number(emp?.basic_salary ?? emp?.base_salary ?? 0);
+    const allowances = Number(emp?.housing_allowance ?? emp?.housing_allow ?? 0) + 
+                       Number(emp?.transport_allowance ?? emp?.transport_allow ?? 0) + 
+                       Number(emp?.other_allowances ?? emp?.other_allow ?? 0);
+    const dailyRate = Math.round((baseSalary / 30) * 100) / 100;
+    const workingHours = Number(emp?.working_hours_per_day || 8);
+    const hourlyRate = Math.round((dailyRate / workingHours) * 100) / 100;
+
+    const earnedBasic = Math.round((dailyRate * daysWorked) * 100) / 100;
+    const overtimePay = Math.round((hourlyRate * otHours * 1.5) * 100) / 100;
+    const grossPay = earnedBasic + allowances + overtimePay;
+
+    const empLoans = loans.filter((l: any) => 
+      (empId && String(l.employee_id) === empId) || 
+      (empCode && (l.emp_code || '').trim().toLowerCase() === empCode.toLowerCase())
+    );
+    let advanceDeduction = 0;
+    let loanEmiDeduction = 0;
+    for (const l of empLoans) {
+      const rem = Number(l.remaining_amount || 0);
+      if (l.type === 'SALARY_ADVANCE') {
+        advanceDeduction += Math.min(rem, Number(l.principal_amount || rem));
+      } else {
+        loanEmiDeduction += Math.min(rem, Number(l.emi_amount || rem));
+      }
+    }
+
+    const slipDeductions = advanceDeduction + loanEmiDeduction;
+    const netPay = Math.max(0, grossPay - slipDeductions);
+
+    totalGross += grossPay;
+    totalDeductions += slipDeductions;
+    totalNet += netPay;
+
+    const slipId = `pay-${empId || att.id}-${month}`;
+    await client.query(`
+      INSERT INTO employee_payroll (
+        id, employee_id, employee_name, emp_code, designation, month_year, status,
+        base_salary, allowances, daily_rate, hourly_rate, days_worked, overtime_hours,
+        earned_basic, overtime_pay, gross_pay, advance_deduction, loan_emi_deduction,
+        total_deductions, net_pay, payment_method, created_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, 'DRAFT',
+        $7, $8, $9, $10, $11, $12,
+        $13, $14, $15, $16, $17,
+        $18, $19, 'BANK_TRANSFER', NOW()
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        employee_name = EXCLUDED.employee_name,
+        emp_code = EXCLUDED.emp_code,
+        designation = EXCLUDED.designation,
+        base_salary = EXCLUDED.base_salary,
+        allowances = EXCLUDED.allowances,
+        daily_rate = EXCLUDED.daily_rate,
+        hourly_rate = EXCLUDED.hourly_rate,
+        days_worked = EXCLUDED.days_worked,
+        overtime_hours = EXCLUDED.overtime_hours,
+        earned_basic = EXCLUDED.earned_basic,
+        overtime_pay = EXCLUDED.overtime_pay,
+        gross_pay = EXCLUDED.gross_pay,
+        advance_deduction = EXCLUDED.advance_deduction,
+        loan_emi_deduction = EXCLUDED.loan_emi_deduction,
+        total_deductions = EXCLUDED.total_deductions,
+        net_pay = EXCLUDED.net_pay;
+    `, [
+      slipId, empId, empName, empCode, desig, month,
+      baseSalary, allowances, dailyRate, hourlyRate, daysWorked, otHours,
+      earnedBasic, overtimePay, grossPay, advanceDeduction, loanEmiDeduction,
+      slipDeductions, netPay
+    ]);
+  }
+
+  const sheetId = `pay-sheet-${month}`;
+  await client.query(`
+    INSERT INTO hr_payroll_sheets (
+      id, month_year, total_employees, total_gross, total_deductions, total_net, status, created_at
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, 'DRAFT', NOW()
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      total_employees = EXCLUDED.total_employees,
+      total_gross = EXCLUDED.total_gross,
+      total_deductions = EXCLUDED.total_deductions,
+      total_net = EXCLUDED.total_net;
+  `, [sheetId, month, attendanceRows.length, totalGross, totalDeductions, totalNet]);
+
+  const slipRes = await client.query(`
+    SELECT * FROM employee_payroll 
+    WHERE month_year = $1 
+    ORDER BY emp_code ASC;
+  `, [month]);
+
+  return slipRes.rows;
+}
+
+// POST /api/hr/attendance/post - Lock & Post attendance sheet & auto-rebuild draft payroll
 hrRouter.post('/attendance/post', async (req, res) => {
   const { month, postedBy } = req.body;
   try {
@@ -887,6 +1031,12 @@ hrRouter.post('/attendance/post', async (req, res) => {
         SET status = 'POSTED' 
         WHERE month_year = $1;
       `, [month]);
+
+      // Auto-rebuild draft payroll for this month so all 4 employees appear in payroll
+      const sheetCheck = await client.query(`SELECT status FROM hr_payroll_sheets WHERE month_year = $1;`, [month]).catch(() => ({ rows: [] }));
+      if (sheetCheck.rows[0]?.status !== 'POSTED') {
+        await rebuildPayrollFromAttendance(client, month);
+      }
     });
     return res.json({ success: true });
   } catch (_) {
@@ -954,11 +1104,29 @@ hrRouter.get('/payroll', async (req, res) => {
   const monthYear = month || new Date().toISOString().slice(0, 7);
   try {
     const data = await withDb(async (client) => {
-      const result = await client.query(`
+      let result = await client.query(`
         SELECT * FROM employee_payroll 
         WHERE month_year = $1 
         ORDER BY emp_code ASC;
       `, [monthYear]);
+
+      // Check if attendance has more records than current draft payroll slips
+      const attCountRes = await client.query(`
+        SELECT COUNT(*) as count FROM employee_attendance 
+        WHERE month_year = $1;
+      `, [monthYear]).catch(() => ({ rows: [{ count: 0 }] }));
+      const attCount = Number(attCountRes.rows[0]?.count || 0);
+
+      const isAllDraft = result.rows.length === 0 || result.rows.every((r: any) => r.status === 'DRAFT' || !r.status);
+      if (attCount > 0 && result.rows.length < attCount && isAllDraft) {
+        await rebuildPayrollFromAttendance(client, monthYear);
+        result = await client.query(`
+          SELECT * FROM employee_payroll 
+          WHERE month_year = $1 
+          ORDER BY emp_code ASC;
+        `, [monthYear]);
+      }
+
       return result.rows.map(mapPayrollRow);
     });
     return res.json(data);
@@ -967,133 +1135,13 @@ hrRouter.get('/payroll', async (req, res) => {
   }
 });
 
-// POST /api/hr/payroll/run - Run payroll calculation for month
-hrRouter.post('/payroll/run', async (req, res) => {
+// POST /api/hr/payroll/run & /api/hr/payroll/sync-attendance - Run or force-sync payroll calculation for month
+hrRouter.post(['/payroll/run', '/payroll/sync-attendance'], async (req, res) => {
   const { month } = req.body;
   try {
     const slips = await withDb(async (client) => {
-      const empRes = await client.query(`
-        SELECT * FROM employees 
-        WHERE is_active IS NOT FALSE AND is_deleted IS NOT TRUE 
-        ORDER BY emp_code ASC;
-      `);
-      const employees = empRes.rows;
-
-      const attRes = await client.query(`
-        SELECT * FROM employee_attendance 
-        WHERE month_year = $1;
-      `, [month]);
-      const attMap = new Map<string, any>();
-      attRes.rows.forEach(r => attMap.set(String(r.employee_id), r));
-
-      const loanRes = await client.query(`
-        SELECT * FROM employee_loans 
-        WHERE status = 'ACTIVE' AND remaining_amount > 0;
-      `);
-      const loans = loanRes.rows;
-
-      let totalGross = 0;
-      let totalDeductions = 0;
-      let totalNet = 0;
-
-      for (const emp of employees) {
-        const empId = String(emp.id);
-        const empCode = emp.emp_code || emp.employee_code || '';
-        const empName = emp.full_name || emp.name || '';
-        const desig = emp.designation || 'Staff';
-
-        const att = attMap.get(empId);
-        const daysWorked = att ? Number(att.days_worked || 30) : 30;
-        const otHours = att ? Number(att.overtime_hours || 0) : 0;
-
-        const baseSalary = Number(emp.basic_salary ?? emp.base_salary ?? 0);
-        const allowances = Number(emp.housing_allowance ?? emp.housing_allow ?? 0) + Number(emp.transport_allowance ?? emp.transport_allow ?? 0);
-        const dailyRate = Math.round((baseSalary / 30) * 100) / 100;
-        const workingHours = Number(emp.working_hours_per_day || 8);
-        const hourlyRate = Math.round((dailyRate / workingHours) * 100) / 100;
-
-        const earnedBasic = Math.round((dailyRate * daysWorked) * 100) / 100;
-        const overtimePay = Math.round((hourlyRate * otHours * 1.5) * 100) / 100;
-        const grossPay = earnedBasic + allowances + overtimePay;
-
-        const empLoans = loans.filter(l => String(l.employee_id) === empId || l.emp_code === empCode);
-        let advanceDeduction = 0;
-        let loanEmiDeduction = 0;
-        for (const l of empLoans) {
-          const rem = Number(l.remaining_amount || 0);
-          if (l.type === 'SALARY_ADVANCE') {
-            advanceDeduction += Math.min(rem, Number(l.principal_amount || 0));
-          } else {
-            loanEmiDeduction += Math.min(rem, Number(l.emi_amount || 0));
-          }
-        }
-
-        const slipDeductions = advanceDeduction + loanEmiDeduction;
-        const netPay = Math.max(0, grossPay - slipDeductions);
-
-        totalGross += grossPay;
-        totalDeductions += slipDeductions;
-        totalNet += netPay;
-
-        const slipId = `pay-${empId}-${month}`;
-        await client.query(`
-          INSERT INTO employee_payroll (
-            id, employee_id, employee_name, emp_code, designation, month_year, status,
-            base_salary, allowances, daily_rate, hourly_rate, days_worked, overtime_hours,
-            earned_basic, overtime_pay, gross_pay, advance_deduction, loan_emi_deduction,
-            total_deductions, net_pay, payment_method, created_at
-          ) VALUES (
-            $1, $2, $3, $4, $5, $6, 'DRAFT',
-            $7, $8, $9, $10, $11, $12,
-            $13, $14, $15, $16, $17,
-            $18, $19, 'BANK_TRANSFER', NOW()
-          )
-          ON CONFLICT (id) DO UPDATE SET
-            employee_name = EXCLUDED.employee_name,
-            emp_code = EXCLUDED.emp_code,
-            designation = EXCLUDED.designation,
-            base_salary = EXCLUDED.base_salary,
-            allowances = EXCLUDED.allowances,
-            daily_rate = EXCLUDED.daily_rate,
-            hourly_rate = EXCLUDED.hourly_rate,
-            days_worked = EXCLUDED.days_worked,
-            overtime_hours = EXCLUDED.overtime_hours,
-            earned_basic = EXCLUDED.earned_basic,
-            overtime_pay = EXCLUDED.overtime_pay,
-            gross_pay = EXCLUDED.gross_pay,
-            advance_deduction = EXCLUDED.advance_deduction,
-            loan_emi_deduction = EXCLUDED.loan_emi_deduction,
-            total_deductions = EXCLUDED.total_deductions,
-            net_pay = EXCLUDED.net_pay;
-        `, [
-          slipId, empId, empName, empCode, desig, month,
-          baseSalary, allowances, dailyRate, hourlyRate, daysWorked, otHours,
-          earnedBasic, overtimePay, grossPay, advanceDeduction, loanEmiDeduction,
-          slipDeductions, netPay
-        ]);
-      }
-
-      const sheetId = `pay-sheet-${month}`;
-      await client.query(`
-        INSERT INTO hr_payroll_sheets (
-          id, month_year, total_employees, total_gross, total_deductions, total_net, status, created_at
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6, 'DRAFT', NOW()
-        )
-        ON CONFLICT (id) DO UPDATE SET
-          total_employees = EXCLUDED.total_employees,
-          total_gross = EXCLUDED.total_gross,
-          total_deductions = EXCLUDED.total_deductions,
-          total_net = EXCLUDED.total_net;
-      `, [sheetId, month, employees.length, totalGross, totalDeductions, totalNet]);
-
-      const slipRes = await client.query(`
-        SELECT * FROM employee_payroll 
-        WHERE month_year = $1 
-        ORDER BY emp_code ASC;
-      `, [month]);
-
-      return slipRes.rows.map(mapPayrollRow);
+      const rows = await rebuildPayrollFromAttendance(client, month);
+      return rows.map(mapPayrollRow);
     });
 
     return res.json({ success: true, records: slips });

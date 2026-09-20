@@ -13,3 +13,4 @@ export * from './searchService.ts';
 export * from './deviceService.ts';
 export * from './presenceService.ts';
 export * from './attendanceService.ts';
+export * from './payrollService.ts';

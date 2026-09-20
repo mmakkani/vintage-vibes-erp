@@ -1727,7 +1727,259 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: true, syncedCount: 0 });
     }
 
-    // 8d. POST /api/hr/attendance/post - Lock & Post attendance sheet
+    // Helper function to rebuild draft payroll slips from attendance records for a month
+    const rebuildPayrollFromAttendance = async (clientOrPool: any, month: string) => {
+      try {
+        let attendanceRows: any[] = [];
+        let employeeRows: any[] = [];
+        let loanRows: any[] = [];
+
+        if (clientOrPool) {
+          try {
+            const attRes = await clientOrPool.query(`
+              SELECT * FROM employee_attendance 
+              WHERE month_year = $1 
+              ORDER BY emp_code ASC;
+            `, [month]);
+            attendanceRows = attRes.rows || [];
+          } catch (_) {}
+
+          try {
+            const empRes = await clientOrPool.query(`
+              SELECT * FROM employees 
+              WHERE is_active IS NOT FALSE AND is_deleted IS NOT TRUE 
+              ORDER BY emp_code ASC;
+            `);
+            employeeRows = empRes.rows || [];
+          } catch (_) {}
+
+          try {
+            const loanRes = await clientOrPool.query(`
+              SELECT * FROM employee_loans 
+              WHERE status = 'ACTIVE' AND remaining_amount > 0;
+            `);
+            loanRows = loanRes.rows || [];
+          } catch (_) {}
+        }
+
+        if (attendanceRows.length === 0) {
+          const { data: attData } = await supabaseAdmin
+            .from('employee_attendance')
+            .select('*')
+            .eq('month_year', month);
+          attendanceRows = attData || [];
+        }
+
+        if (attendanceRows.length === 0) return [];
+
+        if (employeeRows.length === 0) {
+          const { data: empData } = await supabaseAdmin
+            .from('employees')
+            .select('*')
+            .eq('is_deleted', false);
+          employeeRows = empData || [];
+        }
+
+        if (loanRows.length === 0) {
+          const { data: loanData } = await supabaseAdmin
+            .from('employee_loans')
+            .select('*')
+            .eq('status', 'ACTIVE');
+          loanRows = loanData || [];
+        }
+
+        // Delete existing DRAFT slips for this month so stale 1-person drafts are cleared
+        if (clientOrPool) {
+          await clientOrPool.query(`
+            DELETE FROM employee_payroll 
+            WHERE month_year = $1 AND (status = 'DRAFT' OR status IS NULL);
+          `, [month]).catch(() => {});
+        } else {
+          await supabaseAdmin
+            .from('employee_payroll')
+            .delete()
+            .eq('month_year', month)
+            .eq('status', 'DRAFT');
+        }
+
+        let totalGross = 0;
+        let totalDeductions = 0;
+        let totalNet = 0;
+        const slips: any[] = [];
+
+        for (const att of attendanceRows) {
+          const attEmpId = String(att.employee_id || '');
+          const attCode = String(att.emp_code || '').trim().toLowerCase();
+          const emp = employeeRows.find((e: any) => 
+            (attEmpId && String(e.id) === attEmpId) || 
+            (attCode && (e.emp_code || e.employee_code || '').trim().toLowerCase() === attCode)
+          );
+
+          const empId = emp ? String(emp.id) : attEmpId;
+          const empCode = (emp?.emp_code || emp?.employee_code || att.emp_code || '').trim();
+          const empName = (emp?.full_name || emp?.name || att.employee_name || 'Staff Member').trim();
+          const desig = emp?.designation || 'Staff';
+
+          const daysWorked = Number(att.days_worked ?? 30);
+          const otHours = Number(att.overtime_hours ?? 0);
+
+          const baseSalary = Number(emp?.basic_salary ?? emp?.base_salary ?? 0);
+          const allowances = Number(emp?.housing_allowance ?? emp?.housing_allow ?? 0) + 
+                             Number(emp?.transport_allowance ?? emp?.transport_allow ?? 0) + 
+                             Number(emp?.other_allowances ?? emp?.other_allow ?? 0);
+          const dailyRate = Math.round((baseSalary / 30) * 100) / 100;
+          const workingHours = Number(emp?.working_hours_per_day || 8);
+          const hourlyRate = Math.round((dailyRate / workingHours) * 100) / 100;
+
+          const earnedBasic = Math.round((dailyRate * daysWorked) * 100) / 100;
+          const overtimePay = Math.round((hourlyRate * otHours * 1.5) * 100) / 100;
+          const grossPay = earnedBasic + allowances + overtimePay;
+
+          const empLoans = loanRows.filter((l: any) => 
+            (empId && String(l.employee_id) === empId) || 
+            (empCode && (l.emp_code || '').trim().toLowerCase() === empCode.toLowerCase())
+          );
+          let advanceDeduction = 0;
+          let loanEmiDeduction = 0;
+          for (const l of empLoans) {
+            const rem = Number(l.remaining_amount || 0);
+            if (l.type === 'SALARY_ADVANCE') {
+              advanceDeduction += Math.min(rem, Number(l.principal_amount || rem));
+            } else {
+              loanEmiDeduction += Math.min(rem, Number(l.emi_amount || rem));
+            }
+          }
+
+          const slipDeductions = advanceDeduction + loanEmiDeduction;
+          const netPay = Math.max(0, grossPay - slipDeductions);
+
+          totalGross += grossPay;
+          totalDeductions += slipDeductions;
+          totalNet += netPay;
+
+          const slipId = `pay-${empId || att.id}-${month}`;
+
+          if (clientOrPool) {
+            await clientOrPool.query(`
+              INSERT INTO employee_payroll (
+                id, employee_id, employee_name, emp_code, designation, month_year, status,
+                base_salary, allowances, daily_rate, hourly_rate, days_worked, overtime_hours,
+                earned_basic, overtime_pay, gross_pay, advance_deduction, loan_emi_deduction,
+                total_deductions, net_pay, payment_method, created_at
+              ) VALUES (
+                $1, $2, $3, $4, $5, $6, 'DRAFT',
+                $7, $8, $9, $10, $11, $12,
+                $13, $14, $15, $16, $17,
+                $18, $19, 'BANK_TRANSFER', NOW()
+              )
+              ON CONFLICT (id) DO UPDATE SET
+                employee_name = EXCLUDED.employee_name,
+                emp_code = EXCLUDED.emp_code,
+                designation = EXCLUDED.designation,
+                base_salary = EXCLUDED.base_salary,
+                allowances = EXCLUDED.allowances,
+                daily_rate = EXCLUDED.daily_rate,
+                hourly_rate = EXCLUDED.hourly_rate,
+                days_worked = EXCLUDED.days_worked,
+                overtime_hours = EXCLUDED.overtime_hours,
+                earned_basic = EXCLUDED.earned_basic,
+                overtime_pay = EXCLUDED.overtime_pay,
+                gross_pay = EXCLUDED.gross_pay,
+                advance_deduction = EXCLUDED.advance_deduction,
+                loan_emi_deduction = EXCLUDED.loan_emi_deduction,
+                total_deductions = EXCLUDED.total_deductions,
+                net_pay = EXCLUDED.net_pay;
+            `, [
+              slipId, empId, empName, empCode, desig, month,
+              baseSalary, allowances, dailyRate, hourlyRate, daysWorked, otHours,
+              earnedBasic, overtimePay, grossPay, advanceDeduction, loanEmiDeduction,
+              slipDeductions, netPay
+            ]).catch(() => {});
+          } else {
+            await supabaseAdmin.from('employee_payroll').upsert({
+              id: slipId,
+              employee_id: empId,
+              employee_name: empName,
+              emp_code: empCode,
+              designation: desig,
+              month_year: month,
+              status: 'DRAFT',
+              base_salary: baseSalary,
+              allowances,
+              daily_rate: dailyRate,
+              hourly_rate: hourlyRate,
+              days_worked: daysWorked,
+              overtime_hours: otHours,
+              earned_basic: earnedBasic,
+              overtime_pay: overtimePay,
+              gross_pay: grossPay,
+              advance_deduction: advanceDeduction,
+              loan_emi_deduction: loanEmiDeduction,
+              total_deductions: slipDeductions,
+              net_pay: netPay,
+              payment_method: 'BANK_TRANSFER'
+            });
+          }
+
+          slips.push({
+            id: slipId,
+            employeeId: empId,
+            employeeName: empName,
+            empCode: empCode,
+            designation: desig,
+            monthYear: month,
+            status: 'DRAFT',
+            baseSalary,
+            allowances,
+            dailyRate,
+            hourlyRate,
+            daysWorked,
+            overtimeHours: otHours,
+            earnedBasic,
+            overtimePay,
+            grossPay,
+            advanceDeduction,
+            loanEmiDeduction,
+            totalDeductions: slipDeductions,
+            netPay,
+            paymentMethod: 'BANK_TRANSFER'
+          });
+        }
+
+        const sheetId = `pay-sheet-${month}`;
+        if (clientOrPool) {
+          await clientOrPool.query(`
+            INSERT INTO hr_payroll_sheets (
+              id, month_year, total_employees, total_gross, total_deductions, total_net, status, created_at
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, 'DRAFT', NOW()
+            )
+            ON CONFLICT (id) DO UPDATE SET
+              total_employees = EXCLUDED.total_employees,
+              total_gross = EXCLUDED.total_gross,
+              total_deductions = EXCLUDED.total_deductions,
+              total_net = EXCLUDED.total_net;
+          `, [sheetId, month, slips.length, totalGross, totalDeductions, totalNet]).catch(() => {});
+        } else {
+          await supabaseAdmin.from('hr_payroll_sheets').upsert({
+            id: sheetId,
+            month_year: month,
+            total_employees: slips.length,
+            total_gross: totalGross,
+            total_deductions: totalDeductions,
+            total_net: totalNet,
+            status: 'DRAFT'
+          });
+        }
+
+        return slips;
+      } catch (err: any) {
+        console.error('[rebuildPayrollFromAttendance] Error:', err?.message || err);
+        return [];
+      }
+    };
+
+    // 8d. POST /api/hr/attendance/post - Lock & Post attendance sheet & auto-rebuild draft payroll
     if (pathname.includes('/api/hr/attendance/post') && method === 'POST') {
       const { month, postedBy } = body;
       let client: any = null;
@@ -1744,12 +1996,25 @@ export default async function handler(req: any, res: any) {
             SET status = 'POSTED' 
             WHERE month_year = $1;
           `, [month]);
+
+          // Invalidate and auto-rebuild draft payroll for this month so all 4 employees appear
+          const sheetCheck = await client.query(`SELECT status FROM hr_payroll_sheets WHERE month_year = $1;`, [month]).catch(() => ({ rows: [] }));
+          if (sheetCheck.rows[0]?.status !== 'POSTED') {
+            await rebuildPayrollFromAttendance(client, month);
+          }
+
           return res.status(200).json({ success: true });
         } catch (dbErr: any) {
           return res.status(400).json({ error: dbErr?.message });
         } finally {
           try { client.release(); } catch (_) {}
         }
+      } else {
+        try {
+          await supabaseAdmin.from('employee_attendance').update({ status: 'POSTED', locked_at: new Date().toISOString(), locked_by: postedBy || 'HR Manager' }).eq('month_year', month);
+          await supabaseAdmin.from('hr_attendance_sheets').update({ status: 'POSTED' }).eq('month_year', month);
+          await rebuildPayrollFromAttendance(null, month);
+        } catch (_) {}
       }
       return res.status(200).json({ success: true });
     }
@@ -1835,12 +2100,31 @@ export default async function handler(req: any, res: any) {
       const client = await getPgClient();
       if (client) {
         try {
-          const result = await client.query(`
+          let result = await client.query(`
             SELECT * FROM employee_payroll 
             WHERE month_year = $1 
             ORDER BY emp_code ASC;
           `, [month]);
-          const slips = result.rows.map(r => ({
+
+          // Check if attendance has more records than current draft payroll slips
+          const attCountRes = await client.query(`
+            SELECT COUNT(*) as count FROM employee_attendance 
+            WHERE month_year = $1;
+          `, [month]).catch(() => ({ rows: [{ count: 0 }] }));
+          const attCount = Number(attCountRes.rows[0]?.count || 0);
+
+          const isAllDraft = result.rows.length === 0 || result.rows.every((r: any) => r.status === 'DRAFT' || !r.status);
+          if (attCount > 0 && result.rows.length < attCount && isAllDraft) {
+            console.log(`[Serverless HR] Auto-syncing payroll for ${month}: ${result.rows.length} slips found vs ${attCount} attendance rows`);
+            await rebuildPayrollFromAttendance(client, month);
+            result = await client.query(`
+              SELECT * FROM employee_payroll 
+              WHERE month_year = $1 
+              ORDER BY emp_code ASC;
+            `, [month]);
+          }
+
+          const slips = result.rows.map((r: any) => ({
             id: String(r.id),
             employeeId: String(r.employee_id),
             employeeName: r.employee_name || '',
@@ -1875,6 +2159,99 @@ export default async function handler(req: any, res: any) {
         }
       }
       return res.status(200).json([]);
+    }
+
+    // 10b. POST /api/hr/payroll/run & /api/hr/payroll/sync-attendance - Force recalculate payroll from attendance
+    if ((pathname.includes('/api/hr/payroll/run') || pathname.includes('/api/hr/payroll/sync-attendance')) && method === 'POST') {
+      const month = body.month || parsedUrl.searchParams.get('month') || new Date().toISOString().slice(0, 7);
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) {}
+      if (client) {
+        try {
+          const slips = await rebuildPayrollFromAttendance(client, month);
+          return res.status(200).json({ success: true, records: slips });
+        } catch (dbErr: any) {
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { client.release(); } catch (_) {}
+        }
+      } else {
+        const slips = await rebuildPayrollFromAttendance(null, month);
+        return res.status(200).json({ success: true, records: slips });
+      }
+    }
+
+    // 10c. PUT /api/hr/payroll/:id/deductions - Update deductions on single slip
+    if (pathname.includes('/api/hr/payroll/') && pathname.includes('/deductions') && method === 'PUT') {
+      const parts = pathname.split('/');
+      const payrollIdx = parts.indexOf('payroll');
+      const slipId = payrollIdx !== -1 ? parts[payrollIdx + 1] : '';
+      const { advanceDeduction, loanEmiDeduction } = body;
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) {}
+      if (client) {
+        try {
+          const pRes = await client.query(`SELECT * FROM employee_payroll WHERE id = $1;`, [slipId]);
+          if (pRes.rows.length > 0) {
+            const row = pRes.rows[0];
+            const adv = Number(advanceDeduction ?? row.advance_deduction ?? 0);
+            const loan = Number(loanEmiDeduction ?? row.loan_emi_deduction ?? 0);
+            const totalDed = adv + loan;
+            const gross = Number(row.gross_pay || 0);
+            const net = Math.max(0, gross - totalDed);
+
+            await client.query(`
+              UPDATE employee_payroll 
+              SET advance_deduction = $1, loan_emi_deduction = $2, total_deductions = $3, net_pay = $4 
+              WHERE id = $5;
+            `, [adv, loan, totalDed, net, slipId]);
+
+            const totalsRes = await client.query(`
+              SELECT SUM(gross_pay) as gross, SUM(total_deductions) as deductions, SUM(net_pay) as net 
+              FROM employee_payroll 
+              WHERE month_year = $1;
+            `, [row.month_year]);
+
+            if (totalsRes.rows[0]) {
+              await client.query(`
+                UPDATE hr_payroll_sheets 
+                SET total_gross = $1, total_deductions = $2, total_net = $3 
+                WHERE month_year = $4;
+              `, [
+                Number(totalsRes.rows[0].gross || 0),
+                Number(totalsRes.rows[0].deductions || 0),
+                Number(totalsRes.rows[0].net || 0),
+                row.month_year
+              ]);
+            }
+          }
+          return res.status(200).json({ success: true });
+        } catch (dbErr: any) {
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { client.release(); } catch (_) {}
+        }
+      }
+      return res.status(200).json({ success: true });
+    }
+
+    // 10d. DELETE /api/hr/payroll/sheet - Delete draft payroll sheet
+    if (pathname.includes('/api/hr/payroll/sheet') && method === 'DELETE') {
+      const month = body?.month || parsedUrl.searchParams.get('month');
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) {}
+      if (client) {
+        try {
+          await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
+          await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
+          return res.status(200).json({ success: true });
+        } catch (dbErr: any) {
+          return res.status(400).json({ error: dbErr?.message });
+        } finally {
+          try { client.release(); } catch (_) {}
+        }
+      }
+      return res.status(200).json({ success: true });
     }
 
     // 11. GET /api/hr/loans - Employee loans list

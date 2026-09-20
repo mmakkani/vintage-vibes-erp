@@ -941,27 +941,78 @@ export class HrService {
 
   public static async runPayroll(monthYear: string): Promise<PayrollRecord[]> {
     const employees = await this.getEmployees();
-    const activeEmployees = employees.filter(e => e.isActive);
+    const activeEmployees = employees.filter(e => {
+      const isDeleted = (e as any).is_deleted === true || (e as any).isDeleted === true;
+      const isActive = e.isActive !== false && (e as any).is_active !== false;
+      const notTerminated = (e as any).status !== 'TERMINATED' && (e as any).status !== 'INACTIVE';
+      return !isDeleted && isActive && notTerminated;
+    });
+
     const attendanceRecords = await this.getAttendance(monthYear);
     const loans = await this.getLoans();
     const activeLoans = loans.filter(l => l.status === 'ACTIVE' && l.remainingAmount > 0);
 
-    const slips: any[] = activeEmployees.map(emp => {
-      const att = attendanceRecords.find(a => String(a.employeeId) === String(emp.id));
-      const daysWorked = att ? att.daysWorked : 30;
-      const otHours = att ? att.overtimeHours : 0;
+    // Build complete roster: all staff in attendance sheet for this month, plus any active employees
+    const rosterMap = new Map<string, { emp?: Employee; att?: AttendanceRecord }>();
 
-      const baseSalary = emp.baseSalary;
-      const allowances = emp.housingAllow + emp.transportAllow;
+    // 1. Add all attendance records first
+    for (const att of attendanceRecords) {
+      const attEmpId = String(att.employeeId || '');
+      const attCode = (att.empCode || '').trim().toLowerCase();
+      const matchedEmp = employees.find(e => 
+        (attEmpId && String(e.id) === attEmpId) || 
+        (attCode && (e.empCode || (e as any).code || (e as any).employee_code || '').trim().toLowerCase() === attCode)
+      );
+      const key = attEmpId || attCode || att.id;
+      rosterMap.set(key, { emp: matchedEmp, att });
+    }
+
+    // 2. Add any active employees not already in roster
+    for (const emp of activeEmployees) {
+      const empId = String(emp.id);
+      const empCode = (emp.empCode || '').trim().toLowerCase();
+      let foundKey: string | null = null;
+      for (const [key, val] of rosterMap.entries()) {
+        if (
+          (val.emp && String(val.emp.id) === empId) ||
+          (val.att && String(val.att.employeeId) === empId) ||
+          (empCode && val.att && (val.att.empCode || '').trim().toLowerCase() === empCode)
+        ) {
+          foundKey = key;
+          break;
+        }
+      }
+      if (!foundKey) {
+        rosterMap.set(empId, { emp, att: undefined });
+      } else if (!rosterMap.get(foundKey)!.emp) {
+        rosterMap.get(foundKey)!.emp = emp;
+      }
+    }
+
+    const slips: any[] = Array.from(rosterMap.values()).map(({ emp, att }) => {
+      const empId = emp ? String(emp.id) : String(att?.employeeId || '');
+      const empCode = emp?.empCode || att?.empCode || '';
+      const empName = emp?.name || att?.employeeName || 'Staff Member';
+      const desig = emp?.designation || 'Staff';
+
+      const daysWorked = att ? Number(att.daysWorked ?? 30) : 30;
+      const otHours = att ? Number(att.overtimeHours ?? 0) : 0;
+
+      const baseSalary = Number(emp?.baseSalary ?? (emp as any)?.basic_salary ?? 0);
+      const allowances = Number(emp?.housingAllow ?? 0) + Number(emp?.transportAllow ?? 0) + Number(emp?.otherAllow ?? 0);
       const dailyRate = Math.round((baseSalary / 30) * 100) / 100;
-      const hourlyRate = Math.round((dailyRate / (emp.workingHoursPerDay || 8)) * 100) / 100;
+      const workingHours = Number(emp?.workingHoursPerDay || 8);
+      const hourlyRate = Math.round((dailyRate / workingHours) * 100) / 100;
 
       const earnedBasic = Math.round((dailyRate * daysWorked) * 100) / 100;
       const overtimePay = Math.round((hourlyRate * otHours * 1.5) * 100) / 100;
       const grossPay = earnedBasic + allowances + overtimePay;
 
       // Calculate loan/advance recovery
-      const empLoans = activeLoans.filter(l => String(l.employeeId) === String(emp.id));
+      const empLoans = activeLoans.filter(l => 
+        (empId && String(l.employeeId) === empId) || 
+        (empCode && (l.empCode || '').trim().toLowerCase() === empCode.trim().toLowerCase())
+      );
       let advanceDeduction = 0;
       let loanEmiDeduction = 0;
 
@@ -977,11 +1028,11 @@ export class HrService {
       const netPay = Math.max(0, grossPay - totalDeductions);
 
       return {
-        id: generateId('pay'),
-        employee_id: String(emp.id),
-        employee_name: emp.name,
-        emp_code: emp.empCode,
-        designation: emp.designation,
+        id: `pay-${empId || empCode}-${monthYear}`,
+        employee_id: empId,
+        employee_name: empName,
+        emp_code: empCode,
+        designation: desig,
         month_year: monthYear,
         status: 'DRAFT',
         base_salary: baseSalary,
