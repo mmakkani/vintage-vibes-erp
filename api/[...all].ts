@@ -3918,7 +3918,7 @@ export default async function handler(req: any, res: any) {
 
     // Financial Statements & Database-Level Reports
     if (pathname.includes('/finance/reports')) {
-      const urlObj = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+      const urlObj = new URL(req.url || '', 'http://localhost');
       const startDate = (urlObj.searchParams.get('startDate') || req.query?.startDate || '') as string;
       const endDate = (urlObj.searchParams.get('endDate') || req.query?.endDate || '') as string;
       const asOfDate = (urlObj.searchParams.get('asOfDate') || req.query?.asOfDate || endDate || '') as string;
@@ -4499,7 +4499,7 @@ export default async function handler(req: any, res: any) {
 
     // Finance General Ledgers
     if (pathname.includes('/finance/ledgers') || pathname.includes('/finance/ledger')) {
-      const urlObj = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+      const urlObj = new URL(req.url || '', 'http://localhost');
       const accountId = (urlObj.searchParams.get('accountId') || req.query?.accountId || null) as string | null;
       const partyId = (urlObj.searchParams.get('partyId') || req.query?.partyId || null) as string | null;
       const startDate = (urlObj.searchParams.get('startDate') || req.query?.startDate || null) as string | null;
