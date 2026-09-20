@@ -1,3 +1,47 @@
+let pool: any = null;
+let pgPoolClass: any = null;
+
+const DEFAULT_DB_URL = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&uselibpqcompat=true';
+
+async function getClient() {
+  if (!pgPoolClass) {
+    const pgMod: any = await import('pg');
+    pgPoolClass = pgMod.Pool || pgMod.default?.Pool;
+  }
+  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL;
+  if (dbUrl.includes('127.0.0.1') || dbUrl.includes('localhost') || dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
+    dbUrl = DEFAULT_DB_URL;
+  }
+  if (dbUrl.includes('.pooler.supabase.com:5432')) {
+    dbUrl = dbUrl.replace('.pooler.supabase.com:5432', '.pooler.supabase.com:6543');
+  }
+  const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
+  if (match) {
+    let [_, u, rawPwd, host, port, rest] = match;
+    if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
+    dbUrl = `postgresql://${u}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
+  }
+  if (!pool) {
+    pool = new pgPoolClass({
+      connectionString: dbUrl,
+      max: 2,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 5000
+    });
+  }
+  try {
+    return await pool.connect();
+  } catch (err) {
+    const fbPool = new pgPoolClass({
+      connectionString: DEFAULT_DB_URL,
+      max: 2,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 5000
+    });
+    return await fbPool.connect();
+  }
+}
+
 export default async function handler(req: any, res: any) {
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -9,48 +53,18 @@ export default async function handler(req: any, res: any) {
   }
 
   const startTime = Date.now();
+  let client: any = null;
   try {
-    let pgPoolClass: any = null;
-    try {
-      const pgMod: any = await import('pg');
-      pgPoolClass = pgMod.Pool || pgMod.default?.Pool;
-    } catch (_) {}
-
-    if (pgPoolClass) {
-      let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&uselibpqcompat=true';
-      if (dbUrl.includes('127.0.0.1') || dbUrl.includes('localhost')) {
-        dbUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&uselibpqcompat=true';
-      }
-      if (dbUrl.includes('.pooler.supabase.com:5432')) {
-        dbUrl = dbUrl.replace('.pooler.supabase.com:5432', '.pooler.supabase.com:6543');
-      }
-      const pool = new pgPoolClass({
-        connectionString: dbUrl,
-        max: 1,
-        ssl: { rejectUnauthorized: false },
-        connectionTimeoutMillis: 5000
-      });
-      const client = await pool.connect();
-      const result = await client.query('SELECT NOW() as time');
-      client.release();
-      await pool.end();
-
-      return res.status(200).json({
-        status: 'ok',
-        db_connected: true,
-        time: result.rows[0]?.time || new Date().toISOString(),
-        latency_ms: Date.now() - startTime,
-        pool_type: 'SUPABASE_TRANSACTION_POOLER_6543',
-        has_db_url: !!process.env.DATABASE_URL,
-        env: process.env.NODE_ENV || 'production'
-      });
-    }
-
+    client = await getClient();
+    const result = await client.query('SELECT NOW() as time');
     return res.status(200).json({
-      status: 'healthy',
-      system: 'Vintage Vibe Enterprise ERP',
-      runtime: 'Vercel Serverless Function',
-      timestamp: new Date().toISOString()
+      status: 'ok',
+      db_connected: true,
+      time: result.rows[0]?.time || new Date().toISOString(),
+      latency_ms: Date.now() - startTime,
+      pool_type: 'SUPABASE_TRANSACTION_POOLER_6543',
+      has_db_url: !!process.env.DATABASE_URL,
+      env: process.env.NODE_ENV || 'production'
     });
   } catch (err: any) {
     return res.status(200).json({
@@ -60,5 +74,9 @@ export default async function handler(req: any, res: any) {
       has_db_url: !!process.env.DATABASE_URL,
       timestamp: new Date().toISOString()
     });
+  } finally {
+    if (client && typeof client.release === 'function') {
+      try { client.release(); } catch (_) {}
+    }
   }
 }
