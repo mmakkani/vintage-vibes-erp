@@ -725,6 +725,94 @@ async function runSecurityGateTests() {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Gate 14: Cookie-based Authentication on Protected Endpoints
+  // -------------------------------------------------------------------------
+  console.log('\n--- GATE 14: Cookie-based Authentication on Protected Endpoints ---');
+  {
+    // GET /api/hr/employees with vv_session cookie
+    const { req: c1, res: s1 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/hr/employees',
+      headers: { 'cookie': `vv_session=${encodeURIComponent(adminToken)}` }
+    });
+    await allHandler(c1, s1);
+    assert(s1.getResponse().statusCode === 200, 'GET /api/hr/employees with valid vv_session cookie returns HTTP 200');
+
+    // GET /api/finance/coa with vv_session cookie
+    const { req: c2, res: s2 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/finance/coa',
+      headers: { 'cookie': `vv_session=${encodeURIComponent(adminToken)}` }
+    });
+    await allHandler(c2, s2);
+    assert(s2.getResponse().statusCode === 200, 'GET /api/finance/coa with valid vv_session cookie returns HTTP 200');
+
+    // GET /api/audit with vv_session cookie
+    const { req: c3, res: s3 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/audit',
+      headers: { 'cookie': `vv_session=${encodeURIComponent(adminToken)}` }
+    });
+    await allHandler(c3, s3);
+    assert(s3.getResponse().statusCode === 200, 'GET /api/audit with valid vv_session cookie returns HTTP 200');
+
+    // GET /api/hr/ocr/logs with vv_session cookie
+    const { req: c4, res: s4 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/hr/ocr/logs',
+      headers: { 'cookie': `vv_session=${encodeURIComponent(adminToken)}` }
+    });
+    await allHandler(c4, s4);
+    assert(s4.getResponse().statusCode === 200, 'GET /api/hr/ocr/logs with valid vv_session cookie returns HTTP 200');
+  }
+
+  // -------------------------------------------------------------------------
+  // Gate 15: Device Registration Resilience (No 503)
+  // -------------------------------------------------------------------------
+  console.log('\n--- GATE 15: Device Registration Resilience (No 503) ---');
+  {
+    const testDeviceId = `test-gate15-dev-${Date.now()}`;
+    const { req: dReq, res: dRes } = createMockReqRes({
+      method: 'POST',
+      url: '/api/devices/register',
+      headers: {
+        'content-type': 'application/json',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      },
+      body: {
+        deviceId: testDeviceId,
+        userId: 'usr-sec-test',
+        username: 'Guest / Visitor',
+        deviceType: 'Desktop',
+        deviceModel: 'Security Test Agent',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        isStandalone: false
+      }
+    });
+
+    await allHandler(dReq, dRes);
+    const dResponse = dRes.getResponse();
+
+    assert(
+      dResponse.statusCode === 200 || dResponse.statusCode === 201,
+      'POST /api/devices/register returns HTTP 200 or 201',
+      `Got status ${dResponse.statusCode}`
+    );
+    assert(
+      dResponse.statusCode !== 503,
+      'POST /api/devices/register NEVER returns HTTP 503 Service Unavailable'
+    );
+    assert(
+      dResponse.body?.success === true,
+      'POST /api/devices/register returns success: true'
+    );
+    assert(
+      dResponse.body?.device !== undefined,
+      'POST /api/devices/register returns device metadata object'
+    );
+  }
+
   console.log('\n======================================================');
   console.log(`  SECURITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('======================================================\n');

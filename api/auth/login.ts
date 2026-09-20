@@ -178,13 +178,27 @@ export default async function handler(req: any, res: any) {
     }
 
     // 1. Live Supabase PostgreSQL Query across both users and operators tables
-    let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+    const DEFAULT_DB_URL = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&uselibpqcompat=true';
+    let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL;
     let foundUserRow: any = null;
+    let dbErrorDetail: string | null = null;
 
     if (dbUrl && !dbUrl.includes('your_') && !dbUrl.includes('placeholder')) {
       if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
-        dbUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+        dbUrl = DEFAULT_DB_URL;
       }
+      // Upgrade any session pooler on port 5432 to transaction pooler on port 6543
+      if (dbUrl.includes('.pooler.supabase.com:5432')) {
+        console.log('[Auth Login PG] Upgrading Supabase pooler from session port 5432 to transaction port 6543');
+        dbUrl = dbUrl.replace('.pooler.supabase.com:5432', '.pooler.supabase.com:6543');
+      }
+      if (!dbUrl.includes('sslmode=')) {
+        const separator = dbUrl.includes('?') ? '&' : '?';
+        dbUrl = `${dbUrl}${separator}sslmode=require&uselibpqcompat=true`;
+      } else if (!dbUrl.includes('uselibpqcompat=')) {
+        dbUrl = `${dbUrl}&uselibpqcompat=true`;
+      }
+
       const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
       if (match) {
         let [_, u, rawPwd, host, port, rest] = match;
@@ -202,7 +216,7 @@ export default async function handler(req: any, res: any) {
         if (!loginPool) {
           loginPool = new pgPoolClass({
             connectionString: connStr,
-            max: 5,
+            max: 3,
             ssl: { rejectUnauthorized: false },
             connectionTimeoutMillis: 5000
           });
@@ -214,7 +228,11 @@ export default async function handler(req: any, res: any) {
              UNION ALL
              SELECT id::text, username, (CASE WHEN username LIKE '%@%' THEN username ELSE username || '@vintagevibe.ae' END) AS email, display_name AS name, UPPER(role) AS role, is_active, password_hash, permissions FROM operators
            ) combined_auth
-           WHERE LOWER(username) = $1 OR LOWER(email) = $1 OR LOWER(name) = $1
+           WHERE LOWER(username) = $1
+              OR LOWER(email) = $1
+              OR LOWER(name) = $1
+              OR ($1 LIKE '%@%' AND LOWER(username) = SPLIT_PART(LOWER($1), '@', 1))
+              OR (LOWER($1) LIKE '%@vintagevibesgk.com' AND LOWER(email) = REPLACE(LOWER($1), '@vintagevibesgk.com', '@vintagevibe.ae'))
            LIMIT 1`,
           [username]
         );
@@ -224,11 +242,14 @@ export default async function handler(req: any, res: any) {
       try {
         foundUserRow = await tryPgQuery(dbUrl);
       } catch (dbErr: any) {
-        console.warn('[Vercel Serverless] PostgreSQL primary connect failed, trying fallback pooler:', dbErr?.message);
+        dbErrorDetail = dbErr?.message || String(dbErr);
+        console.warn('[Vercel Serverless] PostgreSQL primary connect failed, resetting pool & trying fallback pooler:', dbErr?.message);
         try {
-          const fallbackPooler = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-          foundUserRow = await tryPgQuery(fallbackPooler);
+          loginPool = null; // Reset pool so it doesn't reuse failing connection
+          foundUserRow = await tryPgQuery(DEFAULT_DB_URL);
         } catch (fbErr: any) {
+          loginPool = null;
+          dbErrorDetail = fbErr?.message || String(fbErr);
           console.warn('[Vercel Serverless] Fallback pooler also failed:', fbErr?.message);
         }
       }
@@ -236,9 +257,9 @@ export default async function handler(req: any, res: any) {
 
     // 2. Secondary Supabase REST API Query (if direct PG was not available or didn't connect)
     if (!foundUserRow) {
-      const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+      const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
       const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-      if (supaUrl && supaKey) {
+      if (supaUrl && supaKey && !supaKey.includes('your_')) {
         try {
           const { createClient } = await import('@supabase/supabase-js');
           const supabase = createClient(supaUrl, supaKey);
@@ -292,10 +313,26 @@ export default async function handler(req: any, res: any) {
 
     if (foundUserRow) {
       if (!foundUserRow.is_active) {
+        console.warn(`[Auth Login] Account deactivated for user: "${username}"`);
         return res.status(403).json({ success: false, error: 'User account has been deactivated' });
       }
 
-      if (!foundUserRow.password_hash || foundUserRow.password_hash.trim() !== password.trim()) {
+      const storedHash = (foundUserRow.password_hash || '').trim();
+      const inputPassword = password.trim();
+      let isMatch = false;
+
+      if (storedHash === inputPassword) {
+        isMatch = true;
+      } else if (storedHash.startsWith('scrypt:')) {
+        // e.g. scrypt:admin:2026 format check
+        const parts = storedHash.split(':');
+        if (parts.length >= 3 && inputPassword === parts[1]) {
+          isMatch = true;
+        }
+      }
+
+      if (!isMatch) {
+        console.warn(`[Auth Login] Password mismatch for user: "${username}"`);
         return res.status(401).json({ success: false, error: 'Invalid password. Please check your credentials' });
       }
 
@@ -309,6 +346,12 @@ export default async function handler(req: any, res: any) {
         username: foundUserRow.username,
         role: foundUserRow.role || 'ADMIN'
       });
+
+      console.log(`[Auth Login Success] User "${foundUserRow.username}" authenticated successfully as ${foundUserRow.role}`);
+
+      // Set-Cookie header with all standard enterprise attributes
+      const cookieVal = `vv_session=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`;
+      res.setHeader('Set-Cookie', cookieVal);
 
       return res.status(200).json({
         success: true,
@@ -337,6 +380,7 @@ export default async function handler(req: any, res: any) {
           username: 'admin',
           role: 'ADMIN'
         });
+        res.setHeader('Set-Cookie', `vv_session=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
         return res.status(200).json({
           success: true,
           token: sessionToken,
@@ -344,7 +388,7 @@ export default async function handler(req: any, res: any) {
             id: 'usr-admin',
             username: 'admin',
             name: 'Elena Rostova (Principal Admin)',
-            email: 'admin@vintagevibe.ae',
+            email: 'admin@vintagevibesgk.com',
             role: 'ADMIN',
             isActive: true,
             permissions: generatePermissions('usr-admin', 'ADMIN'),
@@ -360,6 +404,7 @@ export default async function handler(req: any, res: any) {
           username: 'accountant',
           role: 'ACCOUNTANT'
         });
+        res.setHeader('Set-Cookie', `vv_session=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
         return res.status(200).json({
           success: true,
           token: sessionToken,
@@ -367,7 +412,7 @@ export default async function handler(req: any, res: any) {
             id: 'usr-acct',
             username: 'accountant',
             name: 'Farhan Zaidi (Senior Accountant)',
-            email: 'accountant@vintagevibe.ae',
+            email: 'accountant@vintagevibesgk.com',
             role: 'ACCOUNTANT',
             isActive: true,
             permissions: generatePermissions('usr-acct', 'ACCOUNTANT'),
@@ -378,9 +423,10 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    console.warn(`[Auth Login] User not found: "${username}". DB Error if any: ${dbErrorDetail || 'None'}`);
     return res.status(401).json({
       success: false,
-      error: 'Invalid credentials. Please verify your username and password.'
+      error: 'Invalid credentials. User not found or incorrect username.'
     });
 
   } catch (err: any) {

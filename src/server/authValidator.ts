@@ -390,13 +390,45 @@ export function checkModulePermission(
 }
 
 /**
+ * Extract auth token from Authorization header or Cookie header
+ */
+export function extractAuthToken(req: any): string {
+  if (!req) return '';
+  // 1. Authorization header (Bearer <token>)
+  const authHeader = req.headers?.authorization || req.headers?.['authorization'] || '';
+  if (authHeader && typeof authHeader === 'string' && authHeader.trim()) {
+    let token = authHeader.trim();
+    if (token.toLowerCase().startsWith('bearer ')) {
+      token = token.slice(7).trim();
+    }
+    if (token) return token;
+  }
+
+  // 2. Cookie header (vv_session, session_token, auth_token, token)
+  const cookieHeader = req.headers?.cookie || req.headers?.['cookie'] || '';
+  if (cookieHeader && typeof cookieHeader === 'string') {
+    const cookies = cookieHeader.split(';').map((c: string) => c.trim());
+    for (const c of cookies) {
+      const [name, ...valParts] = c.split('=');
+      const val = valParts.join('=');
+      if (['vv_session', 'session_token', 'auth_token', 'token'].includes(name.trim())) {
+        const decoded = decodeURIComponent(val.trim());
+        if (decoded) return decoded;
+      }
+    }
+  }
+
+  return '';
+}
+
+/**
  * Express middleware to enforce both cryptographic authentication and role-based access control.
  */
 export function requireModuleAuth(module: ModulePermissionTarget) {
   return async (req: any, res: any, next: any) => {
     const correlationId = (req as any).correlationId || req.headers?.['x-correlation-id'] || `req-${Date.now()}`;
-    const authHeader = req.headers?.authorization || req.headers?.['authorization'];
-    const authResult = await verifyAuthToken(authHeader);
+    const token = extractAuthToken(req);
+    const authResult = await verifyAuthToken(token);
 
     if (!authResult.valid || !authResult.user) {
       return res.status(401).json({

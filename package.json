@@ -11,7 +11,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "tsx scripts/test-security-gates.ts",
-    "db:migrate": "node scripts/migrate-supabase.cjs"
+    "db:migrate": "node scripts/migrate-supabase.cjs",
+    "prepare": "husky install"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -58,6 +59,7 @@
     "@types/ws": "^8.5.14",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
+    "husky": "^9.1.7",
     "prisma": "^8.0.0-rc.13",
     "sharp": "^0.35.4",
     "tailwindcss": "^4.1.14",

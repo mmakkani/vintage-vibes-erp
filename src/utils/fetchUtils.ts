@@ -508,21 +508,33 @@ export function initUniversalFetchInterceptor() {
     if (!isAllowedApiDestination(url)) {
       return init;
     }
+    const updatedInit: RequestInit = { ...init };
+    // Automatically include credentials (cookies) for approved same-origin/organization APIs
+    if (!updatedInit.credentials) {
+      updatedInit.credentials = 'include';
+    }
     try {
-      const stored = localStorage.getItem('vintage_erp_logged_user');
-      if (stored) {
-        const u = JSON.parse(stored);
-        const token = u?.token;
-        if (token) {
-          const h = new Headers(init?.headers);
-          if (!h.has('Authorization')) {
-            h.set('Authorization', `Bearer ${token}`);
-          }
-          return { ...init, headers: h };
+      let token: string | null = null;
+      const explicitToken = localStorage.getItem('vv_auth_token') || localStorage.getItem('session_token');
+      if (explicitToken && typeof explicitToken === 'string' && explicitToken.trim()) {
+        token = explicitToken.trim();
+      }
+      if (!token) {
+        const stored = localStorage.getItem('vintage_erp_logged_user') || localStorage.getItem('vintage_vibes_auth_user');
+        if (stored) {
+          const u = JSON.parse(stored);
+          token = u?.token || null;
         }
       }
+      if (token) {
+        const h = new Headers(updatedInit.headers);
+        if (!h.has('Authorization')) {
+          h.set('Authorization', `Bearer ${token}`);
+        }
+        updatedInit.headers = h;
+      }
     } catch (_) {}
-    return init;
+    return updatedInit;
   }
 
   const authenticatedFetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {

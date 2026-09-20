@@ -70,7 +70,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         if (contentType.includes('application/json')) {
           const data = await res.json();
           if (res.ok && data.success && data.user) {
-            authenticatedUser = data.user;
+            const token = data.token || data.user.token;
+            authenticatedUser = { ...data.user, token };
+            if (token) {
+              localStorage.setItem('vv_auth_token', token);
+            }
           } else if (data && data.error) {
             if (res.status === 403 || data.error.includes('deactivated')) {
               setErrorMsg('User account has been deactivated');
@@ -92,6 +96,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       if (authenticatedUser) {
         localStorage.setItem('vintage_erp_logged_user', JSON.stringify(authenticatedUser));
         localStorage.setItem('vintage_vibes_auth_user', JSON.stringify(authenticatedUser));
+        if ((authenticatedUser as any).token) {
+          localStorage.setItem('vv_auth_token', (authenticatedUser as any).token);
+        }
         onLoginSuccess(authenticatedUser);
         return;
       }
