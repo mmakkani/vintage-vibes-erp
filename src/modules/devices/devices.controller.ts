@@ -42,6 +42,7 @@ export const DevicesController = {
     const botType = isBad ? 'BAD_BOT' : (isVerified ? 'VERIFIED_BOT' : 'HUMAN');
     const installStatus = isBad ? 'BLOCKED' : 'ACTIVE';
     const blockReason = isBad ? botAnalysis.reason : null;
+    const cleanUser = (username || '').trim();
 
     const client = await getPgClient();
     if (client) {
@@ -104,7 +105,6 @@ export const DevicesController = {
         }
 
         // 2. New Device Registration - Enforce Device Limit per Operator
-        const cleanUser = (username || '').trim();
         const maxLimit = 2; // Default maximum authorized devices per operator
 
         if (isBad) {
@@ -150,11 +150,21 @@ export const DevicesController = {
           }
         }
 
-        // 3. Insert New Device
+        // 3. Idempotent Insert / Upsert Device
         const insertQuery = `
           INSERT INTO device_installations (
             device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          ON CONFLICT (device_id) DO UPDATE SET
+            last_active_at = NOW(),
+            ip_address = EXCLUDED.ip_address,
+            is_standalone = EXCLUDED.is_standalone,
+            username = COALESCE(NULLIF(EXCLUDED.username, ''), device_installations.username),
+            user_id = COALESCE(NULLIF(EXCLUDED.user_id, ''), device_installations.user_id),
+            device_type = COALESCE(NULLIF(EXCLUDED.device_type, ''), device_installations.device_type),
+            device_model = COALESCE(NULLIF(EXCLUDED.device_model, ''), device_installations.device_model),
+            user_agent = COALESCE(NULLIF(EXCLUDED.user_agent, ''), device_installations.user_agent),
+            bot_type = EXCLUDED.bot_type
           RETURNING *;
         `;
         const inserted = await client.query(insertQuery, [
@@ -181,8 +191,22 @@ export const DevicesController = {
 
       } catch (err: any) {
         try { await client.end(); } catch (_) {}
-        console.error('[Device Register Error]:', err);
-        return res.status(500).json({ success: false, error: err?.message || 'Database error' });
+        const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        console.error('[Device Register Error]', {
+          correlationId,
+          endpoint: '/api/devices/register',
+          method: 'POST',
+          userId: (req as any).user?.id || 'unauthenticated',
+          clientReportedId: userId || null,
+          errorCode: err?.code || 'PG_ERROR',
+          errorMessage: err?.message
+        });
+        return res.status(503).json({
+          success: false,
+          degraded: true,
+          error: 'Device registration database write failed. Database service temporarily unavailable.',
+          correlationId
+        });
       }
     }
 
@@ -225,7 +249,7 @@ export const DevicesController = {
 
       const { data: inserted, error: insErr } = await supabaseAdmin
         .from('device_installations')
-        .insert({
+        .upsert({
           device_id: deviceId,
           user_id: userId || null,
           username: isBad ? `[BAD BOT] ${username || botAnalysis.botName}` : (username || 'Guest / Visitor'),
@@ -238,7 +262,7 @@ export const DevicesController = {
           bot_type: botType,
           block_reason: blockReason,
           max_devices_limit: isBad ? 0 : 2
-        })
+        }, { onConflict: 'device_id' })
         .select()
         .single();
 
@@ -248,7 +272,22 @@ export const DevicesController = {
       }
       return res.status(201).json({ success: true, device: inserted, ip });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err?.message || 'Supabase error' });
+      const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      console.error('[Device Register Supabase Error]', {
+        correlationId,
+        endpoint: '/api/devices/register',
+        method: 'POST',
+        userId: (req as any).user?.id || 'unauthenticated',
+        clientReportedId: userId || null,
+        errorCode: err?.code || 'SUPABASE_ERROR',
+        errorMessage: err?.message
+      });
+      return res.status(503).json({
+        success: false,
+        degraded: true,
+        error: 'Device registration database write failed. Database service temporarily unavailable.',
+        correlationId
+      });
     }
   },
 

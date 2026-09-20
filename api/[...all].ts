@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { createClient } from '@supabase/supabase-js';
+import { isOriginAllowed, verifyAuthToken } from '../src/server/authValidator.ts';
 
 function getClientIp(req: any): string {
   const forwarded = req.headers?.['x-forwarded-for'];
@@ -911,13 +912,23 @@ function getOrCreateSession(userId: string, userName?: string): WhatsAppDeviceSe
 
 // Master Handler
 export default async function handler(req: any, res: any) {
+  const correlationId = (req.headers?.['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const origin = (req.headers?.origin as string) || '';
   try {
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (origin && isOriginAllowed(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Vary', 'Origin');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Correlation-ID, X-User-ID');
+    res.setHeader('X-Correlation-ID', correlationId);
 
     if (req.method === 'OPTIONS') {
+      if (origin && !isOriginAllowed(origin)) {
+        return res.status(403).json({ error: 'CORS origin not allowed' });
+      }
       return res.status(200).end();
     }
 
@@ -2074,6 +2085,7 @@ export default async function handler(req: any, res: any) {
     if (pathname.includes('/api/hr/payroll/sheets') && method === 'GET') {
       const client = await getPgClient();
       if (client) {
+        try {
           const result = await client.query(`
             SELECT 
               s.*,
@@ -2320,14 +2332,31 @@ export default async function handler(req: any, res: any) {
       const client = await getPgClient();
       if (client) {
         try {
-          const result = await client.query(`SELECT * FROM hr_ocr_logs ORDER BY scanned_at DESC LIMIT 50;`);
+          const result = await client.query(`SELECT * FROM hr_ocr_logs ORDER BY created_at DESC LIMIT 50;`);
           return res.status(200).json(result.rows || []);
-        } catch (_) {}
+        } catch (dbErr: any) {
+          console.warn('[Serverless HR OCR Logs Error]:', dbErr?.message);
+        }
         finally {
           try { await client.end(); } catch (_) {}
         }
       }
-      return res.status(200).json([]);
+      try {
+        const { data } = await supabaseAdmin
+          .from('hr_ocr_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(50);
+        if (Array.isArray(data)) return res.status(200).json(data);
+      } catch (_) {}
+
+      return res.status(503).json({
+        success: false,
+        degraded: true,
+        error: 'HR OCR logs database query failed. Service temporarily unavailable.',
+        correlationId,
+        logs: []
+      });
     }
 
     // 13. GET /api/hr/ocr/status
@@ -2912,42 +2941,6 @@ export default async function handler(req: any, res: any) {
           `• Vault Drops & Gate Passes: Operational\n\n` +
           `🚀 Generated automatically via Vintage Vibes ERP`
       });
-    }
-
-    // Enterprise Audit Trail (Supabase public.audit_logs)
-    if (pathname.includes('/audit')) {
-      if (method === 'GET') {
-        try {
-          const { data, error } = await supabaseAdmin
-            .from('audit_logs')
-            .select('*')
-            .order('timestamp', { ascending: false })
-            .limit(100);
-          if (!error && Array.isArray(data)) {
-            return res.status(200).json({ success: true, data });
-          }
-          return res.status(200).json({ success: true, data: [] });
-        } catch (err: any) {
-          return res.status(200).json({ success: true, data: [] });
-        }
-      }
-      if (method === 'POST') {
-        try {
-          const logPayload = body?.log || body || {};
-          await supabaseAdmin.from('audit_logs').insert({
-            id: logPayload.id || `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            timestamp: logPayload.timestamp || new Date().toISOString(),
-            module: logPayload.module || 'SYSTEM',
-            action: logPayload.action || 'UPDATE',
-            actor: logPayload.userName || logPayload.actor || logPayload.user_name || 'System Admin',
-            document_ref: logPayload.documentRef || logPayload.document_ref || '',
-            status: logPayload.status || 'POSTED',
-            details: logPayload.details || ''
-          });
-        } catch (_) {}
-        return res.status(200).json({ success: true });
-      }
-      return res.status(200).json({ success: true, data: [] });
     }
 
     // HR OCR Logs (Supabase public.hr_ocr_logs)
@@ -3662,19 +3655,30 @@ export default async function handler(req: any, res: any) {
                   COALESCE(v.current_balance, c.current_balance, 0) as live_balance 
                 FROM public.chart_of_accounts c 
                 LEFT JOIN view_coa_live_balances v ON c.id::text = v.account_id::text OR c.code = v.account_code
-                WHERE c.is_deleted IS NOT TRUE 
                 ORDER BY c.code ASC;
               `);
               rawRows = res.rows || [];
             } catch (coaErr: any) {
-              console.warn('[Serverless COA] chart_of_accounts query failed, trying accounts table fallback:', coaErr?.message);
-              // Attempt 2: Fallback to accounts table
+              console.warn('[Serverless COA] live balance query failed, trying direct chart_of_accounts:', coaErr?.message);
               try {
-                const resAcc = await client.query('SELECT * FROM accounts ORDER BY account_code ASC;');
-                rawRows = resAcc.rows || [];
-              } catch (accErr: any) {
-                console.warn('[Serverless COA] accounts table query also failed:', accErr?.message);
-                return res.status(200).json({ success: true, accounts: [], coa: [] });
+                const directRes = await client.query('SELECT * FROM public.chart_of_accounts ORDER BY code ASC;');
+                rawRows = directRes.rows || [];
+              } catch (dirErr: any) {
+                console.warn('[Serverless COA] direct chart_of_accounts failed, trying accounts table fallback:', dirErr?.message);
+                try {
+                  const resAcc = await client.query('SELECT * FROM accounts ORDER BY account_code ASC;');
+                  rawRows = resAcc.rows || [];
+                } catch (accErr: any) {
+                  console.error('[Serverless COA] All COA queries failed:', accErr?.message);
+                  return res.status(503).json({
+                    success: false,
+                    degraded: true,
+                    error: 'Chart of accounts database query failed. Service unavailable.',
+                    correlationId,
+                    accounts: [],
+                    coa: []
+                  });
+                }
               }
             }
 
@@ -4823,7 +4827,13 @@ export default async function handler(req: any, res: any) {
               if (isBad) {
                 const inserted = await client.query(`
                   INSERT INTO device_installations (device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit, city, country)
-                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'BLOCKED', 'BAD_BOT', $9, 0, $10, $11) RETURNING *;
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'BLOCKED', 'BAD_BOT', $9, 0, $10, $11)
+                  ON CONFLICT (device_id) DO UPDATE SET
+                    last_active_at = NOW(),
+                    install_status = 'BLOCKED',
+                    bot_type = 'BAD_BOT',
+                    block_reason = COALESCE(EXCLUDED.block_reason, device_installations.block_reason)
+                  RETURNING *;
                 `, [safeDeviceId, userId || null, `[BAD BOT] ${cleanUser || botCheck.botName}`, ip, deviceType || 'Bad Bot / Scanner', deviceModel || botCheck.botName, userAgent || '', Boolean(isStandalone), blockReason, loc.city, loc.country]);
                 await client.end();
                 return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator / Automated Security Shield.', reason: blockReason, device: inserted.rows[0] });
@@ -4839,13 +4849,38 @@ export default async function handler(req: any, res: any) {
               }
               const inserted = await client.query(`
                 INSERT INTO device_installations (device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit, city, country)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *;
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                ON CONFLICT (device_id) DO UPDATE SET
+                  last_active_at = NOW(),
+                  ip_address = EXCLUDED.ip_address,
+                  is_standalone = EXCLUDED.is_standalone,
+                  username = COALESCE(NULLIF(EXCLUDED.username, ''), device_installations.username),
+                  user_id = COALESCE(NULLIF(EXCLUDED.user_id, ''), device_installations.user_id),
+                  device_type = COALESCE(NULLIF(EXCLUDED.device_type, ''), device_installations.device_type),
+                  device_model = COALESCE(NULLIF(EXCLUDED.device_model, ''), device_installations.device_model),
+                  user_agent = COALESCE(NULLIF(EXCLUDED.user_agent, ''), device_installations.user_agent),
+                  bot_type = EXCLUDED.bot_type,
+                  city = COALESCE(NULLIF(EXCLUDED.city, ''), device_installations.city),
+                  country = COALESCE(NULLIF(EXCLUDED.country, ''), device_installations.country)
+                RETURNING *;
               `, [safeDeviceId, userId || null, cleanUser || 'Guest / Visitor', ip, deviceType || 'Unknown', deviceModel || 'Unknown Device', userAgent || '', Boolean(isStandalone), installStatus, botType, blockReason, maxLimit, loc.city, loc.country]);
               await client.end();
               return res.status(201).json({ success: true, device: inserted.rows[0], ip, city: loc.city, country: loc.country });
             } catch (err: any) {
               try { await client.end(); } catch (_) {}
-              console.error('[Device Register PG Error]:', err);
+              console.error('[Device Register PG Error]:', {
+                correlationId,
+                endpoint: '/api/devices/register',
+                method: 'POST',
+                errorCode: err?.code || 'PG_ERROR',
+                errorMessage: err?.message
+              });
+              return res.status(503).json({
+                success: false,
+                degraded: true,
+                error: 'Device registration database write failed. Database service temporarily unavailable.',
+                correlationId
+              });
             }
           }
           try {
@@ -4855,14 +4890,31 @@ export default async function handler(req: any, res: any) {
               const { data: updated } = await supabaseAdmin.from('device_installations').update({ ip_address: ip, is_standalone: Boolean(isStandalone), last_active_at: new Date().toISOString(), username: username || existing.username, city: loc.city, country: loc.country, bot_type: botType }).eq('device_id', safeDeviceId).select().single();
               return res.status(200).json({ success: true, device: updated, ip, city: loc.city, country: loc.country });
             }
-            const { data: ins } = await supabaseAdmin.from('device_installations').insert({ device_id: safeDeviceId, user_id: userId || null, username: isBad ? `[BAD BOT] ${username || botCheck.botName}` : (username || 'Guest / Visitor'), ip_address: ip, device_type: deviceType || (isBad ? 'Bad Bot' : 'Unknown'), device_model: deviceModel || (isBad ? botCheck.botName : 'Unknown'), user_agent: userAgent || '', is_standalone: Boolean(isStandalone), install_status: installStatus, bot_type: botType, block_reason: blockReason, max_devices_limit: isBad ? 0 : 2, city: loc.city, country: loc.country }).select().single();
+            const { data: ins } = await supabaseAdmin.from('device_installations').upsert({ device_id: safeDeviceId, user_id: userId || null, username: isBad ? `[BAD BOT] ${username || botCheck.botName}` : (username || 'Guest / Visitor'), ip_address: ip, device_type: deviceType || (isBad ? 'Bad Bot' : 'Unknown'), device_model: deviceModel || (isBad ? botCheck.botName : 'Unknown'), user_agent: userAgent || '', is_standalone: Boolean(isStandalone), install_status: installStatus, bot_type: botType, block_reason: blockReason, max_devices_limit: isBad ? 0 : 2, city: loc.city, country: loc.country }, { onConflict: 'device_id' }).select().single();
             if (isBad) return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator / Automated Security Shield.', reason: blockReason, device: ins });
             return res.status(201).json({ success: true, device: ins, ip, city: loc.city, country: loc.country });
           } catch (err: any) {
-            return res.status(200).json({ success: true, registered: true, device: { device_id: safeDeviceId, username: username || 'Guest' }, ip, city: loc.city, country: loc.country });
+            console.error('[Device Register Supabase Error]:', {
+              correlationId,
+              endpoint: '/api/devices/register',
+              method: 'POST',
+              errorCode: err?.code || 'SUPABASE_ERROR',
+              errorMessage: err?.message
+            });
+            return res.status(503).json({
+              success: false,
+              degraded: true,
+              error: 'Device registration database write failed. Service temporarily unavailable.',
+              correlationId
+            });
           }
         } catch (globalErr: any) {
-          return res.status(200).json({ success: true, registered: true, device: { device_id: body?.deviceId || 'dev-fallback' } });
+          return res.status(503).json({
+            success: false,
+            degraded: true,
+            error: 'Device registration service error.',
+            correlationId
+          });
         }
       }
 
@@ -4999,12 +5051,34 @@ export default async function handler(req: any, res: any) {
               return res.status(200).json({ success: true, onlineCount: activeRes.rows.length, users: activeRes.rows });
             } catch (err: any) {
               try { await client.end(); } catch (_) {}
-              return res.status(200).json({ success: true, onlineCount: 1, users: [] });
+              console.error('[Serverless Presence Heartbeat Error]:', {
+                correlationId,
+                endpoint: '/api/presence/heartbeat',
+                method: 'POST',
+                errorCode: err?.code || 'PG_ERROR',
+                errorMessage: err?.message
+              });
+              return res.status(503).json({
+                success: false,
+                degraded: true,
+                error: 'Presence heartbeat database write failed. Service temporarily unavailable.',
+                correlationId
+              });
             }
           }
-          return res.status(200).json({ success: true, onlineCount: 1, users: [] });
+          return res.status(503).json({
+            success: false,
+            degraded: true,
+            error: 'Presence service database connection unavailable.',
+            correlationId
+          });
         } catch (_) {
-          return res.status(200).json({ success: true, onlineCount: 1, users: [] });
+          return res.status(503).json({
+            success: false,
+            degraded: true,
+            error: 'Presence service unavailable.',
+            correlationId
+          });
         }
       }
 
@@ -5043,7 +5117,123 @@ export default async function handler(req: any, res: any) {
             try { await client.end(); } catch (_) {}
           }
         }
-        return res.status(200).json({ success: true, onlineCount: 1, users: [] });
+      }
+    }
+
+    // ==================== ENTERPRISE AUDIT LOGS ====================
+    if (pathname.includes('/api/audit') || pathname.endsWith('/audit')) {
+      if (method === 'GET') {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const result = await client.query('SELECT * FROM public.audit_logs ORDER BY "timestamp" DESC LIMIT 200;');
+            await client.end();
+            return res.status(200).json(result.rows || []);
+          } catch (dbErr: any) {
+            try { await client.end(); } catch (_) {}
+            console.warn('[Serverless Audit Query Error]:', dbErr?.message);
+          }
+        }
+        try {
+          const { data, error } = await supabaseAdmin
+            .from('audit_logs')
+            .select('*')
+            .order('timestamp', { ascending: false })
+            .limit(200);
+          if (!error && Array.isArray(data)) {
+            return res.status(200).json(data);
+          }
+        } catch (_) {}
+
+        return res.status(503).json({
+          success: false,
+          degraded: true,
+          error: 'Audit logs query failed. Database service temporarily unavailable.',
+          correlationId,
+          logs: []
+        });
+      }
+
+      if (method === 'POST') {
+        const authHeader = (req.headers?.authorization as string) || (req.headers?.['authorization'] as string) || '';
+        const authResult = await verifyAuthToken(authHeader);
+
+        if (!authResult.valid || !authResult.user) {
+          return res.status(401).json({
+            success: false,
+            error: authResult.error || 'Unauthorized. Valid authorization token or session is required to record audit events.',
+            correlationId
+          });
+        }
+
+        const entry = body || {};
+        const targetId = entry.id ? String(entry.id).trim() : '';
+        const client = await getPgClient();
+
+        if (targetId && client) {
+          try {
+            const check = await client.query('SELECT 1 FROM public.audit_logs WHERE id = $1 LIMIT 1;', [targetId]);
+            if (check.rows && check.rows.length > 0) {
+              await client.end();
+              return res.status(409).json({
+                success: false,
+                error: 'Audit log records are immutable and cannot be overwritten.',
+                correlationId
+              });
+            }
+          } catch (_) {}
+        }
+
+        const id = targetId || `aud-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        // Actor is strictly tied to verified user identity, not request body or untrusted headers
+        const effectiveUserName = authResult.user.username || authResult.user.id || 'HR Department';
+        const timestamp = entry.timestamp || new Date().toISOString();
+
+        if (client) {
+          try {
+            await client.query(`
+              INSERT INTO public.audit_logs (id, module, action, document_ref, status, actor, details, "timestamp")
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+            `, [
+              id,
+              entry.module || 'HR',
+              entry.action || 'POST',
+              entry.documentRef || entry.document_ref || '',
+              entry.status || 'POSTED',
+              effectiveUserName,
+              entry.details || '',
+              timestamp
+            ]);
+            await client.end();
+            return res.status(200).json({ success: true, id, correlationId });
+          } catch (dbErr: any) {
+            try { await client.end(); } catch (_) {}
+            console.error('[Serverless Audit Insert Error]:', dbErr?.message);
+          }
+        }
+
+        try {
+          const { error: insErr } = await supabaseAdmin.from('audit_logs').insert({
+            id,
+            module: entry.module || 'HR',
+            action: entry.action || 'POST',
+            document_ref: entry.documentRef || entry.document_ref || '',
+            status: entry.status || 'POSTED',
+            actor: effectiveUserName,
+            details: entry.details || '',
+            timestamp
+          });
+          if (!insErr) {
+            return res.status(200).json({ success: true, id, correlationId });
+          }
+        } catch (_) {}
+
+        return res.status(503).json({
+          success: false,
+          degraded: true,
+          error: 'Audit log database write failed. Service temporarily unavailable.',
+          correlationId
+        });
       }
     }
 
@@ -5108,13 +5298,15 @@ export default async function handler(req: any, res: any) {
             });
           }
 
+          const safePingErr = (pingErr || 'Failed to authenticate with Google Gemini API. Please check your key.')
+            .replace(new RegExp(keyToTest, 'g'), '[REDACTED]');
           return res.status(400).json({
             success: false,
             valid: false,
-            error: pingErr || 'Failed to authenticate with Google Gemini API.'
+            error: safePingErr
           });
         } catch (err: any) {
-          return res.status(500).json({ success: false, valid: false, error: err?.message || 'Network error connecting to Google AI' });
+          return res.status(500).json({ success: false, valid: false, error: 'Network error connecting to Google AI' });
         }
       }
 
@@ -5122,39 +5314,47 @@ export default async function handler(req: any, res: any) {
         const client = await getPgClient();
         if (client) {
           try {
-            await client.query(`
-              CREATE TABLE IF NOT EXISTS gemini_api_config (
-                id VARCHAR(64) PRIMARY KEY,
-                api_key TEXT NOT NULL,
-                model VARCHAR(64) DEFAULT 'gemini-3.6',
-                status VARCHAR(64) DEFAULT 'ACTIVE',
-                updated_at TIMESTAMPTZ DEFAULT NOW()
-              );
-            `);
             const dbRes = await client.query("SELECT id, api_key, model, status, updated_at FROM gemini_api_config WHERE id = 'default' LIMIT 1;");
             await client.end();
             if (dbRes.rows && dbRes.rows.length > 0 && dbRes.rows[0].api_key) {
               const row = dbRes.rows[0];
               return res.status(200).json({
                 success: true,
-                apiKey: row.api_key,
-                model: row.model || 'gemini-3.6',
+                configured: true,
+                model: row.model || 'gemini-3.7-flash',
                 status: row.status || 'ACTIVE',
-                updatedAt: row.updated_at,
-                configured: true
+                updatedAt: row.updated_at
               });
             }
-          } catch (dbErr) {
+          } catch (dbErr: any) {
             try { await client.end(); } catch (_) {}
-            console.warn('[Serverless Gemini Select Warning]:', dbErr);
+            console.warn('[Serverless Gemini Select Warning]:', dbErr?.message);
           }
         }
+        try {
+          const { data } = await supabaseAdmin
+            .from('gemini_api_config')
+            .select('*')
+            .eq('id', 'default')
+            .maybeSingle();
+          if (data && data.api_key) {
+            return res.status(200).json({
+              success: true,
+              configured: true,
+              model: data.model || 'gemini-3.7-flash',
+              status: data.status || 'ACTIVE',
+              updatedAt: data.updated_at
+            });
+          }
+        } catch (_) {}
+
         const envKey = (process.env.GEMINI_API_KEY || '').trim();
         return res.status(200).json({
           success: true,
-          apiKey: envKey,
-          model: 'gemini-3.6',
-          configured: Boolean(envKey)
+          configured: Boolean(envKey),
+          model: 'gemini-3.7-flash',
+          status: envKey ? 'ACTIVE' : 'NOT_CONFIGURED',
+          updatedAt: envKey ? new Date().toISOString() : null
         });
       }
 
@@ -5170,15 +5370,6 @@ export default async function handler(req: any, res: any) {
         let savedRecord = null;
         if (client) {
           try {
-            await client.query(`
-              CREATE TABLE IF NOT EXISTS gemini_api_config (
-                id VARCHAR(64) PRIMARY KEY,
-                api_key TEXT NOT NULL,
-                model VARCHAR(64) DEFAULT 'gemini-3.6',
-                status VARCHAR(64) DEFAULT 'ACTIVE',
-                updated_at TIMESTAMPTZ DEFAULT NOW()
-              );
-            `);
             const upsertResult = await client.query(`
               INSERT INTO gemini_api_config (id, api_key, model, status, updated_at)
               VALUES ('default', $1, $2, 'ACTIVE', NOW())
@@ -5187,7 +5378,7 @@ export default async function handler(req: any, res: any) {
                   model = COALESCE(EXCLUDED.model, gemini_api_config.model),
                   status = 'ACTIVE',
                   updated_at = NOW()
-              RETURNING id, api_key, model, status, updated_at;
+              RETURNING id, model, status, updated_at;
             `, [cleanKey, selectedModel]);
             if (upsertResult.rows && upsertResult.rows.length > 0) {
               savedRecord = upsertResult.rows[0];
@@ -5204,21 +5395,21 @@ export default async function handler(req: any, res: any) {
         if (savedRecord) {
           return res.status(200).json({
             success: true,
-            message: '✓ Gemini API Key successfully saved and persisted in PostgreSQL database (gemini_api_config)!',
-            apiKey: savedRecord.api_key,
-            model: savedRecord.model,
-            status: savedRecord.status,
-            updatedAt: savedRecord.updated_at,
-            configured: true
+            configured: true,
+            model: savedRecord.model || selectedModel,
+            status: savedRecord.status || 'ACTIVE',
+            updatedAt: savedRecord.updated_at || new Date().toISOString(),
+            message: '✓ Gemini API Key successfully saved and persisted.'
           });
         }
 
         return res.status(200).json({
           success: true,
-          message: '✓ Gemini API Key updated in runtime environment.',
-          apiKey: cleanKey,
+          configured: true,
           model: selectedModel,
-          configured: true
+          status: 'ACTIVE',
+          updatedAt: new Date().toISOString(),
+          message: '✓ Gemini API Key updated in runtime environment.'
         });
       }
     }
@@ -7236,17 +7427,48 @@ export default async function handler(req: any, res: any) {
     });
 
   } catch (fatalErr: any) {
-    console.error("FATAL VERCEL GATEWAY ERROR:", fatalErr);
+    const isAuthError = fatalErr?.status === 401 || fatalErr?.status === 403 || fatalErr?.statusCode === 401 || fatalErr?.statusCode === 403 || /unauthorized|forbidden|jwt|token|not authenticated/i.test(fatalErr?.message || '');
+    const userId = req.user?.id || 'unauthenticated';
+    const clientReportedId = (req.headers?.['x-user-id'] as string) || null;
+    const rawUrl = (req.headers?.['x-matched-path'] as string) || req.url || '';
+    const reqMethod = req.method || 'GET';
+
+    console.error('[API Serverless Error]', {
+      correlationId,
+      endpoint: rawUrl,
+      method: reqMethod,
+      userId,
+      ...(clientReportedId ? { clientReportedId } : {}),
+      errorCode: fatalErr?.code || (isAuthError ? 'AUTH_ERROR' : 'GATEWAY_ERROR'),
+      errorMessage: fatalErr?.message || String(fatalErr)
+    });
+
+    const origin = (req.headers?.origin as string) || '';
     try {
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      if (origin) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Vary', 'Origin');
+      } else {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+      }
+      res.setHeader('X-Correlation-ID', correlationId);
     } catch (_) {}
-    return res.status(200).json({
+
+    if (isAuthError) {
+      return res.status(fatalErr?.status || fatalErr?.statusCode || 401).json({
+        success: false,
+        error: fatalErr?.message || 'Unauthorized access',
+        correlationId
+      });
+    }
+
+    return res.status(503).json({
       success: false,
-      diagnostic_error: fatalErr?.message || String(fatalErr),
-      stack: fatalErr?.stack,
-      has_db_url: !!process.env.DATABASE_URL,
-      employees: []
+      degraded: true,
+      error: fatalErr?.message || 'Gateway operation failed. Database service temporarily unavailable.',
+      correlationId
     });
   }
 }

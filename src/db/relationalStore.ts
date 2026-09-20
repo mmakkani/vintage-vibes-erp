@@ -603,7 +603,11 @@ class RelationalStore {
       return { success: false, error: 'User account has been deactivated by Administrator' };
     }
 
-    if (password && user.password && user.password !== password) {
+    if (!password || !password.trim()) {
+      return { success: false, error: 'Password is required' };
+    }
+
+    if (user.password && user.password !== password.trim()) {
       return { success: false, error: 'Invalid password. Please check your credentials' };
     }
 

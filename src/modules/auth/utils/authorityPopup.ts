@@ -755,9 +755,25 @@ export function openAuthorityMatrixPopup(options: AuthorityPopupOptions): Window
         localStorage.setItem('vintage_erp_master_pin', next);
         activeMasterPin = next;
         // Log to Audit Trail
+        let auditAuthToken = '';
+        try {
+          const userRaw = localStorage.getItem('vintage_erp_logged_user');
+          const parsed = userRaw ? JSON.parse(userRaw) : null;
+          if (parsed && parsed.token) {
+            auditAuthToken = parsed.token;
+          } else if (parsed && parsed.id) {
+            auditAuthToken = 'sess-' + String(parsed.id) + '-' + String(parsed.username || adminHandle);
+          } else {
+            auditAuthToken = 'sess-admin-' + String(adminHandle);
+          }
+        } catch {}
+
         fetch('/api/audit/log', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(auditAuthToken ? { 'Authorization': 'Bearer ' + auditAuthToken } : {})
+          },
           body: JSON.stringify({
             module: 'AUTH',
             action: 'EDIT',

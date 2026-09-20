@@ -26,6 +26,7 @@ import { Client } from 'pg';
 import { createClient } from '@supabase/supabase-js';
 import { ecommerceRouter } from './src/modules/ecommerce/ecommerce.routes.ts';
 import { sortingRouter } from './src/modules/sorting/sorting.routes.ts';
+import { applyCorsHeaders, isOriginAllowed } from './src/server/authValidator.ts';
 
 const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
@@ -122,12 +123,21 @@ async function startServer() {
   app.use(express.json({ limit: '25mb' }));
   app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
-  // Global CORS & Tunnel Intermediary Header Handling
+  // Request Correlation ID Middleware
   app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, ngrok-skip-browser-warning');
-    if (req.method === 'OPTIONS') {
+    const correlationId = (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    (req as any).correlationId = correlationId;
+    res.setHeader('X-Correlation-ID', correlationId);
+    next();
+  });
+
+  // Global Strict CORS & Tunnel Intermediary Header Handling
+  app.use((req, res, next) => {
+    const corsResult = applyCorsHeaders(req, res);
+    if (corsResult.isPreflight) {
+      if (!corsResult.allowed) {
+        return; // 403 status already sent by applyCorsHeaders
+      }
       return res.sendStatus(200);
     }
     next();
@@ -280,6 +290,33 @@ async function startServer() {
       data
     });
     return res.json({ success: true, broadcastedAt: new Date().toISOString() });
+  });
+
+  // Structured Server-side API Error Logging Middleware
+  app.use((err: any, req: any, res: any, next: any) => {
+    const correlationId = req.correlationId || (req.headers?.['x-correlation-id'] as string) || 'unknown';
+    const userId = req.user?.id || 'unauthenticated';
+    const clientReportedId = (req.headers?.['x-user-id'] as string) || null;
+    const isAuthError = err?.status === 401 || err?.status === 403 || err?.statusCode === 401 || err?.statusCode === 403 || /unauthorized|forbidden|jwt|token|not authenticated/i.test(err?.message || '');
+    const statusCode = isAuthError ? (err.status || err.statusCode || 401) : (err.status || err.statusCode || 500);
+
+    console.error('[API Server Error]', {
+      correlationId,
+      endpoint: req.originalUrl || req.url,
+      method: req.method,
+      userId,
+      ...(clientReportedId ? { clientReportedId } : {}),
+      errorCode: err?.code || (isAuthError ? 'AUTH_ERROR' : 'INTERNAL_ERROR'),
+      errorMessage: err?.message || String(err)
+    });
+
+    if (res.headersSent) return next(err);
+
+    return res.status(statusCode).json({
+      success: false,
+      error: err?.message || (isAuthError ? 'Authentication/Authorization required' : 'Internal server error'),
+      correlationId
+    });
   });
 
   // Vite middleware in dev mode, or static file serving in production

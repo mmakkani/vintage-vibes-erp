@@ -1,3 +1,5 @@
+import { createSessionToken, isOriginAllowed } from '../../src/server/authValidator.ts';
+
 function generatePermissions(userId: string, role: string) {
   const modules = [
     'DASHBOARD', 'PURCHASE', 'INVENTORY', 'SALES', 'FINANCE', 'PARTIES', 'HR', 'SETUP', 'AUDIT', 'AUTH'
@@ -51,6 +53,8 @@ function generatePermissions(userId: string, role: string) {
       canUnpost
     };
   });
+}
+
 // global pool reuse pattern
 let loginPool: any = null;
 let pgPoolClass: any = null;
@@ -58,11 +62,19 @@ let pgPoolClass: any = null;
 export default async function handler(req: any, res: any) {
   // Always return application/json headers
   res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = (req.headers?.origin as string) || '';
+  if (origin && isOriginAllowed(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Correlation-ID');
 
   if (req.method === 'OPTIONS') {
+    if (origin && !isOriginAllowed(origin)) {
+      return res.status(403).json({ error: 'CORS origin not allowed' });
+    }
     return res.status(200).end();
   }
 
@@ -85,6 +97,9 @@ export default async function handler(req: any, res: any) {
 
     if (!username) {
       return res.status(400).json({ success: false, error: 'Username or email is required' });
+    }
+    if (!password) {
+      return res.status(400).json({ success: false, error: 'Password is required' });
     }
 
     // 1. Live Supabase PostgreSQL Query across both users and operators tables
@@ -205,7 +220,7 @@ export default async function handler(req: any, res: any) {
         return res.status(403).json({ success: false, error: 'User account has been deactivated' });
       }
 
-      if (password && foundUserRow.password_hash && foundUserRow.password_hash.trim() !== password.trim()) {
+      if (!foundUserRow.password_hash || foundUserRow.password_hash.trim() !== password.trim()) {
         return res.status(401).json({ success: false, error: 'Invalid password. Please check your credentials' });
       }
 
@@ -213,52 +228,79 @@ export default async function handler(req: any, res: any) {
         ? foundUserRow.permissions
         : generatePermissions(String(foundUserRow.id), foundUserRow.role || 'ADMIN');
 
+      const userIdStr = String(foundUserRow.id);
+      const sessionToken = await createSessionToken({
+        id: userIdStr,
+        username: foundUserRow.username,
+        role: foundUserRow.role || 'ADMIN'
+      });
+
       return res.status(200).json({
         success: true,
+        token: sessionToken,
         user: {
-          id: String(foundUserRow.id),
+          id: userIdStr,
           username: foundUserRow.username,
           name: foundUserRow.name,
           email: foundUserRow.email,
           role: foundUserRow.role || 'ADMIN',
           isActive: foundUserRow.is_active !== false,
           permissions: userPerms,
+          token: sessionToken,
           createdAt: new Date().toISOString()
         }
       });
     }
 
-    // 2. Built-in Fallback Credentials
-    if (username === 'admin' && (password === 'admin123' || !password)) {
-      return res.status(200).json({
-        success: true,
-        user: {
+    // 2. Built-in Fallback Credentials (STRICTLY GUARDED: Development Only via explicit env flag)
+    const allowDevFallback = process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEV_FALLBACK_AUTH === 'true';
+
+    if (allowDevFallback) {
+      if (username === 'admin' && password === 'admin123') {
+        const sessionToken = await createSessionToken({
           id: 'usr-admin',
           username: 'admin',
-          name: 'Elena Rostova (Principal Admin)',
-          email: 'admin@vintagevibe.ae',
-          role: 'ADMIN',
-          isActive: true,
-          permissions: generatePermissions('usr-admin', 'ADMIN'),
-          createdAt: new Date().toISOString()
-        }
-      });
-    }
+          role: 'ADMIN'
+        });
+        return res.status(200).json({
+          success: true,
+          token: sessionToken,
+          user: {
+            id: 'usr-admin',
+            username: 'admin',
+            name: 'Elena Rostova (Principal Admin)',
+            email: 'admin@vintagevibe.ae',
+            role: 'ADMIN',
+            isActive: true,
+            permissions: generatePermissions('usr-admin', 'ADMIN'),
+            token: sessionToken,
+            createdAt: new Date().toISOString()
+          }
+        });
+      }
 
-    if (username === 'accountant' && (password === 'acct123' || !password)) {
-      return res.status(200).json({
-        success: true,
-        user: {
+      if (username === 'accountant' && password === 'acct123') {
+        const sessionToken = await createSessionToken({
           id: 'usr-acct',
           username: 'accountant',
-          name: 'Farhan Zaidi (Senior Accountant)',
-          email: 'accountant@vintagevibe.ae',
-          role: 'ACCOUNTANT',
-          isActive: true,
-          permissions: generatePermissions('usr-acct', 'ACCOUNTANT'),
-          createdAt: new Date().toISOString()
-        }
-      });
+          role: 'ACCOUNTANT'
+        });
+        return res.status(200).json({
+          success: true,
+          token: sessionToken,
+          user: {
+            id: 'usr-acct',
+            username: 'accountant',
+            name: 'Farhan Zaidi (Senior Accountant)',
+            email: 'accountant@vintagevibe.ae',
+            role: 'ACCOUNTANT',
+            isActive: true,
+            permissions: generatePermissions('usr-acct', 'ACCOUNTANT'),
+            token: sessionToken,
+            createdAt: new Date().toISOString()
+          }
+        });
+      }
     }
 
     return res.status(401).json({

@@ -4,12 +4,12 @@ import { Client } from 'pg';
 import { FinanceController } from './finance.controller.ts';
 import { FinanceService } from '../../services/financeService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
-import { withDb } from '../../db/pgPool.ts';
+import { withDb, sanitizeDbUrl, DEFAULT_DB_URL } from '../../db/pgPool.ts';
 
 export const financeRouter = Router();
 
 async function getDbClient(): Promise<Client> {
-  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  const dbUrl = sanitizeDbUrl(process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL);
   const client = new Client({
     connectionString: dbUrl,
     ssl: { rejectUnauthorized: false }
@@ -61,19 +61,28 @@ financeRouter.get('/coa', async (req, res) => {
             COALESCE(v.current_balance, c.current_balance, 0) as live_balance 
           FROM public.chart_of_accounts c 
           LEFT JOIN view_coa_live_balances v ON c.id::text = v.account_id::text OR c.code = v.account_code
-          WHERE c.is_deleted IS NOT TRUE 
           ORDER BY c.code ASC;
         `);
         rawRows = result.rows || [];
       } catch (coaErr: any) {
-        console.warn('[Finance COA] chart_of_accounts query failed, trying accounts table:', coaErr?.message);
+        console.warn('[Finance COA] Live balance query failed, trying direct chart_of_accounts:', coaErr?.message);
         try {
-          const resAcc = await client.query('SELECT * FROM accounts ORDER BY account_code ASC');
-          rawRows = resAcc.rows || [];
-        } catch (accErr: any) {
-          console.warn('[Finance COA] accounts query also failed:', accErr?.message);
-          return [];
+          const directRes = await client.query('SELECT * FROM public.chart_of_accounts ORDER BY code ASC;');
+          rawRows = directRes.rows || [];
+        } catch (dirErr: any) {
+          console.warn('[Finance COA] Direct chart_of_accounts failed, trying accounts table:', dirErr?.message);
+          try {
+            const resAcc = await client.query('SELECT * FROM accounts ORDER BY account_code ASC;');
+            rawRows = resAcc.rows || [];
+          } catch (accErr: any) {
+            console.warn('[Finance COA] All COA queries failed:', accErr?.message);
+            return null;
+          }
         }
+      }
+
+      if (!rawRows || rawRows.length === 0) {
+        return [];
       }
 
       const typeMapById: Record<number, string> = {
@@ -139,6 +148,18 @@ financeRouter.get('/coa', async (req, res) => {
       });
     });
 
+    if (accounts === null || accounts === undefined) {
+      const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      return res.status(503).json({
+        success: false,
+        degraded: true,
+        error: 'Chart of accounts database service unavailable',
+        correlationId,
+        accounts: [],
+        coa: []
+      });
+    }
+
     return res.status(200).json({
       success: true,
       data: accounts,
@@ -146,9 +167,13 @@ financeRouter.get('/coa', async (req, res) => {
       coa: accounts
     });
   } catch (err: any) {
+    const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     console.error('[Finance COA] Error in GET /api/finance/coa:', err?.message || err);
-    return res.status(200).json({
-      success: true,
+    return res.status(503).json({
+      success: false,
+      degraded: true,
+      error: 'Chart of accounts database query failed',
+      correlationId,
       accounts: [],
       coa: []
     });

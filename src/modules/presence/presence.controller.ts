@@ -6,9 +6,8 @@ export const PresenceController = {
     const ip = getClientIp(req);
     const { sessionId, userId, username, displayName, role, deviceType } = req.body || {};
 
-    if (!sessionId || !username) {
-      return res.status(400).json({ success: false, error: 'Session ID and Username required' });
-    }
+    const safeSessionId = sessionId || `sess-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const safeUsername = (username || 'operator').trim();
 
     const client = await getPgClient();
     if (client) {
@@ -25,17 +24,17 @@ export const PresenceController = {
               device_type = EXCLUDED.device_type,
               ip_address = EXCLUDED.ip_address;
         `, [
-          sessionId,
+          safeSessionId,
           userId || null,
-          username,
-          displayName || username,
+          safeUsername,
+          displayName || safeUsername,
           role || 'OPERATOR',
           deviceType || 'Web Client',
           ip
         ]);
 
         // Clean up stale sessions (> 45s)
-        await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '45 seconds';");
+        await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '45 seconds';").catch(() => {});
 
         // Fetch active online users
         const activeRes = await client.query(`
@@ -53,19 +52,39 @@ export const PresenceController = {
         });
       } catch (err: any) {
         try { await client.end(); } catch (_) {}
-        console.error('[Presence Heartbeat Error]:', err);
-        return res.status(500).json({ success: false, error: err?.message });
+        const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        console.error('[Presence Heartbeat Error]', {
+          correlationId,
+          endpoint: '/api/presence/heartbeat',
+          method: 'POST',
+          userId: (req as any).user?.id || 'unauthenticated',
+          clientReportedId: userId || null,
+          errorCode: err?.code || 'PG_ERROR',
+          errorMessage: err?.message
+        });
+        return res.status(503).json({
+          success: false,
+          degraded: true,
+          error: 'Presence heartbeat database write failed. Database service temporarily unavailable.',
+          correlationId
+        });
       }
     }
 
-    return res.status(200).json({ success: true, onlineCount: 1, users: [] });
+    const fallbackCorrelationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    return res.status(503).json({
+      success: false,
+      degraded: true,
+      error: 'Presence heartbeat service unavailable.',
+      correlationId: fallbackCorrelationId
+    });
   },
 
   async getOnlineUsers(req: any, res: any) {
     const client = await getPgClient();
     if (client) {
       try {
-        await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '45 seconds';");
+        await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '45 seconds';").catch(() => {});
         const activeRes = await client.query(`
           SELECT session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat
           FROM user_presences
@@ -80,10 +99,31 @@ export const PresenceController = {
         });
       } catch (err: any) {
         try { await client.end(); } catch (_) {}
-        return res.status(500).json({ success: false, error: err?.message });
+        const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        console.error('[Presence getOnlineUsers Error]', {
+          correlationId,
+          endpoint: '/api/presence/users',
+          method: 'GET',
+          errorCode: err?.code || 'PG_ERROR',
+          errorMessage: err?.message
+        });
+        return res.status(503).json({
+          success: false,
+          degraded: true,
+          error: 'Presence query database error. Service temporarily unavailable.',
+          correlationId,
+          users: []
+        });
       }
     }
-    return res.status(200).json({ success: true, onlineCount: 1, users: [] });
+    const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    return res.status(503).json({
+      success: false,
+      degraded: true,
+      error: 'Presence service unavailable.',
+      correlationId,
+      users: []
+    });
   },
 
   async logout(req: any, res: any) {
