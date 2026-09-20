@@ -1798,6 +1798,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       placeholder="[]"
                       value={gramWeight}
                       onChange={e => setGramWeight(e.target.value)}
+                      onFocus={e => e.target.select()}
                       onKeyDown={e => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
@@ -1835,6 +1836,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                     placeholder={String(suggestedSellingPrice)}
                     value={sellingPriceOverride}
                     onChange={e => setSellingPriceOverride(e.target.value)}
+                    onFocus={e => e.target.select()}
                     disabled={hudStats.isCompleted}
                     className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-400 rounded-lg px-3 py-2 text-sm font-mono font-bold text-emerald-400 focus:outline-hidden disabled:opacity-50"
                   />
@@ -2281,6 +2283,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       step="0.1"
                       value={regWeightKg}
                       onChange={e => setRegWeightKg(e.target.value)}
+                      onFocus={e => e.target.select()}
                       className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white font-mono focus:border-indigo-400"
                       required
                     />
@@ -2292,6 +2295,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       step="1"
                       value={regCostAed}
                       onChange={e => setRegCostAed(e.target.value)}
+                      onFocus={e => e.target.select()}
                       className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white font-mono focus:border-indigo-400"
                       required
                     />

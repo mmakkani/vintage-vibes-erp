@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { User, Shield, CreditCard, Building2, DollarSign, Upload, Scan, Sparkles, FileText, CheckCircle2, Globe } from 'lucide-react';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import { AIOcrScannerModal } from './AIOcrScannerModal.tsx';
+import { NumericInput } from '../../../components/NumericInput.tsx';
 
 interface RegisterEmployeeModalProps {
   isOpen: boolean;
@@ -370,12 +371,12 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Daily Working Hours</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="16"
+                <NumericInput
+                  min={1}
+                  max={16}
                   value={form.workingHoursPerDay}
-                  onChange={e => setForm({ ...form, workingHoursPerDay: Number(e.target.value) })}
+                  onChange={val => setForm(prev => ({ ...prev, workingHoursPerDay: val === '' ? ('' as any) : Number(val) }))}
+                  onBlurCommit={val => setForm(prev => ({ ...prev, workingHoursPerDay: Math.max(1, Math.min(16, val || 8)) }))}
                   className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs font-mono bg-white"
                 />
               </div>
@@ -692,34 +693,34 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Base Salary (AED) *</label>
-                <input
-                  type="number"
+                <NumericInput
                   required
-                  min="0"
+                  min={0}
                   value={form.baseSalary}
-                  onChange={e => setForm({ ...form, baseSalary: Number(e.target.value) })}
+                  onChange={val => setForm(prev => ({ ...prev, baseSalary: val === '' ? ('' as any) : Number(val) }))}
+                  onBlurCommit={val => setForm(prev => ({ ...prev, baseSalary: val }))}
                   className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs font-bold text-slate-900 bg-white"
                 />
               </div>
 
               <div>
                 <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Housing Allowance (AED)</label>
-                <input
-                  type="number"
-                  min="0"
+                <NumericInput
+                  min={0}
                   value={form.housingAllow}
-                  onChange={e => setForm({ ...form, housingAllow: Number(e.target.value) })}
+                  onChange={val => setForm(prev => ({ ...prev, housingAllow: val === '' ? ('' as any) : Number(val) }))}
+                  onBlurCommit={val => setForm(prev => ({ ...prev, housingAllow: val }))}
                   className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
                 />
               </div>
 
               <div>
                 <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Transport Allowance (AED)</label>
-                <input
-                  type="number"
-                  min="0"
+                <NumericInput
+                  min={0}
                   value={form.transportAllow}
-                  onChange={e => setForm({ ...form, transportAllow: Number(e.target.value) })}
+                  onChange={val => setForm(prev => ({ ...prev, transportAllow: val === '' ? ('' as any) : Number(val) }))}
+                  onBlurCommit={val => setForm(prev => ({ ...prev, transportAllow: val }))}
                   className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
                 />
               </div>

@@ -45,10 +45,10 @@ export interface InvoiceLineDraft {
   itemCode: string;
   itemName: string;
   packagingUom: PackagingUOM;
-  packageCount: number;
-  totalWeight: number;
+  packageCount: number | '';
+  totalWeight: number | '';
   rateType: 'PER_KG' | 'PER_UNIT';
-  ratePerWeight: number;
+  ratePerWeight: number | '';
   lineTotal: number;
 }
 
@@ -1137,7 +1137,16 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
                             type="number"
                             min="1"
                             value={line.packageCount}
-                            onChange={e => handleLineChange(idx, 'packageCount', Number(e.target.value))}
+                            onChange={e => {
+                              const v = e.target.value;
+                              handleLineChange(idx, 'packageCount', v === '' ? '' : Number(v));
+                            }}
+                            onFocus={e => e.target.select()}
+                            onBlur={() => {
+                              if (line.packageCount === '' || Number(line.packageCount) <= 0) {
+                                handleLineChange(idx, 'packageCount', 1);
+                              }
+                            }}
                             className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs font-mono font-bold text-center text-slate-900"
                           />
                         </td>
@@ -1147,7 +1156,16 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
                             min="1"
                             step="0.1"
                             value={line.totalWeight}
-                            onChange={e => handleLineChange(idx, 'totalWeight', Number(e.target.value))}
+                            onChange={e => {
+                              const v = e.target.value;
+                              handleLineChange(idx, 'totalWeight', v === '' ? '' : Number(v));
+                            }}
+                            onFocus={e => e.target.select()}
+                            onBlur={() => {
+                              if (line.totalWeight === '' || Number(line.totalWeight) <= 0) {
+                                handleLineChange(idx, 'totalWeight', 1);
+                              }
+                            }}
                             className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs font-mono font-bold text-right text-slate-900"
                           />
                           <div className="text-[9px] text-slate-700 text-right mt-0.5">
@@ -1178,7 +1196,16 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
                             min="0"
                             step="0.01"
                             value={line.ratePerWeight}
-                            onChange={e => handleLineChange(idx, 'ratePerWeight', Number(e.target.value))}
+                            onChange={e => {
+                              const v = e.target.value;
+                              handleLineChange(idx, 'ratePerWeight', v === '' ? '' : Number(v));
+                            }}
+                            onFocus={e => e.target.select()}
+                            onBlur={() => {
+                              if (line.ratePerWeight === '' || isNaN(Number(line.ratePerWeight))) {
+                                handleLineChange(idx, 'ratePerWeight', 0);
+                              }
+                            }}
                             className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs font-mono font-bold text-right text-slate-900"
                           />
                         </td>
@@ -1302,6 +1329,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
                       type="number"
                       value={freightAmount}
                       onChange={e => setFreightAmount(Number(e.target.value) || 0)}
+                      onFocus={e => e.target.select()}
                       className="w-full bg-white border border-slate-300 rounded px-1.5 py-0.5 text-xs font-mono font-bold text-right"
                     />
                   </div>
@@ -1315,6 +1343,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
                       type="number"
                       value={customsDutyAmount}
                       onChange={e => setCustomsDutyAmount(Number(e.target.value) || 0)}
+                      onFocus={e => e.target.select()}
                       className="w-full bg-white border border-slate-300 rounded px-1.5 py-0.5 text-xs font-mono font-bold text-right"
                     />
                   </div>
@@ -1328,6 +1357,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
                       type="number"
                       value={terminalHandlingAmount}
                       onChange={e => setTerminalHandlingAmount(Number(e.target.value) || 0)}
+                      onFocus={e => e.target.select()}
                       className="w-full bg-white border border-slate-300 rounded px-1.5 py-0.5 text-xs font-mono font-bold text-right"
                     />
                   </div>
@@ -1353,6 +1383,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
                       value={deductionAmount || ''}
                       placeholder="0.00"
                       onChange={e => setDeductionAmount(Math.max(0, Number(e.target.value) || 0))}
+                      onFocus={e => e.target.select()}
                       className="w-full bg-white border border-rose-300 rounded px-1.5 py-0.5 text-xs font-mono font-bold text-right text-rose-700 focus:ring-1 focus:ring-rose-500"
                     />
                   </div>

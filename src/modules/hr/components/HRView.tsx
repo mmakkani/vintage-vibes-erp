@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Employee, AttendanceRecord, PayrollRecord, EmployeeLoan } from '../hr.types.ts';
 import { StatusBadge } from '../../../components/StatusBadge.tsx';
+import { NumericInput } from '../../../components/NumericInput.tsx';
 import { QuickAttendanceSummary } from './QuickAttendanceSummary.tsx';
 import { DocumentVault } from './DocumentVault.tsx';
 import { AIOcrScannerModal } from './AIOcrScannerModal.tsx';
 import { HROcrLogsView } from './HROcrLogsView.tsx';
 import { AttendanceModal } from './AttendanceModal.tsx';
+import { PayrollRow } from './PayrollRow.tsx';
 import { RoyalWaxSeal } from '../../../components/RoyalWaxSeal.tsx';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { HrService } from '../../../services/hrService.ts';
@@ -486,7 +488,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   };
 
   // Update attendance inside the window
-  const handleUpdateWindowAttendance = async (attId: string, daysWorked: number, overtimeHours: number) => {
+  const handleUpdateWindowAttendance = useCallback(async (attId: string, daysWorked: number, overtimeHours: number) => {
     try {
       const res = await fetch(`/api/hr/attendance/${attId}`, {
         method: 'PUT',
@@ -502,7 +504,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     } catch (err) {
       console.error(err);
     }
-  };
+  }, [activeAttendanceSheetMonth]);
 
   // Set 30 days for all staff inside window
   const handleWindowSetAllDays = async (days: number) => {
@@ -811,7 +813,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   };
 
   // Update employee payroll slip deductions (Advance & Loan EMI)
-  const handleUpdateDeductions = async (slipId: string, advanceDeduction: number, loanEmiDeduction: number) => {
+  const handleUpdateDeductions = useCallback(async (slipId: string, advanceDeduction: number, loanEmiDeduction: number) => {
     try {
       const res = await fetch(`/api/hr/payroll/${slipId}/deductions`, {
         method: 'PUT',
@@ -828,7 +830,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     } catch (err) {
       showMsg('Failed to update deductions', 'error');
     }
-  };
+  }, []);
 
   // Unpost entire monthly payroll run
   const handleUnpostMonthlyPayroll = async (targetMonth?: string) => {
@@ -2559,12 +2561,12 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Daily Working Hours</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="16"
+                    <NumericInput
+                      min={1}
+                      max={16}
                       value={empForm.workingHoursPerDay}
-                      onChange={e => setEmpForm({ ...empForm, workingHoursPerDay: Number(e.target.value) })}
+                      onChange={val => setEmpForm(prev => ({ ...prev, workingHoursPerDay: val === '' ? ('' as any) : Number(val) }))}
+                      onBlurCommit={val => setEmpForm(prev => ({ ...prev, workingHoursPerDay: Math.max(1, Math.min(16, val || 8)) }))}
                       className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs font-mono bg-white"
                     />
                   </div>
@@ -3030,34 +3032,34 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Base Salary (AED) *</label>
-                    <input
-                      type="number"
+                    <NumericInput
                       required
-                      min="0"
+                      min={0}
                       value={empForm.baseSalary}
-                      onChange={e => setEmpForm({ ...empForm, baseSalary: Number(e.target.value) })}
+                      onChange={val => setEmpForm(prev => ({ ...prev, baseSalary: val === '' ? ('' as any) : Number(val) }))}
+                      onBlurCommit={val => setEmpForm(prev => ({ ...prev, baseSalary: val }))}
                       className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs font-bold text-slate-900 bg-white"
                     />
                   </div>
 
                   <div>
                     <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Housing Allow (AED)</label>
-                    <input
-                      type="number"
-                      min="0"
+                    <NumericInput
+                      min={0}
                       value={empForm.housingAllow}
-                      onChange={e => setEmpForm({ ...empForm, housingAllow: Number(e.target.value) })}
+                      onChange={val => setEmpForm(prev => ({ ...prev, housingAllow: val === '' ? ('' as any) : Number(val) }))}
+                      onBlurCommit={val => setEmpForm(prev => ({ ...prev, housingAllow: val }))}
                       className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
                     />
                   </div>
 
                   <div>
                     <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Transport Allow (AED)</label>
-                    <input
-                      type="number"
-                      min="0"
+                    <NumericInput
+                      min={0}
                       value={empForm.transportAllow}
-                      onChange={e => setEmpForm({ ...empForm, transportAllow: Number(e.target.value) })}
+                      onChange={val => setEmpForm(prev => ({ ...prev, transportAllow: val === '' ? ('' as any) : Number(val) }))}
+                      onBlurCommit={val => setEmpForm(prev => ({ ...prev, transportAllow: val }))}
                       className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
                     />
                   </div>
@@ -3378,12 +3380,12 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
                     Principal Amount (AED)
                   </label>
-                  <input
-                    type="number"
-                    min="1"
-                    step="50"
+                  <NumericInput
+                    min={1}
+                    step={50}
                     value={loanForm.principalAmount}
-                    onChange={e => setLoanForm(prev => ({ ...prev, principalAmount: Number(e.target.value) }))}
+                    onChange={val => setLoanForm(prev => ({ ...prev, principalAmount: val === '' ? ('' as any) : Number(val) }))}
+                    onBlurCommit={val => setLoanForm(prev => ({ ...prev, principalAmount: val }))}
                     className="w-full px-3 py-2 border border-slate-300 rounded font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     required
                   />
@@ -3393,13 +3395,13 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
                     Tenure / Months
                   </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="36"
+                  <NumericInput
+                    min={1}
+                    max={36}
                     disabled={loanForm.type === 'SALARY_ADVANCE'}
                     value={loanForm.totalMonths}
-                    onChange={e => setLoanForm(prev => ({ ...prev, totalMonths: Math.max(1, Number(e.target.value)) }))}
+                    onChange={val => setLoanForm(prev => ({ ...prev, totalMonths: val === '' ? ('' as any) : Math.max(1, Number(val)) }))}
+                    onBlurCommit={val => setLoanForm(prev => ({ ...prev, totalMonths: Math.max(1, val) }))}
                     className={`w-full px-3 py-2 border border-slate-300 rounded font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
                       loanForm.type === 'SALARY_ADVANCE' ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : 'bg-white'
                     }`}
@@ -3586,61 +3588,12 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-mono">
                     {payrollSlips.map(slip => (
-                      <tr key={slip.id} className="hover:bg-blue-50/40 transition-colors font-sans">
-                        <td className="px-3 py-2 font-mono font-bold text-blue-900">{slip.empCode}</td>
-                        <td className="px-3 py-2 font-semibold text-slate-800">
-                          <div>{slip.employeeName}</div>
-                          <div className="text-[10px] text-slate-400 font-normal">{slip.designation}</div>
-                        </td>
-                        <td className="px-3 py-2 font-mono text-slate-700">AED {safeFormatNum(slip.baseSalary)}</td>
-                        <td className="px-3 py-2 font-mono text-slate-700">{slip.daysWorked}/30</td>
-                        <td className="px-3 py-2 font-mono text-slate-800">AED {safeFixed(slip.earnedBasic, 2)}</td>
-                        <td className="px-3 py-2 font-mono text-emerald-700">+AED {safeFixed(slip.overtimePay, 2)}</td>
-                        <td className="px-3 py-2 font-mono text-slate-700">+AED {safeFixed(slip.allowances, 2)}</td>
-
-                        {/* Advance Cut Input */}
-                        <td className="px-3 py-2 bg-rose-50/30">
-                          <input
-                            type="number"
-                            min="0"
-                            step="10"
-                            disabled={isPayrollPosted}
-                            value={slip.advanceDeduction || 0}
-                            onChange={e => handleUpdateDeductions(slip.id, Number(e.target.value), slip.loanEmiDeduction || 0)}
-                            className={`w-20 px-2 py-1 border rounded font-mono font-bold text-xs ${
-                              isPayrollPosted
-                                ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed'
-                                : 'bg-white text-rose-800 border-rose-300 focus:ring-2 focus:ring-rose-500'
-                            }`}
-                          />
-                        </td>
-
-                        {/* Loan EMI Input */}
-                        <td className="px-3 py-2 bg-rose-50/30">
-                          <input
-                            type="number"
-                            min="0"
-                            step="10"
-                            disabled={isPayrollPosted}
-                            value={slip.loanEmiDeduction || 0}
-                            onChange={e => handleUpdateDeductions(slip.id, slip.advanceDeduction || 0, Number(e.target.value))}
-                            className={`w-20 px-2 py-1 border rounded font-mono font-bold text-xs ${
-                              isPayrollPosted
-                                ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed'
-                                : 'bg-white text-rose-800 border-rose-300 focus:ring-2 focus:ring-rose-500'
-                            }`}
-                          />
-                        </td>
-
-                        {/* Net Pay Result */}
-                        <td className="px-3 py-2 font-mono font-bold text-emerald-800 bg-emerald-50/30 text-xs">
-                          AED {safeFormatAed(slip.netPay)}
-                        </td>
-
-                        <td className="px-3 py-2 text-right font-sans">
-                          <StatusBadge status={slip.status} size="sm" />
-                        </td>
-                      </tr>
+                      <PayrollRow
+                        key={slip.id}
+                        slip={slip}
+                        isPayrollPosted={isPayrollPosted}
+                        onUpdateDeductions={handleUpdateDeductions}
+                      />
                     ))}
                     {payrollSlips.length === 0 && (
                       <tr>

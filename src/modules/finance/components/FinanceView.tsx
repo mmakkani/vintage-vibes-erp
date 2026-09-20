@@ -2694,6 +2694,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   step="0.01"
                   value={newAccOpeningBalance}
                   onChange={e => setNewAccOpeningBalance(e.target.value)}
+                  onFocus={e => e.target.select()}
                   placeholder="0.00"
                   className="w-full px-3 py-2 rounded-lg border border-amber-200 text-xs font-mono font-bold bg-[#fdfcf9] focus:ring-2 focus:ring-amber-500"
                 />
@@ -2813,6 +2814,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     disabled={voucherCurrency === 'AED'}
                     value={voucherCurrency === 'AED' ? '1.0000' : voucherExchangeRate}
                     onChange={e => setVoucherExchangeRate(parseFloat(e.target.value) || 1.0)}
+                    onFocus={e => e.target.select()}
                     className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-mono font-bold ${
                       voucherCurrency === 'AED'
                         ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
@@ -2955,6 +2957,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                               step="0.01"
                               value={line.amount || ''}
                               onChange={e => handleUpdateSingleLine(idx, 'amount', parseFloat(e.target.value) || 0)}
+                              onFocus={e => e.target.select()}
                               placeholder={`Amount (${voucherCurrency})`}
                               className="w-full text-right p-1.5 border border-slate-300 rounded font-mono text-[11px] font-bold text-slate-900 bg-white"
                             />
@@ -3052,6 +3055,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                             step="0.01"
                             value={line.debitAmount || ''}
                             onChange={e => handleUpdateVoucherLine(idx, 'debitAmount', parseFloat(e.target.value) || 0)}
+                            onFocus={e => e.target.select()}
                             placeholder={`Debit (${voucherCurrency})`}
                             className="w-full text-right p-1.5 border border-slate-300 rounded font-mono text-[11px] font-bold text-slate-900 bg-white"
                           />
@@ -3068,6 +3072,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                             step="0.01"
                             value={line.creditAmount || ''}
                             onChange={e => handleUpdateVoucherLine(idx, 'creditAmount', parseFloat(e.target.value) || 0)}
+                            onFocus={e => e.target.select()}
                             placeholder={`Credit (${voucherCurrency})`}
                             className="w-full text-right p-1.5 border border-slate-300 rounded font-mono text-[11px] font-bold text-slate-900 bg-white"
                           />

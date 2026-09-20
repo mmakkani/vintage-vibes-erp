@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AttendanceRecord, Employee } from '../hr.types.ts';
 import { StatusBadge } from '../../../components/StatusBadge.tsx';
+import { NumericInput } from '../../../components/NumericInput.tsx';
 import { Calendar, Lock, UserPlus, CheckCircle, XCircle } from 'lucide-react';
 
 export interface AttendanceModalProps {
@@ -17,6 +18,100 @@ export interface AttendanceModalProps {
   onSaveDraft?: () => void;
   isPosted?: boolean;
 }
+
+interface AttendanceRowProps {
+  att: AttendanceRecord;
+  isWindowSheetPosted: boolean;
+  onUpdateAttendance: (attId: string, daysWorked: number, overtimeHours: number) => Promise<void> | void;
+}
+
+export const AttendanceRow: React.FC<AttendanceRowProps> = React.memo(({
+  att,
+  isWindowSheetPosted,
+  onUpdateAttendance
+}) => {
+  const [daysWorked, setDaysWorked] = useState<number | ''>(att.daysWorked ?? 0);
+  const [overtimeHours, setOvertimeHours] = useState<number | ''>(att.overtimeHours ?? 0);
+
+  // Sync if external props change (e.g. Set All 30 Days or sheet refresh)
+  useEffect(() => {
+    setDaysWorked(att.daysWorked ?? 0);
+  }, [att.daysWorked]);
+
+  useEffect(() => {
+    setOvertimeHours(att.overtimeHours ?? 0);
+  }, [att.overtimeHours]);
+
+  const handleBlurDays = (finalDays: number) => {
+    setDaysWorked(finalDays);
+    const ot = overtimeHours === '' ? 0 : Number(overtimeHours);
+    if (finalDays !== att.daysWorked || ot !== att.overtimeHours) {
+      onUpdateAttendance(att.id, finalDays, ot);
+    }
+  };
+
+  const handleBlurOt = (finalOt: number) => {
+    setOvertimeHours(finalOt);
+    const days = daysWorked === '' ? 0 : Number(daysWorked);
+    if (days !== att.daysWorked || finalOt !== att.overtimeHours) {
+      onUpdateAttendance(att.id, days, finalOt);
+    }
+  };
+
+  return (
+    <tr className="hover:bg-blue-50/40 transition-colors font-sans">
+      <td className="px-3.5 py-2 font-mono font-bold text-blue-900">{att.empCode}</td>
+      <td className="px-3.5 py-2 font-semibold text-slate-800">
+        <div>{att.employeeName}</div>
+        <div className="text-[10px] text-slate-400 font-normal">{att.monthYear}</div>
+      </td>
+      <td className="px-3.5 py-2">
+        <NumericInput
+          min={0}
+          max={30}
+          disabled={isWindowSheetPosted}
+          value={daysWorked}
+          onChange={val => setDaysWorked(val)}
+          onBlurCommit={handleBlurDays}
+          className={`w-20 px-2 py-1 border rounded font-mono font-bold text-xs ${
+            isWindowSheetPosted
+              ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed'
+              : 'bg-white text-slate-900 border-slate-300 focus:ring-2 focus:ring-blue-500'
+          }`}
+        />
+      </td>
+      <td className="px-3.5 py-2">
+        <NumericInput
+          min={0}
+          disabled={isWindowSheetPosted}
+          value={overtimeHours}
+          onChange={val => setOvertimeHours(val)}
+          onBlurCommit={handleBlurOt}
+          className={`w-20 px-2 py-1 border rounded font-mono font-bold text-xs ${
+            isWindowSheetPosted
+              ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed'
+              : 'bg-emerald-50 text-emerald-800 border-emerald-300 focus:ring-2 focus:ring-emerald-500'
+          }`}
+        />
+      </td>
+      <td className="px-3.5 py-2 font-sans">
+        <StatusBadge status={att.status} size="sm" />
+      </td>
+      <td className="px-3.5 py-2 text-right font-sans">
+        {isWindowSheetPosted ? (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700">
+            <Lock className="w-3 h-3" />
+            <span>Locked</span>
+          </span>
+        ) : (
+          <span className="text-[10px] text-amber-700 font-medium">Editable (Draft)</span>
+        )}
+      </td>
+    </tr>
+  );
+});
+
+AttendanceRow.displayName = 'AttendanceRow';
 
 export const AttendanceModal: React.FC<AttendanceModalProps> = ({
   isOpen,
@@ -35,6 +130,13 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
   if (!isOpen) return null;
 
   const isWindowSheetPosted = isPosted || (attendance.length > 0 && attendance.every(a => a.status === 'POSTED'));
+
+  const handleUpdate = useCallback(
+    (attId: string, daysWorked: number, overtimeHours: number) => {
+      return onUpdateAttendance(attId, daysWorked, overtimeHours);
+    },
+    [onUpdateAttendance]
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/75 backdrop-blur-xs p-2 sm:p-4 animate-in fade-in duration-200">
@@ -158,55 +260,12 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
                   {attendance.map(att => (
-                    <tr key={att.id} className="hover:bg-blue-50/40 transition-colors font-sans">
-                      <td className="px-3.5 py-2 font-mono font-bold text-blue-900">{att.empCode}</td>
-                      <td className="px-3.5 py-2 font-semibold text-slate-800">
-                        <div>{att.employeeName}</div>
-                        <div className="text-[10px] text-slate-400 font-normal">{att.monthYear}</div>
-                      </td>
-                      <td className="px-3.5 py-2">
-                        <input
-                          type="number"
-                          min="0"
-                          max="30"
-                          disabled={isWindowSheetPosted}
-                          value={att.daysWorked}
-                          onChange={e => onUpdateAttendance(att.id, Number(e.target.value), att.overtimeHours)}
-                          className={`w-20 px-2 py-1 border rounded font-mono font-bold text-xs ${
-                            isWindowSheetPosted
-                              ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed'
-                              : 'bg-white text-slate-900 border-slate-300 focus:ring-2 focus:ring-blue-500'
-                          }`}
-                        />
-                      </td>
-                      <td className="px-3.5 py-2">
-                        <input
-                          type="number"
-                          min="0"
-                          disabled={isWindowSheetPosted}
-                          value={att.overtimeHours}
-                          onChange={e => onUpdateAttendance(att.id, att.daysWorked, Number(e.target.value))}
-                          className={`w-20 px-2 py-1 border rounded font-mono font-bold text-xs ${
-                            isWindowSheetPosted
-                              ? 'bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed'
-                              : 'bg-emerald-50 text-emerald-800 border-emerald-300 focus:ring-2 focus:ring-emerald-500'
-                          }`}
-                        />
-                      </td>
-                      <td className="px-3.5 py-2 font-sans">
-                        <StatusBadge status={att.status} size="sm" />
-                      </td>
-                      <td className="px-3.5 py-2 text-right font-sans">
-                        {isWindowSheetPosted ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700">
-                            <Lock className="w-3 h-3" />
-                            <span>Locked</span>
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-amber-700 font-medium">Editable (Draft)</span>
-                        )}
-                      </td>
-                    </tr>
+                    <AttendanceRow
+                      key={att.id}
+                      att={att}
+                      isWindowSheetPosted={isWindowSheetPosted}
+                      onUpdateAttendance={handleUpdate}
+                    />
                   ))}
                 </tbody>
               </table>
