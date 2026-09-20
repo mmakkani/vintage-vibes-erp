@@ -460,16 +460,14 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         return (!idStr || !existingPayEmpIds.has(idStr)) && (!codeStr || !existingPayCodes.has(codeStr));
       });
 
-      if ((!isPosted && (hasMissingFromAtt || payRecords.length < attRecords.length)) || forceSync) {
+      if (forceSync) {
         setIsSyncingPayroll(true);
         try {
           const syncedSlips = await PayrollService.syncPayrollFromAttendance(month);
           if (Array.isArray(syncedSlips) && syncedSlips.length > 0) {
             payRecords = syncedSlips;
             setPayrollSlips(syncedSlips);
-            if (forceSync) {
-              showMsg(`Synced ${syncedSlips.length} employees from Attendance into Payroll Sheet!`);
-            }
+            showMsg(`Synced ${syncedSlips.length} employees from Attendance into Payroll Sheet!`);
           }
         } finally {
           setIsSyncingPayroll(false);
@@ -591,13 +589,16 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     }
   };
 
-  // Delete attendance sheet from the Log
-  const handleDeleteSheetFromLog = async (month: string, hasPayroll: boolean) => {
-    if (hasPayroll) {
-      showMsg(`Cannot delete attendance for ${month}: Payroll records already exist for this month. Please delete or unpost payroll first.`, 'error');
+  // Delete attendance sheet from the Log (cascades draft payroll, blocks if posted)
+  const handleDeleteSheetFromLog = async (month: string, hasPayroll: boolean, payrollStatus?: string) => {
+    if (payrollStatus === 'POSTED') {
+      showMsg(`Cannot delete attendance for ${month}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`, 'error');
       return;
     }
-    if (!confirm(`Are you sure you want to delete the attendance sheet for ${month}?`)) return;
+    const confirmMsg = hasPayroll
+      ? `Deleting attendance for ${month} will also delete the linked DRAFT payroll sheet. Are you sure?`
+      : `Are you sure you want to delete the attendance sheet for ${month}?`;
+    if (!confirm(confirmMsg)) return;
     try {
       const res = await fetch('/api/hr/attendance/sheet', {
         method: 'DELETE',
@@ -612,6 +613,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       // Pessimistic state update: Only clear after confirmed DB deletion
       setAttendanceSheetsLog(prev => prev.filter(s => s.monthYear !== month));
       setAttendance(prev => prev.filter(a => a.monthYear !== month));
+      setPayrollSheetsLog(prev => prev.filter(s => s.monthYear !== month));
+      setPayrollSlips(prev => prev.filter(p => p.monthYear !== month));
       if (activeAttendanceSheetMonth === month) {
         setActiveAttendanceSheetMonth(null);
       }
@@ -696,13 +699,16 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     }
   };
 
-  // Delete attendance sheet (blocks if payroll exists)
+  // Delete attendance sheet (cascades draft payroll, blocks if posted)
   const handleDeleteAttendanceSheet = async () => {
-    if (payrollSlips.length > 0) {
-      showMsg(`Cannot delete attendance: Payroll records exist for ${selectedMonth}. Please delete the payroll records first.`, 'error');
+    if (isPayrollPosted) {
+      showMsg(`Cannot delete attendance: Payroll is already POSTED to General Ledger for ${selectedMonth}. Please unpost payroll first.`, 'error');
       return;
     }
-    if (!confirm(`Are you sure you want to delete the attendance sheet for ${selectedMonth}?`)) return;
+    const confirmMsg = payrollSlips.length > 0
+      ? `Deleting attendance for ${selectedMonth} will also delete the linked DRAFT payroll records. Are you sure?`
+      : `Are you sure you want to delete the attendance sheet for ${selectedMonth}?`;
+    if (!confirm(confirmMsg)) return;
     try {
       const res = await fetch('/api/hr/attendance/sheet', {
         method: 'DELETE',
@@ -717,6 +723,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       // Pessimistic state update: Only clear after confirmed DB deletion
       setAttendanceSheetsLog(prev => prev.filter(s => s.monthYear !== selectedMonth));
       setAttendance(prev => prev.filter(a => a.monthYear !== selectedMonth));
+      setPayrollSheetsLog(prev => prev.filter(s => s.monthYear !== selectedMonth));
+      setPayrollSlips(prev => prev.filter(p => p.monthYear !== selectedMonth));
       if (activeAttendanceSheetMonth === selectedMonth) {
         setActiveAttendanceSheetMonth(null);
       }
@@ -1860,14 +1868,14 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => handleDeleteSheetFromLog(sheet.monthYear, sheet.hasPayroll)}
-                              disabled={sheet.hasPayroll}
+                              onClick={() => handleDeleteSheetFromLog(sheet.monthYear, sheet.hasPayroll, sheet.payrollStatus)}
+                              disabled={sheet.payrollStatus === 'POSTED'}
                               className={`p-1 rounded text-[11px] font-bold transition-colors ${
-                                sheet.hasPayroll
+                                sheet.payrollStatus === 'POSTED'
                                   ? 'text-slate-300 cursor-not-allowed'
-                                  : 'text-rose-600 hover:bg-rose-50 hover:text-rose-800'
+                                  : 'text-rose-600 hover:bg-rose-50 hover:text-rose-800 cursor-pointer'
                               }`}
-                              title={sheet.hasPayroll ? 'Cannot delete: Payroll exists for this month' : 'Delete Attendance Sheet'}
+                              title={sheet.payrollStatus === 'POSTED' ? 'Cannot delete: Payroll is POSTED to General Ledger for this month' : 'Delete Attendance Sheet (cascades linked draft payroll)'}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>

@@ -1830,10 +1830,8 @@ class RelationalStore {
   }
 
   public createAttendanceSheet(monthYear: string): { success: boolean; records: AttendanceRecord[]; error?: string } {
-    const existing = this.attendances.filter(a => a.monthYear === monthYear);
-    if (existing.length > 0) {
-      return { success: true, records: existing };
-    }
+    // Remove any existing attendance records for this month to guarantee clean draft slate
+    this.attendances = this.attendances.filter(a => a.monthYear !== monthYear);
 
     const activeEmployees = this.employees.filter(e => e.isActive !== false && e.status !== 'UNPOSTED');
     if (activeEmployees.length === 0) {
@@ -1848,7 +1846,9 @@ class RelationalStore {
       monthYear,
       daysWorked: 30,
       overtimeHours: 0,
-      status: 'DRAFT'
+      status: 'DRAFT',
+      lockedAt: undefined,
+      lockedBy: undefined
     }));
 
     this.attendances.push(...newRecords);
@@ -1859,12 +1859,22 @@ class RelationalStore {
   }
 
   public deleteAttendanceSheet(monthYear: string): { success: boolean; error?: string } {
-    const payrollExists = this.payrolls.some(p => p.monthYear === monthYear);
-    if (payrollExists) {
+    const payrollSheet = this.payrollSheets?.find(s => s.monthYear === monthYear);
+    const hasPostedPayroll =
+      (payrollSheet && payrollSheet.status === 'POSTED') ||
+      this.payrolls.some(p => p.monthYear === monthYear && p.status === 'POSTED');
+
+    if (hasPostedPayroll) {
       return {
         success: false,
-        error: `Cannot delete attendance for ${monthYear}: Payroll records already exist for this month. Please delete or unpost payroll first.`
+        error: `Cannot delete attendance for ${monthYear}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`
       };
+    }
+
+    // Cascade delete linked draft payroll records & sheets
+    this.payrolls = this.payrolls.filter(p => p.monthYear !== monthYear);
+    if (this.payrollSheets) {
+      this.payrollSheets = this.payrollSheets.filter(s => s.monthYear !== monthYear);
     }
 
     const beforeCount = this.attendances.length;

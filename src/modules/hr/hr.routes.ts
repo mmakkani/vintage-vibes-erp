@@ -839,6 +839,9 @@ hrRouter.post('/attendance/create-sheet', async (req, res) => {
       `);
       const employees = empRes.rows;
 
+      // 1. Delete previous attendance records for month to guarantee clean slate
+      await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
+
       for (const emp of employees) {
         const empId = String(emp.id);
         const empCode = emp.emp_code || emp.employee_code || '';
@@ -848,7 +851,7 @@ hrRouter.post('/attendance/create-sheet', async (req, res) => {
         await client.query(`
           INSERT INTO employee_attendance (id, employee_id, employee_name, emp_code, month_year, days_worked, overtime_hours, status, created_at)
           VALUES ($1, $2, $3, $4, $5, 30, 0, 'DRAFT', NOW())
-          ON CONFLICT (id) DO UPDATE SET employee_name = EXCLUDED.employee_name, emp_code = EXCLUDED.emp_code;
+          ON CONFLICT (id) DO UPDATE SET employee_name = EXCLUDED.employee_name, emp_code = EXCLUDED.emp_code, status = 'DRAFT', locked_at = NULL, locked_by = NULL;
         `, [attId, empId, empName, empCode, month]);
       }
 
@@ -856,7 +859,7 @@ hrRouter.post('/attendance/create-sheet', async (req, res) => {
       await client.query(`
         INSERT INTO hr_attendance_sheets (id, month_year, total_employees, status, created_at)
         VALUES ($1, $2, $3, 'DRAFT', NOW())
-        ON CONFLICT (id) DO UPDATE SET total_employees = EXCLUDED.total_employees;
+        ON CONFLICT (id) DO UPDATE SET total_employees = EXCLUDED.total_employees, status = 'DRAFT';
       `, [sheetId, month, employees.length]);
 
       const attRes = await client.query(`
@@ -875,7 +878,7 @@ hrRouter.post('/attendance/create-sheet', async (req, res) => {
   }
 });
 
-// DELETE /api/hr/attendance/sheet - Delete attendance sheet & records
+// DELETE /api/hr/attendance/sheet - Delete attendance sheet & records (Cascades draft payroll)
 hrRouter.delete(['/attendance/sheet', '/attendance/:month'], async (req, res) => {
   const month = req.params.month || req.body?.month || (req.query?.month as string);
   if (!month) {
@@ -883,16 +886,29 @@ hrRouter.delete(['/attendance/sheet', '/attendance/:month'], async (req, res) =>
   }
   try {
     await withDb(async (client) => {
-      const payCheck = await client.query(`SELECT id FROM employee_payroll WHERE month_year = $1 LIMIT 1;`, [month]);
-      if (payCheck.rows && payCheck.rows.length > 0) {
-        throw new Error(`Cannot delete attendance for ${month}: Linked payroll records exist. Please delete or unpost payroll first.`);
+      // 1. Check if Payroll Sheet exists for this month and whether it is POSTED
+      const paySheetCheck = await client.query(`SELECT status, voucher_id FROM hr_payroll_sheets WHERE month_year = $1;`, [month]).catch(() => ({ rows: [] }));
+      const postedSlipsCheck = await client.query(`SELECT id FROM employee_payroll WHERE month_year = $1 AND status = 'POSTED' LIMIT 1;`, [month]).catch(() => ({ rows: [] }));
+
+      const isPayrollPosted =
+        paySheetCheck.rows.some((s: any) => s.status === 'POSTED' || !!s.voucher_id) ||
+        postedSlipsCheck.rows.length > 0;
+
+      if (isPayrollPosted) {
+        throw new Error(`Cannot delete attendance for ${month}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`);
       }
+
+      // 2. Cascade delete linked draft payroll records & sheet first
+      await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
+      await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
+
+      // 3. Delete attendance records & attendance sheet
       await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
       await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1;`, [month]);
     });
     return res.json({ success: true });
   } catch (err: any) {
-    if (err.message && err.message.includes('Linked payroll records exist')) {
+    if (err.message && err.message.includes('POSTED to General Ledger')) {
       return res.status(400).json({ error: err.message });
     }
     const result = HRController.deleteAttendanceSheet(month);
@@ -1082,6 +1098,11 @@ hrRouter.post('/attendance/unpost', async (req, res) => {
   const { month } = req.body;
   try {
     await withDb(async (client) => {
+      const paySheetCheck = await client.query(`SELECT status, voucher_id FROM hr_payroll_sheets WHERE month_year = $1;`, [month]).catch(() => ({ rows: [] }));
+      if (paySheetCheck.rows[0]?.status === 'POSTED' || paySheetCheck.rows[0]?.voucher_id) {
+        throw new Error(`Cannot unpost attendance for ${month} because payroll has already been POSTED to General Ledger. Please unpost payroll first.`);
+      }
+
       await client.query(`
         UPDATE employee_attendance 
         SET status = 'DRAFT', locked_at = NULL, locked_by = NULL 
@@ -1094,7 +1115,10 @@ hrRouter.post('/attendance/unpost', async (req, res) => {
       `, [month]);
     });
     return res.json({ success: true });
-  } catch (_) {
+  } catch (err: any) {
+    if (err.message && err.message.includes('POSTED to General Ledger')) {
+      return res.status(400).json({ error: err.message });
+    }
     const result = HRController.unpostAttendanceSheet(month);
     if (!result.success) return res.status(400).json({ error: result.error });
     return res.json(result);
@@ -1160,28 +1184,11 @@ hrRouter.get('/payroll', async (req, res) => {
   const monthYear = month || new Date().toISOString().slice(0, 7);
   try {
     const data = await withDb(async (client) => {
-      let result = await client.query(`
+      const result = await client.query(`
         SELECT * FROM employee_payroll 
         WHERE month_year = $1 
         ORDER BY emp_code ASC;
       `, [monthYear]);
-
-      // Check if attendance has more records than current draft payroll slips
-      const attCountRes = await client.query(`
-        SELECT COUNT(*) as count FROM employee_attendance 
-        WHERE month_year = $1;
-      `, [monthYear]).catch(() => ({ rows: [{ count: 0 }] }));
-      const attCount = Number(attCountRes.rows[0]?.count || 0);
-
-      const isAllDraft = result.rows.length === 0 || result.rows.every((r: any) => r.status === 'DRAFT' || !r.status);
-      if (attCount > 0 && result.rows.length < attCount && isAllDraft) {
-        await rebuildPayrollFromAttendance(client, monthYear);
-        result = await client.query(`
-          SELECT * FROM employee_payroll 
-          WHERE month_year = $1 
-          ORDER BY emp_code ASC;
-        `, [monthYear]);
-      }
 
       return result.rows.map(mapPayrollRow);
     });

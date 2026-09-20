@@ -711,17 +711,18 @@ export class HrService {
       days_worked: 30,
       overtime_hours: 0,
       status: 'DRAFT',
+      locked_at: null,
+      locked_by: null,
       created_at: new Date().toISOString()
     }));
 
-    if (records.length > 0) {
-      // Delete any existing draft for this month first
-      await supabase
-        .from('employee_attendance')
-        .delete()
-        .eq('month_year', monthYear)
-        .eq('status', 'DRAFT');
+    // 1. Delete any existing attendance records for this month to guarantee clean slate
+    await supabase
+      .from('employee_attendance')
+      .delete()
+      .eq('month_year', monthYear);
 
+    if (records.length > 0) {
       const { error } = await supabase
         .from('employee_attendance')
         .insert(records);
@@ -731,12 +732,13 @@ export class HrService {
       }
     }
 
-    // Upsert sheet log
+    // 2. Upsert sheet log with hardcoded DRAFT status
     await supabase.from('hr_attendance_sheets').upsert({
-      id: `sheet-${monthYear}`,
+      id: `att-sheet-${monthYear}`,
       month_year: monthYear,
       total_employees: activeEmployees.length,
-      status: 'DRAFT'
+      status: 'DRAFT',
+      created_at: new Date().toISOString()
     });
 
     return this.getAttendance(monthYear);
@@ -827,13 +829,38 @@ export class HrService {
     await supabase
       .from('hr_attendance_sheets')
       .upsert({
-        id: `sheet-${monthYear}`,
+        id: `att-sheet-${monthYear}`,
         month_year: monthYear,
         status: 'POSTED'
       });
+
+    // Generate draft payroll slips and sheet for this posted attendance month if not already posted
+    const { data: paySheet } = await supabase
+      .from('hr_payroll_sheets')
+      .select('status, voucher_id')
+      .eq('month_year', monthYear)
+      .maybeSingle();
+
+    if (!paySheet || (paySheet.status !== 'POSTED' && !paySheet.voucher_id)) {
+      try {
+        await this.runPayroll(monthYear);
+      } catch (err) {
+        console.warn('[HrService] Auto-generating payroll on post attendance notice:', err);
+      }
+    }
   }
 
   public static async unpostAttendanceSheet(monthYear: string): Promise<void> {
+    const { data: paySheet } = await supabase
+      .from('hr_payroll_sheets')
+      .select('status, voucher_id')
+      .eq('month_year', monthYear)
+      .maybeSingle();
+
+    if (paySheet && (paySheet.status === 'POSTED' || paySheet.voucher_id)) {
+      throw new Error(`Cannot unpost attendance for ${monthYear} because payroll has already been POSTED to General Ledger. Please unpost payroll first.`);
+    }
+
     await supabase
       .from('employee_attendance')
       .update({ status: 'DRAFT', locked_at: null, locked_by: null })
@@ -842,7 +869,7 @@ export class HrService {
     await supabase
       .from('hr_attendance_sheets')
       .upsert({
-        id: `sheet-${monthYear}`,
+        id: `att-sheet-${monthYear}`,
         month_year: monthYear,
         status: 'DRAFT'
       });
@@ -873,18 +900,39 @@ export class HrService {
       throw new Error('Month is required to delete attendance sheet');
     }
 
-    // 1. Foreign Key / Link check: Check if payroll records exist for this month
-    const { data: payrollSlips } = await supabase
+    // 1. Check if Payroll Sheet exists for this monthYear and whether it is POSTED
+    const { data: payrollSheets } = await supabase
+      .from('hr_payroll_sheets')
+      .select('id, status, voucher_id')
+      .eq('month_year', monthYear);
+
+    const { data: postedSlips } = await supabase
       .from('employee_payroll')
       .select('id')
       .eq('month_year', monthYear)
+      .eq('status', 'POSTED')
       .limit(1);
 
-    if (payrollSlips && payrollSlips.length > 0) {
-      throw new Error(`Cannot delete attendance for ${monthYear}: Linked payroll records exist. Please delete or unpost payroll first.`);
+    const isPayrollPosted =
+      (payrollSheets && payrollSheets.some((s: any) => s.status === 'POSTED' || !!s.voucher_id)) ||
+      (postedSlips && postedSlips.length > 0);
+
+    if (isPayrollPosted) {
+      throw new Error(`Cannot delete attendance for ${monthYear}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`);
     }
 
-    // 2. Delete attendance records for this month
+    // 2. Cascading delete: If linked payroll is in DRAFT, programmatically delete payroll slips and sheet first
+    await supabase
+      .from('employee_payroll')
+      .delete()
+      .eq('month_year', monthYear);
+
+    await supabase
+      .from('hr_payroll_sheets')
+      .delete()
+      .eq('month_year', monthYear);
+
+    // 3. Delete attendance records for this month
     const { error: attErr } = await supabase
       .from('employee_attendance')
       .delete()
@@ -895,7 +943,7 @@ export class HrService {
       throw new Error(attErr.message || 'Failed to delete attendance records');
     }
 
-    // 3. Delete attendance sheet record
+    // 4. Delete attendance sheet record
     const { error: sheetErr } = await supabase
       .from('hr_attendance_sheets')
       .delete()

@@ -1,2 +1,6 @@
 #!/bin/sh
-npm test && npm run build && git diff --check
+if [ "$OS" = "Windows_NT" ]; then
+  npm.cmd test && npm.cmd run build && git diff --check
+else
+  npm test && npm run build && git diff --check
+fi
