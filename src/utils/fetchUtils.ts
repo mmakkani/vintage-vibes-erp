@@ -577,8 +577,9 @@ export function initUniversalFetchInterceptor() {
       try {
         const data = await safeFetchJson(url, effectiveInit);
         if (data !== null && data !== undefined) {
+          const isErr = data && (data.success === false || data.error);
           return new Response(JSON.stringify(data), {
-            status: 200,
+            status: isErr ? 400 : 200,
             headers: { 'Content-Type': 'application/json' }
           });
         }

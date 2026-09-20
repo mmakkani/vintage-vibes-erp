@@ -52,4 +52,11 @@ export class AttendanceService {
   public static async getAttendanceSheets(): Promise<any[]> {
     return HrService.getAttendanceSheets();
   }
+
+  /**
+   * Permanently delete an attendance sheet and cascade draft payroll.
+   */
+  public static async deleteAttendanceSheet(monthYear: string): Promise<void> {
+    return HrService.deleteAttendanceSheet(monthYear);
+  }
 }

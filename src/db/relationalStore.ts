@@ -1871,15 +1871,27 @@ class RelationalStore {
       };
     }
 
-    // Cascade delete linked draft payroll records & sheets
+    // Step 2: Cascade delete child payroll records
     this.payrolls = this.payrolls.filter(p => p.monthYear !== monthYear);
+
+    // Step 3: Delete parent payroll sheets
     if (this.payrollSheets) {
       this.payrollSheets = this.payrollSheets.filter(s => s.monthYear !== monthYear);
     }
 
+    // Step 4: Delete child attendance records matching sheetId or monthYear
     const beforeCount = this.attendances.length;
-    this.attendances = this.attendances.filter(a => a.monthYear !== monthYear);
+    this.attendances = this.attendances.filter(a =>
+      a.monthYear !== monthYear &&
+      (a as any).sheetId !== `att-sheet-${monthYear}` &&
+      (a as any).sheetId !== `sheet-${monthYear}`
+    );
     const deletedCount = beforeCount - this.attendances.length;
+
+    // Step 5: Delete parent attendance sheets
+    if ((this as any).attendanceSheets) {
+      (this as any).attendanceSheets = (this as any).attendanceSheets.filter((s: any) => s.monthYear !== monthYear);
+    }
 
     this.auditLogs.unshift(
       AuditEngine.createLogEntry('HR', 'DELETE', `ATT-${monthYear}`, 'POSTED', 'HR Lead', `Deleted attendance sheet for ${monthYear} (${deletedCount} records removed)`)

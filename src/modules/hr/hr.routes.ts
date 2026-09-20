@@ -886,7 +886,7 @@ hrRouter.delete(['/attendance/sheet', '/attendance/:month'], async (req, res) =>
   }
   try {
     await withDb(async (client) => {
-      // 1. Check if Payroll Sheet exists for this month and whether it is POSTED
+      // Step 1: Check if Payroll Sheet exists for this month and whether it is POSTED
       const paySheetCheck = await client.query(`SELECT status, voucher_id FROM hr_payroll_sheets WHERE month_year = $1;`, [month]).catch(() => ({ rows: [] }));
       const postedSlipsCheck = await client.query(`SELECT id FROM employee_payroll WHERE month_year = $1 AND status = 'POSTED' LIMIT 1;`, [month]).catch(() => ({ rows: [] }));
 
@@ -898,22 +898,36 @@ hrRouter.delete(['/attendance/sheet', '/attendance/:month'], async (req, res) =>
         throw new Error(`Cannot delete attendance for ${month}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`);
       }
 
-      // 2. Cascade delete linked draft payroll records & sheet first
+      // Step 2: Delete child payroll records (employee_payroll)
       await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
+
+      // Step 3: Delete parent payroll record (hr_payroll_sheets)
       await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
 
-      // 3. Delete attendance records & attendance sheet
-      await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
+      // Step 4: Delete child attendance records (employee_attendance) matching sheet_id or month_year
+      const sheetRes = await client.query(`SELECT id FROM hr_attendance_sheets WHERE month_year = $1;`, [month]).catch(() => ({ rows: [] }));
+      const sheetIds = Array.from(new Set([
+        ...(sheetRes.rows || []).map((r: any) => r.id).filter(Boolean),
+        `att-sheet-${month}`,
+        `sheet-${month}`
+      ]));
+
+      try {
+        await client.query(`DELETE FROM employee_attendance WHERE sheet_id = ANY($1::text[]) OR month_year = $2;`, [sheetIds, month]);
+      } catch (_) {
+        await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
+      }
+
+      // Step 5: Delete parent attendance record (hr_attendance_sheets)
       await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1;`, [month]);
+      if (sheetIds.length > 0) {
+        await client.query(`DELETE FROM hr_attendance_sheets WHERE id = ANY($1::text[]);`, [sheetIds]).catch(() => {});
+      }
     });
     return res.json({ success: true });
   } catch (err: any) {
-    if (err.message && err.message.includes('POSTED to General Ledger')) {
-      return res.status(400).json({ error: err.message });
-    }
-    const result = HRController.deleteAttendanceSheet(month);
-    if (!result.success) return res.status(400).json({ error: result.error || err.message });
-    return res.json(result);
+    console.error('[hr.routes] Error deleting attendance sheet:', err);
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to delete attendance sheet' });
   }
 });
 
