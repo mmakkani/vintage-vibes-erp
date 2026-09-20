@@ -70,7 +70,38 @@ export class FinanceService {
           } catch (_) {}
         }
 
-        // 2. Secondary fallback: Direct Supabase query to PostgreSQL 'accounts' table
+        // 2. Secondary fallback: Direct Supabase query to PostgreSQL 'chart_of_accounts' table
+        try {
+          const { data: coaData, error: coaErr } = await supabase
+            .from('chart_of_accounts')
+            .select('*')
+            .order('code', { ascending: true });
+
+          if (!coaErr && Array.isArray(coaData) && coaData.length > 0) {
+            const mapped = coaData.map((r: any) => ({
+              ...r,
+              id: String(r.id),
+              code: r.code || r.account_code || '',
+              account_code: r.code || r.account_code || '',
+              name: r.name || r.account_name || '',
+              account_name: r.name || r.account_name || '',
+              type: r.type || r.classification || 'ASSET',
+              classification: r.type || r.classification || 'ASSET',
+              pillar_category: r.type || r.classification || 'ASSET',
+              currentBalance: Number(r.current_balance || r.currentBalance || 0),
+              current_balance: Number(r.current_balance || r.currentBalance || 0),
+              isActive: r.is_active !== false,
+              is_active: r.is_active !== false,
+              status: (r.is_active !== false) ? 'ACTIVE' : 'INACTIVE',
+              createdAt: r.created_at || new Date().toISOString()
+            }));
+            this.cachedCoaAccounts = mapped;
+            this.lastCoaFetched = Date.now();
+            return mapped;
+          }
+        } catch (_) {}
+
+        // 3. Tertiary fallback: Direct Supabase query to PostgreSQL 'accounts' table
         try {
           const { data: accData, error: accErr } = await supabase
             .from('accounts')

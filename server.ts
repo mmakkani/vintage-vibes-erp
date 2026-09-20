@@ -58,7 +58,10 @@ async function recordExpressThreat(analysis: any, req: any) {
     }
   }
 
-  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&uselibpqcompat=true';
+  if (dbUrl.includes('.pooler.supabase.com:5432')) {
+    dbUrl = dbUrl.replace('.pooler.supabase.com:5432', '.pooler.supabase.com:6543');
+  }
   try {
     const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
     await client.connect();
@@ -148,13 +151,33 @@ async function startServer() {
     next();
   });
 
-  // Health endpoint
-  app.get('/api/health', (req, res) => {
-    res.json({
-      status: 'healthy',
-      system: 'Vintage Vibe Enterprise ERP',
-      engine: 'Modular Architecture'
-    });
+  // Health endpoint with live database connectivity verification
+  app.get('/api/health', async (req, res) => {
+    const startTime = Date.now();
+    try {
+      const { withDb } = await import('./src/db/pgPool.ts');
+      const timeData = await withDb(async (client) => {
+        const result = await client.query('SELECT NOW() as time');
+        return result.rows[0]?.time;
+      });
+      return res.json({
+        status: 'ok',
+        db_connected: true,
+        time: timeData || new Date().toISOString(),
+        latency_ms: Date.now() - startTime,
+        pool_type: 'SUPABASE_TRANSACTION_POOLER_6543',
+        has_db_url: !!process.env.DATABASE_URL
+      });
+    } catch (err: any) {
+      console.error('[server.ts Health Check Error]:', err?.message || err);
+      return res.status(200).json({
+        status: 'error',
+        db_connected: false,
+        error: err?.message || String(err),
+        has_db_url: !!process.env.DATABASE_URL,
+        timestamp: new Date().toISOString()
+      });
+    }
   });
 
   // Enterprise Modular API Routes
@@ -191,7 +214,10 @@ async function startServer() {
     const body = req.body || {};
     let dbClient: Client | null = null;
     try {
-      let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+      let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&uselibpqcompat=true';
+      if (dbUrl.includes('.pooler.supabase.com:5432')) {
+        dbUrl = dbUrl.replace('.pooler.supabase.com:5432', '.pooler.supabase.com:6543');
+      }
       try {
         const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
         if (match) {

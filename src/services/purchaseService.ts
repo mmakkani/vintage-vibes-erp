@@ -6,23 +6,48 @@ import { PartiesService } from './partiesService.ts';
 export class PurchaseService {
   // --- Purchase Invoices ---
   public static async getPurchaseInvoices(): Promise<PurchaseInvoice[]> {
-    const [invResult, itemsResult] = await Promise.all([
-      supabase
-        .from('purchase_invoices')
-        .select('*')
-        .order('created_at', { ascending: false }),
-      supabase
-        .from('purchase_invoice_items')
-        .select('*')
-    ]);
+    // 1. Primary route: Query server endpoint connected directly to PostgreSQL
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const apiRes = await rawFetch('/api/purchase/invoices?_t=' + Date.now());
+        if (apiRes && apiRes.ok) {
+          const list = await apiRes.json();
+          if (Array.isArray(list) && list.length > 0) {
+            return list;
+          }
+        }
+      } catch (_) {}
+    }
 
-    if (invResult.error) {
-      console.error('Supabase error on purchase_invoices:', invResult.error);
-      throw new Error(invResult.error.message || 'Database error occurred reading purchase invoices');
+    // 2. Universal fallback: Direct Supabase client query
+    let invData: any[] = [];
+    let itemsData: any[] = [];
+    try {
+      const [invResult, itemsResult] = await Promise.all([
+        supabase
+          .from('purchase_invoices')
+          .select('*')
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('purchase_invoice_items')
+          .select('*')
+      ]);
+
+      if (!invResult.error && Array.isArray(invResult.data)) {
+        invData = invResult.data;
+      } else if (invResult.error) {
+        console.warn('Supabase query notice on purchase_invoices:', invResult.error.message);
+      }
+      if (!itemsResult.error && Array.isArray(itemsResult.data)) {
+        itemsData = itemsResult.data;
+      }
+    } catch (err: any) {
+      console.warn('Supabase fetch exception on purchase invoices:', err?.message);
     }
 
     const itemsByInvoiceId = new Map<string, any[]>();
-    (itemsResult.data || []).forEach((itemRow: any) => {
+    (itemsData || []).forEach((itemRow: any) => {
       const invId = String(itemRow.invoice_id);
       if (!itemsByInvoiceId.has(invId)) {
         itemsByInvoiceId.set(invId, []);
@@ -41,7 +66,7 @@ export class PurchaseService {
       });
     });
 
-    return (invResult.data || []).map((row: any) => {
+    return (invData || []).map((row: any) => {
       const rawDate = row.issue_date || row.invoice_date || row.created_at;
       let cleanDate = '';
       if (rawDate) {

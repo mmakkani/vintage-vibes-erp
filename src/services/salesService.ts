@@ -3,17 +3,38 @@ import { SalesInvoice } from '../modules/sales/sales.types.ts';
 
 export class SalesService {
   public static async getSalesInvoices(): Promise<SalesInvoice[]> {
-    const { data, error } = await supabase
-      .from('sales_invoices')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Supabase error on sales_invoices:', error);
-      throw new Error(error.message || 'Database error occurred reading sales invoices');
+    // 1. Primary route: Query server endpoint connected directly to PostgreSQL
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const apiRes = await rawFetch('/api/sales/invoices?_t=' + Date.now());
+        if (apiRes && apiRes.ok) {
+          const list = await apiRes.json();
+          if (Array.isArray(list) && list.length > 0) {
+            return list;
+          }
+        }
+      } catch (_) {}
     }
 
-    return (data || []).map((row: any) => {
+    // 2. Universal fallback: Direct Supabase client query
+    let rows: any[] = [];
+    try {
+      const { data, error } = await supabase
+        .from('sales_invoices')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!error && Array.isArray(data)) {
+        rows = data;
+      } else if (error) {
+        console.warn('Supabase query notice on sales_invoices:', error.message);
+      }
+    } catch (err: any) {
+      console.warn('Supabase fetch exception on sales_invoices:', err?.message);
+    }
+
+    return rows.map((row: any) => {
       let parsedItems: any[] = [];
       if (Array.isArray(row.items)) {
         parsedItems = row.items;
