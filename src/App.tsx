@@ -245,6 +245,8 @@ export default function App() {
     try {
       if (currentUser?.username && currentUser.username !== 'guest') {
         PresenceService.logout(currentUser.username).catch(() => {});
+      } else {
+        PresenceService.logout().catch(() => {});
       }
       localStorage.removeItem('vintage_erp_logged_user');
       localStorage.removeItem('vintage_vibes_auth_user');
@@ -264,10 +266,10 @@ export default function App() {
     }
     setIsAuthenticated(false);
     setCurrentUser(GUEST_OPERATOR);
-    setCurrentView('storefront');
+    setCurrentView(timeoutReason ? 'login' : 'storefront');
   };
 
-  // 15-Minute Inactivity / Idle Auto-Logout Hook
+  // 3-Hour Inactivity / Idle Auto-Logout Hook
   // CRITICAL REQUIREMENT: Live Streaming mode is exempt from auto-logout
   // - Isolated Mobile Host mode (/live-host)
   // - Live Selling Studio sub-tab inside Sales View
@@ -282,10 +284,10 @@ export default function App() {
   const isExemptFromAutoLogout = liveHostState.isHostMode || (activeTab === 'sales' && isLiveStudioActive);
 
   useIdleTimer({
-    timeoutMs: 15 * 60 * 1000, // 15 minutes of inactivity
+    timeoutMs: 3 * 60 * 60 * 1000, // 3 hours of inactivity (10,800,000 ms)
     onIdle: () => {
-      console.warn('[Security] Session timed out after 15 minutes of inactivity. Logging out...');
-      handleLogout('Session locked: You were inactive for 15 minutes. Please sign in again to continue.');
+      console.warn('[Security] Session timed out after 3 hours of inactivity. Logging out...');
+      handleLogout('Session locked: You were inactive for 3 hours. Please sign in again to continue.');
     },
     isEnabled: isAuthenticated && !isExemptFromAutoLogout
   });

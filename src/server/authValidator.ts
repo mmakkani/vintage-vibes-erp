@@ -84,8 +84,8 @@ export async function createSessionToken(user: { id: string; username: string; r
   const userId = String(user.id || '').trim();
   const username = String(user.username || '').trim();
   const role = String(user.role || 'ADMIN').toUpperCase();
-  // 24-hour default session lifetime with persistent DB storage and revocation
-  const maxAge = Number(process.env.SESSION_MAX_AGE_MS) || 24 * 60 * 60 * 1000;
+  // 3-hour default session lifetime with persistent DB storage and revocation
+  const maxAge = Number(process.env.SESSION_MAX_AGE_MS) || 3 * 60 * 60 * 1000;
   const expiresAt = Date.now() + maxAge;
 
   const payload = `${opaqueId}.${userId}.${role}.${expiresAt}`;

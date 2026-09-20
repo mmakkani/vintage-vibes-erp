@@ -1,7 +1,7 @@
-﻿import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 
 interface UseIdleTimerOptions {
-  timeoutMs?: number; // default 15 minutes = 900,000 ms
+  timeoutMs?: number; // default 3 hours = 10,800,000 ms
   onIdle: () => void;
   isEnabled?: boolean;
 }
@@ -13,7 +13,7 @@ interface UseIdleTimerOptions {
  * Live streaming and mobile host routes bypass this to ensure uninterrupted broadcasts.
  */
 export function useIdleTimer({
-  timeoutMs = 15 * 60 * 1000, // 15 minutes
+  timeoutMs = 3 * 60 * 60 * 1000, // 3 hours
   onIdle,
   isEnabled = true
 }: UseIdleTimerOptions) {
@@ -64,3 +64,6 @@ export function useIdleTimer({
     };
   }, [isEnabled, resetTimer]);
 }
+
+export const useIdleTimeout = useIdleTimer;
+export default useIdleTimer;

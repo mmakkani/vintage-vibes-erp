@@ -65,7 +65,7 @@ async function createSessionToken(user: { id: string; username: string; role?: s
   const userId = String(user.id || '').trim();
   const username = String(user.username || '').trim();
   const role = String(user.role || 'ADMIN').toUpperCase();
-  const maxAge = Number(process.env.SESSION_MAX_AGE_MS) || 24 * 60 * 60 * 1000;
+  const maxAge = Number(process.env.SESSION_MAX_AGE_MS) || 3 * 60 * 60 * 1000;
   const expiresAt = Date.now() + maxAge;
 
   const payload = `${opaqueId}.${userId}.${role}.${expiresAt}`;
@@ -349,8 +349,8 @@ export default async function handler(req: any, res: any) {
 
       console.log(`[Auth Login Success] User "${foundUserRow.username}" authenticated successfully as ${foundUserRow.role}`);
 
-      // Set-Cookie header with all standard enterprise attributes
-      const cookieVal = `vv_session=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`;
+      // Set-Cookie header with all standard enterprise attributes (3 hours / 10800s)
+      const cookieVal = `vv_session=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=10800`;
       res.setHeader('Set-Cookie', cookieVal);
 
       return res.status(200).json({
@@ -380,7 +380,7 @@ export default async function handler(req: any, res: any) {
           username: 'admin',
           role: 'ADMIN'
         });
-        res.setHeader('Set-Cookie', `vv_session=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
+        res.setHeader('Set-Cookie', `vv_session=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=10800`);
         return res.status(200).json({
           success: true,
           token: sessionToken,
@@ -404,7 +404,7 @@ export default async function handler(req: any, res: any) {
           username: 'accountant',
           role: 'ACCOUNTANT'
         });
-        res.setHeader('Set-Cookie', `vv_session=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
+        res.setHeader('Set-Cookie', `vv_session=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=10800`);
         return res.status(200).json({
           success: true,
           token: sessionToken,

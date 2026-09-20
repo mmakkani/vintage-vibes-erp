@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User } from '../auth.types.ts';
 import { Vintage3DLogo } from '../../../components/Vintage3DLogo.tsx';
 import { CompanyName3D } from '../../../components/CompanyName3D.tsx';
@@ -38,6 +38,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(() => {
     return typeof initialMessage === 'string' ? initialMessage : null;
   });
+
+  useEffect(() => {
+    if (typeof initialMessage === 'string') {
+      setErrorMsg(initialMessage);
+    }
+  }, [initialMessage]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
