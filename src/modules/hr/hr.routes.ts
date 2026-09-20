@@ -3,7 +3,7 @@ import { HRController } from './hr.controller.ts';
 import { SetupService } from '../../services/setupService.ts';
 import { Employee, AttendanceRecord, PayrollRecord, EmployeeLoan } from './hr.types.ts';
 import { getPgClient, withDb } from '../../db/pgPool.ts';
-import { verifyAuthToken, checkModulePermission } from '../../server/authValidator.ts';
+import { verifyAuthToken, checkModulePermission, extractAuthToken } from '../../server/authValidator.ts';
 
 export const hrRouter = Router();
 
@@ -1415,7 +1415,8 @@ hrRouter.get('/ocr/status', async (req, res) => {
 hrRouter.get(['/ocr/logs', '/hr/ocr/logs'], async (req, res) => {
   const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}`;
   const authHeader = (req.headers.authorization as string) || (req.headers['authorization'] as string) || '';
-  const authResult = await verifyAuthToken(authHeader);
+  const token = extractAuthToken(req) || authHeader;
+  const authResult = await verifyAuthToken(token);
 
   if (!authResult.valid || !authResult.user) {
     return res.status(401).json({
@@ -1461,8 +1462,29 @@ hrRouter.get(['/ocr/logs', '/hr/ocr/logs'], async (req, res) => {
 
 // POST /api/hr/ocr/scan - Perform AI OCR scan and log history
 hrRouter.post('/ocr/scan', async (req, res) => {
+  const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}`;
+  const token = extractAuthToken(req);
+  if (token) {
+    const authResult = await verifyAuthToken(token);
+    if (!authResult.valid || !authResult.user) {
+      return res.status(401).json({
+        success: false,
+        error: authResult.error || 'Unauthorized. Valid authorization token is required to perform OCR scan.',
+        correlationId
+      });
+    }
+    const perm = checkModulePermission(authResult.user, 'HR');
+    if (!perm.allowed) {
+      return res.status(403).json({
+        success: false,
+        error: perm.reason || 'Forbidden: Insufficient privileges to perform HR OCR scans.',
+        correlationId
+      });
+    }
+  }
+
   try {
-    const { documentType, imageBase64, secondaryImageBase64, apiKey } = req.body;
+    const { documentType, imageBase64, secondaryImageBase64, images, imagesBase64, apiKey } = req.body || {};
     const headerKey = req.headers['x-gemini-api-key'] as string;
     let effectiveApiKey = (apiKey && typeof apiKey === 'string' && apiKey.trim())
       ? apiKey.trim()
@@ -1481,6 +1503,8 @@ hrRouter.post('/ocr/scan', async (req, res) => {
       documentType: documentType || 'AUTO_DETECT',
       imageBase64,
       secondaryImageBase64,
+      images,
+      imagesBase64,
       apiKey: effectiveApiKey
     });
 

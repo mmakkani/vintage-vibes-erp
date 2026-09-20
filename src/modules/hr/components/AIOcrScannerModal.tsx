@@ -277,58 +277,83 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
 
   const handleExecuteScan = async () => {
     setScanError(null);
-    let primaryImg = '';
-    let secImg: string | undefined = undefined;
 
-    if (docMode === 'EMIRATES_ID') {
-      if (!frontImage) {
-        setScanError('Please upload or select the Front Image of the Emirates ID.');
-        return;
-      }
-      primaryImg = frontImage;
-      secImg = backImage || undefined;
-    } else if (docMode === 'PASSPORT') {
-      if (!passportImage) {
-        setScanError('Please upload or select the Passport Bio Page image.');
-        return;
-      }
-      primaryImg = passportImage;
-    } else {
-      if (!residencyImage) {
-        setScanError('Please upload or select the UAE Residency Visa / Card image.');
-        return;
-      }
-      primaryImg = residencyImage;
+    // 1. Gather ALL uploaded images across all tabs (Emirates ID Front/Back, Passport, Visa)
+    const allImages: string[] = [
+      frontImage,
+      backImage,
+      passportImage,
+      residencyImage
+    ].filter((img): img is string => typeof img === 'string' && img.trim().length > 100);
+
+    if (allImages.length === 0) {
+      setScanError('Please upload or select at least one legal document (Emirates ID Front/Back, Passport, or Visa) before scanning.');
+      return;
     }
 
+    const docCount = allImages.length;
     setIsScanning(true);
-    setScanStep('Initializing Gemini Vision Neural Engine...');
+    setScanStep(
+      docCount > 1
+        ? `Cross-referencing & analyzing ${docCount} document images with Gemini AI Vision...`
+        : 'Initializing Gemini Vision Neural Engine...'
+    );
 
     try {
       const activeKey = storedApiKey || undefined;
-      setScanStep('Executing Neural AI Vision Extraction (Gemini Flash)...');
+      setScanStep(
+        docCount > 1
+          ? `Batch scanning ${docCount} documents (Emirates ID, Passport, Visa) with Gemini Flash...`
+          : 'Executing Neural AI Vision Extraction (Gemini Flash)...'
+      );
 
-      // Use unified multi-model Gemini OCR execution
-      const data = await executeDocumentOcr({
-        documentType: docMode,
-        imageBase64: primaryImg,
-        secondaryImageBase64: secImg,
-        apiKey: activeKey
-      });
+      // Execute unified multi-model Gemini OCR execution with backend endpoint priority and client fallback
+      let data: AIOCRScanResult;
+      try {
+        const res = await fetch('/api/hr/ocr/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            documentType: docMode,
+            images: allImages,
+            imagesBase64: allImages,
+            imageBase64: frontImage || passportImage || residencyImage || allImages[0],
+            secondaryImageBase64: backImage || (allImages.length > 1 ? allImages[1] : undefined),
+            apiKey: activeKey
+          })
+        });
+
+        if (res.ok) {
+          const bodyJson = await res.json();
+          if (bodyJson && bodyJson.success) {
+            data = bodyJson;
+          } else {
+            throw new Error(bodyJson?.error || 'Server OCR did not return success.');
+          }
+        } else {
+          throw new Error(`OCR endpoint returned ${res.status}`);
+        }
+      } catch (backendErr) {
+        console.warn('[OCR Scanner] Backend endpoint unavailable, falling back to direct client execution:', backendErr);
+        data = await executeDocumentOcr({
+          documentType: docMode,
+          images: allImages,
+          imagesBase64: allImages,
+          imageBase64: frontImage || passportImage || residencyImage || allImages[0],
+          secondaryImageBase64: backImage || (allImages.length > 1 ? allImages[1] : undefined),
+          apiKey: activeKey
+        });
+      }
 
       if (!data.success) {
         throw new Error(data.error || 'Failed to complete AI OCR scan.');
       }
 
-      // Preserve image URLs if they were uploaded
-      if (docMode === 'EMIRATES_ID') {
-        data.idFrontImageUrl = frontImage;
-        data.idBackImageUrl = backImage;
-      } else if (docMode === 'PASSPORT') {
-        data.passportImageUrl = passportImage;
-      } else {
-        data.residencyImageUrl = residencyImage;
-      }
+      // Preserve all uploaded image URLs for the Visual Verification Overlay & Employee Record
+      if (frontImage) data.idFrontImageUrl = frontImage;
+      if (backImage) data.idBackImageUrl = backImage;
+      if (passportImage) data.passportImageUrl = passportImage;
+      if (residencyImage) data.residencyImageUrl = residencyImage;
 
       setScanResult(data);
       setShowVerificationOverlay(true);
@@ -904,10 +929,18 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
             <div>
               <div className="font-bold text-blue-950 text-xs flex items-center gap-1.5">
                 <Sparkles className="w-4 h-4 text-blue-600" />
-                <span>Ready to Execute AI Optical Character Recognition</span>
+                <span>
+                  {[frontImage, backImage, passportImage, residencyImage].filter(Boolean).length > 1
+                    ? `Ready for Multi-Document Batch Extraction (${[frontImage, backImage, passportImage, residencyImage].filter(Boolean).length} Documents Uploaded)`
+                    : 'Ready to Execute AI Optical Character Recognition'}
+                </span>
               </div>
               <p className="text-[11px] text-blue-800">
-                {isScanning ? scanStep : 'Click below to extract all legal identity numbers and details with Gemini AI Vision.'}
+                {isScanning 
+                  ? scanStep 
+                  : [frontImage, backImage, passportImage, residencyImage].filter(Boolean).length > 1
+                    ? `Cross-referencing all ${[frontImage, backImage, passportImage, residencyImage].filter(Boolean).length} uploaded documents into a single unified employee profile.`
+                    : 'Click below to extract all legal identity numbers and details with Gemini AI Vision.'}
               </p>
             </div>
 
@@ -920,12 +953,20 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
               {isScanning ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Scanning Document...</span>
+                  <span>
+                    {[frontImage, backImage, passportImage, residencyImage].filter(Boolean).length > 1
+                      ? `Batch Scanning (${[frontImage, backImage, passportImage, residencyImage].filter(Boolean).length} Documents)...`
+                      : 'Scanning Document...'}
+                  </span>
                 </>
               ) : (
                 <>
                   <Scan className="w-4 h-4" />
-                  <span>Scan with Gemini AI OCR</span>
+                  <span>
+                    {[frontImage, backImage, passportImage, residencyImage].filter(Boolean).length > 1
+                      ? `Scan ${[frontImage, backImage, passportImage, residencyImage].filter(Boolean).length} Docs with Gemini AI OCR`
+                      : 'Scan with Gemini AI OCR'}
+                  </span>
                 </>
               )}
             </button>
@@ -1110,72 +1151,86 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                   <span className="text-[10px] font-mono text-slate-500 uppercase">{scanResult.documentType}</span>
                 </div>
 
-                {/* If Emirates ID, show both Front and Back */}
-                {scanResult.documentType === 'EMIRATES_ID' ? (
-                  <div className="space-y-2">
-                    {/* Front preview */}
-                    <div>
-                      <div className="text-[10px] font-bold text-slate-600 mb-1 flex items-center justify-between">
-                        <span>Front Side (Photo & ID No)</span>
-                        <span className="text-emerald-700 font-semibold text-[9px] bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">Auto-Cropped ✓</span>
+                {/* Scanned Document Previews - Multi-Document Display */}
+                <div className="space-y-3">
+                  {/* 1. Emirates ID Front & Back Previews if available */}
+                  {(scanResult.idFrontImageUrl || scanResult.idBackImageUrl || scanResult.documentType === 'EMIRATES_ID') && (
+                    <div className="space-y-2 pb-2 border-b border-slate-200">
+                      <div className="text-[10px] font-bold text-slate-700 uppercase flex items-center justify-between">
+                        <span>Emirates ID (Front & Back)</span>
+                        <span className="text-emerald-700 font-semibold text-[9px] bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">Verified ✓</span>
                       </div>
-                      <div className="aspect-[85.6/53.98] bg-slate-900/5 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner flex items-center justify-center">
-                        {scanResult.idFrontImageUrl ? (
-                          <img src={scanResult.idFrontImageUrl} alt="Front ID" className="w-full h-full object-contain p-1" />
-                        ) : (
-                          <div className="flex items-center justify-center h-full text-slate-400 text-xs">No Front Photo</div>
-                        )}
-                        <div className="absolute bottom-1.5 left-1.5 bg-slate-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-mono">
-                          ID: {scanResult.emiratesId || '784-...'}
+                      <div className="grid grid-cols-2 gap-2">
+                        {/* Front */}
+                        <div>
+                          <div className="text-[9px] font-bold text-slate-500 mb-0.5">Front Side</div>
+                          <div className="aspect-[85.6/53.98] bg-slate-900/5 rounded overflow-hidden border border-slate-300 relative shadow-inner flex items-center justify-center">
+                            {scanResult.idFrontImageUrl ? (
+                              <img src={scanResult.idFrontImageUrl} alt="Front ID" className="w-full h-full object-contain p-0.5" />
+                            ) : (
+                              <div className="flex items-center justify-center h-full text-slate-400 text-[10px]">No Front Photo</div>
+                            )}
+                          </div>
+                        </div>
+                        {/* Back */}
+                        <div>
+                          <div className="text-[9px] font-bold text-slate-500 mb-0.5">Back Side</div>
+                          <div className="aspect-[85.6/53.98] bg-slate-900/5 rounded overflow-hidden border border-slate-300 relative shadow-inner flex items-center justify-center">
+                            {scanResult.idBackImageUrl ? (
+                              <img src={scanResult.idBackImageUrl} alt="Back ID" className="w-full h-full object-contain p-0.5" />
+                            ) : (
+                              <div className="flex items-center justify-center h-full text-slate-400 text-[10px]">No Back Photo</div>
+                            )}
+                          </div>
                         </div>
                       </div>
+                      <div className="bg-slate-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-mono flex items-center justify-between">
+                        <span>ID: {scanResult.emiratesId || '784-...'}</span>
+                        <span>Card: {scanResult.idCardNo || 'EID-...'}</span>
+                      </div>
                     </div>
+                  )}
 
-                    {/* Back preview */}
-                    <div>
-                      <div className="text-[10px] font-bold text-slate-600 mb-1 flex items-center justify-between">
-                        <span>Back Side (Card Number & Chip)</span>
-                        <span className="text-blue-700 font-semibold text-[9px] bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200">Auto-Cropped ✓</span>
+                  {/* 2. Passport Preview if available */}
+                  {(scanResult.passportImageUrl || scanResult.documentType === 'PASSPORT') && (
+                    <div className="space-y-1.5 pb-2 border-b border-slate-200">
+                      <div className="text-[10px] font-bold text-slate-700 uppercase flex items-center justify-between">
+                        <span>Passport Bio Page</span>
+                        <span className="text-indigo-700 font-semibold text-[9px] bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-200">Passport ✓</span>
                       </div>
-                      <div className="aspect-[85.6/53.98] bg-slate-900/5 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner flex items-center justify-center">
-                        {scanResult.idBackImageUrl ? (
-                          <img src={scanResult.idBackImageUrl} alt="Back ID" className="w-full h-full object-contain p-1" />
+                      <div className="aspect-[125/88] bg-slate-900/5 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner flex items-center justify-center">
+                        {scanResult.passportImageUrl ? (
+                          <img src={scanResult.passportImageUrl} alt="Passport Bio Page" className="w-full h-full object-contain p-1" />
                         ) : (
-                          <div className="flex items-center justify-center h-full text-slate-400 text-xs">No Back Photo</div>
+                          <div className="flex items-center justify-center h-full text-slate-400 text-xs">Passport Scan</div>
                         )}
                         <div className="absolute bottom-1.5 left-1.5 bg-slate-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-mono">
-                          Card: {scanResult.idCardNo || 'EID-...'}
+                          Passport: {scanResult.passportNo || 'N/A'}
                         </div>
                       </div>
                     </div>
-                  </div>
-                ) : scanResult.documentType === 'PASSPORT' ? (
-                  <div>
-                    <div className="aspect-[125/88] bg-slate-900/5 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner flex items-center justify-center">
-                      {scanResult.passportImageUrl ? (
-                        <img src={scanResult.passportImageUrl} alt="Passport Bio Page" className="w-full h-full object-contain p-1" />
-                      ) : (
-                        <div className="flex items-center justify-center h-full text-slate-400 text-xs">Passport Scan</div>
-                      )}
-                      <div className="absolute bottom-1.5 left-1.5 bg-slate-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-mono">
-                        Passport: {scanResult.passportNo}
+                  )}
+
+                  {/* 3. UAE Residency Visa Preview if available */}
+                  {(scanResult.residencyImageUrl || scanResult.documentType === 'RESIDENCY_VISA') && (
+                    <div className="space-y-1.5 pb-2">
+                      <div className="text-[10px] font-bold text-slate-700 uppercase flex items-center justify-between">
+                        <span>UAE Residency Visa / Card</span>
+                        <span className="text-amber-700 font-semibold text-[9px] bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200">Visa ✓</span>
+                      </div>
+                      <div className="aspect-[1.414] bg-slate-900/5 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner flex items-center justify-center">
+                        {scanResult.residencyImageUrl ? (
+                          <img src={scanResult.residencyImageUrl} alt="Residency Visa" className="w-full h-full object-contain p-1" />
+                        ) : (
+                          <div className="flex items-center justify-center h-full text-slate-400 text-xs">Residency Scan</div>
+                        )}
+                        <div className="absolute bottom-1.5 left-1.5 bg-slate-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-mono">
+                          File: {scanResult.residencyCardNo || 'N/A'}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ) : (
-                  <div>
-                    <div className="aspect-[1.414] bg-slate-900/5 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner flex items-center justify-center">
-                      {scanResult.residencyImageUrl ? (
-                        <img src={scanResult.residencyImageUrl} alt="Residency Visa" className="w-full h-full object-contain p-1" />
-                      ) : (
-                        <div className="flex items-center justify-center h-full text-slate-400 text-xs">Residency Scan</div>
-                      )}
-                      <div className="absolute bottom-1.5 left-1.5 bg-slate-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-mono">
-                        File: {scanResult.residencyCardNo}
-                      </div>
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 <div className="text-[10px] text-slate-500 bg-white p-2 rounded border border-slate-200">
                   <strong>Source:</strong> {scanResult.source === 'GEMINI_AI_VISION' ? 'Google Gemini 2.5 Flash Vision' : 'Demo UAE Preset Engine'}

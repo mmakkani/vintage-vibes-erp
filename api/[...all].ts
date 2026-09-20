@@ -2824,6 +2824,66 @@ export default async function handler(req: any, res: any) {
       });
     }
 
+    // 14. POST /api/hr/ocr/scan - Multi-document Batch AI OCR
+    if (pathname.includes('/api/hr/ocr/scan') && method === 'POST') {
+      const token = extractAuthToken(req);
+      if (token) {
+        const authResult = await verifyAuthToken(token);
+        if (!authResult.valid || !authResult.user) {
+          return res.status(401).json({
+            success: false,
+            error: authResult.error || 'Unauthorized. Valid authorization token is required to perform OCR scan.',
+            correlationId
+          });
+        }
+        const perm = checkModulePermission(authResult.user, 'HR');
+        if (!perm.allowed) {
+          return res.status(403).json({
+            success: false,
+            error: perm.reason || 'Forbidden: Insufficient privileges to perform HR OCR scans.',
+            correlationId
+          });
+        }
+      }
+
+      try {
+        const { HRController } = await import('../src/modules/hr/hr.controller.ts');
+        const { documentType, imageBase64, secondaryImageBase64, images, imagesBase64, apiKey } = body || {};
+        const headerKey = req.headers['x-gemini-api-key'] as string;
+        let effectiveApiKey = (apiKey && typeof apiKey === 'string' && apiKey.trim())
+          ? apiKey.trim()
+          : (headerKey && headerKey.trim() ? headerKey.trim() : undefined);
+
+        if (!effectiveApiKey) {
+          try {
+            const { SetupService } = await import('../src/services/setupService.ts');
+            const config = await SetupService.getGeminiApiConfig();
+            if (config.configured && config.apiKey) {
+              effectiveApiKey = config.apiKey;
+            }
+          } catch (_) {}
+        }
+
+        const result = await HRController.performAIOCRScan({
+          documentType: documentType || 'AUTO_DETECT',
+          imageBase64,
+          secondaryImageBase64,
+          images,
+          imagesBase64,
+          apiKey: effectiveApiKey
+        });
+
+        return res.status(200).json(result);
+      } catch (err: any) {
+        console.error('[Serverless HR OCR Scan Error]:', err?.message);
+        return res.status(400).json({
+          success: false,
+          error: err?.message || 'Failed to complete AI OCR scan',
+          correlationId
+        });
+      }
+    }
+
     // ========================================================================
     // WHATSAPP BROADCASTER & PAIRING ENDPOINTS
     // ========================================================================

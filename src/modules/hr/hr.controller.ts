@@ -4,8 +4,10 @@ import { GoogleGenAI } from '@google/genai';
 
 export interface AIOCRScanPayload {
   documentType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA' | 'AUTO_DETECT';
-  imageBase64: string;
+  imageBase64?: string;
   secondaryImageBase64?: string; // e.g. Back of Emirates ID
+  images?: string[]; // Multiple document images batch array
+  imagesBase64?: string[]; // Multiple document images batch array (alias)
   apiKey?: string;
 }
 
@@ -133,27 +135,22 @@ export class HRController {
     return relationalStore.deleteEmployeeLoan(loanId);
   }
 
-  public static getOcrConfigStatus(): { configured: boolean; model: string } {
-    const configured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5);
+  public static getOcrConfigStatus() {
     return {
-      configured,
+      configured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5),
       model: 'gemini-3.7-flash'
     };
   }
 
   /**
    * High-accuracy Google Gemini AI Vision OCR for UAE Emirates ID (Front & Back),
-   * Passport, and UAE Residency Card / Visa.
+   * Passport, and UAE Residency Card / Visa with multi-document batch cross-referencing.
    */
   public static async performAIOCRScan(payload: AIOCRScanPayload): Promise<AIOCRScanResult> {
-    const { documentType, imageBase64, secondaryImageBase64, apiKey: clientApiKey } = payload;
+    const { documentType, apiKey: clientApiKey } = payload;
     const apiKey = (clientApiKey && clientApiKey.trim().length > 5)
       ? clientApiKey.trim()
       : (process.env.GEMINI_API_KEY || '').trim();
-
-    if (!imageBase64 || imageBase64.trim().length < 100) {
-      throw new Error('Please upload or capture a clear photo of the document to scan.');
-    }
 
     // Helper to clean base64 string
     const cleanBase64 = (b64: string) => b64.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '');
@@ -161,6 +158,17 @@ export class HRController {
       const match = b64.match(/^data:(image\/[a-zA-Z0-9.+]+);base64,/);
       return match ? match[1] : 'image/jpeg';
     };
+
+    // Gather all document images from payload
+    const rawImages: string[] = (Array.isArray(payload.images) && payload.images.length > 0)
+      ? payload.images.filter(img => typeof img === 'string' && img.trim().length > 100)
+      : (Array.isArray(payload.imagesBase64) && payload.imagesBase64.length > 0)
+        ? payload.imagesBase64.filter(img => typeof img === 'string' && img.trim().length > 100)
+        : [payload.imageBase64, payload.secondaryImageBase64].filter((img): img is string => typeof img === 'string' && img.trim().length > 100);
+
+    if (rawImages.length === 0) {
+      throw new Error('Please upload or capture at least one clear document photo to scan.');
+    }
 
     if (apiKey) {
       try {
@@ -171,32 +179,14 @@ export class HRController {
           }
         });
 
-        const parts: any[] = [];
-        parts.push({
-          inlineData: {
-            mimeType: detectMime(imageBase64),
-            data: cleanBase64(imageBase64)
-          }
-        });
-
-        if (secondaryImageBase64 && secondaryImageBase64.trim().length > 100) {
-          parts.push({
-            inlineData: {
-              mimeType: detectMime(secondaryImageBase64),
-              data: cleanBase64(secondaryImageBase64)
-            }
-          });
-        }
-
-        const promptText = `You are a certified UAE legal document OCR verification engine specializing in UAE Emirates IDs, Passports, and UAE Residency Visas.
-Carefully examine the provided document image(s) (Front and/or Back side).
+        const promptText = `I am providing multiple images of a person's legal documents (e.g., Passport, Emirates ID, Visa). Cross-reference all provided images to extract a single, comprehensive JSON profile. Fill in missing gaps from one document using the others.
 
 MANDATORY RULES:
-1. Identify the exact document type: 'EMIRATES_ID', 'PASSPORT', or 'RESIDENCY_VISA'.
-2. Extract all visible fields with maximum accuracy:
+1. Identify all present legal documents: Emirates ID (Front and/or Back), Passport Bio Page, and UAE Residency Visa / Card.
+2. Cross-reference all provided images to extract a single, unified, comprehensive JSON profile:
    - For Emirates ID:
      * Full Name in English
-     * Full Name in Arabic (if present on card)
+     * Full Name in Arabic (الاسم بالعربية as printed on card)
      * Emirates ID Number in standard format 784-YYYY-XXXXXXX-X
      * Card Number / Serial Number (found on the back of card or near chip)
      * Date of Birth in YYYY-MM-DD format
@@ -212,15 +202,19 @@ MANDATORY RULES:
      * Date of Issue (YYYY-MM-DD)
      * Date of Expiry (YYYY-MM-DD)
    - For UAE Residency Visa / Card:
-     * File Number / Residency Number (e.g. 201/2023/XXXXXXX)
+     * File Number / Residency Number (e.g. 201/YYYY/XXXXXXX)
      * Unified Number / UID No (9 digits)
-     * Full Name
+     * Full Name in English and Arabic
      * Profession / Designation (as printed on visa)
      * Sponsor / Employer Name
      * Issue Date (YYYY-MM-DD)
      * Expiry Date (YYYY-MM-DD)
 
-3. Return ONLY a pure JSON object matching this schema without any markdown formatting or commentary:
+3. Unified Profile Reconciliation:
+   - Harmonize and merge values across documents. Fill in missing gaps from one document using the others (e.g., if Name in English or Nationality is in Passport, and Emirates ID has Arabic name and UID, combine them into one profile).
+   - For documentType, specify 'EMIRATES_ID' if an Emirates ID is present, otherwise 'PASSPORT' or 'RESIDENCY_VISA'.
+
+4. Return ONLY a pure JSON object matching this schema without any markdown formatting or commentary:
 {
   "documentType": "EMIRATES_ID",
   "name": "Full Name in English",
@@ -244,7 +238,17 @@ MANDATORY RULES:
   "confidence": 0.98
 }`;
 
+        // Construct parts array containing prompt and all document images in a single request
+        const parts: any[] = [];
         parts.push({ text: promptText });
+        for (const img of rawImages) {
+          parts.push({
+            inlineData: {
+              mimeType: detectMime(img),
+              data: cleanBase64(img)
+            }
+          });
+        }
 
         const candidateModels = [
           'gemini-3.7-flash',
@@ -256,13 +260,18 @@ MANDATORY RULES:
           'gemini-1.5-flash'
         ];
         let lastModelErr: any = null;
+        let response: any = null;
+        let successfulModel = 'gemini-3.7-flash';
         for (const m of candidateModels) {
           try {
             response = await ai.models.generateContent({
               model: m,
               contents: { parts }
             });
-            if (response?.text) break;
+            if (response?.text) {
+              successfulModel = m;
+              break;
+            }
           } catch (mErr) {
             lastModelErr = mErr;
           }
@@ -296,11 +305,12 @@ MANDATORY RULES:
           residencyExpiryDate: parsed.residencyExpiryDate || '',
           confidence: Number(parsed.confidence) || 0.98,
           source: 'GEMINI_AI_VISION',
-          idFrontImageUrl: imageBase64,
-          idBackImageUrl: secondaryImageBase64 || '',
-          passportImageUrl: documentType === 'PASSPORT' ? imageBase64 : '',
-          residencyImageUrl: documentType === 'RESIDENCY_VISA' ? imageBase64 : '',
-          notes: 'High-precision extraction via Gemini Vision AI'
+          idFrontImageUrl: payload.imageBase64 || (rawImages.length > 0 ? rawImages[0] : ''),
+          idBackImageUrl: payload.secondaryImageBase64 || (rawImages.length > 1 ? rawImages[1] : ''),
+          passportImageUrl: documentType === 'PASSPORT' ? (payload.imageBase64 || rawImages[0]) : '',
+          residencyImageUrl: documentType === 'RESIDENCY_VISA' ? (payload.imageBase64 || rawImages[0]) : '',
+          notes: `Batch cross-referenced ${rawImages.length} document image${rawImages.length > 1 ? 's' : ''} via Gemini Vision AI`,
+          modelUsed: successfulModel
         };
       } catch (geminiErr: any) {
         console.warn('Gemini OCR Vision call warning:', geminiErr?.message);
@@ -334,10 +344,10 @@ MANDATORY RULES:
       residencyExpiryDate: '',
       confidence: 0,
       source: 'MANUAL_ENTRY',
-      idFrontImageUrl: imageBase64 || '',
-      idBackImageUrl: secondaryImageBase64 || '',
-      passportImageUrl: detectedType === 'PASSPORT' ? imageBase64 : '',
-      residencyImageUrl: detectedType === 'RESIDENCY_VISA' ? imageBase64 : '',
+      idFrontImageUrl: payload.imageBase64 || (rawImages.length > 0 ? rawImages[0] : ''),
+      idBackImageUrl: payload.secondaryImageBase64 || (rawImages.length > 1 ? rawImages[1] : ''),
+      passportImageUrl: detectedType === 'PASSPORT' ? (payload.imageBase64 || (rawImages.length > 0 ? rawImages[0] : '')) : '',
+      residencyImageUrl: detectedType === 'RESIDENCY_VISA' ? (payload.imageBase64 || (rawImages.length > 0 ? rawImages[0] : '')) : '',
       notes: apiKey ? 'AI Vision extraction failed. Please enter document details manually.' : 'Gemini API key not configured. Please enter document details manually.'
     };
   }
