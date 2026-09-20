@@ -596,17 +596,20 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
         showMsg(data.error || 'Failed to delete attendance sheet', 'error');
-      } else {
-        showMsg(`Attendance sheet for ${month} deleted.`);
-        if (activeAttendanceSheetMonth === month) {
-          setActiveAttendanceSheetMonth(null);
-        }
-        notifyMutation('HR', 'ATTENDANCE', 'DELETE', month);
-        loadData();
-        onRefreshAll();
+        return;
       }
-    } catch (err) {
-      showMsg('Failed to delete attendance sheet', 'error');
+      // Pessimistic state update: Only clear after confirmed DB deletion
+      setAttendanceSheetsLog(prev => prev.filter(s => s.monthYear !== month));
+      setAttendance(prev => prev.filter(a => a.monthYear !== month));
+      if (activeAttendanceSheetMonth === month) {
+        setActiveAttendanceSheetMonth(null);
+      }
+      showMsg(`Attendance sheet for ${month} deleted.`);
+      notifyMutation('HR', 'ATTENDANCE', 'DELETE', month);
+      await loadData();
+      onRefreshAll?.();
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to delete attendance sheet', 'error');
     }
   };
 
@@ -695,17 +698,23 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ month: selectedMonth })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
         showMsg(data.error || 'Failed to delete attendance sheet', 'error');
-      } else {
-        showMsg(`Attendance sheet for ${selectedMonth} deleted.`);
-        notifyMutation('HR', 'ATTENDANCE', 'DELETE', selectedMonth);
-        loadData();
-        onRefreshAll();
+        return;
       }
-    } catch (err) {
-      showMsg('Failed to delete attendance sheet', 'error');
+      // Pessimistic state update: Only clear after confirmed DB deletion
+      setAttendanceSheetsLog(prev => prev.filter(s => s.monthYear !== selectedMonth));
+      setAttendance(prev => prev.filter(a => a.monthYear !== selectedMonth));
+      if (activeAttendanceSheetMonth === selectedMonth) {
+        setActiveAttendanceSheetMonth(null);
+      }
+      showMsg(`Attendance sheet for ${selectedMonth} deleted.`);
+      notifyMutation('HR', 'ATTENDANCE', 'DELETE', selectedMonth);
+      await loadData();
+      onRefreshAll?.();
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to delete attendance sheet', 'error');
     }
   };
 
@@ -748,18 +757,25 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ month: selectedMonth })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
         showMsg(data.error || 'Failed to delete payroll', 'error');
-      } else {
-        showMsg(`Draft payroll for ${selectedMonth} deleted.`);
-        HrService.clearPayrollSheetsCache();
-        notifyMutation('HR', 'PAYROLL', 'DELETE', selectedMonth);
-        loadData();
-        onRefreshAll?.();
+        return;
       }
-    } catch (err) {
-      showMsg('Failed to delete payroll', 'error');
+      // Pessimistic state update: Only clear after confirmed DB deletion
+      HrService.clearPayrollSheetsCache();
+      setPayrollSheetsLog(prev => prev.filter(s => s.monthYear !== selectedMonth));
+      setPayrollSlips(prev => prev.filter(p => p.monthYear !== selectedMonth));
+      if (activePayrollSheetMonth === selectedMonth) {
+        setShowPayrollRegisterWindow(false);
+        setActivePayrollSheetMonth(null);
+      }
+      showMsg(`Draft payroll for ${selectedMonth} deleted.`);
+      notifyMutation('HR', 'PAYROLL', 'DELETE', selectedMonth);
+      await loadData();
+      onRefreshAll?.();
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to delete payroll', 'error');
     }
   };
 
@@ -872,18 +888,22 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
         showMsg(data.error || 'Failed to delete payroll sheet', 'error');
-      } else {
-        showMsg(`Draft payroll for ${month} deleted.`);
-        if (activePayrollSheetMonth === month) {
-          setShowPayrollRegisterWindow(false);
-          setActivePayrollSheetMonth(null);
-        }
-        notifyMutation('HR', 'PAYROLL', 'DELETE', month);
-        loadData();
-        onRefreshAll();
+        return;
       }
-    } catch (err) {
-      showMsg('Failed to delete payroll sheet', 'error');
+      // Pessimistic state update: Only clear after confirmed DB deletion
+      HrService.clearPayrollSheetsCache();
+      setPayrollSheetsLog(prev => prev.filter(s => s.monthYear !== month));
+      setPayrollSlips(prev => prev.filter(p => p.monthYear !== month));
+      if (activePayrollSheetMonth === month) {
+        setShowPayrollRegisterWindow(false);
+        setActivePayrollSheetMonth(null);
+      }
+      showMsg(`Draft payroll for ${month} deleted.`);
+      notifyMutation('HR', 'PAYROLL', 'DELETE', month);
+      await loadData();
+      onRefreshAll?.();
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to delete payroll sheet', 'error');
     }
   };
 

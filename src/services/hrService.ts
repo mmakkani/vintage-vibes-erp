@@ -808,6 +808,55 @@ export class HrService {
     }));
   }
 
+  public static async deleteAttendanceSheet(monthYear: string): Promise<void> {
+    if (!monthYear) {
+      throw new Error('Month is required to delete attendance sheet');
+    }
+
+    // 1. Foreign Key / Link check: Check if payroll records exist for this month
+    const { data: payrollSlips } = await supabase
+      .from('employee_payroll')
+      .select('id')
+      .eq('month_year', monthYear)
+      .limit(1);
+
+    if (payrollSlips && payrollSlips.length > 0) {
+      throw new Error(`Cannot delete attendance for ${monthYear}: Linked payroll records exist. Please delete or unpost payroll first.`);
+    }
+
+    // 2. Delete attendance records for this month
+    const { error: attErr } = await supabase
+      .from('employee_attendance')
+      .delete()
+      .eq('month_year', monthYear);
+
+    if (attErr) {
+      console.error('[HrService] Error deleting employee_attendance from Supabase:', attErr);
+      throw new Error(attErr.message || 'Failed to delete attendance records');
+    }
+
+    // 3. Delete attendance sheet record
+    const { error: sheetErr } = await supabase
+      .from('hr_attendance_sheets')
+      .delete()
+      .eq('month_year', monthYear);
+
+    if (sheetErr) {
+      console.error('[HrService] Error deleting hr_attendance_sheets from Supabase:', sheetErr);
+      throw new Error(sheetErr.message || 'Failed to delete attendance sheet');
+    }
+
+    // 4. Log audit action
+    try {
+      await AuditService.logAction({
+        action: 'DELETE',
+        entityType: 'ATTENDANCE',
+        entityId: `ATT-${monthYear}`,
+        details: `Permanently deleted attendance sheet and records for ${monthYear}`
+      });
+    } catch (_) {}
+  }
+
   // ==========================================
   // 3. EMPLOYEE LOANS (public.employee_loans)
   // ==========================================
@@ -1434,6 +1483,61 @@ export class HrService {
     })();
 
     return this.payrollSheetsPromise;
+  }
+
+  public static async deletePayroll(monthYear: string): Promise<void> {
+    return this.deletePayrollSheet(monthYear);
+  }
+
+  public static async deletePayrollSheet(monthYear: string): Promise<void> {
+    if (!monthYear) {
+      throw new Error('Month is required to delete payroll sheet');
+    }
+
+    this.clearPayrollSheetsCache();
+
+    // 1. Validation: Verify sheet is not POSTED
+    const { data: sheet } = await supabase
+      .from('hr_payroll_sheets')
+      .select('status, voucher_id, voucher_no')
+      .eq('month_year', monthYear)
+      .maybeSingle();
+
+    if (sheet?.status === 'POSTED') {
+      throw new Error(`Cannot delete payroll for ${monthYear}: Sheet is POSTED and recorded in General Ledger. Please unpost it first.`);
+    }
+
+    // 2. Delete employee payroll slips
+    const { error: payErr } = await supabase
+      .from('employee_payroll')
+      .delete()
+      .eq('month_year', monthYear);
+
+    if (payErr) {
+      console.error('[HrService] Error deleting employee_payroll from Supabase:', payErr);
+      throw new Error(payErr.message || 'Failed to delete payroll records');
+    }
+
+    // 3. Delete payroll sheet
+    const { error: sheetErr } = await supabase
+      .from('hr_payroll_sheets')
+      .delete()
+      .eq('month_year', monthYear);
+
+    if (sheetErr) {
+      console.error('[HrService] Error deleting hr_payroll_sheets from Supabase:', sheetErr);
+      throw new Error(sheetErr.message || 'Failed to delete payroll sheet');
+    }
+
+    // 4. Log audit action
+    try {
+      await AuditService.logAction({
+        action: 'DELETE',
+        entityType: 'PAYROLL',
+        entityId: `PAY-${monthYear}`,
+        details: `Permanently deleted draft payroll sheet and salary slips for ${monthYear}`
+      });
+    } catch (_) {}
   }
 
   // ==========================================

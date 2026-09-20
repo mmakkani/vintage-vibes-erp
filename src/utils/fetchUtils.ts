@@ -375,6 +375,13 @@ export async function safeFetchJson<T = any>(
       }
 
       // HR Attendance Mutations
+      if (url.includes('/api/hr/attendance/sheet') && method === 'DELETE') {
+        const month = bodyData.monthYear || bodyData.month || (url.split('month=')[1] ? decodeURIComponent(url.split('month=')[1].split('&')[0]) : '');
+        if (month) {
+          await HrService.deleteAttendanceSheet(month);
+          return { success: true } as any;
+        }
+      }
       if (url.includes('/api/hr/attendance/create-sheet')) {
         const month = bodyData.monthYear || bodyData.month || new Date().toISOString().slice(0, 7);
         const records = await HrService.createAttendanceSheet(month);
@@ -398,6 +405,13 @@ export async function safeFetchJson<T = any>(
       }
 
       // HR Payroll Mutations
+      if (url.includes('/api/hr/payroll/sheet') && method === 'DELETE') {
+        const month = bodyData.monthYear || bodyData.month || (url.split('month=')[1] ? decodeURIComponent(url.split('month=')[1].split('&')[0]) : '');
+        if (month) {
+          await HrService.deletePayrollSheet(month);
+          return { success: true } as any;
+        }
+      }
       if (url.includes('/api/hr/payroll/run')) {
         const month = bodyData.monthYear || bodyData.month || new Date().toISOString().slice(0, 7);
         const slips = await HrService.runPayroll(month);
@@ -463,7 +477,7 @@ export async function safeFetchJson<T = any>(
       return { success: true } as any;
     } catch (mutationErr: any) {
       console.warn(`[Supabase Mutation Catch for ${url}]:`, mutationErr?.message);
-      return { success: true } as any;
+      return { success: false, error: mutationErr?.message || 'Database operation failed' } as any;
     }
   }
 

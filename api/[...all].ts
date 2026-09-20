@@ -2349,15 +2349,23 @@ export default async function handler(req: any, res: any) {
     // 8f. DELETE /api/hr/attendance/sheet - Delete attendance sheet
     if (pathname.includes('/api/hr/attendance/sheet') && method === 'DELETE') {
       const month = body?.month || parsedUrl.searchParams.get('month');
+      if (!month) {
+        return res.status(400).json({ success: false, error: 'Month parameter is required' });
+      }
       let client: any = null;
       try { client = await borrowClient(); } catch (_) {}
       if (client) {
         try {
+          // Foreign Key Check: Prevent delete if linked payroll records exist
+          const payCheck = await client.query(`SELECT id FROM employee_payroll WHERE month_year = $1 LIMIT 1;`, [month]);
+          if (payCheck.rows && payCheck.rows.length > 0) {
+            return res.status(400).json({ success: false, error: `Cannot delete attendance for ${month}: Linked payroll records exist. Please delete or unpost payroll first.` });
+          }
           await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
           await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1;`, [month]);
           return res.status(200).json({ success: true });
         } catch (dbErr: any) {
-          return res.status(400).json({ error: dbErr?.message });
+          return res.status(400).json({ success: false, error: dbErr?.message || 'Database error deleting attendance sheet' });
         } finally {
           try { client.release(); } catch (_) {}
         }
@@ -2563,15 +2571,23 @@ export default async function handler(req: any, res: any) {
     // 10d. DELETE /api/hr/payroll/sheet - Delete draft payroll sheet
     if (pathname.includes('/api/hr/payroll/sheet') && method === 'DELETE') {
       const month = body?.month || parsedUrl.searchParams.get('month');
+      if (!month) {
+        return res.status(400).json({ success: false, error: 'Month parameter is required' });
+      }
       let client: any = null;
       try { client = await borrowClient(); } catch (_) {}
       if (client) {
         try {
+          // Constraint Check: Cannot delete POSTED payroll
+          const postCheck = await client.query(`SELECT status FROM hr_payroll_sheets WHERE month_year = $1 LIMIT 1;`, [month]);
+          if (postCheck.rows?.[0]?.status === 'POSTED') {
+            return res.status(400).json({ success: false, error: `Cannot delete payroll for ${month}: Sheet is POSTED and recorded in General Ledger. Please unpost it first.` });
+          }
           await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
           await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
           return res.status(200).json({ success: true });
         } catch (dbErr: any) {
-          return res.status(400).json({ error: dbErr?.message });
+          return res.status(400).json({ success: false, error: dbErr?.message || 'Database error deleting payroll sheet' });
         } finally {
           try { client.release(); } catch (_) {}
         }

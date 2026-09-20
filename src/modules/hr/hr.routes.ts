@@ -883,13 +883,20 @@ hrRouter.delete(['/attendance/sheet', '/attendance/:month'], async (req, res) =>
   }
   try {
     await withDb(async (client) => {
+      const payCheck = await client.query(`SELECT id FROM employee_payroll WHERE month_year = $1 LIMIT 1;`, [month]);
+      if (payCheck.rows && payCheck.rows.length > 0) {
+        throw new Error(`Cannot delete attendance for ${month}: Linked payroll records exist. Please delete or unpost payroll first.`);
+      }
       await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
       await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1;`, [month]);
     });
     return res.json({ success: true });
-  } catch (_) {
+  } catch (err: any) {
+    if (err.message && err.message.includes('Linked payroll records exist')) {
+      return res.status(400).json({ error: err.message });
+    }
     const result = HRController.deleteAttendanceSheet(month);
-    if (!result.success) return res.status(400).json({ error: result.error });
+    if (!result.success) return res.status(400).json({ error: result.error || err.message });
     return res.json(result);
   }
 });
@@ -1209,13 +1216,24 @@ hrRouter.delete(['/payroll/sheet', '/payroll/:month'], async (req, res) => {
   }
   try {
     await withDb(async (client) => {
+      const postCheck = await client.query(`SELECT status FROM hr_payroll_sheets WHERE month_year = $1 LIMIT 1;`, [month]);
+      if (postCheck.rows?.[0]?.status === 'POSTED') {
+        throw new Error(`Cannot delete payroll for ${month}: Sheet is POSTED and recorded in General Ledger. Please unpost it first.`);
+      }
+      const slipCheck = await client.query(`SELECT id FROM employee_payroll WHERE month_year = $1 AND status = 'POSTED' LIMIT 1;`, [month]);
+      if (slipCheck.rows && slipCheck.rows.length > 0) {
+        throw new Error(`Cannot delete payroll for ${month}: Sheet contains POSTED slips. Please unpost them first.`);
+      }
       await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
       await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
     });
     return res.json({ success: true });
-  } catch (_) {
+  } catch (err: any) {
+    if (err.message && err.message.includes('POSTED')) {
+      return res.status(400).json({ error: err.message });
+    }
     const result = HRController.deletePayroll(month);
-    if (!result.success) return res.status(400).json({ error: result.error });
+    if (!result.success) return res.status(400).json({ error: result.error || err.message });
     return res.json(result);
   }
 });
