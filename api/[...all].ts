@@ -3,7 +3,6 @@ import path from 'path';
 import os from 'os';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
-import loginHandler from './auth/login.ts';
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://vintagevibesgk.com',
@@ -3583,9 +3582,16 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    // Auth Login
+    // Auth Login (Handled primarily by dedicated api/auth/login.ts)
     if ((pathname === '/api/auth/login' || pathname.endsWith('/auth/login') || pathname.includes('/auth/login')) && method === 'POST') {
-      return await loginHandler(req, res);
+      try {
+        const loginMod: any = await import('./auth/login.js').catch(() => import('./auth/login.ts').catch(() => null));
+        if (loginMod && (loginMod.default || loginMod.handler)) {
+          const fn = loginMod.default || loginMod.handler;
+          return await fn(req, res);
+        }
+      } catch (_) {}
+      return res.status(401).json({ success: false, error: 'Authentication required via /api/auth/login' });
     }
 
     // Operators & Users Route
