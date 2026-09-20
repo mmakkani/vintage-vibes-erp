@@ -252,13 +252,11 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
 
   const loadData = async () => {
     try {
-      const [empRes, attRes, payRes, coaRes, sheetsLogRes, loansRes, paySheetsLogRes, ocrLogsRes, auditLogsRes] = await Promise.all([
-        fetch('/api/hr/employees')
-          .then(r => r.ok ? r.json() : [])
-          .catch(err => {
-            console.warn('[HRView] Fetch employees notice:', err);
-            return [];
-          }),
+      const [empList, attRes, payRes, coaRes, sheetsLogRes, loansRes, paySheetsLogRes, ocrLogsRes, auditLogsRes] = await Promise.all([
+        HrService.getEmployees(true).catch(err => {
+          console.warn('[HRView] Fetch employees error:', err);
+          return [];
+        }),
         fetch(`/api/hr/attendance?month=${selectedMonth}`).then(r => r.ok ? r.json() : []).catch(() => []),
         fetch(`/api/hr/payroll?month=${selectedMonth}`).then(r => r.ok ? r.json() : []).catch(() => []),
         fetch('/api/finance/coa').then(r => r.ok ? r.json() : []).catch(() => []),
@@ -269,8 +267,12 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         fetch('/api/audit').then(r => r.ok ? r.json() : []).catch(() => [])
       ]);
 
-      const empList = Array.isArray(empRes) ? empRes : (empRes?.employees || empRes?.data || []);
-      setEmployees(empList);
+      const activeEmployees = (Array.isArray(empList) ? empList : []).filter((e: any) => {
+        const isDel = e.is_deleted === true || e.isDeleted === true || e.status === 'DELETED';
+        const isAct = e.is_active !== false && e.isActive !== false;
+        return !isDel && isAct;
+      });
+      setEmployees(activeEmployees);
       setAttendance(Array.isArray(attRes) ? attRes : []);
       setPayrollSlips(Array.isArray(payRes) ? payRes : []);
       setAttendanceSheetsLog(Array.isArray(sheetsLogRes) ? sheetsLogRes : []);
@@ -295,22 +297,23 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const isPosted = records.length > 0 && records.every(a => a.status === 'POSTED');
       if (!isPosted || forceSync) {
         let activeEmps = (employees || []).filter((e: any) => {
-          const isDeleted = e.is_deleted === true || e.isDeleted === true;
+          const isDeleted = e.is_deleted === true || e.isDeleted === true || e.status === 'DELETED';
           const isActive = e.isActive !== false && e.is_active !== false;
           const notTerminated = e.status !== 'TERMINATED' && e.status !== 'INACTIVE';
           return !isDeleted && isActive && notTerminated;
         });
 
         if (activeEmps.length === 0) {
-          const freshEmployees = await HrService.getEmployees().catch(() => []);
+          const freshEmployees = await HrService.getEmployees(true).catch(() => []);
           if (Array.isArray(freshEmployees) && freshEmployees.length > 0) {
-            setEmployees(freshEmployees);
-            activeEmps = freshEmployees.filter((e: any) => {
-              const isDeleted = e.is_deleted === true || e.isDeleted === true;
+            const validFresh = freshEmployees.filter((e: any) => {
+              const isDeleted = e.is_deleted === true || e.isDeleted === true || e.status === 'DELETED';
               const isActive = e.isActive !== false && e.is_active !== false;
               const notTerminated = e.status !== 'TERMINATED' && e.status !== 'INACTIVE';
               return !isDeleted && isActive && notTerminated;
             });
+            setEmployees(validFresh);
+            activeEmps = validFresh;
           }
         }
 
@@ -1018,12 +1021,15 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     const fetchEmployees = () => {
       HrService.clearEmployeeCache();
       loadData();
-      fetch('/api/hr/employees')
-        .then(r => r.ok ? r.json() : [])
-        .then(data => {
-          const list = Array.isArray(data) ? data : (data?.employees || data?.data || []);
-          if (Array.isArray(list) && list.length > 0) {
-            setEmployees(list);
+      HrService.getEmployees(true)
+        .then(fresh => {
+          if (Array.isArray(fresh) && fresh.length > 0) {
+            const valid = fresh.filter((e: any) => {
+              const isDel = e.is_deleted === true || e.isDeleted === true || e.status === 'DELETED';
+              const isAct = e.is_active !== false && e.isActive !== false;
+              return !isDel && isAct;
+            });
+            setEmployees(valid);
           }
         })
         .catch(err => console.warn('[HRView] fetchEmployees direct sync notice:', err));
@@ -1187,9 +1193,14 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       // 3. Pessimistic UI & Re-fetch: DO NOT just remove the employee from local React state.
       // Trigger a fresh re-fetch from the database to ensure UI perfectly matches DB state.
       HrService.clearEmployeeCache();
-      const freshEmps = await HrService.getEmployees(undefined, { forceRefresh: true }).catch(() => []);
+      const freshEmps = await HrService.getEmployees(true).catch(() => []);
       if (Array.isArray(freshEmps)) {
-        setEmployees(freshEmps);
+        const valid = freshEmps.filter((e: any) => {
+          const isDel = e.is_deleted === true || e.isDeleted === true || e.status === 'DELETED';
+          const isAct = e.is_active !== false && e.isActive !== false;
+          return !isDel && isAct;
+        });
+        setEmployees(valid);
       }
       await loadData();
       onRefreshAll?.();

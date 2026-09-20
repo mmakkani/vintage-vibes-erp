@@ -705,10 +705,10 @@ hrRouter.get('/attendance', async (req, res) => {
 
       if (!isPosted) {
         const empRes = await client.query(`
-          SELECT * FROM employees
-          WHERE is_deleted IS NOT TRUE
-            AND (is_active IS NULL OR is_active IS NOT FALSE)
-            AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
+          SELECT * FROM public.employees
+          WHERE COALESCE(is_deleted, false) = false
+            AND COALESCE(is_active, true) = true
+            AND COALESCE(status, '') NOT IN ('TERMINATED', 'INACTIVE', 'DELETED')
           ORDER BY emp_code ASC;
         `);
 
@@ -772,10 +772,10 @@ hrRouter.post('/attendance/sync-missing', async (req, res) => {
   try {
     const synced = await withDb(async (client) => {
       const empRes = await client.query(`
-        SELECT * FROM employees
-        WHERE is_deleted IS NOT TRUE
-          AND (is_active IS NULL OR is_active IS NOT FALSE)
-          AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
+        SELECT * FROM public.employees
+        WHERE COALESCE(is_deleted, false) = false
+          AND COALESCE(is_active, true) = true
+          AND COALESCE(status, '') NOT IN ('TERMINATED', 'INACTIVE', 'DELETED')
         ORDER BY emp_code ASC;
       `);
       const existingRes = await client.query(`SELECT * FROM employee_attendance WHERE month_year = $1;`, [monthYear]);
@@ -845,8 +845,10 @@ hrRouter.post('/attendance/create-sheet', async (req, res) => {
   try {
     const records = await withDb(async (client) => {
       const empRes = await client.query(`
-        SELECT * FROM employees
-        WHERE is_active IS NOT FALSE AND is_deleted IS NOT TRUE
+        SELECT * FROM public.employees
+        WHERE COALESCE(is_deleted, false) = false
+          AND COALESCE(is_active, true) = true
+          AND COALESCE(status, '') NOT IN ('TERMINATED', 'INACTIVE', 'DELETED')
         ORDER BY emp_code ASC;
       `);
       const employees = empRes.rows;
@@ -884,27 +886,30 @@ hrRouter.post('/attendance/create-sheet', async (req, res) => {
     });
     return res.json({ success: true, records });
   } catch (err: any) {
-    const result = HRController.createAttendanceSheet(month);
-    if (!result.success) return res.status(400).json({ error: result.error });
-    return res.json(result);
+    return res.status(400).json({ error: err?.message });
   }
 });
 
-// DELETE /api/hr/attendance/sheet - Delete attendance sheet & records (Cascades draft payroll)
-hrRouter.delete(['/attendance/sheet', '/attendance/:month'], async (req, res) => {
-  const month = req.params.month || req.body?.month || (req.query?.month as string);
+// DELETE /api/hr/attendance/sheet - Delete full attendance sheet & cascade
+hrRouter.delete('/attendance/sheet', async (req, res) => {
+  const { month } = req.body;
   if (!month) {
-    return res.status(400).json({ error: 'Month parameter is required' });
+    return res.status(400).json({ error: 'Month is required' });
   }
+
   try {
     await withDb(async (client) => {
-      // Step 1: Check if Payroll Sheet exists for this month and whether it is POSTED
-      const paySheetCheck = await client.query(`SELECT status, voucher_id FROM hr_payroll_sheets WHERE month_year = $1;`, [month]).catch(() => ({ rows: [] }));
-      const postedSlipsCheck = await client.query(`SELECT id FROM employee_payroll WHERE month_year = $1 AND status = 'POSTED' LIMIT 1;`, [month]).catch(() => ({ rows: [] }));
+      // Step 1: Verify Payroll is not POSTED
+      const payRes = await client.query(`
+        SELECT status, voucher_id FROM hr_payroll_sheets WHERE month_year = $1;
+      `, [month]).catch(() => ({ rows: [] }));
+      const postedRes = await client.query(`
+        SELECT id FROM employee_payroll WHERE month_year = $1 AND status = 'POSTED' LIMIT 1;
+      `, [month]).catch(() => ({ rows: [] }));
 
       const isPayrollPosted =
-        paySheetCheck.rows.some((s: any) => s.status === 'POSTED' || !!s.voucher_id) ||
-        postedSlipsCheck.rows.length > 0;
+        (payRes.rows || []).some((r: any) => r.status === 'POSTED' || !!r.voucher_id) ||
+        (postedRes.rows || []).length > 0;
 
       if (isPayrollPosted) {
         throw new Error(`Cannot delete attendance for ${month}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`);
@@ -918,9 +923,8 @@ hrRouter.delete(['/attendance/sheet', '/attendance/:month'], async (req, res) =>
         month
       ]));
 
-      // Step 2: Delete child payroll records (employee_payroll & payroll_records)
+      // Step 2: Delete child payroll records (employee_payroll)
       await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
-      await client.query(`DELETE FROM payroll_records WHERE payroll_month = $1 OR month_year = $1;`, [month]).catch(() => {});
 
       // Step 3: Delete parent payroll record (hr_payroll_sheets)
       await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
@@ -939,9 +943,6 @@ hrRouter.delete(['/attendance/sheet', '/attendance/:month'], async (req, res) =>
         await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
       }
       await client.query(`DELETE FROM staff_attendance WHERE attendance_date::text LIKE $1;`, [`${month}%`]).catch(() => {});
-
-      // Delete from secondary attendance_sheets table if present
-      await client.query(`DELETE FROM attendance_sheets WHERE month_year = $1 OR month = $1 OR id = ANY($2::text[]);`, [month, sheetIds]).catch(() => {});
 
       // Step 6: Delete parent attendance record (hr_attendance_sheets)
       await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1 OR id = ANY($2::text[]);`, [month, sheetIds]);
@@ -969,8 +970,10 @@ async function rebuildPayrollFromAttendance(client: any, month: string) {
   if (attendanceRows.length === 0) return [];
 
   const empRes = await client.query(`
-    SELECT * FROM employees
-    WHERE is_active IS NOT FALSE AND is_deleted IS NOT TRUE
+    SELECT * FROM public.employees
+    WHERE COALESCE(is_deleted, false) = false
+      AND COALESCE(is_active, true) = true
+      AND COALESCE(status, '') NOT IN ('TERMINATED', 'INACTIVE', 'DELETED')
     ORDER BY emp_code ASC;
   `).catch(() => ({ rows: [] }));
   const employees = empRes.rows || [];

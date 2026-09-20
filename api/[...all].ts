@@ -1458,12 +1458,21 @@ export default async function handler(req: any, res: any) {
         }
 
         if (!client) {
-          return res.status(200).json({
-            success: false,
-            diagnostic_error: 'Database connection pool is not available.',
-            has_db_url: !!process.env.DATABASE_URL,
-            employees: []
-          });
+          const adminClient = getSupabaseAdmin();
+          if (adminClient) {
+            const { data } = await adminClient
+              .from('employees')
+              .select('*')
+              .or('is_deleted.is.null,is_deleted.eq.false')
+              .or('is_active.is.null,is_active.eq.true')
+              .neq('status', 'DELETED')
+              .order('created_at', { ascending: false });
+            if (Array.isArray(data)) {
+              const mapped = data.map(mapEmployeeRow).filter((e: any) => e.is_deleted !== true && e.is_active !== false && e.status !== 'DELETED');
+              return res.status(200).json(mapped);
+            }
+          }
+          return res.status(200).json([]);
         }
 
         try {
@@ -1497,14 +1506,22 @@ export default async function handler(req: any, res: any) {
         }
       } catch (err: any) {
         console.error("Database query failed:", err);
-        return res.status(200).json({
-          success: false,
-          diagnostic_error: err?.message || String(err),
-          detail: err?.detail,
-          stack: err?.stack,
-          has_db_url: !!process.env.DATABASE_URL,
-          employees: []
-        });
+        const adminClient = getSupabaseAdmin();
+        if (adminClient) {
+          try {
+            const { data } = await adminClient
+              .from('employees')
+              .select('*')
+              .or('is_deleted.is.null,is_deleted.eq.false')
+              .or('is_active.is.null,is_active.eq.true')
+              .neq('status', 'DELETED')
+              .order('created_at', { ascending: false });
+            if (Array.isArray(data)) {
+              return res.status(200).json(data.map(mapEmployeeRow).filter((e: any) => e.is_deleted !== true && e.is_active !== false && e.status !== 'DELETED'));
+            }
+          } catch (_) {}
+        }
+        return res.status(200).json([]);
       }
     }
 
@@ -1856,10 +1873,10 @@ export default async function handler(req: any, res: any) {
           if (!isPosted) {
             try {
               const empRes = await client.query(`
-                SELECT * FROM employees
-                WHERE is_deleted IS NOT TRUE
-                  AND (is_active IS NULL OR is_active IS NOT FALSE)
-                  AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
+                SELECT * FROM public.employees
+                WHERE COALESCE(is_deleted, false) = false
+                  AND COALESCE(is_active, true) = true
+                  AND COALESCE(status, '') NOT IN ('TERMINATED', 'INACTIVE', 'DELETED')
                 ORDER BY emp_code ASC;
               `);
 
@@ -1957,10 +1974,10 @@ export default async function handler(req: any, res: any) {
       if (client) {
         try {
           const empRes = await client.query(`
-            SELECT * FROM employees
-            WHERE is_deleted IS NOT TRUE
-              AND (is_active IS NULL OR is_active IS NOT FALSE)
-              AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
+            SELECT * FROM public.employees
+            WHERE COALESCE(is_deleted, false) = false
+              AND COALESCE(is_active, true) = true
+              AND COALESCE(status, '') NOT IN ('TERMINATED', 'INACTIVE', 'DELETED')
             ORDER BY emp_code ASC;
           `);
           const employees = empRes.rows;
@@ -2006,10 +2023,10 @@ export default async function handler(req: any, res: any) {
       if (client) {
         try {
           const empRes = await client.query(`
-            SELECT * FROM employees
-            WHERE is_deleted IS NOT TRUE
-              AND (is_active IS NULL OR is_active IS NOT FALSE)
-              AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
+            SELECT * FROM public.employees
+            WHERE COALESCE(is_deleted, false) = false
+              AND COALESCE(is_active, true) = true
+              AND COALESCE(status, '') NOT IN ('TERMINATED', 'INACTIVE', 'DELETED')
             ORDER BY emp_code ASC;
           `);
           const existingRes = await client.query(`SELECT * FROM employee_attendance WHERE month_year = $1;`, [targetMonth]);
@@ -2074,8 +2091,10 @@ export default async function handler(req: any, res: any) {
 
           try {
             const empRes = await clientOrPool.query(`
-              SELECT * FROM employees
-              WHERE is_active IS NOT FALSE AND is_deleted IS NOT TRUE
+              SELECT * FROM public.employees
+              WHERE COALESCE(is_deleted, false) = false
+                AND COALESCE(is_active, true) = true
+                AND COALESCE(status, '') NOT IN ('TERMINATED', 'INACTIVE', 'DELETED')
               ORDER BY emp_code ASC;
             `);
             employeeRows = empRes.rows || [];
@@ -2103,9 +2122,14 @@ export default async function handler(req: any, res: any) {
         if (employeeRows.length === 0) {
           const { data: empData } = await supabaseAdmin
             .from('employees')
-            .select('*')
-            .eq('is_deleted', false);
-          employeeRows = empData || [];
+            .select('*');
+          employeeRows = (empData || []).filter((e: any) =>
+            (e.is_deleted === false || e.is_deleted == null) &&
+            (e.is_active === true || e.is_active == null) &&
+            e.status !== 'DELETED' &&
+            e.status !== 'TERMINATED' &&
+            e.status !== 'INACTIVE'
+          );
         }
 
         if (loanRows.length === 0) {
@@ -2416,9 +2440,8 @@ export default async function handler(req: any, res: any) {
             month
           ]));
 
-          // Step 2: Delete child payroll records (employee_payroll & payroll_records)
+          // Step 2: Delete child payroll records (employee_payroll)
           await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
-          await client.query(`DELETE FROM payroll_records WHERE payroll_month = $1 OR month_year = $1;`, [month]).catch(() => {});
 
           // Step 3: Delete parent payroll record (hr_payroll_sheets)
           await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
@@ -2437,9 +2460,6 @@ export default async function handler(req: any, res: any) {
             await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
           }
           await client.query(`DELETE FROM staff_attendance WHERE attendance_date::text LIKE $1;`, [`${month}%`]).catch(() => {});
-
-          // Delete from secondary attendance_sheets table if present
-          await client.query(`DELETE FROM attendance_sheets WHERE month_year = $1 OR month = $1 OR id = ANY($2::text[]);`, [month, sheetIds]).catch(() => {});
 
           // Step 6: Delete parent attendance record (hr_attendance_sheets)
           await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1 OR id = ANY($2::text[]);`, [month, sheetIds]);
@@ -2507,7 +2527,7 @@ export default async function handler(req: any, res: any) {
             month
           ]));
 
-          // Step 2: Delete child payroll records (employee_payroll & payroll_records)
+          // Step 2: Delete child payroll records (employee_payroll)
           const { error: delPayrollErr } = await supabase
             .from('employee_payroll')
             .delete()
@@ -2517,10 +2537,6 @@ export default async function handler(req: any, res: any) {
             console.error("Supabase Deletion Error:", delPayrollErr);
             return res.status(400).json({ success: false, error: `DB Error: ${delPayrollErr.message} | Details: ${delPayrollErr.details}` });
           }
-
-          try {
-            await supabase.from('payroll_records').delete().or(`payroll_month.eq.${month},month_year.eq.${month}`);
-          } catch (_) {}
 
           // Step 3: Delete parent payroll record (hr_payroll_sheets)
           const { error: delPaySheetErr } = await supabase
@@ -2575,14 +2591,6 @@ export default async function handler(req: any, res: any) {
             console.error("Supabase Deletion Error:", attErr);
             return res.status(400).json({ success: false, error: `DB Error: ${attErr.message} | Details: ${attErr.details}` });
           }
-
-          // Delete from secondary attendance_sheets table if present
-          try {
-            await supabase
-              .from('attendance_sheets')
-              .delete()
-              .or(`month_year.eq.${month},month.eq.${month},id.in.(${sheetIds.join(',')})`);
-          } catch (_) {}
 
           // Step 6: Delete parent attendance record (hr_attendance_sheets)
           const { error: sheetErr } = await supabase

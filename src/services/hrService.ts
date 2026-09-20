@@ -178,15 +178,18 @@ export class HrService {
       return this.employeesPromise;
     }
 
-    const runFetch = async () => {
-      // Purge stale local storage cache so direct database deletes reflect immediately
+    const runFetch = async (): Promise<Employee[]> => {
+      // Purge stale local storage cache
       try {
         if (typeof localStorage !== 'undefined') {
           localStorage.removeItem(LOCAL_STORAGE_EMPLOYEES_KEY);
         }
       } catch (_) {}
 
-      // 1. Try fetching from direct API endpoint first (PostgreSQL Pooler) if default
+      // SSOT: Query ONLY public.employees master table
+      // Strict filter: WHERE COALESCE(is_deleted, false) = false AND COALESCE(is_active, true) = true
+
+      // 1. Try fetching from direct API endpoint first (PostgreSQL Pooler)
       if (isDefaultFetch) {
         try {
           const fetchFn = (typeof window !== 'undefined' && (window as any).__originalFetch) || (typeof fetch !== 'undefined' ? fetch : null);
@@ -194,19 +197,13 @@ export class HrService {
             const res = await fetchFn('/api/hr/employees');
             if (res.ok) {
               const json = await res.json();
-              if (json && json.success === false && json.diagnostic_error) {
-                console.warn('[HrService] Vercel Serverless DB diagnostic warning:', json.diagnostic_error, {
-                  has_db_url: json.has_db_url,
-                  stack: json.stack
-                });
-              }
               const rawList = Array.isArray(json) ? json : (json?.employees || json?.data || []);
-              const list = rawList.filter((e: any) =>
-                (e.is_deleted === false || e.is_deleted == null) &&
-                (e.is_active === true || e.is_active == null) &&
-                e.status !== 'DELETED'
-              );
-              if (Array.isArray(list) && list.length > 0) {
+              if (Array.isArray(rawList)) {
+                const list = rawList.filter((e: any) =>
+                  (e.is_deleted === false || e.is_deleted == null) &&
+                  (e.is_active === true || e.is_active == null) &&
+                  e.status !== 'DELETED'
+                );
                 this.cachedEmployees = list;
                 this.lastEmployeesFetched = Date.now();
                 return list;
@@ -216,6 +213,7 @@ export class HrService {
         } catch (_) {}
       }
 
+      // 2. Direct Supabase Query strictly on public.employees
       try {
         const selectCols = options?.full ? '*' : HrService.EMPLOYEES_GRID_COLUMNS;
         let query = supabase
@@ -237,14 +235,6 @@ export class HrService {
         const { data, error } = await query;
 
         if (!error && Array.isArray(data)) {
-          if (data.length === 0) {
-            if (isDefaultFetch) {
-              this.cachedEmployees = [];
-              this.lastEmployeesFetched = Date.now();
-            }
-            return [];
-          }
-
           const mapped = data
             .map((row: any) => this.mapEmployeeRow(row))
             .filter((e: any) =>
@@ -267,7 +257,15 @@ export class HrService {
         console.warn('Supabase fetch employees failed:', err);
       }
 
-      return this.cachedEmployees || [];
+      // If force refresh was requested, return empty array rather than stale cache
+      if (forceRefresh) {
+        return [];
+      }
+      return (this.cachedEmployees || []).filter((e: any) =>
+        (e.is_deleted === false || e.is_deleted == null) &&
+        (e.is_active === true || e.is_active == null) &&
+        e.status !== 'DELETED'
+      );
     };
 
     if (isDefaultFetch) {
@@ -975,7 +973,7 @@ export class HrService {
       monthYear
     ]));
 
-    // Step 2: Delete child payroll records (employee_payroll & payroll_records)
+    // Step 2: Delete child payroll records (employee_payroll)
     const { error: delPayrollErr } = await supabase
       .from('employee_payroll')
       .delete()
@@ -985,10 +983,6 @@ export class HrService {
       console.error("Supabase Deletion Error:", delPayrollErr);
       throw new Error(`DB Error: ${delPayrollErr.message} | Details: ${delPayrollErr.details}`);
     }
-
-    try {
-      await supabase.from('payroll_records').delete().or(`payroll_month.eq.${monthYear},month_year.eq.${monthYear}`);
-    } catch (_) {}
 
     // Step 3: Delete parent payroll record (hr_payroll_sheets)
     const { error: delPaySheetErr } = await supabase
@@ -1054,14 +1048,6 @@ export class HrService {
       console.error("Supabase Deletion Error:", attErr);
       throw new Error(`DB Error: ${attErr.message} | Details: ${attErr.details}`);
     }
-
-    // Delete from secondary / legacy attendance_sheets table if present
-    try {
-      await supabase
-        .from('attendance_sheets')
-        .delete()
-        .or(`month_year.eq.${monthYear},month.eq.${monthYear},id.in.(${sheetIds.join(',')})`);
-    } catch (_) {}
 
     // Step 6: Delete the parent attendance record (hr_attendance_sheets)
     const { error: sheetErr } = await supabase
