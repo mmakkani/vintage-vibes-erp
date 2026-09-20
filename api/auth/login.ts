@@ -1,4 +1,80 @@
-import { createSessionToken, isOriginAllowed } from '../../src/server/authValidator.ts';
+import crypto from 'crypto';
+
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://vintagevibesgk.com',
+  'https://www.vintagevibesgk.com',
+  'https://vintagevibe.ae',
+  'https://www.vintagevibe.ae'
+];
+
+function isOriginAllowed(origin?: string | null): boolean {
+  if (!origin || typeof origin !== 'string') return false;
+  const lower = origin.trim().toLowerCase();
+
+  const envOrigins = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(o => o.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (envOrigins.includes(lower)) return true;
+  if (DEFAULT_ALLOWED_ORIGINS.some(allowed => allowed.toLowerCase() === lower)) return true;
+
+  if (
+    lower.startsWith('http://localhost:') ||
+    lower.startsWith('http://127.0.0.1:') ||
+    lower.startsWith('https://localhost:')
+  ) {
+    return true;
+  }
+
+  if (lower.endsWith('.vercel.app')) {
+    return true;
+  }
+
+  return false;
+}
+
+let devEphemeralSecret: string | null = null;
+function getSessionSecret(): string {
+  const envSecret =
+    process.env.SESSION_SECRET ||
+    process.env.JWT_SECRET ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (envSecret && envSecret.trim()) {
+    return envSecret.trim();
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'CRITICAL SECURITY ERROR: SESSION_SECRET (or JWT_SECRET / SUPABASE_SERVICE_ROLE_KEY) is mandatory in production environment. No default secret permitted.'
+    );
+  }
+
+  if (!devEphemeralSecret) {
+    devEphemeralSecret = crypto.randomBytes(32).toString('hex');
+  }
+  return devEphemeralSecret;
+}
+
+function computeSignature(payload: string): string {
+  return crypto.createHmac('sha256', getSessionSecret()).update(payload).digest('hex');
+}
+
+async function createSessionToken(user: { id: string; username: string; role?: string }): Promise<string> {
+  const opaqueId = 'vv_sess_' + crypto.randomBytes(32).toString('hex');
+  const userId = String(user.id || '').trim();
+  const username = String(user.username || '').trim();
+  const role = String(user.role || 'ADMIN').toUpperCase();
+  const maxAge = Number(process.env.SESSION_MAX_AGE_MS) || 24 * 60 * 60 * 1000;
+  const expiresAt = Date.now() + maxAge;
+
+  const payload = `${opaqueId}.${userId}.${role}.${expiresAt}`;
+  const sig = computeSignature(payload);
+  const token = `${payload}.${sig}`;
+
+  return token;
+}
 
 function generatePermissions(userId: string, role: string) {
   const modules = [

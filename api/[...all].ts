@@ -2,7 +2,190 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { createClient } from '@supabase/supabase-js';
-import { isOriginAllowed, verifyAuthToken } from '../src/server/authValidator.ts';
+import crypto from 'crypto';
+
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://vintagevibesgk.com',
+  'https://www.vintagevibesgk.com',
+  'https://vintagevibe.ae',
+  'https://www.vintagevibe.ae'
+];
+
+function isOriginAllowed(origin?: string | null): boolean {
+  if (!origin || typeof origin !== 'string') return false;
+  const lower = origin.trim().toLowerCase();
+
+  const envOrigins = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(o => o.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (envOrigins.includes(lower)) return true;
+  if (DEFAULT_ALLOWED_ORIGINS.some(allowed => allowed.toLowerCase() === lower)) return true;
+
+  if (
+    lower.startsWith('http://localhost:') ||
+    lower.startsWith('http://127.0.0.1:') ||
+    lower.startsWith('https://localhost:')
+  ) {
+    return true;
+  }
+
+  if (lower.endsWith('.vercel.app')) {
+    return true;
+  }
+
+  return false;
+}
+
+let devEphemeralSecret: string | null = null;
+function getSessionSecret(): string {
+  const envSecret =
+    process.env.SESSION_SECRET ||
+    process.env.JWT_SECRET ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (envSecret && envSecret.trim()) {
+    return envSecret.trim();
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'CRITICAL SECURITY ERROR: SESSION_SECRET (or JWT_SECRET / SUPABASE_SERVICE_ROLE_KEY) is mandatory in production environment. No default secret permitted.'
+    );
+  }
+
+  if (!devEphemeralSecret) {
+    devEphemeralSecret = crypto.randomBytes(32).toString('hex');
+  }
+  return devEphemeralSecret;
+}
+
+function computeSignature(payload: string): string {
+  return crypto.createHmac('sha256', getSessionSecret()).update(payload).digest('hex');
+}
+
+function verifySignature(expected: string, actual: string): boolean {
+  try {
+    if (!expected || !actual) return false;
+    const bufA = Buffer.from(expected, 'hex');
+    const bufB = Buffer.from(actual, 'hex');
+    if (bufA.length === 0 || bufB.length === 0 || bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
+}
+
+const activeSessions = new Map<string, { userId: string; username: string; role: string; expiresAt: number }>();
+const revokedTokens = new Set<string>();
+
+async function verifyAuthToken(authHeaderOrToken?: string): Promise<{ valid: boolean; user?: { id: string; username: string; role: string }; error?: string }> {
+  try {
+    if (!authHeaderOrToken || typeof authHeaderOrToken !== 'string') {
+      return { valid: false, error: 'Authorization token is required' };
+    }
+
+    let token = authHeaderOrToken.trim();
+    if (token.toLowerCase().startsWith('bearer ')) {
+      token = token.slice(7).trim();
+    }
+
+    if (!token) {
+      return { valid: false, error: 'Empty token supplied' };
+    }
+
+    if (revokedTokens.has(token)) {
+      return { valid: false, error: 'Session token has been revoked' };
+    }
+
+    if (token.startsWith('vv_sess_')) {
+      const parts = token.split('.');
+      if (parts.length === 5) {
+        const [opaqueId, userId, role, expiresAtStr, sig] = parts;
+        if (!opaqueId.startsWith('vv_sess_') || opaqueId.length < 32 || !userId || !role || !sig || sig.length !== 64) {
+          return { valid: false, error: 'Malformed session token structure' };
+        }
+        const expiresAt = Number(expiresAtStr);
+        if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) {
+          return { valid: false, error: 'Session token has expired' };
+        }
+
+        const payload = `${opaqueId}.${userId}.${role}.${expiresAtStr}`;
+        const expectedSig = computeSignature(payload);
+        if (!verifySignature(expectedSig, sig)) {
+          return { valid: false, error: 'Invalid session signature' };
+        }
+
+        const cached = activeSessions.get(token);
+        if (cached) {
+          return { valid: true, user: { id: cached.userId, username: cached.username, role: cached.role } };
+        }
+
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const dbCheck = await client.query(
+              'SELECT user_id, username, role, revoked_at FROM public.user_sessions WHERE token = $1 LIMIT 1;',
+              [token]
+            );
+            if (dbCheck.rows && dbCheck.rows.length > 0) {
+              const row = dbCheck.rows[0];
+              if (row.revoked_at) {
+                revokedTokens.add(token);
+                return { valid: false, error: 'Session token has been revoked' };
+              }
+              activeSessions.set(token, { userId: row.user_id, username: row.username, role: row.role, expiresAt });
+              return { valid: true, user: { id: row.user_id, username: row.username, role: row.role } };
+            }
+          } catch (_) {}
+        }
+
+        return {
+          valid: true,
+          user: {
+            id: userId,
+            username: userId.startsWith('usr-') ? userId.replace('usr-', '') : userId,
+            role
+          }
+        };
+      }
+      return { valid: false, error: 'Malformed session token' };
+    }
+
+    if (token.startsWith('eyJ') && token.split('.').length === 3) {
+      const supabase = getSupabaseAdmin();
+      if (supabase) {
+        try {
+          const { data, error } = await supabase.auth.getUser(token);
+          if (!error && data?.user) {
+            const u = data.user;
+            const userMeta = u.user_metadata || {};
+            const appMeta = u.app_metadata || {};
+            return {
+              valid: true,
+              user: {
+                id: u.id,
+                username: userMeta.username || u.email?.split('@')[0] || 'operator',
+                role: (appMeta.role || userMeta.role || 'USER').toUpperCase()
+              }
+            };
+          }
+        } catch (_) {}
+      }
+    }
+
+    return {
+      valid: false,
+      error: 'Unauthorized: Invalid or unverified token. Prefix-only or arbitrary tokens are rejected.'
+    };
+  } catch {
+    return {
+      valid: false,
+      error: 'Unauthorized: Authentication verification failed (fail-closed).'
+    };
+  }
+}
 
 function getClientIp(req: any): string {
   const forwarded = req.headers?.['x-forwarded-for'];
