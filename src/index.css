@@ -436,3 +436,100 @@ body.theme-obsidian #global-stock-alert-panel {
   background: linear-gradient(135deg, #2d1822 0%, #1f1f2e 100%) !important;
   border-color: rgba(244, 63, 94, 0.5) !important;
 }
+
+/* ==========================================================================
+   Global Formal Enterprise Print CSS (@media print)
+   Standard A4, 15mm margin, Clean Monochrome/Color Adjust, Hidden Web Chrome
+   ========================================================================== */
+
+.print-only {
+  display: none !important;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 15mm;
+  }
+
+  /* Universal print resets */
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt !important;
+    min-height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Force background colors and borders in print */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Show print-only elements */
+  .print-only {
+    display: block !important;
+  }
+
+  /* Hide web chrome, navigations, sidebars, toast containers, action buttons */
+  nav,
+  aside,
+  header:not(.print-header),
+  footer:not(.print-footer),
+  button,
+  input[type="button"],
+  input[type="submit"],
+  .no-print,
+  #toast-container,
+  [role="alert"],
+  .toast,
+  .sidebar,
+  .navbar,
+  #live-souk-ticker,
+  .modal-backdrop,
+  .floating-action,
+  .fixed:not(.print-container) {
+    display: none !important;
+  }
+
+  /* Formal Company Header on all printed pages */
+  .formal-company-print-header {
+    display: block !important;
+    text-align: center;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #000000;
+  }
+  .formal-company-print-header h1 {
+    font-size: 16pt;
+    font-weight: 800;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .formal-company-print-header p {
+    font-size: 9pt;
+    color: #333333;
+    margin: 4px 0 0 0;
+    font-family: monospace;
+  }
+
+  /* Avoid page breaks inside table rows, cards, and signature blocks */
+  table {
+    page-break-inside: auto;
+  }
+  tr, td, th {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  .print-avoid-break,
+  .signature-block,
+  .remarks-container,
+  .doc-card {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}
+

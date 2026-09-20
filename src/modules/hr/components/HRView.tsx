@@ -13,6 +13,7 @@ import { useSync } from '../../../context/SyncContext.tsx';
 import { HrService } from '../../../services/hrService.ts';
 import { PayrollService } from '../../../services/payrollService.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
+import { printEmployeeProfileA4, printAttendanceSheetA4, printPayrollRegisterA4 } from '../../../utils/printHrA4.ts';
 import {
   Briefcase,
   Plus,
@@ -510,6 +511,71 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     setActivePayrollSheetMonth(month);
     setShowPayrollRegisterWindow(true);
     await loadPayrollWindowData(month);
+  };
+
+  // 1. Formal A4 Employee Profile Dossier Print
+  const handlePrintEmployeeProfile = (emp: Employee) => {
+    printEmployeeProfileA4(emp);
+  };
+
+  // 2. Formal A4 Attendance Sheet Print
+  const handlePrintAttendanceSheet = async (monthToPrint: string) => {
+    if (activeAttendanceSheetMonth === monthToPrint && attendance.length > 0) {
+      printAttendanceSheetA4({
+        month: monthToPrint,
+        records: attendance,
+        status: isAttendancePosted ? 'POSTED' : 'DRAFT',
+        totalStaff: employees.length
+      });
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/hr/attendance?month=${monthToPrint}`);
+      const records = res.ok ? await res.json() : [];
+      if (Array.isArray(records) && records.length > 0) {
+        const isPosted = records.every((r: any) => r.status === 'POSTED');
+        printAttendanceSheetA4({
+          month: monthToPrint,
+          records,
+          status: isPosted ? 'POSTED' : 'DRAFT',
+          totalStaff: employees.length
+        });
+      } else {
+        showMsg(`No attendance records found for ${monthToPrint} to print.`, 'error');
+      }
+    } catch (err: any) {
+      showMsg(`Failed to load attendance for print: ${err?.message || err}`, 'error');
+    }
+  };
+
+  // 3. Formal A4 Payroll Register Print (with Remarks & Signatures)
+  const handlePrintPayrollRegister = async (monthToPrint: string) => {
+    if (showPayrollRegisterWindow && activePayrollSheetMonth === monthToPrint && payrollSlips.length > 0) {
+      printPayrollRegisterA4({
+        month: monthToPrint,
+        slips: payrollSlips,
+        status: isPayrollPosted ? 'POSTED' : 'DRAFT'
+      });
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/hr/payroll?month=${monthToPrint}`);
+      const slips = res.ok ? await res.json() : [];
+      if (Array.isArray(slips) && slips.length > 0) {
+        const isPosted = slips.every((s: any) => s.status === 'POSTED');
+        printPayrollRegisterA4({
+          month: monthToPrint,
+          slips,
+          status: isPosted ? 'POSTED' : 'DRAFT'
+        });
+      } else {
+        showMsg(`No payroll slips generated for ${monthToPrint} to print.`, 'error');
+      }
+    } catch (err: any) {
+      showMsg(`Failed to load payroll for print: ${err?.message || err}`, 'error');
+    }
   };
 
   // Update attendance inside the window
@@ -1338,6 +1404,15 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
           {subTab === 'attendance' && (
             <div className="flex items-center gap-2 flex-wrap">
               <button
+                type="button"
+                onClick={() => handlePrintAttendanceSheet(selectedMonth)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold uppercase tracking-wider transition-colors shadow-2xs cursor-pointer"
+                title={`Print Formal A4 Monthly Attendance Sheet for ${selectedMonth}`}
+              >
+                <Printer className="w-3.5 h-3.5 text-blue-600" />
+                <span>Print Sheet ({selectedMonth})</span>
+              </button>
+              <button
                 id="btn-create-attendance-sheet"
                 onClick={() => {
                   setNewAttMonth(selectedMonth);
@@ -1353,6 +1428,15 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
 
           {subTab === 'payroll' && (
             <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => handlePrintPayrollRegister(selectedMonth)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold uppercase tracking-wider transition-colors shadow-2xs cursor-pointer"
+                title={`Print Formal A4 Monthly Payroll Register for ${selectedMonth}`}
+              >
+                <Printer className="w-3.5 h-3.5 text-blue-600" />
+                <span>Print Payroll ({selectedMonth})</span>
+              </button>
               <button
                 id="btn-run-payroll-engine"
                 onClick={handleRunPayrollEngine}
@@ -1565,6 +1649,15 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 </button>
                 <button
                   type="button"
+                  onClick={() => handlePrintPayrollRegister(selectedMonth)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold uppercase tracking-wider transition-colors shadow-2xs cursor-pointer"
+                  title={`Print Formal A4 Monthly Payroll Register for ${selectedMonth}`}
+                >
+                  <Printer className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Print Payroll ({selectedMonth})</span>
+                </button>
+                <button
+                  type="button"
                   id="btn-run-payroll-engine-main"
                   onClick={handleRunPayrollEngine}
                   disabled={isAttendanceDraft || isAttendanceMissing}
@@ -1665,6 +1758,15 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                         </td>
                         <td className="px-3 py-2.5 text-right font-sans">
                           <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handlePrintPayrollRegister(sheet.monthYear)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-white hover:bg-slate-100 text-slate-700 text-[11px] font-bold uppercase tracking-wider transition-colors border border-slate-300 shadow-2xs cursor-pointer"
+                              title={`Print Formal A4 Payroll Register for ${sheet.monthYear}`}
+                            >
+                              <Printer className="w-3.5 h-3.5 text-blue-600" />
+                              <span>Print</span>
+                            </button>
                             <button
                               type="button"
                               onClick={() => handleOpenPayrollRegisterWindow(sheet.monthYear)}
@@ -1807,6 +1909,15 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 </button>
                 <button
                   type="button"
+                  onClick={() => handlePrintAttendanceSheet(selectedMonth)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold uppercase tracking-wider transition-colors shadow-2xs cursor-pointer"
+                  title={`Print Formal A4 Monthly Attendance Sheet for ${selectedMonth}`}
+                >
+                  <Printer className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Print Sheet ({selectedMonth})</span>
+                </button>
+                <button
+                  type="button"
                   id="btn-create-new-attendance-sheet"
                   onClick={() => {
                     setNewAttMonth(selectedMonth);
@@ -1902,6 +2013,15 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                         </td>
                         <td className="px-3 py-2.5 text-right font-sans">
                           <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handlePrintAttendanceSheet(sheet.monthYear)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-white hover:bg-slate-100 text-slate-700 text-[11px] font-bold uppercase tracking-wider transition-colors border border-slate-300 shadow-2xs cursor-pointer"
+                              title={`Print Formal A4 Attendance Register for ${sheet.monthYear}`}
+                            >
+                              <Printer className="w-3.5 h-3.5 text-blue-600" />
+                              <span>Print</span>
+                            </button>
                             <button
                               type="button"
                               onClick={() => handleOpenAttendanceSheetWindow(sheet.monthYear)}
@@ -2223,6 +2343,14 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
 
                       {/* ACTIONS */}
                       <td className="px-3 py-2 text-right space-x-1 font-sans whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => handlePrintEmployeeProfile(emp)}
+                        className="p-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 transition-colors"
+                        title="Print Formal A4 Employee Dossier & Legal Credentials"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                      </button>
                       <button
                         onClick={() => {
                           setEditingEmpId(emp.id);
@@ -3250,6 +3378,20 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   All legal identifiers and photos are encrypted and synced to Document Vault.
                 </div>
                 <div className="flex gap-2">
+                  {editingEmpId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetEmp = employees.find(e => e.id === editingEmpId) || ({ ...empForm, id: editingEmpId } as any);
+                        handlePrintEmployeeProfile(targetEmp);
+                      }}
+                      className="px-3.5 py-2 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold uppercase tracking-wider text-[11px] inline-flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                      title="Print Formal A4 Employee Dossier & Legal Credentials"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Print Profile</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setShowEmpModal(false)}
@@ -3847,11 +3989,12 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold uppercase tracking-wider text-xs transition-colors shadow-2xs"
+                  onClick={() => handlePrintPayrollRegister(activePayrollSheetMonth || selectedMonth)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold uppercase tracking-wider text-xs transition-colors shadow-2xs cursor-pointer"
+                  title="Print Formal A4 Monthly Payroll Register"
                 >
                   <Printer className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Print Sheet</span>
+                  <span>Print Payroll</span>
                 </button>
 
                 <button

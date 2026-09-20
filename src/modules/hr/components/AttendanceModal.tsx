@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { AttendanceRecord, Employee } from '../hr.types.ts';
 import { StatusBadge } from '../../../components/StatusBadge.tsx';
 import { NumericInput } from '../../../components/NumericInput.tsx';
-import { Calendar, Lock, UserPlus, CheckCircle, XCircle } from 'lucide-react';
+import { Calendar, Lock, UserPlus, CheckCircle, XCircle, Printer } from 'lucide-react';
+import { printAttendanceSheetA4 } from '../../../utils/printHrA4.ts';
 
 export interface AttendanceModalProps {
   isOpen: boolean;
@@ -330,6 +331,21 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => printAttendanceSheetA4({
+                month,
+                records: attendance,
+                status: isWindowSheetPosted ? 'POSTED' : 'DRAFT',
+                totalStaff: employees.length
+              })}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold uppercase tracking-wider text-xs transition-colors shadow-2xs cursor-pointer"
+              title="Print Formal A4 Monthly Attendance Sheet"
+            >
+              <Printer className="w-3.5 h-3.5 text-blue-600" />
+              <span>Print Sheet</span>
+            </button>
+
             <button
               type="button"
               onClick={onClose}
