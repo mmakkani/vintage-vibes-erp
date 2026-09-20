@@ -50,7 +50,8 @@ import {
   Wallet,
   History,
   Bell,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
 
 interface HRViewProps {
@@ -115,6 +116,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   // Employee Create / Edit Modal state
   const [showEmpModal, setShowEmpModal] = useState(false);
   const [editingEmpId, setEditingEmpId] = useState<string | null>(null);
+  const [isSubmittingEmp, setIsSubmittingEmp] = useState(false);
 
   // AI OCR Scanner Modal state
   const [showAIOcrModal, setShowAIOcrModal] = useState(false);
@@ -1015,6 +1017,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   // Save / Submit Employee Form
   const handleSaveEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingEmp) return;
+    setIsSubmittingEmp(true);
+
     const fetchEmployees = () => {
       HrService.clearEmployeeCache();
       loadData();
@@ -1142,6 +1147,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     } catch (error: any) {
       alert("Error saving employee: " + (error?.message || String(error)));
       showMsg("Error saving employee: " + (error?.message || String(error)), 'error');
+    } finally {
+      setIsSubmittingEmp(false);
     }
   };
 
@@ -2581,7 +2588,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   </p>
                 </div>
               </div>
-              <button onClick={() => setShowEmpModal(false)} className="text-slate-400 hover:text-slate-700 font-bold p-1">✕</button>
+              <button onClick={() => !isSubmittingEmp && setShowEmpModal(false)} disabled={isSubmittingEmp} className="text-slate-400 hover:text-slate-700 font-bold p-1 disabled:opacity-50">✕</button>
             </div>
 
             {/* AI OCR Scanner Quick Action Bar */}
@@ -3246,15 +3253,24 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   <button
                     type="button"
                     onClick={() => setShowEmpModal(false)}
-                    className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px]"
+                    disabled={isSubmittingEmp}
+                    className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px] disabled:opacity-50"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 rounded-lg bg-[#0056b3] hover:bg-[#004494] text-white font-bold uppercase tracking-wider text-[11px] shadow-md hover:shadow-lg transition-all"
+                    disabled={isSubmittingEmp}
+                    className="px-5 py-2 rounded-lg bg-[#0056b3] hover:bg-[#004494] text-white font-bold uppercase tracking-wider text-[11px] shadow-md hover:shadow-lg transition-all disabled:opacity-50 flex items-center gap-2"
                   >
-                    {editingEmpId ? 'Update Employee Record' : 'Save Employee & Legal IDs'}
+                    {isSubmittingEmp ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>{editingEmpId ? 'Updating...' : 'Saving...'}</span>
+                      </>
+                    ) : (
+                      <span>{editingEmpId ? 'Update Employee Record' : 'Save Employee & Legal IDs'}</span>
+                    )}
                   </button>
                 </div>
               </div>

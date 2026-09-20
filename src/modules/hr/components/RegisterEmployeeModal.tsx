@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { User, Shield, CreditCard, Building2, DollarSign, Upload, Scan, Sparkles, FileText, CheckCircle2, Globe } from 'lucide-react';
+import { User, Shield, CreditCard, Building2, DollarSign, Upload, Scan, Sparkles, FileText, CheckCircle2, Globe, Loader2 } from 'lucide-react';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import { AIOcrScannerModal } from './AIOcrScannerModal.tsx';
 import { NumericInput } from '../../../components/NumericInput.tsx';
@@ -116,6 +116,7 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
 
   const handleSaveEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setIsSubmitting(true);
 
     try {
@@ -231,7 +232,7 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 font-bold p-1">✕</button>
+          <button onClick={onClose} disabled={isSubmitting} className="text-slate-400 hover:text-slate-700 font-bold p-1 disabled:opacity-50">✕</button>
         </div>
 
         {/* AI OCR Scanner Quick Action Bar */}
@@ -737,16 +738,23 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
                 type="button"
                 onClick={onClose}
                 disabled={isSubmitting}
-                className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px]"
+                className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px] disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="px-5 py-2 rounded-lg bg-[#0056b3] hover:bg-[#004494] text-white font-bold uppercase tracking-wider text-[11px] shadow-md hover:shadow-lg transition-all"
+                className="px-5 py-2 rounded-lg bg-[#0056b3] hover:bg-[#004494] text-white font-bold uppercase tracking-wider text-[11px] shadow-md hover:shadow-lg transition-all disabled:opacity-50 flex items-center gap-2"
               >
-                {isSubmitting ? 'Saving...' : (editingEmployee?.id ? 'Update Employee Record' : 'Save Employee & Legal IDs')}
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>{editingEmployee?.id ? 'Updating...' : 'Saving...'}</span>
+                  </>
+                ) : (
+                  <span>{editingEmployee?.id ? 'Update Employee Record' : 'Save Employee & Legal IDs'}</span>
+                )}
               </button>
             </div>
           </div>
