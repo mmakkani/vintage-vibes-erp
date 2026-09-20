@@ -688,7 +688,7 @@ hrRouter.get('/attendance/sheets', async (req, res) => {
   }
 });
 
-// GET /api/hr/attendance - Attendance records for selected month (auto-syncs missing active employees)
+// GET /api/hr/attendance - Attendance records for selected month (STRICT READ-ONLY: NO AUTO-CREATION)
 hrRouter.get('/attendance', async (req, res) => {
   const { month } = req.query as { month?: string };
   const monthYear = month || new Date().toISOString().slice(0, 7);
@@ -700,64 +700,7 @@ hrRouter.get('/attendance', async (req, res) => {
         ORDER BY emp_code ASC;
       `, [monthYear]);
 
-      let records = result.rows.map(mapAttendanceRow);
-      const isPosted = records.length > 0 && records.every(r => r.status === 'POSTED');
-
-      if (!isPosted) {
-        const empRes = await client.query(`
-          SELECT * FROM public.employees
-          WHERE COALESCE(is_deleted, false) = false
-            AND COALESCE(is_active, true) = true
-            AND COALESCE(status, '') NOT IN ('TERMINATED', 'INACTIVE', 'DELETED')
-          ORDER BY emp_code ASC;
-        `);
-
-        const activeEmps = empRes.rows;
-        const existingEmpIds = new Set(records.map(r => String(r.employeeId)));
-        const existingCodes = new Set(records.map(r => String(r.empCode).trim().toLowerCase()));
-
-        const missing = activeEmps.filter(e => {
-          const idStr = String(e.id);
-          const codeStr = String(e.emp_code || e.employee_code || '').trim().toLowerCase();
-          const hasId = idStr && existingEmpIds.has(idStr);
-          const hasCode = codeStr && existingCodes.has(codeStr);
-          return !hasId && !hasCode;
-        });
-
-        if (missing.length > 0) {
-          for (const emp of missing) {
-            const empId = String(emp.id);
-            const empCode = emp.emp_code || emp.employee_code || '';
-            const empName = emp.full_name || emp.name || 'Staff Member';
-            const attId = `att-${empId}-${monthYear}`;
-
-            await client.query(`
-              INSERT INTO employee_attendance (id, employee_id, employee_name, emp_code, month_year, days_worked, overtime_hours, status, created_at)
-              VALUES ($1, $2, $3, $4, $5, 30, 0, 'DRAFT', NOW())
-              ON CONFLICT (id) DO NOTHING;
-            `, [attId, empId, empName, empCode, monthYear]);
-
-            records.push({
-              id: attId,
-              employeeId: empId,
-              employeeName: empName,
-              empCode: empCode,
-              monthYear: monthYear,
-              daysWorked: 30,
-              overtimeHours: 0,
-              status: 'DRAFT'
-            });
-          }
-
-          await client.query(`
-            INSERT INTO hr_attendance_sheets (id, month_year, total_employees, status, created_at)
-            VALUES ($1, $2, $3, 'DRAFT', NOW())
-            ON CONFLICT (id) DO UPDATE SET total_employees = hr_attendance_sheets.total_employees + $4;
-          `, [`att-sheet-${monthYear}`, monthYear, records.length, missing.length]);
-        }
-      }
-
-      return records;
+      return result.rows.map(mapAttendanceRow);
     });
     return res.json(data);
   } catch (_) {
@@ -890,66 +833,36 @@ hrRouter.post('/attendance/create-sheet', async (req, res) => {
   }
 });
 
-// DELETE /api/hr/attendance/sheet - Delete full attendance sheet & cascade
+// DELETE /api/hr/attendance/sheet - Persistent Attendance Deletion
 hrRouter.delete('/attendance/sheet', async (req, res) => {
-  const { month } = req.body;
-  if (!month) {
-    return res.status(400).json({ error: 'Month is required' });
+  const monthInput = req.body?.month || req.body?.month_year || req.body?.sheet_id || req.body?.id || req.body?.monthYear || (req.query?.month as string) || (req.query?.sheet_id as string);
+  if (!monthInput) {
+    return res.status(400).json({ success: false, error: 'Month or sheet_id is required' });
   }
+
+  let month = String(monthInput).trim();
+  if (month.startsWith('att-sheet-')) month = month.replace('att-sheet-', '');
+  else if (month.startsWith('sheet-')) month = month.replace('sheet-', '');
+
+  const sheetIds = Array.from(new Set([
+    `att-sheet-${month}`,
+    `sheet-${month}`,
+    String(monthInput).trim(),
+    month
+  ]));
 
   try {
     await withDb(async (client) => {
-      // Step 1: Verify Payroll is not POSTED
-      const payRes = await client.query(`
-        SELECT status, voucher_id FROM hr_payroll_sheets WHERE month_year = $1;
-      `, [month]).catch(() => ({ rows: [] }));
-      const postedRes = await client.query(`
-        SELECT id FROM employee_payroll WHERE month_year = $1 AND status = 'POSTED' LIMIT 1;
-      `, [month]).catch(() => ({ rows: [] }));
+      // Step 1: Delete child attendance records (public.employee_attendance)
+      await client.query(`DELETE FROM public.employee_attendance WHERE month_year = $1 OR sheet_id = ANY($2::text[]);`, [month, sheetIds]);
 
-      const isPayrollPosted =
-        (payRes.rows || []).some((r: any) => r.status === 'POSTED' || !!r.voucher_id) ||
-        (postedRes.rows || []).length > 0;
-
-      if (isPayrollPosted) {
-        throw new Error(`Cannot delete attendance for ${month}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`);
-      }
-
-      const sheetRes = await client.query(`SELECT id FROM hr_attendance_sheets WHERE month_year = $1;`, [month]).catch(() => ({ rows: [] }));
-      const sheetIds = Array.from(new Set([
-        ...(sheetRes.rows || []).map((r: any) => r.id).filter(Boolean),
-        `att-sheet-${month}`,
-        `sheet-${month}`,
-        month
-      ]));
-
-      // Step 2: Delete child payroll records (employee_payroll)
-      await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
-
-      // Step 3: Delete parent payroll record (hr_payroll_sheets)
-      await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
-
-      // Step 4: Clear logs & activity tables referencing this sheet / month
-      await client.query(`DELETE FROM audit_logs WHERE document_ref = ANY($1::text[]) OR details LIKE $2;`, [
-        [`ATT-${month}`, `att-sheet-${month}`, `sheet-${month}`, month],
-        `%${month}%`
-      ]).catch(() => {});
-      await client.query(`DELETE FROM hr_activity_logs WHERE month_year = $1 OR sheet_id = ANY($2::text[]);`, [month, sheetIds]).catch(() => {});
-
-      // Step 5: Delete child attendance records (employee_attendance & staff_attendance)
-      try {
-        await client.query(`DELETE FROM employee_attendance WHERE sheet_id = ANY($1::text[]) OR month_year = $2;`, [sheetIds, month]);
-      } catch (_) {
-        await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
-      }
-      await client.query(`DELETE FROM staff_attendance WHERE attendance_date::text LIKE $1;`, [`${month}%`]).catch(() => {});
-
-      // Step 6: Delete parent attendance record (hr_attendance_sheets)
-      await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1 OR id = ANY($2::text[]);`, [month, sheetIds]);
+      // Step 2: Delete parent attendance record (public.hr_attendance_sheets)
+      await client.query(`DELETE FROM public.hr_attendance_sheets WHERE month_year = $1 OR id = ANY($2::text[]);`, [month, sheetIds]);
     });
+    relationalStore.deleteAttendanceSheet(month);
     return res.json({ success: true });
   } catch (err: any) {
-    console.error("Supabase Deletion Error:", err);
+    console.error("Attendance Deletion Error:", err);
     const errMsg = err?.message || 'Failed to delete attendance sheet';
     const errDetails = err?.detail || err?.details || err?.hint || err?.code || 'None';
     return res.status(400).json({

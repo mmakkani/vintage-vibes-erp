@@ -260,9 +260,15 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         fetch(`/api/hr/attendance?month=${selectedMonth}`).then(r => r.ok ? r.json() : []).catch(() => []),
         fetch(`/api/hr/payroll?month=${selectedMonth}`).then(r => r.ok ? r.json() : []).catch(() => []),
         fetch('/api/finance/coa').then(r => r.ok ? r.json() : []).catch(() => []),
-        fetch('/api/hr/attendance/sheets').then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch('/api/hr/attendance/sheets').then(async r => {
+          if (r.ok) return r.json();
+          return await HrService.getAttendanceSheets().catch(() => []);
+        }).catch(() => HrService.getAttendanceSheets().catch(() => [])),
         fetch('/api/hr/loans').then(r => r.ok ? r.json() : []).catch(() => []),
-        fetch('/api/hr/payroll/sheets').then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch('/api/hr/payroll/sheets').then(async r => {
+          if (r.ok) return r.json();
+          return await HrService.getPayrollSheets().catch(() => []);
+        }).catch(() => HrService.getPayrollSheets().catch(() => [])),
         fetch('/api/hr/ocr/logs').then(r => r.ok ? r.json() : []).catch(() => []),
         fetch('/api/audit').then(r => r.ok ? r.json() : []).catch(() => [])
       ]);
@@ -294,8 +300,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const data = await res.json().catch(() => []);
       let records: AttendanceRecord[] = Array.isArray(data) ? data : [];
 
-      const isPosted = records.length > 0 && records.every(a => a.status === 'POSTED');
-      if (!isPosted || forceSync) {
+      // NO AUTO-GENERATION ON LOAD: Only sync if explicitly forced by the user AND existing records exist
+      if (forceSync && records.length > 0) {
         let activeEmps = (employees || []).filter((e: any) => {
           const isDeleted = e.is_deleted === true || e.isDeleted === true || e.status === 'DELETED';
           const isActive = e.isActive !== false && e.is_active !== false;
@@ -347,12 +353,11 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
 
           // Persist missing records in background so backend / database also has them
           HrService.syncMissingEmployeesToAttendance(month).catch(() => {});
-        } else {
-          setSheetWindowAttendance(records);
+          return;
         }
-      } else {
-        setSheetWindowAttendance(records);
       }
+
+      setSheetWindowAttendance(records);
     } catch (err) {
       console.error(err);
     }
@@ -598,15 +603,13 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     }
   };
 
-  // Delete attendance sheet from the Log (cascades draft payroll, blocks if posted)
+  // Delete attendance sheet from the Log (isolated to attendance tables)
   const handleDeleteSheetFromLog = async (month: string, hasPayroll: boolean, payrollStatus?: string) => {
     if (payrollStatus === 'POSTED') {
       showMsg(`Cannot delete attendance for ${month}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`, 'error');
       return;
     }
-    const confirmMsg = hasPayroll
-      ? `Deleting attendance for ${month} will also delete the linked DRAFT payroll sheet. Are you sure?`
-      : `Are you sure you want to delete the attendance sheet for ${month}?`;
+    const confirmMsg = `Are you sure you want to delete the attendance sheet for ${month}?`;
     if (!confirm(confirmMsg)) return;
     try {
       const res = await fetch('/api/hr/attendance/sheet', {
@@ -621,11 +624,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         showMsg(errorMsg, 'error');
         return;
       }
-      // Pessimistic state update: Only clear after confirmed DB deletion
+      // Pessimistic state update: Only clear attendance after confirmed DB deletion
       setAttendanceSheetsLog(prev => prev.filter(s => s.monthYear !== month));
       setAttendance(prev => prev.filter(a => a.monthYear !== month));
-      setPayrollSheetsLog(prev => prev.filter(s => s.monthYear !== month));
-      setPayrollSlips(prev => prev.filter(p => p.monthYear !== month));
       if (activeAttendanceSheetMonth === month) {
         setActiveAttendanceSheetMonth(null);
       }
@@ -712,15 +713,13 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     }
   };
 
-  // Delete attendance sheet (cascades draft payroll, blocks if posted)
+  // Delete attendance sheet (isolated to attendance tables)
   const handleDeleteAttendanceSheet = async () => {
     if (isPayrollPosted) {
       showMsg(`Cannot delete attendance: Payroll is already POSTED to General Ledger for ${selectedMonth}. Please unpost payroll first.`, 'error');
       return;
     }
-    const confirmMsg = payrollSlips.length > 0
-      ? `Deleting attendance for ${selectedMonth} will also delete the linked DRAFT payroll records. Are you sure?`
-      : `Are you sure you want to delete the attendance sheet for ${selectedMonth}?`;
+    const confirmMsg = `Are you sure you want to delete the attendance sheet for ${selectedMonth}?`;
     if (!confirm(confirmMsg)) return;
     try {
       const res = await fetch('/api/hr/attendance/sheet', {
@@ -735,11 +734,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         showMsg(errorMsg, 'error');
         return;
       }
-      // Pessimistic state update: Only clear after confirmed DB deletion
+      // Pessimistic state update: Only clear attendance after confirmed DB deletion
       setAttendanceSheetsLog(prev => prev.filter(s => s.monthYear !== selectedMonth));
       setAttendance(prev => prev.filter(a => a.monthYear !== selectedMonth));
-      setPayrollSheetsLog(prev => prev.filter(s => s.monthYear !== selectedMonth));
-      setPayrollSlips(prev => prev.filter(p => p.monthYear !== selectedMonth));
       if (activeAttendanceSheetMonth === selectedMonth) {
         setActiveAttendanceSheetMonth(null);
       }
@@ -1738,7 +1735,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
             <div className="bg-white p-2.5 rounded border border-slate-200 shadow-xs">
               <span className="text-[10px] uppercase font-bold text-slate-500">Active Staff in Org</span>
               <div className="text-base font-bold font-mono text-blue-900 mt-0.5">
-                {employees.filter(e => e.isActive !== false).length} Employees
+                {employees.filter(e => e.isActive !== false && (e as any).is_active !== false && (e as any).is_deleted !== true && (e as any).status !== 'DELETED').length} Employees
               </div>
             </div>
             <div className="bg-white p-2.5 rounded border border-slate-200 shadow-xs">
@@ -1857,7 +1854,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                           {sheet.monthYear}
                         </td>
                         <td className="px-3 py-2.5 font-semibold text-slate-800">
-                          {sheet.totalStaff} Employees
+                          {sheet.totalStaff ?? sheet.totalEmployees ?? 0} Employees
                         </td>
                         <td className="px-3 py-2.5 font-mono text-slate-700">
                           {sheet.totalDaysWorked} Days

@@ -1740,33 +1740,7 @@ class RelationalStore {
   }
 
   public getAttendance(monthYear: string): AttendanceRecord[] {
-    const existing = this.attendances.filter(a => a.monthYear === monthYear);
-    const isPosted = existing.length > 0 && existing.every(a => a.status === 'POSTED');
-    if (!isPosted) {
-      const activeEmployees = this.employees.filter(e => (e as any).is_deleted !== true && (e as any).isDeleted !== true && e.isActive !== false && (e as any).is_active !== false && e.status !== 'TERMINATED' && e.status !== 'INACTIVE');
-      const existingIds = new Set(existing.map(a => String(a.employeeId)));
-      const existingCodes = new Set(existing.map(a => String(a.empCode).trim().toLowerCase()));
-
-      for (const emp of activeEmployees) {
-        const idStr = String(emp.id);
-        const codeStr = String(emp.empCode || (emp as any).code || '').trim().toLowerCase();
-        if ((!idStr || !existingIds.has(idStr)) && (!codeStr || !existingCodes.has(codeStr))) {
-          const newAtt: AttendanceRecord = {
-            id: `att-${emp.id}-${monthYear}`,
-            employeeId: String(emp.id),
-            employeeName: emp.name,
-            empCode: emp.empCode,
-            monthYear,
-            daysWorked: 30,
-            overtimeHours: 0,
-            status: 'DRAFT'
-          };
-          this.attendances.push(newAtt);
-          existing.push(newAtt);
-        }
-      }
-    }
-    return existing;
+    return this.attendances.filter(a => a.monthYear === monthYear);
   }
 
   public getPayroll(monthYear: string): PayrollRecord[] {
@@ -1871,39 +1845,27 @@ class RelationalStore {
     return { success: true, records: newRecords };
   }
 
-  public deleteAttendanceSheet(monthYear: string): { success: boolean; error?: string } {
-    const payrollSheet = this.payrollSheets?.find(s => s.monthYear === monthYear);
-    const hasPostedPayroll =
-      (payrollSheet && payrollSheet.status === 'POSTED') ||
-      this.payrolls.some(p => p.monthYear === monthYear && p.status === 'POSTED');
+  public deleteAttendanceSheet(monthYearOrSheetId: string): { success: boolean; error?: string } {
+    let monthYear = (monthYearOrSheetId || '').trim();
+    if (monthYear.startsWith('att-sheet-')) monthYear = monthYear.replace('att-sheet-', '');
+    else if (monthYear.startsWith('sheet-')) monthYear = monthYear.replace('sheet-', '');
 
-    if (hasPostedPayroll) {
-      return {
-        success: false,
-        error: `Cannot delete attendance for ${monthYear}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`
-      };
-    }
+    const sheetIds = new Set([`att-sheet-${monthYear}`, `sheet-${monthYear}`, monthYearOrSheetId, monthYear]);
 
-    // Step 2: Cascade delete child payroll records
-    this.payrolls = this.payrolls.filter(p => p.monthYear !== monthYear);
-
-    // Step 3: Delete parent payroll sheets
-    if (this.payrollSheets) {
-      this.payrollSheets = this.payrollSheets.filter(s => s.monthYear !== monthYear);
-    }
-
-    // Step 4: Delete child attendance records matching sheetId or monthYear
+    // Step 1: Delete child attendance records matching sheetId or monthYear
     const beforeCount = this.attendances.length;
     this.attendances = this.attendances.filter(a =>
       a.monthYear !== monthYear &&
-      (a as any).sheetId !== `att-sheet-${monthYear}` &&
-      (a as any).sheetId !== `sheet-${monthYear}`
+      !sheetIds.has((a as any).sheetId || '') &&
+      !sheetIds.has(a.id)
     );
     const deletedCount = beforeCount - this.attendances.length;
 
-    // Step 5: Delete parent attendance sheets
+    // Step 2: Delete parent attendance sheets
     if ((this as any).attendanceSheets) {
-      (this as any).attendanceSheets = (this as any).attendanceSheets.filter((s: any) => s.monthYear !== monthYear);
+      (this as any).attendanceSheets = (this as any).attendanceSheets.filter((s: any) =>
+        s.monthYear !== monthYear && !sheetIds.has(s.id)
+      );
     }
 
     this.auditLogs.unshift(

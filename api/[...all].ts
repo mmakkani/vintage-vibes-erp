@@ -1819,11 +1819,30 @@ export default async function handler(req: any, res: any) {
       const client = await getPgClient();
       if (client) {
         try {
-          const result = await client.query(`SELECT * FROM hr_attendance_sheets ORDER BY created_at DESC;`);
+          const result = await client.query(`
+            SELECT
+              s.id,
+              s.month_year,
+              COALESCE(s.total_employees, att.emp_count, 0) as total_employees,
+              COALESCE(att.total_days, 0) as total_days_worked,
+              COALESCE(att.total_ot, 0) as total_overtime_hours,
+              s.status,
+              s.created_at
+            FROM hr_attendance_sheets s
+            LEFT JOIN (
+              SELECT month_year, COUNT(*) as emp_count, SUM(days_worked) as total_days, SUM(overtime_hours) as total_ot
+              FROM employee_attendance
+              GROUP BY month_year
+            ) att ON att.month_year = s.month_year
+            ORDER BY s.created_at DESC;
+          `);
           const sheets = result.rows.map(r => ({
             id: r.id,
             monthYear: r.month_year,
             totalEmployees: Number(r.total_employees || 0),
+            totalStaff: Number(r.total_employees || 0),
+            totalDaysWorked: Number(r.total_days_worked || 0),
+            totalOvertimeHours: Number(r.total_overtime_hours || 0),
             status: r.status,
             createdAt: r.created_at
           }));
@@ -1834,10 +1853,33 @@ export default async function handler(req: any, res: any) {
           try { await client.end(); } catch (_) {}
         }
       }
+
+      // Supabase fallback
+      try {
+        const supabase = getSupabaseAdmin();
+        const { data, error } = await supabase
+          .from('hr_attendance_sheets')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (data && !error) {
+          return res.status(200).json(data.map((r: any) => ({
+            id: r.id,
+            monthYear: r.month_year,
+            totalEmployees: Number(r.total_employees || 0),
+            totalStaff: Number(r.total_employees || 0),
+            totalDaysWorked: 0,
+            totalOvertimeHours: 0,
+            status: r.status,
+            createdAt: r.created_at
+          })));
+        }
+      } catch (_) {}
+
       return res.status(200).json([]);
     }
 
-    // 8. GET /api/hr/attendance - Attendance records for month with automatic sync for missing active employees
+    // 8. GET /api/hr/attendance - Attendance records for month (STRICT READ-ONLY: NO AUTO-CREATION)
     if ((pathname === '/api/hr/attendance' || pathname.endsWith('/hr/attendance')) && method === 'GET') {
       const month = parsedUrl.searchParams.get('month') || new Date().toISOString().slice(0, 7);
       let client: any = null;
@@ -1868,68 +1910,6 @@ export default async function handler(req: any, res: any) {
             lockedBy: r.locked_by || undefined
           }));
 
-          // If attendance sheet is in DRAFT (or unposted), check if any active employees are missing from this month's sheet
-          const isPosted = records.length > 0 && records.every(r => r.status === 'POSTED');
-          if (!isPosted) {
-            try {
-              const empRes = await client.query(`
-                SELECT * FROM public.employees
-                WHERE COALESCE(is_deleted, false) = false
-                  AND COALESCE(is_active, true) = true
-                  AND COALESCE(status, '') NOT IN ('TERMINATED', 'INACTIVE', 'DELETED')
-                ORDER BY emp_code ASC;
-              `);
-
-              const activeEmps = empRes.rows;
-              const existingEmpIds = new Set(records.map(r => String(r.employeeId || '')));
-              const existingCodes = new Set(records.map(r => String(r.empCode || '').trim().toLowerCase()));
-
-              const missing = activeEmps.filter(e => {
-                const idStr = String(e.id);
-                const codeStr = String(e.emp_code || e.employee_code || '').trim().toLowerCase();
-                const hasId = idStr && existingEmpIds.has(idStr);
-                const hasCode = codeStr && existingCodes.has(codeStr);
-                return !hasId && !hasCode;
-              });
-
-              if (missing.length > 0) {
-                for (const emp of missing) {
-                  const empId = String(emp.id);
-                  const empCode = emp.emp_code || emp.employee_code || '';
-                  const empName = emp.full_name || emp.name || 'Staff Member';
-                  const attId = `att-${empId}-${month}`;
-
-                  await client.query(`
-                    INSERT INTO employee_attendance (id, employee_id, employee_name, emp_code, month_year, days_worked, overtime_hours, status, created_at)
-                    VALUES ($1, $2, $3, $4, $5, 30, 0, 'DRAFT', NOW())
-                    ON CONFLICT (id) DO NOTHING;
-                  `, [attId, empId, empName, empCode, month]);
-
-                  records.push({
-                    id: attId,
-                    employeeId: empId,
-                    employeeName: empName,
-                    empCode: empCode,
-                    monthYear: month,
-                    daysWorked: 30,
-                    overtimeHours: 0,
-                    status: 'DRAFT',
-                    lockedAt: undefined,
-                    lockedBy: undefined
-                  });
-                }
-
-                await client.query(`
-                  INSERT INTO hr_attendance_sheets (id, month_year, total_employees, status, created_at)
-                  VALUES ($1, $2, $3, 'DRAFT', NOW())
-                  ON CONFLICT (id) DO UPDATE SET total_employees = hr_attendance_sheets.total_employees + $4;
-                `, [`att-sheet-${month}`, month, records.length, missing.length]);
-              }
-            } catch (syncErr: any) {
-              console.warn('[Serverless HR] auto-sync missing employees notice:', syncErr?.message);
-            }
-          }
-
           return res.status(200).json(records);
         } catch (dbErr: any) {
           console.warn('[Serverless HR] attendance query error:', dbErr?.message);
@@ -1937,7 +1917,37 @@ export default async function handler(req: any, res: any) {
           try { client.release(); } catch (_) {}
         }
       }
-      return res.status(200).json([]);
+
+      // Supabase fallback (STRICT READ-ONLY: NO AUTO-GENERATION)
+      try {
+        const supabase = getSupabaseAdmin();
+        const { data, error } = await supabase
+          .from('employee_attendance')
+          .select('*')
+          .eq('month_year', month)
+          .order('emp_code', { ascending: true });
+
+        if (error) {
+          console.error('[Serverless HR] Supabase attendance error:', error);
+          return res.status(200).json([]);
+        }
+
+        const records = (data || []).map((r: any) => ({
+          id: String(r.id),
+          employeeId: String(r.employee_id),
+          employeeName: r.employee_name || '',
+          empCode: r.emp_code || '',
+          monthYear: r.month_year || '',
+          daysWorked: Number(r.days_worked || 0),
+          overtimeHours: Number(r.overtime_hours || 0),
+          status: r.status || 'DRAFT',
+          lockedAt: r.locked_at ? new Date(r.locked_at).toISOString() : undefined,
+          lockedBy: r.locked_by || undefined
+        }));
+        return res.status(200).json(records);
+      } catch (_) {
+        return res.status(200).json([]);
+      }
     }
 
     // 8a. PUT /api/hr/attendance/:id - Update days worked & overtime
@@ -2407,66 +2417,37 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: true });
     }
 
-    // 8f. DELETE /api/hr/attendance/sheet - Delete attendance sheet (Cascades draft payroll)
+    // 8f. DELETE /api/hr/attendance/sheet - Persistent Attendance Deletion
     if (pathname.includes('/api/hr/attendance/sheet') && method === 'DELETE') {
-      const month = body?.month || parsedUrl.searchParams.get('month');
-      if (!month) {
-        return res.status(400).json({ success: false, error: 'Month parameter is required' });
+      const monthInput = body?.month || body?.month_year || body?.sheet_id || body?.id || body?.monthYear || parsedUrl.searchParams.get('month') || parsedUrl.searchParams.get('sheet_id') || parsedUrl.searchParams.get('month_year');
+      if (!monthInput) {
+        return res.status(400).json({ success: false, error: 'Month or sheet_id parameter is required' });
       }
+
+      let month = String(monthInput).trim();
+      if (month.startsWith('att-sheet-')) month = month.replace('att-sheet-', '');
+      else if (month.startsWith('sheet-')) month = month.replace('sheet-', '');
+
+      const sheetIds = Array.from(new Set([
+        `att-sheet-${month}`,
+        `sheet-${month}`,
+        String(monthInput).trim(),
+        month
+      ]));
+
       let client: any = null;
       try { client = await borrowClient(); } catch (_) {}
       if (client) {
         try {
-          // Step 1: Verify Payroll is not POSTED
-          const paySheetCheck = await client.query(`SELECT status, voucher_id FROM hr_payroll_sheets WHERE month_year = $1;`, [month]).catch(() => ({ rows: [] }));
-          const postedSlipsCheck = await client.query(`SELECT id FROM employee_payroll WHERE month_year = $1 AND status = 'POSTED' LIMIT 1;`, [month]).catch(() => ({ rows: [] }));
+          // Step 1: Delete child attendance records (public.employee_attendance)
+          await client.query(`DELETE FROM public.employee_attendance WHERE month_year = $1 OR sheet_id = ANY($2::text[]);`, [month, sheetIds]);
 
-          const isPayrollPosted =
-            paySheetCheck.rows.some((s: any) => s.status === 'POSTED' || !!s.voucher_id) ||
-            postedSlipsCheck.rows.length > 0;
-
-          if (isPayrollPosted) {
-            return res.status(400).json({
-              success: false,
-              error: `Cannot delete attendance for ${month}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`
-            });
-          }
-
-          const sheetRes = await client.query(`SELECT id FROM hr_attendance_sheets WHERE month_year = $1;`, [month]).catch(() => ({ rows: [] }));
-          const sheetIds = Array.from(new Set([
-            ...(sheetRes.rows || []).map((r: any) => r.id).filter(Boolean),
-            `att-sheet-${month}`,
-            `sheet-${month}`,
-            month
-          ]));
-
-          // Step 2: Delete child payroll records (employee_payroll)
-          await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
-
-          // Step 3: Delete parent payroll record (hr_payroll_sheets)
-          await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
-
-          // Step 4: Clear logs & activity tables referencing this sheet / month
-          await client.query(`DELETE FROM audit_logs WHERE document_ref = ANY($1::text[]) OR details LIKE $2;`, [
-            [`ATT-${month}`, `att-sheet-${month}`, `sheet-${month}`, month],
-            `%${month}%`
-          ]).catch(() => {});
-          await client.query(`DELETE FROM hr_activity_logs WHERE month_year = $1 OR sheet_id = ANY($2::text[]);`, [month, sheetIds]).catch(() => {});
-
-          // Step 5: Delete child attendance records (employee_attendance & staff_attendance)
-          try {
-            await client.query(`DELETE FROM employee_attendance WHERE sheet_id = ANY($1::text[]) OR month_year = $2;`, [sheetIds, month]);
-          } catch (_) {
-            await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
-          }
-          await client.query(`DELETE FROM staff_attendance WHERE attendance_date::text LIKE $1;`, [`${month}%`]).catch(() => {});
-
-          // Step 6: Delete parent attendance record (hr_attendance_sheets)
-          await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1 OR id = ANY($2::text[]);`, [month, sheetIds]);
+          // Step 2: Delete parent attendance record (public.hr_attendance_sheets)
+          await client.query(`DELETE FROM public.hr_attendance_sheets WHERE month_year = $1 OR id = ANY($2::text[]);`, [month, sheetIds]);
 
           return res.status(200).json({ success: true });
         } catch (dbErr: any) {
-          console.error("Supabase Deletion Error:", dbErr);
+          console.error("Attendance Deletion Error:", dbErr);
           const errMsg = dbErr?.message || 'Database error deleting attendance sheet';
           const errDetails = dbErr?.detail || dbErr?.details || dbErr?.hint || dbErr?.code || 'None';
           return res.status(400).json({
@@ -2481,136 +2462,26 @@ export default async function handler(req: any, res: any) {
         try {
           const supabase = getSupabaseAdmin();
 
-          // Step 1: Verify Payroll is not POSTED
-          const { data: payrollSheets, error: paySheetsErr } = await supabase
-            .from('hr_payroll_sheets')
-            .select('id, status, voucher_id')
-            .eq('month_year', month);
-
-          if (paySheetsErr) {
-            console.error("Supabase Deletion Error:", paySheetsErr);
-            return res.status(400).json({ success: false, error: `DB Error: ${paySheetsErr.message} | Details: ${paySheetsErr.details}` });
-          }
-
-          const { data: postedSlips, error: postedSlipsErr } = await supabase
-            .from('employee_payroll')
-            .select('id')
-            .eq('month_year', month)
-            .eq('status', 'POSTED')
-            .limit(1);
-
-          if (postedSlipsErr) {
-            console.error("Supabase Deletion Error:", postedSlipsErr);
-            return res.status(400).json({ success: false, error: `DB Error: ${postedSlipsErr.message} | Details: ${postedSlipsErr.details}` });
-          }
-
-          const isPayrollPosted =
-            (payrollSheets && payrollSheets.some((s: any) => s.status === 'POSTED' || !!s.voucher_id)) ||
-            (postedSlips && postedSlips.length > 0);
-
-          if (isPayrollPosted) {
-            return res.status(400).json({
-              success: false,
-              error: `Cannot delete attendance for ${month}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`
-            });
-          }
-
-          const { data: attSheets } = await supabase
-            .from('hr_attendance_sheets')
-            .select('id')
-            .eq('month_year', month);
-
-          const sheetIds = Array.from(new Set([
-            ...(attSheets || []).map((s: any) => s.id).filter(Boolean),
-            `att-sheet-${month}`,
-            `sheet-${month}`,
-            month
-          ]));
-
-          // Step 2: Delete child payroll records (employee_payroll)
-          const { error: delPayrollErr } = await supabase
-            .from('employee_payroll')
-            .delete()
-            .eq('month_year', month);
-
-          if (delPayrollErr) {
-            console.error("Supabase Deletion Error:", delPayrollErr);
-            return res.status(400).json({ success: false, error: `DB Error: ${delPayrollErr.message} | Details: ${delPayrollErr.details}` });
-          }
-
-          // Step 3: Delete parent payroll record (hr_payroll_sheets)
-          const { error: delPaySheetErr } = await supabase
-            .from('hr_payroll_sheets')
-            .delete()
-            .eq('month_year', month);
-
-          if (delPaySheetErr) {
-            console.error("Supabase Deletion Error:", delPaySheetErr);
-            return res.status(400).json({ success: false, error: `DB Error: ${delPaySheetErr.message} | Details: ${delPaySheetErr.details}` });
-          }
-
-          // Step 4: Clear logs referencing this sheet / month
-          try {
-            await supabase
-              .from('audit_logs')
-              .delete()
-              .or(`document_ref.eq.ATT-${month},document_ref.eq.att-sheet-${month},document_ref.eq.sheet-${month},document_ref.eq.${month}`);
-          } catch (_) {}
-
-          try {
-            await supabase
-              .from('hr_activity_logs')
-              .delete()
-              .or(`month_year.eq.${month},sheet_id.in.(${sheetIds.join(',')})`);
-          } catch (_) {}
-
-          // Step 5: Delete child attendance records (employee_attendance) matching sheet_id or month_year
-          if (sheetIds.length > 0) {
-            try {
-              const { error: sheetIdDelErr } = await supabase
-                .from('employee_attendance')
-                .delete()
-                .in('sheet_id', sheetIds);
-
-              if (sheetIdDelErr) {
-                const msg = (sheetIdDelErr.message || '').toLowerCase();
-                if (!msg.includes('column') && !msg.includes('does not exist')) {
-                  console.error("Supabase Deletion Error:", sheetIdDelErr);
-                  return res.status(400).json({ success: false, error: `DB Error: ${sheetIdDelErr.message} | Details: ${sheetIdDelErr.details}` });
-                }
-              }
-            } catch (_) {}
-          }
-
+          // Step 1: Delete child attendance records (public.employee_attendance)
           const { error: attErr } = await supabase
             .from('employee_attendance')
             .delete()
-            .eq('month_year', month);
+            .or(`month_year.eq.${month},sheet_id.in.(${sheetIds.join(',')})`);
 
           if (attErr) {
-            console.error("Supabase Deletion Error:", attErr);
-            return res.status(400).json({ success: false, error: `DB Error: ${attErr.message} | Details: ${attErr.details}` });
+            console.error("Supabase Deletion Error (employee_attendance):", attErr);
+            return res.status(400).json({ success: false, error: `DB Error: ${attErr.message} | Details: ${attErr.details || 'None'}` });
           }
 
-          // Step 6: Delete parent attendance record (hr_attendance_sheets)
+          // Step 2: Delete parent attendance record (public.hr_attendance_sheets)
           const { error: sheetErr } = await supabase
             .from('hr_attendance_sheets')
             .delete()
-            .eq('month_year', month);
+            .or(`month_year.eq.${month},id.in.(${sheetIds.join(',')})`);
 
           if (sheetErr) {
-            console.error("Supabase Deletion Error:", sheetErr);
-            return res.status(400).json({ success: false, error: `DB Error: ${sheetErr.message} | Details: ${sheetErr.details}` });
-          }
-
-          if (sheetIds.length > 0) {
-            try {
-              const { error: idDelErr } = await supabase.from('hr_attendance_sheets').delete().in('id', sheetIds);
-              if (idDelErr) {
-                console.error("Supabase Deletion Error:", idDelErr);
-                return res.status(400).json({ success: false, error: `DB Error: ${idDelErr.message} | Details: ${idDelErr.details}` });
-              }
-            } catch (_) {}
+            console.error("Supabase Deletion Error (hr_attendance_sheets):", sheetErr);
+            return res.status(400).json({ success: false, error: `DB Error: ${sheetErr.message} | Details: ${sheetErr.details || 'None'}` });
           }
 
           return res.status(200).json({ success: true });
