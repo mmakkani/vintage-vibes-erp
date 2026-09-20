@@ -2,12 +2,17 @@ import { supabase } from '../supabaseClient.ts';
 import { SalesInvoice } from '../modules/sales/sales.types.ts';
 
 export class SalesService {
-  public static async getSalesInvoices(): Promise<SalesInvoice[]> {
+  public static readonly SALES_INVOICE_GRID_COLUMNS = 'id, invoice_no, client_id, customer_name, customer_phone, subtotal, tax_amount, total_amount, status, payment_method, invoice_date, created_at, items';
+
+  public static async getSalesInvoices(options?: { limit?: number; offset?: number; page?: number }): Promise<SalesInvoice[]> {
+    const limit = options?.limit || 50;
+    const offset = options?.offset ?? (options?.page ? (options.page - 1) * limit : 0);
+
     // 1. Primary route: Query server endpoint connected directly to PostgreSQL
     if (typeof window !== 'undefined') {
       try {
         const rawFetch = (window as any).__originalFetch || window.fetch;
-        const apiRes = await rawFetch('/api/sales/invoices?_t=' + Date.now());
+        const apiRes = await rawFetch(`/api/sales/invoices?limit=${limit}&offset=${offset}&_t=${Date.now()}`);
         if (apiRes && apiRes.ok) {
           const list = await apiRes.json();
           if (Array.isArray(list) && list.length > 0) {
@@ -22,8 +27,9 @@ export class SalesService {
     try {
       const { data, error } = await supabase
         .from('sales_invoices')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select(SalesService.SALES_INVOICE_GRID_COLUMNS)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
 
       if (!error && Array.isArray(data)) {
         rows = data;
@@ -118,16 +124,14 @@ export class SalesService {
       throw new Error(error.message || 'Failed to record sales invoice');
     }
 
-    // Auto mark pieces as sold
-    if (Array.isArray(inv.items)) {
-      for (const item of inv.items) {
-        const pieceId = item.pieceId || item.id || item.barcode;
-        if (pieceId) {
-          await supabase
-            .from('inventory_pieces')
-            .update({ is_sold: true, status: 'SOLD' })
-            .or(`id.eq.${pieceId},barcode.eq.${pieceId}`);
-        }
+    // Auto mark pieces as sold in batch (eliminates N+1 sequential loop)
+    if (Array.isArray(inv.items) && inv.items.length > 0) {
+      const pieceIds = inv.items.map((item: any) => item.pieceId || item.id || item.barcode).filter(Boolean);
+      if (pieceIds.length > 0) {
+        await Promise.all([
+          supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('id', pieceIds),
+          supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('barcode', pieceIds)
+        ]).catch(err => console.warn('[SalesService] Batch update sold pieces notice:', err));
       }
     }
 

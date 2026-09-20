@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Employee, AttendanceRecord, PayrollRecord, EmployeeLoan } from '../hr.types.ts';
 import { StatusBadge } from '../../../components/StatusBadge.tsx';
 import { NumericInput } from '../../../components/NumericInput.tsx';
@@ -229,6 +229,27 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   // General Ledger COA Accounts
   const [coaAccounts, setCoaAccounts] = useState<any[]>([]);
 
+  // Grid Pagination States (Prevents memory bloat & browser freezing)
+  const [empPage, setEmpPage] = useState(1);
+  const empPageSize = 50;
+  const paginatedEmployees = useMemo(() => employees.slice((empPage - 1) * empPageSize, empPage * empPageSize), [employees, empPage]);
+  const totalEmpPages = Math.max(1, Math.ceil(employees.length / empPageSize));
+
+  const [attLogPage, setAttLogPage] = useState(1);
+  const attLogPageSize = 25;
+  const paginatedAttLogs = useMemo(() => attendanceSheetsLog.slice((attLogPage - 1) * attLogPageSize, attLogPage * attLogPageSize), [attendanceSheetsLog, attLogPage]);
+  const totalAttLogPages = Math.max(1, Math.ceil(attendanceSheetsLog.length / attLogPageSize));
+
+  const [payLogPage, setPayLogPage] = useState(1);
+  const payLogPageSize = 25;
+  const paginatedPayLogs = useMemo(() => payrollSheetsLog.slice((payLogPage - 1) * payLogPageSize, payLogPage * payLogPageSize), [payrollSheetsLog, payLogPage]);
+  const totalPayLogPages = Math.max(1, Math.ceil(payrollSheetsLog.length / payLogPageSize));
+
+  const [paySlipPage, setPaySlipPage] = useState(1);
+  const paySlipPageSize = 50;
+  const paginatedPaySlips = useMemo(() => payrollSlips.slice((paySlipPage - 1) * paySlipPageSize, paySlipPage * paySlipPageSize), [payrollSlips, paySlipPage]);
+  const totalPaySlipPages = Math.max(1, Math.ceil(payrollSlips.length / paySlipPageSize));
+
   const loadData = async () => {
     try {
       const [empRes, attRes, payRes, coaRes, sheetsLogRes, loansRes, paySheetsLogRes, ocrLogsRes, auditLogsRes] = await Promise.all([
@@ -350,16 +371,6 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   // 1. Initial full data fetch on mount only: runs ONCE
   useEffect(() => {
     loadData();
-    // Direct dedicated fetch to ensure employee master state is loaded immediately
-    fetch('/api/hr/employees')
-      .then(r => r.ok ? r.json() : [])
-      .then(data => {
-        const list = Array.isArray(data) ? data : (data?.employees || data?.data || []);
-        if (Array.isArray(list) && list.length > 0) {
-          setEmployees(list);
-        }
-      })
-      .catch(err => console.warn('[HRView] Mount fetch employees notice:', err));
   }, []);
 
   // 2. Month selector switch: ONLY re-fetches attendance and payroll for that specific month
@@ -1558,7 +1569,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-mono">
-                    {payrollSheetsLog.map(sheet => (
+                    {paginatedPayLogs.map(sheet => (
                       <tr key={sheet.monthYear} className="hover:bg-blue-50/40 transition-colors font-sans">
                         <td className="px-3 py-2.5 font-mono font-bold text-blue-900 text-xs">
                           {sheet.monthYear}
@@ -1629,6 +1640,34 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     ))}
                   </tbody>
                 </table>
+                {payrollSheetsLog.length > payLogPageSize && (
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
+                    <div>
+                      Showing <span className="font-bold font-mono">{(payLogPage - 1) * payLogPageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(payLogPage * payLogPageSize, payrollSheetsLog.length)}</span> of <span className="font-bold font-mono">{payrollSheetsLog.length}</span> sheets
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setPayLogPage(p => Math.max(1, p - 1))}
+                        disabled={payLogPage === 1}
+                        className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      <span className="px-2 font-mono font-bold">
+                        Page {payLogPage} of {totalPayLogPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPayLogPage(p => Math.min(totalPayLogPages, p + 1))}
+                        disabled={payLogPage === totalPayLogPages}
+                        className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1763,7 +1802,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-mono">
-                    {attendanceSheetsLog.map(sheet => (
+                    {paginatedAttLogs.map(sheet => (
                       <tr key={sheet.monthYear} className="hover:bg-blue-50/40 transition-colors font-sans">
                         <td className="px-3 py-2.5 font-mono font-bold text-blue-900 text-xs">
                           {sheet.monthYear}
@@ -1838,6 +1877,34 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     ))}
                   </tbody>
                 </table>
+                {attendanceSheetsLog.length > attLogPageSize && (
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
+                    <div>
+                      Showing <span className="font-bold font-mono">{(attLogPage - 1) * attLogPageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(attLogPage * attLogPageSize, attendanceSheetsLog.length)}</span> of <span className="font-bold font-mono">{attendanceSheetsLog.length}</span> sheets
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setAttLogPage(p => Math.max(1, p - 1))}
+                        disabled={attLogPage === 1}
+                        className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      <span className="px-2 font-mono font-bold">
+                        Page {attLogPage} of {totalAttLogPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setAttLogPage(p => Math.min(totalAttLogPages, p + 1))}
+                        disabled={attLogPage === totalAttLogPages}
+                        className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1927,7 +1994,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono">
-                {employees.map(emp => {
+                {paginatedEmployees.map(emp => {
                   const now = new Date();
                   
                   // Helper for expiry alarm status
@@ -2238,6 +2305,34 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 )}
               </tbody>
             </table>
+            {employees.length > empPageSize && (
+              <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
+                <div>
+                  Showing <span className="font-bold font-mono">{(empPage - 1) * empPageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(empPage * empPageSize, employees.length)}</span> of <span className="font-bold font-mono">{employees.length}</span> employees
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setEmpPage(p => Math.max(1, p - 1))}
+                    disabled={empPage === 1}
+                    className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    Previous
+                  </button>
+                  <span className="px-2 font-mono font-bold">
+                    Page {empPage} of {totalEmpPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setEmpPage(p => Math.min(totalEmpPages, p + 1))}
+                    disabled={empPage === totalEmpPages}
+                    className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3607,7 +3702,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-mono">
-                    {payrollSlips.map(slip => (
+                    {paginatedPaySlips.map(slip => (
                       <PayrollRow
                         key={slip.id}
                         slip={slip}
@@ -3641,6 +3736,34 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     )}
                   </tbody>
                 </table>
+                {payrollSlips.length > paySlipPageSize && (
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
+                    <div>
+                      Showing <span className="font-bold font-mono">{(paySlipPage - 1) * paySlipPageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(paySlipPage * paySlipPageSize, payrollSlips.length)}</span> of <span className="font-bold font-mono">{payrollSlips.length}</span> slips
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setPaySlipPage(p => Math.max(1, p - 1))}
+                        disabled={paySlipPage === 1}
+                        className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        Previous
+                      </button>
+                      <span className="px-2 font-mono font-bold">
+                        Page {paySlipPage} of {totalPaySlipPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPaySlipPage(p => Math.min(totalPaySlipPages, p + 1))}
+                        disabled={paySlipPage === totalPaySlipPages}
+                        className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

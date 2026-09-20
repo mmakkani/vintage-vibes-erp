@@ -24,23 +24,26 @@ export class PurchaseService {
     let invData: any[] = [];
     let itemsData: any[] = [];
     try {
-      const [invResult, itemsResult] = await Promise.all([
-        supabase
-          .from('purchase_invoices')
-          .select('*')
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('purchase_invoice_items')
-          .select('*')
-      ]);
+      const invResult = await supabase
+        .from('purchase_invoices')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
 
       if (!invResult.error && Array.isArray(invResult.data)) {
         invData = invResult.data;
+        const invIds = invData.map((row: any) => String(row.id)).filter(Boolean);
+        if (invIds.length > 0) {
+          const itemsResult = await supabase
+            .from('purchase_invoice_items')
+            .select('*')
+            .in('invoice_id', invIds);
+          if (!itemsResult.error && Array.isArray(itemsResult.data)) {
+            itemsData = itemsResult.data;
+          }
+        }
       } else if (invResult.error) {
         console.warn('Supabase query notice on purchase_invoices:', invResult.error.message);
-      }
-      if (!itemsResult.error && Array.isArray(itemsResult.data)) {
-        itemsData = itemsResult.data;
       }
     } catch (err: any) {
       console.warn('Supabase fetch exception on purchase invoices:', err?.message);
@@ -1176,16 +1179,18 @@ export class PurchaseService {
     return this.getInventoryPieces(limit);
   }
 
+  public static readonly PIECES_GRID_COLUMNS = 'id, gate_pass_id, barcode, piece_code, item_name, brand_name, brand_tier, label_grade, shop_location, weight_kg, weight_grams, cost_price, selling_price, estimated_resale_value, is_sold, status, created_at';
+
   public static async getInventoryPieces(limit = 1000): Promise<PieceBreakdownItem[]> {
     const [invRes, sortedRes] = await Promise.all([
       supabase
         .from('inventory_pieces')
-        .select('*')
+        .select(PurchaseService.PIECES_GRID_COLUMNS)
         .order('created_at', { ascending: false })
         .limit(limit),
       supabase
         .from('bale_sorted_pieces')
-        .select('*')
+        .select(PurchaseService.PIECES_GRID_COLUMNS)
         .order('created_at', { ascending: false })
         .limit(limit)
     ]);

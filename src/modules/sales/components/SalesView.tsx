@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { SalesGatePass, SalesInvoice } from '../sales.types.ts';
 import { Party } from '../../parties/parties.types.ts';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
@@ -79,6 +79,13 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
 
   const [gatePasses, setGatePasses] = useState<SalesGatePass[]>([]);
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
+  const [invPage, setInvPage] = useState(1);
+  const invPageSize = 50;
+  const paginatedInvoices = useMemo(
+    () => (invoices || []).slice((invPage - 1) * invPageSize, invPage * invPageSize),
+    [invoices, invPage]
+  );
+  const totalInvPages = Math.max(1, Math.ceil((invoices || []).length / invPageSize));
   const [clients, setClients] = useState<Party[]>([]);
   const [stockPieces, setStockPieces] = useState<PieceBreakdownItem[]>([]);
 
@@ -776,7 +783,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {(invoices || []).map(inv => (
+                  {paginatedInvoices.map(inv => (
                     <tr key={inv.id} className="hover:bg-blue-50/40 transition-colors">
                       <td className="px-3 py-2 font-mono font-bold text-blue-900">{inv.invoiceNo}</td>
                       <td className="px-3 py-2 font-medium text-slate-800">{inv.customerName}</td>
@@ -836,6 +843,34 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                   ))}
                 </tbody>
               </table>
+              {invoices.length > invPageSize && (
+                <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
+                  <div>
+                    Showing <span className="font-bold font-mono">{(invPage - 1) * invPageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(invPage * invPageSize, invoices.length)}</span> of <span className="font-bold font-mono">{invoices.length}</span> invoices
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setInvPage(p => Math.max(1, p - 1))}
+                      disabled={invPage === 1}
+                      className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Previous
+                    </button>
+                    <span className="px-2 font-mono font-bold">
+                      Page {invPage} of {totalInvPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setInvPage(p => Math.min(totalInvPages, p + 1))}
+                      disabled={invPage === totalInvPages}
+                      className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

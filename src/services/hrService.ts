@@ -55,15 +55,127 @@ export class HrService {
   // ==========================================
   // 1. EMPLOYEES (public.employees strictly)
   // ==========================================
-  public static async getEmployees(forceRefresh: boolean = false): Promise<Employee[]> {
-    if (!forceRefresh && this.cachedEmployees && (Date.now() - this.lastEmployeesFetched < this.EMPLOYEES_TTL_MS)) {
+  public static readonly EMPLOYEES_GRID_COLUMNS = 'id, emp_code, employee_code, name, full_name, first_name, last_name, designation, department, basic_salary, base_salary, salary, housing_allowance, housing_allow, transport_allowance, transport_allow, other_allow, total_package, gross_salary, working_hours_per_day, is_active, joining_date, status, emirates_id, emirates_id_no, nationality, gender, dob, emirates_id_expiry, id_card_no, passport_no, passport_number, passport_expiry, created_at, updated_at';
+
+  public static mapEmployeeRow(row: any): Employee {
+    const empCode = row.emp_code || row.employee_code || '';
+    const fullName = (row.name || `${row.first_name || ''} ${row.last_name || ''}`).trim() || row.full_name || 'Staff Member';
+    const basicSal = Number(row.basic_salary || row.base_salary || row.salary || 0);
+    const housingAllow = Number(row.housing_allowance || row.housing_allow || 0);
+    const transAllow = Number(row.transport_allowance || row.transport_allow || 0);
+    const otherAllow = Number(row.other_allow || 0);
+    const totPkg = Number(row.total_package || row.gross_salary || (basicSal + housingAllow + transAllow + otherAllow));
+
+    return {
+      id: String(row.id),
+      code: empCode,
+      empCode: empCode,
+      employee_code: empCode,
+      emp_code: empCode,
+      name: fullName,
+      fullName: fullName,
+      full_name: fullName,
+      first_name: row.first_name || '',
+      last_name: row.last_name || '',
+      designation: row.designation || 'Staff',
+      department: row.department || 'Operations',
+      baseSalary: basicSal,
+      basic_salary: basicSal,
+      base_salary: basicSal,
+      salary: basicSal,
+      housingAllow: housingAllow,
+      housing_allow: housingAllow,
+      housing_allowance: housingAllow,
+      transportAllow: transAllow,
+      transport_allow: transAllow,
+      transport_allowance: transAllow,
+      otherAllow: otherAllow,
+      other_allow: otherAllow,
+      totalPackage: totPkg,
+      gross_salary: totPkg,
+      total_package: totPkg,
+      workingHoursPerDay: Number(row.working_hours_per_day || 8),
+      working_hours_per_day: Number(row.working_hours_per_day || 8),
+      isActive: row.is_active !== false,
+      is_active: row.is_active !== false,
+      joiningDate: row.joining_date || new Date().toISOString().slice(0, 10),
+      joining_date: row.joining_date || new Date().toISOString().slice(0, 10),
+      status: row.status || 'POSTED',
+      emiratesId: row.emirates_id || row.emirates_id_no || '',
+      emirates_id: row.emirates_id || row.emirates_id_no || '',
+      residencyCardNo: row.residency_card_no || row.residency_no || '',
+      residency_card_no: row.residency_card_no || row.residency_no || '',
+      passportNo: row.passport_no || row.passport_number || '',
+      passport_no: row.passport_no || row.passport_number || '',
+      idFrontImageUrl: row.id_front_image_url || '',
+      id_front_image_url: row.id_front_image_url || '',
+      idBackImageUrl: row.id_back_image_url || '',
+      id_back_image_url: row.id_back_image_url || '',
+      nameArabic: row.name_arabic || row.arabic_name || '',
+      name_arabic: row.name_arabic || row.arabic_name || '',
+      arabic_name: row.name_arabic || row.arabic_name || '',
+      nationality: row.nationality || '',
+      gender: row.gender || 'MALE',
+      dob: row.dob || '',
+      emiratesIdExpiry: row.emirates_id_expiry || '',
+      emirates_id_expiry: row.emirates_id_expiry || '',
+      idCardNo: row.id_card_no || '',
+      id_card_no: row.id_card_no || '',
+      passportExpiry: row.passport_expiry || row.passport_expiry_date || '',
+      passport_expiry: row.passport_expiry || row.passport_expiry_date || '',
+      passportIssueDate: row.passport_issue_date || '',
+      passport_issue_date: row.passport_issue_date || '',
+      passportCountry: row.passport_country || '',
+      passport_country: row.passport_country || '',
+      passportImageUrl: row.passport_image_url || '',
+      passport_image_url: row.passport_image_url || '',
+      uidNo: row.uid_no || row.visa_uid || '',
+      visaUid: row.uid_no || row.visa_uid || '',
+      uid_no: row.uid_no || row.visa_uid || '',
+      visa_uid: row.uid_no || row.visa_uid || '',
+      residencyIssueDate: row.residency_issue_date || row.visa_issue_date || '',
+      residency_issue_date: row.residency_issue_date || row.visa_issue_date || '',
+      residencyExpiryDate: row.residency_expiry_date || row.visa_expiry_date || '',
+      residency_expiry_date: row.residency_expiry_date || row.visa_expiry_date || '',
+      residencySponsor: row.residency_sponsor || row.sponsor || '',
+      residency_sponsor: row.residency_sponsor || row.sponsor || '',
+      residencyProfession: row.residency_profession || row.profession_on_visa || '',
+      residency_profession: row.residency_profession || row.profession_on_visa || '',
+      residencyImageUrl: row.residency_image_url || row.visa_image_url || '',
+      residency_image_url: row.residency_image_url || row.visa_image_url || '',
+      photoUrl: row.photo_url || '',
+      photo_url: row.photo_url || ''
+    };
+  }
+
+  public static async getEmployeeById(id: string): Promise<Employee | null> {
+    try {
+      const { data, error } = await supabase
+        .from('employees')
+        .select('*')
+        .or(`id.eq.${id},emp_code.eq.${id}`)
+        .maybeSingle();
+
+      if (error || !data) return null;
+      return this.mapEmployeeRow(data);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  public static async getEmployees(
+    forceRefresh: boolean = false,
+    options?: { limit?: number; offset?: number; page?: number; full?: boolean }
+  ): Promise<Employee[]> {
+    const isDefaultFetch = !options || (!options.limit && !options.offset && !options.page && !options.full);
+    if (!forceRefresh && isDefaultFetch && this.cachedEmployees && (Date.now() - this.lastEmployeesFetched < this.EMPLOYEES_TTL_MS)) {
       return this.cachedEmployees;
     }
-    if (this.employeesPromise) {
+    if (isDefaultFetch && this.employeesPromise) {
       return this.employeesPromise;
     }
 
-    this.employeesPromise = (async () => {
+    const runFetch = async () => {
       // Purge stale local storage cache so direct database deletes reflect immediately
       try {
         if (typeof localStorage !== 'undefined') {
@@ -71,135 +183,63 @@ export class HrService {
         }
       } catch (_) {}
 
-      // 1. Try fetching from direct API endpoint first (PostgreSQL Pooler)
-      try {
-        const fetchFn = (typeof window !== 'undefined' && (window as any).__originalFetch) || (typeof fetch !== 'undefined' ? fetch : null);
-        if (fetchFn) {
-          const res = await fetchFn('/api/hr/employees');
-          if (res.ok) {
-            const json = await res.json();
-            if (json && json.success === false && json.diagnostic_error) {
-              console.warn('[HrService] Vercel Serverless DB diagnostic warning:', json.diagnostic_error, {
-                has_db_url: json.has_db_url,
-                stack: json.stack
-              });
-            }
-            const list = Array.isArray(json) ? json : (json?.employees || json?.data || []);
-            if (Array.isArray(list) && list.length > 0) {
-              this.cachedEmployees = list;
-              this.lastEmployeesFetched = Date.now();
-              return list;
+      // 1. Try fetching from direct API endpoint first (PostgreSQL Pooler) if default
+      if (isDefaultFetch) {
+        try {
+          const fetchFn = (typeof window !== 'undefined' && (window as any).__originalFetch) || (typeof fetch !== 'undefined' ? fetch : null);
+          if (fetchFn) {
+            const res = await fetchFn('/api/hr/employees');
+            if (res.ok) {
+              const json = await res.json();
+              if (json && json.success === false && json.diagnostic_error) {
+                console.warn('[HrService] Vercel Serverless DB diagnostic warning:', json.diagnostic_error, {
+                  has_db_url: json.has_db_url,
+                  stack: json.stack
+                });
+              }
+              const list = Array.isArray(json) ? json : (json?.employees || json?.data || []);
+              if (Array.isArray(list) && list.length > 0) {
+                this.cachedEmployees = list;
+                this.lastEmployeesFetched = Date.now();
+                return list;
+              }
             }
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
 
       try {
-        const { data, error } = await supabase
+        const selectCols = options?.full ? '*' : HrService.EMPLOYEES_GRID_COLUMNS;
+        let query = supabase
           .from('employees')
-          .select('*')
+          .select(selectCols)
           .order('created_at', { ascending: false });
+
+        if (options?.limit) {
+          const limit = options.limit;
+          const offset = options.offset ?? (options.page ? (options.page - 1) * limit : 0);
+          query = query.range(offset, offset + limit - 1);
+        } else if (isDefaultFetch) {
+          query = query.range(0, 49);
+        }
+
+        const { data, error } = await query;
 
         if (!error && Array.isArray(data)) {
           if (data.length === 0) {
-            this.cachedEmployees = [];
-            this.lastEmployeesFetched = Date.now();
+            if (isDefaultFetch) {
+              this.cachedEmployees = [];
+              this.lastEmployeesFetched = Date.now();
+            }
             return [];
           }
 
-          const mapped = data.map((row: any) => {
-            const empCode = row.emp_code || row.employee_code || '';
-            const fullName = (row.name || `${row.first_name || ''} ${row.last_name || ''}`).trim() || row.full_name || 'Staff Member';
-            const basicSal = Number(row.basic_salary || row.base_salary || row.salary || 0);
-            const housingAllow = Number(row.housing_allowance || row.housing_allow || 0);
-            const transAllow = Number(row.transport_allowance || row.transport_allow || 0);
-            const otherAllow = Number(row.other_allow || 0);
-            const totPkg = Number(row.total_package || row.gross_salary || (basicSal + housingAllow + transAllow + otherAllow));
+          const mapped = data.map((row: any) => this.mapEmployeeRow(row));
 
-            return {
-              id: String(row.id),
-              code: empCode,
-              empCode: empCode,
-              employee_code: empCode,
-              emp_code: empCode,
-              name: fullName,
-              fullName: fullName,
-              full_name: fullName,
-              first_name: row.first_name || '',
-              last_name: row.last_name || '',
-              designation: row.designation || 'Staff',
-              department: row.department || 'Operations',
-              baseSalary: basicSal,
-              basic_salary: basicSal,
-              base_salary: basicSal,
-              salary: basicSal,
-              housingAllow: housingAllow,
-              housing_allow: housingAllow,
-              housing_allowance: housingAllow,
-              transportAllow: transAllow,
-              transport_allow: transAllow,
-              transport_allowance: transAllow,
-              otherAllow: otherAllow,
-              other_allow: otherAllow,
-              totalPackage: totPkg,
-              gross_salary: totPkg,
-              total_package: totPkg,
-              workingHoursPerDay: Number(row.working_hours_per_day || 8),
-              working_hours_per_day: Number(row.working_hours_per_day || 8),
-              isActive: row.is_active !== false,
-              is_active: row.is_active !== false,
-              joiningDate: row.joining_date || new Date().toISOString().slice(0, 10),
-              joining_date: row.joining_date || new Date().toISOString().slice(0, 10),
-              status: row.status || 'POSTED',
-              emiratesId: row.emirates_id || row.emirates_id_no || '',
-              emirates_id: row.emirates_id || row.emirates_id_no || '',
-              residencyCardNo: row.residency_card_no || row.residency_no || '',
-              residency_card_no: row.residency_card_no || row.residency_no || '',
-              passportNo: row.passport_no || row.passport_number || '',
-              passport_no: row.passport_no || row.passport_number || '',
-              idFrontImageUrl: row.id_front_image_url || '',
-              id_front_image_url: row.id_front_image_url || '',
-              idBackImageUrl: row.id_back_image_url || '',
-              id_back_image_url: row.id_back_image_url || '',
-              nameArabic: row.name_arabic || row.arabic_name || '',
-              name_arabic: row.name_arabic || row.arabic_name || '',
-              arabic_name: row.name_arabic || row.arabic_name || '',
-              nationality: row.nationality || '',
-              gender: row.gender || 'MALE',
-              dob: row.dob || '',
-              emiratesIdExpiry: row.emirates_id_expiry || '',
-              emirates_id_expiry: row.emirates_id_expiry || '',
-              idCardNo: row.id_card_no || '',
-              id_card_no: row.id_card_no || '',
-              passportExpiry: row.passport_expiry || row.passport_expiry_date || '',
-              passport_expiry: row.passport_expiry || row.passport_expiry_date || '',
-              passportIssueDate: row.passport_issue_date || '',
-              passport_issue_date: row.passport_issue_date || '',
-              passportCountry: row.passport_country || '',
-              passport_country: row.passport_country || '',
-              passportImageUrl: row.passport_image_url || '',
-              passport_image_url: row.passport_image_url || '',
-              uidNo: row.uid_no || row.visa_uid || '',
-              visaUid: row.uid_no || row.visa_uid || '',
-              uid_no: row.uid_no || row.visa_uid || '',
-              visa_uid: row.uid_no || row.visa_uid || '',
-              residencyIssueDate: row.residency_issue_date || row.visa_issue_date || '',
-              residency_issue_date: row.residency_issue_date || row.visa_issue_date || '',
-              residencyExpiryDate: row.residency_expiry_date || row.visa_expiry_date || '',
-              residency_expiry_date: row.residency_expiry_date || row.visa_expiry_date || '',
-              residencySponsor: row.residency_sponsor || row.sponsor || '',
-              residency_sponsor: row.residency_sponsor || row.sponsor || '',
-              residencyProfession: row.residency_profession || row.profession_on_visa || '',
-              residency_profession: row.residency_profession || row.profession_on_visa || '',
-              residencyImageUrl: row.residency_image_url || row.visa_image_url || '',
-              residency_image_url: row.residency_image_url || row.visa_image_url || '',
-              photoUrl: row.photo_url || '',
-              photo_url: row.photo_url || ''
-            };
-          });
-
-          this.cachedEmployees = mapped;
-          this.lastEmployeesFetched = Date.now();
+          if (isDefaultFetch) {
+            this.cachedEmployees = mapped;
+            this.lastEmployeesFetched = Date.now();
+          }
           return mapped;
         }
 
@@ -208,16 +248,21 @@ export class HrService {
         }
       } catch (err) {
         console.warn('Supabase fetch employees failed:', err);
+      }
+
+      return this.cachedEmployees || [];
+    };
+
+    if (isDefaultFetch) {
+      this.employeesPromise = runFetch();
+      try {
+        return await this.employeesPromise;
       } finally {
         this.employeesPromise = null;
       }
-
-      this.cachedEmployees = [];
-      this.lastEmployeesFetched = Date.now();
-      return [];
-    })();
-
-    return this.employeesPromise;
+    } else {
+      return await runFetch();
+    }
   }
 
   public static async createEmployee(emp: Partial<Employee>): Promise<Employee> {
@@ -607,14 +652,25 @@ export class HrService {
   // ==========================================
   // 2. ATTENDANCE (public.employee_attendance & hr_attendance_sheets)
   // ==========================================
-  public static async getAttendance(monthYear?: string): Promise<AttendanceRecord[]> {
+  public static readonly ATTENDANCE_GRID_COLUMNS = 'id, employee_id, employee_name, emp_code, month_year, days_worked, overtime_hours, status, locked_at, locked_by, created_at';
+
+  public static async getAttendance(
+    monthYear?: string,
+    options?: { limit?: number; offset?: number; page?: number }
+  ): Promise<AttendanceRecord[]> {
     let query = supabase
       .from('employee_attendance')
-      .select('*')
+      .select(HrService.ATTENDANCE_GRID_COLUMNS)
       .order('created_at', { ascending: false });
 
     if (monthYear) {
       query = query.eq('month_year', monthYear);
+    }
+
+    if (options?.limit) {
+      const limit = options.limit;
+      const offset = options.offset ?? (options.page ? (options.page - 1) * limit : 0);
+      query = query.range(offset, offset + limit - 1);
     }
 
     const { data, error } = await query;
@@ -792,11 +848,15 @@ export class HrService {
       });
   }
 
-  public static async getAttendanceSheets(): Promise<any[]> {
+  public static async getAttendanceSheets(options?: { limit?: number; offset?: number; page?: number }): Promise<any[]> {
+    const limit = options?.limit || 50;
+    const offset = options?.offset ?? (options?.page ? (options.page - 1) * limit : 0);
+
     const { data, error } = await supabase
       .from('hr_attendance_sheets')
-      .select('*')
-      .order('month_year', { ascending: false });
+      .select('id, month_year, total_employees, status, created_at')
+      .order('month_year', { ascending: false })
+      .range(offset, offset + limit - 1);
 
     if (error) return [];
     return (data || []).map((row: any) => ({
@@ -943,14 +1003,25 @@ export class HrService {
   // ==========================================
   // 4. PAYROLL (public.employee_payroll & hr_payroll_sheets)
   // ==========================================
-  public static async getPayroll(monthYear?: string): Promise<PayrollRecord[]> {
+  public static readonly PAYROLL_GRID_COLUMNS = 'id, employee_id, employee_name, emp_code, designation, month_year, status, base_salary, allowances, daily_rate, hourly_rate, days_worked, overtime_hours, earned_basic, overtime_pay, gross_pay, advance_deduction, loan_emi_deduction, total_deductions, net_pay, payment_method, bank_account_id, bank_account_name, posted_at, posted_by, created_at';
+
+  public static async getPayroll(
+    monthYear?: string,
+    options?: { limit?: number; offset?: number; page?: number }
+  ): Promise<PayrollRecord[]> {
     let query = supabase
       .from('employee_payroll')
-      .select('*')
+      .select(HrService.PAYROLL_GRID_COLUMNS)
       .order('created_at', { ascending: false });
 
     if (monthYear) {
       query = query.eq('month_year', monthYear);
+    }
+
+    if (options?.limit) {
+      const limit = options.limit;
+      const offset = options.offset ?? (options.page ? (options.page - 1) * limit : 0);
+      query = query.range(offset, offset + limit - 1);
     }
 
     const { data, error } = await query;
@@ -1445,23 +1516,31 @@ export class HrService {
     }
   }
 
-  public static async getPayrollSheets(forceRefresh: boolean = false): Promise<any[]> {
-    if (!forceRefresh && this.cachedPayrollSheets && (Date.now() - this.lastPayrollSheetsFetched < this.PAYROLL_SHEETS_TTL_MS)) {
+  public static async getPayrollSheets(
+    forceRefresh: boolean = false,
+    options?: { limit?: number; offset?: number; page?: number }
+  ): Promise<any[]> {
+    const isDefaultFetch = !options || (!options.limit && !options.offset && !options.page);
+    if (!forceRefresh && isDefaultFetch && this.cachedPayrollSheets && (Date.now() - this.lastPayrollSheetsFetched < this.PAYROLL_SHEETS_TTL_MS)) {
       return this.cachedPayrollSheets;
     }
-    if (this.payrollSheetsPromise) {
+    if (isDefaultFetch && this.payrollSheetsPromise) {
       return this.payrollSheetsPromise;
     }
 
-    this.payrollSheetsPromise = (async () => {
+    const runFetch = async () => {
       try {
+        const limit = options?.limit || 50;
+        const offset = options?.offset ?? (options?.page ? (options.page - 1) * limit : 0);
+
         const { data, error } = await supabase
           .from('hr_payroll_sheets')
-          .select('*')
-          .order('month_year', { ascending: false });
+          .select('id, month_year, total_employees, total_gross, total_deductions, total_net, status, voucher_no, voucher_id, created_at')
+          .order('month_year', { ascending: false })
+          .range(offset, offset + limit - 1);
 
         if (error) {
-          if (this.cachedPayrollSheets) return this.cachedPayrollSheets;
+          if (this.cachedPayrollSheets && isDefaultFetch) return this.cachedPayrollSheets;
           return [];
         }
         const mapped = (data || []).map((row: any) => ({
@@ -1474,15 +1553,24 @@ export class HrService {
           status: row.status,
           createdAt: row.created_at
         }));
-        this.cachedPayrollSheets = mapped;
-        this.lastPayrollSheetsFetched = Date.now();
+        if (isDefaultFetch) {
+          this.cachedPayrollSheets = mapped;
+          this.lastPayrollSheetsFetched = Date.now();
+        }
         return mapped;
       } finally {
-        this.payrollSheetsPromise = null;
+        if (isDefaultFetch) {
+          this.payrollSheetsPromise = null;
+        }
       }
-    })();
+    };
 
-    return this.payrollSheetsPromise;
+    if (isDefaultFetch) {
+      this.payrollSheetsPromise = runFetch();
+      return this.payrollSheetsPromise;
+    } else {
+      return await runFetch();
+    }
   }
 
   public static async deletePayroll(monthYear: string): Promise<void> {
@@ -1602,7 +1690,9 @@ export class HrService {
     } catch (_) {}
   }
 
-  public static async getOcrLogs(): Promise<any[]> {
+  public static readonly OCR_LOGS_GRID_COLUMNS = 'id, document_type, extracted_name, extracted_id, confidence, confidence_score, source, scanned_by, details, created_at';
+
+  public static async getOcrLogs(options?: { limit?: number; offset?: number; page?: number }): Promise<any[]> {
     try {
       if (typeof localStorage !== 'undefined') {
         localStorage.removeItem('vintage_vibes_hr_ocr_logs');
@@ -1610,11 +1700,14 @@ export class HrService {
     } catch (_) {}
 
     try {
+      const limit = options?.limit || 50;
+      const offset = options?.offset ?? (options?.page ? (options.page - 1) * limit : 0);
+
       const { data, error } = await supabase
         .from('hr_ocr_logs')
-        .select('*')
+        .select(HrService.OCR_LOGS_GRID_COLUMNS)
         .order('created_at', { ascending: false })
-        .limit(50);
+        .range(offset, offset + limit - 1);
 
       if (!error && Array.isArray(data)) {
         return data;

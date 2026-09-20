@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { History, Search, Scan, Plus, ShieldCheck, RefreshCw, Sparkles, User, FileText, CheckCircle2, Clock } from 'lucide-react';
 
 interface HROcrLogsViewProps {
@@ -76,6 +76,19 @@ export const HROcrLogsView: React.FC<HROcrLogsViewProps> = ({
     }
     return true;
   });
+
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
+
+  useEffect(() => {
+    setPage(1);
+  }, [activeFilter, searchTerm]);
+
+  const paginatedLogs = useMemo(() => {
+    return filteredLogs.slice((page - 1) * pageSize, page * pageSize);
+  }, [filteredLogs, page, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / pageSize));
 
   return (
     <div className="space-y-3">
@@ -233,7 +246,7 @@ export const HROcrLogsView: React.FC<HROcrLogsViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-mono">
-              {filteredLogs.map(log => {
+              {paginatedLogs.map(log => {
                 const isOcr = log.type === 'OCR';
                 const isCreate = log.category === 'CREATE' || log.category === 'EMIRATES_ID' || log.category === 'PASSPORT';
                 const isDelete = log.category === 'DELETE';
@@ -331,6 +344,34 @@ export const HROcrLogsView: React.FC<HROcrLogsViewProps> = ({
             </tbody>
           </table>
         </div>
+        {filteredLogs.length > pageSize && (
+          <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
+            <div>
+              Showing <span className="font-bold font-mono">{(page - 1) * pageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(page * pageSize, filteredLogs.length)}</span> of <span className="font-bold font-mono">{filteredLogs.length}</span> logs
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                Previous
+              </button>
+              <span className="px-2 font-mono font-bold">
+                Page {page} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { AttendanceRecord, Employee } from '../hr.types.ts';
 import { StatusBadge } from '../../../components/StatusBadge.tsx';
 import { NumericInput } from '../../../components/NumericInput.tsx';
@@ -131,6 +131,19 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
 
   const isWindowSheetPosted = isPosted || (attendance.length > 0 && attendance.every(a => a.status === 'POSTED'));
 
+  const [attPage, setAttPage] = useState(1);
+  const attPageSize = 50;
+
+  useEffect(() => {
+    setAttPage(1);
+  }, [month, isOpen]);
+
+  const paginatedAttendance = useMemo(
+    () => attendance.slice((attPage - 1) * attPageSize, attPage * attPageSize),
+    [attendance, attPage]
+  );
+  const totalAttPages = Math.max(1, Math.ceil(attendance.length / attPageSize));
+
   const handleUpdate = useCallback(
     (attId: string, daysWorked: number, overtimeHours: number) => {
       return onUpdateAttendance(attId, daysWorked, overtimeHours);
@@ -259,7 +272,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
-                  {attendance.map(att => (
+                  {paginatedAttendance.map(att => (
                     <AttendanceRow
                       key={att.id}
                       att={att}
@@ -269,6 +282,34 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
                   ))}
                 </tbody>
               </table>
+              {attendance.length > attPageSize && (
+                <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
+                  <div>
+                    Showing <span className="font-bold font-mono">{(attPage - 1) * attPageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(attPage * attPageSize, attendance.length)}</span> of <span className="font-bold font-mono">{attendance.length}</span> records
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setAttPage(p => Math.max(1, p - 1))}
+                      disabled={attPage === 1}
+                      className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Previous
+                    </button>
+                    <span className="px-2 font-mono font-bold">
+                      Page {attPage} of {totalAttPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setAttPage(p => Math.min(totalAttPages, p + 1))}
+                      disabled={attPage === totalAttPages}
+                      className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
