@@ -3,6 +3,7 @@ import allHandler from '../api/[...all].ts';
 import loginHandler from '../api/auth/login.ts';
 import healthHandler from '../api/health.ts';
 import { createSessionToken, verifyAuthToken, revokeSessionToken, isOriginAllowed } from '../src/server/authValidator.ts';
+import { isAllowedApiDestination } from '../src/utils/fetchUtils.ts';
 
 interface MockResponse {
   statusCode: number;
@@ -672,6 +673,48 @@ async function runSecurityGateTests() {
     assert(healthRes.body?.pool_type === undefined, 'GET /api/health does NOT leak pool_type');
     assert(healthRes.body?.has_db_url === undefined, 'GET /api/health does NOT leak has_db_url');
     assert(healthRes.body?.error === undefined, 'GET /api/health does NOT leak database internal error');
+  }
+
+  // -------------------------------------------------------------------------
+  // Gate 13: Frontend Interceptor Strict Origin Check (Zero Token Leak)
+  // -------------------------------------------------------------------------
+  console.log('\n--- GATE 13: Frontend Interceptor Strict Origin Check ---');
+  {
+    const origWindow = (global as any).window;
+    (global as any).window = {
+      location: {
+        origin: 'https://vintagevibesgk.com'
+      }
+    };
+
+    try {
+      assert(
+        isAllowedApiDestination('/api/hr/employees'),
+        'Relative URL /api/hr/employees is approved for auth injection'
+      );
+      assert(
+        isAllowedApiDestination('https://vintagevibesgk.com/api/finance/coa'),
+        'Same-origin URL https://vintagevibesgk.com/api/finance/coa is approved'
+      );
+      assert(
+        isAllowedApiDestination('https://api.vintagevibesgk.com/api/audit'),
+        'Approved origin https://api.vintagevibesgk.com/api/audit is approved'
+      );
+      assert(
+        !isAllowedApiDestination('https://evil-attacker.com/api/stolen-token'),
+        'External domain https://evil-attacker.com is REJECTED (Zero Token Leak)'
+      );
+      assert(
+        !isAllowedApiDestination('https://api.stripe.com/v1/tokens'),
+        'Third-party Stripe API is REJECTED (Zero Token Leak)'
+      );
+      assert(
+        !isAllowedApiDestination('https://www.google-analytics.com/collect'),
+        'Third-party Analytics URL is REJECTED (Zero Token Leak)'
+      );
+    } finally {
+      (global as any).window = origWindow;
+    }
   }
 
   console.log('\n======================================================');

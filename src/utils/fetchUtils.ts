@@ -470,6 +470,32 @@ export async function safeFetchJson<T = any>(
   return null;
 }
 
+export const APPROVED_API_ORIGINS = new Set([
+  'https://vintagevibesgk.com',
+  'https://www.vintagevibesgk.com',
+  'https://api.vintagevibesgk.com',
+  'https://vintagevibe.ae',
+  'https://www.vintagevibe.ae'
+]);
+
+export function isAllowedApiDestination(rawUrl: string): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.location) return false;
+    const targetUrl = new URL(rawUrl, window.location.origin);
+    // 1. Same-origin requests to application /api/
+    if (targetUrl.origin === window.location.origin && targetUrl.pathname.startsWith('/api/')) {
+      return true;
+    }
+    // 2. Explicitly approved production API origins to application /api/
+    if (APPROVED_API_ORIGINS.has(targetUrl.origin) && targetUrl.pathname.startsWith('/api/')) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Global Fetch Interceptor.
  * Installs transparently on window.fetch to route all `/api/...` calls directly to Supabase services.
@@ -480,7 +506,10 @@ export function initUniversalFetchInterceptor() {
 
   const rawFetch = window.fetch;
 
-  function attachAuthHeader(init?: RequestInit): RequestInit | undefined {
+  function attachAuthHeader(url: string, init?: RequestInit): RequestInit | undefined {
+    if (!isAllowedApiDestination(url)) {
+      return init;
+    }
     try {
       const stored = localStorage.getItem('vintage_erp_logged_user');
       if (stored) {
@@ -500,7 +529,7 @@ export function initUniversalFetchInterceptor() {
 
   const authenticatedFetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
-    const effectiveInit = (typeof url === 'string' && url.includes('/api/')) ? attachAuthHeader(init) : init;
+    const effectiveInit = typeof url === 'string' ? attachAuthHeader(url, init) : init;
     return rawFetch.apply(window, [input, effectiveInit]);
   };
 
@@ -508,8 +537,8 @@ export function initUniversalFetchInterceptor() {
 
   window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
-    if (typeof url === 'string' && url.includes('/api/')) {
-      const effectiveInit = attachAuthHeader(init);
+    if (typeof url === 'string' && isAllowedApiDestination(url)) {
+      const effectiveInit = attachAuthHeader(url, init);
       // 1. Try real server HTTP request first
       try {
         const res = await rawFetch.apply(this, [input, effectiveInit]);
