@@ -2378,36 +2378,51 @@ export default async function handler(req: any, res: any) {
             });
           }
 
-          // Step 2: Delete child payroll records (employee_payroll)
-          await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
-
-          // Step 3: Delete parent payroll record (hr_payroll_sheets)
-          await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
-
-          // Step 4: Delete child attendance records (employee_attendance) matching sheet_id or month_year
           const sheetRes = await client.query(`SELECT id FROM hr_attendance_sheets WHERE month_year = $1;`, [month]).catch(() => ({ rows: [] }));
           const sheetIds = Array.from(new Set([
             ...(sheetRes.rows || []).map((r: any) => r.id).filter(Boolean),
             `att-sheet-${month}`,
-            `sheet-${month}`
+            `sheet-${month}`,
+            month
           ]));
 
+          // Step 2: Delete child payroll records (employee_payroll & payroll_records)
+          await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
+          await client.query(`DELETE FROM payroll_records WHERE payroll_month = $1 OR month_year = $1;`, [month]).catch(() => {});
+
+          // Step 3: Delete parent payroll record (hr_payroll_sheets)
+          await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
+
+          // Step 4: Clear logs & activity tables referencing this sheet / month
+          await client.query(`DELETE FROM audit_logs WHERE document_ref = ANY($1::text[]) OR details LIKE $2;`, [
+            [`ATT-${month}`, `att-sheet-${month}`, `sheet-${month}`, month],
+            `%${month}%`
+          ]).catch(() => {});
+          await client.query(`DELETE FROM hr_activity_logs WHERE month_year = $1 OR sheet_id = ANY($2::text[]);`, [month, sheetIds]).catch(() => {});
+
+          // Step 5: Delete child attendance records (employee_attendance & staff_attendance)
           try {
             await client.query(`DELETE FROM employee_attendance WHERE sheet_id = ANY($1::text[]) OR month_year = $2;`, [sheetIds, month]);
           } catch (_) {
             await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
           }
+          await client.query(`DELETE FROM staff_attendance WHERE attendance_date::text LIKE $1;`, [`${month}%`]).catch(() => {});
 
-          // Step 5: Delete parent attendance record (hr_attendance_sheets)
-          await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1;`, [month]);
-          if (sheetIds.length > 0) {
-            await client.query(`DELETE FROM hr_attendance_sheets WHERE id = ANY($1::text[]);`, [sheetIds]).catch(() => {});
-          }
+          // Delete from secondary attendance_sheets table if present
+          await client.query(`DELETE FROM attendance_sheets WHERE month_year = $1 OR month = $1 OR id = ANY($2::text[]);`, [month, sheetIds]).catch(() => {});
+
+          // Step 6: Delete parent attendance record (hr_attendance_sheets)
+          await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1 OR id = ANY($2::text[]);`, [month, sheetIds]);
 
           return res.status(200).json({ success: true });
         } catch (dbErr: any) {
-          console.error('[api/[...all].ts] Database error deleting attendance sheet:', dbErr);
-          return res.status(400).json({ success: false, error: dbErr?.message || 'Database error deleting attendance sheet' });
+          console.error("Supabase Deletion Error:", dbErr);
+          const errMsg = dbErr?.message || 'Database error deleting attendance sheet';
+          const errDetails = dbErr?.detail || dbErr?.details || dbErr?.hint || dbErr?.code || 'None';
+          return res.status(400).json({
+            success: false,
+            error: `DB Error: ${errMsg} | Details: ${errDetails}`
+          });
         } finally {
           try { client.release(); } catch (_) {}
         }
@@ -2423,7 +2438,8 @@ export default async function handler(req: any, res: any) {
             .eq('month_year', month);
 
           if (paySheetsErr) {
-            return res.status(400).json({ success: false, error: paySheetsErr.message || 'Failed to verify payroll status' });
+            console.error("Supabase Deletion Error:", paySheetsErr);
+            return res.status(400).json({ success: false, error: `DB Error: ${paySheetsErr.message} | Details: ${paySheetsErr.details}` });
           }
 
           const { data: postedSlips, error: postedSlipsErr } = await supabase
@@ -2434,7 +2450,8 @@ export default async function handler(req: any, res: any) {
             .limit(1);
 
           if (postedSlipsErr) {
-            return res.status(400).json({ success: false, error: postedSlipsErr.message || 'Failed to verify posted payroll slips' });
+            console.error("Supabase Deletion Error:", postedSlipsErr);
+            return res.status(400).json({ success: false, error: `DB Error: ${postedSlipsErr.message} | Details: ${postedSlipsErr.details}` });
           }
 
           const isPayrollPosted =
@@ -2448,27 +2465,6 @@ export default async function handler(req: any, res: any) {
             });
           }
 
-          // Step 2: Delete child payroll records (employee_payroll)
-          const { error: delPayrollErr } = await supabase
-            .from('employee_payroll')
-            .delete()
-            .eq('month_year', month);
-
-          if (delPayrollErr) {
-            return res.status(400).json({ success: false, error: delPayrollErr.message || 'Failed to delete child payroll records' });
-          }
-
-          // Step 3: Delete parent payroll record (hr_payroll_sheets)
-          const { error: delPaySheetErr } = await supabase
-            .from('hr_payroll_sheets')
-            .delete()
-            .eq('month_year', month);
-
-          if (delPaySheetErr) {
-            return res.status(400).json({ success: false, error: delPaySheetErr.message || 'Failed to delete parent payroll sheet' });
-          }
-
-          // Step 4: Delete child attendance records (employee_attendance) matching sheet_id or month_year
           const { data: attSheets } = await supabase
             .from('hr_attendance_sheets')
             .select('id')
@@ -2477,9 +2473,52 @@ export default async function handler(req: any, res: any) {
           const sheetIds = Array.from(new Set([
             ...(attSheets || []).map((s: any) => s.id).filter(Boolean),
             `att-sheet-${month}`,
-            `sheet-${month}`
+            `sheet-${month}`,
+            month
           ]));
 
+          // Step 2: Delete child payroll records (employee_payroll & payroll_records)
+          const { error: delPayrollErr } = await supabase
+            .from('employee_payroll')
+            .delete()
+            .eq('month_year', month);
+
+          if (delPayrollErr) {
+            console.error("Supabase Deletion Error:", delPayrollErr);
+            return res.status(400).json({ success: false, error: `DB Error: ${delPayrollErr.message} | Details: ${delPayrollErr.details}` });
+          }
+
+          try {
+            await supabase.from('payroll_records').delete().or(`payroll_month.eq.${month},month_year.eq.${month}`);
+          } catch (_) {}
+
+          // Step 3: Delete parent payroll record (hr_payroll_sheets)
+          const { error: delPaySheetErr } = await supabase
+            .from('hr_payroll_sheets')
+            .delete()
+            .eq('month_year', month);
+
+          if (delPaySheetErr) {
+            console.error("Supabase Deletion Error:", delPaySheetErr);
+            return res.status(400).json({ success: false, error: `DB Error: ${delPaySheetErr.message} | Details: ${delPaySheetErr.details}` });
+          }
+
+          // Step 4: Clear logs referencing this sheet / month
+          try {
+            await supabase
+              .from('audit_logs')
+              .delete()
+              .or(`document_ref.eq.ATT-${month},document_ref.eq.att-sheet-${month},document_ref.eq.sheet-${month},document_ref.eq.${month}`);
+          } catch (_) {}
+
+          try {
+            await supabase
+              .from('hr_activity_logs')
+              .delete()
+              .or(`month_year.eq.${month},sheet_id.in.(${sheetIds.join(',')})`);
+          } catch (_) {}
+
+          // Step 5: Delete child attendance records (employee_attendance) matching sheet_id or month_year
           if (sheetIds.length > 0) {
             try {
               const { error: sheetIdDelErr } = await supabase
@@ -2488,9 +2527,10 @@ export default async function handler(req: any, res: any) {
                 .in('sheet_id', sheetIds);
 
               if (sheetIdDelErr) {
-                const msg = sheetIdDelErr.message || '';
-                if (!msg.toLowerCase().includes('column') && !msg.toLowerCase().includes('does not exist')) {
-                  return res.status(400).json({ success: false, error: sheetIdDelErr.message });
+                const msg = (sheetIdDelErr.message || '').toLowerCase();
+                if (!msg.includes('column') && !msg.includes('does not exist')) {
+                  console.error("Supabase Deletion Error:", sheetIdDelErr);
+                  return res.status(400).json({ success: false, error: `DB Error: ${sheetIdDelErr.message} | Details: ${sheetIdDelErr.details}` });
                 }
               }
             } catch (_) {}
@@ -2502,29 +2542,45 @@ export default async function handler(req: any, res: any) {
             .eq('month_year', month);
 
           if (attErr) {
-            return res.status(400).json({ success: false, error: attErr.message || 'Failed to delete child attendance records' });
+            console.error("Supabase Deletion Error:", attErr);
+            return res.status(400).json({ success: false, error: `DB Error: ${attErr.message} | Details: ${attErr.details}` });
           }
 
-          // Step 5: Delete parent attendance record (hr_attendance_sheets)
+          // Delete from secondary attendance_sheets table if present
+          try {
+            await supabase
+              .from('attendance_sheets')
+              .delete()
+              .or(`month_year.eq.${month},month.eq.${month},id.in.(${sheetIds.join(',')})`);
+          } catch (_) {}
+
+          // Step 6: Delete parent attendance record (hr_attendance_sheets)
           const { error: sheetErr } = await supabase
             .from('hr_attendance_sheets')
             .delete()
             .eq('month_year', month);
 
           if (sheetErr) {
-            return res.status(400).json({ success: false, error: sheetErr.message || 'Failed to delete parent attendance sheet' });
+            console.error("Supabase Deletion Error:", sheetErr);
+            return res.status(400).json({ success: false, error: `DB Error: ${sheetErr.message} | Details: ${sheetErr.details}` });
           }
 
           if (sheetIds.length > 0) {
             try {
-              await supabase.from('hr_attendance_sheets').delete().in('id', sheetIds);
+              const { error: idDelErr } = await supabase.from('hr_attendance_sheets').delete().in('id', sheetIds);
+              if (idDelErr) {
+                console.error("Supabase Deletion Error:", idDelErr);
+                return res.status(400).json({ success: false, error: `DB Error: ${idDelErr.message} | Details: ${idDelErr.details}` });
+              }
             } catch (_) {}
           }
 
           return res.status(200).json({ success: true });
         } catch (supaErr: any) {
-          console.error('[api/[...all].ts] Supabase error deleting attendance sheet:', supaErr);
-          return res.status(400).json({ success: false, error: supaErr?.message || 'Error deleting attendance sheet' });
+          console.error("Supabase Deletion Error:", supaErr);
+          const errMsg = supaErr?.message || 'Error deleting attendance sheet';
+          const errDetails = supaErr?.details || supaErr?.hint || supaErr?.code || 'None';
+          return res.status(400).json({ success: false, error: `DB Error: ${errMsg} | Details: ${errDetails}` });
         }
       }
     }

@@ -392,7 +392,13 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
 
   const showMsg = (text: string, type: 'success' | 'error' = 'success') => {
     setActionMessage({ type, text });
-    setTimeout(() => setActionMessage(null), 6000);
+    if (type === 'error') {
+      console.error('[HRView Error Toast]:', text);
+      if (typeof (window as any).toast?.error === 'function') {
+        (window as any).toast.error(text);
+      }
+    }
+    setTimeout(() => setActionMessage(null), type === 'error' ? 15000 : 6000);
   };
 
   // Status checks for currently selected month
@@ -607,7 +613,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
-        showMsg(data.error || 'Failed to delete attendance sheet', 'error');
+        const errorMsg = data.error || data.message || (typeof data === 'string' ? data : 'Failed to delete attendance sheet');
+        console.error('[HRView] Attendance sheet deletion failed:', errorMsg);
+        showMsg(errorMsg, 'error');
         return;
       }
       // Pessimistic state update: Only clear after confirmed DB deletion
@@ -623,7 +631,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       await loadData();
       onRefreshAll?.();
     } catch (err: any) {
-      showMsg(err?.message || 'Failed to delete attendance sheet', 'error');
+      const errorMsg = err?.message || 'Failed to delete attendance sheet';
+      console.error('[HRView] Attendance sheet deletion exception:', errorMsg);
+      showMsg(errorMsg, 'error');
     }
   };
 
@@ -717,7 +727,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
-        showMsg(data.error || 'Failed to delete attendance sheet', 'error');
+        const errorMsg = data.error || data.message || (typeof data === 'string' ? data : 'Failed to delete attendance sheet');
+        console.error('[HRView] Attendance sheet deletion failed:', errorMsg);
+        showMsg(errorMsg, 'error');
         return;
       }
       // Pessimistic state update: Only clear after confirmed DB deletion
@@ -733,7 +745,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       await loadData();
       onRefreshAll?.();
     } catch (err: any) {
-      showMsg(err?.message || 'Failed to delete attendance sheet', 'error');
+      const errorMsg = err?.message || 'Failed to delete attendance sheet';
+      console.error('[HRView] Attendance sheet deletion exception:', errorMsg);
+      showMsg(errorMsg, 'error');
     }
   };
 

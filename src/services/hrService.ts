@@ -907,8 +907,8 @@ export class HrService {
       .eq('month_year', monthYear);
 
     if (paySheetsErr) {
-      console.error('[HrService] Error verifying hr_payroll_sheets status:', paySheetsErr);
-      throw new Error(paySheetsErr.message || 'Failed to verify payroll status');
+      console.error("Supabase Deletion Error:", paySheetsErr);
+      throw new Error(`DB Error: ${paySheetsErr.message} | Details: ${paySheetsErr.details}`);
     }
 
     const { data: postedSlips, error: postedSlipsErr } = await supabase
@@ -919,8 +919,8 @@ export class HrService {
       .limit(1);
 
     if (postedSlipsErr) {
-      console.error('[HrService] Error verifying posted employee_payroll slips:', postedSlipsErr);
-      throw new Error(postedSlipsErr.message || 'Failed to verify posted payroll slips');
+      console.error("Supabase Deletion Error:", postedSlipsErr);
+      throw new Error(`DB Error: ${postedSlipsErr.message} | Details: ${postedSlipsErr.details}`);
     }
 
     const isPayrollPosted =
@@ -931,16 +931,33 @@ export class HrService {
       throw new Error(`Cannot delete attendance for ${monthYear}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`);
     }
 
-    // Step 2: Delete child payroll records (employee_payroll)
+    // Lookup all potential sheet IDs for attendance & payroll matching this month
+    const { data: attSheets } = await supabase
+      .from('hr_attendance_sheets')
+      .select('id')
+      .eq('month_year', monthYear);
+
+    const sheetIds = Array.from(new Set([
+      ...(attSheets || []).map((s: any) => s.id).filter(Boolean),
+      `att-sheet-${monthYear}`,
+      `sheet-${monthYear}`,
+      monthYear
+    ]));
+
+    // Step 2: Delete child payroll records (employee_payroll & payroll_records)
     const { error: delPayrollErr } = await supabase
       .from('employee_payroll')
       .delete()
       .eq('month_year', monthYear);
 
     if (delPayrollErr) {
-      console.error('[HrService] Error deleting employee_payroll:', delPayrollErr);
-      throw new Error(delPayrollErr.message || 'Failed to delete payroll records');
+      console.error("Supabase Deletion Error:", delPayrollErr);
+      throw new Error(`DB Error: ${delPayrollErr.message} | Details: ${delPayrollErr.details}`);
     }
+
+    try {
+      await supabase.from('payroll_records').delete().or(`payroll_month.eq.${monthYear},month_year.eq.${monthYear}`);
+    } catch (_) {}
 
     // Step 3: Delete parent payroll record (hr_payroll_sheets)
     const { error: delPaySheetErr } = await supabase
@@ -949,28 +966,35 @@ export class HrService {
       .eq('month_year', monthYear);
 
     if (delPaySheetErr) {
-      console.error('[HrService] Error deleting hr_payroll_sheets:', delPaySheetErr);
-      throw new Error(delPaySheetErr.message || 'Failed to delete payroll sheet');
+      console.error("Supabase Deletion Error:", delPaySheetErr);
+      throw new Error(`DB Error: ${delPaySheetErr.message} | Details: ${delPaySheetErr.details}`);
     }
 
-    // Step 4: Delete child attendance records (employee_attendance) matching sheet_id or month_year
-    // First lookup any attendance sheet IDs matching this month_year
-    const { data: attSheets, error: fetchSheetErr } = await supabase
-      .from('hr_attendance_sheets')
-      .select('id')
-      .eq('month_year', monthYear);
-
-    if (fetchSheetErr) {
-      console.warn('[HrService] Warning fetching attendance sheet IDs:', fetchSheetErr.message);
+    // Step 4: Clear logs & activity tables referencing this sheet / month (audit_logs, hr_activity_logs, etc.)
+    try {
+      await supabase
+        .from('audit_logs')
+        .delete()
+        .or(`document_ref.eq.ATT-${monthYear},document_ref.eq.att-sheet-${monthYear},document_ref.eq.sheet-${monthYear},document_ref.eq.${monthYear}`);
+    } catch (auditErr: any) {
+      console.warn('[HrService] audit_logs cleanup notice:', auditErr?.message);
     }
 
-    const sheetIds = Array.from(new Set([
-      ...(attSheets || []).map((s: any) => s.id).filter(Boolean),
-      `att-sheet-${monthYear}`,
-      `sheet-${monthYear}`
-    ]));
+    try {
+      await supabase
+        .from('hr_activity_logs')
+        .delete()
+        .or(`month_year.eq.${monthYear},sheet_id.in.(${sheetIds.join(',')})`);
+    } catch (_) {}
 
-    // Delete child attendance records by sheet_id if child table has sheet_id column
+    try {
+      await supabase
+        .from('staff_attendance')
+        .delete()
+        .like('attendance_date', `${monthYear}%`);
+    } catch (_) {}
+
+    // Step 5: Delete child attendance records (employee_attendance) matching sheet_id or month_year
     if (sheetIds.length > 0) {
       try {
         const { error: sheetIdDelErr } = await supabase
@@ -979,49 +1003,60 @@ export class HrService {
           .in('sheet_id', sheetIds);
 
         if (sheetIdDelErr) {
-          const msg = sheetIdDelErr.message || '';
-          if (!msg.toLowerCase().includes('column') && !msg.toLowerCase().includes('does not exist')) {
-            console.error('[HrService] Error deleting employee_attendance by sheet_id:', sheetIdDelErr);
-            throw new Error(sheetIdDelErr.message || 'Failed to delete child attendance records by sheet_id');
+          const msg = (sheetIdDelErr.message || '').toLowerCase();
+          if (!msg.includes('column') && !msg.includes('does not exist')) {
+            console.error("Supabase Deletion Error:", sheetIdDelErr);
+            throw new Error(`DB Error: ${sheetIdDelErr.message} | Details: ${sheetIdDelErr.details}`);
           }
         }
       } catch (err: any) {
-        const msg = err?.message || '';
-        if (!msg.toLowerCase().includes('column') && !msg.toLowerCase().includes('does not exist')) {
-          throw err;
-        }
+        if (err.message && err.message.startsWith('DB Error:')) throw err;
       }
     }
 
-    // Delete child attendance records by month_year
     const { error: attErr } = await supabase
       .from('employee_attendance')
       .delete()
       .eq('month_year', monthYear);
 
     if (attErr) {
-      console.error('[HrService] Error deleting employee_attendance from Supabase:', attErr);
-      throw new Error(attErr.message || 'Failed to delete child attendance records');
+      console.error("Supabase Deletion Error:", attErr);
+      throw new Error(`DB Error: ${attErr.message} | Details: ${attErr.details}`);
     }
 
-    // Step 5: Delete the parent attendance record (hr_attendance_sheets)
+    // Delete from secondary / legacy attendance_sheets table if present
+    try {
+      await supabase
+        .from('attendance_sheets')
+        .delete()
+        .or(`month_year.eq.${monthYear},month.eq.${monthYear},id.in.(${sheetIds.join(',')})`);
+    } catch (_) {}
+
+    // Step 6: Delete the parent attendance record (hr_attendance_sheets)
     const { error: sheetErr } = await supabase
       .from('hr_attendance_sheets')
       .delete()
       .eq('month_year', monthYear);
 
     if (sheetErr) {
-      console.error('[HrService] Error deleting hr_attendance_sheets by month_year from Supabase:', sheetErr);
-      throw new Error(sheetErr.message || 'Failed to delete attendance sheet');
+      console.error("Supabase Deletion Error:", sheetErr);
+      throw new Error(`DB Error: ${sheetErr.message} | Details: ${sheetErr.details}`);
     }
 
     if (sheetIds.length > 0) {
       try {
-        await supabase
+        const { error: idDelErr } = await supabase
           .from('hr_attendance_sheets')
           .delete()
           .in('id', sheetIds);
-      } catch (_) {}
+
+        if (idDelErr) {
+          console.error("Supabase Deletion Error:", idDelErr);
+          throw new Error(`DB Error: ${idDelErr.message} | Details: ${idDelErr.details}`);
+        }
+      } catch (err: any) {
+        if (err.message && err.message.startsWith('DB Error:')) throw err;
+      }
     }
 
     // Audit log

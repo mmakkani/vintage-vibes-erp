@@ -898,36 +898,51 @@ hrRouter.delete(['/attendance/sheet', '/attendance/:month'], async (req, res) =>
         throw new Error(`Cannot delete attendance for ${month}: Linked payroll is already POSTED to General Ledger. Please unpost payroll first.`);
       }
 
-      // Step 2: Delete child payroll records (employee_payroll)
-      await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
-
-      // Step 3: Delete parent payroll record (hr_payroll_sheets)
-      await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
-
-      // Step 4: Delete child attendance records (employee_attendance) matching sheet_id or month_year
       const sheetRes = await client.query(`SELECT id FROM hr_attendance_sheets WHERE month_year = $1;`, [month]).catch(() => ({ rows: [] }));
       const sheetIds = Array.from(new Set([
         ...(sheetRes.rows || []).map((r: any) => r.id).filter(Boolean),
         `att-sheet-${month}`,
-        `sheet-${month}`
+        `sheet-${month}`,
+        month
       ]));
 
+      // Step 2: Delete child payroll records (employee_payroll & payroll_records)
+      await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
+      await client.query(`DELETE FROM payroll_records WHERE payroll_month = $1 OR month_year = $1;`, [month]).catch(() => {});
+
+      // Step 3: Delete parent payroll record (hr_payroll_sheets)
+      await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
+
+      // Step 4: Clear logs & activity tables referencing this sheet / month
+      await client.query(`DELETE FROM audit_logs WHERE document_ref = ANY($1::text[]) OR details LIKE $2;`, [
+        [`ATT-${month}`, `att-sheet-${month}`, `sheet-${month}`, month],
+        `%${month}%`
+      ]).catch(() => {});
+      await client.query(`DELETE FROM hr_activity_logs WHERE month_year = $1 OR sheet_id = ANY($2::text[]);`, [month, sheetIds]).catch(() => {});
+
+      // Step 5: Delete child attendance records (employee_attendance & staff_attendance)
       try {
         await client.query(`DELETE FROM employee_attendance WHERE sheet_id = ANY($1::text[]) OR month_year = $2;`, [sheetIds, month]);
       } catch (_) {
         await client.query(`DELETE FROM employee_attendance WHERE month_year = $1;`, [month]);
       }
+      await client.query(`DELETE FROM staff_attendance WHERE attendance_date::text LIKE $1;`, [`${month}%`]).catch(() => {});
 
-      // Step 5: Delete parent attendance record (hr_attendance_sheets)
-      await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1;`, [month]);
-      if (sheetIds.length > 0) {
-        await client.query(`DELETE FROM hr_attendance_sheets WHERE id = ANY($1::text[]);`, [sheetIds]).catch(() => {});
-      }
+      // Delete from secondary attendance_sheets table if present
+      await client.query(`DELETE FROM attendance_sheets WHERE month_year = $1 OR month = $1 OR id = ANY($2::text[]);`, [month, sheetIds]).catch(() => {});
+
+      // Step 6: Delete parent attendance record (hr_attendance_sheets)
+      await client.query(`DELETE FROM hr_attendance_sheets WHERE month_year = $1 OR id = ANY($2::text[]);`, [month, sheetIds]);
     });
     return res.json({ success: true });
   } catch (err: any) {
-    console.error('[hr.routes] Error deleting attendance sheet:', err);
-    return res.status(400).json({ success: false, error: err?.message || 'Failed to delete attendance sheet' });
+    console.error("Supabase Deletion Error:", err);
+    const errMsg = err?.message || 'Failed to delete attendance sheet';
+    const errDetails = err?.detail || err?.details || err?.hint || err?.code || 'None';
+    return res.status(400).json({
+      success: false,
+      error: `DB Error: ${errMsg} | Details: ${errDetails}`
+    });
   }
 });
 
