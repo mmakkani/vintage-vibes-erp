@@ -55,7 +55,7 @@ export class HrService {
   // ==========================================
   // 1. EMPLOYEES (public.employees strictly)
   // ==========================================
-  public static readonly EMPLOYEES_GRID_COLUMNS = 'id, emp_code, employee_code, name, full_name, first_name, last_name, designation, department, basic_salary, base_salary, salary, housing_allowance, housing_allow, transport_allowance, transport_allow, other_allow, total_package, gross_salary, working_hours_per_day, is_active, joining_date, status, emirates_id, emirates_id_no, nationality, gender, dob, emirates_id_expiry, id_card_no, passport_no, passport_number, passport_expiry, created_at, updated_at';
+  public static readonly EMPLOYEES_GRID_COLUMNS = 'id, emp_code, employee_code, name, full_name, first_name, last_name, designation, department, basic_salary, base_salary, salary, housing_allowance, housing_allow, transport_allowance, transport_allow, other_allow, total_package, gross_salary, working_hours_per_day, is_active, is_deleted, joining_date, status, emirates_id, emirates_id_no, nationality, gender, dob, emirates_id_expiry, id_card_no, passport_no, passport_number, passport_expiry, created_at, updated_at';
 
   public static mapEmployeeRow(row: any): Employee {
     const empCode = row.emp_code || row.employee_code || '';
@@ -96,8 +96,11 @@ export class HrService {
       total_package: totPkg,
       workingHoursPerDay: Number(row.working_hours_per_day || 8),
       working_hours_per_day: Number(row.working_hours_per_day || 8),
-      isActive: row.is_active !== false,
-      is_active: row.is_active !== false,
+      isActive: row.is_active !== false && row.is_deleted !== true && row.status !== 'DELETED',
+      is_active: row.is_active !== false && row.is_deleted !== true && row.status !== 'DELETED',
+      is_deleted: row.is_deleted === true || row.status === 'DELETED',
+      isDeleted: row.is_deleted === true || row.status === 'DELETED',
+      updated_at: row.updated_at || '',
       joiningDate: row.joining_date || new Date().toISOString().slice(0, 10),
       joining_date: row.joining_date || new Date().toISOString().slice(0, 10),
       status: row.status || 'POSTED',
@@ -197,7 +200,12 @@ export class HrService {
                   stack: json.stack
                 });
               }
-              const list = Array.isArray(json) ? json : (json?.employees || json?.data || []);
+              const rawList = Array.isArray(json) ? json : (json?.employees || json?.data || []);
+              const list = rawList.filter((e: any) =>
+                (e.is_deleted === false || e.is_deleted == null) &&
+                (e.is_active === true || e.is_active == null) &&
+                e.status !== 'DELETED'
+              );
               if (Array.isArray(list) && list.length > 0) {
                 this.cachedEmployees = list;
                 this.lastEmployeesFetched = Date.now();
@@ -213,6 +221,9 @@ export class HrService {
         let query = supabase
           .from('employees')
           .select(selectCols)
+          .or('is_deleted.is.null,is_deleted.eq.false')
+          .or('is_active.is.null,is_active.eq.true')
+          .neq('status', 'DELETED')
           .order('created_at', { ascending: false });
 
         if (options?.limit) {
@@ -234,7 +245,13 @@ export class HrService {
             return [];
           }
 
-          const mapped = data.map((row: any) => this.mapEmployeeRow(row));
+          const mapped = data
+            .map((row: any) => this.mapEmployeeRow(row))
+            .filter((e: any) =>
+              (e.is_deleted === false || e.is_deleted == null) &&
+              (e.is_active === true || e.is_active == null) &&
+              e.status !== 'DELETED'
+            );
 
           if (isDefaultFetch) {
             this.cachedEmployees = mapped;
@@ -277,22 +294,22 @@ export class HrService {
     const totalPackage = Number(emp.total_package ?? emp.totalPackage ?? (basicSalary + housingAllowance + transportAllowance + otherAllowance));
     const workingHoursPerDay = Number((emp as any).working_hours_per_day ?? emp.workingHoursPerDay ?? 8);
 
-    const resolvedFullName = 
-      (emp as any).full_name || 
-      (emp as any).fullName || 
-      (emp as any).fullNameEnglish || 
-      emp.name || 
-      (emp as any).full_name_english || 
+    const resolvedFullName =
+      (emp as any).full_name ||
+      (emp as any).fullName ||
+      (emp as any).fullNameEnglish ||
+      emp.name ||
+      (emp as any).full_name_english ||
       'Staff Member';
 
     const firstName = resolvedFullName.split(' ')[0] || resolvedFullName;
     const lastName = resolvedFullName.split(' ').slice(1).join(' ') || '';
 
-    const resolvedArabicName = 
-      emp.nameArabic || 
-      (emp as any).full_name_arabic || 
-      (emp as any).fullNameArabic || 
-      (emp as any).name_arabic || 
+    const resolvedArabicName =
+      emp.nameArabic ||
+      (emp as any).full_name_arabic ||
+      (emp as any).fullNameArabic ||
+      (emp as any).name_arabic ||
       '';
 
     const safeJoiningDate = cleanDate(emp.joiningDate || (emp as any).joining_date) || new Date().toISOString().slice(0, 10);
@@ -628,13 +645,27 @@ export class HrService {
       }
     } catch (_) {}
 
+    const now = new Date().toISOString();
     try {
-      await supabase
+      // Strict Soft Delete on public.employees using exact id (UUID)
+      // Table Isolation: DO NOT touch employee_attendance, staff_attendance, employee_payroll, payroll_records, employee_documents, hr_attendance_sheets
+      const { error } = await supabase
         .from('employees')
-        .delete()
+        .update({
+          is_deleted: true,
+          is_active: false,
+          status: 'DELETED',
+          updated_at: now
+        })
         .eq('id', String(id));
-    } catch (err) {
-      console.warn('Supabase delete employee error:', err);
+
+      if (error) {
+        console.warn('Supabase soft delete employee error:', error);
+        throw new Error(`DB Error: ${error.message} | Details: ${error.details || ''}`);
+      }
+    } catch (err: any) {
+      console.warn('Soft delete employee failed:', err);
+      throw err;
     }
 
     try {
@@ -644,7 +675,7 @@ export class HrService {
         documentRef: String(id),
         status: 'UNPOSTED',
         userName: 'HR Administrator',
-        details: `Deleted employee record with ID ${id}`
+        details: `Soft-deleted employee record with ID ${id}`
       });
     } catch (_) {}
   }
@@ -1232,8 +1263,8 @@ export class HrService {
     for (const att of attendanceRecords) {
       const attEmpId = String(att.employeeId || '');
       const attCode = (att.empCode || '').trim().toLowerCase();
-      const matchedEmp = employees.find(e => 
-        (attEmpId && String(e.id) === attEmpId) || 
+      const matchedEmp = employees.find(e =>
+        (attEmpId && String(e.id) === attEmpId) ||
         (attCode && (e.empCode || (e as any).code || (e as any).employee_code || '').trim().toLowerCase() === attCode)
       );
       const key = attEmpId || attCode || att.id;
@@ -1282,8 +1313,8 @@ export class HrService {
       const grossPay = earnedBasic + allowances + overtimePay;
 
       // Calculate loan/advance recovery
-      const empLoans = activeLoans.filter(l => 
-        (empId && String(l.employeeId) === empId) || 
+      const empLoans = activeLoans.filter(l =>
+        (empId && String(l.employeeId) === empId) ||
         (empCode && (l.empCode || '').trim().toLowerCase() === empCode.trim().toLowerCase())
       );
       let advanceDeduction = 0;

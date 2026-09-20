@@ -1364,8 +1364,11 @@ export default async function handler(req: any, res: any) {
         total_package: totalPackage,
         workingHoursPerDay: Number(row.working_hours_per_day || 8),
         working_hours_per_day: Number(row.working_hours_per_day || 8),
-        isActive: row.is_active !== false,
-        is_active: row.is_active !== false,
+        isActive: row.is_active !== false && row.is_deleted !== true && row.status !== 'DELETED',
+        is_active: row.is_active !== false && row.is_deleted !== true && row.status !== 'DELETED',
+        is_deleted: row.is_deleted === true || row.status === 'DELETED',
+        isDeleted: row.is_deleted === true || row.status === 'DELETED',
+        updated_at: row.updated_at || '',
         joiningDate: formatDateStr(row.joining_date || row.date_of_joining) || new Date().toISOString().slice(0, 10),
         joining_date: formatDateStr(row.joining_date || row.date_of_joining) || new Date().toISOString().slice(0, 10),
         status: row.status || 'POSTED',
@@ -1470,20 +1473,22 @@ export default async function handler(req: any, res: any) {
           let result: any;
           try {
             result = await client.query(`
-              SELECT * FROM public.employees 
-              WHERE is_deleted IS NOT TRUE 
+              SELECT * FROM public.employees
+              WHERE COALESCE(is_deleted, false) = false
+                AND COALESCE(is_active, true) = true
+                AND COALESCE(status, '') != 'DELETED'
               ORDER BY created_at DESC;
             `);
           } catch (colErr: any) {
-            console.warn('[Serverless HR] Column query failed, falling back to SELECT *:', colErr?.message);
+            console.warn('[Serverless HR] Column query failed, falling back to basic query:', colErr?.message);
             try {
-              result = await client.query('SELECT * FROM public.employees ORDER BY id DESC;');
+              result = await client.query("SELECT * FROM public.employees WHERE is_deleted IS NOT TRUE AND is_active IS NOT FALSE AND COALESCE(status, '') != 'DELETED' ORDER BY id DESC;");
             } catch {
-              result = await client.query('SELECT * FROM public.employees;');
+              result = await client.query("SELECT * FROM public.employees WHERE is_deleted IS NOT TRUE;");
             }
           }
           const rows = Array.isArray(result?.rows) ? result.rows : [];
-          const mapped = rows.map(mapEmployeeRow);
+          const mapped = rows.map(mapEmployeeRow).filter((e: any) => e.is_deleted !== true && e.is_active !== false && e.status !== 'DELETED');
           return res.status(200).json(mapped);
         } finally {
           if (client && typeof client.release === 'function') {
@@ -1514,8 +1519,8 @@ export default async function handler(req: any, res: any) {
           let empCode = (emp.empCode || emp.emp_code || emp.employee_code || '').trim();
           if (!empCode) {
             const codeRes = await client.query(`
-              SELECT emp_code, employee_code FROM employees 
-              WHERE emp_code LIKE 'EMP-%' OR employee_code LIKE 'EMP-%' 
+              SELECT emp_code, employee_code FROM employees
+              WHERE emp_code LIKE 'EMP-%' OR employee_code LIKE 'EMP-%'
               ORDER BY created_at DESC LIMIT 50;
             `);
             let maxNum = 0;
@@ -1607,8 +1612,8 @@ export default async function handler(req: any, res: any) {
       if (client) {
         try {
           const updRes = await client.query(`
-            UPDATE employees SET status = 'POSTED', updated_at = NOW() 
-            WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1 
+            UPDATE employees SET status = 'POSTED', updated_at = NOW()
+            WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1
             RETURNING *;
           `, [id]);
           return res.status(200).json({ success: true, employee: mapEmployeeRow(updRes.rows[0] || {}) });
@@ -1629,8 +1634,8 @@ export default async function handler(req: any, res: any) {
       if (client) {
         try {
           const updRes = await client.query(`
-            UPDATE employees SET status = 'DRAFT', updated_at = NOW() 
-            WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1 
+            UPDATE employees SET status = 'DRAFT', updated_at = NOW()
+            WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1
             RETURNING *;
           `, [id]);
           return res.status(200).json({ success: true, employee: mapEmployeeRow(updRes.rows[0] || {}) });
@@ -1643,25 +1648,50 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: true });
     }
 
-    // 5. DELETE /api/hr/employees/:id - Delete employee
+    // 5. DELETE /api/hr/employees/:id - Soft Delete employee on public.employees
     if (pathname.includes('/api/hr/employees/') && method === 'DELETE') {
       const segments = pathname.split('/').filter(Boolean);
       const id = segments[segments.length - 1];
+      const now = new Date().toISOString();
       const client = await getPgClient();
       if (client) {
         try {
-          await client.query(`DELETE FROM employee_attendance WHERE employee_id = $1 OR emp_code = $1;`, [id]).catch(() => {});
-          await client.query(`DELETE FROM employee_loans WHERE employee_id = $1 OR emp_code = $1;`, [id]).catch(() => {});
-          await client.query(`DELETE FROM employee_payroll WHERE employee_id = $1 OR emp_code = $1;`, [id]).catch(() => {});
-          await client.query(`DELETE FROM employees WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1;`, [id]);
-          return res.status(200).json({ success: true });
+          // Strict Soft Delete on public.employees using exact id (UUID)
+          // Table Isolation: Absolutely DO NOT modify or delete records in:
+          // public.employee_attendance, public.staff_attendance, public.employee_payroll, public.payroll_records, public.employee_documents, public.hr_attendance_sheets
+          await client.query(`
+            UPDATE public.employees
+            SET is_deleted = true,
+                is_active = false,
+                status = 'DELETED',
+                updated_at = $1
+            WHERE id::text = $2;
+          `, [now, id]);
+          return res.status(200).json({ success: true, message: 'Employee soft-deleted successfully' });
         } catch (dbErr: any) {
-          return res.status(400).json({ error: dbErr?.message });
+          return res.status(400).json({ error: dbErr?.message, details: dbErr?.detail });
         } finally {
           try { await client.end(); } catch (_) {}
         }
       }
-      return res.status(200).json({ success: true });
+
+      // Supabase fallback if direct PG client is not available
+      const adminClient = getSupabaseAdmin();
+      if (adminClient) {
+        const { error } = await adminClient
+          .from('employees')
+          .update({
+            is_deleted: true,
+            is_active: false,
+            status: 'DELETED',
+            updated_at: now
+          })
+          .eq('id', id);
+        if (error) {
+          return res.status(400).json({ error: error.message, details: error.details });
+        }
+      }
+      return res.status(200).json({ success: true, message: 'Employee soft-deleted successfully' });
     }
 
     // 6. PUT /api/hr/employees/:id - Update existing employee
@@ -1803,8 +1833,8 @@ export default async function handler(req: any, res: any) {
       if (client) {
         try {
           const result = await client.query(`
-            SELECT * FROM employee_attendance 
-            WHERE month_year = $1 
+            SELECT * FROM employee_attendance
+            WHERE month_year = $1
             ORDER BY emp_code ASC;
           `, [month]);
 
@@ -1826,8 +1856,8 @@ export default async function handler(req: any, res: any) {
           if (!isPosted) {
             try {
               const empRes = await client.query(`
-                SELECT * FROM employees 
-                WHERE is_deleted IS NOT TRUE 
+                SELECT * FROM employees
+                WHERE is_deleted IS NOT TRUE
                   AND (is_active IS NULL OR is_active IS NOT FALSE)
                   AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
                 ORDER BY emp_code ASC;
@@ -1903,8 +1933,8 @@ export default async function handler(req: any, res: any) {
       if (client) {
         try {
           await client.query(`
-            UPDATE employee_attendance 
-            SET days_worked = $1, overtime_hours = $2 
+            UPDATE employee_attendance
+            SET days_worked = $1, overtime_hours = $2
             WHERE id = $3;
           `, [Number(daysWorked || 0), Number(overtimeHours || 0), attId]);
           return res.status(200).json({ success: true });
@@ -1927,8 +1957,8 @@ export default async function handler(req: any, res: any) {
       if (client) {
         try {
           const empRes = await client.query(`
-            SELECT * FROM employees 
-            WHERE is_deleted IS NOT TRUE 
+            SELECT * FROM employees
+            WHERE is_deleted IS NOT TRUE
               AND (is_active IS NULL OR is_active IS NOT FALSE)
               AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
             ORDER BY emp_code ASC;
@@ -1976,8 +2006,8 @@ export default async function handler(req: any, res: any) {
       if (client) {
         try {
           const empRes = await client.query(`
-            SELECT * FROM employees 
-            WHERE is_deleted IS NOT TRUE 
+            SELECT * FROM employees
+            WHERE is_deleted IS NOT TRUE
               AND (is_active IS NULL OR is_active IS NOT FALSE)
               AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
             ORDER BY emp_code ASC;
@@ -2035,8 +2065,8 @@ export default async function handler(req: any, res: any) {
         if (clientOrPool) {
           try {
             const attRes = await clientOrPool.query(`
-              SELECT * FROM employee_attendance 
-              WHERE month_year = $1 
+              SELECT * FROM employee_attendance
+              WHERE month_year = $1
               ORDER BY emp_code ASC;
             `, [month]);
             attendanceRows = attRes.rows || [];
@@ -2044,8 +2074,8 @@ export default async function handler(req: any, res: any) {
 
           try {
             const empRes = await clientOrPool.query(`
-              SELECT * FROM employees 
-              WHERE is_active IS NOT FALSE AND is_deleted IS NOT TRUE 
+              SELECT * FROM employees
+              WHERE is_active IS NOT FALSE AND is_deleted IS NOT TRUE
               ORDER BY emp_code ASC;
             `);
             employeeRows = empRes.rows || [];
@@ -2053,7 +2083,7 @@ export default async function handler(req: any, res: any) {
 
           try {
             const loanRes = await clientOrPool.query(`
-              SELECT * FROM employee_loans 
+              SELECT * FROM employee_loans
               WHERE status = 'ACTIVE' AND remaining_amount > 0;
             `);
             loanRows = loanRes.rows || [];
@@ -2089,7 +2119,7 @@ export default async function handler(req: any, res: any) {
         // Delete existing DRAFT slips for this month so stale 1-person drafts are cleared
         if (clientOrPool) {
           await clientOrPool.query(`
-            DELETE FROM employee_payroll 
+            DELETE FROM employee_payroll
             WHERE month_year = $1 AND (status = 'DRAFT' OR status IS NULL);
           `, [month]).catch(() => {});
         } else {
@@ -2108,8 +2138,8 @@ export default async function handler(req: any, res: any) {
         for (const att of attendanceRows) {
           const attEmpId = String(att.employee_id || '');
           const attCode = String(att.emp_code || '').trim().toLowerCase();
-          const emp = employeeRows.find((e: any) => 
-            (attEmpId && String(e.id) === attEmpId) || 
+          const emp = employeeRows.find((e: any) =>
+            (attEmpId && String(e.id) === attEmpId) ||
             (attCode && (e.emp_code || e.employee_code || '').trim().toLowerCase() === attCode)
           );
 
@@ -2122,8 +2152,8 @@ export default async function handler(req: any, res: any) {
           const otHours = Number(att.overtime_hours ?? 0);
 
           const baseSalary = Number(emp?.basic_salary ?? emp?.base_salary ?? 0);
-          const allowances = Number(emp?.housing_allowance ?? emp?.housing_allow ?? 0) + 
-                             Number(emp?.transport_allowance ?? emp?.transport_allow ?? 0) + 
+          const allowances = Number(emp?.housing_allowance ?? emp?.housing_allow ?? 0) +
+                             Number(emp?.transport_allowance ?? emp?.transport_allow ?? 0) +
                              Number(emp?.other_allowances ?? emp?.other_allow ?? 0);
           const dailyRate = Math.round((baseSalary / 30) * 100) / 100;
           const workingHours = Number(emp?.working_hours_per_day || 8);
@@ -2133,8 +2163,8 @@ export default async function handler(req: any, res: any) {
           const overtimePay = Math.round((hourlyRate * otHours * 1.5) * 100) / 100;
           const grossPay = earnedBasic + allowances + overtimePay;
 
-          const empLoans = loanRows.filter((l: any) => 
-            (empId && String(l.employee_id) === empId) || 
+          const empLoans = loanRows.filter((l: any) =>
+            (empId && String(l.employee_id) === empId) ||
             (empCode && (l.emp_code || '').trim().toLowerCase() === empCode.toLowerCase())
           );
           let advanceDeduction = 0;
@@ -2289,13 +2319,13 @@ export default async function handler(req: any, res: any) {
       if (client) {
         try {
           await client.query(`
-            UPDATE employee_attendance 
-            SET status = 'POSTED', locked_at = NOW(), locked_by = $2 
+            UPDATE employee_attendance
+            SET status = 'POSTED', locked_at = NOW(), locked_by = $2
             WHERE month_year = $1;
           `, [month, postedBy || 'HR Manager']);
           await client.query(`
-            UPDATE hr_attendance_sheets 
-            SET status = 'POSTED' 
+            UPDATE hr_attendance_sheets
+            SET status = 'POSTED'
             WHERE month_year = $1;
           `, [month]);
 
@@ -2334,13 +2364,13 @@ export default async function handler(req: any, res: any) {
           }
 
           await client.query(`
-            UPDATE employee_attendance 
-            SET status = 'DRAFT', locked_at = NULL, locked_by = NULL 
+            UPDATE employee_attendance
+            SET status = 'DRAFT', locked_at = NULL, locked_by = NULL
             WHERE month_year = $1;
           `, [month]);
           await client.query(`
-            UPDATE hr_attendance_sheets 
-            SET status = 'DRAFT' 
+            UPDATE hr_attendance_sheets
+            SET status = 'DRAFT'
             WHERE month_year = $1;
           `, [month]);
           return res.status(200).json({ success: true });
@@ -2592,7 +2622,7 @@ export default async function handler(req: any, res: any) {
       if (client) {
         try {
           const result = await client.query(`
-            SELECT 
+            SELECT
               s.*,
               COALESCE(NULLIF(s.total_gross, 0), NULLIF(s.gross_total, 0), ep.calc_gross, 0) as calc_gross_pay,
               COALESCE(s.total_deductions, ep.calc_deductions, 0) as calc_deductions_val,
@@ -2646,8 +2676,8 @@ export default async function handler(req: any, res: any) {
       if (client) {
         try {
           let result = await client.query(`
-            SELECT * FROM employee_payroll 
-            WHERE month_year = $1 
+            SELECT * FROM employee_payroll
+            WHERE month_year = $1
             ORDER BY emp_code ASC;
           `, [month]);
 
@@ -2728,21 +2758,21 @@ export default async function handler(req: any, res: any) {
             const net = Math.max(0, gross - totalDed);
 
             await client.query(`
-              UPDATE employee_payroll 
-              SET advance_deduction = $1, loan_emi_deduction = $2, total_deductions = $3, net_pay = $4 
+              UPDATE employee_payroll
+              SET advance_deduction = $1, loan_emi_deduction = $2, total_deductions = $3, net_pay = $4
               WHERE id = $5;
             `, [adv, loan, totalDed, net, slipId]);
 
             const totalsRes = await client.query(`
-              SELECT SUM(gross_pay) as gross, SUM(total_deductions) as deductions, SUM(net_pay) as net 
-              FROM employee_payroll 
+              SELECT SUM(gross_pay) as gross, SUM(total_deductions) as deductions, SUM(net_pay) as net
+              FROM employee_payroll
               WHERE month_year = $1;
             `, [row.month_year]);
 
             if (totalsRes.rows[0]) {
               await client.query(`
-                UPDATE hr_payroll_sheets 
-                SET total_gross = $1, gross_total = $1, total_deductions = $2, total_net = $3, net_payable = $3 
+                UPDATE hr_payroll_sheets
+                SET total_gross = $1, gross_total = $1, total_deductions = $2, total_net = $3, net_payable = $3
                 WHERE month_year = $4;
               `, [
                 Number(totalsRes.rows[0].gross || 0),
@@ -4034,14 +4064,14 @@ export default async function handler(req: any, res: any) {
         const parts = pathname.split('/').filter(Boolean);
         const templateId = parts[parts.length - 2];
         const template = customReportTemplatesList.find(t => t.id === templateId) || customReportTemplatesList[0];
-        
+
         let coaRows: any[] = [];
         try {
           const client = await getPgClient();
           if (client) {
             const resQ = await client.query(`
-              SELECT a.account_id AS id, a.account_code AS code, a.account_name AS name, COALESCE(t.type_name, 'ASSET') AS type, '' AS sub_type, 0.00 AS current_balance 
-              FROM accounts a 
+              SELECT a.account_id AS id, a.account_code AS code, a.account_name AS name, COALESCE(t.type_name, 'ASSET') AS type, '' AS sub_type, 0.00 AS current_balance
+              FROM accounts a
               LEFT JOIN account_types t ON a.account_type_id = t.type_id
             `);
             coaRows = resQ.rows || [];
@@ -4195,10 +4225,10 @@ export default async function handler(req: any, res: any) {
             // Attempt 1: Query public.chart_of_accounts
             try {
               const res = await client.query(`
-                SELECT 
-                  c.*, 
-                  COALESCE(v.current_balance, c.current_balance, 0) as live_balance 
-                FROM public.chart_of_accounts c 
+                SELECT
+                  c.*,
+                  COALESCE(v.current_balance, c.current_balance, 0) as live_balance
+                FROM public.chart_of_accounts c
                 LEFT JOIN view_coa_live_balances v ON c.id::text = v.account_id::text OR c.code = v.account_code
                 ORDER BY c.code ASC;
               `);
@@ -4587,7 +4617,7 @@ export default async function handler(req: any, res: any) {
           if (client) {
             try {
               const logsRes = await client.query(`
-                SELECT * FROM party_khata_logs 
+                SELECT * FROM party_khata_logs
                 WHERE party_id = $1 OR party_id IN (SELECT id FROM parties WHERE id = $1 OR party_id::text = $1)
                 ORDER BY date ASC, created_at ASC;
               `, [targetPartyId]);
@@ -4686,7 +4716,7 @@ export default async function handler(req: any, res: any) {
         if (client) {
           try {
             const singleRes = await client.query(`
-              SELECT 
+              SELECT
                 COALESCE(id, party_id::text) as id,
                 party_id,
                 COALESCE(code, CONCAT(CASE WHEN UPPER(COALESCE(type, party_type, '')) LIKE '%SUPP%' THEN 'SUP-' ELSE 'CLI-' END, LPAD(COALESCE(party_id, 1)::text, 4, '0'))) as code,
@@ -4701,7 +4731,7 @@ export default async function handler(req: any, res: any) {
                 COALESCE(currency, 'AED') as currency,
                 COALESCE(is_active, true) as is_active,
                 account_map, coa_account_id, linked_account_id, created_at
-              FROM parties 
+              FROM parties
               WHERE id = $1 OR party_id::text = $1
               LIMIT 1;
             `, [targetPartyId]);
@@ -4847,7 +4877,7 @@ export default async function handler(req: any, res: any) {
         if (client) {
           try {
             const partiesRes = await client.query(`
-              SELECT 
+              SELECT
                 COALESCE(id, party_id::text) as id,
                 party_id,
                 COALESCE(code, CONCAT(CASE WHEN UPPER(COALESCE(type, party_type, '')) LIKE '%SUPP%' THEN 'SUP-' ELSE 'CLI-' END, LPAD(COALESCE(party_id, 1)::text, 4, '0'))) as code,
@@ -4862,7 +4892,7 @@ export default async function handler(req: any, res: any) {
                 COALESCE(currency, 'AED') as currency,
                 COALESCE(is_active, true) as is_active,
                 account_map, coa_account_id, linked_account_id, created_at
-              FROM parties 
+              FROM parties
               ORDER BY COALESCE(name, company_name, '') ASC;
             `);
             await client.end();
@@ -5327,7 +5357,7 @@ export default async function handler(req: any, res: any) {
         try {
           const { deviceId, userId, username, deviceType, deviceModel, userAgent, isStandalone } = body || {};
           const safeDeviceId = deviceId || `dev-${Date.now()}`;
-          
+
           // Automated Bad Bot Detection on Registration
           const botCheck = analyzeBotRequest(req, pathname, userAgent);
           const isBad = botCheck.isBadBot;
@@ -6921,7 +6951,7 @@ export default async function handler(req: any, res: any) {
         if (method === 'POST' && !targetBoothId) {
           const b = body || {};
           let boothId = b.boothId ? String(b.boothId).trim().toLowerCase() : '';
-          
+
           if (client) {
             try {
               if (!boothId) {
@@ -6935,8 +6965,8 @@ export default async function handler(req: any, res: any) {
               const hostName = b.hostName || 'Broadcaster Host';
               const hostHandle = b.hostHandle || `@host_${boothId.replace('-', '')}`;
               const accountEmail = b.accountEmail || `${boothId.replace('-', '')}@vintagevibe.ae`;
-              const activePlatforms: string[] = Array.isArray(b.activePlatforms) && b.activePlatforms.length > 0 
-                ? b.activePlatforms 
+              const activePlatforms: string[] = Array.isArray(b.activePlatforms) && b.activePlatforms.length > 0
+                ? b.activePlatforms
                 : ['tiktok', 'instagram', 'facebook', 'youtube', 'threads'];
 
               await client.query(`
@@ -7169,7 +7199,7 @@ export default async function handler(req: any, res: any) {
         if (client) {
           try {
             const bQuery = await client.query(`
-              SELECT 
+              SELECT
                 b.*,
                 COALESCE(m.is_broadcasting, b.is_broadcasting, false) as is_broadcasting,
                 COALESCE(m.viewer_count, b.viewer_count, 0) as viewer_count,
@@ -7364,7 +7394,7 @@ export default async function handler(req: any, res: any) {
         if (!client) return res.status(500).json({ error: 'Database connection unavailable' });
         try {
           const query = `
-            SELECT 
+            SELECT
               id,
               batch_number AS "batchNumber",
               inward_pass_id AS "inwardPassId",
@@ -7489,7 +7519,7 @@ export default async function handler(req: any, res: any) {
         if (!client) return res.status(500).json({ success: false, error: 'Database connection unavailable' });
         try {
           const result = await client.query(`
-            SELECT 
+            SELECT
               s.id,
               s.setting_key as "settingKey",
               s.account_code as "accountCode",
@@ -7573,7 +7603,7 @@ export default async function handler(req: any, res: any) {
         if (!client) return res.status(500).json({ success: false, error: 'Database connection unavailable' });
         try {
           const result = await client.query(`
-            SELECT 
+            SELECT
               c.id,
               c.code,
               c.name,
@@ -7663,8 +7693,8 @@ export default async function handler(req: any, res: any) {
           const category = parsedUrl.searchParams.get('category') || '';
           let query = `
             SELECT barcode, brand_name, item_name, style, size_scanned, estimated_price, retail_price_aed, status
-            FROM inventory_pieces 
-            WHERE (is_sold = false OR is_sold IS NULL) 
+            FROM inventory_pieces
+            WHERE (is_sold = false OR is_sold IS NULL)
               AND (status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT')
           `;
           const params: any[] = [];
@@ -7697,7 +7727,7 @@ export default async function handler(req: any, res: any) {
           if (!id) return res.status(400).json({ success: false, error: 'Bounty ID missing' });
 
           await client.query(`
-            UPDATE public.grail_bounties 
+            UPDATE public.grail_bounties
             SET status = COALESCE($1, status),
                 matched_barcode = COALESCE($2, matched_barcode),
                 matched_piece_id = COALESCE($3, matched_piece_id),
@@ -7738,7 +7768,7 @@ export default async function handler(req: any, res: any) {
           // 1. Verify pieces are still available
           const barcodes = items.map((i: any) => i.barcode || i.id);
           const checkQuery = await client.query(`
-            SELECT barcode, is_sold, status FROM public.inventory_pieces 
+            SELECT barcode, is_sold, status FROM public.inventory_pieces
             WHERE barcode = ANY($1) FOR UPDATE
           `, [barcodes]);
 
@@ -7769,8 +7799,8 @@ export default async function handler(req: any, res: any) {
           // 4. Insert into orders table
           await client.query(`
             INSERT INTO public.orders (
-              id, order_number, customer_name, customer_phone, customer_email, customer_address, 
-              city, country, items, subtotal, delivery_fee, total_amount, currency, 
+              id, order_number, customer_name, customer_phone, customer_email, customer_address,
+              city, country, items, subtotal, delivery_fee, total_amount, currency,
               payment_method, payment_status, payment_reference, order_status, source, notes, created_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW())
           `, [
@@ -7797,8 +7827,8 @@ export default async function handler(req: any, res: any) {
 
           // 5. Atomically lock pieces: status = 'CLAIMED_PENDING', is_sold = true
           await client.query(`
-            UPDATE public.inventory_pieces 
-            SET is_sold = true, status = 'CLAIMED_PENDING' 
+            UPDATE public.inventory_pieces
+            SET is_sold = true, status = 'CLAIMED_PENDING'
             WHERE barcode = ANY($1)
           `, [barcodes]);
 
@@ -7807,7 +7837,7 @@ export default async function handler(req: any, res: any) {
           const invoiceNo = `SINV-${Date.now().toString().slice(-6)}`;
           await client.query(`
             INSERT INTO public.sales_invoices (
-              id, invoice_no, customer_name, customer_phone, invoice_date, channel, 
+              id, invoice_no, customer_name, customer_phone, invoice_date, channel,
               payment_method, payment_status, payment_reference, shipping_address, city,
               subtotal, discount_amount, tax_amount, total_amount, status, items, order_id, created_at
             ) VALUES ($1, $2, $3, $4, CURRENT_DATE, 'ECOMMERCE', $5, $6, $7, $8, $9, $10, 0, 0, $11, 'DRAFT', $12, $13, NOW())
@@ -7983,7 +8013,7 @@ export default async function handler(req: any, res: any) {
           }
           const { status, matchedBarcode, matchedPieceId } = body;
           await client.query(`
-            UPDATE public.grail_bounties 
+            UPDATE public.grail_bounties
             SET status = COALESCE($1, status),
                 matched_barcode = COALESCE($2, matched_barcode),
                 matched_piece_id = COALESCE($3, matched_piece_id),

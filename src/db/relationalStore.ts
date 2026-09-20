@@ -1663,7 +1663,13 @@ class RelationalStore {
 
   // --- HR & Payroll ---
   public getEmployees(): Employee[] {
-    return this.employees;
+    return this.employees.filter(e =>
+      (e as any).is_deleted !== true &&
+      (e as any).isDeleted !== true &&
+      e.isActive !== false &&
+      (e as any).is_active !== false &&
+      e.status !== 'DELETED'
+    );
   }
 
   public addEmployee(empData: Omit<Employee, 'id' | 'empCode'>): Employee {
@@ -1719,9 +1725,16 @@ class RelationalStore {
     const idx = this.employees.findIndex(e => e.id === id);
     if (idx === -1) return { success: false, error: 'Employee not found' };
     const emp = this.employees[idx];
-    this.employees.splice(idx, 1);
+    const now = new Date().toISOString();
+    // Strict Soft Delete on in-memory store
+    (emp as any).is_deleted = true;
+    (emp as any).isDeleted = true;
+    (emp as any).is_active = false;
+    emp.isActive = false;
+    emp.status = 'DELETED' as any;
+    (emp as any).updated_at = now;
     this.auditLogs.unshift(
-      AuditEngine.createLogEntry('HR', 'DELETE', emp.empCode, 'POSTED', 'HR Director', `Deleted employee record for ${emp.name}`)
+      AuditEngine.createLogEntry('HR', 'DELETE', emp.empCode, 'UNPOSTED', 'HR Director', `Soft-deleted employee record for ${emp.name}`)
     );
     return { success: true };
   }
@@ -2398,7 +2411,7 @@ class RelationalStore {
 
     const applyVat = data.applyVat !== undefined ? Boolean(data.applyVat) : (invoice.applyVat !== undefined ? invoice.applyVat : true);
     const vatRate = applyVat ? (data.vatRatePercent !== undefined ? data.vatRatePercent : (invoice.vatRatePercent || this.companyProfile.vatRatePercent || 5)) : 0;
-    
+
     let subTotal = Number(data.subTotal) || 0;
     if (subTotal === 0 && Array.isArray(data.items) && data.items.length > 0) {
       subTotal = data.items.reduce((sum: number, item: any) => sum + (Number(item.lineTotal) || 0), 0);
@@ -2519,7 +2532,7 @@ class RelationalStore {
 
     // Cascade purge associated vouchers and general ledger entries
     const invNo = invoice.invoiceNo;
-    const removedVouchers = this.vouchers.filter(v => 
+    const removedVouchers = this.vouchers.filter(v =>
       v.reference === invNo ||
       v.reference === `PINV-${invNo}` ||
       v.reference === `INWARD-${invNo}` ||
@@ -2529,7 +2542,7 @@ class RelationalStore {
     const removedVoucherIds = new Set(removedVouchers.map(v => v.id));
     if (removedVoucherIds.size > 0) {
       this.vouchers = this.vouchers.filter(v => !removedVoucherIds.has(v.id));
-      this.generalLedgers = this.generalLedgers.filter(l => 
+      this.generalLedgers = this.generalLedgers.filter(l =>
         !removedVoucherIds.has(l.voucherId) &&
         l.reference !== invNo &&
         l.reference !== `PINV-${invNo}` &&
@@ -3877,7 +3890,7 @@ class RelationalStore {
         if (piece.status === 'CLAIMED_PENDING' || piece.status === 'RESERVED') {
           const isHoldExpired = piece.lockExpiresAt && piece.lockExpiresAt < now;
           const isReservationExpired = piece.reservedUntil && piece.reservedUntil < now;
-          
+
           if (isHoldExpired || isReservationExpired) {
             sweptBarcodes.push(piece.barcode);
             piece.status = 'IN_STOCK';

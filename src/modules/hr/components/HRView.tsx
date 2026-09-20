@@ -115,7 +115,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   // Employee Create / Edit Modal state
   const [showEmpModal, setShowEmpModal] = useState(false);
   const [editingEmpId, setEditingEmpId] = useState<string | null>(null);
-  
+
   // AI OCR Scanner Modal state
   const [showAIOcrModal, setShowAIOcrModal] = useState(false);
 
@@ -1043,12 +1043,12 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const safePhotoUrl = typeof empForm.photoUrl === 'string' ? empForm.photoUrl : '';
 
       // 2. Ensure full_name is NEVER null and numbers are properly converted
-      const resolvedFullName = 
-        (empForm as any).full_name || 
-        (empForm as any).fullName || 
-        (empForm as any).fullNameEnglish || 
-        empForm.name || 
-        (empForm as any).full_name_english || 
+      const resolvedFullName =
+        (empForm as any).full_name ||
+        (empForm as any).fullName ||
+        (empForm as any).fullNameEnglish ||
+        empForm.name ||
+        (empForm as any).full_name_english ||
         'Staff Member';
 
       const cleanDateVal = (d: any) => {
@@ -1171,14 +1171,30 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   const handleDeleteEmployee = async (id: string) => {
     if (!confirm('Are you sure you want to delete this employee record?')) return;
     try {
+      // 1. Send exact public.employees.id (UUID) to the backend
       const res = await fetch(`/api/hr/employees/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        showMsg('Employee record deleted.');
-        HrService.clearEmployeeCache();
-        loadData();
+      const data = await res.json().catch(() => ({}));
+
+      // 2. Await the success response
+      if (!res.ok || (data && data.success === false)) {
+        const errorMsg = data?.error || data?.message || 'Failed to soft-delete employee';
+        showMsg(`Error deleting employee: ${errorMsg}`, 'error');
+        return;
       }
-    } catch (err) {
-      showMsg('Error deleting employee', 'error');
+
+      showMsg('Employee record soft-deleted successfully.');
+
+      // 3. Pessimistic UI & Re-fetch: DO NOT just remove the employee from local React state.
+      // Trigger a fresh re-fetch from the database to ensure UI perfectly matches DB state.
+      HrService.clearEmployeeCache();
+      const freshEmps = await HrService.getEmployees(undefined, { forceRefresh: true }).catch(() => []);
+      if (Array.isArray(freshEmps)) {
+        setEmployees(freshEmps);
+      }
+      await loadData();
+      onRefreshAll?.();
+    } catch (err: any) {
+      showMsg(`Error deleting employee: ${err?.message || String(err)}`, 'error');
     }
   };
 
@@ -2018,7 +2034,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
               <tbody className="divide-y divide-slate-100 font-mono">
                 {paginatedEmployees.map(emp => {
                   const now = new Date();
-                  
+
                   // Helper for expiry alarm status
                   const getAlarmStatus = (expDateStr?: string) => {
                     if (!expDateStr) return null;
@@ -2538,7 +2554,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       {showEmpModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-xl max-w-4xl w-full p-5 shadow-2xl border border-slate-200 text-xs animate-in fade-in zoom-in-95 my-auto max-h-[92vh] flex flex-col overflow-hidden">
-            
+
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-3 bg-white">
               <div className="flex items-center gap-2.5">
@@ -2589,7 +2605,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
             </div>
 
             <form onSubmit={handleSaveEmployee} className="space-y-4 overflow-y-auto flex-1 pr-1">
-              
+
               {/* SECTION 1: PERSONAL PROFILE & EMPLOYMENT INFORMATION */}
               <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
                 <div className="text-[11px] font-bold text-slate-800 uppercase flex items-center gap-1.5 border-b border-slate-200 pb-1.5">

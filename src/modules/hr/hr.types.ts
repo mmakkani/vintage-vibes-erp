@@ -18,7 +18,7 @@ export interface Employee {
   passportNo: string; // e.g., "A9283746"
   idFrontImageUrl?: string;
   idBackImageUrl?: string;
-  
+
   // Extended Emirates ID & Personal Details
   nameArabic?: string;
   nationality?: string;
@@ -26,13 +26,13 @@ export interface Employee {
   dob?: string;
   emiratesIdExpiry?: string;
   idCardNo?: string; // Serial number on back of card
-  
+
   // Passport Details
   passportExpiry?: string;
   passportIssueDate?: string;
   passportCountry?: string;
   passportImageUrl?: string;
-  
+
   // UAE Residency Visa & UID Details
   uidNo?: string; // UAE Unified Number
   residencyIssueDate?: string;
@@ -40,7 +40,7 @@ export interface Employee {
   residencySponsor?: string;
   residencyProfession?: string;
   residencyImageUrl?: string;
-  
+
   // Photo preview / Avatar
   photoUrl?: string;
 
@@ -98,6 +98,10 @@ export interface Employee {
   email?: string;
   address?: string;
   notes?: string;
+  is_deleted?: boolean;
+  isDeleted?: boolean;
+  is_active?: boolean;
+  updated_at?: string;
 }
 
 export interface AttendanceRecord {
@@ -158,4 +162,3 @@ export interface PayrollRecord {
   postedAt?: string;
   postedBy?: string;
 }
-

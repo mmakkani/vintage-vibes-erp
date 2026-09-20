@@ -77,9 +77,11 @@ function mapEmployeeRow(row: any): Employee {
     gross_salary: totalPackage,
     total_package: totalPackage,
     workingHoursPerDay: Number(row.working_hours_per_day || 8),
-    working_hours_per_day: Number(row.working_hours_per_day || 8),
-    isActive: row.is_active !== false,
-    is_active: row.is_active !== false,
+    isActive: row.is_active !== false && row.is_deleted !== true && row.status !== 'DELETED',
+    is_active: row.is_active !== false && row.is_deleted !== true && row.status !== 'DELETED',
+    is_deleted: row.is_deleted === true || row.status === 'DELETED',
+    isDeleted: row.is_deleted === true || row.status === 'DELETED',
+    updated_at: row.updated_at || '',
     joiningDate: formatDateStr(row.joining_date || row.date_of_joining) || new Date().toISOString().slice(0, 10),
     joining_date: formatDateStr(row.joining_date || row.date_of_joining) || new Date().toISOString().slice(0, 10),
     status: (row.status || 'POSTED') as any,
@@ -201,7 +203,7 @@ function mapLoanRow(row: any): EmployeeLoan {
 // Auto-generate sequentially increasing EMP code (e.g., EMP-0787, EMP-0788)
 async function generateNextEmpCode(client: Client): Promise<string> {
   const res = await client.query(`
-    SELECT emp_code, employee_code FROM employees 
+    SELECT emp_code, employee_code FROM employees
     WHERE emp_code LIKE 'EMP-%' OR employee_code LIKE 'EMP-%'
     ORDER BY created_at DESC LIMIT 50;
   `);
@@ -254,19 +256,21 @@ hrRouter.get('/employees', async (req, res) => {
       let result: any;
       try {
         result = await client.query(`
-          SELECT * FROM public.employees 
-          WHERE is_deleted IS NOT TRUE 
+          SELECT * FROM public.employees
+          WHERE COALESCE(is_deleted, false) = false
+            AND COALESCE(is_active, true) = true
+            AND COALESCE(status, '') != 'DELETED'
           ORDER BY created_at DESC;
         `);
       } catch (colErr: any) {
-        console.warn('[HR Routes] Column query failed, falling back to SELECT *:', colErr?.message);
+        console.warn('[HR Routes] Column query failed, falling back to basic query:', colErr?.message);
         try {
-          result = await client.query('SELECT * FROM public.employees ORDER BY id DESC;');
+          result = await client.query("SELECT * FROM public.employees WHERE is_deleted IS NOT TRUE AND is_active IS NOT FALSE AND COALESCE(status, '') != 'DELETED' ORDER BY id DESC;");
         } catch {
-          result = await client.query('SELECT * FROM public.employees;');
+          result = await client.query("SELECT * FROM public.employees WHERE is_deleted IS NOT TRUE;");
         }
       }
-      return result.rows.map(mapEmployeeRow);
+      return result.rows.map(mapEmployeeRow).filter((e: any) => e.is_deleted !== true && e.is_active !== false && e.status !== 'DELETED');
     });
     return res.json(data);
   } catch (err: any) {
@@ -302,22 +306,22 @@ hrRouter.post('/employees', async (req, res) => {
       const totalPackage = Number(emp.total_package ?? emp.totalPackage ?? (basicSalary + housingAllowance + transportAllowance + otherAllowance));
       const workingHoursPerDay = Number(emp.working_hours_per_day ?? emp.workingHoursPerDay ?? 8);
 
-      const resolvedFullName = 
-        emp.full_name || 
-        emp.fullName || 
-        emp.fullNameEnglish || 
-        emp.name || 
-        emp.full_name_english || 
+      const resolvedFullName =
+        emp.full_name ||
+        emp.fullName ||
+        emp.fullNameEnglish ||
+        emp.name ||
+        emp.full_name_english ||
         'Staff Member';
 
       const firstName = resolvedFullName.split(' ')[0] || resolvedFullName;
       const lastName = resolvedFullName.split(' ').slice(1).join(' ') || '';
 
-      const resolvedArabicName = 
-        emp.nameArabic || 
-        emp.full_name_arabic || 
-        emp.fullNameArabic || 
-        emp.name_arabic || 
+      const resolvedArabicName =
+        emp.nameArabic ||
+        emp.full_name_arabic ||
+        emp.fullNameArabic ||
+        emp.name_arabic ||
         '';
 
       const safeJoiningDate = cleanDate(emp.joiningDate || emp.joining_date) || new Date().toISOString().slice(0, 10);
@@ -571,9 +575,9 @@ hrRouter.put('/employees/:id', async (req, res) => {
       values.push(id);
 
       const query = `
-        UPDATE employees 
-        SET ${sets.join(', ')} 
-        WHERE id::text = $${idx} OR emp_code = $${idx} OR employee_code = $${idx} 
+        UPDATE employees
+        SET ${sets.join(', ')}
+        WHERE id::text = $${idx} OR emp_code = $${idx} OR employee_code = $${idx}
         RETURNING *;
       `;
 
@@ -597,9 +601,9 @@ hrRouter.post('/employees/:id/post', async (req, res) => {
   try {
     const updated = await withDb(async (client) => {
       const result = await client.query(`
-        UPDATE employees 
-        SET status = 'POSTED', updated_at = NOW() 
-        WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1 
+        UPDATE employees
+        SET status = 'POSTED', updated_at = NOW()
+        WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1
         RETURNING *;
       `, [id]);
       if (result.rows.length === 0) throw new Error('Employee not found');
@@ -619,9 +623,9 @@ hrRouter.post('/employees/:id/unpost', async (req, res) => {
   try {
     const updated = await withDb(async (client) => {
       const result = await client.query(`
-        UPDATE employees 
-        SET status = 'DRAFT', updated_at = NOW() 
-        WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1 
+        UPDATE employees
+        SET status = 'DRAFT', updated_at = NOW()
+        WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1
         RETURNING *;
       `, [id]);
       if (result.rows.length === 0) throw new Error('Employee not found');
@@ -635,17 +639,25 @@ hrRouter.post('/employees/:id/unpost', async (req, res) => {
   }
 });
 
-// DELETE /api/hr/employees/:id - Delete employee from PostgreSQL
+// DELETE /api/hr/employees/:id - Soft Delete employee on public.employees
 hrRouter.delete('/employees/:id', async (req, res) => {
   const { id } = req.params;
+  const now = new Date().toISOString();
   try {
     await withDb(async (client) => {
-      await client.query(`DELETE FROM employee_attendance WHERE employee_id = $1 OR emp_code = $1;`, [id]).catch(() => {});
-      await client.query(`DELETE FROM employee_loans WHERE employee_id = $1 OR emp_code = $1;`, [id]).catch(() => {});
-      await client.query(`DELETE FROM employee_payroll WHERE employee_id = $1 OR emp_code = $1;`, [id]).catch(() => {});
-      await client.query(`DELETE FROM employees WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1;`, [id]);
+      // Strict Soft Delete on public.employees using exact id (UUID)
+      // Table Isolation: Absolutely DO NOT modify or delete records in:
+      // public.employee_attendance, public.staff_attendance, public.employee_payroll, public.payroll_records, public.employee_documents, public.hr_attendance_sheets
+      await client.query(`
+        UPDATE public.employees
+        SET is_deleted = true,
+            is_active = false,
+            status = 'DELETED',
+            updated_at = $1
+        WHERE id::text = $2;
+      `, [now, id]);
     });
-    return res.json({ success: true });
+    return res.json({ success: true, message: 'Employee soft-deleted successfully' });
   } catch (err: any) {
     const result = HRController.deleteEmployee(id);
     if (!result.success) return res.status(400).json({ error: result.error });
@@ -683,8 +695,8 @@ hrRouter.get('/attendance', async (req, res) => {
   try {
     const data = await withDb(async (client) => {
       const result = await client.query(`
-        SELECT * FROM employee_attendance 
-        WHERE month_year = $1 
+        SELECT * FROM employee_attendance
+        WHERE month_year = $1
         ORDER BY emp_code ASC;
       `, [monthYear]);
 
@@ -693,8 +705,8 @@ hrRouter.get('/attendance', async (req, res) => {
 
       if (!isPosted) {
         const empRes = await client.query(`
-          SELECT * FROM employees 
-          WHERE is_deleted IS NOT TRUE 
+          SELECT * FROM employees
+          WHERE is_deleted IS NOT TRUE
             AND (is_active IS NULL OR is_active IS NOT FALSE)
             AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
           ORDER BY emp_code ASC;
@@ -760,8 +772,8 @@ hrRouter.post('/attendance/sync-missing', async (req, res) => {
   try {
     const synced = await withDb(async (client) => {
       const empRes = await client.query(`
-        SELECT * FROM employees 
-        WHERE is_deleted IS NOT TRUE 
+        SELECT * FROM employees
+        WHERE is_deleted IS NOT TRUE
           AND (is_active IS NULL OR is_active IS NOT FALSE)
           AND (status IS NULL OR status NOT IN ('TERMINATED', 'INACTIVE'))
         ORDER BY emp_code ASC;
@@ -813,8 +825,8 @@ hrRouter.put('/attendance/:id', async (req, res) => {
   try {
     await withDb(async (client) => {
       await client.query(`
-        UPDATE employee_attendance 
-        SET days_worked = $1, overtime_hours = $2 
+        UPDATE employee_attendance
+        SET days_worked = $1, overtime_hours = $2
         WHERE id = $3;
       `, [Number(daysWorked || 0), Number(overtimeHours || 0), id]);
     });
@@ -833,8 +845,8 @@ hrRouter.post('/attendance/create-sheet', async (req, res) => {
   try {
     const records = await withDb(async (client) => {
       const empRes = await client.query(`
-        SELECT * FROM employees 
-        WHERE is_active IS NOT FALSE AND is_deleted IS NOT TRUE 
+        SELECT * FROM employees
+        WHERE is_active IS NOT FALSE AND is_deleted IS NOT TRUE
         ORDER BY emp_code ASC;
       `);
       const employees = empRes.rows;
@@ -863,8 +875,8 @@ hrRouter.post('/attendance/create-sheet', async (req, res) => {
       `, [sheetId, month, employees.length]);
 
       const attRes = await client.query(`
-        SELECT * FROM employee_attendance 
-        WHERE month_year = $1 
+        SELECT * FROM employee_attendance
+        WHERE month_year = $1
         ORDER BY emp_code ASC;
       `, [month]);
 
@@ -949,29 +961,29 @@ hrRouter.delete(['/attendance/sheet', '/attendance/:month'], async (req, res) =>
 // Helper function to rebuild draft payroll slips from attendance records for a month
 async function rebuildPayrollFromAttendance(client: any, month: string) {
   const attRes = await client.query(`
-    SELECT * FROM employee_attendance 
-    WHERE month_year = $1 
+    SELECT * FROM employee_attendance
+    WHERE month_year = $1
     ORDER BY emp_code ASC;
   `, [month]);
   const attendanceRows = attRes.rows || [];
   if (attendanceRows.length === 0) return [];
 
   const empRes = await client.query(`
-    SELECT * FROM employees 
-    WHERE is_active IS NOT FALSE AND is_deleted IS NOT TRUE 
+    SELECT * FROM employees
+    WHERE is_active IS NOT FALSE AND is_deleted IS NOT TRUE
     ORDER BY emp_code ASC;
   `).catch(() => ({ rows: [] }));
   const employees = empRes.rows || [];
 
   const loanRes = await client.query(`
-    SELECT * FROM employee_loans 
+    SELECT * FROM employee_loans
     WHERE status = 'ACTIVE' AND remaining_amount > 0;
   `).catch(() => ({ rows: [] }));
   const loans = loanRes.rows || [];
 
   // Clear stale DRAFT slips for this month
   await client.query(`
-    DELETE FROM employee_payroll 
+    DELETE FROM employee_payroll
     WHERE month_year = $1 AND (status = 'DRAFT' OR status IS NULL);
   `, [month]).catch(() => {});
 
@@ -982,8 +994,8 @@ async function rebuildPayrollFromAttendance(client: any, month: string) {
   for (const att of attendanceRows) {
     const attEmpId = String(att.employee_id || '');
     const attCode = String(att.emp_code || '').trim().toLowerCase();
-    const emp = employees.find((e: any) => 
-      (attEmpId && String(e.id) === attEmpId) || 
+    const emp = employees.find((e: any) =>
+      (attEmpId && String(e.id) === attEmpId) ||
       (attCode && (e.emp_code || e.employee_code || '').trim().toLowerCase() === attCode)
     );
 
@@ -996,8 +1008,8 @@ async function rebuildPayrollFromAttendance(client: any, month: string) {
     const otHours = Number(att.overtime_hours ?? 0);
 
     const baseSalary = Number(emp?.basic_salary ?? emp?.base_salary ?? 0);
-    const allowances = Number(emp?.housing_allowance ?? emp?.housing_allow ?? 0) + 
-                       Number(emp?.transport_allowance ?? emp?.transport_allow ?? 0) + 
+    const allowances = Number(emp?.housing_allowance ?? emp?.housing_allow ?? 0) +
+                       Number(emp?.transport_allowance ?? emp?.transport_allow ?? 0) +
                        Number(emp?.other_allowances ?? emp?.other_allow ?? 0);
     const dailyRate = Math.round((baseSalary / 30) * 100) / 100;
     const workingHours = Number(emp?.working_hours_per_day || 8);
@@ -1007,8 +1019,8 @@ async function rebuildPayrollFromAttendance(client: any, month: string) {
     const overtimePay = Math.round((hourlyRate * otHours * 1.5) * 100) / 100;
     const grossPay = earnedBasic + allowances + overtimePay;
 
-    const empLoans = loans.filter((l: any) => 
-      (empId && String(l.employee_id) === empId) || 
+    const empLoans = loans.filter((l: any) =>
+      (empId && String(l.employee_id) === empId) ||
       (empCode && (l.emp_code || '').trim().toLowerCase() === empCode.toLowerCase())
     );
     let advanceDeduction = 0;
@@ -1084,8 +1096,8 @@ async function rebuildPayrollFromAttendance(client: any, month: string) {
   `, [sheetId, month, attendanceRows.length, totalGross, totalDeductions, totalNet]);
 
   const slipRes = await client.query(`
-    SELECT * FROM employee_payroll 
-    WHERE month_year = $1 
+    SELECT * FROM employee_payroll
+    WHERE month_year = $1
     ORDER BY emp_code ASC;
   `, [month]);
 
@@ -1098,13 +1110,13 @@ hrRouter.post('/attendance/post', async (req, res) => {
   try {
     await withDb(async (client) => {
       await client.query(`
-        UPDATE employee_attendance 
-        SET status = 'POSTED', locked_at = NOW(), locked_by = $2 
+        UPDATE employee_attendance
+        SET status = 'POSTED', locked_at = NOW(), locked_by = $2
         WHERE month_year = $1;
       `, [month, postedBy || 'HR Manager']);
       await client.query(`
-        UPDATE hr_attendance_sheets 
-        SET status = 'POSTED' 
+        UPDATE hr_attendance_sheets
+        SET status = 'POSTED'
         WHERE month_year = $1;
       `, [month]);
 
@@ -1133,13 +1145,13 @@ hrRouter.post('/attendance/unpost', async (req, res) => {
       }
 
       await client.query(`
-        UPDATE employee_attendance 
-        SET status = 'DRAFT', locked_at = NULL, locked_by = NULL 
+        UPDATE employee_attendance
+        SET status = 'DRAFT', locked_at = NULL, locked_by = NULL
         WHERE month_year = $1;
       `, [month]);
       await client.query(`
-        UPDATE hr_attendance_sheets 
-        SET status = 'DRAFT' 
+        UPDATE hr_attendance_sheets
+        SET status = 'DRAFT'
         WHERE month_year = $1;
       `, [month]);
     });
@@ -1163,7 +1175,7 @@ hrRouter.get('/payroll/sheets', async (req, res) => {
   try {
     const data = await withDb(async (client) => {
       const result = await client.query(`
-        SELECT 
+        SELECT
           s.*,
           COALESCE(NULLIF(s.total_gross, 0), NULLIF(s.gross_total, 0), ep.calc_gross, 0) as calc_gross_pay,
           COALESCE(s.total_deductions, ep.calc_deductions, 0) as calc_deductions_val,
@@ -1214,8 +1226,8 @@ hrRouter.get('/payroll', async (req, res) => {
   try {
     const data = await withDb(async (client) => {
       const result = await client.query(`
-        SELECT * FROM employee_payroll 
-        WHERE month_year = $1 
+        SELECT * FROM employee_payroll
+        WHERE month_year = $1
         ORDER BY emp_code ASC;
       `, [monthYear]);
 
@@ -1289,21 +1301,21 @@ hrRouter.put('/payroll/:id/deductions', async (req, res) => {
       const net = Math.max(0, gross - totalDed);
 
       await client.query(`
-        UPDATE employee_payroll 
-        SET advance_deduction = $1, loan_emi_deduction = $2, total_deductions = $3, net_pay = $4 
+        UPDATE employee_payroll
+        SET advance_deduction = $1, loan_emi_deduction = $2, total_deductions = $3, net_pay = $4
         WHERE id = $5;
       `, [adv, loan, totalDed, net, req.params.id]);
 
       const totalsRes = await client.query(`
-        SELECT SUM(gross_pay) as gross, SUM(total_deductions) as deductions, SUM(net_pay) as net 
-        FROM employee_payroll 
+        SELECT SUM(gross_pay) as gross, SUM(total_deductions) as deductions, SUM(net_pay) as net
+        FROM employee_payroll
         WHERE month_year = $1;
       `, [row.month_year]);
 
       if (totalsRes.rows[0]) {
         await client.query(`
-          UPDATE hr_payroll_sheets 
-          SET total_gross = $1, gross_total = $1, total_deductions = $2, total_net = $3, net_payable = $3 
+          UPDATE hr_payroll_sheets
+          SET total_gross = $1, gross_total = $1, total_deductions = $2, total_net = $3, net_payable = $3
           WHERE month_year = $4;
         `, [
           Number(totalsRes.rows[0].gross || 0),
@@ -1332,7 +1344,7 @@ hrRouter.post(['/payroll/post', '/payroll/:id/post'], async (req, res) => {
         return r.rows[0]?.result || { success: true };
       } else {
         await client.query(`
-          UPDATE employee_payroll 
+          UPDATE employee_payroll
           SET status = 'POSTED', posted_at = NOW(), posted_by = $2, payment_method = COALESCE($3, payment_method), bank_account_id = COALESCE($4, bank_account_id)
           WHERE id = $1;
         `, [target, postedBy || 'HR Director', paymentMethod, bankAccountId]);
@@ -1358,8 +1370,8 @@ hrRouter.post(['/payroll/unpost', '/payroll/:id/unpost'], async (req, res) => {
         return r.rows[0]?.result || { success: true };
       } else {
         await client.query(`
-          UPDATE employee_payroll 
-          SET status = 'DRAFT', posted_at = NULL, posted_by = NULL 
+          UPDATE employee_payroll
+          SET status = 'DRAFT', posted_at = NULL, posted_by = NULL
           WHERE id = $1;
         `, [target]);
         return { success: true };
