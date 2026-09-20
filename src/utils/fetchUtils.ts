@@ -285,10 +285,10 @@ export async function safeFetchJson<T = any>(
       }
 
       if (url.includes('/whatsapp-report')) {
-        const comp = await CompanyProfileService.getCompanyProfile();
+        const comp: any = await CompanyProfileService.getCompanyProfile();
         return {
           success: true,
-          report: `*${comp?.company_name || 'VINTAGE VIBES'} - STATUS REPORT*\nGenerated: ${new Date().toLocaleString()}\nStatus: Cloud Database Online`
+          report: `*${comp?.companyName || comp?.company_name || 'VINTAGE VIBES'} - STATUS REPORT*\nGenerated: ${new Date().toLocaleString()}\nStatus: Cloud Database Online`
         } as any;
       }
     } catch (dbErr: any) {
@@ -478,15 +478,41 @@ export function initUniversalFetchInterceptor() {
   if (typeof window === 'undefined' || (window as any).__vv_fetch_interceptor_installed) return;
   (window as any).__vv_fetch_interceptor_installed = true;
 
-  const originalFetch = window.fetch;
-  (window as any).__originalFetch = originalFetch;
+  const rawFetch = window.fetch;
+
+  function attachAuthHeader(init?: RequestInit): RequestInit | undefined {
+    try {
+      const stored = localStorage.getItem('vintage_erp_logged_user');
+      if (stored) {
+        const u = JSON.parse(stored);
+        const token = u?.token;
+        if (token) {
+          const h = new Headers(init?.headers);
+          if (!h.has('Authorization')) {
+            h.set('Authorization', `Bearer ${token}`);
+          }
+          return { ...init, headers: h };
+        }
+      }
+    } catch (_) {}
+    return init;
+  }
+
+  const authenticatedFetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+    const effectiveInit = (typeof url === 'string' && url.includes('/api/')) ? attachAuthHeader(init) : init;
+    return rawFetch.apply(window, [input, effectiveInit]);
+  };
+
+  (window as any).__originalFetch = authenticatedFetch;
 
   window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
     if (typeof url === 'string' && url.includes('/api/')) {
+      const effectiveInit = attachAuthHeader(init);
       // 1. Try real server HTTP request first
       try {
-        const res = await originalFetch.apply(this, [input, init]);
+        const res = await rawFetch.apply(this, [input, effectiveInit]);
         if (res.ok || (res.status !== 404 && res.status !== 502 && res.status !== 503)) {
           return res;
         }
@@ -496,7 +522,7 @@ export function initUniversalFetchInterceptor() {
 
       // 2. Client-side fallback if server is unreachable
       try {
-        const data = await safeFetchJson(url, init);
+        const data = await safeFetchJson(url, effectiveInit);
         if (data !== null && data !== undefined) {
           return new Response(JSON.stringify(data), {
             status: 200,
@@ -512,7 +538,7 @@ export function initUniversalFetchInterceptor() {
         headers: { 'Content-Type': 'application/json' }
       });
     }
-    return originalFetch.apply(this, [input, init]);
+    return rawFetch.apply(this, [input, init]);
   };
 }
 

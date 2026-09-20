@@ -187,6 +187,59 @@ async function verifyAuthToken(authHeaderOrToken?: string): Promise<{ valid: boo
   }
 }
 
+type ModulePermissionTarget = 'AUDIT' | 'HR' | 'FINANCE';
+
+function checkModulePermission(
+  user: { role?: string; permissions?: any[] } | undefined,
+  module: ModulePermissionTarget
+): { allowed: boolean; reason?: string } {
+  if (!user) {
+    return { allowed: false, reason: 'Authentication required' };
+  }
+
+  const role = String(user.role || '').toUpperCase();
+  if (role === 'ADMIN') {
+    return { allowed: true };
+  }
+
+  if (Array.isArray(user.permissions)) {
+    const modPerm = user.permissions.find((p: any) => p?.module === module);
+    if (modPerm && typeof modPerm.canView === 'boolean') {
+      if (modPerm.canView) return { allowed: true };
+      return { allowed: false, reason: `Forbidden: User does not have ${module} view permission.` };
+    }
+  }
+
+  if (module === 'AUDIT') {
+    return {
+      allowed: false,
+      reason: 'Forbidden: Insufficient privileges to view audit logs. Required role: ADMIN.'
+    };
+  }
+
+  if (module === 'HR') {
+    if (['MANAGER', 'ACCOUNTANT'].includes(role)) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      reason: 'Forbidden: Insufficient privileges to access HR records. Required role: ADMIN, MANAGER, or ACCOUNTANT.'
+    };
+  }
+
+  if (module === 'FINANCE') {
+    if (['MANAGER', 'ACCOUNTANT'].includes(role)) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      reason: 'Forbidden: Insufficient privileges to access financial data. Required role: ADMIN, MANAGER, or ACCOUNTANT.'
+    };
+  }
+
+  return { allowed: false, reason: `Forbidden: Insufficient privileges for module ${module}.` };
+}
+
 function getClientIp(req: any): string {
   const forwarded = req.headers?.['x-forwarded-for'];
   if (typeof forwarded === 'string') {
@@ -1334,6 +1387,27 @@ export default async function handler(req: any, res: any) {
         notes: row.notes || ''
       };
     };
+
+    // Access Control & RBAC: HR Employees (GET, POST, PUT, DELETE, /post, /unpost)
+    if (pathname === '/api/hr/employees' || pathname.endsWith('/hr/employees') || pathname === '/api/employees' || pathname.includes('/api/hr/employees/')) {
+      const authHeader = (req.headers?.authorization as string) || (req.headers?.['authorization'] as string) || '';
+      const authResult = await verifyAuthToken(authHeader);
+      if (!authResult.valid || !authResult.user) {
+        return res.status(401).json({
+          success: false,
+          error: authResult.error || 'Unauthorized. Valid authorization token is required to access employee records.',
+          correlationId
+        });
+      }
+      const perm = checkModulePermission(authResult.user, 'HR');
+      if (!perm.allowed) {
+        return res.status(403).json({
+          success: false,
+          error: perm.reason || 'Forbidden: Insufficient privileges to access employee records.',
+          correlationId
+        });
+      }
+    }
 
     // 1. GET /api/hr/employees - Retrieve all active employees
     if ((pathname === '/api/hr/employees' || pathname.endsWith('/hr/employees') || pathname === '/api/employees') && method === 'GET') {
@@ -2512,6 +2586,24 @@ export default async function handler(req: any, res: any) {
 
     // 12. GET /api/hr/ocr/logs
     if (pathname.includes('/api/hr/ocr/logs') && method === 'GET') {
+      const authHeader = (req.headers?.authorization as string) || (req.headers?.['authorization'] as string) || '';
+      const authResult = await verifyAuthToken(authHeader);
+      if (!authResult.valid || !authResult.user) {
+        return res.status(401).json({
+          success: false,
+          error: authResult.error || 'Unauthorized. Valid authorization token is required to access OCR logs.',
+          correlationId
+        });
+      }
+      const perm = checkModulePermission(authResult.user, 'HR');
+      if (!perm.allowed) {
+        return res.status(403).json({
+          success: false,
+          error: perm.reason || 'Forbidden: Insufficient privileges to access HR OCR scan logs.',
+          correlationId
+        });
+      }
+
       const client = await getPgClient();
       if (client) {
         try {
@@ -3128,6 +3220,24 @@ export default async function handler(req: any, res: any) {
 
     // HR OCR Logs (Supabase public.hr_ocr_logs)
     if (pathname.includes('/hr/ocr/logs') || pathname.includes('/ocr/logs')) {
+      const authHeader = (req.headers?.authorization as string) || (req.headers?.['authorization'] as string) || '';
+      const authResult = await verifyAuthToken(authHeader);
+      if (!authResult.valid || !authResult.user) {
+        return res.status(401).json({
+          success: false,
+          error: authResult.error || 'Unauthorized. Valid authorization token is required to access OCR logs.',
+          correlationId
+        });
+      }
+      const perm = checkModulePermission(authResult.user, 'HR');
+      if (!perm.allowed) {
+        return res.status(403).json({
+          success: false,
+          error: perm.reason || 'Forbidden: Insufficient privileges to access HR OCR scan logs.',
+          correlationId
+        });
+      }
+
       if (method === 'GET') {
         try {
           const { data, error } = await supabaseAdmin
@@ -3814,6 +3924,24 @@ export default async function handler(req: any, res: any) {
 
     // Chart of Accounts (COA)
     if (pathname === '/api/finance/coa' || pathname.endsWith('/finance/coa') || pathname.includes('/finance/coa')) {
+      const authHeader = (req.headers?.authorization as string) || (req.headers?.['authorization'] as string) || '';
+      const authResult = await verifyAuthToken(authHeader);
+      if (!authResult.valid || !authResult.user) {
+        return res.status(401).json({
+          success: false,
+          error: authResult.error || 'Unauthorized. Valid authorization token is required to access Chart of Accounts.',
+          correlationId
+        });
+      }
+      const perm = checkModulePermission(authResult.user, 'FINANCE');
+      if (!perm.allowed) {
+        return res.status(403).json({
+          success: false,
+          error: perm.reason || 'Forbidden: Insufficient privileges to access Chart of Accounts.',
+          correlationId
+        });
+      }
+
       if (req.method === 'GET') {
         let client: any = null;
         try {
@@ -5305,6 +5433,26 @@ export default async function handler(req: any, res: any) {
 
     // ==================== ENTERPRISE AUDIT LOGS ====================
     if (pathname.includes('/api/audit') || pathname.endsWith('/audit')) {
+      const authHeader = (req.headers?.authorization as string) || (req.headers?.['authorization'] as string) || '';
+      const authResult = await verifyAuthToken(authHeader);
+
+      if (!authResult.valid || !authResult.user) {
+        return res.status(401).json({
+          success: false,
+          error: authResult.error || 'Unauthorized. Valid authorization token or session is required to access audit trail.',
+          correlationId
+        });
+      }
+
+      const perm = checkModulePermission(authResult.user, 'AUDIT');
+      if (!perm.allowed) {
+        return res.status(403).json({
+          success: false,
+          error: perm.reason || 'Forbidden: Insufficient privileges to access audit logs. Required role: ADMIN.',
+          correlationId
+        });
+      }
+
       if (method === 'GET') {
         const client = await getPgClient();
         if (client) {
@@ -5338,16 +5486,6 @@ export default async function handler(req: any, res: any) {
       }
 
       if (method === 'POST') {
-        const authHeader = (req.headers?.authorization as string) || (req.headers?.['authorization'] as string) || '';
-        const authResult = await verifyAuthToken(authHeader);
-
-        if (!authResult.valid || !authResult.user) {
-          return res.status(401).json({
-            success: false,
-            error: authResult.error || 'Unauthorized. Valid authorization token or session is required to record audit events.',
-            correlationId
-          });
-        }
 
         const entry = body || {};
         const targetId = entry.id ? String(entry.id).trim() : '';

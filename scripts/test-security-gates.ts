@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import allHandler from '../api/[...all].ts';
 import loginHandler from '../api/auth/login.ts';
-import { createSessionToken, verifyAuthToken, isOriginAllowed } from '../src/server/authValidator.ts';
+import healthHandler from '../api/health.ts';
+import { createSessionToken, verifyAuthToken, revokeSessionToken, isOriginAllowed } from '../src/server/authValidator.ts';
 
 interface MockResponse {
   statusCode: number;
@@ -453,6 +454,224 @@ async function runSecurityGateTests() {
       if (origJwt) process.env.JWT_SECRET = origJwt;
       if (origSupabase) process.env.SUPABASE_SERVICE_ROLE_KEY = origSupabase;
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Helper Tokens for RBAC and Revocation Testing
+  // -------------------------------------------------------------------------
+  const adminToken = await createSessionToken({ id: 'usr-admin-sec', username: 'admin_auditor', role: 'ADMIN' });
+  const managerToken = await createSessionToken({ id: 'usr-mgr-sec', username: 'manager_auditor', role: 'MANAGER' });
+  const accountantToken = await createSessionToken({ id: 'usr-acct-sec', username: 'accountant_auditor', role: 'ACCOUNTANT' });
+  const salesToken = await createSessionToken({ id: 'usr-sales-sec', username: 'sales_rep', role: 'SALES_EXECUTIVE' });
+  const userToken = await createSessionToken({ id: 'usr-regular-sec', username: 'standard_user', role: 'USER' });
+
+  const revokedTestToken = await createSessionToken({ id: 'usr-revoked', username: 'revoked_user', role: 'ADMIN' });
+  await revokeSessionToken(revokedTestToken);
+
+  // -------------------------------------------------------------------------
+  // Gate 8: GET /api/hr/employees Access Control & RBAC
+  // -------------------------------------------------------------------------
+  console.log('\n--- GATE 8: GET /api/hr/employees Access Control & RBAC ---');
+  {
+    // 1. No token => 401
+    const { req: r1, res: s1 } = createMockReqRes({ method: 'GET', url: '/api/hr/employees' });
+    await allHandler(r1, s1);
+    assert(s1.getResponse().statusCode === 401, 'GET /api/hr/employees with NO token returns HTTP 401');
+
+    // 2. Fake Bearer => 401
+    const { req: r2, res: s2 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/hr/employees',
+      headers: { 'authorization': 'Bearer fake-bearer-token-123' }
+    });
+    await allHandler(r2, s2);
+    assert(s2.getResponse().statusCode === 401, 'GET /api/hr/employees with fake Bearer token returns HTTP 401');
+
+    // 3. Revoked token => 401
+    const { req: r3, res: s3 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/hr/employees',
+      headers: { 'authorization': `Bearer ${revokedTestToken}` }
+    });
+    await allHandler(r3, s3);
+    assert(s3.getResponse().statusCode === 401, 'GET /api/hr/employees with revoked token returns HTTP 401');
+
+    // 4. Insufficient role (SALES_EXECUTIVE) => 403
+    const { req: r4, res: s4 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/hr/employees',
+      headers: { 'authorization': `Bearer ${salesToken}` }
+    });
+    await allHandler(r4, s4);
+    assert(s4.getResponse().statusCode === 403, 'GET /api/hr/employees with SALES_EXECUTIVE role returns HTTP 403');
+
+    // 5. Authorized role (ADMIN / MANAGER) => 200
+    const { req: r5, res: s5 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/hr/employees',
+      headers: { 'authorization': `Bearer ${adminToken}` }
+    });
+    await allHandler(r5, s5);
+    assert(s5.getResponse().statusCode === 200, 'GET /api/hr/employees with ADMIN token returns HTTP 200');
+  }
+
+  // -------------------------------------------------------------------------
+  // Gate 9: GET /api/finance/coa Access Control & RBAC
+  // -------------------------------------------------------------------------
+  console.log('\n--- GATE 9: GET /api/finance/coa Access Control & RBAC ---');
+  {
+    // 1. No token => 401
+    const { req: r1, res: s1 } = createMockReqRes({ method: 'GET', url: '/api/finance/coa' });
+    await allHandler(r1, s1);
+    assert(s1.getResponse().statusCode === 401, 'GET /api/finance/coa with NO token returns HTTP 401');
+
+    // 2. Fake Bearer => 401
+    const { req: r2, res: s2 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/finance/coa',
+      headers: { 'authorization': 'Bearer fake-finance-token-999' }
+    });
+    await allHandler(r2, s2);
+    assert(s2.getResponse().statusCode === 401, 'GET /api/finance/coa with fake Bearer token returns HTTP 401');
+
+    // 3. Revoked token => 401
+    const { req: r3, res: s3 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/finance/coa',
+      headers: { 'authorization': `Bearer ${revokedTestToken}` }
+    });
+    await allHandler(r3, s3);
+    assert(s3.getResponse().statusCode === 401, 'GET /api/finance/coa with revoked token returns HTTP 401');
+
+    // 4. Insufficient role (SALES_EXECUTIVE) => 403
+    const { req: r4, res: s4 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/finance/coa',
+      headers: { 'authorization': `Bearer ${salesToken}` }
+    });
+    await allHandler(r4, s4);
+    assert(s4.getResponse().statusCode === 403, 'GET /api/finance/coa with SALES_EXECUTIVE role returns HTTP 403');
+
+    // 5. Authorized role (ACCOUNTANT / ADMIN) => 200
+    const { req: r5, res: s5 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/finance/coa',
+      headers: { 'authorization': `Bearer ${accountantToken}` }
+    });
+    await allHandler(r5, s5);
+    assert(s5.getResponse().statusCode === 200, 'GET /api/finance/coa with ACCOUNTANT token returns HTTP 200');
+  }
+
+  // -------------------------------------------------------------------------
+  // Gate 10: GET /api/audit Access Control & RBAC
+  // -------------------------------------------------------------------------
+  console.log('\n--- GATE 10: GET /api/audit Access Control & RBAC ---');
+  {
+    // 1. No token => 401
+    const { req: r1, res: s1 } = createMockReqRes({ method: 'GET', url: '/api/audit' });
+    await allHandler(r1, s1);
+    assert(s1.getResponse().statusCode === 401, 'GET /api/audit with NO token returns HTTP 401');
+
+    // 2. Fake Bearer => 401
+    const { req: r2, res: s2 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/audit',
+      headers: { 'authorization': 'Bearer fake-audit-token-404' }
+    });
+    await allHandler(r2, s2);
+    assert(s2.getResponse().statusCode === 401, 'GET /api/audit with fake Bearer token returns HTTP 401');
+
+    // 3. Revoked token => 401
+    const { req: r3, res: s3 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/audit',
+      headers: { 'authorization': `Bearer ${revokedTestToken}` }
+    });
+    await allHandler(r3, s3);
+    assert(s3.getResponse().statusCode === 401, 'GET /api/audit with revoked token returns HTTP 401');
+
+    // 4. Insufficient role (ACCOUNTANT) => 403
+    const { req: r4, res: s4 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/audit',
+      headers: { 'authorization': `Bearer ${accountantToken}` }
+    });
+    await allHandler(r4, s4);
+    assert(s4.getResponse().statusCode === 403, 'GET /api/audit with ACCOUNTANT role returns HTTP 403');
+
+    // 5. Authorized role (ADMIN) => 200
+    const { req: r5, res: s5 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/audit',
+      headers: { 'authorization': `Bearer ${adminToken}` }
+    });
+    await allHandler(r5, s5);
+    assert(s5.getResponse().statusCode === 200, 'GET /api/audit with ADMIN token returns HTTP 200');
+  }
+
+  // -------------------------------------------------------------------------
+  // Gate 11: GET /api/hr/ocr/logs Access Control & RBAC
+  // -------------------------------------------------------------------------
+  console.log('\n--- GATE 11: GET /api/hr/ocr/logs Access Control & RBAC ---');
+  {
+    // 1. No token => 401
+    const { req: r1, res: s1 } = createMockReqRes({ method: 'GET', url: '/api/hr/ocr/logs' });
+    await allHandler(r1, s1);
+    assert(s1.getResponse().statusCode === 401, 'GET /api/hr/ocr/logs with NO token returns HTTP 401');
+
+    // 2. Fake Bearer => 401
+    const { req: r2, res: s2 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/hr/ocr/logs',
+      headers: { 'authorization': 'Bearer fake-ocr-token-555' }
+    });
+    await allHandler(r2, s2);
+    assert(s2.getResponse().statusCode === 401, 'GET /api/hr/ocr/logs with fake Bearer token returns HTTP 401');
+
+    // 3. Revoked token => 401
+    const { req: r3, res: s3 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/hr/ocr/logs',
+      headers: { 'authorization': `Bearer ${revokedTestToken}` }
+    });
+    await allHandler(r3, s3);
+    assert(s3.getResponse().statusCode === 401, 'GET /api/hr/ocr/logs with revoked token returns HTTP 401');
+
+    // 4. Insufficient role (USER) => 403
+    const { req: r4, res: s4 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/hr/ocr/logs',
+      headers: { 'authorization': `Bearer ${userToken}` }
+    });
+    await allHandler(r4, s4);
+    assert(s4.getResponse().statusCode === 403, 'GET /api/hr/ocr/logs with USER role returns HTTP 403');
+
+    // 5. Authorized role (ADMIN / MANAGER) => 200
+    const { req: r5, res: s5 } = createMockReqRes({
+      method: 'GET',
+      url: '/api/hr/ocr/logs',
+      headers: { 'authorization': `Bearer ${adminToken}` }
+    });
+    await allHandler(r5, s5);
+    assert(s5.getResponse().statusCode === 200, 'GET /api/hr/ocr/logs with ADMIN token returns HTTP 200');
+  }
+
+  // -------------------------------------------------------------------------
+  // Gate 12: /api/health Infrastructure Detail Sanitization
+  // -------------------------------------------------------------------------
+  console.log('\n--- GATE 12: /api/health Sanitization (Zero Leakage) ---');
+  {
+    const { req, res } = createMockReqRes({ method: 'GET', url: '/api/health' });
+    await healthHandler(req, res);
+    const healthRes = res.getResponse();
+    assert(healthRes.statusCode === 200, 'GET /api/health returns HTTP 200');
+    assert(
+      healthRes.body && (healthRes.body.status === 'healthy' || healthRes.body.status === 'ok'),
+      'GET /api/health returns valid status'
+    );
+    assert(healthRes.body?.pool_type === undefined, 'GET /api/health does NOT leak pool_type');
+    assert(healthRes.body?.has_db_url === undefined, 'GET /api/health does NOT leak has_db_url');
+    assert(healthRes.body?.error === undefined, 'GET /api/health does NOT leak database internal error');
   }
 
   console.log('\n======================================================');

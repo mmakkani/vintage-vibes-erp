@@ -331,6 +331,95 @@ export async function requireAuthMiddleware(req: any, res: any, next: any) {
   next();
 }
 
+export type ModulePermissionTarget = 'AUDIT' | 'HR' | 'FINANCE';
+
+/**
+ * Validates whether the authenticated user has sufficient role/privileges to access the specified module.
+ * Fails closed with explicit reason on permission denial.
+ */
+export function checkModulePermission(
+  user: { role?: string; permissions?: any[] } | undefined,
+  module: ModulePermissionTarget
+): { allowed: boolean; reason?: string } {
+  if (!user) {
+    return { allowed: false, reason: 'Authentication required' };
+  }
+
+  const role = String(user.role || '').toUpperCase();
+  if (role === 'ADMIN') {
+    return { allowed: true };
+  }
+
+  // Check explicit module permissions array if present
+  if (Array.isArray(user.permissions)) {
+    const modPerm = user.permissions.find((p: any) => p?.module === module);
+    if (modPerm && typeof modPerm.canView === 'boolean') {
+      if (modPerm.canView) return { allowed: true };
+      return { allowed: false, reason: `Forbidden: User does not have ${module} view permission.` };
+    }
+  }
+
+  if (module === 'AUDIT') {
+    return {
+      allowed: false,
+      reason: 'Forbidden: Insufficient privileges to view audit logs. Required role: ADMIN.'
+    };
+  }
+
+  if (module === 'HR') {
+    if (['MANAGER', 'ACCOUNTANT'].includes(role)) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      reason: 'Forbidden: Insufficient privileges to access HR records. Required role: ADMIN, MANAGER, or ACCOUNTANT.'
+    };
+  }
+
+  if (module === 'FINANCE') {
+    if (['MANAGER', 'ACCOUNTANT'].includes(role)) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      reason: 'Forbidden: Insufficient privileges to access financial data. Required role: ADMIN, MANAGER, or ACCOUNTANT.'
+    };
+  }
+
+  return { allowed: false, reason: `Forbidden: Insufficient privileges for module ${module}.` };
+}
+
+/**
+ * Express middleware to enforce both cryptographic authentication and role-based access control.
+ */
+export function requireModuleAuth(module: ModulePermissionTarget) {
+  return async (req: any, res: any, next: any) => {
+    const correlationId = (req as any).correlationId || req.headers?.['x-correlation-id'] || `req-${Date.now()}`;
+    const authHeader = req.headers?.authorization || req.headers?.['authorization'];
+    const authResult = await verifyAuthToken(authHeader);
+
+    if (!authResult.valid || !authResult.user) {
+      return res.status(401).json({
+        success: false,
+        error: authResult.error || 'Unauthorized. Valid cryptographic authorization token is required.',
+        correlationId
+      });
+    }
+
+    const perm = checkModulePermission(authResult.user, module);
+    if (!perm.allowed) {
+      return res.status(403).json({
+        success: false,
+        error: perm.reason || 'Forbidden: Insufficient privileges.',
+        correlationId
+      });
+    }
+
+    req.user = authResult.user;
+    next();
+  };
+}
+
 /**
  * Strict CORS Allowlist and Origin validation
  */

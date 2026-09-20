@@ -3,6 +3,7 @@ import { HRController } from './hr.controller.ts';
 import { SetupService } from '../../services/setupService.ts';
 import { Employee, AttendanceRecord, PayrollRecord, EmployeeLoan } from './hr.types.ts';
 import { getPgClient, withDb } from '../../db/pgPool.ts';
+import { verifyAuthToken, checkModulePermission } from '../../server/authValidator.ts';
 
 export const hrRouter = Router();
 
@@ -224,6 +225,27 @@ async function generateNextEmpCode(client: Client): Promise<string> {
 
 // GET /api/hr/employees - Retrieve all employees from PostgreSQL
 hrRouter.get('/employees', async (req, res) => {
+  const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}`;
+  const authHeader = (req.headers.authorization as string) || (req.headers['authorization'] as string) || '';
+  const authResult = await verifyAuthToken(authHeader);
+
+  if (!authResult.valid || !authResult.user) {
+    return res.status(401).json({
+      success: false,
+      error: authResult.error || 'Unauthorized. Valid cryptographic authorization token is required to access employee records.',
+      correlationId
+    });
+  }
+
+  const perm = checkModulePermission(authResult.user, 'HR');
+  if (!perm.allowed) {
+    return res.status(403).json({
+      success: false,
+      error: perm.reason || 'Forbidden: Insufficient privileges to access employee records.',
+      correlationId
+    });
+  }
+
   try {
     const data = await withDb(async (client) => {
       // Ensure existing empty string emails are converted to NULL to prevent unique index conflicts
@@ -1397,6 +1419,27 @@ hrRouter.get('/ocr/status', async (req, res) => {
 
 // GET /api/hr/ocr/logs - Recent OCR Scans History
 hrRouter.get(['/ocr/logs', '/hr/ocr/logs'], async (req, res) => {
+  const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}`;
+  const authHeader = (req.headers.authorization as string) || (req.headers['authorization'] as string) || '';
+  const authResult = await verifyAuthToken(authHeader);
+
+  if (!authResult.valid || !authResult.user) {
+    return res.status(401).json({
+      success: false,
+      error: authResult.error || 'Unauthorized. Valid cryptographic authorization token is required to access OCR logs.',
+      correlationId
+    });
+  }
+
+  const perm = checkModulePermission(authResult.user, 'HR');
+  if (!perm.allowed) {
+    return res.status(403).json({
+      success: false,
+      error: perm.reason || 'Forbidden: Insufficient privileges to access HR OCR scan logs.',
+      correlationId
+    });
+  }
+
   try {
     const logs = await withDb(async (client) => {
       const result = await client.query(`SELECT * FROM hr_ocr_logs ORDER BY created_at DESC LIMIT 50;`);

@@ -5,6 +5,7 @@ import { FinanceController } from './finance.controller.ts';
 import { FinanceService } from '../../services/financeService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { withDb, sanitizeDbUrl, DEFAULT_DB_URL } from '../../db/pgPool.ts';
+import { verifyAuthToken, checkModulePermission } from '../../server/authValidator.ts';
 
 export const financeRouter = Router();
 
@@ -51,6 +52,27 @@ async function ensureFiveRootAccounts(client: Client): Promise<void> {
 }
 
 financeRouter.get('/coa', async (req, res) => {
+  const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}`;
+  const authHeader = (req.headers.authorization as string) || (req.headers['authorization'] as string) || '';
+  const authResult = await verifyAuthToken(authHeader);
+
+  if (!authResult.valid || !authResult.user) {
+    return res.status(401).json({
+      success: false,
+      error: authResult.error || 'Unauthorized. Valid cryptographic authorization token is required to access Chart of Accounts.',
+      correlationId
+    });
+  }
+
+  const perm = checkModulePermission(authResult.user, 'FINANCE');
+  if (!perm.allowed) {
+    return res.status(403).json({
+      success: false,
+      error: perm.reason || 'Forbidden: Insufficient privileges to access Chart of Accounts.',
+      correlationId
+    });
+  }
+
   try {
     const accounts = await withDb(async (client) => {
       let rawRows: any[] = [];

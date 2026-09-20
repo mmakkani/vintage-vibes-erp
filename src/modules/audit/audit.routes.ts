@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { AuditController } from './audit.controller.ts';
 import { AuditService } from '../../services/auditService.ts';
 import { withDb } from '../../db/pgPool.ts';
-import { verifyAuthToken } from '../../server/authValidator.ts';
+import { verifyAuthToken, checkModulePermission } from '../../server/authValidator.ts';
 
 export const auditRouter = Router();
 
@@ -29,6 +29,26 @@ async function fetchAuditLogsFromPg(limit = 200) {
 
 auditRouter.get(['/', '/logs'], async (req, res) => {
   const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}`;
+  const authHeader = (req.headers.authorization as string) || (req.headers['authorization'] as string) || '';
+  const authResult = await verifyAuthToken(authHeader);
+
+  if (!authResult.valid || !authResult.user) {
+    return res.status(401).json({
+      success: false,
+      error: authResult.error || 'Unauthorized. Valid cryptographic authorization token or session is required to access audit trail.',
+      correlationId
+    });
+  }
+
+  const perm = checkModulePermission(authResult.user, 'AUDIT');
+  if (!perm.allowed) {
+    return res.status(403).json({
+      success: false,
+      error: perm.reason || 'Forbidden: Insufficient privileges to view audit logs. Required role: ADMIN.',
+      correlationId
+    });
+  }
+
   const filters = req.query as any;
   try {
     const pgLogs = await fetchAuditLogsFromPg(200);
@@ -63,6 +83,15 @@ auditRouter.post(['/', '/log'], async (req, res) => {
     return res.status(401).json({
       success: false,
       error: authResult.error || 'Unauthorized. Valid cryptographic authorization token or session is required to record audit events.',
+      correlationId
+    });
+  }
+
+  const perm = checkModulePermission(authResult.user, 'AUDIT');
+  if (!perm.allowed) {
+    return res.status(403).json({
+      success: false,
+      error: perm.reason || 'Forbidden: Insufficient privileges to record audit events. Required role: ADMIN.',
       correlationId
     });
   }
