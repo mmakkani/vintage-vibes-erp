@@ -1852,11 +1852,10 @@ class RelationalStore {
 
     const sheetIds = new Set([`att-sheet-${monthYear}`, `sheet-${monthYear}`, monthYearOrSheetId, monthYear]);
 
-    // Step 1: Delete child attendance records matching sheetId or monthYear
+    // Step 1: Delete child attendance records matching monthYear
     const beforeCount = this.attendances.length;
     this.attendances = this.attendances.filter(a =>
       a.monthYear !== monthYear &&
-      !sheetIds.has((a as any).sheetId || '') &&
       !sheetIds.has(a.id)
     );
     const deletedCount = beforeCount - this.attendances.length;

@@ -928,116 +928,78 @@ export class HrService {
     }));
   }
 
-  public static async deleteAttendanceSheet(monthYearOrSheetId: string): Promise<void> {
-    if (!monthYearOrSheetId) {
-      throw new Error('Month or sheet ID is required to delete attendance sheet');
+  public static async deleteAttendanceSheet(sheetIdOrMonthYear: string): Promise<void> {
+    if (!sheetIdOrMonthYear) {
+      throw new Error('sheetId or monthYear is required to delete attendance sheet');
     }
 
-    let monthYear = String(monthYearOrSheetId).trim();
-    if (monthYear.startsWith('att-sheet-')) monthYear = monthYear.replace('att-sheet-', '');
-    else if (monthYear.startsWith('sheet-')) monthYear = monthYear.replace('sheet-', '');
+    const rawInput = String(sheetIdOrMonthYear).trim();
 
-    const sheetIds = Array.from(new Set([
-      `att-sheet-${monthYear}`,
-      `sheet-${monthYear}`,
-      String(monthYearOrSheetId).trim(),
-      monthYear
-    ]));
+    // 1. Resolve the Target Month (month_year)
+    let resolvedMonthYear = '';
 
-    // Step 1: Delete child attendance records (public.employee_attendance)
-    // Relational order: child rows first
-    let attDeleted = false;
+    // Query hr_attendance_sheets to resolve the exact month_year
     try {
-      const { error: attErr } = await supabase
-        .from('employee_attendance')
-        .delete()
-        .or(`month_year.eq.${monthYear},sheet_id.in.(${sheetIds.join(',')})`);
+      const { data: sheetRow } = await supabase
+        .from('hr_attendance_sheets')
+        .select('month_year')
+        .or(`id.eq.${rawInput},month_year.eq.${rawInput}`)
+        .maybeSingle();
 
-      if (!attErr) {
-        attDeleted = true;
-      } else {
-        console.warn('[HrService] Attendance batch delete fallback:', attErr.message);
+      if (sheetRow?.month_year) {
+        resolvedMonthYear = String(sheetRow.month_year).trim();
       }
     } catch (_) {}
 
-    if (!attDeleted) {
-      const { error: attErrMonth } = await supabase
-        .from('employee_attendance')
-        .delete()
-        .eq('month_year', monthYear);
-
-      if (attErrMonth) {
-        console.error("Supabase Deletion Error (employee_attendance):", attErrMonth);
-        throw new Error(`DB Error: ${attErrMonth.message} | Details: ${attErrMonth.details || ''}`);
-      }
-
-      if (sheetIds.length > 0) {
-        try {
-          const { error: sheetIdDelErr } = await supabase
-            .from('employee_attendance')
-            .delete()
-            .in('sheet_id', sheetIds);
-
-          if (sheetIdDelErr && !sheetIdDelErr.message?.toLowerCase().includes('column')) {
-            console.error("Supabase Deletion Error (employee_attendance by sheet_id):", sheetIdDelErr);
-            throw new Error(`DB Error: ${sheetIdDelErr.message} | Details: ${sheetIdDelErr.details || ''}`);
-          }
-        } catch (err: any) {
-          if (err.message?.startsWith('DB Error:')) throw err;
-        }
-      }
+    // Fallback: strip prefixes if not resolved from DB query
+    if (!resolvedMonthYear) {
+      resolvedMonthYear = rawInput.replace(/^(att-sheet-|sheet-)/, '');
     }
 
-    // Step 2: Delete parent attendance record (public.hr_attendance_sheets)
-    let sheetDeleted = false;
-    try {
-      const { error: sheetErr } = await supabase
-        .from('hr_attendance_sheets')
-        .delete()
-        .or(`month_year.eq.${monthYear},id.in.(${sheetIds.join(',')})`);
+    // 2. Execute Deletion in Strict Order (Using month_year)
+    // Step A: Delete child records: DELETE FROM public.employee_attendance WHERE month_year = '<resolved_month_year>'
+    const { error: childErr } = await supabase
+      .from('employee_attendance')
+      .delete()
+      .eq('month_year', resolvedMonthYear);
 
-      if (!sheetErr) {
-        sheetDeleted = true;
-      } else {
-        console.warn('[HrService] Attendance sheet batch delete fallback:', sheetErr.message);
-      }
-    } catch (_) {}
+    if (childErr) {
+      console.error("Supabase Deletion Error (employee_attendance):", childErr);
+      throw new Error(`DB Error: ${childErr.message} | Details: ${childErr.details || ''}`);
+    }
 
-    if (!sheetDeleted) {
-      const { error: sheetErrMonth } = await supabase
-        .from('hr_attendance_sheets')
-        .delete()
-        .eq('month_year', monthYear);
+    // Step B: Delete parent record: DELETE FROM public.hr_attendance_sheets WHERE month_year = '<resolved_month_year>'
+    const { error: parentErr } = await supabase
+      .from('hr_attendance_sheets')
+      .delete()
+      .eq('month_year', resolvedMonthYear);
 
-      if (sheetErrMonth) {
-        console.error("Supabase Deletion Error (hr_attendance_sheets):", sheetErrMonth);
-        throw new Error(`DB Error: ${sheetErrMonth.message} | Details: ${sheetErrMonth.details || ''}`);
-      }
+    if (parentErr) {
+      console.error("Supabase Deletion Error (hr_attendance_sheets):", parentErr);
+      throw new Error(`DB Error: ${parentErr.message} | Details: ${parentErr.details || ''}`);
+    }
 
-      if (sheetIds.length > 0) {
-        const { error: idDelErr } = await supabase
+    // Also clean up by id if rawInput was a sheet id
+    if (rawInput !== resolvedMonthYear) {
+      try {
+        await supabase
           .from('hr_attendance_sheets')
           .delete()
-          .in('id', sheetIds);
-
-        if (idDelErr) {
-          console.error("Supabase Deletion Error (hr_attendance_sheets by id):", idDelErr);
-          throw new Error(`DB Error: ${idDelErr.message} | Details: ${idDelErr.details || ''}`);
-        }
-      }
+          .eq('id', rawInput);
+      } catch (_) {}
     }
 
-    // Step 3: Clear local / memory store
+    // 3. Update local in-memory store
     try {
-      relationalStore.deleteAttendanceSheet(monthYear);
+      relationalStore.deleteAttendanceSheet(resolvedMonthYear);
     } catch (_) {}
 
-    // Step 4: Clear non-payroll activity/audit logs referencing this attendance sheet
+    // 4. Clear non-payroll activity logs referencing this attendance sheet
     try {
       await supabase
         .from('hr_activity_logs')
         .delete()
-        .or(`month_year.eq.${monthYear},sheet_id.in.(${sheetIds.join(',')})`);
+        .eq('month_year', resolvedMonthYear);
     } catch (_) {}
 
     // Audit log
@@ -1045,8 +1007,8 @@ export class HrService {
       await AuditService.logAction({
         action: 'DELETE',
         entityType: 'ATTENDANCE',
-        entityId: `ATT-${monthYear}`,
-        details: `Permanently deleted attendance sheet and child attendance records for ${monthYear}`
+        entityId: `ATT-${resolvedMonthYear}`,
+        details: `Permanently deleted attendance sheet and child attendance records for ${resolvedMonthYear}`
       });
     } catch (_) {}
   }

@@ -835,39 +835,51 @@ hrRouter.post('/attendance/create-sheet', async (req, res) => {
 
 // DELETE /api/hr/attendance/sheet - Persistent Attendance Deletion
 hrRouter.delete('/attendance/sheet', async (req, res) => {
-  const monthInput = req.body?.month || req.body?.month_year || req.body?.sheet_id || req.body?.id || req.body?.monthYear || (req.query?.month as string) || (req.query?.sheet_id as string);
-  if (!monthInput) {
-    return res.status(400).json({ success: false, error: 'Month or sheet_id is required' });
+  const rawInput = req.body?.sheetId || req.body?.sheet_id || req.body?.monthYear || req.body?.month_year || req.body?.month || req.body?.id || (req.query?.sheetId as string) || (req.query?.sheet_id as string) || (req.query?.monthYear as string) || (req.query?.month as string) || (req.query?.id as string);
+  if (!rawInput) {
+    return res.status(400).json({ success: false, error: 'sheetId or monthYear is required' });
   }
 
-  let month = String(monthInput).trim();
-  if (month.startsWith('att-sheet-')) month = month.replace('att-sheet-', '');
-  else if (month.startsWith('sheet-')) month = month.replace('sheet-', '');
-
-  const sheetIds = Array.from(new Set([
-    `att-sheet-${month}`,
-    `sheet-${month}`,
-    String(monthInput).trim(),
-    month
-  ]));
+  const rawStr = String(rawInput).trim();
 
   try {
+    let resolvedMonthYear = '';
     await withDb(async (client) => {
-      // Step 1: Delete child attendance records (public.employee_attendance)
-      await client.query(`DELETE FROM public.employee_attendance WHERE month_year = $1 OR sheet_id = ANY($2::text[]);`, [month, sheetIds]);
+      // 1. Resolve Target Month: If sheetId is provided, first query hr_attendance_sheets to resolve exact month_year
+      try {
+        const findRes = await client.query(
+          `SELECT month_year FROM public.hr_attendance_sheets WHERE id = $1 OR month_year = $1 LIMIT 1;`,
+          [rawStr]
+        );
+        if (findRes.rows.length > 0 && findRes.rows[0].month_year) {
+          resolvedMonthYear = String(findRes.rows[0].month_year).trim();
+        }
+      } catch (_) {}
 
-      // Step 2: Delete parent attendance record (public.hr_attendance_sheets)
-      await client.query(`DELETE FROM public.hr_attendance_sheets WHERE month_year = $1 OR id = ANY($2::text[]);`, [month, sheetIds]);
+      if (!resolvedMonthYear) {
+        resolvedMonthYear = rawStr.replace(/^(att-sheet-|sheet-)/, '');
+      }
+
+      // Step A: Delete child records: DELETE FROM public.employee_attendance WHERE month_year = '<resolved_month_year>'
+      await client.query(`DELETE FROM public.employee_attendance WHERE month_year = $1;`, [resolvedMonthYear]);
+
+      // Step B: Delete parent record: DELETE FROM public.hr_attendance_sheets WHERE month_year = '<resolved_month_year>'
+      await client.query(`DELETE FROM public.hr_attendance_sheets WHERE month_year = $1 OR id = $2;`, [resolvedMonthYear, rawStr]);
     });
-    relationalStore.deleteAttendanceSheet(month);
-    return res.json({ success: true });
+
+    if (!resolvedMonthYear) {
+      resolvedMonthYear = rawStr.replace(/^(att-sheet-|sheet-)/, '');
+    }
+
+    relationalStore.deleteAttendanceSheet(resolvedMonthYear);
+    return res.json({ success: true, monthYear: resolvedMonthYear });
   } catch (err: any) {
     console.error("Attendance Deletion Error:", err);
     const errMsg = err?.message || 'Failed to delete attendance sheet';
-    const errDetails = err?.detail || err?.details || err?.hint || err?.code || 'None';
+    const errDetails = err?.detail || err?.details || err?.hint || err?.code || '';
     return res.status(400).json({
       success: false,
-      error: `DB Error: ${errMsg} | Details: ${errDetails}`
+      error: `DB Error: ${errMsg}${errDetails ? ` | Details: ${errDetails}` : ''}`
     });
   }
 });

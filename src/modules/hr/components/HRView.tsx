@@ -615,7 +615,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const res = await fetch('/api/hr/attendance/sheet', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month })
+        body: JSON.stringify({ month, monthYear: month, sheetId: `att-sheet-${month}` })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
@@ -725,7 +725,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const res = await fetch('/api/hr/attendance/sheet', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month: selectedMonth })
+        body: JSON.stringify({ month: selectedMonth, monthYear: selectedMonth, sheetId: `att-sheet-${selectedMonth}` })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
