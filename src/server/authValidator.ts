@@ -426,8 +426,7 @@ export function requireModuleAuth(module: ModulePermissionTarget) {
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://vintagevibesgk.com',
   'https://www.vintagevibesgk.com',
-  'https://vintagevibe.ae',
-  'https://www.vintagevibe.ae'
+  'https://api.vintagevibesgk.com'
 ];
 
 export function isOriginAllowed(origin?: string | null): boolean {

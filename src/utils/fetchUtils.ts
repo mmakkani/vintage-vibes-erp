@@ -473,9 +473,7 @@ export async function safeFetchJson<T = any>(
 export const APPROVED_API_ORIGINS = new Set([
   'https://vintagevibesgk.com',
   'https://www.vintagevibesgk.com',
-  'https://api.vintagevibesgk.com',
-  'https://vintagevibe.ae',
-  'https://www.vintagevibe.ae'
+  'https://api.vintagevibesgk.com'
 ]);
 
 export function isAllowedApiDestination(rawUrl: string): boolean {

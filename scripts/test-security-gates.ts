@@ -712,6 +712,14 @@ async function runSecurityGateTests() {
         !isAllowedApiDestination('https://www.google-analytics.com/collect'),
         'Third-party Analytics URL is REJECTED (Zero Token Leak)'
       );
+      assert(
+        !isAllowedApiDestination('https://vintagevibe.ae/api/hr/employees'),
+        'Unapproved domain https://vintagevibe.ae is REJECTED (Zero Token Leak)'
+      );
+      assert(
+        !isAllowedApiDestination('https://www.vintagevibe.ae/api/finance/coa'),
+        'Unapproved domain https://www.vintagevibe.ae is REJECTED (Zero Token Leak)'
+      );
     } finally {
       (global as any).window = origWindow;
     }

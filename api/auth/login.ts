@@ -3,8 +3,7 @@ import crypto from 'crypto';
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://vintagevibesgk.com',
   'https://www.vintagevibesgk.com',
-  'https://vintagevibe.ae',
-  'https://www.vintagevibe.ae'
+  'https://api.vintagevibesgk.com'
 ];
 
 function isOriginAllowed(origin?: string | null): boolean {
