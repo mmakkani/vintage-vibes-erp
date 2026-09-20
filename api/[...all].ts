@@ -1950,15 +1950,17 @@ export default async function handler(req: any, res: any) {
         if (clientOrPool) {
           await clientOrPool.query(`
             INSERT INTO hr_payroll_sheets (
-              id, month_year, total_employees, total_gross, total_deductions, total_net, status, created_at
+              id, month_year, total_employees, total_gross, gross_total, total_deductions, total_net, net_payable, status, created_at
             ) VALUES (
-              $1, $2, $3, $4, $5, $6, 'DRAFT', NOW()
+              $1, $2, $3, $4, $4, $5, $6, $6, 'DRAFT', NOW()
             )
             ON CONFLICT (id) DO UPDATE SET
               total_employees = EXCLUDED.total_employees,
               total_gross = EXCLUDED.total_gross,
+              gross_total = EXCLUDED.gross_total,
               total_deductions = EXCLUDED.total_deductions,
-              total_net = EXCLUDED.total_net;
+              total_net = EXCLUDED.total_net,
+              net_payable = EXCLUDED.net_payable;
           `, [sheetId, month, slips.length, totalGross, totalDeductions, totalNet]).catch(() => {});
         } else {
           await supabaseAdmin.from('hr_payroll_sheets').upsert({
@@ -1966,8 +1968,10 @@ export default async function handler(req: any, res: any) {
             month_year: month,
             total_employees: slips.length,
             total_gross: totalGross,
+            gross_total: totalGross,
             total_deductions: totalDeductions,
             total_net: totalNet,
+            net_payable: totalNet,
             status: 'DRAFT'
           });
         }
@@ -2070,20 +2074,44 @@ export default async function handler(req: any, res: any) {
     if (pathname.includes('/api/hr/payroll/sheets') && method === 'GET') {
       const client = await getPgClient();
       if (client) {
-        try {
-          const result = await client.query(`SELECT * FROM hr_payroll_sheets ORDER BY created_at DESC;`);
-          const sheets = result.rows.map(r => ({
-            id: r.id,
-            monthYear: r.month_year,
-            totalEmployees: Number(r.total_employees || 0),
-            totalGross: Number(r.total_gross || 0),
-            totalDeductions: Number(r.total_deductions || 0),
-            totalNet: Number(r.total_net || 0),
-            status: r.status,
-            postedAt: r.posted_at,
-            voucherNo: r.voucher_no,
-            createdAt: r.created_at
-          }));
+          const result = await client.query(`
+            SELECT 
+              s.*,
+              COALESCE(NULLIF(s.total_gross, 0), NULLIF(s.gross_total, 0), ep.calc_gross, 0) as calc_gross_pay,
+              COALESCE(s.total_deductions, ep.calc_deductions, 0) as calc_deductions_val,
+              COALESCE(NULLIF(s.total_net, 0), NULLIF(s.net_payable, 0), ep.calc_net, 0) as calc_net_pay,
+              COALESCE(NULLIF(s.total_employees, 0), ep.emp_count, 0) as calc_emp_count
+            FROM hr_payroll_sheets s
+            LEFT JOIN (
+              SELECT month_year, COUNT(*) as emp_count, SUM(gross_pay) as calc_gross, SUM(total_deductions) as calc_deductions, SUM(net_pay) as calc_net
+              FROM employee_payroll
+              GROUP BY month_year
+            ) ep ON ep.month_year = s.month_year
+            ORDER BY s.created_at DESC;
+          `);
+          const sheets = result.rows.map(r => {
+            const gross = Number(r.calc_gross_pay ?? r.total_gross ?? r.gross_total ?? 0);
+            const deductions = Number(r.calc_deductions_val ?? r.total_deductions ?? 0);
+            const net = Number(r.calc_net_pay ?? r.total_net ?? r.net_payable ?? 0);
+            const employees = Number(r.calc_emp_count ?? r.total_employees ?? 0);
+            return {
+              id: r.id,
+              monthYear: r.month_year,
+              totalEmployees: employees,
+              totalGross: gross,
+              totalGrossPay: gross,
+              grossTotal: gross,
+              totalDeductions: deductions,
+              totalNet: net,
+              totalNetPay: net,
+              netPayable: net,
+              status: r.status,
+              postedAt: r.posted_at,
+              voucherNo: r.voucher_no,
+              voucherId: r.voucher_id,
+              createdAt: r.created_at
+            };
+          });
           return res.status(200).json(sheets);
         } catch (dbErr: any) {
           console.warn('[Serverless HR] payroll sheets error:', dbErr?.message);
@@ -2215,7 +2243,7 @@ export default async function handler(req: any, res: any) {
             if (totalsRes.rows[0]) {
               await client.query(`
                 UPDATE hr_payroll_sheets 
-                SET total_gross = $1, total_deductions = $2, total_net = $3 
+                SET total_gross = $1, gross_total = $1, total_deductions = $2, total_net = $3, net_payable = $3 
                 WHERE month_year = $4;
               `, [
                 Number(totalsRes.rows[0].gross || 0),
@@ -3629,9 +3657,13 @@ export default async function handler(req: any, res: any) {
             // Attempt 1: Query public.chart_of_accounts
             try {
               const res = await client.query(`
-                SELECT * FROM public.chart_of_accounts 
-                WHERE is_deleted IS NOT TRUE 
-                ORDER BY code ASC;
+                SELECT 
+                  c.*, 
+                  COALESCE(v.current_balance, c.current_balance, 0) as live_balance 
+                FROM public.chart_of_accounts c 
+                LEFT JOIN view_coa_live_balances v ON c.id::text = v.account_id::text OR c.code = v.account_code
+                WHERE c.is_deleted IS NOT TRUE 
+                ORDER BY c.code ASC;
               `);
               rawRows = res.rows || [];
             } catch (coaErr: any) {
@@ -3656,7 +3688,7 @@ export default async function handler(req: any, res: any) {
               const rawType = String(detected).toUpperCase();
               const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
               const tierLevel = Number(r.tier_level || r.tierLevel || r.account_level || 1);
-              const balance = Number(r.current_balance || r.currentBalance || 0);
+              const balance = Number(r.live_balance ?? r.current_balance ?? r.currentBalance ?? 0);
               const active = r.is_active !== false && r.isActive !== false && r.is_deleted !== true;
 
               return {

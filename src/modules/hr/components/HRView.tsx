@@ -1163,7 +1163,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     showMsg(`AI OCR verified and populated legal identity records for ${data.name || 'employee'}! Scan log registered.`);
   };
 
-  const totalPayrollCost = (payrollSlips || []).reduce((sum, s) => sum + (Number(s?.netPay) || 0), 0);
+  const totalPayrollCost = (payrollSlips || []).reduce((sum, s) => sum + (Number(s?.netPay ?? s?.net_pay) || 0), 0);
 
   return (
     <div className="space-y-3">
@@ -1545,13 +1545,13 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                           {sheet.totalEmployees} Staff
                         </td>
                         <td className="px-3 py-2.5 font-mono text-slate-800 font-medium">
-                          AED {safeFormatAed(sheet.totalGrossPay)}
+                          AED {safeFormatAed(sheet.totalGrossPay ?? sheet.totalGross ?? sheet.grossTotal ?? 0)}
                         </td>
                         <td className="px-3 py-2.5 font-mono text-rose-700 font-bold">
                           {(Number(sheet.totalDeductions) || 0) > 0 ? `-AED ${safeFormatAed(sheet.totalDeductions)}` : 'AED 0.00'}
                         </td>
                         <td className="px-3 py-2.5 font-mono font-bold text-emerald-800 text-xs">
-                          AED {safeFormatAed(sheet.totalNetPay)}
+                          AED {safeFormatAed(sheet.totalNetPay ?? sheet.totalNet ?? sheet.netPayable ?? 0)}
                         </td>
                         <td className="px-3 py-2.5">
                           {sheet.status === 'POSTED' ? (

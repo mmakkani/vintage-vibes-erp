@@ -18,6 +18,20 @@ export class PayrollService {
   }
 
   /**
+   * Compute exact payroll aggregates across slips in sheet
+   */
+  public static computeAggregates(slips: any[]): { totalGross: number; totalDeductions: number; totalNet: number } {
+    const totalGross = (slips || []).reduce((sum, s) => sum + (Number(s.earnedBasic || s.earned_basic || s.grossPay || s.gross_pay || 0) + Number(s.allowances || 0) + Number(s.otPay || s.overtimePay || s.overtime_pay || 0)), 0);
+    const totalDeductions = (slips || []).reduce((sum, s) => sum + (Number(s.advanceCut || s.advanceDeduction || s.advance_deduction || 0) + Number(s.loanEmi || s.loanEmiDeduction || s.loan_emi_deduction || 0) + Number(s.deductions || s.totalDeductions || s.total_deductions || 0)), 0);
+    const totalNet = (slips || []).reduce((sum, s) => sum + Number(s.netPay || s.net_pay || ((s.earnedBasic || s.earned_basic || 0) - totalDeductions)), 0);
+    return {
+      totalGross: Number(totalGross.toFixed(2)),
+      totalDeductions: Number(totalDeductions.toFixed(2)),
+      totalNet: Number(totalNet.toFixed(2))
+    };
+  }
+
+  /**
    * Rebuild or sync payroll slips directly from the latest posted attendance sheet for that month.
    * Ensures all active employees present in the attendance sheet are merged or created with exact
    * days worked, earned basic ((baseSalary / 30) * daysWorked), allowances, and loan/advance cuts.

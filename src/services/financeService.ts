@@ -514,6 +514,20 @@ export class FinanceService {
       } catch (err) {
         console.warn('ledgers insert warning:', err);
       }
+
+      try {
+        const journalEntriesRows = voucherEntriesRows.map((veRow: any) => ({
+          voucher_id: String(id),
+          account_id: veRow.account_id,
+          party_id: veRow.party_id || null,
+          debit: veRow.debit,
+          credit: veRow.credit,
+          description: veRow.narration || narration
+        }));
+        await supabase.from('journal_entries').insert(journalEntriesRows);
+      } catch (err) {
+        console.warn('journal_entries insert warning in FinanceService.addVoucher:', err);
+      }
     }
 
     try {

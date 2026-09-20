@@ -996,15 +996,17 @@ async function rebuildPayrollFromAttendance(client: any, month: string) {
   const sheetId = `pay-sheet-${month}`;
   await client.query(`
     INSERT INTO hr_payroll_sheets (
-      id, month_year, total_employees, total_gross, total_deductions, total_net, status, created_at
+      id, month_year, total_employees, total_gross, gross_total, total_deductions, total_net, net_payable, status, created_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, 'DRAFT', NOW()
+      $1, $2, $3, $4, $4, $5, $6, $6, 'DRAFT', NOW()
     )
     ON CONFLICT (id) DO UPDATE SET
       total_employees = EXCLUDED.total_employees,
       total_gross = EXCLUDED.total_gross,
+      gross_total = EXCLUDED.gross_total,
       total_deductions = EXCLUDED.total_deductions,
-      total_net = EXCLUDED.total_net;
+      total_net = EXCLUDED.total_net,
+      net_payable = EXCLUDED.net_payable;
   `, [sheetId, month, attendanceRows.length, totalGross, totalDeductions, totalNet]);
 
   const slipRes = await client.query(`
@@ -1078,19 +1080,44 @@ hrRouter.post('/attendance/unpost', async (req, res) => {
 hrRouter.get('/payroll/sheets', async (req, res) => {
   try {
     const data = await withDb(async (client) => {
-      const result = await client.query(`SELECT * FROM hr_payroll_sheets ORDER BY created_at DESC;`);
-      return result.rows.map(r => ({
-        id: r.id,
-        monthYear: r.month_year,
-        totalEmployees: Number(r.total_employees || 0),
-        totalGross: Number(r.total_gross || 0),
-        totalDeductions: Number(r.total_deductions || 0),
-        totalNet: Number(r.total_net || 0),
-        status: r.status,
-        postedAt: r.posted_at,
-        voucherNo: r.voucher_no,
-        createdAt: r.created_at
-      }));
+      const result = await client.query(`
+        SELECT 
+          s.*,
+          COALESCE(NULLIF(s.total_gross, 0), NULLIF(s.gross_total, 0), ep.calc_gross, 0) as calc_gross_pay,
+          COALESCE(s.total_deductions, ep.calc_deductions, 0) as calc_deductions_val,
+          COALESCE(NULLIF(s.total_net, 0), NULLIF(s.net_payable, 0), ep.calc_net, 0) as calc_net_pay,
+          COALESCE(NULLIF(s.total_employees, 0), ep.emp_count, 0) as calc_emp_count
+        FROM hr_payroll_sheets s
+        LEFT JOIN (
+          SELECT month_year, COUNT(*) as emp_count, SUM(gross_pay) as calc_gross, SUM(total_deductions) as calc_deductions, SUM(net_pay) as calc_net
+          FROM employee_payroll
+          GROUP BY month_year
+        ) ep ON ep.month_year = s.month_year
+        ORDER BY s.created_at DESC;
+      `);
+      return result.rows.map(r => {
+        const gross = Number(r.calc_gross_pay ?? r.total_gross ?? r.gross_total ?? 0);
+        const deductions = Number(r.calc_deductions_val ?? r.total_deductions ?? 0);
+        const net = Number(r.calc_net_pay ?? r.total_net ?? r.net_payable ?? 0);
+        const employees = Number(r.calc_emp_count ?? r.total_employees ?? 0);
+        return {
+          id: r.id,
+          monthYear: r.month_year,
+          totalEmployees: employees,
+          totalGross: gross,
+          totalGrossPay: gross,
+          grossTotal: gross,
+          totalDeductions: deductions,
+          totalNet: net,
+          totalNetPay: net,
+          netPayable: net,
+          status: r.status,
+          postedAt: r.posted_at,
+          voucherNo: r.voucher_no,
+          voucherId: r.voucher_id,
+          createdAt: r.created_at
+        };
+      });
     });
     return res.json(data);
   } catch (_) {
@@ -1200,7 +1227,7 @@ hrRouter.put('/payroll/:id/deductions', async (req, res) => {
       if (totalsRes.rows[0]) {
         await client.query(`
           UPDATE hr_payroll_sheets 
-          SET total_gross = $1, total_deductions = $2, total_net = $3 
+          SET total_gross = $1, gross_total = $1, total_deductions = $2, total_net = $3, net_payable = $3 
           WHERE month_year = $4;
         `, [
           Number(totalsRes.rows[0].gross || 0),
@@ -1223,27 +1250,20 @@ hrRouter.post(['/payroll/post', '/payroll/:id/post'], async (req, res) => {
   const { month, postedBy, paymentMethod, bankAccountId } = req.body;
   const target = req.params.id || month;
   try {
-    await withDb(async (client) => {
-      if (target.includes('-') && target.length === 7) {
-        await client.query(`
-          UPDATE employee_payroll 
-          SET status = 'POSTED', posted_at = NOW(), posted_by = $2, payment_method = COALESCE($3, payment_method), bank_account_id = COALESCE($4, bank_account_id)
-          WHERE month_year = $1;
-        `, [target, postedBy || 'HR Director', paymentMethod, bankAccountId]);
-        await client.query(`
-          UPDATE hr_payroll_sheets 
-          SET status = 'POSTED', posted_at = NOW() 
-          WHERE month_year = $1;
-        `, [target]);
+    const rpcRes = await withDb(async (client) => {
+      if (target && target.includes('-') && target.length === 7) {
+        const r = await client.query('SELECT public.post_payroll_batch_and_post_jv($1, $2) as result;', [target, postedBy || 'HR Director']);
+        return r.rows[0]?.result || { success: true };
       } else {
         await client.query(`
           UPDATE employee_payroll 
           SET status = 'POSTED', posted_at = NOW(), posted_by = $2, payment_method = COALESCE($3, payment_method), bank_account_id = COALESCE($4, bank_account_id)
           WHERE id = $1;
         `, [target, postedBy || 'HR Director', paymentMethod, bankAccountId]);
+        return { success: true };
       }
     });
-    return res.json({ success: true });
+    return res.json(rpcRes || { success: true });
   } catch (err: any) {
     const result = HRController.postPayroll(target, postedBy || 'HR Director', paymentMethod, bankAccountId);
     if (!result.success) return res.status(400).json({ error: result.error });
@@ -1256,27 +1276,20 @@ hrRouter.post(['/payroll/unpost', '/payroll/:id/unpost'], async (req, res) => {
   const { month } = req.body;
   const target = req.params.id || month;
   try {
-    await withDb(async (client) => {
-      if (target.includes('-') && target.length === 7) {
-        await client.query(`
-          UPDATE employee_payroll 
-          SET status = 'DRAFT', posted_at = NULL, posted_by = NULL 
-          WHERE month_year = $1;
-        `, [target]);
-        await client.query(`
-          UPDATE hr_payroll_sheets 
-          SET status = 'DRAFT', posted_at = NULL 
-          WHERE month_year = $1;
-        `, [target]);
+    const rpcRes = await withDb(async (client) => {
+      if (target && target.includes('-') && target.length === 7) {
+        const r = await client.query('SELECT public.unpost_payroll_batch_and_reverse_jv($1) as result;', [target]);
+        return r.rows[0]?.result || { success: true };
       } else {
         await client.query(`
           UPDATE employee_payroll 
           SET status = 'DRAFT', posted_at = NULL, posted_by = NULL 
           WHERE id = $1;
         `, [target]);
+        return { success: true };
       }
     });
-    return res.json({ success: true });
+    return res.json(rpcRes || { success: true });
   } catch (err: any) {
     const result = HRController.unpostPayroll(target);
     if (!result.success) return res.status(400).json({ error: result.error });

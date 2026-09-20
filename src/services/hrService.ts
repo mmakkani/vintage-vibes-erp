@@ -1156,15 +1156,15 @@ export class HrService {
       .eq('month_year', monthYear);
 
     const slips = records || [];
-    const totalGross = Number(slips.reduce((sum: number, s: any) => sum + (Number(s.gross_pay) || 0), 0).toFixed(2));
-    const totalDeductions = Number(slips.reduce((sum: number, s: any) => sum + (Number(s.total_deductions) || 0), 0).toFixed(2));
-    const totalNet = Number(slips.reduce((sum: number, s: any) => sum + (Number(s.net_pay) || 0), 0).toFixed(2));
+    const totalGross = Number(slips.reduce((sum: number, s: any) => sum + (Number(s.earned_basic || s.gross_pay || s.grossPay || 0) + Number(s.allowances || 0) + Number(s.overtime_pay || s.otPay || 0)), 0).toFixed(2));
+    const totalDeductions = Number(slips.reduce((sum: number, s: any) => sum + (Number(s.advance_deduction || s.advanceCut || 0) + Number(s.loan_emi_deduction || s.loanEmi || 0) + Number(s.total_deductions || s.deductions || 0)), 0).toFixed(2));
+    const totalNet = Number(slips.reduce((sum: number, s: any) => sum + Number(s.net_pay || s.netPay || (s.earned_basic - totalDeductions)), 0).toFixed(2));
 
     const voucherNo = `JV-PAY-${monthYear}`;
     const voucherId = `vch-pay-${monthYear}`;
-    const voucherDate = (monthYear === new Date().toISOString().slice(0, 7))
-      ? new Date().toISOString().slice(0, 10)
-      : `${monthYear}-01`;
+    const [yNum, mNum] = monthYear.split('-').map(Number);
+    const lastDay = new Date(Date.UTC(yNum, mNum, 0)).getUTCDate();
+    const voucherDate = `${monthYear}-${String(lastDay).padStart(2, '0')}`;
 
     // 4. Upsert hr_payroll_sheets with voucher tracking
     await supabase
@@ -1174,8 +1174,10 @@ export class HrService {
         month_year: monthYear,
         total_employees: slips.length,
         total_gross: totalGross,
+        gross_total: totalGross,
         total_deductions: totalDeductions,
         total_net: totalNet,
+        net_payable: totalNet,
         status: 'POSTED',
         voucher_id: voucherId,
         voucher_no: voucherNo,
@@ -1195,6 +1197,7 @@ export class HrService {
 
       // Clean up previous entries if re-posting
       try {
+        await supabase.from('journal_entries').delete().or(`voucher_id.eq.${voucherNo},voucher_id.eq.${voucherId}`);
         await supabase.from('voucher_entries').delete().or(`voucher_no.eq.${voucherNo},voucher_id.eq.${voucherId}`);
         await supabase.from('general_ledger').delete().or(`voucher_no.eq.${voucherNo},voucher_id.eq.${voucherId}`);
         await supabase.from('ledgers').delete().or(`voucher_no.eq.${voucherNo},voucher_id.eq.${voucherId}`);
@@ -1203,6 +1206,8 @@ export class HrService {
       } catch (e) {
         console.warn('Voucher cleanup warning:', e);
       }
+
+      const memo = `Monthly Payroll Expense & Accrual - ${monthYear} (${slips.length} Staff)`;
 
       const voucherLines: any[] = [
         {
@@ -1244,13 +1249,44 @@ export class HrService {
         date: voucherDate,
         type: 'JOURNAL',
         reference: `PAY-${monthYear}`,
-        narration: `Monthly payroll accrual for ${monthYear} (${slips.length} employees) - Gross: AED ${totalGross.toFixed(2)}, Deductions: AED ${totalDeductions.toFixed(2)}, Net Salaries Payable: AED ${totalNet.toFixed(2)}`,
+        narration: memo,
         totalDebit: totalGross,
         totalCredit: totalGross,
         status: 'POSTED',
         createdBy: postedBy,
         lines: voucherLines
       });
+
+      try {
+        const journalLines: any[] = [
+          {
+            voucher_id: voucherId,
+            account_id: expAcc?.id,
+            debit: totalGross,
+            credit: 0,
+            description: memo
+          }
+        ];
+        if (totalDeductions > 0) {
+          journalLines.push({
+            voucher_id: voucherId,
+            account_id: dedAcc?.id,
+            debit: 0,
+            credit: totalDeductions,
+            description: memo
+          });
+        }
+        journalLines.push({
+          voucher_id: voucherId,
+          account_id: payAcc?.id,
+          debit: 0,
+          credit: totalNet,
+          description: memo
+        });
+        await supabase.from('journal_entries').insert(journalLines);
+      } catch (jeErr) {
+        console.warn('[HrService] journal_entries insert warning:', jeErr);
+      }
 
       try {
         FinanceService.clearCoaCache();
@@ -1310,6 +1346,7 @@ export class HrService {
     const voucherNo = `JV-PAY-${monthYear}`;
     const voucherId = `vch-pay-${monthYear}`;
     try {
+      await supabase.from('journal_entries').delete().or(`voucher_id.eq.${voucherNo},voucher_id.eq.${voucherId}`);
       await supabase.from('voucher_entries').delete().or(`voucher_no.eq.${voucherNo},voucher_id.eq.${voucherId}`);
       await supabase.from('general_ledger').delete().or(`voucher_no.eq.${voucherNo},voucher_id.eq.${voucherId}`);
       await supabase.from('ledgers').delete().or(`voucher_no.eq.${voucherNo},voucher_id.eq.${voucherId}`);

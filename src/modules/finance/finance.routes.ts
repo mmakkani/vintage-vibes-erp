@@ -56,9 +56,13 @@ financeRouter.get('/coa', async (req, res) => {
       let rawRows: any[] = [];
       try {
         const result = await client.query(`
-          SELECT * FROM public.chart_of_accounts 
-          WHERE is_deleted IS NOT TRUE 
-          ORDER BY code ASC;
+          SELECT 
+            c.*,
+            COALESCE(v.current_balance, c.current_balance, 0) as live_balance 
+          FROM public.chart_of_accounts c 
+          LEFT JOIN view_coa_live_balances v ON c.id::text = v.account_id::text OR c.code = v.account_code
+          WHERE c.is_deleted IS NOT TRUE 
+          ORDER BY c.code ASC;
         `);
         rawRows = result.rows || [];
       } catch (coaErr: any) {
@@ -94,7 +98,7 @@ financeRouter.get('/coa', async (req, res) => {
         const rawType = String(detected).toUpperCase();
         const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
         const tierLevel = Number(r.tier_level || r.tierLevel || r.account_level || 1);
-        const balance = Number(r.current_balance || r.currentBalance || 0);
+        const balance = Number(r.live_balance ?? r.current_balance ?? r.currentBalance ?? 0);
         const active = r.is_active !== false && r.isActive !== false && r.is_deleted !== true;
 
         return {
