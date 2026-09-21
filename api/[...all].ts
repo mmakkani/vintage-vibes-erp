@@ -5375,7 +5375,7 @@ export default async function handler(req: any, res: any) {
               success: true,
               id: resData.party_id,
               code: resData.party_code || resData.code,
-              coaAccountId: resData.account_id,
+              coaAccountId: resData.code || resData.account_code || resData.coa_account_id || resData.account_id,
               data: resData
             });
           } catch (fnErr: any) {

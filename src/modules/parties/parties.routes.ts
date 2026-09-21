@@ -338,21 +338,29 @@ partiesRouter.post('/', async (req, res) => {
     const isActive = partyData.isActive !== false && partyData.is_active !== false;
 
     // Determine COA sub-account details
-    const isSupplier = type === 'SUPPLIER';
-    const isClient = type === 'CLIENT' || type === 'CUSTOMER';
-    const isAgent = type === 'AGENT';
-    const isCourier = type === 'COURIER';
+    const cleanType = String(type || partyData.party_type || 'CLIENT').trim().toUpperCase();
+    const isCourier = cleanType.includes('COURIER') || cleanType.includes('FREIGHT') || cleanType.includes('LOGISTICS');
+    const isAgent = cleanType.includes('AGENT') || cleanType.includes('BROKER');
+    const isSupplier = cleanType.includes('SUPPLIER') || cleanType.includes('VENDOR');
+    const isClient = !isCourier && !isAgent && !isSupplier;
+
     const cleanCode = code.replace(/[^A-Za-z0-9]/g, '');
-    const coaCode = isSupplier ? `2110-${cleanCode}` : (isClient ? `1130-${cleanCode}` : `2120-${cleanCode}`);
+    const coaCode = isCourier ? `2120-${cleanCode}` : (isSupplier || isAgent ? `2110-${cleanCode}` : `1130-${cleanCode}`);
     const coaId = `acc-${id}`;
-    const parentCode = (isAgent || isCourier)
-      ? (partyData.payableAccountId || partyData.payable_account_id || partyData.coa_account_id || partyData.coaAccountId || '2120-00')
-      : (isSupplier 
-        ? (partyData.payableAccountId || partyData.payable_account_id || partyData.coa_account_id || partyData.coaAccountId || '2110-00')
-        : (partyData.receivableAccountId || partyData.receivable_account_id || partyData.coa_account_id || partyData.coaAccountId || '1130-00'));
+    const parentCode = isCourier
+      ? '2120-00'
+      : (isAgent || isSupplier
+        ? '2110-00'
+        : '1130-00');
     const coaType = isClient ? 'ASSET' : 'LIABILITY';
-    const subType = isSupplier ? 'Accounts Payable - Trade' : (isClient ? 'Accounts Receivable - Trade' : (isCourier ? 'Accounts Payable - Courier & Logistics' : 'Accounts Payable - Clearing & Courier Agent'));
-    const roleTag = isSupplier ? 'Supplier' : (isClient ? 'Customer' : (isCourier ? 'Courier' : 'Agent'));
+    const subType = isCourier
+      ? 'Accounts Payable - Courier & Logistics'
+      : (isAgent
+        ? 'Accounts Payable - Trade'
+        : (isSupplier
+          ? 'Accounts Payable - Trade'
+          : 'Accounts Receivable - Trade'));
+    const roleTag = isCourier ? 'Courier' : (isAgent ? 'Agent' : (isSupplier ? 'Supplier' : 'Customer'));
     const coaName = `${cleanName} (${roleTag})`;
 
     const expenseAccount = partyData.clearingAccountId || partyData.clearing_account_id || partyData.expense_account || null;
@@ -381,7 +389,7 @@ partiesRouter.post('/', async (req, res) => {
     const rpcData = rpcRes.rows[0]?.data;
     const finalPartyId = rpcData?.party_id || id;
     const finalPartyCode = rpcData?.party_code || code;
-    const finalCoaCode = rpcData?.code || coaCode;
+    const finalCoaCode = rpcData?.code || rpcData?.account_code || rpcData?.coa_account_id || coaCode;
 
     const initialMap = (isAgent || isCourier) ? {
       payableAccountId: finalCoaCode,
@@ -423,8 +431,9 @@ partiesRouter.post('/', async (req, res) => {
         swift_code = $10,
         payment_terms = $11,
         opening_balance = $12,
-        business_card_url = $13
-      WHERE id = $14 OR party_id::text = $14;
+        business_card_url = $13,
+        coa_account_id = $14
+      WHERE id = $15 OR party_id::text = $15;
     `, [
       contactPerson || null,
       email || null,
@@ -439,6 +448,7 @@ partiesRouter.post('/', async (req, res) => {
       paymentTerms || null,
       openingBalance,
       businessCardUrl || null,
+      finalCoaCode,
       String(finalPartyId)
     ]).catch(err => {
       console.warn('Could not update extended party fields:', err.message);

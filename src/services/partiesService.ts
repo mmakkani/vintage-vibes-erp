@@ -10,13 +10,23 @@ export class PartiesService {
       try {
         const list = await safeFetchJson<any[]>('/api/parties?_t=' + Date.now(), { credentials: 'include' });
         if (Array.isArray(list)) {
-            const normalized = list.map((r: any) => ({
-              id: r.id,
-              code: r.code || `P-${r.id}`,
-              name: r.name || 'Unnamed Party',
-              type: (r.type || 'CLIENT').toUpperCase(),
-              contactPerson: r.contactPerson || r.contact_person || '',
-              contact_person: r.contact_person || r.contactPerson || '',
+            const normalized = list.map((r: any) => {
+              const rawT = String(r.type || r.party_type || 'CLIENT').trim().toUpperCase();
+              const normType = (rawT.includes('COURIER') || rawT.includes('FREIGHT') || rawT.includes('LOGISTICS'))
+                ? 'COURIER'
+                : (rawT.includes('AGENT') || rawT.includes('BROKER'))
+                ? 'AGENT'
+                : (rawT.includes('SUPPLIER') || rawT.includes('VENDOR'))
+                ? 'SUPPLIER'
+                : 'CLIENT';
+
+              return {
+                id: r.id,
+                code: r.code || `P-${r.id}`,
+                name: r.name || 'Unnamed Party',
+                type: normType,
+                contactPerson: r.contactPerson || r.contact_person || '',
+                contact_person: r.contact_person || r.contactPerson || '',
               phone: r.phone || '',
               email: r.email || '',
               address: r.address || '',
@@ -62,7 +72,8 @@ export class PartiesService {
               hasEntries: Boolean(r.hasEntries),
               createdAt: r.createdAt || r.created_at || new Date().toISOString(),
               created_at: r.createdAt || r.created_at || new Date().toISOString()
-            }));
+            };
+          });
             try {
               localStorage.removeItem('vibe_cached_parties');
             } catch {}
@@ -109,7 +120,13 @@ export class PartiesService {
             id: row.id,
             code: row.code,
             name: row.name,
-            type: (row.type || 'CLIENT').toUpperCase(),
+            type: (() => {
+              const rawT = String(row.type || row.party_type || 'CLIENT').trim().toUpperCase();
+              if (rawT.includes('COURIER') || rawT.includes('FREIGHT') || rawT.includes('LOGISTICS')) return 'COURIER';
+              if (rawT.includes('AGENT') || rawT.includes('BROKER')) return 'AGENT';
+              if (rawT.includes('SUPPLIER') || rawT.includes('VENDOR')) return 'SUPPLIER';
+              return 'CLIENT';
+            })(),
             contactPerson: row.contact_person || row.contactPerson || '',
             contact_person: row.contact_person || row.contactPerson || '',
             contactDesignation: row.contact_designation || row.contactDesignation || '',
@@ -346,12 +363,22 @@ export class PartiesService {
     }
 
     const rawType = String(party.type || party.party_type || (party as any).partyType || 'CLIENT').trim().toUpperCase();
-    const type = (rawType === 'SUPPLIER' || rawType === 'AGENT' || rawType === 'COURIER') ? rawType : 'CLIENT';
+    let type: 'CLIENT' | 'SUPPLIER' | 'COURIER' | 'AGENT' = 'CLIENT';
+
+    if (rawType.includes('COURIER') || rawType.includes('FREIGHT') || rawType.includes('LOGISTICS')) {
+      type = 'COURIER';
+    } else if (rawType.includes('AGENT') || rawType.includes('BROKER')) {
+      type = 'AGENT';
+    } else if (rawType.includes('SUPPLIER') || rawType.includes('VENDOR')) {
+      type = 'SUPPLIER';
+    } else {
+      type = 'CLIENT';
+    }
 
     const phone = party.phone || party.contact_no || (party as any).contactNo || '';
     const trnNo = party.trn_no || party.trnNo || party.tax_id || (party as any).trnTaxNo || '';
     const creditLimit = Number(party.creditLimit ?? party.credit_limit ?? 50000);
-    const payableAccountId = party.payableAccountId || (party as any).payable_account_id || ((type === 'AGENT' || type === 'COURIER') ? '2120-00' : '2110-01');
+    const payableAccountId = party.payableAccountId || (party as any).payable_account_id || (type === 'COURIER' ? '2120-00' : '2110-00');
     const receivableAccountId = party.receivableAccountId || (party as any).receivable_account_id || '1130-00';
     const clearingAccountId = party.clearingAccountId || (party as any).clearing_account_id || '1310-00';
     const revenueAccountId = party.revenueAccountId || (party as any).revenue_account_id || '4110-00';
@@ -459,7 +486,7 @@ export class PartiesService {
 
     const partyId = data?.party_id || `pty-${Date.now()}`;
     const partyCode = data?.party_code || 'P-NEW';
-    const coaCode = data?.code || (type === 'AGENT' ? '2120-00' : (type === 'SUPPLIER' ? '2110-01' : '1130-01'));
+    const coaCode = data?.code || data?.account_code || data?.coa_account_id || (type === 'COURIER' ? '2120-01' : (type === 'CLIENT' ? '1130-01' : '2110-01'));
 
     const contactDesignation = (party as any).contact_designation || party.contactDesignation || '';
     const tradeLicenseNo = (party as any).trade_license_no || party.tradeLicenseNo || '';
@@ -476,6 +503,7 @@ export class PartiesService {
         contact_person: party.contactPerson || (party as any).contact_person,
         email: party.email,
         address: party.address,
+        coa_account_id: coaCode,
         contact_designation: contactDesignation || null,
         trade_license_no: tradeLicenseNo || null,
         license_expiry_date: licenseExpiryDate || null,
@@ -523,13 +551,13 @@ export class PartiesService {
       isActive: true,
       accountMap: (type === 'AGENT' || type === 'COURIER') ? {
         payableAccountId: coaCode,
-        agentPayableAccountId: coaCode,
+        agentPayableAccountId: type === 'AGENT' ? coaCode : undefined,
         courierPayableAccountId: type === 'COURIER' ? coaCode : undefined,
         clearingAccountId: clearingAccountId || '1310-00',
         expenseAccountId: clearingAccountId || '5110-00'
       } : {
-        payableAccountId: type === 'SUPPLIER' ? coaCode : '2110-01',
-        receivableAccountId: type !== 'SUPPLIER' ? coaCode : '1130-00',
+        payableAccountId: type === 'SUPPLIER' ? coaCode : '2110-00',
+        receivableAccountId: type === 'CLIENT' ? coaCode : '1130-00',
         clearingAccountId: clearingAccountId || '1310-00',
         revenueAccountId: revenueAccountId || '4110-00'
       },
