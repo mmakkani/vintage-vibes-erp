@@ -915,10 +915,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         toast.success('🎉 Visiting card converted to official party & linked!');
       }
 
-      toast.success(`Created party & provisioned account ${data.code}`);
-      await queryClient.invalidateQueries({ queryKey: ['parties'] });
-      await queryClient.invalidateQueries({ queryKey: ['chart_of_accounts'] });
-
+      // Immediately close modal and reset form state BEFORE querying to prevent duplicate validation race condition
       setShowNewPartyModal(false);
 
       // Reset form
@@ -965,6 +962,12 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         coaAccountId: '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7',
         coa_account_id: '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7'
       });
+
+      toast.success(`Created party & provisioned account ${data?.code || data?.account_code || data?.coa_account_id || ''}`);
+
+      // Refetch queries after modal is safely closed and form is clean
+      await queryClient.invalidateQueries({ queryKey: ['parties'] });
+      await queryClient.invalidateQueries({ queryKey: ['chart_of_accounts'] });
 
       onRefreshAll?.();
     } catch (err: any) {
@@ -1512,7 +1515,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   <span className="flex items-center gap-1">
                     <span className="text-emerald-600 font-bold">✓ COA:</span>
                     <span className="font-bold text-slate-800">
-                      {party.accountMap?.courierPayableAccountId || party.accountMap?.agentPayableAccountId || party.accountMap?.payableAccountId || party.accountMap?.receivableAccountId || party.coaAccountId || ((party.type === 'COURIER' || party.type === 'AGENT') ? `2120-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : (party.type === 'SUPPLIER' ? `2110-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : `1130-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}`))}
+                      {((party.type === 'CUSTOMER' || (party.type as string) === 'CLIENT' || (party as any).party_type === 'CUSTOMER' || (party as any).party_type === 'CLIENT')
+                        ? (party.accountMap?.receivableAccountId || party.coaAccountId || (party as any).coa_account_id || `1130-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}`)
+                        : (party.accountMap?.courierPayableAccountId || party.accountMap?.agentPayableAccountId || party.accountMap?.payableAccountId || party.coaAccountId || (party as any).coa_account_id || ((party.type === 'COURIER' || party.type === 'AGENT') ? `2120-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : `2110-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}`)))
+                      }
                     </span>
                   </span>
                   
@@ -1692,7 +1698,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     Auto-Linked COA Khata
                   </span>
                   <span className="font-mono font-bold text-slate-800 text-[11px]">
-                    {selectedParty.accountMap?.payableAccountId || selectedParty.accountMap?.receivableAccountId || selectedParty.coaAccountId || (selectedParty.type === 'SUPPLIER' ? `2110-${selectedParty.code.replace(/[^A-Za-z0-9]/g, '')}` : `1130-${selectedParty.code.replace(/[^A-Za-z0-9]/g, '')}`)} - {selectedParty.name} ({selectedParty.type === 'SUPPLIER' ? 'Supplier' : 'Customer'})
+                    {((selectedParty.type === 'CUSTOMER' || (selectedParty.type as string) === 'CLIENT' || (selectedParty as any).party_type === 'CUSTOMER' || (selectedParty as any).party_type === 'CLIENT')
+                      ? (selectedParty.accountMap?.receivableAccountId || selectedParty.coaAccountId || (selectedParty as any).coa_account_id || `1130-${(selectedParty.code || '').replace(/[^A-Za-z0-9]/g, '')}`)
+                      : (selectedParty.accountMap?.courierPayableAccountId || selectedParty.accountMap?.agentPayableAccountId || selectedParty.accountMap?.payableAccountId || selectedParty.coaAccountId || (selectedParty as any).coa_account_id || (selectedParty.type === 'COURIER' ? `2120-${(selectedParty.code || '').replace(/[^A-Za-z0-9]/g, '')}` : `2110-${(selectedParty.code || '').replace(/[^A-Za-z0-9]/g, '')}`))
+                    )} - {selectedParty.name} ({selectedParty.type === 'SUPPLIER' ? 'Supplier' : (selectedParty.type === 'AGENT' ? 'Agent' : (selectedParty.type === 'COURIER' ? 'Courier' : 'Customer'))})
                   </span>
                 </div>
                 <button
@@ -2975,7 +2984,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <div className="flex justify-between items-center pt-2">
                   <span className="font-semibold text-slate-500">Auto-Linked COA Code</span>
                   <span className="font-mono font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                    {viewPartyData.accountMap?.courierPayableAccountId || viewPartyData.accountMap?.agentPayableAccountId || viewPartyData.accountMap?.payableAccountId || viewPartyData.accountMap?.receivableAccountId || viewPartyData.coaAccountId || (viewPartyData.type === 'COURIER' ? `2120-${viewPartyData.code.replace(/[^A-Za-z0-9]/g, '')}` : (viewPartyData.type === 'AGENT' ? `2120-${viewPartyData.code.replace(/[^A-Za-z0-9]/g, '')}` : (viewPartyData.type === 'SUPPLIER' ? `2110-${viewPartyData.code.replace(/[^A-Za-z0-9]/g, '')}` : `1130-${viewPartyData.code.replace(/[^A-Za-z0-9]/g, '')}`)))}
+                    {((viewPartyData.type === 'CUSTOMER' || (viewPartyData.type as string) === 'CLIENT' || (viewPartyData as any).party_type === 'CUSTOMER' || (viewPartyData as any).party_type === 'CLIENT')
+                      ? (viewPartyData.accountMap?.receivableAccountId || viewPartyData.coaAccountId || (viewPartyData as any).coa_account_id || `1130-${(viewPartyData.code || '').replace(/[^A-Za-z0-9]/g, '')}`)
+                      : (viewPartyData.accountMap?.courierPayableAccountId || viewPartyData.accountMap?.agentPayableAccountId || viewPartyData.accountMap?.payableAccountId || viewPartyData.coaAccountId || (viewPartyData as any).coa_account_id || (viewPartyData.type === 'COURIER' ? `2120-${(viewPartyData.code || '').replace(/[^A-Za-z0-9]/g, '')}` : (viewPartyData.type === 'AGENT' ? `2120-${(viewPartyData.code || '').replace(/[^A-Za-z0-9]/g, '')}` : `2110-${(viewPartyData.code || '').replace(/[^A-Za-z0-9]/g, '')}`)))
+                    )}
                   </span>
                 </div>
 
