@@ -2548,10 +2548,10 @@ class RelationalStore {
     }
 
     // 2. Automated Balanced Dual-Entry COA Voucher for Bulk Bale Purchase
-    // Debit: 1140-00 (Inventory - Raw Bulk Bales)
-    // Credit: 2110-00 (Accounts Payable - Trade Suppliers)
-    const rawBaleInvAcc = this.getOrCreateAccount('1140', 'Inventory - Raw Bulk Bales (Unopened Sacks & Containers)', 'ASSET');
-    const apAcc = this.getOrCreateAccount('2110', 'Accounts Payable - Trade Suppliers (Bale Exporters)', 'LIABILITY');
+    // Debit: 1140-01 (Raw Material Unsorted)
+    // Credit: 2110-01 (Accounts Payable - Trade Suppliers)
+    const rawBaleInvAcc = this.getOrCreateAccount('1140-01', 'Raw Material Unsorted', 'ASSET');
+    const apAcc = this.getOrCreateAccount('2110-01', 'Accounts Payable - Trade Suppliers', 'LIABILITY');
 
     const nextIdx = this.vouchers.length + 1;
     const voucherNo = `JV-PUR-${String(nextIdx).padStart(4, '0')}`;
@@ -2600,7 +2600,7 @@ class RelationalStore {
     this.coaAccounts = updatedAccounts;
 
     this.auditLogs.unshift(
-      AuditEngine.createLogEntry('PURCHASE', 'POST', invoice.invoiceNo, 'POSTED', postedBy, `Approved and posted Purchase Invoice ${invoice.invoiceNo}; updated supplier AP (AED ${totalAed}) and Raw Bale Inventory (1140-00)`)
+      AuditEngine.createLogEntry('PURCHASE', 'POST', invoice.invoiceNo, 'POSTED', postedBy, `Approved and posted Purchase Invoice ${invoice.invoiceNo}; updated supplier AP (AED ${totalAed}) and Raw Bale Inventory (1140-01)`)
     );
 
     return { success: true };
@@ -2621,7 +2621,7 @@ class RelationalStore {
       return { success: false, error: `Cannot unpost invoice ${invoice.invoiceNo} because its status is ${invoice.status || 'DRAFT'} (must be POSTED to unpost).` };
     }
 
-    invoice.status = 'UNPOSTED';
+    invoice.status = 'DRAFT';
 
     // Reverse COA Voucher if posted
     const existingVoucher = this.vouchers.find(v => v.referenceNo === invoice.invoiceNo || v.id === `vch-pur-${invoice.id}`);

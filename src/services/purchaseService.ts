@@ -189,11 +189,13 @@ export class PurchaseService {
     const finalPartyName = party?.name || supplierName?.trim() || 'Trade Supplier';
     const partyCode = party?.code || `P-${finalPartyId.replace(/[^A-Za-z0-9]/g, '').slice(-4)}`;
     const cleanCode = partyCode.replace(/[^A-Za-z0-9]/g, '');
-    let accountId = party?.coa_account_id || `acc-${finalPartyId}`;
-    const accountCode = (party?.account_map?.payableAccountId && party.account_map.payableAccountId.startsWith('2110-') && party.account_map.payableAccountId !== '2110-00')
+    const rawAccountCode = (party?.account_map?.payableAccountId && party.account_map.payableAccountId.startsWith('2110-') && party.account_map.payableAccountId !== '2110-00')
       ? party.account_map.payableAccountId
-      : `2110-${cleanCode}`;
-    const accountName = `${finalPartyName} (Supplier)`;
+      : (cleanCode ? `2110-${cleanCode}` : '2110-01');
+    const accountCode = (rawAccountCode === '2110-00' || rawAccountCode.endsWith('-00'))
+      ? '2110-01'
+      : rawAccountCode;
+    const accountName = accountCode === '2110-01' ? 'Accounts Payable - Trade Suppliers' : `${finalPartyName} (Supplier)`;
 
     // Check if account already exists by CODE in chart_of_accounts (UUID id)
     let resolvedChartUuid: string | null = null;
@@ -317,7 +319,64 @@ export class PurchaseService {
         invoice.currency
       );
 
-      // Post Journal Voucher: Dr 1140-00 (Warehouse Raw Bales Inventory) / Cr Supplier Liability Account
+      // Look up dynamic UUID for Tier 3 Account 1140-01 (Raw Material Unsorted)
+      let rawInvAccountId: string | undefined = undefined;
+      try {
+        const { data: rawChart } = await supabase
+          .from('chart_of_accounts')
+          .select('id, name')
+          .eq('code', '1140-01')
+          .maybeSingle();
+        if (rawChart?.id) {
+          rawInvAccountId = String(rawChart.id);
+        } else {
+          const { data: rawCoa } = await supabase
+            .from('coa_accounts')
+            .select('id, name')
+            .eq('code', '1140-01')
+            .maybeSingle();
+          if (rawCoa?.id) rawInvAccountId = String(rawCoa.id);
+        }
+      } catch (_) {}
+
+      // Ensure 1140-01 exists in coa_accounts if not yet created
+      if (!rawInvAccountId) {
+        try {
+          const { data: upsertRaw } = await supabase.from('coa_accounts').upsert({
+            id: 'acc-1140-01',
+            code: '1140-01',
+            name: 'Raw Material Unsorted',
+            type: 'ASSET',
+            sub_type: 'Inventory',
+            parent_code: '1140-00',
+            tier_level: 3,
+            is_active: true
+          }, { onConflict: 'code' }).select('id').maybeSingle();
+          if (upsertRaw?.id) rawInvAccountId = String(upsertRaw.id);
+        } catch (_) {}
+      }
+
+      const targetApCode = (supplierCoa.accountCode === '2110-00' || supplierCoa.accountCode.endsWith('-00'))
+        ? '2110-01'
+        : supplierCoa.accountCode;
+
+      // Ensure 2110-01 exists in coa_accounts if targeting default AP account
+      if (targetApCode === '2110-01') {
+        try {
+          await supabase.from('coa_accounts').upsert({
+            id: 'acc-2110-01',
+            code: '2110-01',
+            name: 'Accounts Payable - Trade Suppliers',
+            type: 'LIABILITY',
+            sub_type: 'Accounts Payable - Trade',
+            parent_code: '2110-00',
+            tier_level: 3,
+            is_active: true
+          }, { onConflict: 'code' });
+        } catch (_) {}
+      }
+
+      // Post Journal Voucher: Dr 1140-01 (Raw Material Unsorted) / Cr Supplier Liability Account (Tier 3)
       await FinanceService.addVoucher({
         voucherNo: `JV-PUR-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
         date: invoice.invoice_date || invoice.issue_date || new Date().toISOString().slice(0, 10),
@@ -330,16 +389,17 @@ export class PurchaseService {
         createdBy: 'System (Commercial Invoice)',
         lines: [
           {
-            accountCode: '1140-00',
-            accountName: 'Inventory - Raw Bales Warehouse Stock',
+            accountId: rawInvAccountId,
+            accountCode: '1140-01',
+            accountName: 'Raw Material Unsorted',
             debitAmount: invoiceTotalAed,
             creditAmount: 0,
             memo: `Commercial Purchase Invoice: ${invoiceNo}`
           },
           {
             accountId: supplierCoa.accountId,
-            accountCode: supplierCoa.accountCode,
-            accountName: supplierCoa.accountName,
+            accountCode: targetApCode,
+            accountName: targetApCode === '2110-01' ? 'Accounts Payable - Trade Suppliers' : supplierCoa.accountName,
             partyId: supplierCoa.partyId,
             partyName: supplierCoa.partyName,
             debitAmount: 0,
@@ -349,28 +409,30 @@ export class PurchaseService {
         ]
       });
 
-      // Update COA balances: 1140-00
-      const { data: accInv } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1140-00').maybeSingle();
+      // Update COA balances: 1140-01 (Raw Material Unsorted)
+      const { data: accInv } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1140-01').maybeSingle();
       if (accInv) {
         const newBal = Number(accInv.current_balance || 0) + invoiceTotalAed;
-        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1140-00');
-        await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '1140-00');
+        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1140-01');
+        await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '1140-01');
       }
 
-      // Update COA balances: Parent AP 2110-00
-      const { data: accParentAp } = await supabase.from('coa_accounts').select('current_balance').eq('code', '2110-00').maybeSingle();
+      // Update COA balances: Accounts Payable - Trade Suppliers 2110-01
+      const { data: accParentAp } = await supabase.from('coa_accounts').select('current_balance').eq('code', '2110-01').maybeSingle();
       if (accParentAp) {
         const newBal = Number(accParentAp.current_balance || 0) + invoiceTotalAed;
-        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '2110-00');
-        await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '2110-00');
+        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '2110-01');
+        await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '2110-01');
       }
 
-      // Update COA balances: Supplier specific account
-      const { data: accSupp } = await supabase.from('coa_accounts').select('current_balance').eq('code', supplierCoa.accountCode).maybeSingle();
-      const prevSuppBal = Number(accSupp?.current_balance ?? supplierCoa.party?.current_balance ?? 0);
-      const newSuppBal = prevSuppBal + invoiceTotalAed;
-      await supabase.from('coa_accounts').update({ current_balance: newSuppBal }).eq('code', supplierCoa.accountCode);
-      await supabase.from('chart_of_accounts').update({ current_balance: newSuppBal }).eq('code', supplierCoa.accountCode);
+      // Update COA balances: Supplier specific Tier 3 sub-account
+      if (targetApCode !== '2110-01') {
+        const { data: accSupp } = await supabase.from('coa_accounts').select('current_balance').eq('code', targetApCode).maybeSingle();
+        const prevSuppBal = Number(accSupp?.current_balance ?? supplierCoa.party?.current_balance ?? 0);
+        const newSuppBal = prevSuppBal + invoiceTotalAed;
+        await supabase.from('coa_accounts').update({ current_balance: newSuppBal }).eq('code', targetApCode);
+        await supabase.from('chart_of_accounts').update({ current_balance: newSuppBal }).eq('code', targetApCode);
+      }
 
       // Update supplier balance in parties table
       if (supplierCoa.partyId) {
@@ -532,11 +594,15 @@ export class PurchaseService {
         const cleanId = mv.id;
         const vNo = mv.voucher_no;
 
+        // Strict UUID match for journal_entries (removes non-existent voucher_no column)
+        const { error: jeErr } = await supabase.from('journal_entries').delete().eq('voucher_id', cleanId);
+        if (jeErr) {
+          console.error(`Failed to delete journal entries for voucher ${vNo || cleanId}:`, jeErr);
+          throw new Error(`Failed to delete journal entries: ${jeErr.message}`);
+        }
+
         try {
           await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
-        } catch (_) {}
-        try {
-          await supabase.from('journal_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
         try {
           await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
@@ -571,11 +637,13 @@ export class PurchaseService {
         const { count: invCount } = await supabase.from('purchase_invoices').select('id', { count: 'exact', head: true });
         const { count: baleCount } = await supabase.from('inward_gate_passes').select('id', { count: 'exact', head: true });
         if (Number(invCount || 0) === 0 && Number(baleCount || 0) === 0) {
-          await supabase.from('coa_accounts').update({ current_balance: 0 }).in('code', ['1140-00', '1150-00', '2110-00']);
+          await supabase.from('coa_accounts').update({ current_balance: 0 }).in('code', ['1140-00', '1140-01', '1150-00', '1150-01', '2110-00', '2110-01']);
+          await supabase.from('chart_of_accounts').update({ current_balance: 0 }).in('code', ['1140-00', '1140-01', '1150-00', '1150-01', '2110-00', '2110-01']);
         }
       } catch (_) {}
     } catch (err) {
-      console.warn('Error in deleteInvoiceFinancialVouchers:', err);
+      console.error('Error in deleteInvoiceFinancialVouchers:', err);
+      throw err;
     }
   }
 
@@ -695,23 +763,23 @@ export class PurchaseService {
       await this.deleteInvoiceFinancialVouchers(invoiceNo);
     }
 
-    // 2. Reverse COA balances: 1140-00 (Warehouse Raw Bales Inventory)
+    // 2. Reverse COA balances: 1140-01 (Raw Material Unsorted)
     try {
-      const { data: accInv } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1140-00').maybeSingle();
+      const { data: accInv } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1140-01').maybeSingle();
       if (accInv) {
         const newBal = Math.max(0, Number(accInv.current_balance || 0) - invoiceTotalAed);
-        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1140-00');
-        await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '1140-00');
+        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1140-01');
+        await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '1140-01');
       }
     } catch (_) {}
 
-    // 3. Reverse COA balances: Parent AP 2110-00
+    // 3. Reverse COA balances: Accounts Payable - Trade Suppliers 2110-01
     try {
-      const { data: accParentAp } = await supabase.from('coa_accounts').select('current_balance').eq('code', '2110-00').maybeSingle();
+      const { data: accParentAp } = await supabase.from('coa_accounts').select('current_balance').eq('code', '2110-01').maybeSingle();
       if (accParentAp) {
         const newBal = Math.max(0, Number(accParentAp.current_balance || 0) - invoiceTotalAed);
-        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '2110-00');
-        await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '2110-00');
+        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '2110-01');
+        await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '2110-01');
       }
     } catch (_) {}
 
@@ -723,11 +791,17 @@ export class PurchaseService {
         invRow.currency
       );
 
-      const { data: accSupp } = await supabase.from('coa_accounts').select('current_balance').eq('code', supplierCoa.accountCode).maybeSingle();
-      if (accSupp) {
-        const newSuppBal = Math.max(0, Number(accSupp.current_balance || 0) - invoiceTotalAed);
-        await supabase.from('coa_accounts').update({ current_balance: newSuppBal }).eq('code', supplierCoa.accountCode);
-        await supabase.from('chart_of_accounts').update({ current_balance: newSuppBal }).eq('code', supplierCoa.accountCode);
+      const targetSuppCode = (supplierCoa.accountCode === '2110-00' || supplierCoa.accountCode.endsWith('-00'))
+        ? '2110-01'
+        : supplierCoa.accountCode;
+
+      if (targetSuppCode !== '2110-01') {
+        const { data: accSupp } = await supabase.from('coa_accounts').select('current_balance').eq('code', targetSuppCode).maybeSingle();
+        if (accSupp) {
+          const newSuppBal = Math.max(0, Number(accSupp.current_balance || 0) - invoiceTotalAed);
+          await supabase.from('coa_accounts').update({ current_balance: newSuppBal }).eq('code', targetSuppCode);
+          await supabase.from('chart_of_accounts').update({ current_balance: newSuppBal }).eq('code', targetSuppCode);
+        }
       }
 
       if (supplierCoa.partyId) {
@@ -1127,7 +1201,7 @@ export class PurchaseService {
           createdBy: 'System (Purchase Inward)',
           lines: [
             {
-              accountCode: '1150-00',
+              accountCode: '1150-01',
               accountName: 'Inventory - Sorting Work-in-Progress (WIP Bales Under Grading)',
               debitAmount: invoiceTotalAed,
               creditAmount: 0,
@@ -1135,7 +1209,7 @@ export class PurchaseService {
             },
             {
               accountId: supplierCoa.accountId,
-              accountCode: supplierCoa.accountCode,
+              accountCode: (supplierCoa.accountCode === '2110-00' || supplierCoa.accountCode.endsWith('-00')) ? '2110-01' : supplierCoa.accountCode,
               accountName: supplierCoa.accountName,
               partyId: supplierCoa.partyId,
               partyName: supplierCoa.partyName,
@@ -1146,28 +1220,31 @@ export class PurchaseService {
           ]
         });
 
-        // Update COA balances: 1150-00 (WIP Inventory)
-        const { data: accWip } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1150-00').maybeSingle();
+        // Update COA balances: 1150-01 (WIP Inventory)
+        const { data: accWip } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1150-01').maybeSingle();
         if (accWip) {
           const newBal = Number(accWip.current_balance || 0) + invoiceTotalAed;
-          await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1150-00');
-          await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '1150-00');
+          await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1150-01');
+          await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '1150-01');
         }
 
-        // Update COA balances: Parent AP 2110-00
-        const { data: accParentAp } = await supabase.from('coa_accounts').select('current_balance').eq('code', '2110-00').maybeSingle();
+        // Update COA balances: Accounts Payable - Trade Suppliers 2110-01
+        const { data: accParentAp } = await supabase.from('coa_accounts').select('current_balance').eq('code', '2110-01').maybeSingle();
         if (accParentAp) {
           const newBal = Number(accParentAp.current_balance || 0) + invoiceTotalAed;
-          await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '2110-00');
-          await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '2110-00');
+          await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '2110-01');
+          await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '2110-01');
         }
 
         // Update COA balances: Supplier specific account
-        const { data: accSupp } = await supabase.from('coa_accounts').select('current_balance').eq('code', supplierCoa.accountCode).maybeSingle();
-        const prevSuppBal = Number(accSupp?.current_balance ?? supplierCoa.party?.current_balance ?? 0);
-        const newSuppBal = prevSuppBal + invoiceTotalAed;
-        await supabase.from('coa_accounts').update({ current_balance: newSuppBal }).eq('code', supplierCoa.accountCode);
-        await supabase.from('chart_of_accounts').update({ current_balance: newSuppBal }).eq('code', supplierCoa.accountCode);
+        const targetSuppCode = (supplierCoa.accountCode === '2110-00' || supplierCoa.accountCode.endsWith('-00')) ? '2110-01' : supplierCoa.accountCode;
+        if (targetSuppCode !== '2110-01') {
+          const { data: accSupp } = await supabase.from('coa_accounts').select('current_balance').eq('code', targetSuppCode).maybeSingle();
+          const prevSuppBal = Number(accSupp?.current_balance ?? supplierCoa.party?.current_balance ?? 0);
+          const newSuppBal = prevSuppBal + invoiceTotalAed;
+          await supabase.from('coa_accounts').update({ current_balance: newSuppBal }).eq('code', targetSuppCode);
+          await supabase.from('chart_of_accounts').update({ current_balance: newSuppBal }).eq('code', targetSuppCode);
+        }
 
         // Update supplier balance in parties table
         if (supplierCoa.partyId) {
@@ -1192,7 +1269,7 @@ export class PurchaseService {
           });
         }
       } else {
-        // If invoice was already posted (PINV), transfer from Raw Bales Stock (1140-00) to Sorting WIP (1150-00)
+        // If invoice was already posted (PINV), transfer from Raw Bales Stock (1140-01) to Sorting WIP (1150-01)
         await FinanceService.addVoucher({
           voucherNo: `JV-INW-TRF-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
           date: new Date().toISOString().slice(0, 10),
@@ -1205,15 +1282,15 @@ export class PurchaseService {
           createdBy: 'System (Purchase Inward)',
           lines: [
             {
-              accountCode: '1150-00',
+              accountCode: '1150-01',
               accountName: 'Inventory - Sorting Work-in-Progress (WIP Bales Under Grading)',
               debitAmount: invoiceTotalAed,
               creditAmount: 0,
               memo: `WIP Raw Bales Inward: ${invoiceNo} (${createdPasses.length} bales)`
             },
             {
-              accountCode: '1140-00',
-              accountName: 'Inventory - Raw Bales Warehouse Stock',
+              accountCode: '1140-01',
+              accountName: 'Raw Material Unsorted',
               debitAmount: 0,
               creditAmount: invoiceTotalAed,
               memo: `Warehouse Stock Inward to WIP: ${invoiceNo}`
@@ -1221,17 +1298,19 @@ export class PurchaseService {
           ]
         });
 
-        // Update COA balances: 1150-00
-        const { data: accWip } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1150-00').single();
+        // Update COA balances: 1150-01
+        const { data: accWip } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1150-01').maybeSingle();
         if (accWip) {
           const newBal = Number(accWip.current_balance || 0) + invoiceTotalAed;
-          await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1150-00');
+          await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1150-01');
+          await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '1150-01');
         }
-        // Update COA balances: 1140-00
-        const { data: accInv } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1140-00').single();
+        // Update COA balances: 1140-01
+        const { data: accInv } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1140-01').maybeSingle();
         if (accInv) {
           const newBal = Math.max(0, Number(accInv.current_balance || 0) - invoiceTotalAed);
-          await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1140-00');
+          await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1140-01');
+          await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '1140-01');
         }
       }
     } catch (coaErr) {

@@ -205,7 +205,7 @@ export class PartiesService {
         expenseAccountId: party.accountMap?.clearingAccountId || party.accountMap?.expenseAccountId || '5110-00'
       } : {
         ...(party.accountMap || {}),
-        payableAccountId: isSupplier ? coaCode : (party.accountMap?.payableAccountId || '2110-00'),
+        payableAccountId: isSupplier ? coaCode : (party.accountMap?.payableAccountId || '2110-01'),
         receivableAccountId: isClient ? coaCode : (party.accountMap?.receivableAccountId || '1130-00')
       };
 
@@ -256,7 +256,7 @@ export class PartiesService {
     const phone = party.phone || party.contact_no || (party as any).contactNo || '';
     const trnNo = party.trn_no || party.trnNo || party.tax_id || (party as any).trnTaxNo || '';
     const creditLimit = Number(party.creditLimit ?? party.credit_limit ?? 50000);
-    const payableAccountId = party.payableAccountId || (party as any).payable_account_id || (type === 'AGENT' ? '2120-00' : '2110-00');
+    const payableAccountId = party.payableAccountId || (party as any).payable_account_id || (type === 'AGENT' ? '2120-00' : '2110-01');
     const receivableAccountId = party.receivableAccountId || (party as any).receivable_account_id || '1130-00';
     const clearingAccountId = party.clearingAccountId || (party as any).clearing_account_id || '1310-00';
     const revenueAccountId = party.revenueAccountId || (party as any).revenue_account_id || '4110-00';
@@ -355,7 +355,7 @@ export class PartiesService {
 
     const partyId = data?.party_id || `pty-${Date.now()}`;
     const partyCode = data?.party_code || 'P-NEW';
-    const coaCode = data?.code || (type === 'AGENT' ? '2120-00' : (type === 'SUPPLIER' ? '2110-00' : '1130-00'));
+    const coaCode = data?.code || (type === 'AGENT' ? '2120-00' : (type === 'SUPPLIER' ? '2110-01' : '1130-01'));
 
     return {
       id: partyId,
@@ -378,7 +378,7 @@ export class PartiesService {
         clearingAccountId: clearingAccountId || '1310-00',
         expenseAccountId: clearingAccountId || '5110-00'
       } : {
-        payableAccountId: type === 'SUPPLIER' ? coaCode : '2110-00',
+        payableAccountId: type === 'SUPPLIER' ? coaCode : '2110-01',
         receivableAccountId: type !== 'SUPPLIER' ? coaCode : '1130-00',
         clearingAccountId: clearingAccountId || '1310-00',
         revenueAccountId: revenueAccountId || '4110-00'

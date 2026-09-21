@@ -68,7 +68,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     creditLimit: 50000,
     isActive: true,
     linked_account_id: undefined as number | undefined,
-    payableAccountId: '2110-00',
+    payableAccountId: '2110-01',
     clearingAccountId: '1310-00',
     receivableAccountId: '1130-00',
     revenueAccountId: '4110-00'
@@ -96,8 +96,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     creditLimit: 50000,
     credit_limit: 50000,
     currency: 'AED' as any,
-    payableAccountId: '2110-00',
-    payable_account_id: '2110-00',
+    payableAccountId: '2110-01',
+    payable_account_id: '2110-01',
     clearingAccountId: '1310-00',
     clearing_account_id: '1310-00',
     receivableAccountId: '1130-00',
@@ -319,7 +319,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
           receivableAccountId: '1130-00',
           clearingAccountId: formData.clearing_account_id || '1310-00'
         } : {
-          payableAccountId: '2110-00',
+          payableAccountId: '2110-01',
           receivableAccountId: data.code || data.account_code || '1130-01',
           revenueAccountId: formData.revenue_account_id || '4110-00'
         };
@@ -354,8 +354,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         creditLimit: 50000,
         credit_limit: 50000,
         currency: 'AED',
-        payableAccountId: '2110-00',
-        payable_account_id: '2110-00',
+        payableAccountId: '2110-01',
+        payable_account_id: '2110-01',
         clearingAccountId: '1310-00',
         clearing_account_id: '1310-00',
         receivableAccountId: '1130-00',

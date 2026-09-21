@@ -5140,12 +5140,31 @@ export default async function handler(req: any, res: any) {
             }
 
             for (const mv of matchedVchs) {
-              await supabaseAdmin.from('voucher_entries').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-              await supabaseAdmin.from('journal_entries').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-              await supabaseAdmin.from('general_ledger').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-              await supabaseAdmin.from('ledgers').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-              await supabaseAdmin.from('financial_vouchers').delete().eq('id', mv.id);
-              await supabaseAdmin.from('vouchers').delete().eq('id', mv.id);
+              const { error: jeErr } = await supabaseAdmin.from('journal_entries').delete().eq('voucher_id', mv.id);
+              if (jeErr) {
+                console.error('Failed to delete journal entries for voucher:', jeErr);
+                return res.status(400).json({
+                  success: false,
+                  error: `Failed to delete journal entries: ${jeErr.message}`,
+                  message: jeErr.message
+                });
+              }
+
+              try {
+                await supabaseAdmin.from('voucher_entries').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+              } catch (_) {}
+              try {
+                await supabaseAdmin.from('general_ledger').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+              } catch (_) {}
+              try {
+                await supabaseAdmin.from('ledgers').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+              } catch (_) {}
+              try {
+                await supabaseAdmin.from('financial_vouchers').delete().eq('id', mv.id);
+              } catch (_) {}
+              try {
+                await supabaseAdmin.from('vouchers').delete().eq('id', mv.id);
+              } catch (_) {}
             }
 
             await supabaseAdmin.from('party_khata_logs').delete().or(`reference.eq.${invoiceNo},notes.ilike.%${invoiceNo}%`);
