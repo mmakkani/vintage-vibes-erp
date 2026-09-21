@@ -194,7 +194,7 @@ export class PartiesService {
         parent_code: parentCode,
         party_id: party.id,
         tier_level: 3
-      }, { onConflict: 'id' });
+      }, { onConflict: 'code' });
 
       // 4. Link accountMap and coa_account_id on party
       const updatedMap = isAgent ? {

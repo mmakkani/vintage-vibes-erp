@@ -1,6 +1,9 @@
 import { supabase } from '../supabaseClient.ts';
 import { COAAccount, Voucher, LedgerEntry } from '../modules/finance/finance.types.ts';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isValidUuid = (val: any): boolean => typeof val === 'string' && UUID_REGEX.test(val.trim());
+
 export class FinanceService {
   private static cachedCoaAccounts: COAAccount[] | null = null;
   private static coaAccountsPromise: Promise<COAAccount[]> | null = null;
@@ -459,18 +462,20 @@ export class FinanceService {
         const memo = l.memo || l.narration || narration;
 
         const targetAccId = String(l.accountId || l.account_id || '');
-        const matchedAcc = coaList.find(a => a.id === targetAccId || a.code === targetAccId);
+        const matchedAcc = coaList.find(a => (targetAccId && (a.id === targetAccId || a.code === targetAccId)) || (l.accountCode && a.code === l.accountCode));
 
         const resolvedCode = String(l.accountCode || l.account_code || matchedAcc?.code || '');
         const resolvedName = String(l.accountName || l.account_name || matchedAcc?.name || '');
         const resolvedPartyId = l.partyId || l.party_id || matchedAcc?.party_id || matchedAcc?.partyId || null;
         const resolvedPartyName = l.partyName || l.party_name || (resolvedPartyId ? resolvedName.replace(/\s*\([^)]*\)/g, '') : null);
 
+        const preferredAccId = (targetAccId && isValidUuid(targetAccId)) ? targetAccId : (matchedAcc?.id && isValidUuid(matchedAcc.id) ? matchedAcc.id : targetAccId || matchedAcc?.id || null);
+
         return {
           id: lineId,
           voucher_id: String(id),
           voucher_no: voucherNo,
-          account_id: targetAccId || matchedAcc?.id || null,
+          account_id: preferredAccId,
           account_code: resolvedCode,
           account_name: resolvedName,
           party_id: resolvedPartyId,
@@ -546,17 +551,68 @@ export class FinanceService {
       }
 
       try {
-        const journalEntriesRows = voucherEntriesRows.map((veRow: any) => ({
-          voucher_id: String(id),
-          account_id: veRow.account_id,
-          party_id: veRow.party_id || null,
-          debit: veRow.debit,
-          credit: veRow.credit,
-          description: veRow.narration || narration
-        }));
-        await supabase.from('journal_entries').insert(journalEntriesRows);
+        const codesToLookup = Array.from(
+          new Set(
+            voucherEntriesRows
+              .map((r: any) => r.account_code)
+              .filter((c: any) => typeof c === 'string' && c.trim() !== '')
+          )
+        );
+
+        let chartMap: Map<string, string> = new Map();
+        if (codesToLookup.length > 0) {
+          try {
+            const { data: chartAccs } = await supabase
+              .from('chart_of_accounts')
+              .select('id, code')
+              .in('code', codesToLookup);
+            if (Array.isArray(chartAccs)) {
+              chartAccs.forEach((a: any) => {
+                if (a.code && isValidUuid(a.id)) {
+                  chartMap.set(a.code, a.id);
+                }
+              });
+            }
+          } catch (cErr) {
+            console.warn('chart_of_accounts lookup warning:', cErr);
+          }
+        }
+
+        const journalEntriesRows = voucherEntriesRows
+          .map((veRow: any) => {
+            let accountUuid: string | null = null;
+            if (isValidUuid(veRow.account_id)) {
+              accountUuid = veRow.account_id;
+            } else if (veRow.account_code && chartMap.has(veRow.account_code)) {
+              accountUuid = chartMap.get(veRow.account_code)!;
+            }
+
+            const cleanPartyId = isValidUuid(veRow.party_id) ? veRow.party_id : null;
+
+            if (!accountUuid) {
+              console.warn(`[FinanceService] Skipping journal_entries row because account_id is not a valid UUID: ${veRow.account_id} (code: ${veRow.account_code})`);
+              return null;
+            }
+
+            return {
+              voucher_id: String(id),
+              account_id: accountUuid,
+              party_id: cleanPartyId,
+              debit: veRow.debit,
+              credit: veRow.credit,
+              description: veRow.narration || narration
+            };
+          })
+          .filter(Boolean);
+
+        if (journalEntriesRows.length > 0) {
+          const { error: jeErr } = await supabase.from('journal_entries').insert(journalEntriesRows);
+          if (jeErr) {
+            console.warn('journal_entries insert warning in FinanceService.addVoucher:', jeErr.message);
+          }
+        }
       } catch (err) {
-        console.warn('journal_entries insert warning in FinanceService.addVoucher:', err);
+        console.warn('journal_entries insert exception in FinanceService.addVoucher:', err);
       }
     }
 

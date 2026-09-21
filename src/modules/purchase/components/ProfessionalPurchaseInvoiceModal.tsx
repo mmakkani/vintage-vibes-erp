@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../../../supabaseClient.ts';
 import { Party } from '../../parties/parties.types.ts';
 import { ItemMaster } from '../../setup/setup.types.ts';
@@ -357,6 +357,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
   }, [allAvailableItems]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Auto-save form payload structure
@@ -554,11 +555,16 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
 
   // Submission handler
   const handleSubmit = async (submitStatus: 'DRAFT' | 'POSTED', autoConvertToInward: boolean = false) => {
+    if (isSubmitting || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+
     if (!supplierId) {
+      isSubmittingRef.current = false;
       setErrorMsg('Please select a supplier');
       return;
     }
     if (lines.length === 0) {
+      isSubmittingRef.current = false;
       setErrorMsg('Please enter at least one bale line item');
       return;
     }
@@ -654,7 +660,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
 
       let { data, error } = await (editingInvoice
         ? supabase.from('purchase_invoices').update(invoicePayload).eq('id', targetInvoiceId).select()
-        : supabase.from('purchase_invoices').insert([invoicePayload]).select()
+        : supabase.from('purchase_invoices').upsert([invoicePayload], { onConflict: 'invoice_no' }).select()
       );
 
       // If schema uses snake_case column names instead of camelCase, auto-retry with snake_case
@@ -683,7 +689,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
         };
         const retryResult = await (editingInvoice
           ? supabase.from('purchase_invoices').update(snakePayload).eq('id', targetInvoiceId).select()
-          : supabase.from('purchase_invoices').insert([snakePayload]).select()
+          : supabase.from('purchase_invoices').upsert([snakePayload], { onConflict: 'invoice_no' }).select()
         );
         if (!retryResult.error) {
           data = retryResult.data;
@@ -694,10 +700,14 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       }
 
       if (error) {
-        console.error("SUPABASE ERROR:", error);
-        alert("DATABASE REJECTION:\nCode: " + error.code + "\nMessage: " + error.message + "\nDetails: " + (error.details || error.hint || 'None'));
-        setErrorMsg(`Database Rejection: ${error.message} (${error.code})`);
+        console.error("SUPABASE ERROR on purchase_invoices:", error);
+        if (error.code === '23505' || error.message?.includes('duplicate key') || error.message?.includes('unique constraint') || error.message?.includes('invoice_no')) {
+          setErrorMsg(`Invoice number "${invoiceNo}" already exists. Please choose a unique invoice number or edit the existing invoice.`);
+        } else {
+          setErrorMsg(`Database Rejection: ${error.message} (${error.code})`);
+        }
         setIsSubmitting(false);
+        isSubmittingRef.current = false;
         return;
       }
 
@@ -810,6 +820,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       setErrorMsg(err.message || 'Error saving purchase invoice');
     } finally {
       setIsSubmitting(false);
+      isSubmittingRef.current = false;
     }
   };
 
@@ -1452,29 +1463,29 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
               type="button"
               disabled={isSubmitting}
               onClick={() => handleSubmit('DRAFT')}
-              className="btn-3d btn-3d-slate text-xs py-1.5 px-3.5 cursor-pointer font-bold uppercase tracking-wider disabled:opacity-50"
+              className="btn-3d btn-3d-slate text-xs py-1.5 px-3.5 cursor-pointer font-bold uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span>Save as Draft</span>
+              <span>{isSubmitting ? 'Saving...' : 'Save as Draft'}</span>
             </button>
 
             <button
               type="button"
               disabled={isSubmitting}
               onClick={() => handleSubmit('POSTED')}
-              className="btn-3d btn-3d-amber text-xs py-1.5 px-4 cursor-pointer font-bold uppercase tracking-wider flex items-center gap-1.5 disabled:opacity-50"
+              className="btn-3d btn-3d-amber text-xs py-1.5 px-4 cursor-pointer font-bold uppercase tracking-wider flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <CheckCircle2 className="w-3.5 h-3.5 text-white" />
-              <span>Save & Post to Ledger</span>
+              <span>{isSubmitting ? 'Posting...' : 'Save & Post to Ledger'}</span>
             </button>
 
             <button
               type="button"
               disabled={isSubmitting}
               onClick={() => handleSubmit('POSTED', true)}
-              className="btn-3d btn-3d-emerald text-xs py-1.5 px-4 cursor-pointer font-bold uppercase tracking-wider flex items-center gap-1.5 disabled:opacity-50"
+              className="btn-3d btn-3d-emerald text-xs py-1.5 px-4 cursor-pointer font-bold uppercase tracking-wider flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ArrowRight className="w-3.5 h-3.5 text-white" />
-              <span>Save & Open Inward Gate Pass</span>
+              <span>{isSubmitting ? 'Processing...' : 'Save & Open Inward Gate Pass'}</span>
             </button>
           </div>
         </div>

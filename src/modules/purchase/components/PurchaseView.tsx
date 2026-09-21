@@ -22,6 +22,16 @@ import { PartiesService } from '../../../services/partiesService.ts';
 import { SetupService } from '../../../services/setupService.ts';
 import { ModuleMaintenanceGuard } from '../../../components/ModuleMaintenanceGuard.tsx';
 
+const CACHE_KEYS = {
+  BALES: 'vv_cached_bales',
+  PIECES: 'vv_cached_pieces',
+  INVOICES: 'vv_cached_invoices'
+};
+
+const saveCached = (_key: string, _data: any) => {
+  // Safe no-op: legacy caches are deprecated and state is managed via React state & Supabase
+};
+
 interface PurchaseViewProps {
   onRefreshAll: () => void;
   currentUserRole: string;
@@ -222,13 +232,11 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
   const handlePieceAdded = (piece: PieceBreakdownItem, updatedBale: InwardGatePass) => {
     setBales(prev => {
       const next = prev.map(b => b.id === updatedBale.id ? updatedBale : b);
-      saveCached(CACHE_KEYS.BALES, next);
       return next;
     });
     setInventoryPieces(prev => {
       const exists = prev.some(p => p.barcode === piece.barcode);
       const next = exists ? prev.map(p => p.barcode === piece.barcode ? piece : p) : [piece, ...prev];
-      saveCached(CACHE_KEYS.PIECES, next);
       return next;
     });
     onRefreshAll();
@@ -238,12 +246,10 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
   const handlePieceDeleted = (pieceId: string, updatedBale: InwardGatePass) => {
     setBales(prev => {
       const next = prev.map(b => b.id === updatedBale.id ? updatedBale : b);
-      saveCached(CACHE_KEYS.BALES, next);
       return next;
     });
     setInventoryPieces(prev => {
       const next = prev.filter(p => p.id !== pieceId);
-      saveCached(CACHE_KEYS.PIECES, next);
       return next;
     });
     onRefreshAll();
@@ -257,7 +263,6 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
       await PurchaseService.updateInwardGatePass(baleId, { status: newStatus as any });
       setBales(prev => {
         const next = prev.map(item => item.id === baleId ? { ...item, status: newStatus as any, sortingStatus: (newStatus === 'PARTIAL' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any } : item);
-        saveCached(CACHE_KEYS.BALES, next);
         return next;
       });
       fetchPurchaseData();
@@ -432,7 +437,6 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
             onInvoiceCreated={inv => {
               setInvoices(prev => {
                 const next = [inv, ...prev.filter(i => i.id !== inv.id)];
-                saveCached(CACHE_KEYS.INVOICES, next);
                 return next;
               });
               onRefreshAll();
@@ -440,7 +444,6 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
             onDeleteInvoice={deletedId => {
               setInvoices(prev => {
                 const next = prev.filter(i => String(i.id) !== String(deletedId));
-                saveCached(CACHE_KEYS.INVOICES, next);
                 return next;
               });
               onRefreshAll();
@@ -483,7 +486,6 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         onBaleCreated={newBale => {
           setBales(prev => {
             const next = [newBale, ...prev.filter(b => b.id !== newBale.id)];
-            saveCached(CACHE_KEYS.BALES, next);
             return next;
           });
           setActiveSortingBaleId(newBale.id);
