@@ -394,8 +394,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       const eDate = customParams?.endDate !== undefined ? customParams.endDate : (reportPeriod === 'ALL' ? undefined : (reportEndDate || undefined));
 
       const [coaRes, vchRes, ledRes, repRes, ptyRes] = await Promise.all([
-        fetch('/api/finance/coa')
-          .then(r => r.ok ? r.json() : null)
+        safeFetchJson<any>('/api/finance/coa')
           .catch(() => null)
           .then(res => {
             if (res) return res;

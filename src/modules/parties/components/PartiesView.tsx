@@ -39,10 +39,27 @@ import {
 import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
 import { SearchableSelect } from '../../../components/SearchableSelect.tsx';
+import { safeFetchJson } from '../../../utils/fetchUtils.ts';
 import { supabase } from '../../../supabaseClient.ts';
 import { LiveCardScannerModal } from './LiveCardScannerModal.tsx';
 import { PartyProfilePrintDossier } from './PartyProfilePrintDossier.tsx';
 import { extractVisitingCardDetails, VisitingCardOcrResult } from '../services/visitingCardOcrService.ts';
+
+const KNOWN_ACCOUNT_UUIDS: Record<string, string> = {
+  '1130-00': '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7',
+  '1140-01': '6b45e403-1422-44fc-87f6-b7ff60864a91',
+  '1310-00': '7d9a873a-13dc-4519-9f15-c551cd0d4697',
+  '2110-00': '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127',
+  '2110-01': '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127',
+  '2120-00': '4cf50ade-782f-4535-9548-f97011d3d604',
+  '2120-01': '1af8a80f-84d3-4e42-97ce-c5678e874fb0',
+  '4110-00': 'a50aeec4-441a-4bbd-b96e-cfac6d4de671',
+  '5110-00': 'd2e7c1d5-e7cb-40fd-bc0e-3de4cf506e94'
+};
+
+const isUuidString = (val: any): boolean => {
+  return typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+};
 
 interface PartiesViewProps {
   onRefreshAll: () => void;
@@ -173,33 +190,151 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     creditLimit: 50000,
     credit_limit: 50000,
     currency: 'AED' as any,
-    payableAccountId: '2110-01',
-    payable_account_id: '2110-01',
-    clearingAccountId: '1310-00',
-    clearing_account_id: '1310-00',
-    receivableAccountId: '1130-00',
-    receivable_account_id: '1130-00',
-    revenueAccountId: '4110-00',
-    revenue_account_id: '4110-00',
-    coaAccountId: '1130-00',
-    coa_account_id: '1130-00'
+    payableAccountId: '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127',
+    payable_account_id: '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127',
+    clearingAccountId: '7d9a873a-13dc-4519-9f15-c551cd0d4697',
+    clearing_account_id: '7d9a873a-13dc-4519-9f15-c551cd0d4697',
+    receivableAccountId: '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7',
+    receivable_account_id: '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7',
+    revenueAccountId: 'a50aeec4-441a-4bbd-b96e-cfac6d4de671',
+    revenue_account_id: 'a50aeec4-441a-4bbd-b96e-cfac6d4de671',
+    coaAccountId: '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7',
+    coa_account_id: '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7'
   });
 
   const [coaAccounts, setCoaAccounts] = useState<any[]>([]);
 
-  // Memoized options for Agent COA selection
-  const agentPayableOptions = useMemo(() => {
+  const resolveAccountUuid = (val: any, fallbackCodeOrUuid?: string): string => {
+    if (!val) {
+      if (fallbackCodeOrUuid) return resolveAccountUuid(fallbackCodeOrUuid);
+      return '';
+    }
+    const str = String(val).trim();
+    if (isUuidString(str)) return str;
+    const match = coaAccounts.find(a => a.code === str || a.account_code === str || a.id === str);
+    if (match?.id && isUuidString(String(match.id))) {
+      return String(match.id);
+    }
+    if (KNOWN_ACCOUNT_UUIDS[str]) {
+      return KNOWN_ACCOUNT_UUIDS[str];
+    }
+    if (fallbackCodeOrUuid && fallbackCodeOrUuid !== str) {
+      return resolveAccountUuid(fallbackCodeOrUuid);
+    }
+    return str;
+  };
+
+  const resolveAccountCode = (val: any, fallbackCode: string = ''): string => {
+    if (!val) return fallbackCode;
+    const str = String(val).trim();
+    const match = coaAccounts.find(a => a.id === str || a.code === str || a.account_code === str);
+    if (match?.code || match?.account_code) {
+      return String(match.code || match.account_code);
+    }
+    for (const [kCode, kUuid] of Object.entries(KNOWN_ACCOUNT_UUIDS)) {
+      if (kUuid.toLowerCase() === str.toLowerCase()) {
+        return kCode;
+      }
+    }
+    return !isUuidString(str) ? str : fallbackCode;
+  };
+
+  // Memoized options for Supplier COA selection
+  const supplierPayableOptions = useMemo(() => {
     const list = coaAccounts
       .filter(a => a.classification === 'LIABILITY' || a.type === 'LIABILITY' || (a.code && a.code.startsWith('2')))
       .map(a => ({
-        value: a.code,
+        value: String(a.id || resolveAccountUuid(a.code, '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127')),
         label: `${a.code} - ${a.name}`,
         badge: 'LIABILITY'
       }));
 
-    if (!list.some(o => o.value === '2120-00')) {
+    const defaultUuid = '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127';
+    if (!list.some(o => o.value === defaultUuid)) {
       list.unshift({
-        value: '2120-00',
+        value: defaultUuid,
+        label: '2110-00 - Accounts Payable - Trade Suppliers (Bale Exporters)',
+        badge: 'LIABILITY'
+      });
+    }
+    return list;
+  }, [coaAccounts]);
+
+  const supplierInventoryOptions = useMemo(() => {
+    const list = coaAccounts
+      .filter(a => a.classification === 'ASSET' || a.type === 'ASSET' || (a.code && a.code.startsWith('1')))
+      .map(a => ({
+        value: String(a.id || resolveAccountUuid(a.code, '7d9a873a-13dc-4519-9f15-c551cd0d4697')),
+        label: `${a.code} - ${a.name}`,
+        badge: 'ASSET'
+      }));
+
+    const defaultUuid = '7d9a873a-13dc-4519-9f15-c551cd0d4697';
+    if (!list.some(o => o.value === defaultUuid)) {
+      list.unshift({
+        value: defaultUuid,
+        label: '1310-00 - Goods In-Transit & Port Clearing Account',
+        badge: 'ASSET'
+      });
+    }
+    return list;
+  }, [coaAccounts]);
+
+  // Memoized options for Client COA selection
+  const clientReceivableOptions = useMemo(() => {
+    const list = coaAccounts
+      .filter(a => a.classification === 'ASSET' || a.type === 'ASSET' || (a.code && a.code.startsWith('1')))
+      .map(a => ({
+        value: String(a.id || resolveAccountUuid(a.code, '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7')),
+        label: `${a.code} - ${a.name}`,
+        badge: 'ASSET'
+      }));
+
+    const defaultUuid = '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7';
+    if (!list.some(o => o.value === defaultUuid)) {
+      list.unshift({
+        value: defaultUuid,
+        label: '1130-00 - Accounts Receivable (Trade Debtors)',
+        badge: 'ASSET'
+      });
+    }
+    return list;
+  }, [coaAccounts]);
+
+  const clientRevenueOptions = useMemo(() => {
+    const list = coaAccounts
+      .filter(a => a.classification === 'REVENUE' || a.type === 'REVENUE' || (a.code && a.code.startsWith('4')))
+      .map(a => ({
+        value: String(a.id || resolveAccountUuid(a.code, 'a50aeec4-441a-4bbd-b96e-cfac6d4de671')),
+        label: `${a.code} - ${a.name}`,
+        badge: 'REVENUE'
+      }));
+
+    const defaultUuid = 'a50aeec4-441a-4bbd-b96e-cfac6d4de671';
+    if (!list.some(o => o.value === defaultUuid)) {
+      list.unshift({
+        value: defaultUuid,
+        label: '4110-00 - Sales Revenue - Local / Retail Stream',
+        badge: 'REVENUE'
+      });
+    }
+    return list;
+  }, [coaAccounts]);
+
+  // Memoized options for Agent & Courier COA selection
+  const agentPayableOptions = useMemo(() => {
+    const list = coaAccounts
+      .filter(a => a.classification === 'LIABILITY' || a.type === 'LIABILITY' || (a.code && a.code.startsWith('2')))
+      .map(a => ({
+        value: String(a.id || resolveAccountUuid(a.code, '4cf50ade-782f-4535-9548-f97011d3d604')),
+        label: `${a.code} - ${a.name}`,
+        badge: 'LIABILITY'
+      }));
+
+    const defaultUuid = '4cf50ade-782f-4535-9548-f97011d3d604';
+    if (!list.some(o => o.value === defaultUuid)) {
+      list.unshift({
+        value: defaultUuid,
         label: '2120-00 - Accounts Payable - Courier, Freight & Clearing Agents',
         badge: 'LIABILITY'
       });
@@ -217,15 +352,16 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       .map(a => {
         const isExp = a.classification === 'EXPENSE' || a.type === 'EXPENSE' || (a.code && a.code.startsWith('5'));
         return {
-          value: a.code,
+          value: String(a.id || resolveAccountUuid(a.code, '7d9a873a-13dc-4519-9f15-c551cd0d4697')),
           label: `${a.code} - ${a.name}`,
           badge: isExp ? 'EXPENSE' : 'ASSET'
         };
       });
 
-    if (!list.some(o => o.value === '1310-00')) {
+    const defaultUuid = '7d9a873a-13dc-4519-9f15-c551cd0d4697';
+    if (!list.some(o => o.value === defaultUuid)) {
       list.unshift({
-        value: '1310-00',
+        value: defaultUuid,
         label: '1310-00 - Goods In-Transit & Port Clearing Account',
         badge: 'ASSET'
       });
@@ -317,10 +453,24 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
   const loadCoaAccounts = async () => {
     try {
+      // Strictly use safeFetchJson to attach HttpOnly session cookie (vv_session) & Bearer token
+      const res = await safeFetchJson<any>('/api/finance/coa');
+      const list = Array.isArray(res) ? res : (res?.accounts || res?.coa || res?.data || []);
+      if (Array.isArray(list) && list.length > 0) {
+        setCoaAccounts(list);
+        return;
+      }
+      // Fallback via FinanceService if safeFetchJson returned empty
       const data = await FinanceService.getCoaAccounts();
       setCoaAccounts(data || []);
     } catch (err: any) {
       console.error('Failed to load COA accounts:', err);
+      try {
+        const data = await FinanceService.getCoaAccounts();
+        setCoaAccounts(data || []);
+      } catch (fallbackErr) {
+        console.error('Fallback load COA accounts failed:', fallbackErr);
+      }
     }
   };
 
@@ -610,6 +760,20 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
     setIsSubmitting(true);
 
+    // Resolve UUIDs strictly for RPC payload (create_party_with_coa requires UUID or NULL for p_inventory_account_id)
+    const rawInv = (partyForm as any).inventory_account_id || (cleanType === 'SUPPLIER' ? (partyForm.clearingAccountId || '1310-00') : null);
+    const resolvedInventoryUuid = cleanType === 'SUPPLIER' && rawInv ? resolveAccountUuid(rawInv, '7d9a873a-13dc-4519-9f15-c551cd0d4697') : null;
+    const safeInventoryUuid = (resolvedInventoryUuid && isUuidString(resolvedInventoryUuid)) ? resolvedInventoryUuid : null;
+
+    const clearingCode = resolveAccountCode(partyForm.clearingAccountId, '1310-00');
+    const clearingUuid = resolveAccountUuid(partyForm.clearingAccountId, '7d9a873a-13dc-4519-9f15-c551cd0d4697');
+    const payableCode = resolveAccountCode(partyForm.payableAccountId, cleanType === 'CLIENT' ? '1130-00' : '2110-00');
+    const payableUuid = resolveAccountUuid(partyForm.payableAccountId, cleanType === 'CLIENT' ? '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7' : '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127');
+    const receivableCode = resolveAccountCode(partyForm.receivableAccountId, '1130-00');
+    const receivableUuid = resolveAccountUuid(partyForm.receivableAccountId, '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7');
+    const revenueCode = resolveAccountCode(partyForm.revenueAccountId, '4110-00');
+    const revenueUuid = resolveAccountUuid(partyForm.revenueAccountId, 'a50aeec4-441a-4bbd-b96e-cfac6d4de671');
+
     const formData = {
       name: cleanName,
       company_name: cleanName,
@@ -618,13 +782,13 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       phone: partyForm.phone || (partyForm as any).contact_no || null,
       trn_no: partyForm.trn_no || partyForm.trnNo || null,
       credit_limit: Number(partyForm.creditLimit ?? (partyForm as any).credit_limit ?? 0),
-      inventory_account_id: (partyForm as any).inventory_account_id || (cleanType === 'SUPPLIER' ? (partyForm.clearingAccountId || '1310-00') : null),
-      payable_account_id: partyForm.payableAccountId || (partyForm as any).payable_account_id,
-      clearing_account_id: partyForm.clearingAccountId || (partyForm as any).clearing_account_id,
-      receivable_account_id: partyForm.receivableAccountId || (partyForm as any).receivable_account_id,
-      revenue_account_id: partyForm.revenueAccountId || (partyForm as any).revenue_account_id,
-      coa_account_id: partyForm.coa_account_id || partyForm.coaAccountId || (cleanType === 'CLIENT' ? partyForm.receivableAccountId : partyForm.payableAccountId),
-      coaAccountId: partyForm.coa_account_id || partyForm.coaAccountId || (cleanType === 'CLIENT' ? partyForm.receivableAccountId : partyForm.payableAccountId),
+      inventory_account_id: safeInventoryUuid,
+      payable_account_id: payableUuid,
+      clearing_account_id: clearingUuid,
+      receivable_account_id: receivableUuid,
+      revenue_account_id: revenueUuid,
+      coa_account_id: cleanType === 'CLIENT' ? receivableCode : payableCode,
+      coaAccountId: cleanType === 'CLIENT' ? receivableCode : payableCode,
       contact_person: partyForm.contactPerson || (partyForm as any).contact_person || '',
       email: partyForm.email || null,
       address: partyForm.address || null,
@@ -646,8 +810,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         p_phone: formData.phone || null,
         p_trn: formData.trn_no || null,
         p_credit_limit: Number(formData.credit_limit) || 0,
-        p_inventory_account_id: formData.inventory_account_id || null,
-        p_expense_account: formData.clearing_account_id || null
+        p_inventory_account_id: safeInventoryUuid,
+        p_expense_account: clearingCode
       });
 
       if (error) {
@@ -660,19 +824,27 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       if (data?.party_id) {
         const customMap = (formData.party_type === 'AGENT' || formData.party_type === 'COURIER') ? {
           payableAccountId: data.code || data.account_code || (formData.party_type === 'COURIER' ? '2120-00' : '2120-01'),
+          payableAccountUuid: payableUuid,
           agentPayableAccountId: data.code || data.account_code || (formData.party_type === 'COURIER' ? '2120-00' : '2120-01'),
+          agentPayableAccountUuid: payableUuid,
           courierPayableAccountId: formData.party_type === 'COURIER' ? (data.code || data.account_code || '2120-00') : undefined,
-          clearingAccountId: formData.clearing_account_id || '1310-00',
-          expenseAccountId: formData.clearing_account_id || '5110-00'
+          clearingAccountId: clearingCode,
+          clearingAccountUuid: clearingUuid,
+          expenseAccountId: resolveAccountCode(formData.clearing_account_id, '5110-00'),
+          inventoryAccountId: safeInventoryUuid
         } : formData.party_type === 'SUPPLIER' ? {
           payableAccountId: data.code || data.account_code || '2110-01',
+          payableAccountUuid: payableUuid,
           receivableAccountId: '1130-00',
-          clearingAccountId: formData.clearing_account_id || '1310-00',
-          inventoryAccountId: formData.inventory_account_id || null
+          clearingAccountId: clearingCode,
+          clearingAccountUuid: clearingUuid,
+          inventoryAccountId: safeInventoryUuid || clearingCode
         } : {
           payableAccountId: '2110-01',
           receivableAccountId: data.code || data.account_code || '1130-01',
-          revenueAccountId: formData.revenue_account_id || '4110-00'
+          receivableAccountUuid: receivableUuid,
+          revenueAccountId: revenueCode,
+          revenueAccountUuid: revenueUuid
         };
 
         const { error: updateError } = await supabase.from('parties').update({
@@ -740,16 +912,16 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         creditLimit: 50000,
         credit_limit: 50000,
         currency: 'AED',
-        payableAccountId: '2110-01',
-        payable_account_id: '2110-01',
-        clearingAccountId: '1310-00',
-        clearing_account_id: '1310-00',
-        receivableAccountId: '1130-00',
-        receivable_account_id: '1130-00',
-        revenueAccountId: '4110-00',
-        revenue_account_id: '4110-00',
-        coaAccountId: '1130-00',
-        coa_account_id: '1130-00'
+        payableAccountId: '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127',
+        payable_account_id: '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127',
+        clearingAccountId: '7d9a873a-13dc-4519-9f15-c551cd0d4697',
+        clearing_account_id: '7d9a873a-13dc-4519-9f15-c551cd0d4697',
+        receivableAccountId: '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7',
+        receivable_account_id: '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7',
+        revenueAccountId: 'a50aeec4-441a-4bbd-b96e-cfac6d4de671',
+        revenue_account_id: 'a50aeec4-441a-4bbd-b96e-cfac6d4de671',
+        coaAccountId: '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7',
+        coa_account_id: '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7'
       });
 
       onRefreshAll?.();
@@ -845,10 +1017,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       creditLimit: Number(party.creditLimit || pAny.credit_limit || 0),
       isActive: party.isActive !== false && pAny.is_active !== false,
       linked_account_id: pAny.linked_account_id || pAny.linkedAccountId,
-      payableAccountId: party.accountMap?.courierPayableAccountId || party.accountMap?.payableAccountId || pAny.account_map?.payableAccountId || ((party.type === 'COURIER' || party.type === 'AGENT') ? (party.accountMap?.agentPayableAccountId || '2120-00') : (party.type === 'SUPPLIER' ? `2110-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : '2110-00')),
-      clearingAccountId: party.accountMap?.clearingAccountId || pAny.account_map?.clearingAccountId || '1310-00',
-      receivableAccountId: party.accountMap?.receivableAccountId || pAny.account_map?.receivableAccountId || (party.type === 'CLIENT' ? `1130-${(party.code || '').replace(/[^A-Za-z0-9]/g, '')}` : '1130-00'),
-      revenueAccountId: party.accountMap?.revenueAccountId || pAny.account_map?.revenueAccountId || '4110-00'
+      payableAccountId: resolveAccountUuid(party.accountMap?.courierPayableAccountId || party.accountMap?.payableAccountId || pAny.account_map?.payableAccountId || ((party.type === 'COURIER' || party.type === 'AGENT') ? '2120-00' : '2110-00'), (party.type === 'COURIER' || party.type === 'AGENT') ? '4cf50ade-782f-4535-9548-f97011d3d604' : '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127'),
+      clearingAccountId: resolveAccountUuid(party.accountMap?.clearingAccountId || pAny.account_map?.clearingAccountId || '1310-00', '7d9a873a-13dc-4519-9f15-c551cd0d4697'),
+      receivableAccountId: resolveAccountUuid(party.accountMap?.receivableAccountId || pAny.account_map?.receivableAccountId || '1130-00', '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7'),
+      revenueAccountId: resolveAccountUuid(party.accountMap?.revenueAccountId || pAny.account_map?.revenueAccountId || '4110-00', 'a50aeec4-441a-4bbd-b96e-cfac6d4de671')
     });
     setShowEditPartyModal(true);
   };
@@ -907,20 +1079,30 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         is_active: editPartyForm.isActive,
         linked_account_id: editPartyForm.linked_account_id,
         accountMap: {
-          payableAccountId: editPartyForm.payableAccountId,
-          agentPayableAccountId: editPartyForm.payableAccountId,
-          courierPayableAccountId: editPartyForm.type === 'COURIER' ? editPartyForm.payableAccountId : undefined,
-          clearingAccountId: editPartyForm.clearingAccountId,
-          receivableAccountId: editPartyForm.receivableAccountId,
-          revenueAccountId: editPartyForm.revenueAccountId
+          payableAccountId: resolveAccountCode(editPartyForm.payableAccountId, editPartyForm.type === 'CLIENT' ? '1130-00' : '2110-00'),
+          payableAccountUuid: resolveAccountUuid(editPartyForm.payableAccountId),
+          agentPayableAccountId: resolveAccountCode(editPartyForm.payableAccountId, '2120-00'),
+          agentPayableAccountUuid: resolveAccountUuid(editPartyForm.payableAccountId),
+          courierPayableAccountId: editPartyForm.type === 'COURIER' ? resolveAccountCode(editPartyForm.payableAccountId, '2120-00') : undefined,
+          clearingAccountId: resolveAccountCode(editPartyForm.clearingAccountId, '1310-00'),
+          clearingAccountUuid: resolveAccountUuid(editPartyForm.clearingAccountId),
+          receivableAccountId: resolveAccountCode(editPartyForm.receivableAccountId, '1130-00'),
+          receivableAccountUuid: resolveAccountUuid(editPartyForm.receivableAccountId),
+          revenueAccountId: resolveAccountCode(editPartyForm.revenueAccountId, '4110-00'),
+          revenueAccountUuid: resolveAccountUuid(editPartyForm.revenueAccountId)
         },
         account_map: {
-          payableAccountId: editPartyForm.payableAccountId,
-          agentPayableAccountId: editPartyForm.payableAccountId,
-          courierPayableAccountId: editPartyForm.type === 'COURIER' ? editPartyForm.payableAccountId : undefined,
-          clearingAccountId: editPartyForm.clearingAccountId,
-          receivableAccountId: editPartyForm.receivableAccountId,
-          revenueAccountId: editPartyForm.revenueAccountId
+          payableAccountId: resolveAccountCode(editPartyForm.payableAccountId, editPartyForm.type === 'CLIENT' ? '1130-00' : '2110-00'),
+          payableAccountUuid: resolveAccountUuid(editPartyForm.payableAccountId),
+          agentPayableAccountId: resolveAccountCode(editPartyForm.payableAccountId, '2120-00'),
+          agentPayableAccountUuid: resolveAccountUuid(editPartyForm.payableAccountId),
+          courierPayableAccountId: editPartyForm.type === 'COURIER' ? resolveAccountCode(editPartyForm.payableAccountId, '2120-00') : undefined,
+          clearingAccountId: resolveAccountCode(editPartyForm.clearingAccountId, '1310-00'),
+          clearingAccountUuid: resolveAccountUuid(editPartyForm.clearingAccountId),
+          receivableAccountId: resolveAccountCode(editPartyForm.receivableAccountId, '1130-00'),
+          receivableAccountUuid: resolveAccountUuid(editPartyForm.receivableAccountId),
+          revenueAccountId: resolveAccountCode(editPartyForm.revenueAccountId, '4110-00'),
+          revenueAccountUuid: resolveAccountUuid(editPartyForm.revenueAccountId)
         }
       });
       setShowEditPartyModal(false);
@@ -1950,33 +2132,33 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                         type: val,
                         party_type: val,
                         ...(val === 'COURIER' ? {
-                          payableAccountId: '2120-00',
-                          payable_account_id: '2120-00',
-                          clearingAccountId: '1310-00',
-                          clearing_account_id: '1310-00',
-                          coaAccountId: '2120-00',
-                          coa_account_id: '2120-00'
+                          payableAccountId: resolveAccountUuid('2120-00', '4cf50ade-782f-4535-9548-f97011d3d604'),
+                          payable_account_id: resolveAccountUuid('2120-00', '4cf50ade-782f-4535-9548-f97011d3d604'),
+                          clearingAccountId: resolveAccountUuid('1310-00', '7d9a873a-13dc-4519-9f15-c551cd0d4697'),
+                          clearing_account_id: resolveAccountUuid('1310-00', '7d9a873a-13dc-4519-9f15-c551cd0d4697'),
+                          coaAccountId: resolveAccountUuid('2120-00', '4cf50ade-782f-4535-9548-f97011d3d604'),
+                          coa_account_id: resolveAccountUuid('2120-00', '4cf50ade-782f-4535-9548-f97011d3d604')
                         } : val === 'AGENT' ? {
-                          payableAccountId: '2120-00',
-                          payable_account_id: '2120-00',
-                          clearingAccountId: '1310-00',
-                          clearing_account_id: '1310-00',
-                          coaAccountId: '2120-00',
-                          coa_account_id: '2120-00'
+                          payableAccountId: resolveAccountUuid('2120-00', '4cf50ade-782f-4535-9548-f97011d3d604'),
+                          payable_account_id: resolveAccountUuid('2120-00', '4cf50ade-782f-4535-9548-f97011d3d604'),
+                          clearingAccountId: resolveAccountUuid('1310-00', '7d9a873a-13dc-4519-9f15-c551cd0d4697'),
+                          clearing_account_id: resolveAccountUuid('1310-00', '7d9a873a-13dc-4519-9f15-c551cd0d4697'),
+                          coaAccountId: resolveAccountUuid('2120-00', '4cf50ade-782f-4535-9548-f97011d3d604'),
+                          coa_account_id: resolveAccountUuid('2120-00', '4cf50ade-782f-4535-9548-f97011d3d604')
                         } : val === 'SUPPLIER' ? {
-                          payableAccountId: '2110-00',
-                          payable_account_id: '2110-00',
-                          clearingAccountId: '1310-00',
-                          clearing_account_id: '1310-00',
-                          coaAccountId: '2110-00',
-                          coa_account_id: '2110-00'
+                          payableAccountId: resolveAccountUuid('2110-00', '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127'),
+                          payable_account_id: resolveAccountUuid('2110-00', '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127'),
+                          clearingAccountId: resolveAccountUuid('1310-00', '7d9a873a-13dc-4519-9f15-c551cd0d4697'),
+                          clearing_account_id: resolveAccountUuid('1310-00', '7d9a873a-13dc-4519-9f15-c551cd0d4697'),
+                          coaAccountId: resolveAccountUuid('2110-00', '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127'),
+                          coa_account_id: resolveAccountUuid('2110-00', '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127')
                         } : {
-                          receivableAccountId: '1130-00',
-                          receivable_account_id: '1130-00',
-                          revenueAccountId: '4110-00',
-                          revenue_account_id: '4110-00',
-                          coaAccountId: '1130-00',
-                          coa_account_id: '1130-00'
+                          receivableAccountId: resolveAccountUuid('1130-00', '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7'),
+                          receivable_account_id: resolveAccountUuid('1130-00', '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7'),
+                          revenueAccountId: resolveAccountUuid('4110-00', 'a50aeec4-441a-4bbd-b96e-cfac6d4de671'),
+                          revenue_account_id: resolveAccountUuid('4110-00', 'a50aeec4-441a-4bbd-b96e-cfac6d4de671'),
+                          coaAccountId: resolveAccountUuid('1130-00', '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7'),
+                          coa_account_id: resolveAccountUuid('1130-00', '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7')
                         })
                       }));
                     }}
@@ -2267,7 +2449,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       1. Accounts Payable Account (Trade Liability):
                     </label>
                     <SearchableSelect
-                      value={partyForm.payableAccountId}
+                      value={resolveAccountUuid(partyForm.payableAccountId, '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127')}
                       onChange={val => setPartyForm(prev => ({
                         ...prev,
                         payableAccountId: val,
@@ -2275,11 +2457,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                         coaAccountId: val,
                         coa_account_id: val
                       }))}
-                      options={coaAccounts.filter(a => a.classification === 'LIABILITY' || a.type === 'LIABILITY' || (a.code && a.code.startsWith('2'))).map(a => ({
-                        value: a.code,
-                        label: `${a.code} - ${a.name}`,
-                        badge: 'LIABILITY'
-                      }))}
+                      options={supplierPayableOptions}
                       placeholder="Select Payable Account (2110-00)..."
                       searchPlaceholder="Search liabilities / payables..."
                       className="w-full bg-white"
@@ -2292,13 +2470,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       2. Stock Bale Inventory / Goods Clearing (Asset):
                     </label>
                     <SearchableSelect
-                      value={partyForm.clearingAccountId}
+                      value={resolveAccountUuid(partyForm.clearingAccountId, '7d9a873a-13dc-4519-9f15-c551cd0d4697')}
                       onChange={val => setPartyForm(prev => ({ ...prev, clearingAccountId: val, clearing_account_id: val }))}
-                      options={coaAccounts.filter(a => a.classification === 'ASSET' || a.type === 'ASSET' || (a.code && a.code.startsWith('1'))).map(a => ({
-                        value: a.code,
-                        label: `${a.code} - ${a.name}`,
-                        badge: 'ASSET'
-                      }))}
+                      options={supplierInventoryOptions}
                       placeholder="Select Inventory Asset Account..."
                       searchPlaceholder="Search inventory assets..."
                       className="w-full bg-white"
@@ -2323,7 +2497,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       1. Accounts Receivable Account (Asset):
                     </label>
                     <SearchableSelect
-                      value={partyForm.receivableAccountId}
+                      value={resolveAccountUuid(partyForm.receivableAccountId, '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7')}
                       onChange={val => setPartyForm(prev => ({
                         ...prev,
                         receivableAccountId: val,
@@ -2331,11 +2505,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                         coaAccountId: val,
                         coa_account_id: val
                       }))}
-                      options={coaAccounts.filter(a => a.classification === 'ASSET' || a.type === 'ASSET' || (a.code && a.code.startsWith('1'))).map(a => ({
-                        value: a.code,
-                        label: `${a.code} - ${a.name}`,
-                        badge: 'ASSET'
-                      }))}
+                      options={clientReceivableOptions}
                       placeholder="Select Receivable Account (1130-00)..."
                       searchPlaceholder="Search trade receivables..."
                       className="w-full bg-white"
@@ -2348,13 +2518,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       2. Sales Revenue Account (Revenue):
                     </label>
                     <SearchableSelect
-                      value={partyForm.revenueAccountId}
+                      value={resolveAccountUuid(partyForm.revenueAccountId, 'a50aeec4-441a-4bbd-b96e-cfac6d4de671')}
                       onChange={val => setPartyForm(prev => ({ ...prev, revenueAccountId: val, revenue_account_id: val }))}
-                      options={coaAccounts.filter(a => a.classification === 'REVENUE' || a.type === 'REVENUE' || (a.code && a.code.startsWith('4'))).map(a => ({
-                        value: a.code,
-                        label: `${a.code} - ${a.name}`,
-                        badge: 'REVENUE'
-                      }))}
+                      options={clientRevenueOptions}
                       placeholder="Select Sales Revenue Account (4110-00)..."
                       searchPlaceholder="Search revenue accounts..."
                       className="w-full bg-white"
@@ -2379,7 +2545,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       1. Accounts Payable - Courier & Freight (Liability e.g., 2120-00):
                     </label>
                     <SearchableSelect
-                      value={partyForm.payableAccountId || '2120-00'}
+                      value={resolveAccountUuid(partyForm.payableAccountId, '4cf50ade-782f-4535-9548-f97011d3d604')}
                       onChange={val => setPartyForm(prev => ({
                         ...prev,
                         payableAccountId: val,
@@ -2400,7 +2566,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       2. Relevant Expense / Shipping Clearing Account:
                     </label>
                     <SearchableSelect
-                      value={partyForm.clearingAccountId || '1310-00'}
+                      value={resolveAccountUuid(partyForm.clearingAccountId, '7d9a873a-13dc-4519-9f15-c551cd0d4697')}
                       onChange={val => setPartyForm(prev => ({ ...prev, clearingAccountId: val, clearing_account_id: val }))}
                       options={expenseAndClearingOptions}
                       placeholder="Select Courier Expense or Clearing Account..."
@@ -2427,7 +2593,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       1. Commission Payable / Clearing Account (Liability e.g., 2120-00):
                     </label>
                     <SearchableSelect
-                      value={partyForm.payableAccountId || '2120-00'}
+                      value={resolveAccountUuid(partyForm.payableAccountId, '4cf50ade-782f-4535-9548-f97011d3d604')}
                       onChange={val => setPartyForm(prev => ({
                         ...prev,
                         payableAccountId: val,
@@ -2448,7 +2614,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       2. Port Clearing / Brokerage Expense Account:
                     </label>
                     <SearchableSelect
-                      value={partyForm.clearingAccountId || '1310-00'}
+                      value={resolveAccountUuid(partyForm.clearingAccountId, '7d9a873a-13dc-4519-9f15-c551cd0d4697')}
                       onChange={val => setPartyForm(prev => ({ ...prev, clearingAccountId: val, clearing_account_id: val }))}
                       options={expenseAndClearingOptions}
                       placeholder="Select Expense or Clearing Asset Account..."
@@ -3167,13 +3333,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       Accounts Payable Account (Liability):
                     </label>
                     <SearchableSelect
-                      value={editPartyForm.payableAccountId}
+                      value={resolveAccountUuid(editPartyForm.payableAccountId, '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127')}
                       onChange={val => setEditPartyForm({ ...editPartyForm, payableAccountId: val })}
-                      options={coaAccounts.filter(a => a.classification === 'LIABILITY').map(a => ({
-                        value: a.code,
-                        label: `${a.code} - ${a.name}`,
-                        badge: 'LIABILITY'
-                      }))}
+                      options={supplierPayableOptions}
                       placeholder="Select Payable Account (2110-00)..."
                       className="w-full bg-white"
                     />
@@ -3183,13 +3345,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       Stock Bale Inventory / Goods Clearing (Asset):
                     </label>
                     <SearchableSelect
-                      value={editPartyForm.clearingAccountId}
+                      value={resolveAccountUuid(editPartyForm.clearingAccountId, '7d9a873a-13dc-4519-9f15-c551cd0d4697')}
                       onChange={val => setEditPartyForm({ ...editPartyForm, clearingAccountId: val })}
-                      options={coaAccounts.filter(a => a.classification === 'ASSET').map(a => ({
-                        value: a.code,
-                        label: `${a.code} - ${a.name}`,
-                        badge: 'ASSET'
-                      }))}
+                      options={supplierInventoryOptions}
                       placeholder="Select Inventory Asset Account..."
                       className="w-full bg-white"
                     />
@@ -3208,13 +3366,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       Accounts Receivable Account (Asset):
                     </label>
                     <SearchableSelect
-                      value={editPartyForm.receivableAccountId}
+                      value={resolveAccountUuid(editPartyForm.receivableAccountId, '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7')}
                       onChange={val => setEditPartyForm({ ...editPartyForm, receivableAccountId: val })}
-                      options={coaAccounts.filter(a => a.classification === 'ASSET').map(a => ({
-                        value: a.code,
-                        label: `${a.code} - ${a.name}`,
-                        badge: 'ASSET'
-                      }))}
+                      options={clientReceivableOptions}
                       placeholder="Select Receivable Account (1130-00)..."
                       className="w-full bg-white"
                     />
@@ -3224,13 +3378,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       Sales Revenue Account (Revenue):
                     </label>
                     <SearchableSelect
-                      value={editPartyForm.revenueAccountId}
+                      value={resolveAccountUuid(editPartyForm.revenueAccountId, 'a50aeec4-441a-4bbd-b96e-cfac6d4de671')}
                       onChange={val => setEditPartyForm({ ...editPartyForm, revenueAccountId: val })}
-                      options={coaAccounts.filter(a => a.classification === 'REVENUE').map(a => ({
-                        value: a.code,
-                        label: `${a.code} - ${a.name}`,
-                        badge: 'REVENUE'
-                      }))}
+                      options={clientRevenueOptions}
                       placeholder="Select Sales Revenue Account..."
                       className="w-full bg-white"
                     />
@@ -3249,7 +3399,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       Accounts Payable - Courier & Freight (Liability):
                     </label>
                     <SearchableSelect
-                      value={editPartyForm.payableAccountId || '2120-00'}
+                      value={resolveAccountUuid(editPartyForm.payableAccountId, '4cf50ade-782f-4535-9548-f97011d3d604')}
                       onChange={val => setEditPartyForm({ ...editPartyForm, payableAccountId: val })}
                       options={agentPayableOptions}
                       placeholder="Select Courier Payable (2120-00)..."
@@ -3261,7 +3411,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       Relevant Expense / Shipping Clearing Account:
                     </label>
                     <SearchableSelect
-                      value={editPartyForm.clearingAccountId || '1310-00'}
+                      value={resolveAccountUuid(editPartyForm.clearingAccountId, '7d9a873a-13dc-4519-9f15-c551cd0d4697')}
                       onChange={val => setEditPartyForm({ ...editPartyForm, clearingAccountId: val })}
                       options={expenseAndClearingOptions}
                       placeholder="Select Courier Expense or Clearing Account..."
@@ -3282,7 +3432,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       Accounts Payable / Agent Clearing Account (Liability):
                     </label>
                     <SearchableSelect
-                      value={editPartyForm.payableAccountId || '2120-00'}
+                      value={resolveAccountUuid(editPartyForm.payableAccountId, '4cf50ade-782f-4535-9548-f97011d3d604')}
                       onChange={val => setEditPartyForm({ ...editPartyForm, payableAccountId: val })}
                       options={agentPayableOptions}
                       placeholder="Select Agent Payable (2120-00)..."
@@ -3294,7 +3444,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       Default Expense / Clearing Account:
                     </label>
                     <SearchableSelect
-                      value={editPartyForm.clearingAccountId || '1310-00'}
+                      value={resolveAccountUuid(editPartyForm.clearingAccountId, '7d9a873a-13dc-4519-9f15-c551cd0d4697')}
                       onChange={val => setEditPartyForm({ ...editPartyForm, clearingAccountId: val })}
                       options={expenseAndClearingOptions}
                       placeholder="Select Expense or Clearing Asset Account..."

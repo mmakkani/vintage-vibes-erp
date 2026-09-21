@@ -5349,7 +5349,22 @@ export default async function handler(req: any, res: any) {
 
           try {
             const expenseAccount = p.clearingAccountId || p.clearing_account_id || p.expense_account || null;
-            const inventoryAccount = p.inventory_account_id || null;
+            let inventoryAccount = p.inventory_account_id || p.inventoryAccountId || null;
+
+            const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            if (inventoryAccount && !UUID_REGEX.test(inventoryAccount)) {
+              try {
+                const coaCheck = await client.query('SELECT id FROM public.chart_of_accounts WHERE code = $1 LIMIT 1', [inventoryAccount]);
+                if (coaCheck.rows.length > 0 && UUID_REGEX.test(coaCheck.rows[0].id)) {
+                  inventoryAccount = coaCheck.rows[0].id;
+                } else {
+                  inventoryAccount = null;
+                }
+              } catch {
+                inventoryAccount = null;
+              }
+            }
+
             const rpcRes = await client.query(
               'SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6, $7) as data;',
               [partyName, partyType, phone, trn, creditLimit, inventoryAccount, expenseAccount]

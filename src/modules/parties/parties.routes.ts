@@ -356,7 +356,21 @@ partiesRouter.post('/', async (req, res) => {
     const coaName = `${cleanName} (${roleTag})`;
 
     const expenseAccount = partyData.clearingAccountId || partyData.clearing_account_id || partyData.expense_account || null;
-    const inventoryAccount = (partyData as any).inventory_account_id || null;
+    let inventoryAccount = (partyData as any).inventory_account_id || (partyData as any).inventoryAccountId || null;
+
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (inventoryAccount && !UUID_REGEX.test(inventoryAccount)) {
+      try {
+        const coaCheck = await client.query('SELECT id FROM public.chart_of_accounts WHERE code = $1 LIMIT 1', [inventoryAccount]);
+        if (coaCheck.rows.length > 0 && UUID_REGEX.test(coaCheck.rows[0].id)) {
+          inventoryAccount = coaCheck.rows[0].id;
+        } else {
+          inventoryAccount = null;
+        }
+      } catch {
+        inventoryAccount = null;
+      }
+    }
 
     // Execute unified create_party_with_coa PostgreSQL database routine
     const rpcRes = await client.query(

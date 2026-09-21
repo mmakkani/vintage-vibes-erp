@@ -356,6 +356,22 @@ export class PartiesService {
     const clearingAccountId = party.clearingAccountId || (party as any).clearing_account_id || '1310-00';
     const revenueAccountId = party.revenueAccountId || (party as any).revenue_account_id || '4110-00';
 
+    const rawInventory = (party as any).inventory_account_id || (party as any).inventoryAccountId || null;
+    const isUuid = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    const KNOWN_ACCOUNT_UUIDS: Record<string, string> = {
+      '1130-00': '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7',
+      '1140-01': '6b45e403-1422-44fc-87f6-b7ff60864a91',
+      '1140-00': '6b45e403-1422-44fc-87f6-b7ff60864a91',
+      '1310-00': '7d9a873a-13dc-4519-9f15-c551cd0d4697',
+      '2110-00': '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127',
+      '2120-00': '4cf50ade-782f-4535-9548-f97011d3d604',
+      '4110-00': 'a50aeec4-441a-4bbd-b96e-cfac6d4de671',
+      '5110-00': 'd2e7c1d5-e7cb-40fd-bc0e-3de4cf506e94'
+    };
+    const safeInventoryAccountId = isUuid(rawInventory)
+      ? rawInventory
+      : (KNOWN_ACCOUNT_UUIDS[rawInventory] || null);
+
     const normalizedInput = {
       ...party,
       name: cleanName,
@@ -367,6 +383,8 @@ export class PartiesService {
       trn_no: trnNo,
       creditLimit,
       credit_limit: creditLimit,
+      inventory_account_id: safeInventoryAccountId,
+      inventoryAccountId: safeInventoryAccountId,
       payableAccountId,
       payable_account_id: payableAccountId,
       receivableAccountId,
@@ -425,7 +443,7 @@ export class PartiesService {
       p_phone: phone || null,
       p_trn: trnNo || null,
       p_credit_limit: creditLimit || 0,
-      p_inventory_account_id: (party as any).inventory_account_id || null,
+      p_inventory_account_id: safeInventoryAccountId,
       p_expense_account: clearingAccountId || null
     });
 
