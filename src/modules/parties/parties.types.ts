@@ -3,9 +3,13 @@ import { PartyType, CurrencyCode } from '../../types/common.types.ts';
 export interface PartyAccountMap {
   receivableAccountId?: string;
   payableAccountId?: string;
+  agentPayableAccountId?: string;
+  courierPayableAccountId?: string;
   clearingAccountId?: string;
   revenueAccountId?: string;
   commissionAccountId?: string;
+  expenseAccountId?: string;
+  inventoryAccountId?: string;
 }
 
 export interface PartyKhataLog {
@@ -94,6 +98,8 @@ export interface PartyFormData {
   revenue_account_id?: string;
   revenueAccountId?: string;
   inventory_account_id?: string;
+  coa_account_id?: string;
+  coaAccountId?: string;
 }
 
 export interface Party {

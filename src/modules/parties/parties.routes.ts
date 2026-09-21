@@ -307,7 +307,7 @@ partiesRouter.post('/', async (req, res) => {
     }
 
     const rawType = String(partyData.type || partyData.party_type || partyData.partyType || 'CLIENT').trim().toUpperCase();
-    const type = (rawType === 'SUPPLIER' || rawType === 'AGENT') ? rawType : 'CLIENT';
+    const type = (rawType === 'SUPPLIER' || rawType === 'AGENT' || rawType === 'COURIER') ? rawType : 'CLIENT';
 
     client = await getDbClient();
 
@@ -341,17 +341,18 @@ partiesRouter.post('/', async (req, res) => {
     const isSupplier = type === 'SUPPLIER';
     const isClient = type === 'CLIENT' || type === 'CUSTOMER';
     const isAgent = type === 'AGENT';
+    const isCourier = type === 'COURIER';
     const cleanCode = code.replace(/[^A-Za-z0-9]/g, '');
     const coaCode = isSupplier ? `2110-${cleanCode}` : (isClient ? `1130-${cleanCode}` : `2120-${cleanCode}`);
     const coaId = `acc-${id}`;
-    const parentCode = isAgent
-      ? (partyData.payableAccountId || partyData.payable_account_id || '2120-00')
+    const parentCode = (isAgent || isCourier)
+      ? (partyData.payableAccountId || partyData.payable_account_id || partyData.coa_account_id || partyData.coaAccountId || '2120-00')
       : (isSupplier 
-        ? (partyData.payableAccountId || partyData.payable_account_id || '2110-00')
-        : (partyData.receivableAccountId || partyData.receivable_account_id || '1130-00'));
+        ? (partyData.payableAccountId || partyData.payable_account_id || partyData.coa_account_id || partyData.coaAccountId || '2110-00')
+        : (partyData.receivableAccountId || partyData.receivable_account_id || partyData.coa_account_id || partyData.coaAccountId || '1130-00'));
     const coaType = isClient ? 'ASSET' : 'LIABILITY';
-    const subType = isSupplier ? 'Accounts Payable - Trade' : (isClient ? 'Accounts Receivable - Trade' : 'Accounts Payable - Clearing & Courier Agent');
-    const roleTag = isSupplier ? 'Supplier' : (isClient ? 'Customer' : 'Agent');
+    const subType = isSupplier ? 'Accounts Payable - Trade' : (isClient ? 'Accounts Receivable - Trade' : (isCourier ? 'Accounts Payable - Courier & Logistics' : 'Accounts Payable - Clearing & Courier Agent'));
+    const roleTag = isSupplier ? 'Supplier' : (isClient ? 'Customer' : (isCourier ? 'Courier' : 'Agent'));
     const coaName = `${cleanName} (${roleTag})`;
 
     const expenseAccount = partyData.clearingAccountId || partyData.clearing_account_id || partyData.expense_account || null;
@@ -368,9 +369,10 @@ partiesRouter.post('/', async (req, res) => {
     const finalPartyCode = rpcData?.party_code || code;
     const finalCoaCode = rpcData?.code || coaCode;
 
-    const initialMap = isAgent ? {
+    const initialMap = (isAgent || isCourier) ? {
       payableAccountId: finalCoaCode,
       agentPayableAccountId: finalCoaCode,
+      courierPayableAccountId: isCourier ? finalCoaCode : undefined,
       clearingAccountId: partyData.clearingAccountId || partyData.clearing_account_id || '1310-00',
       expenseAccountId: partyData.clearingAccountId || partyData.clearing_account_id || '5110-00',
       ...(partyData.accountMap || partyData.account_map || {})

@@ -22,7 +22,7 @@ export type AccountClassification = 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE'
 
 export type VoucherType = 'JV' | 'BRV' | 'BPV' | 'CRV' | 'CPV' | 'JOURNAL' | 'PURCHASE' | 'SALES' | 'PAYMENT' | 'RECEIPT';
 
-export type PartyType = 'CLIENT' | 'SUPPLIER' | 'AGENT';
+export type PartyType = 'CLIENT' | 'SUPPLIER' | 'AGENT' | 'COURIER';
 
 export type CurrencyCode = 'AED' | 'USD' | 'EUR' | 'GBP' | 'SAR' | 'PKR' | (string & {});
 

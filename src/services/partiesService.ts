@@ -346,12 +346,12 @@ export class PartiesService {
     }
 
     const rawType = String(party.type || party.party_type || (party as any).partyType || 'CLIENT').trim().toUpperCase();
-    const type = (rawType === 'SUPPLIER' || rawType === 'AGENT') ? rawType : 'CLIENT';
+    const type = (rawType === 'SUPPLIER' || rawType === 'AGENT' || rawType === 'COURIER') ? rawType : 'CLIENT';
 
     const phone = party.phone || party.contact_no || (party as any).contactNo || '';
     const trnNo = party.trn_no || party.trnNo || party.tax_id || (party as any).trnTaxNo || '';
     const creditLimit = Number(party.creditLimit ?? party.credit_limit ?? 50000);
-    const payableAccountId = party.payableAccountId || (party as any).payable_account_id || (type === 'AGENT' ? '2120-00' : '2110-01');
+    const payableAccountId = party.payableAccountId || (party as any).payable_account_id || ((type === 'AGENT' || type === 'COURIER') ? '2120-00' : '2110-01');
     const receivableAccountId = party.receivableAccountId || (party as any).receivable_account_id || '1130-00';
     const clearingAccountId = party.clearingAccountId || (party as any).clearing_account_id || '1310-00';
     const revenueAccountId = party.revenueAccountId || (party as any).revenue_account_id || '4110-00';
@@ -503,9 +503,10 @@ export class PartiesService {
       currentBalance: 0,
       currency: party.currency || 'AED',
       isActive: true,
-      accountMap: type === 'AGENT' ? {
+      accountMap: (type === 'AGENT' || type === 'COURIER') ? {
         payableAccountId: coaCode,
         agentPayableAccountId: coaCode,
+        courierPayableAccountId: type === 'COURIER' ? coaCode : undefined,
         clearingAccountId: clearingAccountId || '1310-00',
         expenseAccountId: clearingAccountId || '5110-00'
       } : {
