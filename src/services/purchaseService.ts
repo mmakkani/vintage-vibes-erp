@@ -197,6 +197,9 @@ export class PurchaseService {
       : rawAccountCode;
     const accountName = accountCode === '2110-01' ? 'Accounts Payable - Trade Suppliers' : `${finalPartyName} (Supplier)`;
 
+    // Properly declare accountId variable to prevent ReferenceError
+    let accountId: string = party?.coa_account_id || `acc-${finalPartyId}`;
+
     // Check if account already exists by CODE in chart_of_accounts (UUID id)
     let resolvedChartUuid: string | null = null;
     try {
@@ -360,8 +363,27 @@ export class PurchaseService {
         ? '2110-01'
         : supplierCoa.accountCode;
 
+      let finalApAccountId = supplierCoa.accountId;
       // Ensure 2110-01 exists in coa_accounts if targeting default AP account
       if (targetApCode === '2110-01') {
+        try {
+          const { data: apChart } = await supabase
+            .from('chart_of_accounts')
+            .select('id')
+            .eq('code', '2110-01')
+            .maybeSingle();
+          if (apChart?.id) {
+            finalApAccountId = String(apChart.id);
+          } else {
+            const { data: apCoa } = await supabase
+              .from('coa_accounts')
+              .select('id')
+              .eq('code', '2110-01')
+              .maybeSingle();
+            if (apCoa?.id) finalApAccountId = String(apCoa.id);
+          }
+        } catch (_) {}
+
         try {
           await supabase.from('coa_accounts').upsert({
             id: 'acc-2110-01',
@@ -397,7 +419,7 @@ export class PurchaseService {
             memo: `Commercial Purchase Invoice: ${invoiceNo}`
           },
           {
-            accountId: supplierCoa.accountId,
+            accountId: finalApAccountId,
             accountCode: targetApCode,
             accountName: targetApCode === '2110-01' ? 'Accounts Payable - Trade Suppliers' : supplierCoa.accountName,
             partyId: supplierCoa.partyId,
