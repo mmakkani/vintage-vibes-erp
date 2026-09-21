@@ -54,6 +54,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   const [viewInvoice, setViewInvoice] = useState<PurchaseInvoice | null>(null);
   const [invoicesList, setInvoicesList] = useState<PurchaseInvoice[]>(invoices);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isConvertingId, setIsConvertingId] = useState<string | null>(null);
   const [lockedModalInfo, setLockedModalInfo] = useState<{
     invoiceNo: string;
     actionType: 'EDIT' | 'DELETE';
@@ -268,13 +269,19 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   };
 
   const handleConvertToInward = async (invId: string) => {
+    if (isConvertingId) return;
+    setIsConvertingId(invId);
     try {
       const createdBales = await PurchaseService.convertToInwardGatePass(invId);
+      // Immediately reflect convertedToInward in local state so UI updates without waiting
+      setInvoicesList(prev => prev.map(item => item.id === invId ? { ...item, convertedToInward: true, status: 'POSTED' } : item));
       alert(`✅ Inward Gate Pass Created!\n\n${createdBales.length} bale(s) generated and ready for sorting in Terminal.\nConsignment value successfully booked to COA & Supplier Khata.`);
       onRefresh();
     } catch (e: any) {
       console.warn('Error converting to inward:', e);
       alert(`Failed to create inward gate pass: ${e.message || 'Unknown error'}`);
+    } finally {
+      setIsConvertingId(null);
     }
   };
 
@@ -418,6 +425,11 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
         sortedWeightKg: sortedKg,
         balesCount: related.length || 1
       });
+      return;
+    }
+
+    if (inv.status === 'POSTED') {
+      alert(`Cannot edit invoice "${inv.invoiceNo}" because it is in POSTED status.\n\nPlease click "Unpost" first to reverse financial vouchers back to DRAFT before editing.`);
       return;
     }
 
@@ -566,6 +578,8 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                   );
                   const isSortingStarted = sortedPiecesCount > 0 || sortedWeightKg > 0;
                   const isLocked = hasInwardPass || isSortingStarted;
+                  const isEditLocked = isLocked || inv.status === 'POSTED';
+                  const isDeleteLocked = isLocked || inv.status === 'POSTED';
 
                   const invGross = Number(inv.grossAmount || inv.subTotal || inv.totalAmount || 0);
                   const invDeduction = Number(inv.deductionAmount || inv.discountAmount || 0);
@@ -645,33 +659,35 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          {/* Edit Button (Immediately disabled if Inward Pass exists) */}
+                          {/* Edit Button (Immediately disabled if Inward Pass exists or is POSTED) */}
                           <button
                             type="button"
-                            disabled={isLocked}
+                            disabled={isEditLocked}
                             onClick={() => handleEditInvoiceClick(inv)}
                             className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 transition-colors border ${
-                              isLocked
+                              isEditLocked
                                 ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-75'
                                 : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 cursor-pointer'
                             }`}
                             title={
                               isLocked
                                 ? `Locked: Inward Gate Pass / Sorting Bales exist. Delete all sorting bales in the Sorting Terminal first to edit.`
+                                : inv.status === 'POSTED'
+                                ? `Locked: Invoice is in POSTED status. You must Unpost it back to DRAFT first to edit.`
                                 : 'Edit Commercial Invoice'
                             }
                           >
-                            {isLocked ? <Lock className="w-3 h-3 text-slate-400" /> : <Edit className="w-3 h-3 text-blue-600" />}
-                            <span>{isLocked ? 'Locked' : 'Edit'}</span>
+                            {isEditLocked ? <Lock className="w-3 h-3 text-slate-400" /> : <Edit className="w-3 h-3 text-blue-600" />}
+                            <span>{isEditLocked ? 'Locked' : 'Edit'}</span>
                           </button>
 
                           {/* Delete Button (Immediately disabled if Inward Pass exists or is POSTED) */}
                           <button
                             type="button"
-                            disabled={isLocked || inv.status === 'POSTED'}
+                            disabled={isDeleteLocked}
                             onClick={() => handleDeleteInvoiceClick(inv)}
                             className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 transition-colors border ${
-                              isLocked || inv.status === 'POSTED'
+                              isDeleteLocked
                                 ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-75'
                                 : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200 cursor-pointer'
                             }`}
@@ -679,12 +695,12 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                               isLocked
                                 ? `Locked: Inward Gate Pass / Sorting Bales exist. Delete all sorting bales in the Sorting Terminal first to delete.`
                                 : inv.status === 'POSTED'
-                                ? 'Locked: Invoice is POSTED. Unpost first to delete.'
+                                ? `Locked: Invoice is in POSTED status. You must Unpost it back to DRAFT first to delete.`
                                 : 'Delete Commercial Invoice'
                             }
                           >
-                            {isLocked || inv.status === 'POSTED' ? <Lock className="w-3 h-3 text-slate-400" /> : <Trash2 className="w-3 h-3 text-rose-600" />}
-                            <span>{isLocked ? 'Locked' : 'Delete'}</span>
+                            {isDeleteLocked ? <Lock className="w-3 h-3 text-slate-400" /> : <Trash2 className="w-3 h-3 text-rose-600" />}
+                            <span>{isDeleteLocked ? 'Locked' : 'Delete'}</span>
                           </button>
 
                           {/* Direct Print A4 with Monogram and Expenses */}
@@ -722,38 +738,70 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                             <span>View Doc</span>
                           </button>
 
-                          {inv.status === 'POSTED' && !isSortingStarted && !inv.convertedToInward && (
+                          {/* Unpost Button - Hard Locked if Inward Gate Pass or Sorting Bales exist */}
+                          {inv.status === 'POSTED' && (
                             <button
                               type="button"
-                              onClick={() => handleUnpostInvoice(inv.id)}
-                              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors border border-amber-300"
-                              title="Unpost this invoice back to DRAFT to allow changes or deletion"
+                              disabled={isLocked}
+                              onClick={() => !isLocked && handleUnpostInvoice(inv.id)}
+                              className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 transition-colors border ${
+                                isLocked
+                                  ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-75'
+                                  : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 cursor-pointer'
+                              }`}
+                              title={
+                                isLocked
+                                  ? 'Locked: Cannot unpost while Inward Gate Pass or Sorting Bales exist. Delete bales in Sorting Terminal first.'
+                                  : 'Unpost this invoice back to DRAFT to allow changes or deletion'
+                              }
                             >
-                              <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
-                              <span>Unpost</span>
+                              {isLocked ? <Lock className="w-3.5 h-3.5 text-slate-400" /> : <RotateCcw className="w-3.5 h-3.5 text-amber-700" />}
+                              <span>{isLocked ? 'Unpost (Locked)' : 'Unpost'}</span>
                             </button>
                           )}
 
                           {inv.status !== 'POSTED' && (
                             <button
                               type="button"
-                              onClick={() => handlePostInvoice(inv.id)}
-                              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors"
+                              disabled={isLocked}
+                              onClick={() => !isLocked && handlePostInvoice(inv.id)}
+                              className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 transition-colors border ${
+                                isLocked
+                                  ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-75'
+                                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200 cursor-pointer'
+                              }`}
+                              title={isLocked ? 'Locked: Inward Gate Pass exists' : 'Post invoice to GL & Supplier Khata'}
                             >
                               <Lock className="w-3.5 h-3.5" />
                               <span>Post</span>
                             </button>
                           )}
 
-                          {!inv.convertedToInward && (
+                          {/* Inward Pass Button - Hard Locked & Replaced if Inward Pass already generated */}
+                          {hasInwardPass ? (
                             <button
                               type="button"
+                              disabled
+                              className="px-2 py-1 bg-slate-100 text-slate-400 font-semibold text-[11px] rounded border border-slate-200 inline-flex items-center gap-1 cursor-not-allowed opacity-75"
+                              title="Inward Gate Pass & Bales already generated for this invoice. Duplicate generation is locked."
+                            >
+                              <Lock className="w-3.5 h-3.5 text-slate-400" />
+                              <span>Inward Generated</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={isConvertingId === inv.id}
                               onClick={() => handleConvertToInward(inv.id)}
-                              className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors"
+                              className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 transition-colors border ${
+                                isConvertingId === inv.id
+                                  ? 'bg-emerald-100 text-emerald-600 border-emerald-200 cursor-wait'
+                                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200 cursor-pointer'
+                              }`}
                               title="Generate Inward Gate Pass & Bales"
                             >
                               <ArrowRight className="w-3.5 h-3.5" />
-                              <span>Inward Pass</span>
+                              <span>{isConvertingId === inv.id ? 'Generating...' : 'Inward Pass'}</span>
                             </button>
                           )}
                         </div>

@@ -893,13 +893,15 @@ export class PurchaseService {
           if (invoiceNo) {
             await supabase.from('purchase_invoices').update({ converted_to_inward: false }).eq('invoice_no', invoiceNo);
             // Delete inward transfer vouchers specifically
+            const cleanInvNo = invoiceNo.replace(/[^a-zA-Z0-9]/g, '');
             const { data: inwVchs } = await supabase
               .from('financial_vouchers')
               .select('id, voucher_no')
-              .or(`reference.eq.INWARD-${invoiceNo},voucher_no.ilike.%JV-INW%`);
+              .or(`reference.eq.INWARD-${invoiceNo},voucher_no.ilike.JV-INW-%${cleanInvNo}%`);
 
             if (inwVchs && inwVchs.length > 0) {
               for (const iv of inwVchs) {
+                await supabase.from('journal_entries').delete().eq('voucher_id', iv.id);
                 await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
                 await supabase.from('general_ledger').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
                 await supabase.from('financial_vouchers').delete().eq('id', iv.id);
@@ -1006,6 +1008,28 @@ export class PurchaseService {
     }
 
     const invoice = invRows[0];
+    const invoiceNo = invoice.invoice_no || `PUR-${Date.now().toString().slice(-6)}`;
+
+    // Guardrail 1: Check if invoice is already marked converted in DB
+    if (invoice.converted_to_inward) {
+      throw new Error(`Inward Gate Pass has already been generated for invoice "${invoiceNo}". Duplicate generation is blocked.`);
+    }
+
+    // Guardrail 2: Check if inward passes or sorting bales already exist for this invoice in DB
+    const { data: existingPasses } = await supabase
+      .from('inward_gate_passes')
+      .select('id, pass_no, gate_pass_no')
+      .or(`purchase_invoice_id.eq.${invoice.id},purchase_invoice_no.eq.${invoiceNo}`);
+
+    if (existingPasses && existingPasses.length > 0) {
+      // Sync flag in DB so UI remains locked
+      await supabase
+        .from('purchase_invoices')
+        .update({ converted_to_inward: true, status: 'POSTED' })
+        .eq('id', invoice.id);
+      throw new Error(`Inward Gate Pass (${existingPasses.length} bale(s)) already exists for invoice "${invoiceNo}". Duplicate generation is blocked.`);
+    }
+
     const { data: itemRows } = await supabase
       .from('purchase_invoice_items')
       .select('*')
@@ -1015,7 +1039,6 @@ export class PurchaseService {
     const exchangeRate = Number(invoice.exchange_rate) || (currency === 'USD' ? 3.6725 : 1);
     const invoiceTotalAmount = Number(invoice.total_amount || 0);
     const invoiceTotalAed = currency === 'AED' ? invoiceTotalAmount : Number((invoiceTotalAmount * exchangeRate).toFixed(2));
-    const invoiceNo = invoice.invoice_no || `PUR-${Date.now().toString().slice(-6)}`;
     const supplierName = invoice.supplier_name || invoice.party_name || 'Trade Supplier';
 
     // 2. Prepare manifest line items
@@ -1093,6 +1116,10 @@ export class PurchaseService {
 
         if (igpErr) {
           console.error('Error inserting inward_gate_passes:', igpErr);
+          if (igpErr.code === '23505' || igpErr.message?.includes('duplicate key') || igpErr.message?.includes('already exists')) {
+            throw new Error(`Inward Gate Pass (${passNo}) already exists. Duplicate generation is prevented.`);
+          }
+          throw new Error(`Failed to create inward gate pass: ${igpErr.message}`);
         }
 
         // Initialize session in bale_sessions
@@ -1230,33 +1257,45 @@ export class PurchaseService {
         }
       } else {
         // If invoice was already posted (PINV), transfer from Raw Bales Stock (1140-01) to Sorting WIP (1150-01)
-        await FinanceService.addVoucher({
-          voucherNo: `JV-INW-TRF-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
-          date: new Date().toISOString().slice(0, 10),
-          type: 'JOURNAL',
-          reference: `INWARD-${invoiceNo}`,
-          narration: `Consignment Bales Inward Transfer from Warehouse to Sorting WIP: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
-          totalDebit: invoiceTotalAed,
-          totalCredit: invoiceTotalAed,
-          status: 'POSTED',
-          createdBy: 'System (Purchase Inward)',
-          lines: [
-            {
-              accountCode: '1150-01',
-              accountName: 'Inventory - Sorting Work-in-Progress (WIP Bales Under Grading)',
-              debitAmount: invoiceTotalAed,
-              creditAmount: 0,
-              memo: `WIP Raw Bales Inward: ${invoiceNo} (${createdPasses.length} bales)`
-            },
-            {
-              accountCode: '1140-01',
-              accountName: 'Raw Material Unsorted',
-              debitAmount: 0,
-              creditAmount: invoiceTotalAed,
-              memo: `Warehouse Stock Inward to WIP: ${invoiceNo}`
-            }
-          ]
-        });
+        // Hard Idempotency Check: Verify if an inward transfer voucher has ALREADY been posted for this invoice
+        const cleanInvNo = invoiceNo.replace(/[^a-zA-Z0-9]/g, '');
+        const { data: existingInwTransfer } = await supabase
+          .from('financial_vouchers')
+          .select('id, voucher_no')
+          .or(`reference.eq.INWARD-${invoiceNo},voucher_no.ilike.JV-INW-%${cleanInvNo}%`)
+          .limit(1);
+
+        if (existingInwTransfer && existingInwTransfer.length > 0) {
+          console.log(`Inward transfer voucher already exists for ${invoiceNo}: ${existingInwTransfer[0].voucher_no}. Skipping duplicate voucher creation.`);
+        } else {
+          await FinanceService.addVoucher({
+            voucherNo: `JV-INW-TRF-${cleanInvNo}-${Date.now().toString().slice(-4)}`,
+            date: new Date().toISOString().slice(0, 10),
+            type: 'JOURNAL',
+            reference: `INWARD-${invoiceNo}`,
+            narration: `Consignment Bales Inward Transfer from Warehouse to Sorting WIP: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
+            totalDebit: invoiceTotalAed,
+            totalCredit: invoiceTotalAed,
+            status: 'POSTED',
+            createdBy: 'System (Purchase Inward)',
+            lines: [
+              {
+                accountCode: '1150-01',
+                accountName: 'Inventory - Sorting Work-in-Progress (WIP Bales Under Grading)',
+                debitAmount: invoiceTotalAed,
+                creditAmount: 0,
+                memo: `WIP Raw Bales Inward: ${invoiceNo} (${createdPasses.length} bales)`
+              },
+              {
+                accountCode: '1140-01',
+                accountName: 'Raw Material Unsorted',
+                debitAmount: 0,
+                creditAmount: invoiceTotalAed,
+                memo: `Warehouse Stock Inward to WIP: ${invoiceNo}`
+              }
+            ]
+          });
+        }
       }
     } catch (coaErr) {
       console.warn('Notice on COA voucher posting:', coaErr);
