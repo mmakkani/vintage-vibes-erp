@@ -357,12 +357,13 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
           revenueAccountId: formData.revenue_account_id || '4110-00'
         };
 
-        await supabase.from('parties').update({
+        const { error: updateError } = await supabase.from('parties').update({
           contact_person: formData.contact_person,
           email: formData.email,
           address: formData.address,
           account_map: customMap
-        }).eq('id', data.party_id).catch(() => {});
+        }).eq('id', data.party_id);
+        if (updateError) throw updateError;
       }
 
       toast.success(`Created party & provisioned account ${data.code}`);

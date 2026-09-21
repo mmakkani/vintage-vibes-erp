@@ -138,6 +138,8 @@ export class PartiesService {
     currency?: string;
     isActive?: boolean;
     accountMap?: any;
+    coaAccountId?: string;
+    coa_account_id?: string;
   }): Promise<string> {
     const cleanName = String(party.name || '').trim();
     if (!cleanName) return '';
@@ -152,14 +154,56 @@ export class PartiesService {
         : (party.accountMap?.receivableAccountId || '1130-00'));
     const coaAccountType = isClient ? 'ASSET' : 'LIABILITY';
     const subType = isSupplier ? 'Accounts Payable - Trade' : (isClient ? 'Accounts Receivable - Trade' : 'Accounts Payable - Clearing & Courier Agent');
-    const cleanCode = (party.code || '').replace(/[^A-Za-z0-9]/g, '') || String(Date.now()).slice(-4);
-    const coaCode = isSupplier ? `2110-${cleanCode}` : (isClient ? `1130-${cleanCode}` : `2120-${cleanCode}`);
-    const coaId = `acc-${party.id}`;
+    const prefix = isSupplier ? '2110-' : (isClient ? '1130-' : '2120-');
     const roleTag = isSupplier ? 'Supplier' : (isClient ? 'Customer' : 'Agent');
     const coaName = `${cleanName} (${roleTag})`;
 
     try {
-      // 1. Look up parent in chart_of_accounts to get parent UUID
+      // 1. Check if the party already has an existing valid specific account code (not parent folder)
+      let coaCode = party.coaAccountId || (party as any).coa_account_id;
+      if (isSupplier && party.accountMap?.payableAccountId && party.accountMap.payableAccountId.startsWith('2110-') && !party.accountMap.payableAccountId.endsWith('-00')) {
+        coaCode = party.accountMap.payableAccountId;
+      } else if (isClient && party.accountMap?.receivableAccountId && party.accountMap.receivableAccountId.startsWith('1130-') && !party.accountMap.receivableAccountId.endsWith('-00')) {
+        coaCode = party.accountMap.receivableAccountId;
+      } else if (isAgent && party.accountMap?.payableAccountId && party.accountMap.payableAccountId.startsWith('2120-') && !party.accountMap.payableAccountId.endsWith('-00')) {
+        coaCode = party.accountMap.payableAccountId;
+      }
+
+      // If no valid specific code exists, query the database for the highest existing code under prefix
+      if (!coaCode || coaCode.endsWith('-00') || !coaCode.startsWith(prefix)) {
+        const [coaRes, legacyRes] = await Promise.all([
+          supabase.from('chart_of_accounts').select('code').like('code', `${prefix}%`),
+          supabase.from('coa_accounts').select('code').like('code', `${prefix}%`)
+        ]);
+
+        let maxNum = 0;
+        const allExistingCodes = new Set<string>();
+        (coaRes.data || []).forEach((row: any) => {
+          if (row.code) allExistingCodes.add(row.code);
+        });
+        (legacyRes.data || []).forEach((row: any) => {
+          if (row.code) allExistingCodes.add(row.code);
+        });
+
+        allExistingCodes.forEach((code) => {
+          if (code.startsWith(prefix)) {
+            const numPart = code.slice(prefix.length);
+            const num = parseInt(numPart, 10);
+            if (!isNaN(num) && num > maxNum) {
+              maxNum = num;
+            }
+          }
+        });
+
+        let nextNum = maxNum + 1;
+        coaCode = `${prefix}${String(nextNum).padStart(2, '0')}`;
+        while (allExistingCodes.has(coaCode)) {
+          nextNum++;
+          coaCode = `${prefix}${String(nextNum).padStart(2, '0')}`;
+        }
+      }
+
+      // 2. Look up parent in chart_of_accounts to get parent UUID
       const { data: parentAcc } = await supabase
         .from('chart_of_accounts')
         .select('id')
@@ -168,18 +212,38 @@ export class PartiesService {
 
       const parentId = parentAcc?.id || null;
 
-      // 2. Upsert in chart_of_accounts (Standard 5-Tier PostgreSQL table)
-      await supabase.from('chart_of_accounts').upsert({
+      // 3. Look up existing chart_of_accounts to preserve existing id, or let DB generate UUID
+      const { data: existingCoa } = await supabase
+        .from('chart_of_accounts')
+        .select('id')
+        .eq('code', coaCode)
+        .maybeSingle();
+
+      const coaPayload: any = {
         code: coaCode,
         name: coaName,
         account_type: coaAccountType,
         parent_id: parentId,
         current_balance: Number(party.currentBalance || 0)
-      }, { onConflict: 'code' });
+      };
+      if (existingCoa?.id) {
+        coaPayload.id = existingCoa.id;
+      }
 
-      // 3. Upsert in coa_accounts (Legacy compatibility)
-      await supabase.from('coa_accounts').upsert({
-        id: coaId,
+      const { error: coaError } = await supabase.from('chart_of_accounts').upsert(coaPayload, { onConflict: 'code' });
+      if (coaError) throw coaError;
+
+      // 4. Look up existing coa_accounts to preserve existing id, or generate fresh random UUID
+      const { data: existingLegacy } = await supabase
+        .from('coa_accounts')
+        .select('id')
+        .eq('code', coaCode)
+        .maybeSingle();
+
+      const freshLegacyId = existingLegacy?.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `acc-${Date.now()}-${Math.floor(Math.random() * 10000)}`);
+
+      const { error: legacyError } = await supabase.from('coa_accounts').upsert({
+        id: freshLegacyId,
         code: coaCode,
         name: coaName,
         type: coaAccountType,
@@ -192,8 +256,9 @@ export class PartiesService {
         party_id: party.id,
         tier_level: 3
       }, { onConflict: 'code' });
+      if (legacyError) throw legacyError;
 
-      // 4. Link accountMap and coa_account_id on party
+      // 5. Link accountMap and coa_account_id on party
       const updatedMap = isAgent ? {
         ...(party.accountMap || {}),
         payableAccountId: coaCode,
@@ -206,17 +271,18 @@ export class PartiesService {
         receivableAccountId: isClient ? coaCode : (party.accountMap?.receivableAccountId || '1130-00')
       };
 
-      await supabase.from('parties').update({
+      const { error: partyUpdateError } = await supabase.from('parties').update({
         coa_account_id: coaCode,
         account_map: updatedMap
       }).eq('id', party.id);
+      if (partyUpdateError) throw partyUpdateError;
 
       FinanceService.clearCoaCache();
+      return coaCode;
     } catch (err) {
-      console.warn('Auto-provisioning COA account for party failed (non-blocking):', err);
+      console.error('Error auto-provisioning COA account for party:', err);
+      throw err;
     }
-
-    return coaCode;
   }
 
   public static async getPartyById(id: string): Promise<Party | null> {
@@ -310,9 +376,6 @@ export class PartiesService {
             createdAt: created.createdAt || created.created_at || new Date().toISOString(),
             created_at: created.createdAt || created.created_at || new Date().toISOString()
           };
-        } else {
-          const errData = await apiRes.json().catch(() => ({}));
-          if (errData.error) throw new Error(errData.error);
         }
       } catch (err: any) {
         if (err.message && !err.message.includes('fetch') && !err.message.includes('JSON')) throw err;

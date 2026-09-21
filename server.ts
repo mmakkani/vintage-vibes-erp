@@ -247,10 +247,11 @@ async function startServer() {
         const p_trn = body.p_trn || null;
         const p_credit_limit = Number(body.p_credit_limit) || 0;
         const p_inventory_account_id = body.p_inventory_account_id || null;
+        const p_expense_account = body.p_expense_account || null;
 
         const result = await dbClient.query(
-          `SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6) as data;`,
-          [p_name, p_type, p_phone, p_trn, p_credit_limit, p_inventory_account_id]
+          `SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6, $7) as data;`,
+          [p_name, p_type, p_phone, p_trn, p_credit_limit, p_inventory_account_id, p_expense_account]
         );
         const data = result.rows[0]?.data;
         return res.json({ data, error: null });

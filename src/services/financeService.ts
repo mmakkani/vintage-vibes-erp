@@ -368,7 +368,9 @@ export class FinanceService {
     // 3. Direct Supabase Fallback
     if (!apiSuccess) {
       await supabase.from('chart_of_accounts').delete().or(`id.eq.${id}${code ? `,code.eq.${code}` : ''}`);
-      await supabase.from('accounts').delete().or(`account_id.eq.${id}${code ? `,account_code.eq.${code}` : ''}`).catch(() => {});
+      try {
+        await supabase.from('accounts').delete().or(`account_id.eq.${id}${code ? `,account_code.eq.${code}` : ''}`);
+      } catch (_) {}
       resultData = { success: true };
     }
 
@@ -396,9 +398,10 @@ export class FinanceService {
       }
     }
 
-    // 2. Direct Supabase update
     await supabase.from('chart_of_accounts').update({ is_active: isActive }).or(`id.eq.${id}${code ? `,code.eq.${code}` : ''}`);
-    await supabase.from('accounts').update({ is_active: isActive }).or(`account_id.eq.${id}${code ? `,account_code.eq.${code}` : ''}`).catch(() => {});
+    try {
+      await supabase.from('accounts').update({ is_active: isActive }).or(`account_id.eq.${id}${code ? `,account_code.eq.${code}` : ''}`);
+    } catch (_) {}
     this.clearCoaCache();
     return { success: true, is_active: isActive };
   }
