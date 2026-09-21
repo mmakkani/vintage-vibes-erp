@@ -4940,83 +4940,106 @@ export default async function handler(req: any, res: any) {
         const client = await getPgClient();
         if (client) {
           try {
-            // Strict Accounting Safety Check: Prevent deletion of parties with existing transactions or non-zero balance
+            // 1. Fetch party record to inspect linked accounts and transactions
             const pCheck = await client.query(
-              `SELECT id, party_id, code, current_balance, coa_account_id FROM parties WHERE id = $1 OR party_id::text = $1 LIMIT 1`,
+              `SELECT id, party_id, code, name, company_name, current_balance, coa_account_id, linked_account_id 
+               FROM parties 
+               WHERE id = $1 OR party_id::text = $1 OR code = $1 
+               LIMIT 1`,
               [targetPartyId]
             ).catch(() => ({ rows: [] }));
 
-            if (pCheck.rows.length > 0) {
-              const party = pCheck.rows[0];
-              const curBal = Math.abs(Number(party.current_balance || 0));
-              if (curBal > 0.001) {
-                await client.end().catch(() => {});
-                return res.status(400).json({
-                  error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
-                });
-              }
+            if (pCheck.rows.length === 0) {
+              await client.query(`SELECT public.cleanup_orphan_party_accounts();`).catch(() => {});
+              await client.end();
+              return res.status(200).json({ success: true, message: 'Party was already deleted or not found.' });
+            }
 
-              const partyUuid = party.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(party.id)
-                ? party.id
-                : (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetPartyId) ? targetPartyId : null);
+            const party = pCheck.rows[0];
+            const partyUuid = party.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(party.id)
+              ? party.id
+              : (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetPartyId) ? targetPartyId : null);
+            const partyNumId = party.party_id ? String(party.party_id) : null;
+            const coaCode = party.coa_account_id;
+            const linkedAccId = party.linked_account_id;
 
-              let coaUuid: string | null = null;
-              if (party.coa_account_id) {
-                if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(party.coa_account_id)) {
-                  coaUuid = party.coa_account_id;
-                } else {
-                  const coaLookup = await client.query(
-                    `SELECT id FROM chart_of_accounts WHERE code = $1 LIMIT 1`,
-                    [party.coa_account_id]
-                  ).catch(() => ({ rows: [] }));
-                  if (coaLookup.rows.length > 0) {
-                    coaUuid = coaLookup.rows[0].id;
-                  }
-                }
-              }
+            // 2. Strict Accounting Safety Check: Prevent deletion of parties with existing transactions or non-zero balance
+            const curBal = Math.abs(Number(party.current_balance || 0));
+            if (curBal > 0.001) {
+              await client.end().catch(() => {});
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
 
-              // Check journal_entries (UUID only)
-              if (partyUuid || coaUuid) {
-                const jeParams: any[] = [];
-                const jeOrs: string[] = [];
-                if (partyUuid) {
-                  jeParams.push(partyUuid);
-                  jeOrs.push(`party_id = $${jeParams.length}`);
-                }
-                if (coaUuid) {
-                  jeParams.push(coaUuid);
-                  jeOrs.push(`account_id = $${jeParams.length}`);
-                }
-                const jeCheck = await client.query(
-                  `SELECT id FROM journal_entries WHERE ${jeOrs.join(' OR ')} LIMIT 1`,
-                  jeParams
-                ).catch(() => ({ rows: [] }));
-                if (jeCheck.rows.length > 0) {
-                  await client.end().catch(() => {});
-                  return res.status(400).json({
-                    error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
-                  });
-                }
-              }
+            // Check purchase_invoices
+            const piCheck = await client.query(
+              `SELECT id FROM purchase_invoices 
+               WHERE (supplier_id = $1 AND $1 IS NOT NULL) OR (supplier_id = $2 AND $2 IS NOT NULL) 
+               LIMIT 1`,
+              [partyUuid, partyNumId]
+            ).catch(() => ({ rows: [] }));
+            if (piCheck.rows.length > 0) {
+              await client.end().catch(() => {});
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
 
-              // Check voucher_entries
-              const veCheck = await client.query(
-                `SELECT id FROM voucher_entries WHERE party_id::text = $1 OR party_id::text = $2 ${party.coa_account_id ? 'OR account_id::text = $3 OR account_code = $3' : ''} LIMIT 1`,
-                party.coa_account_id ? [String(party.party_id || ''), String(party.id || targetPartyId), party.coa_account_id] : [String(party.party_id || ''), String(party.id || targetPartyId)]
+            // Check sales_invoices
+            const siCheck = await client.query(
+              `SELECT id FROM sales_invoices 
+               WHERE (client_id = $1 AND $1 IS NOT NULL) OR (client_id = $2 AND $2 IS NOT NULL) 
+               LIMIT 1`,
+              [partyUuid, partyNumId]
+            ).catch(() => ({ rows: [] }));
+            if (siCheck.rows.length > 0) {
+              await client.end().catch(() => {});
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+
+            // Check party_khata_logs
+            const khataCheck = await client.query(
+              `SELECT id FROM party_khata_logs 
+               WHERE (party_id = $1 AND $1 IS NOT NULL) OR (party_id = $2 AND $2 IS NOT NULL) 
+               LIMIT 1`,
+              [partyUuid, partyNumId]
+            ).catch(() => ({ rows: [] }));
+            if (khataCheck.rows.length > 0) {
+              await client.end().catch(() => {});
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+
+            // Check voucher_entries
+            const veCheck = await client.query(
+              `SELECT id FROM voucher_entries 
+               WHERE (party_id = $1 AND $1 IS NOT NULL) OR (party_id = $2 AND $2 IS NOT NULL)
+                  OR (account_code = $3 AND $3 IS NOT NULL) OR (account_id::text = $3 AND $3 IS NOT NULL) 
+               LIMIT 1`,
+              [partyUuid, partyNumId, coaCode]
+            ).catch(() => ({ rows: [] }));
+            if (veCheck.rows.length > 0) {
+              await client.end().catch(() => {});
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+
+            // Check journal_entries & items
+            if (linkedAccId || coaCode || partyUuid) {
+              const jiCheck = await client.query(
+                `SELECT ji.id FROM journal_items ji 
+                 LEFT JOIN accounts a ON ji.account_id = a.account_id 
+                 WHERE (ji.account_id = $1 AND $1 IS NOT NULL) 
+                    OR (a.account_code = $2 AND $2 IS NOT NULL) 
+                 LIMIT 1`,
+                [linkedAccId, coaCode]
               ).catch(() => ({ rows: [] }));
-              if (veCheck.rows.length > 0) {
-                await client.end().catch(() => {});
-                return res.status(400).json({
-                  error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
-                });
-              }
-
-              // Check purchase_invoices
-              const piCheck = await client.query(
-                `SELECT id FROM purchase_invoices WHERE supplier_id = $1 OR supplier_id = $2 LIMIT 1`,
-                [String(party.party_id || ''), String(party.id || targetPartyId)]
-              ).catch(() => ({ rows: [] }));
-              if (piCheck.rows.length > 0) {
+              if (jiCheck.rows.length > 0) {
                 await client.end().catch(() => {});
                 return res.status(400).json({
                   error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
@@ -5024,7 +5047,9 @@ export default async function handler(req: any, res: any) {
               }
             }
 
-            const delRes = await client.query('SELECT public.delete_party_and_coa($1) as result;', [targetPartyId]);
+            // 3. Delete via atomic stored procedure
+            const targetParam = partyUuid || partyNumId || targetPartyId;
+            const delRes = await client.query('SELECT public.delete_party_and_coa($1) as result;', [targetParam]);
             await client.end();
             const result = delRes.rows[0]?.result || {};
             if (result.success === false) {
@@ -5045,7 +5070,7 @@ export default async function handler(req: any, res: any) {
           const isNumTarget = /^\d+$/.test(strTargetId);
           const isUuidTarget = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(strTargetId);
 
-          let partyQuery = supabaseAdmin.from('parties').select('id, party_id, current_balance, coa_account_id');
+          let partyQuery = supabaseAdmin.from('parties').select('id, party_id, name, code, current_balance, coa_account_id, linked_account_id');
           if (isUuidTarget) {
             partyQuery = partyQuery.eq('id', strTargetId);
           } else if (isNumTarget) {
@@ -5066,6 +5091,7 @@ export default async function handler(req: any, res: any) {
             const partyUuid = party.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(party.id)
               ? party.id
               : (isUuidTarget ? strTargetId : null);
+            const partyNumStr = String(party.party_id || '');
 
             let coaUuid: string | null = null;
             if (party.coa_account_id) {
@@ -5100,10 +5126,9 @@ export default async function handler(req: any, res: any) {
               }
             }
 
-            const partyIdStr = String(party.party_id ?? (isNumTarget ? strTargetId : ''));
             const veOrClauses: string[] = [];
             if (partyUuid) veOrClauses.push(`party_id.eq.${partyUuid}`);
-            if (partyIdStr) veOrClauses.push(`party_id.eq.${partyIdStr}`);
+            if (partyNumStr) veOrClauses.push(`party_id.eq.${partyNumStr}`);
             if (party.coa_account_id) veOrClauses.push(`account_code.eq.${party.coa_account_id}`);
             if (coaUuid) veOrClauses.push(`account_id.eq.${coaUuid}`);
 
@@ -5122,7 +5147,7 @@ export default async function handler(req: any, res: any) {
 
             const piOrClauses: string[] = [];
             if (partyUuid) piOrClauses.push(`supplier_id.eq.${partyUuid}`);
-            if (partyIdStr) piOrClauses.push(`supplier_id.eq.${partyIdStr}`);
+            if (partyNumStr) piOrClauses.push(`supplier_id.eq.${partyNumStr}`);
             if (piOrClauses.length > 0) {
               const { data: pi } = await supabaseAdmin
                 .from('purchase_invoices')
@@ -5135,10 +5160,44 @@ export default async function handler(req: any, res: any) {
                 });
               }
             }
+
+            const siOrClauses: string[] = [];
+            if (partyUuid) siOrClauses.push(`client_id.eq.${partyUuid}`);
+            if (partyNumStr) siOrClauses.push(`client_id.eq.${partyNumStr}`);
+            if (siOrClauses.length > 0) {
+              const { data: si } = await supabaseAdmin
+                .from('sales_invoices')
+                .select('id')
+                .or(siOrClauses.join(','))
+                .limit(1);
+              if (si && si.length > 0) {
+                return res.status(400).json({
+                  error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+                });
+              }
+            }
           }
 
-          const { data, error } = await supabaseAdmin.rpc('delete_party_and_coa', { p_party_id: targetPartyId });
-          if (error) throw error;
+          const targetRpcParam = party?.id || targetPartyId;
+          const { data, error } = await supabaseAdmin.rpc('delete_party_and_coa', { p_party_id: String(targetRpcParam) });
+          if (error) {
+            // Direct Supabase table deletion fallback with STRICT DELETION ORDER
+            if (party) {
+              // 1. First break foreign key to accounts
+              if (party.id) {
+                await supabaseAdmin.from('parties').update({ linked_account_id: null }).eq('id', party.id);
+                // 2. DELETE the Party record FIRST from parties table
+                await supabaseAdmin.from('parties').delete().eq('id', party.id);
+              }
+              // 3. DELETE the linked COA account from chart_of_accounts
+              if (party.coa_account_id) {
+                await supabaseAdmin.from('chart_of_accounts').delete().eq('code', party.coa_account_id);
+                await supabaseAdmin.from('coa_accounts').delete().eq('code', party.coa_account_id);
+              }
+              return res.status(200).json({ success: true, message: 'Party and linked COA deleted via fallback.' });
+            }
+            throw error;
+          }
           if (data && data.success === false) {
             const errorMsg = data.error?.includes('transactions') || data.error?.includes('balance')
               ? "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."

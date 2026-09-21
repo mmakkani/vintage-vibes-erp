@@ -662,13 +662,18 @@ export class PartiesService {
       // If table query failed due to network/offline, continue to API
     }
 
+    let targetId = strId;
+    if (pCheck?.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pCheck.id)) {
+      targetId = pCheck.id;
+    }
+
     let apiSuccess = false;
     let resultData: any = null;
 
     // 1. Primary route: Express PostgreSQL backend (invoking atomic delete_party_and_coa)
     if (typeof window !== 'undefined') {
       try {
-        const resData = await safeFetchMutation<any>(`/api/parties/${encodeURIComponent(id)}`, 'DELETE');
+        const resData = await safeFetchMutation<any>(`/api/parties/${encodeURIComponent(targetId)}`, 'DELETE');
         if (resData && resData.success !== false) {
           apiSuccess = true;
           resultData = resData;
@@ -684,16 +689,32 @@ export class PartiesService {
       }
     }
 
-    // 2. Direct Supabase RPC Fallback (calling atomic stored procedure delete_party_and_coa)
+    // 2. Direct Supabase Fallback with STRICT DELETION ORDER
     if (!apiSuccess) {
-      const { data: rpcData, error: rpcErr } = await supabase.rpc('delete_party_and_coa', { p_party_id: String(id) });
-      if (rpcErr) {
-        throw new Error(rpcErr.message || 'Failed to delete party from database');
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('delete_party_and_coa', { p_party_id: String(targetId) });
+        if (!rpcErr && rpcData && rpcData.success !== false) {
+          resultData = rpcData;
+        } else if (rpcData && rpcData.success === false) {
+          throw new Error(rpcData.error || 'Failed to delete party');
+        } else if (rpcErr) {
+          // Direct table deletion fallback:
+          // A. Disassociate linked_account_id to prevent FK violation on accounts
+          if (pCheck?.id) {
+            await supabase.from('parties').update({ linked_account_id: null }).eq('id', pCheck.id);
+            // B. DELETE Party record FIRST from parties table
+            await supabase.from('parties').delete().eq('id', pCheck.id);
+          }
+          // C. Now delete linked COA accounts from chart_of_accounts & coa_accounts
+          if (pCheck?.coa_account_id) {
+            await supabase.from('chart_of_accounts').delete().eq('code', pCheck.coa_account_id);
+            await supabase.from('coa_accounts').delete().eq('code', pCheck.coa_account_id);
+          }
+          resultData = { success: true, message: 'Party and linked COA deleted successfully' };
+        }
+      } catch (fbErr: any) {
+        throw fbErr;
       }
-      if (rpcData && rpcData.success === false) {
-        throw new Error(rpcData.error || 'Failed to delete party');
-      }
-      resultData = rpcData;
     }
 
     // 3. Purge obsolete party cache

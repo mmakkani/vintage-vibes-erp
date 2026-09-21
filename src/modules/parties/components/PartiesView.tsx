@@ -541,12 +541,28 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   // Open Delete Modal
   const handleOpenDeleteParty = (party: Party) => {
     if (!party) return;
-    const memoryParty = parties.find(p => p.id === party.id || String((p as any).party_id) === String((party as any).party_id)) || party;
+    const isUuid = (val: any) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val || ''));
+    const memoryParty = parties.find(p => (p.id && p.id === party.id) || (p.code && p.code === party.code) || (String((p as any).party_id) === String((party as any).party_id))) || party;
     const pAny = memoryParty as any;
+    
+    // Strict UUID resolution: Ensure safeParty has a true UUID, never an array index or numeric party_id
+    let validUuid = '';
+    if (isUuid(memoryParty.id)) {
+      validUuid = String(memoryParty.id);
+    } else if (isUuid(pAny.id)) {
+      validUuid = String(pAny.id);
+    } else {
+      const match = parties.find(p => 
+        (p.code === memoryParty.code || String((p as any).party_id) === String(pAny.party_id)) &&
+        isUuid(p.id)
+      );
+      if (match?.id) validUuid = String(match.id);
+    }
+
     const safeParty = {
       ...memoryParty,
-      id: String(memoryParty.id || pAny.party_id || ''),
-      party_id: pAny.party_id || memoryParty.id,
+      id: validUuid || String(memoryParty.id || ''),
+      party_id: pAny.party_id,
       name: memoryParty.name || pAny.company_name || '',
       company_name: pAny.company_name || memoryParty.name || '',
       code: memoryParty.code || ''
@@ -559,7 +575,15 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   // One-click Deactivate Party (recommended when party has financial entries)
   const handleDeactivateParty = async (party: Party) => {
     const pAny = party as any;
-    const pId = String(party.id || pAny.party_id || '').trim();
+    const isUuid = (val: any) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val || ''));
+    let pId = String(party.id || '').trim();
+    if (!isUuid(pId)) {
+      const match = parties.find(p => 
+        (p.code === party.code || String((p as any).party_id) === String(pAny.party_id)) && 
+        isUuid(p.id)
+      );
+      if (match?.id) pId = String(match.id);
+    }
     const pName = party.name || pAny.company_name || 'Party';
     const pCode = party.code || '';
     try {
@@ -577,16 +601,31 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     }
   };
 
-  // Confirm Delete from SQL (strictly blocked if entries exist)
+  // Confirm Delete from SQL (strictly blocked if entries exist, requires valid UUID)
   const handleConfirmDeleteParty = async () => {
     if (!deletingParty) return;
     const pAny = deletingParty as any;
-    const delId = String(deletingParty.id || pAny.party_id || '').trim();
+    const isUuid = (val: any) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val || ''));
+
+    let delId = String(deletingParty.id || '').trim();
+    if (!isUuid(delId)) {
+      const match = parties.find(p => 
+        (p.code === deletingParty.code || String((p as any).party_id) === String(pAny.party_id)) &&
+        isUuid(p.id)
+      );
+      if (match?.id) {
+        delId = String(match.id);
+      }
+    }
+
     const delName = deletingParty.name || pAny.company_name || 'Party';
     const delCode = deletingParty.code || '';
 
-    if (!delId || delId === 'undefined' || delId === 'null') {
-      showMsg('Cannot delete: Missing or invalid party ID', 'error');
+    // Enforce strict UUID validation: Block array index, numeric party_id, or missing id
+    if (!delId || !isUuid(delId)) {
+      const errMsg = 'Cannot delete: A valid Party UUID is required. Numeric IDs or array indices are not permitted.';
+      showMsg(errMsg, 'error');
+      setDeleteError(errMsg);
       return;
     }
 
