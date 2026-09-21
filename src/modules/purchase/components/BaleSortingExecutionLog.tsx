@@ -3,6 +3,7 @@ import { InwardGatePass, PieceBreakdownItem, PurchaseInvoice } from '../purchase
 import { Party } from '../../parties/parties.types.ts';
 import { ItemMaster, BrandMaster, LabelGrade, ShopMaster } from '../../setup/setup.types.ts';
 import { PurchaseEngine } from '../purchase.engine.ts';
+import { PurchaseService } from '../../../services/purchaseService.ts';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { openBatchBaleThermalTagsPrintWindow } from '../../../utils/thermalPrinter.ts';
 import {
@@ -23,7 +24,8 @@ import {
   Eye,
   RefreshCw,
   Sliders,
-  FileText
+  FileText,
+  Trash2
 } from 'lucide-react';
 
 interface BaleSortingExecutionLogProps {
@@ -51,6 +53,25 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'IN_PROGRESS' | 'COMPLETED' | 'UNOPENED'>('ALL');
+  const [isDeletingBaleId, setIsDeletingBaleId] = useState<string | null>(null);
+
+  const handleDeleteBale = async (bale: InwardGatePass) => {
+    const baleTitle = bale.baleCode || bale.gatePassNo || bale.id;
+    if (!window.confirm(`Are you sure you want to delete Bale "${baleTitle}"?\n\nThis will remove the Inward Pass and unlock the associated Commercial Invoice for unposting.`)) {
+      return;
+    }
+    try {
+      setIsDeletingBaleId(bale.id);
+      luxuryAudio.playMechanicalClick();
+      await PurchaseService.deleteInwardGatePass(bale.id);
+      alert(`Bale "${baleTitle}" deleted successfully. Associated Commercial Invoice is now unlocked.`);
+      onRefresh();
+    } catch (err: any) {
+      alert(`Failed to delete bale: ${err?.message || 'Error'}`);
+    } finally {
+      setIsDeletingBaleId(null);
+    }
+  };
 
   // Factory-wide Sorting KPIs
   const kpis = useMemo(() => {
@@ -349,14 +370,15 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                 filteredBales.map(bale => {
                   const grossKg = Number(bale.totalBaleWeight) || 0;
                   const grossGrams = Math.round(grossKg * 1000);
-                  const sortedKg = Number(bale.brokenDownWeight) || 0;
+                  const sortedKg = Number(bale.brokenDownWeight ?? (bale as any).broken_down_weight ?? 0);
                   const sortedGrams = Math.round(sortedKg * 1000);
                   const remainingGrams = Math.max(0, grossGrams - sortedGrams);
-                  const piecesCount = bale.pieces?.length || bale.pieceCount || 0;
+                  const piecesCount = Number(bale.pieceCount ?? (bale as any).piece_count ?? bale.pieces?.length ?? 0);
                   const percent = grossGrams > 0 ? Math.min(100, Math.round((sortedGrams / grossGrams) * 100)) : 0;
 
                   const isComplete = percent === 100 || bale.sortingStatus === 'FULLY_SORTED';
                   const isInProgress = !isComplete && (piecesCount > 0 || sortedGrams > 0);
+                  const isDeletable = sortedKg === 0 && piecesCount === 0;
 
                   return (
                     <tr
@@ -481,21 +503,44 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                         )}
                       </td>
 
-                      {/* Action: [ 👁️ View Pieces / Resume Sorting ] */}
+                      {/* Action: [ 👁️ View Pieces / Resume Sorting ] & Conditional [ 🗑️ Delete Bale ] */}
                       <td className="py-3.5 px-4 text-center" onClick={e => e.stopPropagation()}>
-                        <button
-                          type="button"
-                          onClick={() => handleStartSorting(bale.id)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all inline-flex items-center gap-1.5 cursor-pointer shadow-2xs ${
-                            isComplete
-                              ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
-                              : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20'
-                          }`}
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>{isComplete ? 'View Pieces' : 'Resume Sorting'}</span>
-                          <ArrowRight className="w-3 h-3" />
-                        </button>
+                        <div className="inline-flex items-center justify-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleStartSorting(bale.id)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all inline-flex items-center gap-1.5 cursor-pointer shadow-2xs ${
+                              isComplete
+                                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
+                                : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20'
+                            }`}
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>{isComplete ? 'View Pieces' : 'Resume Sorting'}</span>
+                            <ArrowRight className="w-3 h-3" />
+                          </button>
+
+                          {isDeletable ? (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteBale(bale)}
+                              disabled={isDeletingBaleId === bale.id}
+                              title="Delete Inward Pass / Bale"
+                              className="p-1.5 text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 rounded-lg transition-colors cursor-pointer shadow-2xs disabled:opacity-50"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled
+                              title="Cannot delete: Pieces have already been sorted. Delete individual pieces first."
+                              className="p-1.5 text-slate-300 bg-slate-100 border border-slate-200 rounded-lg cursor-not-allowed opacity-60"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

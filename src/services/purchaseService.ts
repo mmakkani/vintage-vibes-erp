@@ -666,9 +666,17 @@ export class PurchaseService {
       throw new Error(`Failed to check inward gate passes: ${passErr.message}`);
     }
 
-    if ((existingPasses && existingPasses.length > 0) || invRow.converted_to_inward) {
-      const baleCount = existingPasses?.length || 1;
+    if (existingPasses && existingPasses.length > 0) {
+      const baleCount = existingPasses.length;
       throw new Error(`Cannot unpost invoice "${invoiceNo}" because ${baleCount} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`);
+    }
+
+    // Auto-heal: If no gate passes exist, ensure converted_to_inward is false
+    if (invRow.converted_to_inward) {
+      await supabase.from('purchase_invoices').update({ converted_to_inward: false }).eq('id', cleanInvId);
+      if (invoiceNo) {
+        await supabase.from('purchase_invoices').update({ converted_to_inward: false }).eq('invoice_no', invoiceNo);
+      }
     }
 
     // Status check
@@ -790,6 +798,19 @@ export class PurchaseService {
     let invoiceNo: string | undefined;
     let invoiceId: string | undefined;
 
+    // 1. Try serverless / backend API endpoint first if running in browser
+    try {
+      if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
+        const resp = await fetch(`/api/purchase/gate-passes/${encodeURIComponent(cleanId)}`, {
+          method: 'DELETE'
+        });
+        if (resp.ok) {
+          const json = await resp.json().catch(() => ({}));
+          if (json.success) return;
+        }
+      }
+    } catch (_) {}
+
     try {
       const { data: row } = await supabase
         .from('inward_gate_passes')
@@ -803,7 +824,7 @@ export class PurchaseService {
       }
     } catch (_) {}
 
-    // 1. Delete pieces and sessions associated with this bale
+    // 2. Delete pieces and sessions associated with this bale
     try {
       await supabase.from('bale_sorted_pieces').delete().eq('bale_id', cleanId);
     } catch (_) {}
@@ -814,7 +835,7 @@ export class PurchaseService {
       await supabase.from('inventory_pieces').delete().eq('gate_pass_id', cleanId);
     } catch (_) {}
 
-    // 2. Delete the inward gate pass itself
+    // 3. Delete the inward gate pass itself
     const { error: igpErr } = await supabase
       .from('inward_gate_passes')
       .delete()
@@ -825,7 +846,7 @@ export class PurchaseService {
       throw new Error(igpErr.message || 'Failed to delete inward gate pass');
     }
 
-    // 3. If no more bales exist for this invoice, delete inward voucher and reset converted status
+    // 4. If no more bales exist for this invoice, delete inward voucher and reset converted status
     if (invoiceNo || invoiceId) {
       try {
         const { count: remainingBales } = await supabase
@@ -838,6 +859,7 @@ export class PurchaseService {
             await supabase.from('purchase_invoices').update({ converted_to_inward: false }).eq('id', invoiceId);
           }
           if (invoiceNo) {
+            await supabase.from('purchase_invoices').update({ converted_to_inward: false }).eq('invoice_no', invoiceNo);
             // Delete inward transfer vouchers specifically
             const { data: inwVchs } = await supabase
               .from('financial_vouchers')
@@ -1030,10 +1052,10 @@ export class PurchaseService {
           await supabase.from('bale_sessions').insert([{
             bale_id: baleId,
             status: 'UNOPENED',
-            total_weight_grams: Math.round(weightPerBale * 1000),
+            total_grams: Math.round(weightPerBale * 1000),
             remaining_grams: Math.round(weightPerBale * 1000),
             sorted_grams: 0,
-            pieces_count: 0
+            total_pieces: 0
           }]);
         } catch (sessErr) {
           console.warn('bale_sessions notice:', sessErr);
@@ -1201,23 +1223,35 @@ export class PurchaseService {
     return createdPasses;
   }
 
-  public static async addInwardGatePass(igp: Partial<InwardGatePass>): Promise<InwardGatePass> {
+  public static async addInwardGatePass(igp: Partial<InwardGatePass> & { pieces_count?: number; piece_count?: number; [key: string]: any }): Promise<InwardGatePass> {
     const id = igp.id || `igp-${Date.now()}`;
+    const grossKg = Number(igp.totalBaleWeight || igp.weightKg || (igp as any).totalBaleWeightKg || (igp as any).weight_kg || 0);
+    const cost = Number(igp.totalBaleCost || (igp as any).totalBaleCostAed || (igp as any).total_bale_cost || 0);
+    const costPerGram = Number(igp.costPerGram || (igp as any).cost_per_gram || (grossKg > 0 ? (cost / (grossKg * 1000)) : 0));
+    const passNo = igp.gatePassNo || igp.passNo || (igp as any).gate_pass_no || (igp as any).pass_no || `IGP-${Date.now().toString().slice(-6)}`;
+    const baleCode = igp.baleCode || igp.baleTagNo || (igp as any).bale_code || (igp as any).bale_tag_no || `BAL-${Date.now().toString().slice(-6)}`;
+    const pieceCount = Number((igp as any).piece_count ?? (igp as any).pieces_count ?? igp.pieceCount ?? 0);
+    const brokenDownWeight = Number((igp as any).broken_down_weight ?? igp.brokenDownWeight ?? 0);
+
+    // Strictly send verified database columns to inward_gate_passes (strictly piece_count, never pieces_count)
     const payload = {
       id,
-      pass_no: igp.gatePassNo || igp.passNo || `IGP-${Date.now().toString().slice(-6)}`,
-      gate_pass_no: igp.gatePassNo || igp.passNo || `IGP-${Date.now().toString().slice(-6)}`,
-      bale_code: igp.baleCode || igp.baleTagNo || `BAL-${Date.now().toString().slice(-6)}`,
-      bale_tag_no: igp.baleCode || igp.baleTagNo || `BAL-${Date.now().toString().slice(-6)}`,
-      bale_category: igp.baleCategory || 'Vintage Mixed Bales',
-      purchase_invoice_id: igp.purchaseInvoiceId,
-      purchase_invoice_no: igp.purchaseInvoiceNo || '',
-      supplier_name: igp.supplierName || '',
-      weight_kg: Number(igp.totalBaleWeight || igp.weightKg || 0),
-      total_bale_weight: Number(igp.totalBaleWeight || igp.weightKg || 0),
-      total_bale_cost: Number(igp.totalBaleCost || 0),
-      cost_per_gram: Number(igp.costPerGram || 0),
-      status: igp.status || 'UNOPENED'
+      pass_no: passNo,
+      gate_pass_no: passNo,
+      bale_code: baleCode,
+      bale_tag_no: baleCode,
+      bale_category: igp.baleCategory || (igp as any).bale_category || 'Vintage Mixed Bales',
+      purchase_invoice_id: igp.purchaseInvoiceId || (igp as any).purchase_invoice_id || null,
+      purchase_invoice_no: igp.purchaseInvoiceNo || (igp as any).purchase_invoice_no || '',
+      supplier_name: igp.supplierName || (igp as any).supplier_name || '',
+      weight_kg: grossKg,
+      total_bale_weight: grossKg,
+      total_bale_cost: cost,
+      cost_per_gram: costPerGram,
+      broken_down_weight: brokenDownWeight,
+      piece_count: pieceCount,
+      status: igp.status || 'UNOPENED',
+      created_at: (igp as any).createdAt || (igp as any).created_at || new Date().toISOString()
     };
 
     const { data, error } = await supabase
@@ -1230,6 +1264,18 @@ export class PurchaseService {
       console.error('Supabase error on inward_gate_passes:', error);
       throw new Error(error.message || 'Failed to create inward gate pass');
     }
+
+    // Initialize session in bale_sessions
+    try {
+      await supabase.from('bale_sessions').insert([{
+        bale_id: data.id,
+        status: 'UNOPENED',
+        total_grams: Math.round(grossKg * 1000),
+        remaining_grams: Math.round(grossKg * 1000),
+        sorted_grams: 0,
+        total_pieces: 0
+      }]);
+    } catch (_) {}
 
     return {
       id: data.id,
@@ -1244,12 +1290,17 @@ export class PurchaseService {
       weightKg: Number(data.total_bale_weight || data.weight_kg),
       totalBaleCost: Number(data.total_bale_cost || 0),
       costPerGram: Number(data.cost_per_gram || 0),
+      brokenDownWeight: Number(data.broken_down_weight || 0),
+      pieceCount: Number(data.piece_count || 0),
       status: data.status,
       createdAt: data.created_at
     } as InwardGatePass;
   }
 
-  public static async updateInwardGatePass(id: string, updates: Partial<InwardGatePass>): Promise<void> {
+  public static createInwardPass = PurchaseService.addInwardGatePass;
+  public static createInwardGatePass = PurchaseService.addInwardGatePass;
+
+  public static async updateInwardGatePass(id: string, updates: Partial<InwardGatePass> & { pieces_count?: number; piece_count?: number; [key: string]: any }): Promise<void> {
     const payload: any = {};
     if (updates.status !== undefined) payload.status = updates.status;
     if (updates.weightKg !== undefined) payload.weight_kg = Number(updates.weightKg);
@@ -1257,6 +1308,12 @@ export class PurchaseService {
     if (updates.baleTagNo !== undefined) payload.bale_tag_no = updates.baleTagNo;
     if (updates.baleCode !== undefined) payload.bale_code = updates.baleCode;
     if (updates.supplierName !== undefined) payload.supplier_name = updates.supplierName;
+    if (updates.pieceCount !== undefined || updates.piece_count !== undefined || updates.pieces_count !== undefined) {
+      payload.piece_count = Number(updates.pieceCount ?? updates.piece_count ?? updates.pieces_count ?? 0);
+    }
+    if (updates.brokenDownWeight !== undefined || updates.broken_down_weight !== undefined) {
+      payload.broken_down_weight = Number(updates.brokenDownWeight ?? updates.broken_down_weight ?? 0);
+    }
 
     const { error } = await supabase.from('inward_gate_passes').update(payload).eq('id', id);
     if (error) {

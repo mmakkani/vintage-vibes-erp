@@ -200,16 +200,26 @@ purchaseRouter.get(['/bale-presets', '/presets'], async (req, res) => {
   }
 });
 
-purchaseRouter.post(['/gate-passes/bale-inward', '/bales/inward', '/bales'], async (req, res) => {
+purchaseRouter.post(['/gate-passes/bale-inward', '/bales/inward', '/bales', '/gate-passes'], async (req, res) => {
   try {
     const item = await PurchaseService.addInwardGatePass(req.body);
-    return res.json({ success: true, inwardPass: item });
-  } catch (_) {
+    return res.json({ success: true, inwardPass: item, bale: item });
+  } catch (err: any) {
     const result = PurchaseController.createBaleInward(req.body);
     if (!result.success) {
-      return res.status(400).json({ error: result.error });
+      return res.status(400).json({ error: result.error || err?.message });
     }
     return res.json(result);
+  }
+});
+
+purchaseRouter.delete(['/gate-passes/:id', '/bales/:id'], async (req, res) => {
+  const { id } = req.params;
+  try {
+    await PurchaseService.deleteInwardGatePass(id);
+    return res.json({ success: true, message: 'Bale / Gate pass deleted successfully', id });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to delete gate pass' });
   }
 });
 

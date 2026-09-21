@@ -1044,6 +1044,32 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       alert('Popup blocked. Please allow browser popups for this site.');
     }
   };
+  // Delete active bale if unbroken and unsorted
+  const activeSortedKg = Number(activeBale?.brokenDownWeight ?? (activeBale as any)?.broken_down_weight ?? 0);
+  const activeSortedCount = Number(activeBale?.pieceCount ?? (activeBale as any)?.piece_count ?? (pieces?.length || 0));
+  const isActiveDeletable = Boolean(activeBale) && activeSortedKg === 0 && activeSortedCount === 0;
+
+  const handleDeleteActiveBale = async () => {
+    if (!activeBale) return;
+    const baleTitle = activeBale.baleCode || activeBale.gatePassNo || activeBale.id;
+    if (!window.confirm(`Are you sure you want to delete Bale "${baleTitle}"?\n\nThis will remove the Inward Pass and unlock the associated Commercial Invoice for unposting.`)) {
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      luxuryAudio.playMechanicalClick();
+      await PurchaseService.deleteInwardGatePass(activeBale.id);
+      setFeedbackToast({ text: `Bale "${baleTitle}" deleted successfully.`, type: 'success' });
+      setInternalBales(prev => prev.filter(b => b.id !== activeBale.id));
+      setSelectedBaleId('');
+      if (onSavePartial) onSavePartial(activeBale.id);
+      setTimeout(onClose, 500);
+    } catch (err: any) {
+      alert(`Failed to delete bale: ${err?.message || 'Error'}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -1070,6 +1096,30 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {activeBale && (
+              isActiveDeletable ? (
+                <button
+                  type="button"
+                  onClick={handleDeleteActiveBale}
+                  disabled={isSubmitting}
+                  title="Delete Inward Pass / Bale"
+                  className="px-2.5 py-1.5 bg-rose-600/20 text-rose-300 hover:bg-rose-600 hover:text-white border border-rose-500/40 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Delete Bale</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  title="Cannot delete: Pieces have already been sorted. Delete individual pieces first."
+                  className="px-2.5 py-1.5 bg-slate-800 text-slate-500 border border-slate-700 rounded-lg text-xs font-semibold inline-flex items-center gap-1 cursor-not-allowed opacity-60"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Delete Bale</span>
+                </button>
+              )
+            )}
             <button
               type="button"
               onClick={onClose}

@@ -5424,13 +5424,20 @@ export default async function handler(req: any, res: any) {
             .select('id')
             .or(`purchase_invoice_id.eq.${invId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
 
-          if ((existingPasses && existingPasses.length > 0) || invRow.converted_to_inward) {
-            const count = existingPasses?.length || 1;
+          if (existingPasses && existingPasses.length > 0) {
+            const count = existingPasses.length;
             return res.status(400).json({
               success: false,
               error: `Cannot unpost invoice "${invoiceNo}" because ${count} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`,
               message: `Cannot unpost invoice "${invoiceNo}" because ${count} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`
             });
+          }
+
+          if (invRow.converted_to_inward) {
+            await supabaseAdmin.from('purchase_invoices').update({ converted_to_inward: false }).eq('id', invId);
+            if (invoiceNo) {
+              await supabaseAdmin.from('purchase_invoices').update({ converted_to_inward: false }).eq('invoice_no', invoiceNo);
+            }
           }
 
           if (invRow.status !== 'POSTED') {
@@ -5573,8 +5580,8 @@ export default async function handler(req: any, res: any) {
               return res.status(400).json({ success: false, error: passErr.message, message: passErr.message });
             }
 
-            if ((passes && passes.length > 0) || invRow.converted_to_inward) {
-              const count = passes?.length || 1;
+            if (passes && passes.length > 0) {
+              const count = passes.length;
               return res.status(400).json({
                 success: false,
                 error: `Cannot delete invoice "${invoiceNo || invId}" because ${count} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`,
@@ -5636,6 +5643,129 @@ export default async function handler(req: any, res: any) {
 
         const { data } = await supabaseAdmin.from('inward_gate_passes').select('*').order('created_at', { ascending: false });
         return res.status(200).json(data || []);
+      }
+
+      if (method === 'POST') {
+        const id = body.id || `igp-${Date.now()}`;
+        const grossKg = Number(body.totalBaleWeight || body.totalBaleWeightKg || body.weightKg || body.weight_kg || 0);
+        const cost = Number(body.totalBaleCost || body.totalBaleCostAed || body.total_bale_cost || 0);
+        const costPerGram = Number(body.costPerGram || body.cost_per_gram || (grossKg > 0 ? (cost / (grossKg * 1000)) : 0));
+        const passNo = body.gatePassNo || body.passNo || body.gate_pass_no || body.pass_no || `IGP-${Date.now().toString().slice(-6)}`;
+        const baleCode = body.baleCode || body.baleTagNo || body.baleNumber || body.bale_code || body.bale_tag_no || `BAL-${Date.now().toString().slice(-6)}`;
+        const pieceCount = Number(body.piece_count ?? body.pieces_count ?? body.pieceCount ?? 0);
+        const brokenDownWeight = Number(body.broken_down_weight ?? body.brokenDownWeight ?? 0);
+
+        const payload = {
+          id,
+          pass_no: passNo,
+          gate_pass_no: passNo,
+          bale_code: baleCode,
+          bale_tag_no: baleCode,
+          bale_category: body.baleCategory || body.bale_category || 'Vintage Mixed Bales',
+          purchase_invoice_id: body.purchaseInvoiceId || body.purchase_invoice_id || null,
+          purchase_invoice_no: body.purchaseInvoiceNo || body.purchase_invoice_no || '',
+          supplier_name: body.supplierName || body.supplier_name || '',
+          weight_kg: grossKg,
+          total_bale_weight: grossKg,
+          total_bale_cost: cost,
+          cost_per_gram: costPerGram,
+          broken_down_weight: brokenDownWeight,
+          piece_count: pieceCount,
+          status: body.status || 'UNOPENED',
+          created_at: body.createdAt || body.created_at || new Date().toISOString()
+        };
+
+        const { data, error } = await supabaseAdmin
+          .from('inward_gate_passes')
+          .insert(payload)
+          .select()
+          .single();
+
+        if (error) {
+          return res.status(400).json({ success: false, error: error.message, message: error.message });
+        }
+
+        try {
+          await supabaseAdmin.from('bale_sessions').insert([{
+            bale_id: data.id,
+            status: 'UNOPENED',
+            total_grams: Math.round(grossKg * 1000),
+            remaining_grams: Math.round(grossKg * 1000),
+            sorted_grams: 0,
+            total_pieces: 0
+          }]);
+        } catch (_) {}
+
+        return res.status(200).json({ success: true, inwardPass: data, bale: data });
+      }
+
+      if (method === 'DELETE') {
+        const id = pathname.split('/').pop();
+        if (!id) {
+          return res.status(400).json({ success: false, error: 'Bale / Gate pass ID required' });
+        }
+
+        try {
+          let invoiceNo: string | undefined;
+          let invoiceId: string | undefined;
+
+          const { data: row } = await supabaseAdmin
+            .from('inward_gate_passes')
+            .select('id, purchase_invoice_id, purchase_invoice_no')
+            .eq('id', id)
+            .maybeSingle();
+
+          if (row) {
+            invoiceNo = row.purchase_invoice_no;
+            invoiceId = row.purchase_invoice_id;
+          }
+
+          await supabaseAdmin.from('bale_sorted_pieces').delete().eq('bale_id', id);
+          await supabaseAdmin.from('bale_sessions').delete().eq('bale_id', id);
+          await supabaseAdmin.from('inventory_pieces').delete().eq('gate_pass_id', id);
+
+          const { error: delErr } = await supabaseAdmin
+            .from('inward_gate_passes')
+            .delete()
+            .eq('id', id);
+
+          if (delErr) {
+            return res.status(400).json({ success: false, error: delErr.message, message: delErr.message });
+          }
+
+          if (invoiceNo || invoiceId) {
+            const { count: remainingBales } = await supabaseAdmin
+              .from('inward_gate_passes')
+              .select('id', { count: 'exact', head: true })
+              .or(`purchase_invoice_id.eq.${invoiceId || 'none'}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+
+            if (Number(remainingBales || 0) === 0) {
+              if (invoiceId) {
+                await supabaseAdmin.from('purchase_invoices').update({ converted_to_inward: false }).eq('id', invoiceId);
+              }
+              if (invoiceNo) {
+                await supabaseAdmin.from('purchase_invoices').update({ converted_to_inward: false }).eq('invoice_no', invoiceNo);
+                const { data: inwVchs } = await supabaseAdmin
+                  .from('financial_vouchers')
+                  .select('id, voucher_no')
+                  .or(`reference.eq.INWARD-${invoiceNo},voucher_no.ilike.%JV-INW%`);
+
+                if (inwVchs && inwVchs.length > 0) {
+                  for (const iv of inwVchs) {
+                    await supabaseAdmin.from('voucher_entries').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
+                    await supabaseAdmin.from('general_ledger').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
+                    await supabaseAdmin.from('financial_vouchers').delete().eq('id', iv.id);
+                    await supabaseAdmin.from('vouchers').delete().eq('id', iv.id);
+                  }
+                }
+              }
+            }
+          }
+
+          return res.status(200).json({ success: true, message: 'Bale / Gate pass deleted successfully', id });
+        } catch (delEx: any) {
+          return res.status(400).json({ success: false, error: delEx?.message || 'Failed to delete bale' });
+        }
       }
     }
 
