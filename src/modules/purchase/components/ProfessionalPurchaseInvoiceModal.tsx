@@ -702,8 +702,9 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       } else if (submitStatus === 'POSTED') {
         try {
           await PurchaseService.postPurchaseInvoice(targetInvoiceId);
-        } catch (postErr) {
+        } catch (postErr: any) {
           console.warn('Notice on auto post invoice:', postErr);
+          alert("Posting Notice: " + (postErr?.message || 'Failed to post invoice'));
         }
       }
 
