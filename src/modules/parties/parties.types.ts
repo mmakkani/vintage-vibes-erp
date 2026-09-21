@@ -1,4 +1,5 @@
 import { PartyType, CurrencyCode } from '../../types/common.types.ts';
+export type { PartyType, CurrencyCode };
 
 export interface PartyAccountMap {
   receivableAccountId?: string;
@@ -10,18 +11,28 @@ export interface PartyAccountMap {
   commissionAccountId?: string;
   expenseAccountId?: string;
   inventoryAccountId?: string;
+  payableAccountUuid?: string;
+  agentPayableAccountUuid?: string;
+  courierPayableAccountUuid?: string;
+  clearingAccountUuid?: string;
+  receivableAccountUuid?: string;
+  revenueAccountUuid?: string;
 }
 
 export interface PartyKhataLog {
   id: string;
   partyId: string;
   date: string;
-  docType: 'INVOICE' | 'PAYMENT' | 'RECEIPT' | 'CREDIT_NOTE' | 'JV' | 'RETURN';
-  docRef: string;
+  docType?: 'INVOICE' | 'PAYMENT' | 'RECEIPT' | 'CREDIT_NOTE' | 'JV' | 'RETURN';
+  docRef?: string;
   debit: number;
   credit: number;
-  balance: number;
-  description: string;
+  balance?: number;
+  description?: string;
+  reference?: string;
+  notes?: string;
+  runningBalance?: number;
+  running_balance?: number;
 }
 
 export interface PartyRow {
@@ -149,6 +160,16 @@ export interface Party {
   accountMap: PartyAccountMap;
   coa_account_id?: string;
   coaAccountId?: string;
+  payable_account_id?: string;
+  payableAccountId?: string;
+  receivable_account_id?: string;
+  receivableAccountId?: string;
+  clearing_account_id?: string;
+  clearingAccountId?: string;
+  revenue_account_id?: string;
+  revenueAccountId?: string;
+  inventory_account_id?: string;
+  inventoryAccountId?: string;
   linked_account_id?: number;
   linkedAccountId?: number;
   created_at?: string;

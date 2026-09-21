@@ -3,6 +3,7 @@ import { Client } from 'pg';
 import { supabase } from '../../supabaseClient.ts';
 import { PartiesController } from './parties.controller.ts';
 import { visitingCardsRouter } from './visitingCards.routes.ts';
+import { PartyType } from '../../types/common.types.ts';
 
 export const partiesRouter = Router();
 partiesRouter.use('/visiting-cards', visitingCardsRouter);
@@ -459,7 +460,7 @@ partiesRouter.post('/', async (req, res) => {
       code: finalPartyCode,
       name: cleanName,
       company_name: cleanName,
-      type,
+      type: (isCourier ? 'COURIER' : (isAgent ? 'AGENT' : (isSupplier ? 'SUPPLIER' : 'CLIENT'))) as PartyType,
       party_type: type,
       partyType: type,
       contactPerson,

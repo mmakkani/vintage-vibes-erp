@@ -774,6 +774,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       cleanType = 'CLIENT';
     }
 
+    const cleanName = String(partyForm.name || (partyForm as any).company_name || (partyForm as any).companyName || '').trim();
     if (!cleanName) {
       toast.error('Party / Company Name cannot be empty or undefined.');
       return;
@@ -1246,7 +1247,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       return;
     }
 
-    if (!isPartyDeletable(deletingParty)) {
+    const pCheck = isPartyDeletable(deletingParty);
+    if (!pCheck) {
       showMsg("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.", "error");
       setDeleteError("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
       return;

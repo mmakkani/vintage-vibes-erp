@@ -1,5 +1,5 @@
 import { supabase } from '../supabaseClient.ts';
-import { Party, PartyKhataLog, VisitingCard } from '../modules/parties/parties.types.ts';
+import { Party, PartyKhataLog, VisitingCard, PartyType } from '../modules/parties/parties.types.ts';
 import { FinanceService } from './financeService.ts';
 import { safeFetchJson, safeFetchMutation } from '../utils/fetchUtils.ts';
 
@@ -12,7 +12,7 @@ export class PartiesService {
         if (Array.isArray(list)) {
             const normalized = list.map((r: any) => {
               const rawT = String(r.type || r.party_type || 'CLIENT').trim().toUpperCase();
-              const normType = (rawT.includes('COURIER') || rawT.includes('FREIGHT') || rawT.includes('LOGISTICS'))
+              const normType: PartyType = (rawT.includes('COURIER') || rawT.includes('FREIGHT') || rawT.includes('LOGISTICS'))
                 ? 'COURIER'
                 : (rawT.includes('AGENT') || rawT.includes('BROKER'))
                 ? 'AGENT'
@@ -77,7 +77,7 @@ export class PartiesService {
             try {
               localStorage.removeItem('vibe_cached_parties');
             } catch {}
-            return normalized;
+            return normalized as Party[];
           }
       } catch (_) {}
     }
@@ -126,7 +126,7 @@ export class PartiesService {
               if (rawT.includes('AGENT') || rawT.includes('BROKER')) return 'AGENT';
               if (rawT.includes('SUPPLIER') || rawT.includes('VENDOR')) return 'SUPPLIER';
               return 'CLIENT';
-            })(),
+            })() as PartyType,
             contactPerson: row.contact_person || row.contactPerson || '',
             contact_person: row.contact_person || row.contactPerson || '',
             contactDesignation: row.contact_designation || row.contactDesignation || '',
@@ -175,7 +175,7 @@ export class PartiesService {
           localStorage.removeItem('vibe_cached_parties');
         } catch {}
 
-        return mapped;
+        return mapped as Party[];
       }
     } catch (_) {}
 
@@ -499,21 +499,23 @@ export class PartiesService {
     const businessCardUrl = (party as any).business_card_url || party.businessCardUrl || '';
 
     if (data?.party_id) {
-      await supabase.from('parties').update({
-        contact_person: party.contactPerson || (party as any).contact_person,
-        email: party.email,
-        address: party.address,
-        coa_account_id: coaCode,
-        contact_designation: contactDesignation || null,
-        trade_license_no: tradeLicenseNo || null,
-        license_expiry_date: licenseExpiryDate || null,
-        bank_name: bankName || null,
-        iban: iban || null,
-        swift_code: swiftCode || null,
-        payment_terms: paymentTerms || null,
-        opening_balance: openingBalance,
-        business_card_url: businessCardUrl || null
-      }).eq('id', data.party_id).catch(() => {});
+      try {
+        await supabase.from('parties').update({
+          contact_person: party.contactPerson || (party as any).contact_person,
+          email: party.email,
+          address: party.address,
+          coa_account_id: coaCode,
+          contact_designation: contactDesignation || null,
+          trade_license_no: tradeLicenseNo || null,
+          license_expiry_date: licenseExpiryDate || null,
+          bank_name: bankName || null,
+          iban: iban || null,
+          swift_code: swiftCode || null,
+          payment_terms: paymentTerms || null,
+          opening_balance: openingBalance,
+          business_card_url: businessCardUrl || null
+        }).eq('id', data.party_id);
+      } catch (_) {}
     }
 
     return {
@@ -727,6 +729,7 @@ export class PartiesService {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(strId);
 
     // Strict Accounting Validation Check: Prevent deletion of parties with transactions or non-zero balance
+    let pCheck: any = null;
     try {
       let pQuery = supabase.from('parties').select('id, party_id, code, current_balance, coa_account_id');
       if (isUuid) {
@@ -736,7 +739,8 @@ export class PartiesService {
       } else {
         pQuery = pQuery.or(`id.eq.${strId},code.eq.${strId}`);
       }
-      const { data: pCheck } = await pQuery.maybeSingle();
+      const pRes = await pQuery.maybeSingle();
+      pCheck = pRes?.data;
 
       if (pCheck) {
         const curBal = Math.abs(Number(pCheck.current_balance || 0));
@@ -1078,10 +1082,7 @@ export class PartiesService {
 
     if (typeof window !== 'undefined') {
       try {
-        const created = await safeFetchMutation<any>('/api/visiting-cards', {
-          method: 'POST',
-          body: JSON.stringify(payload)
-        });
+        const created = await safeFetchMutation<any>('/api/visiting-cards', 'POST', payload);
         if (created && created.id) return created;
       } catch (e) {
         console.warn('Backend POST /api/visiting-cards failed, falling back to Supabase:', e);
@@ -1134,10 +1135,7 @@ export class PartiesService {
 
     if (typeof window !== 'undefined') {
       try {
-        const updated = await safeFetchMutation<any>(`/api/visiting-cards/${id}`, {
-          method: 'PUT',
-          body: JSON.stringify(payload)
-        });
+        const updated = await safeFetchMutation<any>(`/api/visiting-cards/${id}`, 'PUT', payload);
         if (updated && updated.id) return updated;
       } catch (e) {
         console.warn(`Backend PUT /api/visiting-cards/${id} failed, falling back to Supabase:`, e);
@@ -1158,9 +1156,7 @@ export class PartiesService {
   public static async deleteVisitingCard(id: string): Promise<boolean> {
     if (typeof window !== 'undefined') {
       try {
-        const res = await safeFetchMutation<any>(`/api/visiting-cards/${id}`, {
-          method: 'DELETE'
-        });
+        const res = await safeFetchMutation<any>(`/api/visiting-cards/${id}`, 'DELETE');
         if (res && res.success) return true;
       } catch (e) {
         console.warn(`Backend DELETE /api/visiting-cards/${id} failed, falling back to Supabase:`, e);
@@ -1179,10 +1175,7 @@ export class PartiesService {
   public static async markVisitingCardConverted(id: string, partyId: string): Promise<void> {
     if (typeof window !== 'undefined') {
       try {
-        await safeFetchMutation<any>(`/api/visiting-cards/${id}/convert`, {
-          method: 'POST',
-          body: JSON.stringify({ partyId })
-        });
+        await safeFetchMutation<any>(`/api/visiting-cards/${id}/convert`, 'POST', { partyId });
         return;
       } catch (e) {
         console.warn(`Backend POST /api/visiting-cards/${id}/convert failed:`, e);
