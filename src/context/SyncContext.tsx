@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback, ReactNode } from 'react';
 
 import { PresenceService, OnlineUserPresence } from '../services/presenceService.ts';
+import { supabase } from '../supabaseClient.ts';
 
 export interface SyncEventPayload {
   type: 'ENTITY_MUTATED' | 'SYNC_TRIGGER' | 'CONNECTED';
@@ -26,6 +27,8 @@ interface SyncContextType {
   releaseLock: (lockKey: string) => void;
   isLocked: (lockKey: string) => boolean;
   notifyMutation: (module: string, entity: string, action: string, documentRef?: string) => void;
+  syncToast: { message: string; id: number } | null;
+  showSyncToast: (message: string) => void;
 }
 
 const SyncContext = createContext<SyncContextType | null>(null);
@@ -40,6 +43,15 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(new Date());
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncVersion, setSyncVersion] = useState(1);
+  const [syncToast, setSyncToast] = useState<{ message: string; id: number } | null>(null);
+
+  const showSyncToast = useCallback((message: string) => {
+    const id = Date.now();
+    setSyncToast({ message, id });
+    setTimeout(() => {
+      setSyncToast(prev => (prev?.id === id ? null : prev));
+    }, 2500);
+  }, []);
 
   const refreshPresence = useCallback(async () => {
     try {
@@ -58,6 +70,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSyncingRef = useRef(false);
   const lastSyncedAtRef = useRef<number>(Date.now());
+  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
 
   const triggerGlobalSync = useCallback(async (module?: string) => {
     if (isSyncingRef.current) return;
@@ -98,17 +111,45 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   }, []);
 
   const notifyMutation = useCallback(async (module: string, entity: string, action: string, documentRef?: string) => {
+    // 1. Immediate multi-tab broadcast via BroadcastChannel
+    if (broadcastChannelRef.current) {
+      try {
+        broadcastChannelRef.current.postMessage({
+          type: 'ENTITY_MUTATED',
+          module,
+          entity,
+          action,
+          documentRef,
+          timestamp: Date.now()
+        });
+      } catch (_) {}
+    }
+
+    // 2. Local window event bus
+    try {
+      window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+        detail: { module, entity, action, documentRef }
+      }));
+    } catch (_) {}
+
+    // 3. Subtle micro-toast badge (flicker-free, no UI shift)
+    const readableEntity = entity.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    showSyncToast(`✓ Live Synced: ${readableEntity} (${action.toLowerCase()})`);
+
+    // 4. Server broadcast endpoint (non-blocking)
     try {
       await fetch('/api/events/broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ module, entity, action, documentRef })
       });
-    } catch (err) {
+    } catch (_) {
       // Non-blocking
     }
+
+    // 5. Local syncVersion increment
     triggerGlobalSync(module);
-  }, [triggerGlobalSync]);
+  }, [triggerGlobalSync, showSyncToast]);
 
   // Clean multi-tab synchronization via BroadcastChannel (avoids broken EventSource MIME type 'text/html' spam)
   useEffect(() => {
@@ -145,6 +186,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     try {
       if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
         broadcastChannel = new BroadcastChannel('vintage_vibes_erp_sync');
+        broadcastChannelRef.current = broadcastChannel;
         broadcastChannel.onmessage = (event) => {
           if (unmounted) return;
           const data = event.data;
@@ -164,6 +206,41 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       }
     } catch {
       // Fallback silently if BroadcastChannel restricted
+    }
+
+    // Realtime PostgreSQL CDC over WebSocket for cross-device updates
+    let realtimeChannel: any = null;
+    try {
+      realtimeChannel = supabase
+        .channel('erp_global_realtime')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'financial_vouchers' }, () => {
+          triggerGlobalSync('finance');
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'vouchers' }, () => {
+          triggerGlobalSync('finance');
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'purchase_invoices' }, () => {
+          triggerGlobalSync('purchase');
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'inward_gate_passes' }, () => {
+          triggerGlobalSync('purchase');
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+          triggerGlobalSync('sales');
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'sales_invoices' }, () => {
+          triggerGlobalSync('sales');
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_pieces' }, () => {
+          triggerGlobalSync('inventory');
+        })
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            setIsLiveConnected(true);
+          }
+        });
+    } catch (rtErr) {
+      console.warn('[SyncContext] Realtime subscription notice:', rtErr);
     }
 
     // Send heartbeat every 3 seconds to announce active presence
@@ -194,6 +271,12 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     };
     window.addEventListener('storage', handleStorage);
 
+    const handleEntityMutated = (e: any) => {
+      if (unmounted) return;
+      triggerGlobalSync(e.detail?.module);
+    };
+    window.addEventListener('vv:entity-mutated', handleEntityMutated);
+
     // Throttled fallback polling (every 5 minutes) to guarantee consistency across dormant tabs without spamming
     const fallbackInterval = setInterval(() => {
       if (Date.now() - lastSyncedAtRef.current >= 5 * 60 * 1000) {
@@ -223,9 +306,14 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       PresenceService.logout();
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
-
     return () => {
       unmounted = true;
+      if (broadcastChannelRef.current) {
+        broadcastChannelRef.current = null;
+      }
+      if (realtimeChannel) {
+        try { supabase.removeChannel(realtimeChannel); } catch (_) {}
+      }
       if (broadcastChannel) {
         try {
           broadcastChannel.postMessage({ type: 'DISCONNECT', clientId });
@@ -244,6 +332,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       clearInterval(fallbackInterval);
       clearInterval(presenceInterval);
       window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('vv:entity-mutated', handleEntityMutated);
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
@@ -263,10 +352,22 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         acquireLock,
         releaseLock,
         isLocked,
-        notifyMutation
+        notifyMutation,
+        syncToast,
+        showSyncToast
       }}
     >
       {children}
+
+      {/* Zero-Flicker Micro Toast Badge (Non-intrusive floating indicator) */}
+      {syncToast && (
+        <div className="fixed bottom-4 right-4 z-50 pointer-events-none transition-all duration-300 transform translate-y-0 opacity-100 animate-in fade-in slide-in-from-bottom-2">
+          <div className="bg-slate-900/95 text-emerald-400 border border-emerald-500/40 shadow-2xl rounded-full px-3.5 py-1.5 flex items-center gap-2 text-xs font-mono font-medium backdrop-blur-md">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            <span>{syncToast.message}</span>
+          </div>
+        </div>
+      )}
     </SyncContext.Provider>
   );
 };

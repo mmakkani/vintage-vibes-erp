@@ -26,6 +26,7 @@ import { openBatchBaleThermalTagsPrintWindow } from '../../../utils/thermalPrint
 import { openCommercialInvoiceA4PrintWindow, numberToWords } from '../../../utils/printInvoiceA4.ts';
 import { supabase } from '../../../supabaseClient.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
+import { useSync } from '../../../context/SyncContext.tsx';
 
 interface CommercialInvoicesTabProps {
   invoices: PurchaseInvoice[];
@@ -48,6 +49,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   onInvoiceCreated,
   onDeleteInvoice
 }) => {
+  const { notifyMutation } = useSync();
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<PurchaseInvoice | null>(null);
@@ -238,6 +240,8 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
     try {
       await PurchaseService.postPurchaseInvoice(invId);
       setToastMessage("Purchase invoice posted to General Ledger & Supplier Khata!");
+      notifyMutation('finance', 'vouchers', 'POSTED', invId);
+      notifyMutation('purchase', 'purchase_invoices', 'POSTED', invId);
       onRefresh();
     } catch (e: any) {
       console.warn('Error posting invoice:', e);
@@ -262,6 +266,8 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
     try {
       await PurchaseService.unpostPurchaseInvoice(invId);
       setToastMessage("Purchase invoice unposted to DRAFT and financial vouchers reversed");
+      notifyMutation('finance', 'vouchers', 'UNPOSTED', invId);
+      notifyMutation('purchase', 'purchase_invoices', 'UNPOSTED', invId);
       onRefresh();
     } catch (e: any) {
       alert("Failed to unpost invoice: " + (e?.message || 'Error'));
@@ -275,6 +281,8 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       const createdBales = await PurchaseService.convertToInwardGatePass(invId);
       // Immediately reflect convertedToInward in local state so UI updates without waiting
       setInvoicesList(prev => prev.map(item => item.id === invId ? { ...item, convertedToInward: true, status: 'POSTED' } : item));
+      notifyMutation('finance', 'vouchers', 'INWARD_POSTED', invId);
+      notifyMutation('purchase', 'inward_gate_passes', 'CREATED', invId);
       alert(`✅ Inward Gate Pass Created!\n\n${createdBales.length} bale(s) generated and ready for sorting in Terminal.\nConsignment value successfully booked to COA & Supplier Khata.`);
       onRefresh();
     } catch (e: any) {

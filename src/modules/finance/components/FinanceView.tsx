@@ -467,7 +467,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         setLedgers(res.entries || []);
       });
     }
-  }, [glSelectedTarget, glDateFrom, glDateTo, glSearchText, subTab]);
+  }, [glSelectedTarget, glDateFrom, glDateTo, glSearchText, subTab, syncVersion]);
 
   useEffect(() => {
     FinanceService.clearCoaCache();

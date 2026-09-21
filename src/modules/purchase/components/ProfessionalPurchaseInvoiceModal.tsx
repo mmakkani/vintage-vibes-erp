@@ -8,6 +8,7 @@ import { PartiesService } from '../../../services/partiesService.ts';
 import { CameraInvoiceScannerOverlay } from './CameraInvoiceScannerOverlay.tsx';
 import { useFormAutoSave } from '../../../hooks/useFormAutoSave.ts';
 import { AutoSaveDraftBanner, AutoSaveIndicator } from '../../../components/AutoSaveNotice.tsx';
+import { useSync } from '../../../context/SyncContext.tsx';
 import {
   X,
   Plus,
@@ -62,6 +63,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
   editingInvoice,
   onSuccess
 }) => {
+  const { notifyMutation } = useSync();
   const [internalParties, setInternalParties] = useState<Party[]>(() => {
     if (Array.isArray(partiesProp)) return partiesProp;
     return [];
@@ -705,16 +707,22 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       if (autoConvertToInward) {
         try {
           await PurchaseService.convertToInwardGatePass(targetInvoiceId);
+          notifyMutation('finance', 'vouchers', 'INWARD_POSTED', targetInvoiceId);
+          notifyMutation('purchase', 'inward_gate_passes', 'CREATED', targetInvoiceId);
         } catch (convErr) {
           console.warn('Notice on auto convert to inward:', convErr);
         }
       } else if (submitStatus === 'POSTED') {
         try {
           await PurchaseService.postPurchaseInvoice(targetInvoiceId);
+          notifyMutation('finance', 'vouchers', 'POSTED', targetInvoiceId);
+          notifyMutation('purchase', 'purchase_invoices', 'POSTED', targetInvoiceId);
         } catch (postErr: any) {
           console.warn('Notice on auto post invoice:', postErr);
           alert("Posting Notice: " + (postErr?.message || 'Failed to post invoice'));
         }
+      } else {
+        notifyMutation('purchase', 'purchase_invoices', 'SAVED_DRAFT', targetInvoiceId);
       }
 
       const savedRow = data?.[0];

@@ -135,6 +135,14 @@ export class SalesService {
       }
     }
 
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+          detail: { module: 'sales', entity: 'sales_invoices', action: 'CREATED', documentRef: invoiceNo }
+        }));
+      } catch (_) {}
+    }
+
     return {
       id: data.id,
       invoiceNo: data.invoice_no,

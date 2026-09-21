@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, Suspense, useRef } from 'react';
 import { Header } from './components/Header.tsx';
 import { DubaiLiveSoukTicker } from './components/DubaiLiveSoukTicker.tsx';
 import { Navigation, ActiveTab } from './components/Navigation.tsx';
@@ -14,7 +14,7 @@ import { MainDashboardView } from './modules/dashboard/components/MainDashboardV
 import { LoginScreen } from './modules/auth/components/LoginScreen.tsx';
 import { CompanyProfile, CurrencyItem } from './modules/setup/setup.types.ts';
 import { User } from './modules/auth/auth.types.ts';
-import { SyncProvider } from './context/SyncContext.tsx';
+import { SyncProvider, useSync } from './context/SyncContext.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { AccessDeniedNotice } from './components/AccessDeniedNotice.tsx';
 import { GoldenCursorDust } from './components/GoldenCursorDust.tsx';
@@ -54,6 +54,22 @@ const ModuleLoadingFallback: React.FC<{ name?: string }> = ({ name }) => (
     <div className="text-[11px] text-slate-400 mt-1 font-mono">Connecting to relational data streams</div>
   </div>
 );
+
+// Zero-Flicker Tab Transition Synchronizer (silent background SWR revalidation without layout shift)
+const TabActiveSyncManager: React.FC<{ activeTab: ActiveTab }> = ({ activeTab }) => {
+  const { triggerGlobalSync } = useSync();
+  const prevTabRef = useRef<ActiveTab>(activeTab);
+
+  useEffect(() => {
+    if (prevTabRef.current !== activeTab) {
+      prevTabRef.current = activeTab;
+      // Perform silent SWR background check when transitioning into any tab
+      triggerGlobalSync(activeTab);
+    }
+  }, [activeTab, triggerGlobalSync]);
+
+  return null;
+};
 
 const VALID_TABS: ActiveTab[] = [
   'dashboard',
@@ -617,7 +633,8 @@ export default function App() {
 
     return (
       <SyncProvider onGlobalRefresh={refreshGlobalData}>
-      <div className="min-h-screen flex flex-col bg-[#FAF4E6] text-slate-800 font-sans antialiased selection:bg-amber-200 selection:text-amber-950">
+        <TabActiveSyncManager activeTab={activeTab} />
+        <div className="min-h-screen flex flex-col bg-[#FAF4E6] text-slate-800 font-sans antialiased selection:bg-amber-200 selection:text-amber-950">
         
         {/* 3D Brand Header with Animated Logo & Live Multi-User Sync Status */}
         <Header

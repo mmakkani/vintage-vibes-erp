@@ -410,6 +410,15 @@ export class PurchaseService {
         });
       }
     }
+
+    PurchaseService.invalidateInvoicesCache();
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+          detail: { module: 'finance', entity: 'vouchers', action: 'POSTED', documentRef: invoiceNo }
+        }));
+      } catch (_) {}
+    }
   }
 
   public static async addPurchaseInvoice(inv: Partial<PurchaseInvoice>): Promise<PurchaseInvoice> {
@@ -803,6 +812,15 @@ export class PurchaseService {
       FinanceService.clearCoaCache();
       await supabase.rpc('sync_coa_current_balances');
     } catch (_) {}
+
+    PurchaseService.invalidateInvoicesCache();
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+          detail: { module: 'finance', entity: 'vouchers', action: 'UNPOSTED', documentRef: invoiceNo }
+        }));
+      } catch (_) {}
+    }
   }
 
   public static async purgeOrphanedInventory(): Promise<{ deletedCount: number }> {

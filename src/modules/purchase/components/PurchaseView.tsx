@@ -22,6 +22,7 @@ import { PartiesService } from '../../../services/partiesService.ts';
 import { SetupService } from '../../../services/setupService.ts';
 import { MasterDataCache } from '../../../services/masterDataCache.ts';
 import { ModuleMaintenanceGuard } from '../../../components/ModuleMaintenanceGuard.tsx';
+import { useSync } from '../../../context/SyncContext.tsx';
 
 const CACHE_KEYS = {
   BALES: 'vv_cached_bales',
@@ -46,6 +47,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
   currentUserRole,
   maintenanceModules
 }) => {
+  const { syncVersion } = useSync();
   const [activeSubTab, setActiveSubTabState] = useState<PurchaseSubTab>(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
@@ -203,7 +205,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
 
   useEffect(() => {
     fetchPurchaseData();
-  }, [fetchPurchaseData]);
+  }, [fetchPurchaseData, syncVersion]);
 
   // Handle open sorting terminal modal
   const handleOpenSortingTerminal = (baleId?: string) => {
