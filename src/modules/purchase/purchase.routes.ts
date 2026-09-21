@@ -17,47 +17,38 @@ purchaseRouter.post('/invoices', async (req, res) => {
   try {
     const invoice = await PurchaseService.addPurchaseInvoice(req.body);
     return res.json(invoice);
-  } catch (_) {
-    const invoice = PurchaseController.createInvoice(req.body);
-    return res.json(invoice);
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to create invoice', message: err?.message });
   }
 });
 
-purchaseRouter.put('/invoices/:id', (req, res) => {
+purchaseRouter.put('/invoices/:id', async (req, res) => {
   const { id } = req.params;
-  const result = PurchaseController.updateInvoice(id, req.body);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  try {
+    const invoice = await PurchaseService.addPurchaseInvoice({ ...req.body, id });
+    return res.json({ success: true, invoice });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to update invoice', message: err?.message });
   }
-  return res.json(result);
 });
 
 purchaseRouter.delete('/invoices/:id', async (req, res) => {
   const { id } = req.params;
   try {
     await PurchaseService.deletePurchaseInvoice(id);
-    return res.json({ success: true });
-  } catch (_) {
-    const result = PurchaseController.deleteInvoice(id);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    return res.json(result);
+    return res.json({ success: true, message: 'Invoice deleted successfully' });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to delete invoice', message: err?.message });
   }
 });
 
 purchaseRouter.post('/invoices/:id/post', async (req, res) => {
   const { id } = req.params;
-  const { postedBy } = req.body;
   try {
     await PurchaseService.postPurchaseInvoice(id);
-    return res.json({ success: true });
-  } catch (_) {
-    const result = PurchaseController.postInvoice(id, postedBy || 'Procurement Mgr');
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    return res.json(result);
+    return res.json({ success: true, message: 'Invoice posted successfully' });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to post invoice', message: err?.message });
   }
 });
 
@@ -65,13 +56,9 @@ purchaseRouter.post('/invoices/:id/unpost', async (req, res) => {
   const { id } = req.params;
   try {
     await PurchaseService.unpostPurchaseInvoice(id);
-    return res.json({ success: true });
-  } catch (_) {
-    const result = PurchaseController.unpostInvoice(id);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    return res.json(result);
+    return res.json({ success: true, message: 'Invoice unposted successfully' });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to unpost invoice', message: err?.message });
   }
 });
 

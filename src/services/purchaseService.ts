@@ -137,28 +137,7 @@ export class PurchaseService {
     });
   }
 
-  public static async unpostPurchaseInvoice(invoiceId: string): Promise<void> {
-    const { data: invRow } = await supabase
-      .from('purchase_invoices')
-      .select('id, invoice_no')
-      .eq('id', String(invoiceId))
-      .maybeSingle();
 
-    const invoiceNo = invRow?.invoice_no;
-
-    const { error } = await supabase
-      .from('purchase_invoices')
-      .update({ status: 'DRAFT', converted_to_inward: false })
-      .eq('id', String(invoiceId));
-    if (error) {
-      console.error('Supabase error unposting purchase invoice:', error);
-      throw new Error(error.message || 'Failed to unpost purchase invoice');
-    }
-
-    if (invoiceNo) {
-      await this.deleteInvoiceFinancialVouchers(invoiceNo);
-    }
-  }
 
   public static async resolveSupplierCoaAccount(supplierId?: string | null, supplierName?: string, currency: string = 'AED'): Promise<{
     partyId: string;
@@ -422,26 +401,29 @@ export class PurchaseService {
     const id = inv.id || `pi-${Date.now()}`;
     const rawSupplierId = inv.supplierId || (inv as any).supplier_id;
     const cleanSupplierId = (rawSupplierId && String(rawSupplierId).trim() !== '' && String(rawSupplierId) !== 'undefined' && String(rawSupplierId) !== 'null') ? String(rawSupplierId) : null;
+    const vesselName = (inv as any).vesselName || (inv as any).vessel_name || null;
+    const portOfArrival = (inv as any).portOfArrival || (inv as any).portOfEntry || (inv as any).port_of_arrival || null;
     const payload = {
       id,
-      invoice_no: inv.invoiceNo || `PINV-${Date.now().toString().slice(-6)}`,
+      invoice_no: inv.invoiceNo || (inv as any).invoice_no || `PINV-${Date.now().toString().slice(-6)}`,
       supplier_id: cleanSupplierId,
       supplier_name: inv.supplierName || (inv as any).supplier_name || '',
-      party_name: inv.supplierName || (inv as any).supplier_name || '',
-      invoice_date: inv.invoiceDate || inv.date || new Date().toISOString().slice(0, 10),
-      currency: inv.currency || 'AED',
-      exchange_rate: Number(inv.exchangeRate || 1),
+      invoice_date: inv.invoiceDate || inv.date || (inv as any).invoice_date || new Date().toISOString().slice(0, 10),
+      status: inv.status || 'DRAFT',
+      currency: (inv.currency || 'AED').toUpperCase(),
+      exchange_rate: Number(inv.exchangeRate || (inv as any).exchange_rate || 1),
       subtotal: Number(inv.subtotal || (inv as any).subTotal || 0),
-      gross_amount: Number(inv.grossAmount || (inv as any).subtotal || (inv as any).subTotal || inv.totalAmount || 0),
-      deduction_amount: Number(inv.deductionAmount || inv.discountAmount || 0),
-      discount_amount: Number(inv.discountAmount || inv.deductionAmount || 0),
-      net_amount: Number(inv.netAmount || inv.totalAmount || 0),
-      tax_amount: Number(inv.taxAmount || inv.vatAmount || 0),
-      total_amount: Number(inv.totalAmount || 0),
-      total_weight_kg: Number(inv.totalWeightKg || (inv as any).totalGrossWeightKg || 0),
-      container_no: inv.containerNo || '',
-      bl_no: inv.blAirwayBillNo || '',
-      status: inv.status || 'RECEIVED',
+      gross_amount: Number(inv.grossAmount || (inv as any).gross_amount || inv.subtotal || (inv as any).subTotal || inv.totalAmount || 0),
+      deduction_amount: Number(inv.deductionAmount || (inv as any).deduction_amount || inv.discountAmount || 0),
+      discount_amount: Number(inv.discountAmount || (inv as any).discount_amount || inv.deductionAmount || 0),
+      net_amount: Number(inv.netAmount || (inv as any).net_amount || inv.totalAmount || 0),
+      tax_amount: Number(inv.taxAmount || (inv as any).tax_amount || inv.vatAmount || 0),
+      total_amount: Number(inv.totalAmount || (inv as any).total_amount || 0),
+      total_weight_kg: Number(inv.totalWeightKg || (inv as any).total_weight_kg || (inv as any).totalGrossWeightKg || 0),
+      container_no: inv.containerNo || (inv as any).container_no || '',
+      bl_no: inv.blAirwayBillNo || (inv as any).bl_no || '',
+      vessel_name: vesselName ? String(vesselName) : null,
+      port_of_arrival: portOfArrival ? String(portOfArrival) : null,
       notes: inv.notes || ''
     };
 
@@ -554,7 +536,7 @@ export class PurchaseService {
           await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
         try {
-          await supabase.from('financial_voucher_lines').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+          await supabase.from('journal_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
         try {
           await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
@@ -599,89 +581,193 @@ export class PurchaseService {
 
   public static async deletePurchaseInvoice(invoiceId: string, explicitInvoiceNo?: string): Promise<void> {
     const cleanInvId = String(invoiceId);
-    let invoiceNo = explicitInvoiceNo;
 
-    // 0. Fetch invoice first to get invoice_no and supplier info
-    try {
-      const { data: invRow } = await supabase
-        .from('purchase_invoices')
-        .select('id, invoice_no, supplier_id, supplier_name')
-        .eq('id', cleanInvId)
-        .maybeSingle();
+    // 0. Fetch invoice first to inspect status and metadata
+    const { data: invRow, error: invFetchErr } = await supabase
+      .from('purchase_invoices')
+      .select('id, invoice_no, status, converted_to_inward')
+      .eq('id', cleanInvId)
+      .maybeSingle();
 
-      if (invRow?.invoice_no) {
-        invoiceNo = invRow.invoice_no;
-      }
-    } catch (_) {}
+    if (invFetchErr) {
+      throw new Error(`Failed to fetch invoice: ${invFetchErr.message}`);
+    }
 
-    // 1. Delete associated manifest line items
+    if (!invRow) {
+      throw new Error(`Purchase invoice ${cleanInvId} not found`);
+    }
+
+    const invoiceNo = invRow.invoice_no || explicitInvoiceNo || cleanInvId;
+
+    // Rule A (Delete Constraint): An invoice CANNOT be deleted if its status is 'POSTED'. The user must explicitly "Unpost" it first.
+    if (invRow.status === 'POSTED') {
+      throw new Error(`Cannot delete purchase invoice "${invoiceNo}" because it is in POSTED status. You must explicitly Unpost it first.`);
+    }
+
+    // Rule B (Unpost/Delete Dependency): An invoice CANNOT be unposted or deleted if an "Inward Pass" or "Sorting Bale" has already been generated for it.
+    const { data: existingPasses, error: passErr } = await supabase
+      .from('inward_gate_passes')
+      .select('id, gate_pass_no')
+      .or(`purchase_invoice_id.eq.${cleanInvId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+
+    if (passErr) {
+      throw new Error(`Failed to verify related inward gate passes: ${passErr.message}`);
+    }
+
+    if ((existingPasses && existingPasses.length > 0) || invRow.converted_to_inward) {
+      const baleCount = existingPasses?.length || 1;
+      throw new Error(`Cannot delete invoice "${invoiceNo}" because ${baleCount} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`);
+    }
+
+    // 1. Deletion targets ONLY purchase_invoices and its exact child table purchase_invoice_items
     try {
       await supabase
         .from('purchase_invoice_items')
         .delete()
         .eq('invoice_id', cleanInvId);
-    } catch (itemsError) {
-      console.warn("Items delete warning:", itemsError);
+    } catch (itemsError: any) {
+      console.warn("purchase_invoice_items delete notice:", itemsError?.message);
     }
 
-    // 2. Cascade Delete all associated inward gate pass bales and their generated inventory pieces
-    try {
-      const { data: passes } = await supabase
-        .from('inward_gate_passes')
-        .select('id')
-        .or(`purchase_invoice_id.eq.${cleanInvId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
-
-      const passIds = (passes || []).map((p: any) => p.id);
-
-      // Step A: Delete generated inventory pieces / garments matching invoice or bales
-      if (passIds.length > 0) {
-        await supabase.from('bale_sorted_pieces').delete().in('bale_id', passIds);
-        await supabase.from('bale_sessions').delete().in('bale_id', passIds);
-        await supabase.from('inventory_pieces').delete().in('gate_pass_id', passIds);
-      }
-
-      // Also delete pieces referencing purchase_invoice_id directly
-      try {
-        await supabase.from('inventory_pieces').delete().eq('purchase_invoice_id', cleanInvId);
-      } catch (_) {}
-
-      // Step B: Delete master bales inward records created by this invoice
-      await supabase
-        .from('inward_gate_passes')
-        .delete()
-        .or(`purchase_invoice_id.eq.${cleanInvId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
-    } catch (gateErr) {
-      console.warn("Inward passes delete warning:", gateErr);
-    }
-
-    // 3. Delete any auto-generated vouchers and general ledger entries tied to this invoice
-    if (invoiceNo) {
-      await this.deleteInvoiceFinancialVouchers(invoiceNo);
-    }
-
-    // Step C: Delete the invoice header record from purchase_invoices
+    // 2. Delete parent record from purchase_invoices
     const { error: invoiceError } = await supabase
       .from('purchase_invoices')
       .delete()
       .eq('id', cleanInvId);
+
     if (invoiceError) {
       console.error("Failed to delete invoice:", invoiceError);
       throw new Error(invoiceError.message || 'Failed to delete invoice');
     }
 
-    // 4. Purge any orphaned inventory pieces left without a parent invoice or bale
-    await this.purgeOrphanedInventory().catch(() => ({ deletedCount: 0 }));
-
-    // 5. Final COA cache and live balance refresh
-    try {
-      FinanceService.clearCoaCache();
-      await supabase.rpc('sync_coa_current_balances');
-    } catch (_) {}
-
-    // 6. Purge local cache
+    // 3. Purge local cache
     try {
       localStorage.removeItem('vv_cached_pieces');
       localStorage.removeItem('vintage_cached_pieces');
+      localStorage.removeItem('vv_cached_purchases');
+    } catch (_) {}
+  }
+
+  public static async unpostPurchaseInvoice(invoiceId: string): Promise<void> {
+    const cleanInvId = String(invoiceId);
+
+    // 0. Fetch invoice first
+    const { data: invRow, error: invFetchErr } = await supabase
+      .from('purchase_invoices')
+      .select('id, invoice_no, status, total_amount, currency, exchange_rate, supplier_id, supplier_name, converted_to_inward')
+      .eq('id', cleanInvId)
+      .maybeSingle();
+
+    if (invFetchErr || !invRow) {
+      throw new Error(`Purchase invoice ${cleanInvId} not found`);
+    }
+
+    const invoiceNo = invRow.invoice_no || '';
+
+    // Rule B (Unpost/Delete Dependency): An invoice CANNOT be unposted if an "Inward Pass" or "Sorting Bale" has already been generated for it.
+    const { data: existingPasses, error: passErr } = await supabase
+      .from('inward_gate_passes')
+      .select('id, gate_pass_no')
+      .or(`purchase_invoice_id.eq.${cleanInvId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+
+    if (passErr) {
+      throw new Error(`Failed to check inward gate passes: ${passErr.message}`);
+    }
+
+    if ((existingPasses && existingPasses.length > 0) || invRow.converted_to_inward) {
+      const baleCount = existingPasses?.length || 1;
+      throw new Error(`Cannot unpost invoice "${invoiceNo}" because ${baleCount} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`);
+    }
+
+    // Status check
+    if (invRow.status !== 'POSTED') {
+      throw new Error(`Cannot unpost invoice "${invoiceNo}" because its status is "${invRow.status || 'DRAFT'}" (must be POSTED to unpost).`);
+    }
+
+    const currency = (invRow.currency || 'AED').toUpperCase();
+    const exchangeRate = Number(invRow.exchange_rate) || (currency === 'USD' ? 3.6725 : 1);
+    const invoiceTotalAmount = Number(invRow.total_amount || 0);
+    const invoiceTotalAed = currency === 'AED' ? invoiceTotalAmount : Number((invoiceTotalAmount * exchangeRate).toFixed(2));
+    const supplierName = invRow.supplier_name || 'Trade Supplier';
+
+    // 1. Delete financial vouchers and reverse general ledger
+    if (invoiceNo) {
+      await this.deleteInvoiceFinancialVouchers(invoiceNo);
+    }
+
+    // 2. Reverse COA balances: 1140-00 (Warehouse Raw Bales Inventory)
+    try {
+      const { data: accInv } = await supabase.from('coa_accounts').select('current_balance').eq('code', '1140-00').maybeSingle();
+      if (accInv) {
+        const newBal = Math.max(0, Number(accInv.current_balance || 0) - invoiceTotalAed);
+        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '1140-00');
+        await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '1140-00');
+      }
+    } catch (_) {}
+
+    // 3. Reverse COA balances: Parent AP 2110-00
+    try {
+      const { data: accParentAp } = await supabase.from('coa_accounts').select('current_balance').eq('code', '2110-00').maybeSingle();
+      if (accParentAp) {
+        const newBal = Math.max(0, Number(accParentAp.current_balance || 0) - invoiceTotalAed);
+        await supabase.from('coa_accounts').update({ current_balance: newBal }).eq('code', '2110-00');
+        await supabase.from('chart_of_accounts').update({ current_balance: newBal }).eq('code', '2110-00');
+      }
+    } catch (_) {}
+
+    // 4. Reverse COA balances: Supplier specific account & supplier party balance
+    try {
+      const supplierCoa = await PurchaseService.resolveSupplierCoaAccount(
+        invRow.supplier_id,
+        supplierName,
+        invRow.currency
+      );
+
+      const { data: accSupp } = await supabase.from('coa_accounts').select('current_balance').eq('code', supplierCoa.accountCode).maybeSingle();
+      if (accSupp) {
+        const newSuppBal = Math.max(0, Number(accSupp.current_balance || 0) - invoiceTotalAed);
+        await supabase.from('coa_accounts').update({ current_balance: newSuppBal }).eq('code', supplierCoa.accountCode);
+        await supabase.from('chart_of_accounts').update({ current_balance: newSuppBal }).eq('code', supplierCoa.accountCode);
+      }
+
+      if (supplierCoa.partyId) {
+        const { data: ptyRow } = await supabase.from('parties').select('current_balance').eq('id', supplierCoa.partyId).maybeSingle();
+        const currentPartyBal = Number(ptyRow?.current_balance ?? 0);
+        const updatedPartyBal = Math.max(0, currentPartyBal - invoiceTotalAed);
+
+        await supabase.from('parties').update({
+          current_balance: updatedPartyBal
+        }).eq('id', supplierCoa.partyId);
+
+        // Add reversal entry in party_khata_logs
+        await PartiesService.addKhataLog({
+          partyId: supplierCoa.partyId,
+          date: new Date().toISOString().slice(0, 10),
+          reference: `UNPOST-${invoiceNo}`,
+          debit: invoiceTotalAed,
+          credit: 0,
+          runningBalance: updatedPartyBal,
+          notes: `Reversal on unposting invoice ${invoiceNo}`
+        });
+      }
+    } catch (coaRevErr) {
+      console.warn('Notice on unpost COA reversal:', coaRevErr);
+    }
+
+    // 5. Update invoice status to 'DRAFT'
+    const { error: updateErr } = await supabase
+      .from('purchase_invoices')
+      .update({ status: 'DRAFT' })
+      .eq('id', cleanInvId);
+
+    if (updateErr) {
+      throw new Error(`Failed to update invoice status to DRAFT: ${updateErr.message}`);
+    }
+
+    // 6. Refresh COA cache and balances
+    try {
+      FinanceService.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
     } catch (_) {}
   }
 
@@ -695,17 +781,6 @@ export class PurchaseService {
 
       const validInvoiceIds = new Set((invoicesRes.data || []).map((r: any) => String(r.id)));
       const validPassIds = new Set((passesRes.data || []).map((r: any) => String(r.id)));
-
-      // If zero invoices and zero bales exist, wipe all inventory pieces and items
-      if (validInvoiceIds.size === 0 && validPassIds.size === 0) {
-        const { count: c1 } = await supabase.from('inventory_pieces').delete({ count: 'exact' }).neq('id', 'placeholder_none');
-        const { count: c2 } = await supabase.from('bale_sorted_pieces').delete({ count: 'exact' }).neq('id', 'placeholder_none');
-        try {
-          localStorage.removeItem('vv_cached_pieces');
-          localStorage.removeItem('vintage_cached_pieces');
-        } catch (_) {}
-        return { deletedCount: (c1 || 0) + (c2 || 0) };
-      }
 
       // Find pieces with missing parent
       const { data: allPieces } = await supabase.from('inventory_pieces').select('id, gate_pass_id');

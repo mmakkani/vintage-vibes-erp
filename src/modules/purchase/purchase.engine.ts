@@ -148,20 +148,21 @@ export class PurchaseEngine {
     invoice: PurchaseInvoice,
     relatedBales: InwardGatePass[] = []
   ): { canDelete: boolean; error?: string; sortedPiecesCount?: number } {
-    const sortedPiecesCount = relatedBales.reduce(
-      (sum, b) => sum + (b.pieces?.length || b.pieceCount || 0),
-      0
-    );
-    const sortedWeightKg = relatedBales.reduce(
-      (sum, b) => sum + (b.brokenDownWeight || 0),
-      0
-    );
-
-    if (sortedPiecesCount > 0 || sortedWeightKg > 0) {
+    // Rule A: An invoice CANNOT be deleted if its status is 'POSTED'.
+    if (invoice.status === 'POSTED') {
       return {
         canDelete: false,
-        sortedPiecesCount,
-        error: `Cannot delete invoice ${invoice.invoiceNo} because sorting has already started (${sortedPiecesCount} pieces sorted, ${sortedWeightKg.toFixed(2)} KG). You must first delete all sorted pieces in the Bale Sorting Terminal.`
+        sortedPiecesCount: 0,
+        error: `Cannot delete invoice ${invoice.invoiceNo} because it is in POSTED status. You must explicitly Unpost it first.`
+      };
+    }
+
+    // Rule B: An invoice CANNOT be deleted if an Inward Pass or Sorting Bale has already been generated for it.
+    if (relatedBales.length > 0 || invoice.convertedToInward) {
+      return {
+        canDelete: false,
+        sortedPiecesCount: relatedBales.length,
+        error: `Cannot delete invoice ${invoice.invoiceNo} because ${relatedBales.length || 1} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`
       };
     }
 

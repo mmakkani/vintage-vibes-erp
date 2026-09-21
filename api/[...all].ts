@@ -5048,103 +5048,211 @@ export default async function handler(req: any, res: any) {
 
     // Purchase Invoices
     if (pathname.includes('/purchase/invoices')) {
+      const sanitizeInvoicePayload = (raw: any) => {
+        const rawSupplierId = raw.supplier_id || raw.supplierId;
+        const cleanSupplierId = (rawSupplierId && String(rawSupplierId).trim() !== '' && String(rawSupplierId) !== 'undefined' && String(rawSupplierId) !== 'null') ? String(rawSupplierId).trim() : null;
+        const deduction = Number(raw.deduction_amount ?? raw.deductionAmount ?? raw.discount_amount ?? raw.discountAmount ?? 0);
+        const gross = Number(raw.gross_amount ?? raw.grossAmount ?? raw.subtotal ?? raw.subTotal ?? raw.total_amount ?? raw.totalAmount ?? 0);
+        const net = Number(raw.net_amount ?? raw.netAmount ?? raw.total_amount ?? raw.totalAmount ?? 0);
+        const total = Number(raw.total_amount ?? raw.totalAmount ?? net);
+        const vessel = raw.vessel_name || raw.vesselName || null;
+        const port = raw.port_of_arrival || raw.portOfEntry || raw.portOfArrival || null;
+
+        return {
+          id: String(raw.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `pi-${Date.now()}`)),
+          invoice_no: String(raw.invoice_no || raw.invoiceNo || `PINV-${Date.now().toString().slice(-6)}`).trim(),
+          supplier_id: cleanSupplierId,
+          supplier_name: String(raw.supplier_name || raw.supplierName || raw.party_name || ''),
+          invoice_date: String(raw.invoice_date || raw.date || new Date().toISOString().slice(0, 10)),
+          status: String(raw.status || 'DRAFT'),
+          currency: String(raw.currency || 'AED').toUpperCase(),
+          exchange_rate: Number(raw.exchange_rate ?? raw.exchangeRate ?? 1),
+          subtotal: Number(raw.subtotal ?? raw.subTotal ?? 0),
+          gross_amount: gross,
+          deduction_amount: deduction,
+          discount_amount: deduction,
+          net_amount: net,
+          tax_amount: Number(raw.tax_amount ?? raw.vat_amount ?? raw.vatAmount ?? 0),
+          total_amount: total,
+          total_weight_kg: Number(raw.total_weight_kg ?? raw.totalWeightKg ?? raw.totalGrossWeightKg ?? 0),
+          container_no: String(raw.container_no || raw.containerNo || ''),
+          bl_no: String(raw.bl_no || raw.blAirwayBillNo || ''),
+          vessel_name: vessel ? String(vessel) : null,
+          port_of_arrival: port ? String(port) : null,
+          notes: String(raw.notes || '')
+        };
+      };
+
+      if (pathname.includes('/unpost') && method === 'POST') {
+        const invId = pathname.replace('/unpost', '').split('/').pop();
+        try {
+          const { data: invRow, error: fetchErr } = await supabaseAdmin
+            .from('purchase_invoices')
+            .select('id, invoice_no, status, converted_to_inward')
+            .eq('id', invId)
+            .maybeSingle();
+
+          if (fetchErr || !invRow) {
+            return res.status(400).json({ success: false, error: fetchErr?.message || 'Invoice not found', message: fetchErr?.message || 'Invoice not found' });
+          }
+
+          const invoiceNo = invRow.invoice_no;
+
+          // Rule B: An invoice CANNOT be unposted if an Inward Pass or Sorting Bale has already been generated
+          const { data: existingPasses } = await supabaseAdmin
+            .from('inward_gate_passes')
+            .select('id')
+            .or(`purchase_invoice_id.eq.${invId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+
+          if ((existingPasses && existingPasses.length > 0) || invRow.converted_to_inward) {
+            const count = existingPasses?.length || 1;
+            return res.status(400).json({
+              success: false,
+              error: `Cannot unpost invoice "${invoiceNo}" because ${count} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`,
+              message: `Cannot unpost invoice "${invoiceNo}" because ${count} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`
+            });
+          }
+
+          if (invRow.status !== 'POSTED') {
+            return res.status(400).json({
+              success: false,
+              error: `Cannot unpost invoice "${invoiceNo}" because its status is "${invRow.status || 'DRAFT'}" (must be POSTED).`,
+              message: `Cannot unpost invoice "${invoiceNo}" because its status is "${invRow.status || 'DRAFT'}" (must be POSTED).`
+            });
+          }
+
+          if (invoiceNo) {
+            const { data: fvList } = await supabaseAdmin
+              .from('financial_vouchers')
+              .select('id, voucher_no, reference, narration');
+
+            const matchedVchs: { id: string; voucher_no: string }[] = [];
+            if (fvList) {
+              const target = invoiceNo.toUpperCase();
+              for (const v of fvList) {
+                const vRef = String(v.reference || '').toUpperCase();
+                const vNo = String(v.voucher_no || '').toUpperCase();
+                const vNarr = String(v.narration || '').toUpperCase();
+                if (vRef.includes(target) || vNarr.includes(target) || vNo.includes(target)) {
+                  matchedVchs.push({ id: String(v.id), voucher_no: String(v.voucher_no) });
+                }
+              }
+            }
+
+            for (const mv of matchedVchs) {
+              await supabaseAdmin.from('voucher_entries').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+              await supabaseAdmin.from('journal_entries').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+              await supabaseAdmin.from('general_ledger').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+              await supabaseAdmin.from('ledgers').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
+              await supabaseAdmin.from('financial_vouchers').delete().eq('id', mv.id);
+              await supabaseAdmin.from('vouchers').delete().eq('id', mv.id);
+            }
+
+            await supabaseAdmin.from('party_khata_logs').delete().or(`reference.eq.${invoiceNo},notes.ilike.%${invoiceNo}%`);
+          }
+
+          await supabaseAdmin.from('purchase_invoices').update({ status: 'DRAFT' }).eq('id', invId);
+          try { await supabaseAdmin.rpc('sync_coa_current_balances'); } catch (_) {}
+          return res.status(200).json({ success: true, message: 'Invoice unposted to DRAFT and financial vouchers reversed' });
+        } catch (e: any) {
+          return res.status(400).json({ success: false, error: e?.message || 'Failed to unpost invoice', message: e?.message });
+        }
+      }
+
       if (method === 'GET') {
         const { data, error } = await supabaseAdmin
           .from('purchase_invoices')
           .select('*')
           .order('created_at', { ascending: false });
         if (error) {
-          return res.status(500).json({ success: false, error: error.message });
+          return res.status(400).json({ success: false, error: error.message, message: error.message });
         }
         return res.status(200).json(data || []);
       }
+
       if (method === 'POST') {
-        const invPayload = body;
+        const invPayload = sanitizeInvoicePayload(body);
         const { data, error } = await supabaseAdmin
           .from('purchase_invoices')
-          .insert([invPayload])
+          .upsert([invPayload], { onConflict: 'invoice_no' })
           .select();
         if (error) {
-          return res.status(500).json({ success: false, error: error.message, code: error.code, details: error.details });
+          return res.status(400).json({ success: false, error: error.message, message: error.message, code: error.code });
         }
         return res.status(200).json({ success: true, invoice: data?.[0] || invPayload });
       }
+
       if (method === 'PUT') {
         const invId = pathname.split('/').pop();
+        const invPayload = sanitizeInvoicePayload({ ...body, id: invId });
         const { data, error } = await supabaseAdmin
           .from('purchase_invoices')
-          .update(body)
+          .update(invPayload)
           .eq('id', invId)
           .select();
         if (error) {
-          return res.status(500).json({ success: false, error: error.message, code: error.code, details: error.details });
+          return res.status(400).json({ success: false, error: error.message, message: error.message, code: error.code });
         }
-        return res.status(200).json({ success: true, invoice: data?.[0] || body });
+        return res.status(200).json({ success: true, invoice: data?.[0] || invPayload });
       }
+
       if (method === 'DELETE') {
         const invId = pathname.split('/').pop();
         if (invId) {
           try {
-            const { data: invRow } = await supabaseAdmin
+            const { data: invRow, error: fetchErr } = await supabaseAdmin
               .from('purchase_invoices')
-              .select('id, invoice_no')
+              .select('id, invoice_no, status, converted_to_inward')
               .eq('id', invId)
               .maybeSingle();
 
-            const invoiceNo = invRow?.invoice_no;
-            const cleanInvNo = (invoiceNo || '').replace(/[^a-zA-Z0-9]/g, '');
+            if (fetchErr) {
+              return res.status(400).json({ success: false, error: fetchErr.message, message: fetchErr.message });
+            }
+            if (!invRow) {
+              return res.status(400).json({ success: false, error: 'Invoice not found', message: 'Invoice not found' });
+            }
 
-            await supabaseAdmin.from('purchase_invoice_items').delete().eq('invoice_id', invId);
+            const invoiceNo = invRow.invoice_no;
 
-            const { data: passes } = await supabaseAdmin
+            // Rule A (Delete Constraint): An invoice CANNOT be deleted if its status is 'POSTED'.
+            if (invRow.status === 'POSTED') {
+              return res.status(400).json({
+                success: false,
+                error: `Cannot delete invoice "${invoiceNo || invId}" because it is in POSTED status. You must explicitly Unpost it first.`,
+                message: `Cannot delete invoice "${invoiceNo || invId}" because it is in POSTED status. You must explicitly Unpost it first.`
+              });
+            }
+
+            // Rule B (Unpost/Delete Dependency): An invoice CANNOT be deleted if an Inward Pass or Sorting Bale exists
+            const { data: passes, error: passErr } = await supabaseAdmin
               .from('inward_gate_passes')
               .select('id')
               .or(`purchase_invoice_id.eq.${invId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
 
-            if (passes && passes.length > 0) {
-              for (const p of passes) {
-                await supabaseAdmin.from('bale_sorted_pieces').delete().eq('bale_id', p.id);
-                await supabaseAdmin.from('bale_sessions').delete().eq('bale_id', p.id);
-                await supabaseAdmin.from('inventory_pieces').delete().eq('gate_pass_id', p.id);
-              }
-              await supabaseAdmin.from('inward_gate_passes').delete().or(`purchase_invoice_id.eq.${invId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+            if (passErr) {
+              return res.status(400).json({ success: false, error: passErr.message, message: passErr.message });
             }
 
-            if (invoiceNo) {
-              const { data: fvList } = await supabaseAdmin
-                .from('financial_vouchers')
-                .select('id, voucher_no, reference, narration');
-
-              const matchedVchs: { id: string; voucher_no: string }[] = [];
-              if (fvList) {
-                for (const v of fvList) {
-                  const target = invoiceNo.toUpperCase();
-                  const targetClean = cleanInvNo.toUpperCase();
-                  const vRef = String(v.reference || '').toUpperCase();
-                  const vNo = String(v.voucher_no || '').toUpperCase();
-                  const vNarr = String(v.narration || '').toUpperCase();
-                  if (vRef.includes(target) || vNarr.includes(target) || (targetClean && vNo.includes(targetClean))) {
-                    matchedVchs.push({ id: String(v.id), voucher_no: String(v.voucher_no) });
-                  }
-                }
-              }
-
-              for (const mv of matchedVchs) {
-                await supabaseAdmin.from('voucher_entries').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-                await supabaseAdmin.from('general_ledger').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-                await supabaseAdmin.from('ledgers').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-                await supabaseAdmin.from('financial_vouchers').delete().eq('id', mv.id);
-                await supabaseAdmin.from('vouchers').delete().eq('id', mv.id);
-              }
-
-              await supabaseAdmin.from('party_khata_logs').delete().or(`reference.eq.${invoiceNo},notes.ilike.%${invoiceNo}%`);
+            if ((passes && passes.length > 0) || invRow.converted_to_inward) {
+              const count = passes?.length || 1;
+              return res.status(400).json({
+                success: false,
+                error: `Cannot delete invoice "${invoiceNo || invId}" because ${count} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`,
+                message: `Cannot delete invoice "${invoiceNo || invId}" because ${count} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`
+              });
             }
 
-            await supabaseAdmin.from('purchase_invoices').delete().eq('id', invId);
-            try { await supabaseAdmin.rpc('sync_coa_current_balances'); } catch (_) {}
-            return res.status(200).json({ success: true, message: 'Invoice and financial vouchers cascade deleted from SQL' });
+            // Deletion strictly targets purchase_invoices and purchase_invoice_items
+            await supabaseAdmin.from('purchase_invoice_items').delete().eq('invoice_id', invId);
+            const { error: delErr } = await supabaseAdmin.from('purchase_invoices').delete().eq('id', invId);
+            if (delErr) {
+              return res.status(400).json({ success: false, error: delErr.message, message: delErr.message });
+            }
+
+            return res.status(200).json({ success: true, message: 'Invoice deleted successfully' });
           } catch (e: any) {
-            return res.status(500).json({ success: false, error: e?.message || 'Failed to delete invoice' });
+            return res.status(400).json({ success: false, error: e?.message || 'Failed to delete invoice', message: e?.message });
           }
         }
       }

@@ -2609,7 +2609,17 @@ class RelationalStore {
   public unpostPurchaseInvoice(invoiceId: string): { success: boolean; error?: string } {
     const invoice = this.purchaseInvoices.find(i => i.id === invoiceId);
     if (!invoice) return { success: false, error: 'Invoice not found' };
-    if (invoice.convertedToInward) return { success: false, error: 'Cannot unpost invoice that has already been converted into an Inward Gate Pass' };
+
+    const relatedBales = this.inwardGatePasses.filter(
+      b => b.purchaseInvoiceId === invoiceId || b.purchaseInvoiceNo === invoice.invoiceNo
+    );
+    if (relatedBales.length > 0 || invoice.convertedToInward) {
+      return { success: false, error: `Cannot unpost invoice ${invoice.invoiceNo} because ${relatedBales.length || 1} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.` };
+    }
+
+    if (invoice.status !== 'POSTED') {
+      return { success: false, error: `Cannot unpost invoice ${invoice.invoiceNo} because its status is ${invoice.status || 'DRAFT'} (must be POSTED to unpost).` };
+    }
 
     invoice.status = 'UNPOSTED';
 

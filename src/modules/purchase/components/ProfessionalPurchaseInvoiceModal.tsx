@@ -618,86 +618,37 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
 
     try {
       const targetInvoiceId = String(editingInvoice?.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : (`pi-${Date.now()}`)));
-      const cleanSupplierId = String(supplierId || '');
+      const cleanSupplierId = String(supplierId || '').trim() || null;
 
-      let invoicePayload: any = {
+      // Strictly map frontend state to the 21 database columns ONLY, stripping all camelCase fields
+      const invoicePayload = {
         id: targetInvoiceId,
         invoice_no: invoiceNo,
-        invoiceNo,
         supplier_id: cleanSupplierId,
-        supplierId: cleanSupplierId,
         supplier_name: selectedSupplier?.name || '',
-        supplierName: selectedSupplier?.name || '',
-        party_name: selectedSupplier?.name || '',
         invoice_date: invoiceDate,
-        date: invoiceDate,
         status: editingInvoice ? (editingInvoice.status || submitStatus) : submitStatus,
         currency,
-        exchange_rate: exchangeRate,
-        exchangeRate,
-        subtotal: itemsSubTotal,
-        subTotal: itemsSubTotal,
-        gross_amount: grossAmount,
-        grossAmount,
-        deduction_amount: deductionAmount,
-        deductionAmount,
-        discount_amount: deductionAmount,
-        discountAmount: deductionAmount,
-        net_amount: grandTotal,
-        netAmount: grandTotal,
-        tax_amount: vatAmount,
-        vatAmount,
-        total_amount: grandTotal,
-        totalAmount: grandTotal,
-        total_weight_kg: totalGrossWeightKg,
-        totalWeightKg: totalGrossWeightKg,
+        exchange_rate: Number(exchangeRate || 1),
+        subtotal: Number(itemsSubTotal || 0),
+        gross_amount: Number(grossAmount || 0),
+        deduction_amount: Number(deductionAmount || 0),
+        discount_amount: Number(deductionAmount || 0),
+        net_amount: Number(grandTotal || 0),
+        tax_amount: Number(vatAmount || 0),
+        total_amount: Number(grandTotal || 0),
+        total_weight_kg: Number(totalGrossWeightKg || 0),
         container_no: containerNo || '',
         bl_no: blAirwayBillNo || '',
-        vessel_name: vesselName || null,
-        port_of_arrival: portOfEntry || null,
+        vessel_name: vesselName ? String(vesselName) : null,
+        port_of_arrival: portOfEntry ? String(portOfEntry) : null,
         notes: notes ? `${notes} | Terms: ${paymentTerms.replace(/_/g, ' ')}` : `Terms: ${paymentTerms.replace(/_/g, ' ')}`
       };
 
-      let { data, error } = await (editingInvoice
+      const { data, error } = await (editingInvoice
         ? supabase.from('purchase_invoices').update(invoicePayload).eq('id', targetInvoiceId).select()
         : supabase.from('purchase_invoices').upsert([invoicePayload], { onConflict: 'invoice_no' }).select()
       );
-
-      // If schema uses snake_case column names instead of camelCase, auto-retry with snake_case
-      if (error && (error.message?.includes('column') || error.code === 'PGRST204')) {
-        const snakePayload: any = {
-          id: targetInvoiceId,
-          invoice_no: invoiceNo,
-          supplier_id: cleanSupplierId,
-          supplier_name: selectedSupplier?.name || '',
-          party_name: selectedSupplier?.name || '',
-          container_no: containerNo || '',
-          bl_no: blAirwayBillNo || '',
-          invoice_date: invoiceDate,
-          status: editingInvoice ? (editingInvoice.status || submitStatus) : submitStatus,
-          currency,
-          exchange_rate: exchangeRate,
-          subtotal: itemsSubTotal,
-          gross_amount: grossAmount,
-          deduction_amount: deductionAmount,
-          discount_amount: deductionAmount,
-          net_amount: grandTotal,
-          tax_amount: vatAmount,
-          total_amount: grandTotal,
-          total_weight_kg: totalGrossWeightKg,
-          notes: notes ? `${notes} | Terms: ${paymentTerms.replace(/_/g, ' ')}` : `Terms: ${paymentTerms.replace(/_/g, ' ')}`
-        };
-        const retryResult = await (editingInvoice
-          ? supabase.from('purchase_invoices').update(snakePayload).eq('id', targetInvoiceId).select()
-          : supabase.from('purchase_invoices').upsert([snakePayload], { onConflict: 'invoice_no' }).select()
-        );
-        if (!retryResult.error) {
-          data = retryResult.data;
-          error = null;
-        } else {
-          error = retryResult.error;
-        }
-      }
 
       if (error) {
         console.error("SUPABASE ERROR on purchase_invoices:", error);
@@ -802,14 +753,6 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
         })) as PurchaseInvoiceItem[]
       };
 
-      // Non-blocking sync to server API route if available
-      try {
-        fetch(editingInvoice ? `/api/purchase/invoices/${editingInvoice.id}` : '/api/purchase/invoices', {
-          method: editingInvoice ? 'PUT' : 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(savedInvoice)
-        }).catch(() => {});
-      } catch (_) {}
 
       clearDraft();
       onSuccess(savedInvoice, autoConvertToInward);

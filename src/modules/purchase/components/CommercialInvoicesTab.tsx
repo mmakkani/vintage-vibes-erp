@@ -244,10 +244,22 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   };
 
   const handleUnpostInvoice = async (invId: string) => {
-    if (!window.confirm("Are you sure you want to unpost this invoice back to DRAFT? Auto-generated financial vouchers and ledger entries will be removed from SQL.")) return;
+    const invoice = invoicesList.find(i => String(i.id) === String(invId));
+    const invoiceNo = invoice?.invoiceNo || invId;
+
+    // Rule B (Unpost/Delete Dependency): An invoice CANNOT be unposted if related bales exist
+    const related = (bales || []).filter(
+      b => b.purchaseInvoiceId === invId || (invoice && b.purchaseInvoiceNo === invoice.invoiceNo)
+    );
+    if (related.length > 0 || invoice?.convertedToInward) {
+      alert(`Cannot unpost invoice ${invoiceNo} because ${related.length || 1} Inward Pass(es) / Sorting Bale(s) have already been generated for it.\n\nYou must delete the Sorting Bales in the Sorting / Inward Terminal first.`);
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to unpost invoice "${invoiceNo}" back to DRAFT? Auto-generated financial vouchers and ledger entries will be reversed.`)) return;
     try {
       await PurchaseService.unpostPurchaseInvoice(invId);
-      setToastMessage("Purchase invoice unposted to DRAFT and vouchers removed from SQL");
+      setToastMessage("Purchase invoice unposted to DRAFT and financial vouchers reversed");
       onRefresh();
     } catch (e: any) {
       alert("Failed to unpost invoice: " + (e?.message || 'Error'));
@@ -287,26 +299,21 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
     setShowCreateModal(true);
   };
 
-  // 3. FIX DELETE BUTTON (Cascading Delete Handler)
+  // 3. FIX DELETE BUTTON (Strict ERP Constraints)
   const handleDeleteInvoice = async (invoiceId: string, invoiceNo?: string) => {
-    // a) Confirmation prompt:
-    if (!window.confirm("Are you sure you want to permanently delete this purchase invoice? All associated bales, generated inventory pieces, and auto-generated accounting vouchers will be completely removed from the database.")) return;
-
     try {
-      // b) Perform complete cascade delete via PurchaseService
       await PurchaseService.deletePurchaseInvoice(String(invoiceId), invoiceNo);
-      await PurchaseService.purgeOrphanedInventory();
 
-      // c) Immediately remove the deleted invoice from React state:
+      // Immediately remove the deleted invoice from React state:
       setInvoicesList(prev => prev.filter(inv => String(inv.id) !== String(invoiceId)));
       if (onDeleteInvoice) {
         onDeleteInvoice(String(invoiceId));
       }
 
-      setToastMessage("Purchase invoice and all associated inventory pieces deleted successfully");
+      setToastMessage("Purchase invoice deleted successfully");
       try {
         if (typeof (window as any).toast !== 'undefined') {
-          (window as any).toast.success("Purchase invoice & associated inventory deleted successfully");
+          (window as any).toast.success("Purchase invoice deleted successfully");
         }
       } catch {}
 
@@ -318,17 +325,22 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   };
 
   const handleDeleteInvoiceClick = async (inv: PurchaseInvoice) => {
+    // Rule A (Delete Constraint): An invoice CANNOT be deleted if its status is 'POSTED'.
+    if (inv.status === 'POSTED') {
+      alert(`Cannot delete commercial invoice "${inv.invoiceNo}" because it is in POSTED status.\n\nYou must explicitly click "Unpost" first.`);
+      return;
+    }
+
+    // Rule B (Unpost/Delete Dependency): An invoice CANNOT be deleted if an Inward Pass or Sorting Bale exists
     const related = (bales || []).filter(
       b => b.purchaseInvoiceId === inv.id || b.purchaseInvoiceNo === inv.invoiceNo
     );
-    const sortedCount = related.reduce((acc, b) => acc + (b.pieces?.length || b.pieceCount || 0), 0);
-    const sortedKg = related.reduce((acc, b) => acc + (b.brokenDownWeight || 0), 0);
-
-    if (sortedCount > 0 || sortedKg > 0) {
-      if (!window.confirm(`This commercial invoice (${inv.invoiceNo}) has ${sortedCount} generated inventory pieces across ${related.length} bales.\n\nAre you sure you want to CASCADE DELETE this invoice?\n\nThis will permanently remove:\n• The Commercial Invoice record\n• All ${related.length} associated bales\n• All ${sortedCount} generated inventory pieces/garments\n• All auto-generated accounting vouchers`)) {
-        return;
-      }
+    if (related.length > 0 || inv.convertedToInward) {
+      alert(`Cannot delete invoice "${inv.invoiceNo}" because ${related.length || 1} Inward Pass(es) / Sorting Bale(s) have already been generated for it.\n\nYou must delete the Sorting Bales in the Sorting / Inward Terminal first.`);
+      return;
     }
+
+    if (!window.confirm(`Are you sure you want to permanently delete purchase invoice "${inv.invoiceNo}"?`)) return;
 
     await handleDeleteInvoice(inv.id, inv.invoiceNo);
   };
