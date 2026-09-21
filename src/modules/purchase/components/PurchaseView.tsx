@@ -20,6 +20,7 @@ import {
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { SetupService } from '../../../services/setupService.ts';
+import { MasterDataCache } from '../../../services/masterDataCache.ts';
 import { ModuleMaintenanceGuard } from '../../../components/ModuleMaintenanceGuard.tsx';
 
 const CACHE_KEYS = {
@@ -75,13 +76,27 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [inventoryPieces, setInventoryPieces] = useState<PieceBreakdownItem[]>([]);
   const [parties, setParties] = useState<Party[]>([]);
-  const [items, setItems] = useState<ItemMaster[]>([]);
-  const [brands, setBrands] = useState<BrandMaster[]>([]);
-  const [labels, setLabels] = useState<LabelGrade[]>([]);
-  const [shops, setShops] = useState<ShopMaster[]>([]);
-  const [categories, setCategories] = useState<CategoryMaster[]>([]);
-  const [sizes, setSizes] = useState<SizeMaster[]>([]);
+  const cachedMaster = MasterDataCache.getCached();
+  const [items, setItems] = useState<ItemMaster[]>(cachedMaster.items);
+  const [brands, setBrands] = useState<BrandMaster[]>(cachedMaster.brands);
+  const [labels, setLabels] = useState<LabelGrade[]>(cachedMaster.labels);
+  const [shops, setShops] = useState<ShopMaster[]>(cachedMaster.shops);
+  const [categories, setCategories] = useState<CategoryMaster[]>(cachedMaster.categories);
+  const [sizes, setSizes] = useState<SizeMaster[]>(cachedMaster.sizes);
   const [balePresets, setBalePresets] = useState<any[]>([]);
+
+  // Realtime subscription to shared master setup cache
+  useEffect(() => {
+    const unsub = MasterDataCache.subscribe(s => {
+      if (s.items.length > 0) setItems(s.items);
+      if (s.brands.length > 0) setBrands(s.brands);
+      if (s.labels.length > 0) setLabels(s.labels);
+      if (s.shops.length > 0) setShops(s.shops);
+      if (s.categories.length > 0) setCategories(s.categories);
+      if (s.sizes.length > 0) setSizes(s.sizes);
+    });
+    return unsub;
+  }, []);
 
   // Purge lingering legacy localStorage entity caches on mount
   useEffect(() => {
@@ -125,17 +140,11 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
     isFetchingRef.current = true;
     setIsLoading(true);
     try {
-      const [balesRes, invRes, piecesRes, partiesRes, itemsRes, brandsRes, labelsRes, shopsRes, catRes, sizeRes, presetsRes] = await Promise.all([
+      const [balesRes, invRes, piecesRes, partiesRes, presetsRes] = await Promise.all([
         PurchaseService.getInwardGatePasses().catch((err) => { console.warn('Gate pass sync warning:', err); return []; }),
         PurchaseService.getPurchaseInvoices().catch((err) => { console.warn('Purchase invoice sync warning:', err); return []; }),
         PurchaseService.getInventoryPieces().catch((err) => { console.warn('Inventory pieces sync warning:', err); return []; }),
         PartiesService.getParties().catch((err) => { console.warn('Parties sync warning:', err); return []; }),
-        SetupService.getItems().catch((err) => { console.warn('Items sync warning:', err); return []; }),
-        SetupService.getBrands().catch((err) => { console.warn('Brands sync warning:', err); return []; }),
-        SetupService.getLabelGrades().catch((err) => { console.warn('Labels sync warning:', err); return []; }),
-        SetupService.getShops().catch((err) => { console.warn('Shops sync warning:', err); return []; }),
-        SetupService.getCategories().catch((err) => { console.warn('Categories sync warning:', err); return []; }),
-        SetupService.getSizes().catch((err) => { console.warn('Sizes sync warning:', err); return []; }),
         PurchaseService.getBalePresets().catch((err) => { console.warn('Presets sync warning:', err); return []; })
       ]);
 
@@ -170,30 +179,6 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
       }
       if (Array.isArray(presetsRes)) {
         setBalePresets(presetsRes);
-      }
-      if (Array.isArray(presetsRes) || Array.isArray(itemsRes)) {
-        const presetsList = Array.isArray(presetsRes) ? presetsRes : [];
-        const itemsList = Array.isArray(itemsRes) ? itemsRes : [];
-        const mergedItems = [
-          ...presetsList,
-          ...itemsList.filter((it: any) => !presetsList.some((p: any) => p.id === it.id || p.code === it.code || (p.name && it.name && p.name.toLowerCase() === it.name.toLowerCase())))
-        ];
-        setItems(mergedItems);
-      }
-      if (Array.isArray(brandsRes)) {
-        setBrands(brandsRes);
-      }
-      if (Array.isArray(labelsRes)) {
-        setLabels(labelsRes);
-      }
-      if (Array.isArray(shopsRes)) {
-        setShops(shopsRes);
-      }
-      if (Array.isArray(catRes)) {
-        setCategories(catRes);
-      }
-      if (Array.isArray(sizeRes)) {
-        setSizes(sizeRes);
       }
 
       setIsOfflineMode(false);

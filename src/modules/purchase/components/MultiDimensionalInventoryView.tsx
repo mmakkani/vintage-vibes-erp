@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { PieceBreakdownItem, InwardGatePass } from '../purchase.types.ts';
 import { StickerData } from '../../../components/ThermalBarcodeSticker.tsx';
 import { PurchaseService } from '../../../services/purchaseService.ts';
+import { ImageOptimizer } from '../../../utils/imageOptimizer.ts';
 import {
   Layers,
   Search,
@@ -484,8 +485,10 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                           <div className="flex items-center justify-center gap-1.5">
                             {frontImg && (
                               <img
-                                src={frontImg}
+                                src={ImageOptimizer.getThumbnailUrl(frontImg, 80, 70)}
                                 alt="Front"
+                                loading="lazy"
+                                decoding="async"
                                 title="Front Photo - Click to Enlarge"
                                 onClick={() => setPreviewLightboxImage(frontImg)}
                                 className="w-8 h-8 object-cover rounded border border-slate-300 hover:border-emerald-500 cursor-pointer hover:scale-125 transition shadow-xs"
@@ -493,8 +496,10 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                             )}
                             {backImg && (
                               <img
-                                src={backImg}
+                                src={ImageOptimizer.getThumbnailUrl(backImg, 80, 70)}
                                 alt="Back"
+                                loading="lazy"
+                                decoding="async"
                                 title="Back Photo - Click to Enlarge"
                                 onClick={() => setPreviewLightboxImage(backImg)}
                                 className="w-8 h-8 object-cover rounded border border-slate-300 hover:border-indigo-500 cursor-pointer hover:scale-125 transition shadow-xs"
@@ -502,8 +507,10 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                             )}
                             {tagImg && (
                               <img
-                                src={tagImg}
+                                src={ImageOptimizer.getThumbnailUrl(tagImg, 80, 70)}
                                 alt="Tag"
+                                loading="lazy"
+                                decoding="async"
                                 title="Tag OCR Photo - Click to Enlarge"
                                 onClick={() => setPreviewLightboxImage(tagImg)}
                                 className="w-8 h-8 object-cover rounded border border-amber-400 hover:border-amber-600 cursor-pointer hover:scale-125 transition shadow-xs"

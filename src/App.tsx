@@ -21,6 +21,7 @@ import { GoldenCursorDust } from './components/GoldenCursorDust.tsx';
 import { useIdleTimer } from './hooks/useIdleTimer.ts';
 import { isTabAccessible, getAccessibleTabs } from './modules/auth/utils/permissionUtils.ts';
 import { CompanyProfileService, SetupService, AuthService, DeviceService, PresenceService } from './services/index.ts';
+import { MasterDataCache } from './services/masterDataCache.ts';
 import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
 import { ModuleMaintenanceGuard } from './components/ModuleMaintenanceGuard.tsx';
 import { PWAUpdatePrompt } from './components/PWAUpdatePrompt.tsx';
@@ -117,6 +118,23 @@ export default function App() {
 
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [isExecutiveTerminalOpen, setIsExecutiveTerminalOpen] = useState(false);
+
+  // Tab Keep-Alive: Retain visited tabs in memory for 0ms instant tab switching
+  const [visitedTabs, setVisitedTabs] = useState<Set<ActiveTab>>(() => new Set([activeTab]));
+
+  useEffect(() => {
+    setVisitedTabs(prev => {
+      if (prev.has(activeTab)) return prev;
+      const next = new Set(prev);
+      next.add(activeTab);
+      return next;
+    });
+  }, [activeTab]);
+
+  // Pre-warm master setup cache on application mount
+  useEffect(() => {
+    MasterDataCache.revalidate().catch(() => {});
+  }, []);
 
   // Global Keyboard Shortcut: Shift + E to launch Executive TV Command Center
   useEffect(() => {
@@ -654,123 +672,166 @@ export default function App() {
           )}
 
           <Suspense fallback={<ModuleLoadingFallback name={activeTab.toUpperCase()} />}>
-            {activeTab === 'dashboard' && isTabAccessible('dashboard', currentUser) && (
-              <ErrorBoundary sectionName="Executive Dashboard">
-                <MainDashboardView
-                  onNavigateTab={tab => setActiveTab(tab as ActiveTab)}
-                  currentUser={currentUser}
-                />
-              </ErrorBoundary>
-            )}
-            {activeTab === 'purchase' && (
-              <ErrorBoundary sectionName="Purchase & Container Inward Module">
-                <PurchaseView
-                  onRefreshAll={refreshGlobalData}
-                  currentUserRole={currentUser.role}
-                  maintenanceModules={companyProfile.maintenance_modules}
-                />
-              </ErrorBoundary>
-            )}
-            {activeTab === 'sales' && (
-              <ErrorBoundary sectionName="Sales, Barcode & Dispatch Module">
-                <ModuleMaintenanceGuard
-                  moduleKey="sales"
-                  moduleName="Sales & Dispatch Terminal"
-                  currentUserRole={currentUser.role}
-                  maintenanceModules={companyProfile.maintenance_modules}
-                >
-                  <SalesView
+            {/* Executive Dashboard */}
+            <div className={activeTab === 'dashboard' ? 'block' : 'hidden'} key="keepalive-tab-dashboard">
+              {visitedTabs.has('dashboard') && isTabAccessible('dashboard', currentUser) && (
+                <ErrorBoundary sectionName="Executive Dashboard">
+                  <MainDashboardView
+                    onNavigateTab={tab => setActiveTab(tab as ActiveTab)}
+                    currentUser={currentUser}
+                  />
+                </ErrorBoundary>
+              )}
+            </div>
+
+            {/* Purchase & Container Inward Module */}
+            <div className={activeTab === 'purchase' ? 'block' : 'hidden'} key="keepalive-tab-purchase">
+              {visitedTabs.has('purchase') && (
+                <ErrorBoundary sectionName="Purchase & Container Inward Module">
+                  <PurchaseView
                     onRefreshAll={refreshGlobalData}
                     currentUserRole={currentUser.role}
-                    onSubTabChange={(tab) => setIsLiveStudioActive(tab === 'liveSelling')}
+                    maintenanceModules={companyProfile.maintenance_modules}
                   />
-                </ModuleMaintenanceGuard>
-              </ErrorBoundary>
-            )}
-            {activeTab === 'marketing' && (
-              <ErrorBoundary sectionName="Marketing & AI Automation Module">
-                <MarketingAutomationView
-                  onRefreshAll={refreshGlobalData}
-                  currentUserRole={currentUser.role}
-                />
-              </ErrorBoundary>
-            )}
-            {activeTab === 'finance' && (
-              <ErrorBoundary sectionName="Financial Accounts & COA Module">
-                <FinanceView
-                  onRefreshAll={refreshGlobalData}
-                  currentUserRole={currentUser.role}
-                  initialSubTab={currentUser.role === 'ADMIN' ? 'coa' : 'vouchers'}
-                  maintenanceModules={companyProfile.maintenance_modules}
-                  companyProfile={companyProfile}
-                />
-              </ErrorBoundary>
-            )}
-            {activeTab === 'ledger' && (
-              <ErrorBoundary sectionName="General Ledger & Vouchers Module">
-                <FinanceView
-                  onRefreshAll={refreshGlobalData}
-                  currentUserRole={currentUser.role}
-                  initialSubTab="ledger"
-                  maintenanceModules={companyProfile.maintenance_modules}
-                  companyProfile={companyProfile}
-                />
-              </ErrorBoundary>
-            )}
-            {activeTab === 'parties' && (
-              <ErrorBoundary sectionName="Parties & Khata Ledger Module">
-                <PartiesView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
-              </ErrorBoundary>
-            )}
-            {activeTab === 'hr' && (
-              <ErrorBoundary sectionName="HR, Vault & Payroll Module">
-                <ModuleMaintenanceGuard
-                  moduleKey="hr_payroll"
-                  moduleName="HR & Payroll Vault"
-                  currentUserRole={currentUser.role}
-                  maintenanceModules={companyProfile.maintenance_modules}
-                >
-                  <HRView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
-                </ModuleMaintenanceGuard>
-              </ErrorBoundary>
-            )}
-            {activeTab === 'setup' && (
-              !isTabAccessible('setup', currentUser) ? (
-                <AccessDeniedNotice
-                  moduleName="Global Master Setup & Configuration"
-                  currentRole={currentUser.role}
-                  onGoDashboard={() => {
-                    const allowed = getAccessibleTabs(currentUser);
-                    setActiveTab(allowed[0] || 'sales');
-                  }}
-                />
-              ) : (
-                <ErrorBoundary sectionName="Master Setup & Configuration Module">
-                  <SetupView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
                 </ErrorBoundary>
-              )
-            )}
-            {activeTab === 'audit' && (
-              <ErrorBoundary sectionName="System Audit Trail & Compliance Module">
-                <AuditView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
-              </ErrorBoundary>
-            )}
-            {activeTab === 'access' && (
-              !isTabAccessible('access', currentUser) ? (
-                <AccessDeniedNotice
-                  moduleName="Access Control & Authority Matrix (RBAC)"
-                  currentRole={currentUser.role}
-                  onGoDashboard={() => {
-                    const allowed = getAccessibleTabs(currentUser);
-                    setActiveTab(allowed[0] || 'sales');
-                  }}
-                />
-              ) : (
-                <ErrorBoundary sectionName="RBAC Access Control Module">
-                  <AccessControlView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+              )}
+            </div>
+
+            {/* Sales, Barcode & Dispatch Module */}
+            <div className={activeTab === 'sales' ? 'block' : 'hidden'} key="keepalive-tab-sales">
+              {visitedTabs.has('sales') && (
+                <ErrorBoundary sectionName="Sales, Barcode & Dispatch Module">
+                  <ModuleMaintenanceGuard
+                    moduleKey="sales"
+                    moduleName="Sales & Dispatch Terminal"
+                    currentUserRole={currentUser.role}
+                    maintenanceModules={companyProfile.maintenance_modules}
+                  >
+                    <SalesView
+                      onRefreshAll={refreshGlobalData}
+                      currentUserRole={currentUser.role}
+                      onSubTabChange={(tab) => setIsLiveStudioActive(tab === 'liveSelling')}
+                    />
+                  </ModuleMaintenanceGuard>
                 </ErrorBoundary>
-              )
-            )}
+              )}
+            </div>
+
+            {/* Marketing & AI Automation Module */}
+            <div className={activeTab === 'marketing' ? 'block' : 'hidden'} key="keepalive-tab-marketing">
+              {visitedTabs.has('marketing') && (
+                <ErrorBoundary sectionName="Marketing & AI Automation Module">
+                  <MarketingAutomationView
+                    onRefreshAll={refreshGlobalData}
+                    currentUserRole={currentUser.role}
+                  />
+                </ErrorBoundary>
+              )}
+            </div>
+
+            {/* Financial Accounts & COA Module */}
+            <div className={activeTab === 'finance' ? 'block' : 'hidden'} key="keepalive-tab-finance">
+              {visitedTabs.has('finance') && (
+                <ErrorBoundary sectionName="Financial Accounts & COA Module">
+                  <FinanceView
+                    onRefreshAll={refreshGlobalData}
+                    currentUserRole={currentUser.role}
+                    initialSubTab={currentUser.role === 'ADMIN' ? 'coa' : 'vouchers'}
+                    maintenanceModules={companyProfile.maintenance_modules}
+                    companyProfile={companyProfile}
+                  />
+                </ErrorBoundary>
+              )}
+            </div>
+
+            {/* General Ledger & Vouchers Module */}
+            <div className={activeTab === 'ledger' ? 'block' : 'hidden'} key="keepalive-tab-ledger">
+              {visitedTabs.has('ledger') && (
+                <ErrorBoundary sectionName="General Ledger & Vouchers Module">
+                  <FinanceView
+                    onRefreshAll={refreshGlobalData}
+                    currentUserRole={currentUser.role}
+                    initialSubTab="ledger"
+                    maintenanceModules={companyProfile.maintenance_modules}
+                    companyProfile={companyProfile}
+                  />
+                </ErrorBoundary>
+              )}
+            </div>
+
+            {/* Parties & Khata Ledger Module */}
+            <div className={activeTab === 'parties' ? 'block' : 'hidden'} key="keepalive-tab-parties">
+              {visitedTabs.has('parties') && (
+                <ErrorBoundary sectionName="Parties & Khata Ledger Module">
+                  <PartiesView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+                </ErrorBoundary>
+              )}
+            </div>
+
+            {/* HR, Vault & Payroll Module */}
+            <div className={activeTab === 'hr' ? 'block' : 'hidden'} key="keepalive-tab-hr">
+              {visitedTabs.has('hr') && (
+                <ErrorBoundary sectionName="HR, Vault & Payroll Module">
+                  <ModuleMaintenanceGuard
+                    moduleKey="hr_payroll"
+                    moduleName="HR & Payroll Vault"
+                    currentUserRole={currentUser.role}
+                    maintenanceModules={companyProfile.maintenance_modules}
+                  >
+                    <HRView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+                  </ModuleMaintenanceGuard>
+                </ErrorBoundary>
+              )}
+            </div>
+
+            {/* Global Master Setup & Configuration Module */}
+            <div className={activeTab === 'setup' ? 'block' : 'hidden'} key="keepalive-tab-setup">
+              {visitedTabs.has('setup') && (
+                !isTabAccessible('setup', currentUser) ? (
+                  <AccessDeniedNotice
+                    moduleName="Global Master Setup & Configuration"
+                    currentRole={currentUser.role}
+                    onGoDashboard={() => {
+                      const allowed = getAccessibleTabs(currentUser);
+                      setActiveTab(allowed[0] || 'sales');
+                    }}
+                  />
+                ) : (
+                  <ErrorBoundary sectionName="Master Setup & Configuration Module">
+                    <SetupView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+                  </ErrorBoundary>
+                )
+              )}
+            </div>
+
+            {/* System Audit Trail & Compliance Module */}
+            <div className={activeTab === 'audit' ? 'block' : 'hidden'} key="keepalive-tab-audit">
+              {visitedTabs.has('audit') && (
+                <ErrorBoundary sectionName="System Audit Trail & Compliance Module">
+                  <AuditView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+                </ErrorBoundary>
+              )}
+            </div>
+
+            {/* Access Control Module */}
+            <div className={activeTab === 'access' ? 'block' : 'hidden'} key="keepalive-tab-access">
+              {visitedTabs.has('access') && (
+                !isTabAccessible('access', currentUser) ? (
+                  <AccessDeniedNotice
+                    moduleName="Access Control & Authority Matrix (RBAC)"
+                    currentRole={currentUser.role}
+                    onGoDashboard={() => {
+                      const allowed = getAccessibleTabs(currentUser);
+                      setActiveTab(allowed[0] || 'sales');
+                    }}
+                  />
+                ) : (
+                  <ErrorBoundary sectionName="RBAC Access Control Module">
+                    <AccessControlView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
+                  </ErrorBoundary>
+                )
+              )}
+            </div>
           </Suspense>
         </main>
 

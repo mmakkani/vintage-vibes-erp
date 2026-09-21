@@ -4,8 +4,34 @@ import { FinanceService } from './financeService.ts';
 import { PartiesService } from './partiesService.ts';
 
 export class PurchaseService {
+  private static _invoicesCache: { data: PurchaseInvoice[]; timestamp: number } | null = null;
+  private static _gatePassesCache: { data: InwardGatePass[]; timestamp: number } | null = null;
+  private static _piecesCache: { data: PieceBreakdownItem[]; timestamp: number } | null = null;
+
+  public static invalidateInvoicesCache(): void {
+    PurchaseService._invoicesCache = null;
+  }
+
+  public static invalidateGatePassesCache(): void {
+    PurchaseService._gatePassesCache = null;
+  }
+
+  public static invalidatePiecesCache(): void {
+    PurchaseService._piecesCache = null;
+  }
+
+  public static invalidateAllPurchaseCaches(): void {
+    PurchaseService._invoicesCache = null;
+    PurchaseService._gatePassesCache = null;
+    PurchaseService._piecesCache = null;
+  }
+
   // --- Purchase Invoices ---
-  public static async getPurchaseInvoices(): Promise<PurchaseInvoice[]> {
+  public static async getPurchaseInvoices(force = false): Promise<PurchaseInvoice[]> {
+    if (!force && PurchaseService._invoicesCache && (Date.now() - PurchaseService._invoicesCache.timestamp < 30000)) {
+      return PurchaseService._invoicesCache.data;
+    }
+
     // 1. Primary route: Query server endpoint connected directly to PostgreSQL
     if (typeof window !== 'undefined') {
       try {
@@ -14,6 +40,7 @@ export class PurchaseService {
         if (apiRes && apiRes.ok) {
           const list = await apiRes.json();
           if (Array.isArray(list) && list.length > 0) {
+            PurchaseService._invoicesCache = { data: list, timestamp: Date.now() };
             return list;
           }
         }
@@ -69,7 +96,7 @@ export class PurchaseService {
       });
     });
 
-    return (invData || []).map((row: any) => {
+    const mappedInvoices = (invData || []).map((row: any) => {
       const rawDate = row.issue_date || row.invoice_date || row.created_at;
       let cleanDate = '';
       if (rawDate) {
@@ -135,6 +162,8 @@ export class PurchaseService {
         created_at: row.created_at
       } as PurchaseInvoice;
     });
+    PurchaseService._invoicesCache = { data: mappedInvoices, timestamp: Date.now() };
+    return mappedInvoices;
   }
 
 
@@ -925,7 +954,11 @@ export class PurchaseService {
   }
 
   // --- Inward Gate Passes (Bales / Consignments) ---
-  public static async getInwardGatePasses(): Promise<InwardGatePass[]> {
+  public static async getInwardGatePasses(force = false): Promise<InwardGatePass[]> {
+    if (!force && PurchaseService._gatePassesCache && (Date.now() - PurchaseService._gatePassesCache.timestamp < 30000)) {
+      return PurchaseService._gatePassesCache.data;
+    }
+
     let data: any[] | null = null;
     try {
       const res = await supabase
@@ -959,7 +992,7 @@ export class PurchaseService {
       return [];
     }
 
-    return (data || []).map((row: any) => {
+    const mappedPasses = (data || []).map((row: any) => {
       const grossKg = Number(row.total_bale_weight ?? row.weight_kg ?? 0);
       const brokenDownKg = Number(row.broken_down_weight ?? 0);
       const totalCost = Number(row.total_bale_cost ?? row.cost_price ?? 0);
@@ -989,6 +1022,9 @@ export class PurchaseService {
         createdAt: row.created_at
       } as InwardGatePass;
     });
+
+    PurchaseService._gatePassesCache = { data: mappedPasses, timestamp: Date.now() };
+    return mappedPasses;
   }
 
   public static async getGatePasses(): Promise<InwardGatePass[]> {
@@ -1364,6 +1400,7 @@ export class PurchaseService {
       }]);
     } catch (_) {}
 
+    PurchaseService.invalidateGatePassesCache();
     return {
       id: data.id,
       passNo: data.gate_pass_no || data.pass_no,
@@ -1381,7 +1418,7 @@ export class PurchaseService {
       pieceCount: Number(data.piece_count || 0),
       status: data.status,
       createdAt: data.created_at
-    } as InwardGatePass;
+    } as unknown as InwardGatePass;
   }
 
   public static createInwardPass = PurchaseService.addInwardGatePass;
@@ -1407,6 +1444,7 @@ export class PurchaseService {
       console.error('Supabase error on inward_gate_passes:', error);
       throw new Error(error.message || 'Failed to update inward gate pass');
     }
+    PurchaseService.invalidateGatePassesCache();
   }
 
   // --- Individual Garment Pieces ---
@@ -1418,7 +1456,11 @@ export class PurchaseService {
   public static readonly BALE_SORTED_PIECES_COLUMNS = 'id, bale_id, piece_code, weight_grams, cost_price, selling_price, brand_title, category, size, quality_grade, front_image, back_image, tag_image, market_segment, is_grail, ai_suggested_price, is_price_overridden, global_insights, created_at';
   public static readonly PIECES_GRID_COLUMNS = PurchaseService.INVENTORY_PIECES_COLUMNS;
 
-  public static async getInventoryPieces(limit = 1000): Promise<PieceBreakdownItem[]> {
+  public static async getInventoryPieces(limit = 1000, force = false): Promise<PieceBreakdownItem[]> {
+    if (!force && PurchaseService._piecesCache && (Date.now() - PurchaseService._piecesCache.timestamp < 30000)) {
+      return PurchaseService._piecesCache.data;
+    }
+
     try {
       const [invRes, sortedRes] = await Promise.all([
         supabase
@@ -1539,6 +1581,7 @@ export class PurchaseService {
         }
       });
 
+      PurchaseService._piecesCache = { data: mappedPieces, timestamp: Date.now() };
       return mappedPieces;
     } catch (err: any) {
       console.error('[PurchaseService] Fatal exception in getInventoryPieces:', err);
