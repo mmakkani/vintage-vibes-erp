@@ -304,7 +304,7 @@ financeRouter.delete('/coa/:id', async (req, res) => {
   try {
     client = await getDbClient();
 
-    // 1. Lookup account in accounts / chart_of_accounts
+    // 1. Lookup account safely across accounts, chart_of_accounts, and coa_accounts
     let accountCode = '';
     let tierLevel = 3;
     let currentBalance = 0;
@@ -316,29 +316,44 @@ financeRouter.delete('/coa/:id', async (req, res) => {
       [id]
     ).catch(() => ({ rows: [] }));
 
-    // Check chart_of_accounts table
+    // Check chart_of_accounts table (valid columns: id, code, current_balance, is_deleted)
     const coaLookup = await client.query(
-      `SELECT id, code, tier_level, is_active, current_balance FROM chart_of_accounts WHERE id::text = $1 OR code = $1 LIMIT 1`,
+      `SELECT id, code, current_balance, is_deleted FROM chart_of_accounts WHERE id::text = $1 OR code = $1 LIMIT 1`,
       [id]
     ).catch(() => ({ rows: [] }));
 
-    if (accLookup.rows.length === 0 && coaLookup.rows.length === 0) {
+    // Check coa_accounts table
+    const coaAccLookup = await client.query(
+      `SELECT id, code, tier_level, is_active, current_balance FROM coa_accounts WHERE id = $1 OR code = $1 LIMIT 1`,
+      [id]
+    ).catch(() => ({ rows: [] }));
+
+    if (accLookup.rows.length === 0 && coaLookup.rows.length === 0 && coaAccLookup.rows.length === 0) {
       return res.status(404).json({ error: 'Account not found' });
     }
 
-    if (accLookup.rows.length > 0) {
-      accountCode = accLookup.rows[0].account_code;
-      tierLevel = Number(accLookup.rows[0].account_level || 3);
+    if (coaAccLookup.rows.length > 0) {
+      const r = coaAccLookup.rows[0];
+      accountCode = r.code;
+      accountUuid = r.id;
+      tierLevel = Number(r.tier_level || 3);
+      currentBalance = Number(r.current_balance || 0);
     }
     if (coaLookup.rows.length > 0) {
-      accountCode = accountCode || coaLookup.rows[0].code;
-      tierLevel = Number(coaLookup.rows[0].tier_level || tierLevel);
-      currentBalance = Number(coaLookup.rows[0].current_balance || 0);
-      accountUuid = coaLookup.rows[0].id;
+      const r = coaLookup.rows[0];
+      accountCode = accountCode || r.code;
+      accountUuid = accountUuid || r.id;
+      currentBalance = currentBalance || Number(r.current_balance || 0);
+    }
+    if (accLookup.rows.length > 0) {
+      const r = accLookup.rows[0];
+      accountCode = accountCode || r.account_code;
+      tierLevel = Number(r.account_level || tierLevel);
     }
 
-    // Master folder protection
-    if (tierLevel === 1 || accountCode.endsWith('000-00') || ['1000-00', '2000-00', '3000-00', '4000-00', '5000-00'].includes(accountCode)) {
+    accountCode = accountCode || id;
+    const isMaster = accountCode.endsWith('000-00') || ['1000-00', '2000-00', '3000-00', '4000-00', '5000-00'].includes(accountCode);
+    if (tierLevel === 1 || isMaster) {
       return res.status(400).json({
         error: "Cannot delete: Master tier folder accounts cannot be deleted. Please deactivate it instead."
       });
@@ -351,10 +366,10 @@ financeRouter.delete('/coa/:id', async (req, res) => {
       });
     }
 
-    // Check journal_entries
+    // Check journal_entries (UUID-safe)
     const jeCheck = await client.query(
-      `SELECT id FROM journal_entries WHERE account_id::text = $1 ${accountUuid ? 'OR account_id = $2' : ''} LIMIT 1`,
-      accountUuid ? [id, accountUuid] : [id]
+      `SELECT id FROM journal_entries WHERE account_id::text = $1 ${accountUuid && accountUuid !== id ? 'OR account_id::text = $2' : ''} LIMIT 1`,
+      accountUuid && accountUuid !== id ? [id, accountUuid] : [id]
     ).catch(() => ({ rows: [] }));
     if (jeCheck.rows.length > 0) {
       return res.status(400).json({
@@ -364,8 +379,10 @@ financeRouter.delete('/coa/:id', async (req, res) => {
 
     // Check voucher_entries
     const veCheck = await client.query(
-      `SELECT id FROM voucher_entries WHERE account_id::text = $1 ${accountCode ? 'OR account_code = $2' : ''} LIMIT 1`,
-      accountCode ? [id, accountCode] : [id]
+      `SELECT id FROM voucher_entries WHERE account_id::text = $1 ${accountUuid && accountUuid !== id ? 'OR account_id::text = $2' : ''} ${accountCode ? 'OR account_code = $3' : ''} LIMIT 1`,
+      accountUuid && accountUuid !== id
+        ? (accountCode ? [id, accountUuid, accountCode] : [id, accountUuid])
+        : (accountCode ? [id, accountCode] : [id])
     ).catch(() => ({ rows: [] }));
     if (veCheck.rows.length > 0) {
       return res.status(400).json({
@@ -394,6 +411,10 @@ financeRouter.delete('/coa/:id', async (req, res) => {
       await client.query('DELETE FROM chart_of_accounts WHERE id::text = $1', [id]).catch(() => {});
       await client.query('DELETE FROM accounts WHERE account_id::text = $1', [id]).catch(() => {});
       await client.query('DELETE FROM coa_accounts WHERE id::text = $1', [id]).catch(() => {});
+    }
+    if (accountUuid && accountUuid !== id) {
+      await client.query('DELETE FROM chart_of_accounts WHERE id::text = $1', [accountUuid]).catch(() => {});
+      await client.query('DELETE FROM coa_accounts WHERE id::text = $1', [accountUuid]).catch(() => {});
     }
     await client.query('COMMIT').catch(() => {});
 

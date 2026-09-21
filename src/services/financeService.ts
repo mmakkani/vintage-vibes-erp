@@ -300,16 +300,36 @@ export class FinanceService {
       throw new Error('Valid Account ID is required for deletion');
     }
 
+    const strId = String(id).trim();
+    const strCode = (code || '').trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(strId);
+
     // 1. Strict Accounting Validation Check: Prevent deletion of accounts with transactions or non-zero balance
     try {
-      const { data: coaAcc } = await supabase
-        .from('chart_of_accounts')
-        .select('id, code, current_balance, tier_level')
-        .or(`id.eq.${id}${code ? `,code.eq.${code}` : ''}`)
-        .maybeSingle();
+      let coaQuery = supabase.from('chart_of_accounts').select('id, code, current_balance');
+      if (isUuid) {
+        coaQuery = strCode ? coaQuery.or(`id.eq.${strId},code.eq.${strCode}`) : coaQuery.eq('id', strId);
+      } else {
+        coaQuery = coaQuery.eq('code', strId);
+      }
+      let { data: coaAcc } = await coaQuery.maybeSingle();
+
+      if (!coaAcc) {
+        // Also check coa_accounts
+        let caQuery = supabase.from('coa_accounts').select('id, code, current_balance, tier_level');
+        if (isUuid) {
+          caQuery = strCode ? caQuery.or(`id.eq.${strId},code.eq.${strCode}`) : caQuery.eq('id', strId);
+        } else {
+          caQuery = caQuery.eq('code', strId);
+        }
+        const { data: caData } = await caQuery.maybeSingle();
+        coaAcc = caData;
+      }
 
       if (coaAcc) {
-        if (Number(coaAcc.tier_level) === 1) {
+        const targetCode = coaAcc.code || strCode || strId;
+        const isMaster = targetCode.endsWith('000-00') || ['1000-00', '2000-00', '3000-00', '4000-00', '5000-00'].includes(targetCode) || Number(coaAcc.tier_level) === 1;
+        if (isMaster) {
           throw new Error("Cannot delete: Master tier folder accounts cannot be deleted. Please deactivate it instead.");
         }
 
@@ -318,27 +338,35 @@ export class FinanceService {
           throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
         }
 
-        const targetUuid = coaAcc.id;
-        const targetCode = coaAcc.code || code;
+        const targetUuid = coaAcc.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(coaAcc.id)
+          ? coaAcc.id
+          : (isUuid ? strId : null);
 
-        // Check journal_entries
-        const { data: je } = await supabase
-          .from('journal_entries')
-          .select('id')
-          .eq('account_id', targetUuid)
-          .limit(1);
-        if (je && je.length > 0) {
-          throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+        // Check journal_entries (Strict UUID only)
+        if (targetUuid) {
+          const { data: je } = await supabase
+            .from('journal_entries')
+            .select('id')
+            .eq('account_id', targetUuid)
+            .limit(1);
+          if (je && je.length > 0) {
+            throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+          }
         }
 
         // Check voucher_entries
-        const { data: ve } = await supabase
-          .from('voucher_entries')
-          .select('id')
-          .or(`account_id.eq.${targetUuid}${targetCode ? `,account_code.eq.${targetCode}` : ''}`)
-          .limit(1);
-        if (ve && ve.length > 0) {
-          throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+        const veOrClauses: string[] = [];
+        if (targetUuid) veOrClauses.push(`account_id.eq.${targetUuid}`);
+        if (targetCode) veOrClauses.push(`account_code.eq.${targetCode}`);
+        if (veOrClauses.length > 0) {
+          const { data: ve } = await supabase
+            .from('voucher_entries')
+            .select('id')
+            .or(veOrClauses.join(','))
+            .limit(1);
+          if (ve && ve.length > 0) {
+            throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+          }
         }
       }
     } catch (valErr: any) {
@@ -359,18 +387,38 @@ export class FinanceService {
           resultData = resJson;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('fetch') && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
+        // Strict accounting lock errors must be preserved and rethrown
+        if (err.message?.includes('Cannot delete:')) {
           throw err;
         }
+        // If 404 or network error, proceed to Step 3 Supabase direct fallback
       }
     }
 
     // 3. Direct Supabase Fallback
     if (!apiSuccess) {
-      await supabase.from('chart_of_accounts').delete().or(`id.eq.${id}${code ? `,code.eq.${code}` : ''}`);
-      try {
-        await supabase.from('accounts').delete().or(`account_id.eq.${id}${code ? `,account_code.eq.${code}` : ''}`);
-      } catch (_) {}
+      const deleteCode = strCode || (!isUuid ? strId : '');
+      const deleteUuid = isUuid ? strId : null;
+
+      if (deleteUuid) {
+        try {
+          await supabase.from('chart_of_accounts').delete().eq('id', deleteUuid);
+        } catch (_) {}
+        try {
+          await supabase.from('coa_accounts').delete().eq('id', deleteUuid);
+        } catch (_) {}
+      }
+      if (deleteCode) {
+        try {
+          await supabase.from('chart_of_accounts').delete().eq('code', deleteCode);
+        } catch (_) {}
+        try {
+          await supabase.from('coa_accounts').delete().eq('code', deleteCode);
+        } catch (_) {}
+        try {
+          await supabase.from('accounts').delete().eq('account_code', deleteCode);
+        } catch (_) {}
+      }
       resultData = { success: true };
     }
 

@@ -560,13 +560,21 @@ export class PartiesService {
       throw new Error('Valid Party ID is required for deletion');
     }
 
+    const strId = String(id).trim();
+    const isNum = /^\d+$/.test(strId);
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(strId);
+
     // Strict Accounting Validation Check: Prevent deletion of parties with transactions or non-zero balance
     try {
-      const { data: pCheck } = await supabase
-        .from('parties')
-        .select('id, current_balance, coa_account_id')
-        .or(`id.eq.${id},party_id.eq.${id}`)
-        .maybeSingle();
+      let pQuery = supabase.from('parties').select('id, party_id, code, current_balance, coa_account_id');
+      if (isUuid) {
+        pQuery = pQuery.eq('id', strId);
+      } else if (isNum) {
+        pQuery = pQuery.eq('party_id', parseInt(strId, 10));
+      } else {
+        pQuery = pQuery.or(`id.eq.${strId},code.eq.${strId}`);
+      }
+      const { data: pCheck } = await pQuery.maybeSingle();
 
       if (pCheck) {
         const curBal = Math.abs(Number(pCheck.current_balance || 0));
@@ -574,37 +582,77 @@ export class PartiesService {
           throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
         }
 
-        const partyId = pCheck.id || id;
-        const coaId = pCheck.coa_account_id;
+        const partyUuid = pCheck.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pCheck.id)
+          ? pCheck.id
+          : (isUuid ? strId : null);
 
-        // Check journal entries
-        const { data: je } = await supabase
-          .from('journal_entries')
-          .select('id')
-          .or(`party_id.eq.${partyId}${coaId ? `,account_id.eq.${coaId}` : ''}`)
-          .limit(1);
-        if (je && je.length > 0) {
-          throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+        let coaUuid: string | null = null;
+        const coaIdOrCode = pCheck.coa_account_id;
+        if (coaIdOrCode) {
+          if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(coaIdOrCode)) {
+            coaUuid = coaIdOrCode;
+          } else {
+            const { data: coaRec } = await supabase
+              .from('chart_of_accounts')
+              .select('id')
+              .eq('code', coaIdOrCode)
+              .maybeSingle();
+            if (coaRec?.id) {
+              coaUuid = coaRec.id;
+            }
+          }
+        }
+
+        // Check journal entries (STRICT UUID ONLY to avoid Postgres 22P02 syntax error)
+        if (partyUuid || coaUuid) {
+          let jeQuery = supabase.from('journal_entries').select('id');
+          if (partyUuid && coaUuid) {
+            jeQuery = jeQuery.or(`party_id.eq.${partyUuid},account_id.eq.${coaUuid}`);
+          } else if (partyUuid) {
+            jeQuery = jeQuery.eq('party_id', partyUuid);
+          } else if (coaUuid) {
+            jeQuery = jeQuery.eq('account_id', coaUuid);
+          }
+          const { data: je } = await jeQuery.limit(1);
+          if (je && je.length > 0) {
+            throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+          }
         }
 
         // Check voucher entries
-        const { data: ve } = await supabase
-          .from('voucher_entries')
-          .select('id')
-          .eq('party_id', partyId)
-          .limit(1);
-        if (ve && ve.length > 0) {
-          throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+        const partyIdStr = String(pCheck.party_id ?? (isNum ? strId : ''));
+        const partyCodeStr = pCheck.code || '';
+        const orClauses: string[] = [];
+        if (partyUuid) orClauses.push(`party_id.eq.${partyUuid}`);
+        if (partyIdStr) orClauses.push(`party_id.eq.${partyIdStr}`);
+        if (coaIdOrCode) orClauses.push(`account_code.eq.${coaIdOrCode}`);
+        if (coaUuid) orClauses.push(`account_id.eq.${coaUuid}`);
+
+        if (orClauses.length > 0) {
+          const { data: ve } = await supabase
+            .from('voucher_entries')
+            .select('id')
+            .or(orClauses.join(','))
+            .limit(1);
+          if (ve && ve.length > 0) {
+            throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+          }
         }
 
         // Check purchase invoices
-        const { data: pi } = await supabase
-          .from('purchase_invoices')
-          .select('id')
-          .eq('supplier_id', partyId)
-          .limit(1);
-        if (pi && pi.length > 0) {
-          throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+        const piOrClauses: string[] = [];
+        if (partyUuid) piOrClauses.push(`supplier_id.eq.${partyUuid}`);
+        if (partyIdStr) piOrClauses.push(`supplier_id.eq.${partyIdStr}`);
+        if (partyCodeStr) piOrClauses.push(`supplier_id.eq.${partyCodeStr}`);
+        if (piOrClauses.length > 0) {
+          const { data: pi } = await supabase
+            .from('purchase_invoices')
+            .select('id')
+            .or(piOrClauses.join(','))
+            .limit(1);
+          if (pi && pi.length > 0) {
+            throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+          }
         }
       }
     } catch (valErr: any) {
