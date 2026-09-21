@@ -58,9 +58,15 @@ async function deploy() {
     AS $$
     DECLARE
       v_sheet RECORD;
+      v_chart_exp RECORD;
+      v_chart_pay RECORD;
+      v_chart_ded RECORD;
       v_exp_acc RECORD;
       v_pay_acc RECORD;
       v_ded_acc RECORD;
+      v_ledger_exp_id VARCHAR(255);
+      v_ledger_pay_id VARCHAR(255);
+      v_ledger_ded_id VARCHAR(255);
       v_total_gross NUMERIC(12, 2) := 0;
       v_total_deductions NUMERIC(12, 2) := 0;
       v_total_net NUMERIC(12, 2) := 0;
@@ -83,7 +89,7 @@ async function deploy() {
         v_voucher_date := CURRENT_DATE;
       ELSE
         BEGIN
-          v_voucher_date := TO_DATE(p_month_year || '-01', 'YYYY-MM-DD');
+          v_voucher_date := (TO_DATE(p_month_year || '-01', 'YYYY-MM-DD') + INTERVAL '1 month - 1 day')::date;
         EXCEPTION WHEN OTHERS THEN
           v_voucher_date := CURRENT_DATE;
         END;
@@ -126,34 +132,58 @@ async function deploy() {
           p_month_year, v_total_gross, v_total_net, v_total_deductions;
       END IF;
 
-      -- 3. Resolve Strictly Transactional COA Accounts:
-      -- Debit: 5210-100 (SALARY EXPNSE)
-      SELECT id, code, name INTO v_exp_acc 
-      FROM public.coa_accounts 
-      WHERE code = '5210-100' AND is_active = true LIMIT 1;
+      -- 3. Dynamic UUID Lookup from chart_of_accounts:
+      -- Debit: 5210-100 (SALARY EXPNSE) or fallback 5210-01
+      SELECT id, code, name INTO v_chart_exp 
+      FROM public.chart_of_accounts 
+      WHERE code = '5210-100' LIMIT 1;
       
-      IF v_exp_acc.id IS NULL THEN
-        RAISE EXCEPTION 'Active transactional COA account 5210-100 (SALARY EXPNSE) not found';
+      IF v_chart_exp.id IS NULL THEN
+        SELECT id, code, name INTO v_chart_exp 
+        FROM public.chart_of_accounts 
+        WHERE code = '5210-01' LIMIT 1;
+      END IF;
+
+      IF v_chart_exp.id IS NULL THEN
+        RAISE EXCEPTION 'Account code 5210-100 not found in Chart of Accounts. Please create it first.';
       END IF;
 
       -- Credit: 2310-01 (Staff Salaries Payable)
-      SELECT id, code, name INTO v_pay_acc 
-      FROM public.coa_accounts 
-      WHERE code = '2310-01' AND is_active = true LIMIT 1;
+      SELECT id, code, name INTO v_chart_pay 
+      FROM public.chart_of_accounts 
+      WHERE code = '2310-01' LIMIT 1;
       
-      IF v_pay_acc.id IS NULL THEN
-        RAISE EXCEPTION 'Active transactional COA account 2310-01 (Staff Salaries Payable) not found';
+      IF v_chart_pay.id IS NULL THEN
+        RAISE EXCEPTION 'Account code 2310-01 not found in Chart of Accounts. Please create it first.';
       END IF;
 
       -- Credit: 1135-01 (Staff Advance & Loan Receivables) if deductions exist
       IF v_total_deductions > 0 THEN
+        SELECT id, code, name INTO v_chart_ded 
+        FROM public.chart_of_accounts 
+        WHERE code = '1135-01' LIMIT 1;
+        
+        IF v_chart_ded.id IS NULL THEN
+          RAISE EXCEPTION 'Account code 1135-01 not found in Chart of Accounts. Please create it first.';
+        END IF;
+      END IF;
+
+      -- Resolve coa_accounts IDs for ledgers table foreign key constraint (ledgers_account_id_fkey)
+      SELECT id, code, name INTO v_exp_acc 
+      FROM public.coa_accounts 
+      WHERE code = v_chart_exp.code LIMIT 1;
+      v_ledger_exp_id := COALESCE(v_exp_acc.id, v_chart_exp.id::text);
+
+      SELECT id, code, name INTO v_pay_acc 
+      FROM public.coa_accounts 
+      WHERE code = v_chart_pay.code LIMIT 1;
+      v_ledger_pay_id := COALESCE(v_pay_acc.id, v_chart_pay.id::text);
+
+      IF v_total_deductions > 0 THEN
         SELECT id, code, name INTO v_ded_acc 
         FROM public.coa_accounts 
-        WHERE code = '1135-01' AND is_active = true LIMIT 1;
-        
-        IF v_ded_acc.id IS NULL THEN
-          RAISE EXCEPTION 'Active transactional COA account 1135-01 (Staff Advance & Loan Receivables) not found';
-        END IF;
+        WHERE code = v_chart_ded.code LIMIT 1;
+        v_ledger_ded_id := COALESCE(v_ded_acc.id, v_chart_ded.id::text);
       END IF;
 
       -- 4. Clean up any stale draft vouchers with this number
@@ -202,7 +232,7 @@ async function deploy() {
         debit, credit, particulars, memo, narration, date, created_at,
         currency, exchange_rate, foreign_debit, foreign_credit
       ) VALUES (
-        gen_random_uuid()::text, v_voucher_id, v_voucher_no, v_exp_acc.id, '5210-100', v_exp_acc.name,
+        gen_random_uuid()::text, v_voucher_id, v_voucher_no, v_chart_exp.id::text, v_chart_exp.code, v_chart_exp.name,
         v_total_gross, 0,
         'Staff Salaries Expense for ' || p_month_year,
         'Staff Salaries Expense for ' || p_month_year,
@@ -217,7 +247,7 @@ async function deploy() {
           debit, credit, particulars, memo, narration, date, created_at,
           currency, exchange_rate, foreign_debit, foreign_credit
         ) VALUES (
-          gen_random_uuid()::text, v_voucher_id, v_voucher_no, v_ded_acc.id, '1135-01', v_ded_acc.name,
+          gen_random_uuid()::text, v_voucher_id, v_voucher_no, v_chart_ded.id::text, v_chart_ded.code, v_chart_ded.name,
           0, v_total_deductions,
           'Staff Loan & Advance Recoveries for ' || p_month_year,
           'Staff Loan & Advance Recoveries for ' || p_month_year,
@@ -232,7 +262,7 @@ async function deploy() {
         debit, credit, particulars, memo, narration, date, created_at,
         currency, exchange_rate, foreign_debit, foreign_credit
       ) VALUES (
-        gen_random_uuid()::text, v_voucher_id, v_voucher_no, v_pay_acc.id, '2310-01', v_pay_acc.name,
+        gen_random_uuid()::text, v_voucher_id, v_voucher_no, v_chart_pay.id::text, v_chart_pay.code, v_chart_pay.name,
         0, v_total_net,
         'Accrued Staff Salaries Payable for ' || p_month_year,
         'Accrued Staff Salaries Payable for ' || p_month_year,
@@ -249,7 +279,7 @@ async function deploy() {
       ) VALUES
       (
         gen_random_uuid()::text, v_voucher_date, v_voucher_date, v_voucher_id, v_voucher_no,
-        v_exp_acc.id, '5210-100', v_exp_acc.name,
+        v_chart_exp.id::text, v_chart_exp.code, v_chart_exp.name,
         v_total_gross, 0, v_total_gross,
         'Staff Salaries Expense for ' || p_month_year,
         'Staff Salaries Expense for ' || p_month_year,
@@ -264,7 +294,7 @@ async function deploy() {
           currency, exchange_rate, foreign_debit, foreign_credit, created_at
         ) VALUES (
           gen_random_uuid()::text, v_voucher_date, v_voucher_date, v_voucher_id, v_voucher_no,
-          v_ded_acc.id, '1135-01', v_ded_acc.name,
+          v_chart_ded.id::text, v_chart_ded.code, v_chart_ded.name,
           0, v_total_deductions, -v_total_deductions,
           'Staff Loan & Advance Recoveries for ' || p_month_year,
           'Staff Loan & Advance Recoveries for ' || p_month_year,
@@ -279,14 +309,14 @@ async function deploy() {
         currency, exchange_rate, foreign_debit, foreign_credit, created_at
       ) VALUES (
         gen_random_uuid()::text, v_voucher_date, v_voucher_date, v_voucher_id, v_voucher_no,
-        v_pay_acc.id, '2310-01', v_pay_acc.name,
+        v_chart_pay.id::text, v_chart_pay.code, v_chart_pay.name,
         0, v_total_net, -v_total_net,
         'Accrued Staff Salaries Payable for ' || p_month_year,
         'Accrued Staff Salaries Payable for ' || p_month_year,
         'AED', 1.0, 0, v_total_net, v_now
       );
 
-      -- Mirror to ledgers
+      -- Mirror to ledgers (using v_ledger_*_id to strictly satisfy ledgers_account_id_fkey)
       INSERT INTO public.ledgers (
         id, entry_date, date, voucher_id, voucher_no,
         account_id, account_code, account_name,
@@ -295,7 +325,7 @@ async function deploy() {
       ) VALUES
       (
         gen_random_uuid()::text, v_voucher_date, v_voucher_date, v_voucher_id, v_voucher_no,
-        v_exp_acc.id, '5210-100', v_exp_acc.name,
+        v_ledger_exp_id, v_chart_exp.code, v_chart_exp.name,
         v_total_gross, 0, v_total_gross,
         'Staff Salaries Expense for ' || p_month_year,
         'Staff Salaries Expense for ' || p_month_year,
@@ -310,7 +340,7 @@ async function deploy() {
           currency, exchange_rate, foreign_debit, foreign_credit, created_at
         ) VALUES (
           gen_random_uuid()::text, v_voucher_date, v_voucher_date, v_voucher_id, v_voucher_no,
-          v_ded_acc.id, '1135-01', v_ded_acc.name,
+          v_ledger_ded_id, v_chart_ded.code, v_chart_ded.name,
           0, v_total_deductions, -v_total_deductions,
           'Staff Loan & Advance Recoveries for ' || p_month_year,
           'Staff Loan & Advance Recoveries for ' || p_month_year,
@@ -325,7 +355,7 @@ async function deploy() {
         currency, exchange_rate, foreign_debit, foreign_credit, created_at
       ) VALUES (
         gen_random_uuid()::text, v_voucher_date, v_voucher_date, v_voucher_id, v_voucher_no,
-        v_pay_acc.id, '2310-01', v_pay_acc.name,
+        v_ledger_pay_id, v_chart_pay.code, v_chart_pay.name,
         0, v_total_net, -v_total_net,
         'Accrued Staff Salaries Payable for ' || p_month_year,
         'Accrued Staff Salaries Payable for ' || p_month_year,
@@ -358,6 +388,40 @@ async function deploy() {
       UPDATE public.payroll_records
       SET voucher_id = v_voucher_id, payment_status = 'POSTED'
       WHERE payroll_month = p_month_year;
+
+      -- 9. Update live balances in chart_of_accounts and coa_accounts
+      UPDATE public.chart_of_accounts 
+      SET current_balance = COALESCE(current_balance, 0) + v_total_gross 
+      WHERE id = v_chart_exp.id;
+
+      UPDATE public.coa_accounts 
+      SET current_balance = COALESCE(current_balance, 0) + v_total_gross 
+      WHERE code = v_chart_exp.code;
+
+      UPDATE public.chart_of_accounts 
+      SET current_balance = COALESCE(current_balance, 0) + v_total_net 
+      WHERE id = v_chart_pay.id;
+
+      UPDATE public.coa_accounts 
+      SET current_balance = COALESCE(current_balance, 0) + v_total_net 
+      WHERE code = v_chart_pay.code;
+
+      IF v_total_deductions > 0 THEN
+        UPDATE public.chart_of_accounts 
+        SET current_balance = COALESCE(current_balance, 0) - v_total_deductions 
+        WHERE id = v_chart_ded.id;
+
+        UPDATE public.coa_accounts 
+        SET current_balance = COALESCE(current_balance, 0) - v_total_deductions 
+        WHERE code = v_chart_ded.code;
+      END IF;
+
+      -- Ensure live balances are synchronized
+      BEGIN
+        PERFORM public.sync_coa_current_balances();
+      EXCEPTION WHEN OTHERS THEN
+        NULL;
+      END;
 
       RETURN jsonb_build_object(
         'success', true,

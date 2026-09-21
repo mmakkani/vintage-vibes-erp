@@ -1405,11 +1405,37 @@ export class HrService {
     // CREDIT: 1135-01 Staff Advance & Loan Receivables (totalDeductions, if > 0)
     // CREDIT: 2310-01 Staff Salaries Payable (totalNet)
     if (totalGross > 0) {
-      // Dynamic COA Lookups
-      const coaList = await FinanceService.getCoaAccounts();
-      const expAcc = coaList.find(a => a.code === '5210-100') || coaList.find(a => a.code === '5210-01');
-      const payAcc = coaList.find(a => a.code === '2310-01');
-      const dedAcc = coaList.find(a => a.code === '1135-01');
+      // 1. Dynamic UUID Lookup strictly from chart_of_accounts (No hardcoded UUIDs)
+      let chartData: any[] | null = null;
+      try {
+        const { data, error } = await supabase
+          .from('chart_of_accounts')
+          .select('id, code, name')
+          .in('code', ['5210-100', '5210-01', '2310-01', '1135-01']);
+        if (!error && Array.isArray(data) && data.length > 0) {
+          chartData = data;
+        }
+      } catch (_) {}
+
+      // Fallback if direct query returns empty
+      if (!chartData || chartData.length === 0) {
+        chartData = await FinanceService.getCoaAccounts();
+      }
+
+      const expAcc = chartData?.find((a: any) => (a.code || a.account_code) === '5210-100') || chartData?.find((a: any) => (a.code || a.account_code) === '5210-01');
+      if (!expAcc || !expAcc.id) {
+        throw new Error("Account code 5210-100 not found in Chart of Accounts. Please create it first.");
+      }
+
+      const payAcc = chartData?.find((a: any) => (a.code || a.account_code) === '2310-01');
+      if (!payAcc || !payAcc.id) {
+        throw new Error("Account code 2310-01 not found in Chart of Accounts. Please create it first.");
+      }
+
+      const dedAcc = chartData?.find((a: any) => (a.code || a.account_code) === '1135-01');
+      if (totalDeductions > 0 && (!dedAcc || !dedAcc.id)) {
+        throw new Error("Account code 1135-01 not found in Chart of Accounts. Please create it first.");
+      }
 
       // Clean up previous entries if re-posting
       try {
@@ -1428,21 +1454,21 @@ export class HrService {
       const voucherLines: any[] = [
         {
           id: `vli-pay-dr-${monthYear}`,
-          accountId: expAcc?.id || '7829377d-6af0-42fb-bba4-22775afd7523',
-          accountCode: '5210-100',
-          accountName: expAcc?.name || 'SALARY EXPNSE',
+          accountId: String(expAcc.id),
+          accountCode: expAcc.code || '5210-100',
+          accountName: expAcc.name || 'SALARY EXPNSE',
           debitAmount: totalGross,
           creditAmount: 0,
           memo: `Staff Salaries Expense for ${monthYear}`
         }
       ];
 
-      if (totalDeductions > 0) {
+      if (totalDeductions > 0 && dedAcc) {
         voucherLines.push({
           id: `vli-pay-ded-${monthYear}`,
-          accountId: dedAcc?.id || '7925f934-2f85-4141-a891-0c9e5c56dfdb',
-          accountCode: '1135-01',
-          accountName: dedAcc?.name || 'Staff Advance & Loan Receivables',
+          accountId: String(dedAcc.id),
+          accountCode: dedAcc.code || '1135-01',
+          accountName: dedAcc.name || 'Staff Advance & Loan Receivables',
           debitAmount: 0,
           creditAmount: totalDeductions,
           memo: `Staff Loan & Advance Recoveries for ${monthYear}`
@@ -1451,9 +1477,9 @@ export class HrService {
 
       voucherLines.push({
         id: `vli-pay-cr-${monthYear}`,
-        accountId: payAcc?.id || '411f47dd-068f-45f6-8978-df1b867f4fa5',
-        accountCode: '2310-01',
-        accountName: payAcc?.name || 'Staff Salaries Payable',
+        accountId: String(payAcc.id),
+        accountCode: payAcc.code || '2310-01',
+        accountName: payAcc.name || 'Staff Salaries Payable',
         debitAmount: 0,
         creditAmount: totalNet,
         memo: `Accrued Salaries Payable for ${monthYear}`
@@ -1477,16 +1503,16 @@ export class HrService {
         const journalLines: any[] = [
           {
             voucher_id: voucherId,
-            account_id: expAcc?.id,
+            account_id: String(expAcc.id),
             debit: totalGross,
             credit: 0,
             description: memo
           }
         ];
-        if (totalDeductions > 0) {
+        if (totalDeductions > 0 && dedAcc) {
           journalLines.push({
             voucher_id: voucherId,
-            account_id: dedAcc?.id,
+            account_id: String(dedAcc.id),
             debit: 0,
             credit: totalDeductions,
             description: memo
@@ -1494,7 +1520,7 @@ export class HrService {
         }
         journalLines.push({
           voucher_id: voucherId,
-          account_id: payAcc?.id,
+          account_id: String(payAcc.id),
           debit: 0,
           credit: totalNet,
           description: memo

@@ -528,7 +528,19 @@ export class FinanceService {
       }
 
       try {
-        await supabase.from('ledgers').insert(generalLedgerRows);
+        let coaMap: Map<string, string> = new Map();
+        try {
+          const { data: coaAccs } = await supabase.from('coa_accounts').select('id, code');
+          if (Array.isArray(coaAccs)) {
+            coaMap = new Map(coaAccs.map((a: any) => [a.code, String(a.id)]));
+          }
+        } catch (_) {}
+
+        const ledgersRows = generalLedgerRows.map((glRow: any) => ({
+          ...glRow,
+          account_id: coaMap.get(glRow.account_code) || glRow.account_id
+        }));
+        await supabase.from('ledgers').insert(ledgersRows);
       } catch (err) {
         console.warn('ledgers insert warning:', err);
       }
@@ -610,7 +622,15 @@ export class FinanceService {
       }));
       if (glRows.length > 0) {
         try { await supabase.from('general_ledger').insert(glRows); } catch {}
-        try { await supabase.from('ledgers').insert(glRows); } catch {}
+        try {
+          let coaMap: Map<string, string> = new Map();
+          try {
+            const { data: coaAccs } = await supabase.from('coa_accounts').select('id, code');
+            if (Array.isArray(coaAccs)) coaMap = new Map(coaAccs.map((a: any) => [a.code, String(a.id)]));
+          } catch (_) {}
+          const mappedLedgers = glRows.map((r: any) => ({ ...r, account_id: coaMap.get(r.account_code) || r.account_id }));
+          await supabase.from('ledgers').insert(mappedLedgers);
+        } catch {}
       }
     }
 
@@ -797,7 +817,16 @@ export class FinanceService {
         console.warn('general_ledger update insert warning:', err);
       }
       try {
-        await supabase.from('ledgers').insert(generalLedgerRows);
+        let coaMap: Map<string, string> = new Map();
+        try {
+          const { data: coaAccs } = await supabase.from('coa_accounts').select('id, code');
+          if (Array.isArray(coaAccs)) coaMap = new Map(coaAccs.map((a: any) => [a.code, String(a.id)]));
+        } catch (_) {}
+        const mappedLedgers = generalLedgerRows.map((glRow: any) => ({
+          ...glRow,
+          account_id: coaMap.get(glRow.account_code) || glRow.account_id
+        }));
+        await supabase.from('ledgers').insert(mappedLedgers);
       } catch (err) {
         console.warn('ledgers update insert warning:', err);
       }
