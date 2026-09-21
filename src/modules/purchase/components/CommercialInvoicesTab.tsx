@@ -23,6 +23,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { openBatchBaleThermalTagsPrintWindow } from '../../../utils/thermalPrinter.ts';
+import { openCommercialInvoiceA4PrintWindow, numberToWords } from '../../../utils/printInvoiceA4.ts';
 import { supabase } from '../../../supabaseClient.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 
@@ -277,20 +278,145 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
     }
   };
 
+  const handleDirectA4Print = async (inv: PurchaseInvoice) => {
+    let invItems = inv.items || [];
+    if (invItems.length === 0) {
+      try {
+        const { data: dbItems } = await supabase
+          .from('purchase_invoice_items')
+          .select('*')
+          .eq('invoice_id', String(inv.id));
+        if (dbItems && dbItems.length > 0) {
+          invItems = dbItems.map((itemRow: any, idx: number) => ({
+            id: String(itemRow.id || `pi-${idx}`),
+            itemId: itemRow.item_code || itemRow.id,
+            itemCode: itemRow.item_code || 'VINT-01',
+            itemName: itemRow.item_name || itemRow.description || 'Vintage Mix Bales',
+            packagingUom: itemRow.packaging_uom || itemRow.packaging || 'BALES',
+            packageCount: Number(itemRow.package_count ?? itemRow.quantity ?? 1),
+            weightUom: 'KG',
+            totalWeight: Number(itemRow.total_weight ?? itemRow.total_kg ?? 0),
+            ratePerWeight: Number(itemRow.rate_per_weight ?? itemRow.rate ?? 0),
+            lineTotal: Number(itemRow.line_total ?? 0)
+          }));
+        }
+      } catch (e) {
+        console.warn('Error fetching items for A4 print:', e);
+      }
+    }
+
+    const currency = (inv.currency || 'AED').toUpperCase();
+    const exchangeRate = Number(inv.exchangeRate) || (currency === 'USD' ? 3.6725 : currency === 'EUR' ? 4.015 : 1);
+
+    const mappedItems = (invItems.length > 0 ? invItems : [
+      {
+        id: `pi-${inv.id || '1'}`,
+        itemName: 'Vintage Mix Bales',
+        packagingUom: 'BALES',
+        packageCount: Number(inv.totalBalesCount || (inv as any).total_bales_count || 1),
+        totalWeight: Number(inv.totalWeightKg || (inv as any).total_weight_kg || 25),
+        ratePerWeight: 0,
+        lineTotal: Number(inv.totalAmount || 0)
+      }
+    ]).map((i: any) => {
+      const count = Number(i.packageCount) || 1;
+      const grossKg = Number(i.totalWeight) || 0;
+      const netKg = Number((grossKg * 0.96).toFixed(1));
+      const rawRate = Number(i.ratePerWeight) || 0;
+      const rawLineTotal = Number(i.lineTotal) || (grossKg * rawRate);
+
+      let unitPriceUsd = 0;
+      let totalUsd = 0;
+      let unitPriceAed = 0;
+      let totalAed = 0;
+
+      if (currency === 'USD') {
+        unitPriceUsd = rawRate;
+        totalUsd = rawLineTotal;
+        unitPriceAed = Number((rawRate * exchangeRate).toFixed(2));
+        totalAed = Number((rawLineTotal * exchangeRate).toFixed(2));
+      } else {
+        unitPriceAed = rawRate;
+        totalAed = rawLineTotal;
+        unitPriceUsd = Number((rawRate / exchangeRate).toFixed(2));
+        totalUsd = Number((rawLineTotal / exchangeRate).toFixed(2));
+      }
+
+      return {
+        description: `${i.itemName || 'Vintage Mix Bales'} (${i.packagingUom || 'BALES'} packing)`,
+        hsCode: '6309.00.10',
+        quantityBales: count,
+        netWeightKg: netKg,
+        grossWeightKg: grossKg,
+        unitPriceUsd,
+        totalUsd,
+        unitPriceAed,
+        totalAed
+      };
+    });
+
+    const totalBales = mappedItems.reduce((acc, i) => acc + i.quantityBales, 0);
+    const totalNetKg = mappedItems.reduce((acc, i) => acc + i.netWeightKg, 0);
+    const totalGrossKg = mappedItems.reduce((acc, i) => acc + i.grossWeightKg, 0);
+    const totalUsd = mappedItems.reduce((acc, i) => acc + i.totalUsd, 0);
+    const totalAed = mappedItems.reduce((acc, i) => acc + i.totalAed, 0);
+
+    const freightAmount = Number(inv.freightAmount || (inv as any).freight_amount || 0);
+    const customsDutyAmount = Number(inv.customsDutyAmount || (inv as any).customs_duty_amount || (inv as any).customsDuty || 0);
+    const terminalHandlingAmount = Number(inv.terminalHandlingAmount || (inv as any).terminal_handling_amount || (inv as any).terminalHandling || 0);
+    const deductionAmount = Number(inv.deductionAmount || (inv as any).deduction_amount || (inv as any).discountAmount || (inv as any).discount_amount || 0);
+    const vatAmount = Number(inv.vatAmount || (inv as any).tax_amount || (inv as any).taxAmount || 0);
+    const itemsSubTotal = currency === 'USD' ? totalUsd : totalAed;
+    const grandTotal = Number(inv.totalAmount || (inv as any).total_amount || inv.netAmount || (itemsSubTotal + freightAmount + customsDutyAmount + terminalHandlingAmount - deductionAmount + vatAmount));
+    const grandTotalAed = currency === 'AED' ? grandTotal : Number((grandTotal * exchangeRate).toFixed(2));
+
+    openCommercialInvoiceA4PrintWindow({
+      docNo: inv.invoiceNo,
+      date: formatInvoiceDate(inv),
+      supplierName: getSupplierDisplayName(inv),
+      supplierTrn: getSupplierTrn(inv) || undefined,
+      consigneeName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+      consigneeAddress: 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE',
+      consigneeTrn: '100482910300003',
+      vesselName: (inv as any).vesselName || (inv as any).vessel_name || '-',
+      billOfLading: inv.blAirwayBillNo || (inv as any).bl_no || '-',
+      containerNo: inv.containerNo || (inv as any).container_no || '-',
+      portOfDischarge: inv.portOfEntry || (inv as any).port_of_arrival || 'Jebel Ali Port (AEJEA), Dubai, UAE',
+      items: mappedItems,
+      totalBales,
+      totalNetKg,
+      totalGrossKg,
+      totalUsd,
+      totalAed,
+      amountInWords: numberToWords(grandTotalAed),
+      currency,
+      exchangeRate,
+      itemsSubTotal,
+      freightAmount,
+      customsDutyAmount,
+      terminalHandlingAmount,
+      deductionAmount,
+      vatAmount,
+      grandTotal,
+      grandTotalAed
+    });
+  };
+
   const handleEditInvoiceClick = (inv: PurchaseInvoice) => {
     const related = (bales || []).filter(
       b => b.purchaseInvoiceId === inv.id || b.purchaseInvoiceNo === inv.invoiceNo
     );
+    const hasInward = related.length > 0 || Boolean(inv.convertedToInward) || Boolean((inv as any).converted_to_inward);
     const sortedCount = related.reduce((acc, b) => acc + (b.pieces?.length || b.pieceCount || 0), 0);
     const sortedKg = related.reduce((acc, b) => acc + (b.brokenDownWeight || 0), 0);
 
-    if (sortedCount > 0 || sortedKg > 0) {
+    if (hasInward || sortedCount > 0 || sortedKg > 0) {
       setLockedModalInfo({
         invoiceNo: inv.invoiceNo,
         actionType: 'EDIT',
         sortedPiecesCount: sortedCount,
         sortedWeightKg: sortedKg,
-        balesCount: related.length
+        balesCount: related.length || 1
       });
       return;
     }
@@ -325,18 +451,28 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   };
 
   const handleDeleteInvoiceClick = async (inv: PurchaseInvoice) => {
-    // Rule A (Delete Constraint): An invoice CANNOT be deleted if its status is 'POSTED'.
-    if (inv.status === 'POSTED') {
-      alert(`Cannot delete commercial invoice "${inv.invoiceNo}" because it is in POSTED status.\n\nYou must explicitly click "Unpost" first.`);
-      return;
-    }
-
-    // Rule B (Unpost/Delete Dependency): An invoice CANNOT be deleted if an Inward Pass or Sorting Bale exists
+    // Rule A (Inward / Sorting Dependency): CANNOT delete if Inward Pass or Sorting Bale exists
     const related = (bales || []).filter(
       b => b.purchaseInvoiceId === inv.id || b.purchaseInvoiceNo === inv.invoiceNo
     );
-    if (related.length > 0 || inv.convertedToInward) {
-      alert(`Cannot delete invoice "${inv.invoiceNo}" because ${related.length || 1} Inward Pass(es) / Sorting Bale(s) have already been generated for it.\n\nYou must delete the Sorting Bales in the Sorting / Inward Terminal first.`);
+    const hasInward = related.length > 0 || Boolean(inv.convertedToInward) || Boolean((inv as any).converted_to_inward);
+    const sortedCount = related.reduce((acc, b) => acc + (b.pieces?.length || b.pieceCount || 0), 0);
+    const sortedKg = related.reduce((acc, b) => acc + (b.brokenDownWeight || 0), 0);
+
+    if (hasInward || sortedCount > 0 || sortedKg > 0) {
+      setLockedModalInfo({
+        invoiceNo: inv.invoiceNo,
+        actionType: 'DELETE',
+        sortedPiecesCount: sortedCount,
+        sortedWeightKg: sortedKg,
+        balesCount: related.length || 1
+      });
+      return;
+    }
+
+    // Rule B (Delete Constraint): An invoice CANNOT be deleted if its status is 'POSTED'.
+    if (inv.status === 'POSTED') {
+      alert(`Cannot delete commercial invoice "${inv.invoiceNo}" because it is in POSTED status.\n\nYou must explicitly click "Unpost" first.`);
       return;
     }
 
@@ -419,6 +555,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                   const relatedBales = (bales || []).filter(
                     b => b.purchaseInvoiceId === inv.id || b.purchaseInvoiceNo === inv.invoiceNo
                   );
+                  const hasInwardPass = relatedBales.length > 0 || Boolean(inv.convertedToInward) || Boolean((inv as any).converted_to_inward);
                   const sortedPiecesCount = relatedBales.reduce(
                     (acc, b) => acc + (b.pieces?.length || b.pieceCount || 0),
                     0
@@ -428,6 +565,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                     0
                   );
                   const isSortingStarted = sortedPiecesCount > 0 || sortedWeightKg > 0;
+                  const isLocked = hasInwardPass || isSortingStarted;
 
                   const invGross = Number(inv.grossAmount || inv.subTotal || inv.totalAmount || 0);
                   const invDeduction = Number(inv.deductionAmount || inv.discountAmount || 0);
@@ -494,6 +632,11 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                             <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse"></span>
                             <span>Sorted: {sortedPiecesCount} pcs ({sortedWeightKg.toFixed(1)}kg)</span>
                           </span>
+                        ) : hasInwardPass ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 inline-flex items-center gap-1" title="Inward Gate Pass and Bales generated. Invoice is locked against Edit/Delete until bales are deleted.">
+                            <Lock className="w-3 h-3 text-amber-600" />
+                            <span>Inward Pass Active (Locked)</span>
+                          </span>
                         ) : (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                             Unsorted (Editable)
@@ -502,42 +645,57 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          {/* Edit Button */}
+                          {/* Edit Button (Immediately disabled if Inward Pass exists) */}
                           <button
                             type="button"
+                            disabled={isLocked}
                             onClick={() => handleEditInvoiceClick(inv)}
-                            className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors border ${
-                              isSortingStarted
-                                ? 'bg-slate-100 text-slate-400 border-slate-200'
-                                : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200'
+                            className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 transition-colors border ${
+                              isLocked
+                                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-75'
+                                : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 cursor-pointer'
                             }`}
                             title={
-                              isSortingStarted
-                                ? `Locked: Sorting has started (${sortedPiecesCount} pcs). Delete all pieces in Sorting Terminal first to edit.`
+                              isLocked
+                                ? `Locked: Inward Gate Pass / Sorting Bales exist. Delete all sorting bales in the Sorting Terminal first to edit.`
                                 : 'Edit Commercial Invoice'
                             }
                           >
-                            {isSortingStarted ? <Lock className="w-3 h-3 text-slate-400" /> : <Edit className="w-3 h-3 text-blue-600" />}
-                            <span>{isSortingStarted ? 'Locked' : 'Edit'}</span>
+                            {isLocked ? <Lock className="w-3 h-3 text-slate-400" /> : <Edit className="w-3 h-3 text-blue-600" />}
+                            <span>{isLocked ? 'Locked' : 'Edit'}</span>
                           </button>
 
-                          {/* Delete Button */}
+                          {/* Delete Button (Immediately disabled if Inward Pass exists or is POSTED) */}
                           <button
                             type="button"
+                            disabled={isLocked || inv.status === 'POSTED'}
                             onClick={() => handleDeleteInvoiceClick(inv)}
-                            className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors border ${
-                              isSortingStarted
-                                ? 'bg-slate-100 text-slate-400 border-slate-200'
-                                : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                            className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 transition-colors border ${
+                              isLocked || inv.status === 'POSTED'
+                                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-75'
+                                : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200 cursor-pointer'
                             }`}
                             title={
-                              isSortingStarted
-                                ? `Locked: Sorting has started (${sortedPiecesCount} pcs). Delete all pieces in Sorting Terminal first to delete.`
+                              isLocked
+                                ? `Locked: Inward Gate Pass / Sorting Bales exist. Delete all sorting bales in the Sorting Terminal first to delete.`
+                                : inv.status === 'POSTED'
+                                ? 'Locked: Invoice is POSTED. Unpost first to delete.'
                                 : 'Delete Commercial Invoice'
                             }
                           >
-                            {isSortingStarted ? <Lock className="w-3 h-3 text-slate-400" /> : <Trash2 className="w-3 h-3 text-rose-600" />}
-                            <span>Delete</span>
+                            {isLocked || inv.status === 'POSTED' ? <Lock className="w-3 h-3 text-slate-400" /> : <Trash2 className="w-3 h-3 text-rose-600" />}
+                            <span>{isLocked ? 'Locked' : 'Delete'}</span>
+                          </button>
+
+                          {/* Direct Print A4 with Monogram and Expenses */}
+                          <button
+                            type="button"
+                            onClick={() => handleDirectA4Print(inv)}
+                            className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors border border-indigo-200"
+                            title="Print Official A4 Commercial Customs Invoice Voucher with Monogram & Expenses"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Print A4</span>
                           </button>
 
                           <button
@@ -558,7 +716,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                               date: formatInvoiceDate(inv)
                             })}
                             className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] rounded flex items-center gap-1 cursor-pointer transition-colors"
-                            title="View & Print Formal Commercial Invoice"
+                            title="View & Inspect Commercial Invoice"
                           >
                             <Eye className="w-3.5 h-3.5 text-indigo-600" />
                             <span>View Doc</span>
@@ -622,12 +780,18 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                   Cannot {lockedModalInfo.actionType === 'EDIT' ? 'Edit' : 'Delete'} Invoice {lockedModalInfo.invoiceNo}
                 </h3>
                 <p className="text-xs text-slate-600 mt-1">
-                  Sorting has already started for bales created from this invoice:
+                  {lockedModalInfo.sortedPiecesCount > 0
+                    ? 'Sorting has already started for bales created from this invoice:'
+                    : 'An Inward Gate Pass has already been generated and registered for this invoice:'}
                 </p>
               </div>
             </div>
 
             <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-200 text-xs text-amber-900 space-y-1.5 font-medium">
+              <div className="flex justify-between">
+                <span>Associated Bales:</span>
+                <strong className="font-bold text-amber-950 font-mono">{lockedModalInfo.balesCount} Bales</strong>
+              </div>
               <div className="flex justify-between">
                 <span>Pieces Sorted:</span>
                 <strong className="font-bold text-amber-950 font-mono">{lockedModalInfo.sortedPiecesCount} pieces</strong>
@@ -636,15 +800,15 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                 <span>Weight Broken Down:</span>
                 <strong className="font-bold text-amber-950 font-mono">{lockedModalInfo.sortedWeightKg.toFixed(2)} KG</strong>
               </div>
-              <div className="flex justify-between">
-                <span>Associated Bales:</span>
-                <strong className="font-bold text-amber-950 font-mono">{lockedModalInfo.balesCount} Bales</strong>
-              </div>
             </div>
 
             <div className="text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-200 leading-relaxed">
               <strong className="text-slate-800 block mb-1">To unlock Edit & Delete:</strong>
-              Please navigate to the <strong>Bale Sorting Operations Hub</strong> and delete all <strong>{lockedModalInfo.sortedPiecesCount}</strong> sorted pieces from these bales. Once all pieces are deleted (0 pieces remaining sorted), editing and deleting this invoice will automatically unlock!
+              {lockedModalInfo.sortedPiecesCount > 0 ? (
+                <>Please navigate to the <strong>Bale Sorting Operations Hub</strong> and delete all <strong>{lockedModalInfo.sortedPiecesCount}</strong> sorted pieces from these bales. Once all pieces are deleted (0 pieces remaining sorted), editing and deleting this invoice will automatically unlock!</>
+              ) : (
+                <>Please navigate to the <strong>Inward Gate Passes / Sorting Hub</strong> and delete the associated <strong>{lockedModalInfo.balesCount} Bale(s)</strong>. Once deleted, this invoice will automatically unlock for editing and deletion!</>
+              )}
             </div>
 
             <div className="flex justify-between items-center gap-2">

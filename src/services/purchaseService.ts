@@ -394,24 +394,53 @@ export class PurchaseService {
       invoice_no: inv.invoiceNo || (inv as any).invoice_no || `PINV-${Date.now().toString().slice(-6)}`,
       supplier_id: cleanSupplierId,
       supplier_name: inv.supplierName || (inv as any).supplier_name || '',
-      invoice_date: inv.invoiceDate || inv.date || (inv as any).invoice_date || new Date().toISOString().slice(0, 10),
+      invoice_date: (inv as any).invoiceDate || inv.date || (inv as any).invoice_date || new Date().toISOString().slice(0, 10),
       status: inv.status || 'DRAFT',
       currency: (inv.currency || 'AED').toUpperCase(),
       exchange_rate: Number(inv.exchangeRate || (inv as any).exchange_rate || 1),
-      subtotal: Number(inv.subtotal || (inv as any).subTotal || 0),
-      gross_amount: Number(inv.grossAmount || (inv as any).gross_amount || inv.subtotal || (inv as any).subTotal || inv.totalAmount || 0),
-      deduction_amount: Number(inv.deductionAmount || (inv as any).deduction_amount || inv.discountAmount || 0),
-      discount_amount: Number(inv.discountAmount || (inv as any).discount_amount || inv.deductionAmount || 0),
+      subtotal: Number(inv.subTotal || (inv as any).subtotal || 0),
+      gross_amount: Number(inv.grossAmount || (inv as any).gross_amount || inv.subTotal || (inv as any).subtotal || inv.totalAmount || 0),
+      deduction_amount: Number(inv.deductionAmount || (inv as any).deduction_amount || (inv as any).discountAmount || 0),
+      discount_amount: Number((inv as any).discountAmount || (inv as any).discount_amount || inv.deductionAmount || 0),
       net_amount: Number(inv.netAmount || (inv as any).net_amount || inv.totalAmount || 0),
-      tax_amount: Number(inv.taxAmount || (inv as any).tax_amount || inv.vatAmount || 0),
+      tax_amount: Number(inv.vatAmount || (inv as any).taxAmount || (inv as any).tax_amount || 0),
       total_amount: Number(inv.totalAmount || (inv as any).total_amount || 0),
-      total_weight_kg: Number(inv.totalWeightKg || (inv as any).total_weight_kg || (inv as any).totalGrossWeightKg || 0),
+      total_weight_kg: Number(inv.totalGrossWeightKg || (inv as any).totalWeightKg || (inv as any).total_weight_kg || 0),
       container_no: inv.containerNo || (inv as any).container_no || '',
       bl_no: inv.blAirwayBillNo || (inv as any).bl_no || '',
       vessel_name: vesselName ? String(vesselName) : null,
       port_of_arrival: portOfArrival ? String(portOfArrival) : null,
       notes: inv.notes || ''
     };
+
+    // Security Guardrail: If updating an existing invoice, strictly verify that no Inward Gate Passes exist
+    if (inv.id || inv.invoiceNo) {
+      try {
+        const { data: existingInv } = await supabase
+          .from('purchase_invoices')
+          .select('id, invoice_no, converted_to_inward')
+          .or(`id.eq.${inv.id || 'none'},invoice_no.eq.${inv.invoiceNo || 'none'}`)
+          .maybeSingle();
+
+        if (existingInv) {
+          if (existingInv.converted_to_inward) {
+            throw new Error(`Cannot modify purchase invoice "${existingInv.invoice_no}" because an Inward Gate Pass has already been generated. You must delete the associated Inward Gate Pass / Sorting Bales first.`);
+          }
+          const { count: passCount } = await supabase
+            .from('inward_gate_passes')
+            .select('id', { count: 'exact', head: true })
+            .or(`purchase_invoice_id.eq.${existingInv.id},purchase_invoice_no.eq.${existingInv.invoice_no}`);
+
+          if (Number(passCount || 0) > 0) {
+            throw new Error(`Cannot modify purchase invoice "${existingInv.invoice_no}" because ${passCount} Inward Gate Pass / Sorting Bale(s) exist for it. You must delete the associated Sorting Bales first.`);
+          }
+        }
+      } catch (checkErr: any) {
+        if (checkErr.message?.includes('Cannot modify purchase invoice')) {
+          throw checkErr;
+        }
+      }
+    }
 
     const { data, error } = await supabase
       .from('purchase_invoices')

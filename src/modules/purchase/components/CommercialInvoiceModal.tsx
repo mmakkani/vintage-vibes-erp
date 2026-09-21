@@ -170,19 +170,28 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
   const totalGrossKg = useMemo(() => items.reduce((acc, i) => acc + (i.grossWeightKg || 0), 0), [items]);
   const totalBales = useMemo(() => items.reduce((acc, i) => acc + (i.quantityBales || 0), 0), [items]);
 
+  const freightAmount = Number(invoice?.freightAmount || (invoice as any)?.freight_amount || 0);
+  const customsDutyAmount = Number(invoice?.customsDutyAmount || (invoice as any)?.customs_duty_amount || (invoice as any)?.customsDuty || 0);
+  const terminalHandlingAmount = Number(invoice?.terminalHandlingAmount || (invoice as any)?.terminal_handling_amount || (invoice as any)?.terminalHandling || 0);
+  const deductionAmount = Number(invoice?.deductionAmount || (invoice as any)?.deduction_amount || (invoice as any)?.discountAmount || (invoice as any)?.discount_amount || 0);
+  const vatAmount = Number(invoice?.vatAmount || (invoice as any)?.tax_amount || (invoice as any)?.taxAmount || 0);
+  const itemsSubTotal = currency === 'USD' ? totalUsd : totalAed;
+  const grandTotal = Number(invoice?.totalAmount || (invoice as any)?.total_amount || invoice?.netAmount || (itemsSubTotal + freightAmount + customsDutyAmount + terminalHandlingAmount - deductionAmount + vatAmount));
+  const grandTotalAed = currency === 'AED' ? grandTotal : Number((grandTotal * exchangeRate).toFixed(2));
+
   const docGross = Number(invoice?.grossAmount || (currency === 'USD' ? totalUsd : totalAed));
-  const docDeduction = Number(invoice?.deductionAmount || (invoice as any)?.discountAmount || 0);
-  const docNet = Number(invoice?.netAmount || invoice?.totalAmount || (currency === 'USD' ? totalUsd : totalAed));
+  const docDeduction = deductionAmount;
+  const docNet = grandTotal;
 
   const handlePrint = () => {
     openCommercialInvoiceA4PrintWindow({
       docNo,
       date,
       supplierName,
-      supplierTrn: invoice?.supplierTrn,
+      supplierTrn: invoice?.supplierTrn || (invoice as any)?.supplier_trn,
       consigneeName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
-      consigneeAddress: 'Al Quoz Industrial 3, Dubai, UAE',
-      consigneeTrn: '100492819200003',
+      consigneeAddress: 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE',
+      consigneeTrn: '100482910300003',
       vesselName,
       billOfLading,
       containerNo,
@@ -193,7 +202,17 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
       totalGrossKg,
       totalUsd,
       totalAed,
-      amountInWords: numberToWords(totalAed)
+      amountInWords: numberToWords(grandTotalAed),
+      currency,
+      exchangeRate,
+      itemsSubTotal,
+      freightAmount,
+      customsDutyAmount,
+      terminalHandlingAmount,
+      deductionAmount,
+      vatAmount,
+      grandTotal,
+      grandTotalAed
     });
   };
 
@@ -470,25 +489,57 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
             </table>
           </div>
 
-          {/* Financial Breakdown: Gross, Deductions, Net */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-amber-50/80 border border-amber-200 rounded-lg mb-4 text-xs">
-            <div className="flex flex-col">
-              <span className="text-[10px] uppercase font-bold text-slate-500">Gross Goods & Charges</span>
-              <span className="font-mono font-bold text-slate-800 text-sm">
-                {currency === 'USD' ? '$' : 'AED'} {docGross.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </span>
+          {/* Financial Breakdown: Goods, Expenses (Karachya), Deductions, Net */}
+          <div className="bg-amber-50/90 border border-amber-200 rounded-lg p-3 mb-4 text-xs space-y-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pb-2 border-b border-amber-200/60 font-mono">
+              <div>
+                <span className="text-[9.5px] uppercase font-bold text-slate-500 block">Base Subtotal</span>
+                <span className="font-bold text-slate-800 text-xs">
+                  {currency === 'USD' ? '$' : 'AED'} {itemsSubTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div>
+                <span className="text-[9.5px] uppercase font-bold text-slate-500 block">Freight Charges</span>
+                <span className="font-bold text-slate-800 text-xs">
+                  {freightAmount > 0 ? `+${currency === 'USD' ? '$' : 'AED'} ${freightAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '0.00'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[9.5px] uppercase font-bold text-slate-500 block">Customs & Terminal</span>
+                <span className="font-bold text-slate-800 text-xs">
+                  {(customsDutyAmount + terminalHandlingAmount) > 0 ? `+${currency === 'USD' ? '$' : 'AED'} ${(customsDutyAmount + terminalHandlingAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '0.00'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[9.5px] uppercase font-bold text-emerald-700 block">VAT (5%)</span>
+                <span className="font-bold text-emerald-800 text-xs">
+                  {vatAmount > 0 ? `+${currency === 'USD' ? '$' : 'AED'} ${vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '0.00'}
+                </span>
+              </div>
             </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] uppercase font-bold text-rose-600">Total Deductions / Discounts</span>
-              <span className="font-mono font-bold text-rose-700 text-sm">
-                {docDeduction > 0 ? `-${currency === 'USD' ? '$' : 'AED'} ${docDeduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '0.00'}
-              </span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] uppercase font-bold text-indigo-900">Net Commercial Value</span>
-              <span className="font-mono font-black text-indigo-900 text-sm">
-                {currency === 'USD' ? '$' : 'AED'} {docNet.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </span>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+              <div className="flex flex-col">
+                <span className="text-[10px] uppercase font-bold text-slate-500">Gross Goods & Charges</span>
+                <span className="font-mono font-bold text-slate-800 text-sm">
+                  {currency === 'USD' ? '$' : 'AED'} {docGross.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[10px] uppercase font-bold text-rose-600">Deductions / Discounts</span>
+                <span className="font-mono font-bold text-rose-700 text-sm">
+                  {docDeduction > 0 ? `-${currency === 'USD' ? '$' : 'AED'} ${docDeduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '0.00'}
+                </span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[10px] uppercase font-bold text-indigo-900">Net Landed Commercial Total</span>
+                <span className="font-mono font-black text-indigo-900 text-sm">
+                  {currency === 'USD' ? '$' : 'AED'} {grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {currency !== 'AED' && (
+                    <span className="text-[10px] text-indigo-700 font-bold ml-1.5">(≈ AED {grandTotalAed.toLocaleString(undefined, { minimumFractionDigits: 2 })})</span>
+                  )}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -497,7 +548,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-bold text-slate-700">Total Invoice Amount in Words:</span>
               <span className="font-serif italic font-bold text-amber-900">
-                {numberToWords(totalAed)} (AED {totalAed.toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                {numberToWords(grandTotalAed)} (AED {grandTotalAed.toLocaleString(undefined, { minimumFractionDigits: 2 })})
               </span>
             </div>
             <p className="text-[10px] text-slate-600 border-t border-slate-100 pt-1.5">

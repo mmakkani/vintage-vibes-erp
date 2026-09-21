@@ -296,6 +296,10 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
     }
   }, [editingInvoice]);
 
+  const isInvoiceLockedByInward = Boolean(
+    editingInvoice?.convertedToInward || (editingInvoice as any)?.converted_to_inward
+  );
+
   // Clean initial line item ready for user input
   const [lines, setLines] = useState<InvoiceLineDraft[]>(() => {
     const firstItem = allAvailableItems[0] || (Array.isArray(items) ? items[0] : null);
@@ -568,6 +572,11 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       setErrorMsg('Please enter at least one bale line item');
       return;
     }
+    if (isInvoiceLockedByInward) {
+      isSubmittingRef.current = false;
+      setErrorMsg('Cannot modify or save changes to this purchase invoice because an Inward Gate Pass / warehouse Sorting Bales have already been generated. Please delete the associated Inward Pass / Bales in the Sorting Terminal first.');
+      return;
+    }
 
     setIsSubmitting(true);
     setErrorMsg(null);
@@ -818,6 +827,16 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
             </button>
           </div>
         </div>
+
+        {/* INWARD PASS LOCK BANNER */}
+        {isInvoiceLockedByInward && (
+          <div className="mx-5 mt-3 p-3 bg-amber-50 border border-amber-300 rounded-lg text-amber-950 text-xs flex items-center gap-2.5 font-semibold shadow-xs">
+            <Lock className="w-4 h-4 text-amber-700 shrink-0" />
+            <span>
+              <strong>Invoice Locked:</strong> An Inward Gate Pass / Sorting Bales have already been generated for this invoice. Modifying or saving changes is strictly locked until the associated Sorting Bales are deleted in the Sorting Terminal.
+            </span>
+          </div>
+        )}
 
         {/* ERROR ALERT */}
         {errorMsg && (
@@ -1405,18 +1424,20 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
 
             <button
               type="button"
-              disabled={isSubmitting}
+              disabled={isSubmitting || isInvoiceLockedByInward}
               onClick={() => handleSubmit('DRAFT')}
               className="btn-3d btn-3d-slate text-xs py-1.5 px-3.5 cursor-pointer font-bold uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
+              title={isInvoiceLockedByInward ? 'Locked: Inward Gate Pass generated. Delete bales in Sorting Terminal to unlock.' : 'Save as Draft'}
             >
               <span>{isSubmitting ? 'Saving...' : 'Save as Draft'}</span>
             </button>
 
             <button
               type="button"
-              disabled={isSubmitting}
+              disabled={isSubmitting || isInvoiceLockedByInward}
               onClick={() => handleSubmit('POSTED')}
               className="btn-3d btn-3d-amber text-xs py-1.5 px-4 cursor-pointer font-bold uppercase tracking-wider flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={isInvoiceLockedByInward ? 'Locked: Inward Gate Pass generated. Delete bales in Sorting Terminal to unlock.' : 'Save & Post to Ledger'}
             >
               <CheckCircle2 className="w-3.5 h-3.5 text-white" />
               <span>{isSubmitting ? 'Posting...' : 'Save & Post to Ledger'}</span>
@@ -1424,9 +1445,10 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
 
             <button
               type="button"
-              disabled={isSubmitting}
+              disabled={isSubmitting || isInvoiceLockedByInward}
               onClick={() => handleSubmit('POSTED', true)}
               className="btn-3d btn-3d-emerald text-xs py-1.5 px-4 cursor-pointer font-bold uppercase tracking-wider flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={isInvoiceLockedByInward ? 'Locked: Inward Gate Pass generated.' : 'Save & Open Inward Gate Pass'}
             >
               <ArrowRight className="w-3.5 h-3.5 text-white" />
               <span>{isSubmitting ? 'Processing...' : 'Save & Open Inward Gate Pass'}</span>

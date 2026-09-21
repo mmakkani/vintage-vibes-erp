@@ -6,6 +6,7 @@ import { PurchaseEngine } from '../purchase.engine.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { openBatchBaleThermalTagsPrintWindow } from '../../../utils/thermalPrinter.ts';
+import { BaleSortedPiecesInspectModal } from './BaleSortedPiecesInspectModal.tsx';
 import {
   Scale,
   Package,
@@ -54,6 +55,7 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'IN_PROGRESS' | 'COMPLETED' | 'UNOPENED'>('ALL');
   const [isDeletingBaleId, setIsDeletingBaleId] = useState<string | null>(null);
+  const [inspectingBale, setInspectingBale] = useState<InwardGatePass | null>(null);
 
   const handleDeleteBale = async (bale: InwardGatePass) => {
     const baleTitle = bale.baleCode || bale.gatePassNo || bale.id;
@@ -503,9 +505,20 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                         )}
                       </td>
 
-                      {/* Action: [ 👁️ View Pieces / Resume Sorting ] & Conditional [ 🗑️ Delete Bale ] */}
+                      {/* Action: [ 📦 Sorted Items (X) ] & [ 👁️ Resume Sorting ] & Conditional [ 🗑️ Delete Bale ] */}
                       <td className="py-3.5 px-4 text-center" onClick={e => e.stopPropagation()}>
                         <div className="inline-flex items-center justify-center gap-1.5">
+                          {/* Dedicated "Kon Konsi Cheeza Dali Hain" / View Sorted Items Button */}
+                          <button
+                            type="button"
+                            onClick={() => setInspectingBale(bale)}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition-all inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                            title="View all sorted items in this bale / Kon konsi cheeza dali hain"
+                          >
+                            <Package className="w-3.5 h-3.5 text-amber-700" />
+                            <span>Sorted Items ({piecesCount})</span>
+                          </button>
+
                           <button
                             type="button"
                             onClick={() => handleStartSorting(bale.id)}
@@ -516,7 +529,7 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                             }`}
                           >
                             <Eye className="w-3.5 h-3.5" />
-                            <span>{isComplete ? 'View Pieces' : 'Resume Sorting'}</span>
+                            <span>{isComplete ? 'Terminal' : 'Resume Sorting'}</span>
                             <ArrowRight className="w-3 h-3" />
                           </button>
 
@@ -550,6 +563,16 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
           </table>
         </div>
       </div>
+
+      {/* Dedicated Bale Inspection Modal ("Kon Konsi Cheeza Dali Hain") */}
+      {inspectingBale && (
+        <BaleSortedPiecesInspectModal
+          isOpen={Boolean(inspectingBale)}
+          bale={inspectingBale}
+          onClose={() => setInspectingBale(null)}
+          onOpenTerminal={handleStartSorting}
+        />
+      )}
     </div>
   );
 };
