@@ -307,8 +307,8 @@ partiesRouter.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Party company/customer name is required' });
     }
 
-    const rawType = String(partyData.type || partyData.party_type || partyData.partyType || 'CLIENT').trim().toUpperCase();
-    const type = (rawType === 'SUPPLIER' || rawType === 'AGENT' || rawType === 'COURIER') ? rawType : 'CLIENT';
+    const rawType = String(partyData.type || partyData.party_type || partyData.partyType || 'CUSTOMER').trim().toUpperCase();
+    const type = (rawType === 'SUPPLIER' || rawType === 'AGENT' || rawType === 'COURIER') ? rawType : 'CUSTOMER';
 
     client = await getDbClient();
 
@@ -339,7 +339,7 @@ partiesRouter.post('/', async (req, res) => {
     const isActive = partyData.isActive !== false && partyData.is_active !== false;
 
     // Determine COA sub-account details
-    const cleanType = String(type || partyData.party_type || 'CLIENT').trim().toUpperCase();
+    const cleanType = String(type || partyData.party_type || 'CUSTOMER').trim().toUpperCase();
     const isCourier = cleanType.includes('COURIER') || cleanType.includes('FREIGHT') || cleanType.includes('LOGISTICS');
     const isAgent = cleanType.includes('AGENT') || cleanType.includes('BROKER');
     const isSupplier = cleanType.includes('SUPPLIER') || cleanType.includes('VENDOR');
@@ -460,7 +460,7 @@ partiesRouter.post('/', async (req, res) => {
       code: finalPartyCode,
       name: cleanName,
       company_name: cleanName,
-      type: (isCourier ? 'COURIER' : (isAgent ? 'AGENT' : (isSupplier ? 'SUPPLIER' : 'CLIENT'))) as PartyType,
+      type: (isCourier ? 'COURIER' : (isAgent ? 'AGENT' : (isSupplier ? 'SUPPLIER' : 'CUSTOMER'))) as PartyType,
       party_type: type,
       partyType: type,
       contactPerson,

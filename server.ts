@@ -244,7 +244,7 @@ async function startServer() {
 
       if (fnName === 'create_party_with_coa') {
         const p_name = body.p_name;
-        const p_type = body.p_type;
+        const p_type = (body.p_type === 'CLIENT' ? 'CUSTOMER' : body.p_type) || 'CUSTOMER';
         const p_phone = body.p_phone || null;
         const p_trn = body.p_trn || null;
         const p_credit_limit = Number(body.p_credit_limit) || 0;

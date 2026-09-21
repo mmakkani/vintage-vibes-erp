@@ -571,7 +571,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       const newCust = await PartiesService.addParty({
         name: newContactName.trim() || `Customer (${newContactPhone.trim()})`,
         phone: newContactPhone.trim(),
-        type: 'CLIENT'
+        type: 'CUSTOMER'
       });
       if (newCust) {
         setCustomers(prev => [newCust, ...prev]);
@@ -597,7 +597,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       const myCust = await PartiesService.addParty({
         name: `My Linked Phone (${myPhone})`,
         phone: myPhone,
-        type: 'CLIENT'
+        type: 'CUSTOMER'
       });
       if (myCust) {
         setCustomers(prev => [myCust, ...prev.filter(c => c.phone !== myPhone)]);

@@ -86,7 +86,8 @@ BEGIN
         v_account_type := 'ASSET';
         v_party_suffix := ' (Customer)';
         v_party_prefix := 'CLI-';
-        v_effective_party_type := 'CLIENT';
+        -- public.parties has parties_party_type_check constraint requiring 'CUSTOMER', NOT 'CLIENT'
+        v_effective_party_type := 'CUSTOMER';
     END IF;
 
     -- 2. Find parent in accounts table

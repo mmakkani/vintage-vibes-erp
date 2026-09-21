@@ -5342,7 +5342,8 @@ export default async function handler(req: any, res: any) {
         if (client) {
           const p = body || {};
           const partyName = (p.name || p.company_name || '').trim();
-          const partyType = (p.type || p.party_type || 'CLIENT').toUpperCase();
+          const rawPartyType = (p.type || p.party_type || 'CUSTOMER').toUpperCase();
+          const partyType = rawPartyType === 'CLIENT' ? 'CUSTOMER' : rawPartyType;
           const phone = p.phone || null;
           const trn = p.trn_no || p.trnNo || p.tin_or_ntn || null;
           const creditLimit = Number(p.creditLimit || p.credit_limit || 0);

@@ -117,7 +117,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     code: '',
     name: '',
     company_name: '',
-    type: 'CLIENT' as any,
+    type: 'CUSTOMER' as any,
     contactPerson: '',
     contact_person: '',
     contactDesignation: '',
@@ -161,8 +161,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   const [partyForm, setPartyForm] = useState({
     name: '',
     company_name: '',
-    type: 'CLIENT' as 'CLIENT' | 'SUPPLIER' | 'AGENT' | 'COURIER',
-    party_type: 'CLIENT' as 'CLIENT' | 'SUPPLIER' | 'AGENT' | 'COURIER',
+    type: 'CUSTOMER' as 'CUSTOMER' | 'CLIENT' | 'SUPPLIER' | 'AGENT' | 'COURIER',
+    party_type: 'CUSTOMER' as 'CUSTOMER' | 'CLIENT' | 'SUPPLIER' | 'AGENT' | 'COURIER',
     contactPerson: '',
     contact_person: '',
     contactDesignation: '',
@@ -761,77 +761,83 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     e.preventDefault();
     if (isSubmitting) return;
 
-    const rawType = String(partyForm.type || (partyForm as any).party_type || 'CLIENT').trim().toUpperCase();
-    let cleanType: 'CLIENT' | 'SUPPLIER' | 'COURIER' | 'AGENT' = 'CLIENT';
-
-    if (rawType.includes('COURIER') || rawType.includes('FREIGHT') || rawType.includes('LOGISTICS')) {
-      cleanType = 'COURIER';
-    } else if (rawType.includes('AGENT') || rawType.includes('BROKER')) {
-      cleanType = 'AGENT';
-    } else if (rawType.includes('SUPPLIER') || rawType.includes('VENDOR')) {
-      cleanType = 'SUPPLIER';
-    } else {
-      cleanType = 'CLIENT';
-    }
-
-    const cleanName = String(partyForm.name || (partyForm as any).company_name || (partyForm as any).companyName || '').trim();
-    if (!cleanName) {
-      toast.error('Party / Company Name cannot be empty or undefined.');
-      return;
-    }
-
-    const dup = parties.find(p => p.name.trim().toLowerCase() === cleanName.toLowerCase());
-    if (dup) {
-      toast.error(`Duplicate Name: A party named "${cleanName}" already exists (${dup.code})! Duplicate client/supplier names are strictly prohibited.`);
-      return;
-    }
-
-    setIsSubmitting(true);
-
-    // Resolve UUIDs strictly for RPC payload (create_party_with_coa requires UUID or NULL for p_inventory_account_id)
-    const rawInv = (partyForm as any).inventory_account_id || (cleanType === 'SUPPLIER' ? (partyForm.clearingAccountId || '1310-00') : null);
-    const resolvedInventoryUuid = cleanType === 'SUPPLIER' && rawInv ? resolveAccountUuid(rawInv, '7d9a873a-13dc-4519-9f15-c551cd0d4697') : null;
-    const safeInventoryUuid = (resolvedInventoryUuid && isUuidString(resolvedInventoryUuid)) ? resolvedInventoryUuid : null;
-
-    const clearingCode = resolveAccountCode(partyForm.clearingAccountId, '1310-00');
-    const clearingUuid = resolveAccountUuid(partyForm.clearingAccountId, '7d9a873a-13dc-4519-9f15-c551cd0d4697');
-    const payableCode = resolveAccountCode(partyForm.payableAccountId, cleanType === 'COURIER' ? '2120-00' : (cleanType === 'CLIENT' ? '1130-00' : '2110-00'));
-    const payableUuid = resolveAccountUuid(partyForm.payableAccountId, cleanType === 'COURIER' ? '4cf50ade-782f-4535-9548-f97011d3d604' : (cleanType === 'CLIENT' ? '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7' : '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127'));
-    const receivableCode = resolveAccountCode(partyForm.receivableAccountId, '1130-00');
-    const receivableUuid = resolveAccountUuid(partyForm.receivableAccountId, '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7');
-    const revenueCode = resolveAccountCode(partyForm.revenueAccountId, '4110-00');
-    const revenueUuid = resolveAccountUuid(partyForm.revenueAccountId, 'a50aeec4-441a-4bbd-b96e-cfac6d4de671');
-
-    const formData = {
-      name: cleanName,
-      company_name: cleanName,
-      party_type: cleanType,
-      type: cleanType,
-      phone: partyForm.phone || (partyForm as any).contact_no || null,
-      trn_no: partyForm.trn_no || partyForm.trnNo || null,
-      credit_limit: Number(partyForm.creditLimit ?? (partyForm as any).credit_limit ?? 0),
-      inventory_account_id: safeInventoryUuid,
-      payable_account_id: payableUuid,
-      clearing_account_id: clearingUuid,
-      receivable_account_id: receivableUuid,
-      revenue_account_id: revenueUuid,
-      coa_account_id: cleanType === 'CLIENT' ? receivableCode : payableCode,
-      coaAccountId: cleanType === 'CLIENT' ? receivableCode : payableCode,
-      contact_person: partyForm.contactPerson || (partyForm as any).contact_person || '',
-      email: partyForm.email || null,
-      address: partyForm.address || null,
-      contact_designation: partyForm.contactDesignation || partyForm.contact_designation || null,
-      trade_license_no: partyForm.tradeLicenseNo || partyForm.trade_license_no || null,
-      license_expiry_date: partyForm.licenseExpiryDate || partyForm.license_expiry_date || null,
-      bank_name: partyForm.bankName || partyForm.bank_name || null,
-      iban: partyForm.iban || null,
-      swift_code: partyForm.swiftCode || partyForm.swift_code || null,
-      payment_terms: partyForm.paymentTerms || partyForm.payment_terms || 'Cash on Delivery',
-      opening_balance: Number(partyForm.openingBalance ?? partyForm.opening_balance ?? 0),
-      business_card_url: partyForm.businessCardUrl || partyForm.business_card_url || null
-    };
-
     try {
+      const cleanName = String(partyForm.name || (partyForm as any).company_name || (partyForm as any).companyName || '').trim();
+      if (!cleanName) {
+        toast.error('Party / Company Name cannot be empty or undefined.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      const dup = parties.find(p => p.name.trim().toLowerCase() === cleanName.toLowerCase());
+      if (dup) {
+        toast.error(`Duplicate Name: A party named "${cleanName}" already exists (${dup.code})! Duplicate client/supplier names are strictly prohibited.`);
+        setIsSubmitting(false);
+        return;
+      }
+
+      setIsSubmitting(true);
+
+      const rawType = String(partyForm.type || (partyForm as any).party_type || (partyForm as any).partyType || 'CUSTOMER').trim().toUpperCase();
+      let cleanType: 'CUSTOMER' | 'CLIENT' | 'SUPPLIER' | 'COURIER' | 'AGENT' = 'CUSTOMER';
+
+      if (rawType.includes('COURIER') || rawType.includes('FREIGHT') || rawType.includes('LOGISTICS')) {
+        cleanType = 'COURIER';
+      } else if (rawType.includes('AGENT') || rawType.includes('BROKER')) {
+        cleanType = 'AGENT';
+      } else if (rawType.includes('SUPPLIER') || rawType.includes('VENDOR')) {
+        cleanType = 'SUPPLIER';
+      } else {
+        cleanType = 'CUSTOMER';
+      }
+
+      // Exact Normalization: public.parties table check constraint only accepts CUSTOMER
+      const normalizedPartyType = (cleanType as string) === 'CLIENT' ? 'CUSTOMER' : cleanType;
+
+      // Resolve UUIDs strictly for RPC payload (create_party_with_coa requires UUID or NULL for p_inventory_account_id)
+      const rawInv = (partyForm as any).inventory_account_id || (cleanType === 'SUPPLIER' ? (partyForm.clearingAccountId || '1310-00') : null);
+      const resolvedInventoryUuid = cleanType === 'SUPPLIER' && rawInv ? resolveAccountUuid(rawInv, '7d9a873a-13dc-4519-9f15-c551cd0d4697') : null;
+      const safeInventoryUuid = (resolvedInventoryUuid && isUuidString(resolvedInventoryUuid)) ? resolvedInventoryUuid : null;
+
+      const clearingCode = resolveAccountCode(partyForm.clearingAccountId, '1310-00');
+      const clearingUuid = resolveAccountUuid(partyForm.clearingAccountId, '7d9a873a-13dc-4519-9f15-c551cd0d4697');
+      const payableCode = resolveAccountCode(partyForm.payableAccountId, cleanType === 'COURIER' ? '2120-00' : ((cleanType === 'CUSTOMER' || (cleanType as string) === 'CLIENT') ? '1130-00' : '2110-00'));
+      const payableUuid = resolveAccountUuid(partyForm.payableAccountId, cleanType === 'COURIER' ? '4cf50ade-782f-4535-9548-f97011d3d604' : ((cleanType === 'CUSTOMER' || (cleanType as string) === 'CLIENT') ? '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7' : '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127'));
+      const receivableCode = resolveAccountCode(partyForm.receivableAccountId, '1130-00');
+      const receivableUuid = resolveAccountUuid(partyForm.receivableAccountId, '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7');
+      const revenueCode = resolveAccountCode(partyForm.revenueAccountId, '4110-00');
+      const revenueUuid = resolveAccountUuid(partyForm.revenueAccountId, 'a50aeec4-441a-4bbd-b96e-cfac6d4de671');
+
+      const formData = {
+        name: cleanName,
+        company_name: cleanName,
+        party_type: normalizedPartyType,
+        type: normalizedPartyType,
+        partyType: normalizedPartyType,
+        phone: partyForm.phone || (partyForm as any).contact_no || null,
+        trn_no: partyForm.trn_no || partyForm.trnNo || null,
+        credit_limit: Number(partyForm.creditLimit ?? (partyForm as any).credit_limit ?? 0),
+        inventory_account_id: safeInventoryUuid,
+        payable_account_id: payableUuid,
+        clearing_account_id: clearingUuid,
+        receivable_account_id: receivableUuid,
+        revenue_account_id: revenueUuid,
+        coa_account_id: (cleanType === 'CUSTOMER' || (cleanType as string) === 'CLIENT') ? receivableCode : payableCode,
+        coaAccountId: (cleanType === 'CUSTOMER' || (cleanType as string) === 'CLIENT') ? receivableCode : payableCode,
+        contact_person: partyForm.contactPerson || (partyForm as any).contact_person || '',
+        email: partyForm.email || null,
+        address: partyForm.address || null,
+        contact_designation: partyForm.contactDesignation || partyForm.contact_designation || null,
+        trade_license_no: partyForm.tradeLicenseNo || partyForm.trade_license_no || null,
+        license_expiry_date: partyForm.licenseExpiryDate || partyForm.license_expiry_date || null,
+        bank_name: partyForm.bankName || partyForm.bank_name || null,
+        iban: partyForm.iban || null,
+        swift_code: partyForm.swiftCode || partyForm.swift_code || null,
+        payment_terms: partyForm.paymentTerms || partyForm.payment_terms || 'Cash on Delivery',
+        opening_balance: Number(partyForm.openingBalance ?? partyForm.opening_balance ?? 0),
+        business_card_url: partyForm.businessCardUrl || partyForm.business_card_url || null
+      };
+
       const { data, error } = await supabase.rpc('create_party_with_coa', {
         p_name: formData.name,
         p_type: formData.party_type,
@@ -845,6 +851,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       if (error) {
         toast.error(error.message);
         console.error("Party Creation Failed:", error);
+        setIsSubmitting(false);
         return;
       }
 
@@ -918,8 +925,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       setPartyForm({
         name: '',
         company_name: '',
-        type: 'CLIENT',
-        party_type: 'CLIENT',
+        type: 'CUSTOMER',
+        party_type: 'CUSTOMER',
         contactPerson: '',
         contact_person: '',
         contactDesignation: '',
@@ -963,6 +970,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     } catch (err: any) {
       toast.error(err?.message || 'Failed to add party');
       console.error("Party Creation Failed:", err);
+      setIsSubmitting(false);
     } finally {
       setIsSubmitting(false);
     }
@@ -1019,12 +1027,14 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   // Open Edit Modal
   const handleOpenEditParty = (party: Party) => {
     const pAny = party as any;
+    const rawType = String(party.type || pAny.party_type || 'CUSTOMER').trim().toUpperCase();
+    const normalizedType = rawType === 'CLIENT' ? 'CUSTOMER' : rawType;
     setEditPartyForm({
       id: party.id,
       code: party.code,
       name: party.name || pAny.company_name || '',
       company_name: pAny.company_name || party.name || '',
-      type: (party.type || pAny.party_type || 'CLIENT') as any,
+      type: normalizedType as any,
       contactPerson: party.contactPerson || pAny.contact_person || '',
       contact_person: party.contactPerson || pAny.contact_person || '',
       contactDesignation: party.contactDesignation || pAny.contact_designation || '',
@@ -1068,22 +1078,28 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     const cleanName = (editPartyForm.name || editPartyForm.company_name || '').trim();
     if (!cleanName) {
       showMsg('Party / Company Name cannot be empty.', 'error');
+      setIsSubmitting(false);
       return;
     }
 
     const dup = parties.find(p => p.id !== editPartyForm.id && (p.name || '').trim().toLowerCase() === cleanName.toLowerCase());
     if (dup) {
       showMsg(`Duplicate Name: Another party named "${cleanName}" already exists in the system (${dup.code})! Duplicate client/supplier names are prohibited.`, 'error');
+      setIsSubmitting(false);
       return;
     }
 
     setIsSubmitting(true);
 
     try {
+      const rawEditType = String(editPartyForm.type || (editPartyForm as any).party_type || (editPartyForm as any).partyType || 'CUSTOMER').trim().toUpperCase();
+      const normalizedEditType = (rawEditType === 'CLIENT' ? 'CUSTOMER' : rawEditType) as any;
+
       const updated = await PartiesService.updateParty(editPartyForm.id, {
         name: cleanName,
         company_name: cleanName,
-        type: editPartyForm.type,
+        type: normalizedEditType,
+        party_type: normalizedEditType,
         contactPerson: editPartyForm.contactPerson,
         contact_person: editPartyForm.contactPerson,
         contactDesignation: editPartyForm.contactDesignation,
@@ -1114,7 +1130,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         is_active: editPartyForm.isActive,
         linked_account_id: editPartyForm.linked_account_id,
         accountMap: {
-          payableAccountId: resolveAccountCode(editPartyForm.payableAccountId, editPartyForm.type === 'CLIENT' ? '1130-00' : '2110-00'),
+          payableAccountId: resolveAccountCode(editPartyForm.payableAccountId, (editPartyForm.type === 'CUSTOMER' || (editPartyForm.type as string) === 'CLIENT') ? '1130-00' : '2110-00'),
           payableAccountUuid: resolveAccountUuid(editPartyForm.payableAccountId),
           agentPayableAccountId: editPartyForm.type === 'AGENT' ? resolveAccountCode(editPartyForm.payableAccountId, '2110-00') : undefined,
           agentPayableAccountUuid: editPartyForm.type === 'AGENT' ? resolveAccountUuid(editPartyForm.payableAccountId) : undefined,
@@ -1127,7 +1143,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
           revenueAccountUuid: resolveAccountUuid(editPartyForm.revenueAccountId)
         },
         account_map: {
-          payableAccountId: resolveAccountCode(editPartyForm.payableAccountId, editPartyForm.type === 'CLIENT' ? '1130-00' : '2110-00'),
+          payableAccountId: resolveAccountCode(editPartyForm.payableAccountId, (editPartyForm.type === 'CUSTOMER' || (editPartyForm.type as string) === 'CLIENT') ? '1130-00' : '2110-00'),
           payableAccountUuid: resolveAccountUuid(editPartyForm.payableAccountId),
           agentPayableAccountId: editPartyForm.type === 'AGENT' ? resolveAccountCode(editPartyForm.payableAccountId, '2110-00') : undefined,
           agentPayableAccountUuid: editPartyForm.type === 'AGENT' ? resolveAccountUuid(editPartyForm.payableAccountId) : undefined,
@@ -1151,6 +1167,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       onRefreshAll();
     } catch (err: any) {
       showMsg(err.message || 'Failed to update party', 'error');
+      setIsSubmitting(false);
     } finally {
       setIsSubmitting(false);
     }
@@ -1295,7 +1312,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     const t = String(p.type || (p as any).party_type || '').trim().toUpperCase();
     const pt = String((p as any).party_type || '').trim().toUpperCase();
 
-    if (typeToMatch === 'CLIENT') {
+    if (typeToMatch === 'CUSTOMER' || typeToMatch === 'CLIENT') {
       return t === 'CLIENT' || t === 'CUSTOMER' || pt === 'CLIENT' || pt === 'CUSTOMER';
     }
     if (typeToMatch === 'SUPPLIER') {
@@ -1367,7 +1384,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
           {/* Top Header & Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-2 sm:p-2.5 rounded border border-slate-200 shadow-xs">
         <div className="flex items-center gap-1.5 flex-wrap">
-          {['ALL', 'CLIENT', 'SUPPLIER', 'AGENT', 'COURIER'].map(type => {
+          {['ALL', 'CUSTOMER', 'SUPPLIER', 'AGENT', 'COURIER'].map(type => {
             const count = parties.filter(p => matchesPartyEntityType(p, type)).length;
             return (
               <button
@@ -1379,7 +1396,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                 }`}
               >
-                {type === 'ALL' ? 'All Parties' : type === 'CLIENT' ? 'Clients' : type === 'SUPPLIER' ? 'Suppliers' : type === 'AGENT' ? 'Agents' : 'Couriers'} ({count})
+                {type === 'ALL' ? 'All Parties' : (type === 'CUSTOMER' || type === 'CLIENT') ? 'Clients (Customers)' : type === 'SUPPLIER' ? 'Suppliers' : type === 'AGENT' ? 'Agents' : 'Couriers'} ({count})
               </button>
             );
           })}
@@ -1443,7 +1460,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                         party.type === 'SUPPLIER' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
                         'bg-blue-100 text-blue-800 border border-blue-200'
                       }`}>
-                        {party.type}
+                        {party.type === 'CUSTOMER' || party.type === 'CLIENT' ? 'Client (Customer)' : party.type}
                       </span>
                       {party.hasEntries ? (
                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-0.5" title="Financial history recorded - Protected from deletion">
@@ -2180,7 +2197,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     Entity Type:
                   </label>
                   <select
-                    value={partyForm.type || (partyForm as any).party_type}
+                    value={partyForm.type === 'CLIENT' ? 'CUSTOMER' : (partyForm.type || (partyForm as any).party_type || 'CUSTOMER')}
                     onChange={e => {
                       const val = e.target.value as any;
                       setPartyForm(prev => ({
@@ -2220,7 +2237,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     }}
                     className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500 bg-white"
                   >
-                    <option value="CLIENT">Client (Customer)</option>
+                    <option value="CUSTOMER">Client (Customer)</option>
                     <option value="SUPPLIER">Supplier (Vendor / Sorter)</option>
                     <option value="AGENT">Agent (Broker)</option>
                     <option value="COURIER">Courier Company (Logistics/Freight)</option>
@@ -2538,14 +2555,14 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 </div>
               )}
 
-              {partyForm.type === 'CLIENT' && (
+              {(partyForm.type === 'CUSTOMER' || partyForm.type === 'CLIENT') && (
                 <div className="bg-blue-50/70 p-3 rounded-xl border border-blue-200 space-y-2.5 mt-2">
                   <div className="text-[11px] font-bold text-blue-900 uppercase flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
                       <Shield className="w-3.5 h-3.5 text-blue-700" />
                       <span>DUAL COA ACCOUNTING LINK (AUTO-PROVISIONED)</span>
                     </div>
-                    <span className="text-[9px] bg-blue-200 text-blue-900 px-2 py-0.5 rounded-full font-bold">CLIENT</span>
+                    <span className="text-[9px] bg-blue-200 text-blue-900 px-2 py-0.5 rounded-full font-bold">CLIENT (CUSTOMER)</span>
                   </div>
 
                   <div>
@@ -2794,11 +2811,11 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   <h3 className="text-base font-bold text-slate-900">{viewPartyData.name}</h3>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
                     viewPartyData.type === 'SUPPLIER' ? 'bg-amber-100 text-amber-900 border border-amber-300' :
-                    viewPartyData.type === 'CLIENT' ? 'bg-blue-100 text-blue-900 border border-blue-300' :
+                    (viewPartyData.type === 'CUSTOMER' || viewPartyData.type === 'CLIENT') ? 'bg-blue-100 text-blue-900 border border-blue-300' :
                     viewPartyData.type === 'COURIER' ? 'bg-emerald-100 text-emerald-900 border border-emerald-300' :
                     'bg-purple-100 text-purple-900 border border-purple-300'
                   }`}>
-                    {viewPartyData.type}
+                    {viewPartyData.type === 'CUSTOMER' || viewPartyData.type === 'CLIENT' ? 'Client (Customer)' : viewPartyData.type}
                   </span>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
                     viewPartyData.isActive !== false ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
@@ -3151,7 +3168,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <div>
                   <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Party Entity Type:</label>
                   <select
-                    value={editPartyForm.type}
+                    value={editPartyForm.type === 'CLIENT' ? 'CUSTOMER' : (editPartyForm.type || 'CUSTOMER')}
                     onChange={e => {
                       const val = e.target.value as any;
                       setEditPartyForm(prev => ({
@@ -3170,7 +3187,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     }}
                     className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500 bg-white"
                   >
-                    <option value="CLIENT">Client (Customer)</option>
+                    <option value="CUSTOMER">Client (Customer)</option>
                     <option value="SUPPLIER">Supplier (Vendor / Sorter)</option>
                     <option value="AGENT">Agent (Broker)</option>
                     <option value="COURIER">Courier Company (Logistics/Freight)</option>
@@ -3426,11 +3443,11 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 </div>
               )}
 
-              {editPartyForm.type === 'CLIENT' && (
+              {(editPartyForm.type === 'CUSTOMER' || editPartyForm.type === 'CLIENT') && (
                 <div className="bg-blue-50/70 p-3 rounded-lg border border-blue-200 space-y-2 mt-2">
                   <div className="text-[10px] font-bold text-blue-900 uppercase flex items-center justify-between">
                     <span>🛡️ Linked COA Accounts</span>
-                    <span className="text-[9px] bg-blue-200 text-blue-900 px-1.5 py-0.5 rounded font-bold">CLIENT</span>
+                    <span className="text-[9px] bg-blue-200 text-blue-900 px-1.5 py-0.5 rounded font-bold">CLIENT (CUSTOMER)</span>
                   </div>
                   <div>
                     <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">

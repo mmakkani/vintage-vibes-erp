@@ -18,7 +18,7 @@ export class PartiesService {
                 ? 'AGENT'
                 : (rawT.includes('SUPPLIER') || rawT.includes('VENDOR'))
                 ? 'SUPPLIER'
-                : 'CLIENT';
+                : 'CUSTOMER';
 
               return {
                 id: r.id,
@@ -125,7 +125,7 @@ export class PartiesService {
               if (rawT.includes('COURIER') || rawT.includes('FREIGHT') || rawT.includes('LOGISTICS')) return 'COURIER';
               if (rawT.includes('AGENT') || rawT.includes('BROKER')) return 'AGENT';
               if (rawT.includes('SUPPLIER') || rawT.includes('VENDOR')) return 'SUPPLIER';
-              return 'CLIENT';
+              return 'CUSTOMER';
             })() as PartyType,
             contactPerson: row.contact_person || row.contactPerson || '',
             contact_person: row.contact_person || row.contactPerson || '',
@@ -362,8 +362,8 @@ export class PartiesService {
       throw new Error('Party company/customer name is required and cannot be empty or undefined');
     }
 
-    const rawType = String(party.type || party.party_type || (party as any).partyType || 'CLIENT').trim().toUpperCase();
-    let type: 'CLIENT' | 'SUPPLIER' | 'COURIER' | 'AGENT' = 'CLIENT';
+    const rawType = String(party.type || party.party_type || (party as any).partyType || 'CUSTOMER').trim().toUpperCase();
+    let type: 'CUSTOMER' | 'CLIENT' | 'SUPPLIER' | 'COURIER' | 'AGENT' = 'CUSTOMER';
 
     if (rawType.includes('COURIER') || rawType.includes('FREIGHT') || rawType.includes('LOGISTICS')) {
       type = 'COURIER';
@@ -372,8 +372,10 @@ export class PartiesService {
     } else if (rawType.includes('SUPPLIER') || rawType.includes('VENDOR')) {
       type = 'SUPPLIER';
     } else {
-      type = 'CLIENT';
+      type = 'CUSTOMER';
     }
+
+    const normalizedPartyType = (type as string) === 'CLIENT' ? 'CUSTOMER' : type;
 
     const phone = party.phone || party.contact_no || (party as any).contactNo || '';
     const trnNo = party.trn_no || party.trnNo || party.tax_id || (party as any).trnTaxNo || '';
@@ -403,8 +405,9 @@ export class PartiesService {
       ...party,
       name: cleanName,
       company_name: cleanName,
-      type,
-      party_type: type,
+      type: normalizedPartyType,
+      party_type: normalizedPartyType,
+      partyType: normalizedPartyType,
       phone,
       trnNo,
       trn_no: trnNo,
@@ -466,7 +469,7 @@ export class PartiesService {
     // 2. Direct RPC call to PostgreSQL create_party_with_coa
     const { data, error } = await supabase.rpc('create_party_with_coa', {
       p_name: cleanName,
-      p_type: type,
+      p_type: normalizedPartyType,
       p_phone: phone || null,
       p_trn: trnNo || null,
       p_credit_limit: creditLimit || 0,
@@ -486,7 +489,7 @@ export class PartiesService {
 
     const partyId = data?.party_id || `pty-${Date.now()}`;
     const partyCode = data?.party_code || 'P-NEW';
-    const coaCode = data?.code || data?.account_code || data?.coa_account_id || (type === 'COURIER' ? '2120-01' : (type === 'CLIENT' ? '1130-01' : '2110-01'));
+    const coaCode = data?.code || data?.account_code || data?.coa_account_id || (type === 'COURIER' ? '2120-01' : ((type as string) === 'CLIENT' || type === 'CUSTOMER' ? '1130-01' : '2110-01'));
 
     const contactDesignation = (party as any).contact_designation || party.contactDesignation || '';
     const tradeLicenseNo = (party as any).trade_license_no || party.tradeLicenseNo || '';
@@ -559,7 +562,7 @@ export class PartiesService {
         expenseAccountId: clearingAccountId || '5110-00'
       } : {
         payableAccountId: type === 'SUPPLIER' ? coaCode : '2110-00',
-        receivableAccountId: type === 'CLIENT' ? coaCode : '1130-00',
+        receivableAccountId: (type === 'CUSTOMER' || (type as string) === 'CLIENT') ? coaCode : '1130-00',
         clearingAccountId: clearingAccountId || '1310-00',
         revenueAccountId: revenueAccountId || '4110-00'
       },
@@ -633,9 +636,11 @@ export class PartiesService {
       payload.company_name = updates.name;
     }
     if (updates.company_name !== undefined) payload.company_name = updates.company_name;
-    if (updates.type !== undefined) {
-      payload.type = updates.type;
-      payload.party_type = updates.type === 'SUPPLIER' ? 'SUPPLIER' : 'CUSTOMER';
+    if (updates.type !== undefined || (updates as any).party_type !== undefined) {
+      const rawT = String(updates.type || (updates as any).party_type || '').trim().toUpperCase();
+      const normalizedType = rawT === 'CLIENT' ? 'CUSTOMER' : (rawT || 'CUSTOMER');
+      payload.type = normalizedType;
+      payload.party_type = normalizedType;
     }
     if (updates.contactPerson !== undefined) payload.contact_person = updates.contactPerson;
     if (updates.contact_person !== undefined) payload.contact_person = updates.contact_person;
