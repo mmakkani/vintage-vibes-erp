@@ -69,6 +69,17 @@ CREATE TABLE IF NOT EXISTS parties (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- UAE B2B Enterprise Registry Expansion Columns for Parties
+ALTER TABLE parties ADD COLUMN IF NOT EXISTS contact_designation TEXT;
+ALTER TABLE parties ADD COLUMN IF NOT EXISTS trade_license_no TEXT;
+ALTER TABLE parties ADD COLUMN IF NOT EXISTS license_expiry_date DATE;
+ALTER TABLE parties ADD COLUMN IF NOT EXISTS bank_name TEXT;
+ALTER TABLE parties ADD COLUMN IF NOT EXISTS iban TEXT;
+ALTER TABLE parties ADD COLUMN IF NOT EXISTS swift_code TEXT;
+ALTER TABLE parties ADD COLUMN IF NOT EXISTS payment_terms TEXT;
+ALTER TABLE parties ADD COLUMN IF NOT EXISTS opening_balance NUMERIC DEFAULT 0;
+ALTER TABLE parties ADD COLUMN IF NOT EXISTS business_card_url TEXT;
+
 -- 5. SHOPS & WAREHOUSES
 CREATE TABLE IF NOT EXISTS shop_masters (
     id VARCHAR(64) PRIMARY KEY,

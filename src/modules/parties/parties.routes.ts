@@ -88,6 +88,24 @@ partiesRouter.get('/', async (req, res) => {
           name: row.name || 'Unnamed Party',
           type: (row.type || 'CLIENT').toUpperCase(),
           contactPerson: row.contact_person || '',
+          contact_person: row.contact_person || '',
+          contactDesignation: row.contact_designation || '',
+          contact_designation: row.contact_designation || '',
+          tradeLicenseNo: row.trade_license_no || '',
+          trade_license_no: row.trade_license_no || '',
+          licenseExpiryDate: row.license_expiry_date || null,
+          license_expiry_date: row.license_expiry_date || null,
+          bankName: row.bank_name || '',
+          bank_name: row.bank_name || '',
+          iban: row.iban || '',
+          swiftCode: row.swift_code || '',
+          swift_code: row.swift_code || '',
+          paymentTerms: row.payment_terms || '',
+          payment_terms: row.payment_terms || '',
+          openingBalance: Number(row.opening_balance ?? 0),
+          opening_balance: Number(row.opening_balance ?? 0),
+          businessCardUrl: row.business_card_url || '',
+          business_card_url: row.business_card_url || '',
           phone: row.phone || '',
           email: row.email || '',
           address: row.address || '',
@@ -127,6 +145,24 @@ partiesRouter.get('/', async (req, res) => {
         name: r.name,
         type: (r.type || 'CLIENT').toUpperCase(),
         contactPerson: r.contact_person || '',
+        contact_person: r.contact_person || '',
+        contactDesignation: r.contact_designation || '',
+        contact_designation: r.contact_designation || '',
+        tradeLicenseNo: r.trade_license_no || '',
+        trade_license_no: r.trade_license_no || '',
+        licenseExpiryDate: r.license_expiry_date || null,
+        license_expiry_date: r.license_expiry_date || null,
+        bankName: r.bank_name || '',
+        bank_name: r.bank_name || '',
+        iban: r.iban || '',
+        swiftCode: r.swift_code || '',
+        swift_code: r.swift_code || '',
+        paymentTerms: r.payment_terms || '',
+        payment_terms: r.payment_terms || '',
+        openingBalance: Number(r.opening_balance || 0),
+        opening_balance: Number(r.opening_balance || 0),
+        businessCardUrl: r.business_card_url || '',
+        business_card_url: r.business_card_url || '',
         phone: r.phone || '',
         email: r.email || '',
         address: r.address || '',
@@ -198,6 +234,24 @@ partiesRouter.get('/:id', async (req, res) => {
       name: party.name,
       type: (party.type || 'CLIENT').toUpperCase(),
       contactPerson: party.contact_person || '',
+      contact_person: party.contact_person || '',
+      contactDesignation: party.contact_designation || '',
+      contact_designation: party.contact_designation || '',
+      tradeLicenseNo: party.trade_license_no || '',
+      trade_license_no: party.trade_license_no || '',
+      licenseExpiryDate: party.license_expiry_date || null,
+      license_expiry_date: party.license_expiry_date || null,
+      bankName: party.bank_name || '',
+      bank_name: party.bank_name || '',
+      iban: party.iban || '',
+      swiftCode: party.swift_code || '',
+      swift_code: party.swift_code || '',
+      paymentTerms: party.payment_terms || '',
+      payment_terms: party.payment_terms || '',
+      openingBalance: Number(party.opening_balance || 0),
+      opening_balance: Number(party.opening_balance || 0),
+      businessCardUrl: party.business_card_url || '',
+      business_card_url: party.business_card_url || '',
       phone: party.phone || '',
       email: party.email || '',
       address: party.address || '',
@@ -326,6 +380,52 @@ partiesRouter.post('/', async (req, res) => {
       revenueAccountId: partyData.revenueAccountId || partyData.revenue_account_id || '4110-00'
     };
 
+    const contactDesignation = partyData.contact_designation || partyData.contactDesignation || '';
+    const tradeLicenseNo = partyData.trade_license_no || partyData.tradeLicenseNo || '';
+    const licenseExpiryDate = partyData.license_expiry_date || partyData.licenseExpiryDate || null;
+    const bankName = partyData.bank_name || partyData.bankName || '';
+    const iban = partyData.iban || '';
+    const swiftCode = partyData.swift_code || partyData.swiftCode || '';
+    const paymentTerms = partyData.payment_terms || partyData.paymentTerms || '';
+    const openingBalance = Number(partyData.opening_balance ?? partyData.openingBalance ?? 0);
+    const businessCardUrl = partyData.business_card_url || partyData.businessCardUrl || '';
+
+    // Update extended party details in PostgreSQL
+    await client.query(`
+      UPDATE parties SET
+        contact_person = $1,
+        email = $2,
+        address = $3,
+        account_map = $4,
+        contact_designation = $5,
+        trade_license_no = $6,
+        license_expiry_date = $7,
+        bank_name = $8,
+        iban = $9,
+        swift_code = $10,
+        payment_terms = $11,
+        opening_balance = $12,
+        business_card_url = $13
+      WHERE id = $14 OR party_id::text = $14;
+    `, [
+      contactPerson || null,
+      email || null,
+      address || null,
+      JSON.stringify(initialMap),
+      contactDesignation || null,
+      tradeLicenseNo || null,
+      licenseExpiryDate || null,
+      bankName || null,
+      iban || null,
+      swiftCode || null,
+      paymentTerms || null,
+      openingBalance,
+      businessCardUrl || null,
+      String(finalPartyId)
+    ]).catch(err => {
+      console.warn('Could not update extended party fields:', err.message);
+    });
+
     const createdParty = {
       id: finalPartyId,
       code: finalPartyCode,
@@ -336,6 +436,23 @@ partiesRouter.post('/', async (req, res) => {
       partyType: type,
       contactPerson,
       contact_person: contactPerson,
+      contactDesignation,
+      contact_designation: contactDesignation,
+      tradeLicenseNo,
+      trade_license_no: tradeLicenseNo,
+      licenseExpiryDate,
+      license_expiry_date: licenseExpiryDate,
+      bankName,
+      bank_name: bankName,
+      iban,
+      swiftCode,
+      swift_code: swiftCode,
+      paymentTerms,
+      payment_terms: paymentTerms,
+      openingBalance,
+      opening_balance: openingBalance,
+      businessCardUrl,
+      business_card_url: businessCardUrl,
       phone,
       email,
       address,
@@ -421,6 +538,16 @@ partiesRouter.put('/:id', async (req, res) => {
     const isActive = updates.isActive !== undefined ? Boolean(updates.isActive) : (updates.is_active !== undefined ? Boolean(updates.is_active) : Boolean(current.is_active));
     const accountMap = updates.accountMap || updates.account_map || current.account_map || {};
 
+    const contactDesignation = updates.contact_designation !== undefined ? updates.contact_designation : (updates.contactDesignation !== undefined ? updates.contactDesignation : current.contact_designation);
+    const tradeLicenseNo = updates.trade_license_no !== undefined ? updates.trade_license_no : (updates.tradeLicenseNo !== undefined ? updates.tradeLicenseNo : current.trade_license_no);
+    const licenseExpiryDate = updates.license_expiry_date !== undefined ? updates.license_expiry_date : (updates.licenseExpiryDate !== undefined ? updates.licenseExpiryDate : current.license_expiry_date);
+    const bankName = updates.bank_name !== undefined ? updates.bank_name : (updates.bankName !== undefined ? updates.bankName : current.bank_name);
+    const iban = updates.iban !== undefined ? updates.iban : current.iban;
+    const swiftCode = updates.swift_code !== undefined ? updates.swift_code : (updates.swiftCode !== undefined ? updates.swiftCode : current.swift_code);
+    const paymentTerms = updates.payment_terms !== undefined ? updates.payment_terms : (updates.paymentTerms !== undefined ? updates.paymentTerms : current.payment_terms);
+    const openingBalance = updates.opening_balance !== undefined ? Number(updates.opening_balance) : (updates.openingBalance !== undefined ? Number(updates.openingBalance) : Number(current.opening_balance ?? 0));
+    const businessCardUrl = updates.business_card_url !== undefined ? updates.business_card_url : (updates.businessCardUrl !== undefined ? updates.businessCardUrl : current.business_card_url);
+
     await client.query('BEGIN');
 
     // 1. Update parties
@@ -436,9 +563,18 @@ partiesRouter.put('/:id', async (req, res) => {
         credit_limit = $8,
         current_balance = $9,
         is_active = $10,
-        account_map = $11
-      WHERE id = $12 OR party_id::text = $12
-    `, [cleanName, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, isActive, JSON.stringify(accountMap), id]);
+        account_map = $11,
+        contact_designation = $12,
+        trade_license_no = $13,
+        license_expiry_date = $14,
+        bank_name = $15,
+        iban = $16,
+        swift_code = $17,
+        payment_terms = $18,
+        opening_balance = $19,
+        business_card_url = $20
+      WHERE id = $21 OR party_id::text = $21
+    `, [cleanName, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, isActive, JSON.stringify(accountMap), contactDesignation, tradeLicenseNo, licenseExpiryDate, bankName, iban, swiftCode, paymentTerms, openingBalance, businessCardUrl, id]);
 
     // 2. Keep linked COA account updated
     if (current.coa_account_id) {
@@ -460,6 +596,24 @@ partiesRouter.put('/:id', async (req, res) => {
       name,
       type,
       contactPerson,
+      contact_person: contactPerson,
+      contactDesignation,
+      contact_designation: contactDesignation,
+      tradeLicenseNo,
+      trade_license_no: tradeLicenseNo,
+      licenseExpiryDate,
+      license_expiry_date: licenseExpiryDate,
+      bankName,
+      bank_name: bankName,
+      iban,
+      swiftCode,
+      swift_code: swiftCode,
+      paymentTerms,
+      payment_terms: paymentTerms,
+      openingBalance,
+      opening_balance: openingBalance,
+      businessCardUrl,
+      business_card_url: businessCardUrl,
       phone,
       email,
       address,
@@ -486,78 +640,6 @@ partiesRouter.put('/:id', async (req, res) => {
     return res.status(500).json({ error: err.message || 'Failed to update party' });
   } finally {
     if (client) await client.end().catch(() => {});
-  }
-});
-
-// -------------------------------------------------------------
-// GET /api/parties - Get all parties
-// -------------------------------------------------------------
-partiesRouter.get('/', async (req, res) => {
-  let client: Client | null = null;
-  try {
-    client = await getDbClient();
-    const partiesRes = await client.query(`SELECT * FROM parties ORDER BY created_at DESC;`).catch(() => ({ rows: [] }));
-    const liveBalancesMap = new Map<string, number>();
-    const khataMap = new Map<string, number>();
-    const purMap = new Map<string, number>();
-    const salesMap = new Map<string, number>();
-    const glMap = new Map<string, number>();
-
-    const mapped = partiesRes.rows.map((row: any) => {
-      const rowId = row.id ? String(row.id) : '';
-      const liveBal = (rowId && liveBalancesMap.has(rowId))
-        ? liveBalancesMap.get(rowId)!
-        : (row.coa_account_id && liveBalancesMap.has(String(row.coa_account_id))
-          ? liveBalancesMap.get(String(row.coa_account_id))!
-          : Number(row.current_balance ?? 0));
-
-      const khataCount = (rowId ? khataMap.get(rowId) : 0) || (row.party_id ? khataMap.get(String(row.party_id)) : 0) || 0;
-      const purCount = (rowId ? purMap.get(rowId) : 0) || (row.party_id ? purMap.get(String(row.party_id)) : 0) || 0;
-      const salesCount = (rowId ? salesMap.get(rowId) : 0) || (row.party_id ? salesMap.get(String(row.party_id)) : 0) || 0;
-      const glCount = (rowId ? glMap.get(rowId) : 0) || (row.party_id ? glMap.get(String(row.party_id)) : 0) || 0;
-      const totalEntries = khataCount + purCount + salesCount + glCount;
-      const hasEntries = totalEntries > 0 || Math.abs(liveBal) > 0.001;
-
-      return {
-        id: rowId,
-        party_id: row.party_id,
-        code: row.code || `P-${row.party_id ? String(row.party_id).padStart(4, '0') : String(row.id || '').slice(-4)}`,
-        name: row.name || row.company_name || 'Unnamed Party',
-        company_name: row.company_name || row.name || '',
-        type: (row.type || row.party_type || 'CLIENT').toUpperCase(),
-        party_type: row.party_type || row.type || 'CLIENT',
-        contactPerson: row.contact_person || '',
-        phone: row.phone || '',
-        email: row.email || '',
-        address: row.address || '',
-        trnNo: row.trn_no || '',
-        trn_no: row.trn_no || '',
-        creditLimit: Number(row.credit_limit ?? 0),
-        currentBalance: Number(liveBal.toFixed(2)),
-        currency: row.currency || 'AED',
-        isActive: row.is_active !== false,
-        linked_account_id: row.linked_account_id,
-        accountMap: row.account_map || {},
-        coaAccountId: row.coa_account_id,
-        coa_account_id: row.coa_account_id,
-        purchaseInvoicesCount: purCount,
-        salesInvoicesCount: salesCount,
-        khataLogsCount: khataCount,
-        glEntriesCount: glCount,
-        totalEntriesCount: totalEntries,
-        hasEntries: hasEntries,
-        createdAt: row.created_at || new Date().toISOString()
-      };
-    });
-
-    return res.json(mapped);
-  } catch (err: any) {
-    console.error('Error querying PostgreSQL parties in /api/parties:', err.message);
-    return res.status(500).json({ error: err.message });
-  } finally {
-    if (client) {
-      try { await client.end(); } catch (_) {}
-    }
   }
 });
 

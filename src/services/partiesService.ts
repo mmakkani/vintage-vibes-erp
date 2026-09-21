@@ -16,9 +16,27 @@ export class PartiesService {
               name: r.name || 'Unnamed Party',
               type: (r.type || 'CLIENT').toUpperCase(),
               contactPerson: r.contactPerson || r.contact_person || '',
+              contact_person: r.contact_person || r.contactPerson || '',
               phone: r.phone || '',
               email: r.email || '',
               address: r.address || '',
+              contactDesignation: r.contact_designation || r.contactDesignation || '',
+              contact_designation: r.contact_designation || r.contactDesignation || '',
+              tradeLicenseNo: r.trade_license_no || r.tradeLicenseNo || '',
+              trade_license_no: r.trade_license_no || r.tradeLicenseNo || '',
+              licenseExpiryDate: r.license_expiry_date || r.licenseExpiryDate || null,
+              license_expiry_date: r.license_expiry_date || r.licenseExpiryDate || null,
+              bankName: r.bank_name || r.bankName || '',
+              bank_name: r.bank_name || r.bankName || '',
+              iban: r.iban || '',
+              swiftCode: r.swift_code || r.swiftCode || '',
+              swift_code: r.swift_code || r.swiftCode || '',
+              paymentTerms: r.payment_terms || r.paymentTerms || '',
+              payment_terms: r.payment_terms || r.paymentTerms || '',
+              openingBalance: Number(r.opening_balance ?? r.openingBalance ?? 0),
+              opening_balance: Number(r.opening_balance ?? r.openingBalance ?? 0),
+              businessCardUrl: r.business_card_url || r.businessCardUrl || '',
+              business_card_url: r.business_card_url || r.businessCardUrl || '',
               trnNo: r.trn_no || r.trnNo || '',
               trn_no: r.trn_no || r.trnNo || '',
               party_id: r.party_id,
@@ -93,6 +111,24 @@ export class PartiesService {
             name: row.name,
             type: (row.type || 'CLIENT').toUpperCase(),
             contactPerson: row.contact_person || row.contactPerson || '',
+            contact_person: row.contact_person || row.contactPerson || '',
+            contactDesignation: row.contact_designation || row.contactDesignation || '',
+            contact_designation: row.contact_designation || row.contactDesignation || '',
+            tradeLicenseNo: row.trade_license_no || row.tradeLicenseNo || '',
+            trade_license_no: row.trade_license_no || row.tradeLicenseNo || '',
+            licenseExpiryDate: row.license_expiry_date || row.licenseExpiryDate || null,
+            license_expiry_date: row.license_expiry_date || row.licenseExpiryDate || null,
+            bankName: row.bank_name || row.bankName || '',
+            bank_name: row.bank_name || row.bankName || '',
+            iban: row.iban || '',
+            swiftCode: row.swift_code || row.swiftCode || '',
+            swift_code: row.swift_code || row.swiftCode || '',
+            paymentTerms: row.payment_terms || row.paymentTerms || '',
+            payment_terms: row.payment_terms || row.paymentTerms || '',
+            openingBalance: Number(row.opening_balance ?? row.openingBalance ?? 0),
+            opening_balance: Number(row.opening_balance ?? row.openingBalance ?? 0),
+            businessCardUrl: row.business_card_url || row.businessCardUrl || '',
+            business_card_url: row.business_card_url || row.businessCardUrl || '',
             phone: row.phone || '',
             email: row.email || '',
             address: row.address || '',
@@ -407,12 +443,57 @@ export class PartiesService {
     const partyCode = data?.party_code || 'P-NEW';
     const coaCode = data?.code || (type === 'AGENT' ? '2120-00' : (type === 'SUPPLIER' ? '2110-01' : '1130-01'));
 
+    const contactDesignation = (party as any).contact_designation || party.contactDesignation || '';
+    const tradeLicenseNo = (party as any).trade_license_no || party.tradeLicenseNo || '';
+    const licenseExpiryDate = (party as any).license_expiry_date || party.licenseExpiryDate || null;
+    const bankName = (party as any).bank_name || party.bankName || '';
+    const iban = party.iban || '';
+    const swiftCode = (party as any).swift_code || party.swiftCode || '';
+    const paymentTerms = (party as any).payment_terms || party.paymentTerms || '';
+    const openingBalance = Number((party as any).opening_balance ?? party.openingBalance ?? 0);
+    const businessCardUrl = (party as any).business_card_url || party.businessCardUrl || '';
+
+    if (data?.party_id) {
+      await supabase.from('parties').update({
+        contact_person: party.contactPerson || (party as any).contact_person,
+        email: party.email,
+        address: party.address,
+        contact_designation: contactDesignation || null,
+        trade_license_no: tradeLicenseNo || null,
+        license_expiry_date: licenseExpiryDate || null,
+        bank_name: bankName || null,
+        iban: iban || null,
+        swift_code: swiftCode || null,
+        payment_terms: paymentTerms || null,
+        opening_balance: openingBalance,
+        business_card_url: businessCardUrl || null
+      }).eq('id', data.party_id).catch(() => {});
+    }
+
     return {
       id: partyId,
       code: partyCode,
       name: cleanName,
       type,
       contactPerson: party.contactPerson || '',
+      contact_person: party.contactPerson || '',
+      contactDesignation,
+      contact_designation: contactDesignation,
+      tradeLicenseNo,
+      trade_license_no: tradeLicenseNo,
+      licenseExpiryDate,
+      license_expiry_date: licenseExpiryDate,
+      bankName,
+      bank_name: bankName,
+      iban,
+      swiftCode,
+      swift_code: swiftCode,
+      paymentTerms,
+      payment_terms: paymentTerms,
+      openingBalance,
+      opening_balance: openingBalance,
+      businessCardUrl,
+      business_card_url: businessCardUrl,
       phone: phone || '',
       email: party.email || '',
       address: party.address || '',
@@ -454,6 +535,23 @@ export class PartiesService {
               type: p.type || p.party_type || updates.type || 'CLIENT',
               contactPerson: p.contactPerson || p.contact_person || updates.contactPerson || '',
               contact_person: p.contact_person || p.contactPerson || updates.contactPerson || '',
+              contactDesignation: p.contact_designation || p.contactDesignation || updates.contactDesignation || updates.contact_designation || '',
+              contact_designation: p.contact_designation || p.contactDesignation || updates.contactDesignation || updates.contact_designation || '',
+              tradeLicenseNo: p.trade_license_no || p.tradeLicenseNo || updates.tradeLicenseNo || updates.trade_license_no || '',
+              trade_license_no: p.trade_license_no || p.tradeLicenseNo || updates.tradeLicenseNo || updates.trade_license_no || '',
+              licenseExpiryDate: p.license_expiry_date || p.licenseExpiryDate || updates.licenseExpiryDate || updates.license_expiry_date || null,
+              license_expiry_date: p.license_expiry_date || p.licenseExpiryDate || updates.licenseExpiryDate || updates.license_expiry_date || null,
+              bankName: p.bank_name || p.bankName || updates.bankName || updates.bank_name || '',
+              bank_name: p.bank_name || p.bankName || updates.bankName || updates.bank_name || '',
+              iban: p.iban || updates.iban || '',
+              swiftCode: p.swift_code || p.swiftCode || updates.swiftCode || updates.swift_code || '',
+              swift_code: p.swift_code || p.swiftCode || updates.swiftCode || updates.swift_code || '',
+              paymentTerms: p.payment_terms || p.paymentTerms || updates.paymentTerms || updates.payment_terms || '',
+              payment_terms: p.payment_terms || p.paymentTerms || updates.paymentTerms || updates.payment_terms || '',
+              openingBalance: Number(p.opening_balance ?? p.openingBalance ?? updates.openingBalance ?? updates.opening_balance ?? 0),
+              opening_balance: Number(p.opening_balance ?? p.openingBalance ?? updates.openingBalance ?? updates.opening_balance ?? 0),
+              businessCardUrl: p.business_card_url || p.businessCardUrl || updates.businessCardUrl || updates.business_card_url || '',
+              business_card_url: p.business_card_url || p.businessCardUrl || updates.businessCardUrl || updates.business_card_url || '',
               phone: p.phone || updates.phone || '',
               email: p.email || updates.email || '',
               address: p.address || updates.address || '',
@@ -492,6 +590,23 @@ export class PartiesService {
     }
     if (updates.contactPerson !== undefined) payload.contact_person = updates.contactPerson;
     if (updates.contact_person !== undefined) payload.contact_person = updates.contact_person;
+    if (updates.contactDesignation !== undefined) payload.contact_designation = updates.contactDesignation;
+    if (updates.contact_designation !== undefined) payload.contact_designation = updates.contact_designation;
+    if (updates.tradeLicenseNo !== undefined) payload.trade_license_no = updates.tradeLicenseNo;
+    if (updates.trade_license_no !== undefined) payload.trade_license_no = updates.trade_license_no;
+    if (updates.licenseExpiryDate !== undefined) payload.license_expiry_date = updates.licenseExpiryDate;
+    if (updates.license_expiry_date !== undefined) payload.license_expiry_date = updates.license_expiry_date;
+    if (updates.bankName !== undefined) payload.bank_name = updates.bankName;
+    if (updates.bank_name !== undefined) payload.bank_name = updates.bank_name;
+    if (updates.iban !== undefined) payload.iban = updates.iban;
+    if (updates.swiftCode !== undefined) payload.swift_code = updates.swiftCode;
+    if (updates.swift_code !== undefined) payload.swift_code = updates.swift_code;
+    if (updates.paymentTerms !== undefined) payload.payment_terms = updates.paymentTerms;
+    if (updates.payment_terms !== undefined) payload.payment_terms = updates.payment_terms;
+    if (updates.openingBalance !== undefined) payload.opening_balance = updates.openingBalance;
+    if (updates.opening_balance !== undefined) payload.opening_balance = updates.opening_balance;
+    if (updates.businessCardUrl !== undefined) payload.business_card_url = updates.businessCardUrl;
+    if (updates.business_card_url !== undefined) payload.business_card_url = updates.business_card_url;
     if (updates.phone !== undefined) payload.phone = updates.phone;
     if (updates.email !== undefined) payload.email = updates.email;
     if (updates.address !== undefined) payload.address = updates.address;

@@ -7,6 +7,7 @@ import {
   ArrowUpRight,
   BookOpen,
   Building,
+  Building2,
   Phone,
   Mail,
   Receipt,
@@ -24,12 +25,21 @@ import {
   ExternalLink,
   FileText,
   Check,
-  Shield
+  Shield,
+  Loader2,
+  Camera,
+  Sparkles,
+  Upload,
+  Landmark,
+  Calendar
 } from 'lucide-react';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
 import { SearchableSelect } from '../../../components/SearchableSelect.tsx';
 import { supabase } from '../../../supabaseClient.ts';
+import { LiveCardScannerModal } from './LiveCardScannerModal.tsx';
+import { PartyProfilePrintDossier } from './PartyProfilePrintDossier.tsx';
+import { extractVisitingCardDetails, VisitingCardOcrResult } from '../services/visitingCardOcrService.ts';
 
 interface PartiesViewProps {
   onRefreshAll: () => void;
@@ -43,6 +53,13 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   // Selected party for Khata statement
   const [selectedParty, setSelectedParty] = useState<Party | null>(null);
   const [khataLogs, setKhataLogs] = useState<PartyKhataLog[]>([]);
+
+  // Double-submission protection & OCR Scanner state
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showLiveScannerModal, setShowLiveScannerModal] = useState(false);
+  const [scannerTargetForm, setScannerTargetForm] = useState<'NEW' | 'EDIT'>('NEW');
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
+  const [printingParty, setPrintingParty] = useState<Party | null>(null);
 
   // Modals
   const [showNewPartyModal, setShowNewPartyModal] = useState(false);
@@ -61,11 +78,29 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     company_name: '',
     type: 'CLIENT' as any,
     contactPerson: '',
+    contact_person: '',
+    contactDesignation: '',
+    contact_designation: '',
     phone: '',
     email: '',
     address: '',
     trnNo: '',
     trn_no: '',
+    tradeLicenseNo: '',
+    trade_license_no: '',
+    licenseExpiryDate: '',
+    license_expiry_date: '',
+    bankName: '',
+    bank_name: '',
+    iban: '',
+    swiftCode: '',
+    swift_code: '',
+    paymentTerms: 'Cash on Delivery',
+    payment_terms: 'Cash on Delivery',
+    openingBalance: 0,
+    opening_balance: 0,
+    businessCardUrl: '',
+    business_card_url: '',
     creditLimit: 50000,
     isActive: true,
     linked_account_id: undefined as number | undefined,
@@ -89,11 +124,28 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     party_type: 'CLIENT' as 'CLIENT' | 'SUPPLIER' | 'AGENT',
     contactPerson: '',
     contact_person: '',
+    contactDesignation: '',
+    contact_designation: '',
     phone: '',
     email: '',
     address: '',
     trnNo: '',
     trn_no: '',
+    tradeLicenseNo: '',
+    trade_license_no: '',
+    licenseExpiryDate: '',
+    license_expiry_date: '',
+    bankName: '',
+    bank_name: '',
+    iban: '',
+    swiftCode: '',
+    swift_code: '',
+    paymentTerms: 'Cash on Delivery',
+    payment_terms: 'Cash on Delivery',
+    openingBalance: 0,
+    opening_balance: 0,
+    businessCardUrl: '',
+    business_card_url: '',
     creditLimit: 50000,
     credit_limit: 50000,
     currency: 'AED' as any,
@@ -270,7 +322,76 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
   const toast = {
     error: (msg: string) => showMsg(msg, 'error'),
-    success: (msg: string) => showMsg(msg, 'success')
+    success: (msg: string) => showMsg(msg, 'success'),
+    info: (msg: string) => showMsg(msg, 'success')
+  };
+
+  const handleVisitingCardExtracted = (ocrResult: VisitingCardOcrResult) => {
+    if (scannerTargetForm === 'NEW') {
+      setPartyForm(prev => ({
+        ...prev,
+        name: ocrResult.companyName || prev.name,
+        company_name: ocrResult.companyName || prev.name,
+        contactPerson: ocrResult.contactPerson || prev.contactPerson,
+        contact_person: ocrResult.contactPerson || prev.contactPerson,
+        contactDesignation: ocrResult.designation || prev.contactDesignation,
+        contact_designation: ocrResult.designation || prev.contactDesignation,
+        phone: ocrResult.phone || prev.phone,
+        email: ocrResult.email || prev.email,
+        address: ocrResult.address || prev.address,
+        trnNo: ocrResult.trn_tax_no || prev.trnNo,
+        trn_no: ocrResult.trn_tax_no || prev.trnNo,
+        businessCardUrl: ocrResult.cardImageUrl || prev.businessCardUrl,
+        business_card_url: ocrResult.cardImageUrl || prev.businessCardUrl
+      }));
+    } else {
+      setEditPartyForm(prev => ({
+        ...prev,
+        name: ocrResult.companyName || prev.name,
+        company_name: ocrResult.companyName || prev.name,
+        contactPerson: ocrResult.contactPerson || prev.contactPerson,
+        contact_person: ocrResult.contactPerson || prev.contactPerson,
+        contactDesignation: ocrResult.designation || prev.contactDesignation,
+        contact_designation: ocrResult.designation || prev.contactDesignation,
+        phone: ocrResult.phone || prev.phone,
+        email: ocrResult.email || prev.email,
+        address: ocrResult.address || prev.address,
+        trnNo: ocrResult.trn_tax_no || prev.trnNo,
+        trn_no: ocrResult.trn_tax_no || prev.trnNo,
+        businessCardUrl: ocrResult.cardImageUrl || prev.businessCardUrl,
+        business_card_url: ocrResult.cardImageUrl || prev.businessCardUrl
+      }));
+    }
+    toast.success('✨ Visiting card scanned & party details auto-populated!');
+  };
+
+  const handleCardFileUpload = (e: React.ChangeEvent<HTMLInputElement>, target: 'NEW' | 'EDIT') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const b64 = event.target?.result as string;
+      if (!b64) return;
+      setIsOcrProcessing(true);
+      try {
+        toast.info('Scanning business card with Gemini AI...');
+        const result = await extractVisitingCardDetails(b64);
+        setScannerTargetForm(target);
+        handleVisitingCardExtracted(result);
+      } catch (err: any) {
+        toast.error(err.message || 'Failed to scan visiting card');
+      } finally {
+        setIsOcrProcessing(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handlePrintParty = (party: Party) => {
+    setPrintingParty(party);
+    setTimeout(() => {
+      window.print();
+    }, 150);
   };
 
   const queryClient = {
@@ -287,6 +408,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
   const handleCreateParty = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     const cleanName = String(partyForm.name || (partyForm as any).company_name || '').trim();
     const cleanType = String(partyForm.type || (partyForm as any).party_type || 'CLIENT').trim().toUpperCase();
 
@@ -305,6 +428,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       return;
     }
 
+    setIsSubmitting(true);
+
     const formData = {
       name: cleanName,
       company_name: cleanName,
@@ -320,7 +445,16 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       revenue_account_id: partyForm.revenueAccountId || (partyForm as any).revenue_account_id,
       contact_person: partyForm.contactPerson || (partyForm as any).contact_person || '',
       email: partyForm.email || null,
-      address: partyForm.address || null
+      address: partyForm.address || null,
+      contact_designation: partyForm.contactDesignation || partyForm.contact_designation || null,
+      trade_license_no: partyForm.tradeLicenseNo || partyForm.trade_license_no || null,
+      license_expiry_date: partyForm.licenseExpiryDate || partyForm.license_expiry_date || null,
+      bank_name: partyForm.bankName || partyForm.bank_name || null,
+      iban: partyForm.iban || null,
+      swift_code: partyForm.swiftCode || partyForm.swift_code || null,
+      payment_terms: partyForm.paymentTerms || partyForm.payment_terms || 'Cash on Delivery',
+      opening_balance: Number(partyForm.openingBalance ?? partyForm.opening_balance ?? 0),
+      business_card_url: partyForm.businessCardUrl || partyForm.business_card_url || null
     };
 
     try {
@@ -340,7 +474,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         return;
       }
 
-      // Update party extra details (contact_person, email, address, account_map)
+      // Update party extra details (contact_person, email, address, enterprise B2B fields)
       if (data?.party_id) {
         const customMap = formData.party_type === 'AGENT' ? {
           payableAccountId: data.code || data.account_code || '2120-01',
@@ -361,9 +495,18 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
           contact_person: formData.contact_person,
           email: formData.email,
           address: formData.address,
-          account_map: customMap
+          account_map: customMap,
+          contact_designation: formData.contact_designation,
+          trade_license_no: formData.trade_license_no,
+          license_expiry_date: formData.license_expiry_date,
+          bank_name: formData.bank_name,
+          iban: formData.iban,
+          swift_code: formData.swift_code,
+          payment_terms: formData.payment_terms,
+          opening_balance: formData.opening_balance,
+          business_card_url: formData.business_card_url
         }).eq('id', data.party_id);
-        if (updateError) throw updateError;
+        if (updateError) console.warn("Could not update extended party columns:", updateError);
       }
 
       toast.success(`Created party & provisioned account ${data.code}`);
@@ -380,11 +523,28 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         party_type: 'CLIENT',
         contactPerson: '',
         contact_person: '',
+        contactDesignation: '',
+        contact_designation: '',
         phone: '',
         email: '',
         address: '',
         trnNo: '',
         trn_no: '',
+        tradeLicenseNo: '',
+        trade_license_no: '',
+        licenseExpiryDate: '',
+        license_expiry_date: '',
+        bankName: '',
+        bank_name: '',
+        iban: '',
+        swiftCode: '',
+        swift_code: '',
+        paymentTerms: 'Cash on Delivery',
+        payment_terms: 'Cash on Delivery',
+        openingBalance: 0,
+        opening_balance: 0,
+        businessCardUrl: '',
+        business_card_url: '',
         creditLimit: 50000,
         credit_limit: 50000,
         currency: 'AED',
@@ -402,6 +562,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     } catch (err: any) {
       toast.error(err?.message || 'Failed to add party');
       console.error("Party Creation Failed:", err);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -463,11 +625,29 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       company_name: pAny.company_name || party.name || '',
       type: (party.type || pAny.party_type || 'CLIENT') as any,
       contactPerson: party.contactPerson || pAny.contact_person || '',
+      contact_person: party.contactPerson || pAny.contact_person || '',
+      contactDesignation: party.contactDesignation || pAny.contact_designation || '',
+      contact_designation: party.contactDesignation || pAny.contact_designation || '',
       phone: party.phone || '',
       email: party.email || '',
       address: party.address || '',
       trnNo: pAny.trn_no || party.trnNo || '',
       trn_no: pAny.trn_no || party.trnNo || '',
+      tradeLicenseNo: party.tradeLicenseNo || pAny.trade_license_no || '',
+      trade_license_no: party.tradeLicenseNo || pAny.trade_license_no || '',
+      licenseExpiryDate: party.licenseExpiryDate || pAny.license_expiry_date || '',
+      license_expiry_date: party.licenseExpiryDate || pAny.license_expiry_date || '',
+      bankName: party.bankName || pAny.bank_name || '',
+      bank_name: party.bankName || pAny.bank_name || '',
+      iban: party.iban || pAny.iban || '',
+      swiftCode: party.swiftCode || pAny.swift_code || '',
+      swift_code: party.swiftCode || pAny.swift_code || '',
+      paymentTerms: party.paymentTerms || pAny.payment_terms || 'Cash on Delivery',
+      payment_terms: party.paymentTerms || pAny.payment_terms || 'Cash on Delivery',
+      openingBalance: Number(party.openingBalance ?? pAny.opening_balance ?? 0),
+      opening_balance: Number(party.openingBalance ?? pAny.opening_balance ?? 0),
+      businessCardUrl: party.businessCardUrl || pAny.business_card_url || '',
+      business_card_url: party.businessCardUrl || pAny.business_card_url || '',
       creditLimit: Number(party.creditLimit || pAny.credit_limit || 0),
       isActive: party.isActive !== false && pAny.is_active !== false,
       linked_account_id: pAny.linked_account_id || pAny.linkedAccountId,
@@ -482,6 +662,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   // Save Edit to SQL
   const handleSaveEditParty = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     const cleanName = (editPartyForm.name || editPartyForm.company_name || '').trim();
     if (!cleanName) {
       showMsg('Party / Company Name cannot be empty.', 'error');
@@ -494,6 +676,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       return;
     }
 
+    setIsSubmitting(true);
+
     try {
       const updated = await PartiesService.updateParty(editPartyForm.id, {
         name: cleanName,
@@ -501,11 +685,28 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         type: editPartyForm.type,
         contactPerson: editPartyForm.contactPerson,
         contact_person: editPartyForm.contactPerson,
+        contactDesignation: editPartyForm.contactDesignation,
+        contact_designation: editPartyForm.contactDesignation,
         phone: editPartyForm.phone,
         email: editPartyForm.email,
         address: editPartyForm.address,
         trnNo: editPartyForm.trnNo || editPartyForm.trn_no,
         trn_no: editPartyForm.trnNo || editPartyForm.trn_no,
+        tradeLicenseNo: editPartyForm.tradeLicenseNo,
+        trade_license_no: editPartyForm.tradeLicenseNo,
+        licenseExpiryDate: editPartyForm.licenseExpiryDate,
+        license_expiry_date: editPartyForm.licenseExpiryDate,
+        bankName: editPartyForm.bankName,
+        bank_name: editPartyForm.bankName,
+        iban: editPartyForm.iban,
+        swiftCode: editPartyForm.swiftCode,
+        swift_code: editPartyForm.swiftCode,
+        paymentTerms: editPartyForm.paymentTerms,
+        payment_terms: editPartyForm.paymentTerms,
+        openingBalance: editPartyForm.openingBalance,
+        opening_balance: editPartyForm.openingBalance,
+        businessCardUrl: editPartyForm.businessCardUrl,
+        business_card_url: editPartyForm.businessCardUrl,
         creditLimit: editPartyForm.creditLimit,
         credit_limit: editPartyForm.creditLimit,
         isActive: editPartyForm.isActive,
@@ -535,6 +736,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       onRefreshAll();
     } catch (err: any) {
       showMsg(err.message || 'Failed to update party', 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -834,6 +1037,14 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     </button>
                     <button
                       type="button"
+                      onClick={(e) => { e.stopPropagation(); handlePrintParty(party); }}
+                      className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                      title="Print Official Profile / A4 Dossier"
+                    >
+                      <Printer className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
                       onClick={(e) => { e.stopPropagation(); handleOpenEditParty(party); }}
                       className="p-1 rounded bg-slate-100 hover:bg-amber-100 text-amber-800 transition-colors cursor-pointer"
                       title="Edit Party Details in SQL"
@@ -906,6 +1117,15 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   >
                     <Pencil className="w-3.5 h-3.5 text-amber-600" />
                     <span>Edit</span>
+                  </button>
+
+                  <button
+                    onClick={() => handlePrintParty(selectedParty)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-white hover:bg-slate-100 text-slate-800 font-bold text-[10px] uppercase tracking-wider border border-slate-300 shadow-2xs transition-colors cursor-pointer"
+                    title="Print Full Party Profile / A4 Dossier"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Print</span>
                   </button>
 
                   <button
@@ -1059,85 +1279,230 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
       {/* NEW PARTY MODAL */}
       {showNewPartyModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded max-w-md w-full p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
-            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-1">Add Party & Auto-Provision COA</h3>
-            <p className="text-[11px] text-slate-500 mb-3">
-              Automatically creates Accounts Receivable, Payable, or Clearing sub-accounts in the 5-Tier COA.
-            </p>
-            <form onSubmit={handleCreateParty} className="space-y-2.5 text-xs">
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-start justify-between border-b border-slate-200 pb-3 mb-4">
               <div>
-                <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Party Entity Type:</label>
-                <select
-                  value={partyForm.type || (partyForm as any).party_type}
-                  onChange={e => {
-                    const val = e.target.value as any;
-                    setPartyForm(prev => ({
-                      ...prev,
-                      type: val,
-                      party_type: val,
-                      ...(val === 'AGENT' ? {
-                        payableAccountId: '2120-00',
-                        payable_account_id: '2120-00',
-                        clearingAccountId: '1310-00',
-                        clearing_account_id: '1310-00'
-                      } : val === 'SUPPLIER' ? {
-                        payableAccountId: '2110-00',
-                        payable_account_id: '2110-00',
-                        clearingAccountId: '1310-00',
-                        clearing_account_id: '1310-00'
-                      } : {
-                        receivableAccountId: '1130-00',
-                        receivable_account_id: '1130-00',
-                        revenueAccountId: '4110-00',
-                        revenue_account_id: '4110-00'
-                      })
-                    }));
-                  }}
-                  className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500"
-                >
-                  <option value="CLIENT">Client (Customer)</option>
-                  <option value="SUPPLIER">Supplier (Vendor / Sorter)</option>
-                  <option value="AGENT">Clearing & Commission Agent</option>
-                </select>
+                <h3 className="text-base font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                  <span>Register Enterprise Party & Auto-Provision COA</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Full UAE B2B compliance record with automated 5-Tier Chart of Accounts provisioning.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNewPartyModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* AI VISITING CARD OCR BLOCK */}
+            <div className="bg-gradient-to-r from-blue-50/80 via-indigo-50/60 to-slate-50 border border-blue-200/80 rounded-xl p-3.5 mb-4 shadow-xs">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5 text-blue-950 font-bold text-xs">
+                  <Sparkles className="w-4 h-4 text-blue-600" />
+                  <span>Live AI Visiting Card Scanner & Auto-Fill</span>
+                </div>
+                <span className="text-[9px] font-bold uppercase tracking-wider bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full border border-blue-200">
+                  Gemini Vision OCR
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 mb-2.5 leading-relaxed">
+                Scan or upload a physical visiting card to automatically parse corporate name, designation, phone, email, address, and UAE TRN tax number.
+              </p>
+
+              {partyForm.businessCardUrl ? (
+                <div className="bg-white rounded-lg border border-slate-300 p-2.5 flex items-center justify-between gap-3 shadow-2xs">
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={partyForm.businessCardUrl}
+                      alt="Scanned Business Card"
+                      className="h-16 w-28 rounded object-cover border border-slate-200 shadow-xs"
+                    />
+                    <div>
+                      <span className="text-[11px] font-bold text-emerald-800 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        Business Card Captured & Attached
+                      </span>
+                      <p className="text-[10px] text-slate-500">
+                        Authenticated image will be preserved in database and official print dossiers.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScannerTargetForm('NEW');
+                        setShowLiveScannerModal(true);
+                      }}
+                      className="px-2.5 py-1 rounded text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200"
+                    >
+                      Rescan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPartyForm(prev => ({ ...prev, businessCardUrl: '', business_card_url: '' }))}
+                      className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50"
+                      title="Remove Card"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScannerTargetForm('NEW');
+                      setShowLiveScannerModal(true);
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>📸 Live Camera Scan</span>
+                  </button>
+                  <label className="px-3.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 border border-slate-300 shadow-xs transition cursor-pointer">
+                    <Upload className="w-3.5 h-3.5 text-blue-600" />
+                    <span>📁 Upload Card</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={e => handleCardFileUpload(e, 'NEW')}
+                    />
+                  </label>
+                  {isOcrProcessing && (
+                    <div className="flex items-center gap-1.5 text-xs text-blue-700 font-semibold animate-pulse ml-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Extracting with Gemini AI...</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleCreateParty} className="space-y-3.5 text-xs">
+              {/* Row 1: Entity Type & Name */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-1">
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    Entity Type:
+                  </label>
+                  <select
+                    value={partyForm.type || (partyForm as any).party_type}
+                    onChange={e => {
+                      const val = e.target.value as any;
+                      setPartyForm(prev => ({
+                        ...prev,
+                        type: val,
+                        party_type: val,
+                        ...(val === 'AGENT' ? {
+                          payableAccountId: '2120-00',
+                          payable_account_id: '2120-00',
+                          clearingAccountId: '1310-00',
+                          clearing_account_id: '1310-00'
+                        } : val === 'SUPPLIER' ? {
+                          payableAccountId: '2110-00',
+                          payable_account_id: '2110-00',
+                          clearingAccountId: '1310-00',
+                          clearing_account_id: '1310-00'
+                        } : {
+                          receivableAccountId: '1130-00',
+                          receivable_account_id: '1130-00',
+                          revenueAccountId: '4110-00',
+                          revenue_account_id: '4110-00'
+                        })
+                      }));
+                    }}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500 bg-white"
+                  >
+                    <option value="CLIENT">Client (Customer)</option>
+                    <option value="SUPPLIER">Supplier (Vendor / Sorter)</option>
+                    <option value="AGENT">Clearing & Commission Agent</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    Company / Legal Trading Name:
+                  </label>
+                  <input
+                    type="text"
+                    value={partyForm.name}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setPartyForm(prev => ({ ...prev, name: val, company_name: val }));
+                    }}
+                    placeholder="e.g. Vintage Vibes General Trading L.L.C"
+                    className={`w-full border rounded-lg p-2 text-xs font-semibold text-slate-800 ${
+                      partyForm.name.trim() && parties.some(p => p.name.trim().toLowerCase() === partyForm.name.trim().toLowerCase())
+                        ? 'border-red-500 bg-red-50/40 focus:border-red-600'
+                        : 'border-slate-300 focus:border-blue-500'
+                    }`}
+                    required
+                  />
+                  {(() => {
+                    const clean = partyForm.name.trim().toLowerCase();
+                    if (!clean) return null;
+                    const dup = parties.find(p => p.name.trim().toLowerCase() === clean);
+                    if (dup) {
+                      return (
+                        <div className="text-[10px] text-red-600 font-bold mt-1 flex items-center gap-1 bg-red-50 p-1.5 rounded border border-red-200">
+                          <AlertCircle className="w-3 h-3 text-red-600 shrink-0" />
+                          <span>Duplicate Name: "{dup.name}" already exists ({dup.code}). Duplicate names are strictly prohibited.</span>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Company / Party Name:</label>
-                <input
-                  type="text"
-                  value={partyForm.name}
-                  onChange={e => {
-                    const val = e.target.value;
-                    setPartyForm(prev => ({ ...prev, name: val, company_name: val }));
-                  }}
-                  placeholder="e.g. Dubai Vintage Archive Ltd"
-                  className={`w-full border rounded p-1.5 text-xs text-slate-800 ${
-                    partyForm.name.trim() && parties.some(p => p.name.trim().toLowerCase() === partyForm.name.trim().toLowerCase())
-                      ? 'border-red-500 bg-red-50/40 focus:border-red-600'
-                      : 'border-slate-300 focus:border-blue-500'
-                  }`}
-                  required
-                />
-                {(() => {
-                  const clean = partyForm.name.trim().toLowerCase();
-                  if (!clean) return null;
-                  const dup = parties.find(p => p.name.trim().toLowerCase() === clean);
-                  if (dup) {
-                    return (
-                      <div className="text-[10px] text-red-600 font-bold mt-1 flex items-center gap-1 bg-red-50 p-1.5 rounded border border-red-200">
-                        <AlertCircle className="w-3 h-3 text-red-600 shrink-0" />
-                        <span>Duplicate Name: "{dup.name}" already exists ({dup.code}). Duplicate names are strictly prohibited.</span>
-                      </div>
-                    );
-                  }
-                  return null;
-                })()}
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
+              {/* Row 2: Contact Person & Designation */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Phone Number:</label>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    Contact Person Name:
+                  </label>
+                  <input
+                    type="text"
+                    value={partyForm.contactPerson}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setPartyForm(prev => ({ ...prev, contactPerson: val, contact_person: val }));
+                    }}
+                    placeholder="e.g. John Doe / Tariq Al Mansoor"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    Contact Designation / Executive Role:
+                  </label>
+                  <input
+                    type="text"
+                    value={partyForm.contactDesignation}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setPartyForm(prev => ({ ...prev, contactDesignation: val, contact_designation: val }));
+                    }}
+                    placeholder="e.g. Managing Director, Procurement Head"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Row 3: Phone & Email */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    Official Telephone / Mobile:
+                  </label>
                   <input
                     type="text"
                     value={partyForm.phone}
@@ -1145,13 +1510,31 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       const val = e.target.value;
                       setPartyForm(prev => ({ ...prev, phone: val, contact_no: val }));
                     }}
-                    placeholder="+971 50 ..."
-                    className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500"
+                    placeholder="+971 50 123 4567"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">TRN Tax No:</label>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    Corporate Email Address:
+                  </label>
+                  <input
+                    type="email"
+                    value={partyForm.email}
+                    onChange={e => setPartyForm(prev => ({ ...prev, email: e.target.value }))}
+                    placeholder="finance@company.com"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Row 4: Tax TRN & Trade License */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-1">
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    UAE Tax TRN (15 Digits):
+                  </label>
                   <input
                     type="text"
                     value={partyForm.trnNo}
@@ -1160,182 +1543,173 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       setPartyForm(prev => ({ ...prev, trnNo: val, trn_no: val }));
                     }}
                     placeholder="100..."
-                    className="w-full border border-slate-300 rounded p-1.5 text-xs font-mono text-slate-800 focus:border-blue-500"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+                <div className="sm:col-span-1">
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    Trade License Number:
+                  </label>
+                  <input
+                    type="text"
+                    value={partyForm.tradeLicenseNo}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setPartyForm(prev => ({ ...prev, tradeLicenseNo: val, trade_license_no: val }));
+                    }}
+                    placeholder="e.g. 748291"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+                <div className="sm:col-span-1">
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    License Expiry Date:
+                  </label>
+                  <input
+                    type="date"
+                    value={partyForm.licenseExpiryDate}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setPartyForm(prev => ({ ...prev, licenseExpiryDate: val, license_expiry_date: val }));
+                    }}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
                   />
                 </div>
               </div>
 
+              {/* Address / Location */}
               <div>
-                <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Address / Location:</label>
+                <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                  Office / Warehouse Address:
+                </label>
                 <input
                   type="text"
                   value={partyForm.address}
                   onChange={e => setPartyForm(prev => ({ ...prev, address: e.target.value }))}
-                  placeholder="Plot 12, Industrial Area, Dubai"
-                  className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500"
+                  placeholder="Plot 12, Industrial Area, Al Quoz, Dubai"
+                  className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
                 />
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Approved Credit Limit (AED):</label>
-                <input
-                  type="number"
-                  value={partyForm.creditLimit}
-                  onChange={e => {
-                    const val = Number(e.target.value);
-                    setPartyForm(prev => ({ ...prev, creditLimit: val, credit_limit: val }));
-                  }}
-                  className="w-full border border-slate-300 rounded p-1.5 text-xs font-mono text-slate-800 focus:border-blue-500"
-                />
+              {/* Banking & Settlement Section */}
+              <div className="bg-slate-50/80 border border-slate-200 rounded-xl p-3 space-y-2">
+                <div className="flex items-center gap-1.5 text-slate-800 font-bold text-[11px] uppercase tracking-wider">
+                  <Landmark className="w-3.5 h-3.5 text-blue-700" />
+                  <span>Corporate Banking & Wire Details</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block font-bold text-slate-600 text-[9px] uppercase mb-0.5">Bank Name:</label>
+                    <input
+                      type="text"
+                      value={partyForm.bankName}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setPartyForm(prev => ({ ...prev, bankName: val, bank_name: val }));
+                      }}
+                      placeholder="e.g. Emirates NBD, Mashreq"
+                      className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-600 text-[9px] uppercase mb-0.5">IBAN Number:</label>
+                    <input
+                      type="text"
+                      value={partyForm.iban}
+                      onChange={e => setPartyForm(prev => ({ ...prev, iban: e.target.value }))}
+                      placeholder="AE..."
+                      className="w-full border border-slate-300 rounded p-1.5 text-xs font-mono text-slate-800 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-600 text-[9px] uppercase mb-0.5">SWIFT / BIC Code:</label>
+                    <input
+                      type="text"
+                      value={partyForm.swiftCode}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setPartyForm(prev => ({ ...prev, swiftCode: val, swift_code: val }));
+                      }}
+                      placeholder="EBILAEAD..."
+                      className="w-full border border-slate-300 rounded p-1.5 text-xs font-mono text-slate-800 bg-white"
+                    />
+                  </div>
+                </div>
               </div>
 
-              {/* DUAL COA ACCOUNT SELECTION */}
-              {partyForm.type === 'SUPPLIER' && (
-                <div className="bg-amber-50/70 p-3 rounded-lg border border-amber-200 space-y-2 mt-2">
-                  <div className="text-[10px] font-bold text-amber-900 uppercase flex items-center justify-between">
-                    <span>🛡️ Dual COA Accounting Link (Auto-Provisioned)</span>
-                    <span className="text-[9px] bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold">SUPPLIER</span>
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
-                      1. Accounts Payable Account (Liability):
-                    </label>
-                    <SearchableSelect
-                      value={partyForm.payableAccountId}
-                      onChange={val => setPartyForm(prev => ({ ...prev, payableAccountId: val, payable_account_id: val }))}
-                      options={coaAccounts.filter(a => a.classification === 'LIABILITY').map(a => ({
-                        value: a.code,
-                        label: `${a.code} - ${a.name}`,
-                        badge: 'LIABILITY'
-                      }))}
-                      placeholder="Select Payable Account (2110-00)..."
-                      searchPlaceholder="Search liabilities / payables..."
-                      className="w-full bg-white"
-                    />
-                    <span className="text-[9px] text-slate-500">Credited when purchasing raw bales on credit</span>
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
-                      2. Stock Bale Inventory / Goods Clearing (Asset):
-                    </label>
-                    <SearchableSelect
-                      value={partyForm.clearingAccountId}
-                      onChange={val => setPartyForm(prev => ({ ...prev, clearingAccountId: val, clearing_account_id: val }))}
-                      options={coaAccounts.filter(a => a.classification === 'ASSET').map(a => ({
-                        value: a.code,
-                        label: `${a.code} - ${a.name}`,
-                        badge: 'ASSET'
-                      }))}
-                      placeholder="Select Inventory Asset Account..."
-                      searchPlaceholder="Search inventory assets..."
-                      className="w-full bg-white"
-                    />
-                    <span className="text-[9px] text-slate-500">Debited to capitalize physical inward bales into inventory assets</span>
-                  </div>
+              {/* Commercial Terms & Credit Limit */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    Commercial Payment Terms:
+                  </label>
+                  <select
+                    value={partyForm.paymentTerms}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setPartyForm(prev => ({ ...prev, paymentTerms: val, payment_terms: val }));
+                    }}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 bg-white focus:border-blue-500"
+                  >
+                    <option value="Cash on Delivery">Cash on Delivery (COD)</option>
+                    <option value="100% Advance">100% Advance Payment</option>
+                    <option value="Net 15 Days">Net 15 Days</option>
+                    <option value="Net 30 Days">Net 30 Days</option>
+                    <option value="Net 60 Days">Net 60 Days</option>
+                    <option value="Custom Agreement">Custom Agreement</option>
+                  </select>
                 </div>
-              )}
-
-              {partyForm.type === 'CLIENT' && (
-                <div className="bg-blue-50/70 p-3 rounded-lg border border-blue-200 space-y-2 mt-2">
-                  <div className="text-[10px] font-bold text-blue-900 uppercase flex items-center justify-between">
-                    <span>🛡️ Dual COA Accounting Link (Auto-Provisioned)</span>
-                    <span className="text-[9px] bg-blue-200 text-blue-900 px-1.5 py-0.5 rounded font-bold">CLIENT</span>
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
-                      1. Accounts Receivable Account (Asset):
-                    </label>
-                    <SearchableSelect
-                      value={partyForm.receivableAccountId}
-                      onChange={val => setPartyForm(prev => ({ ...prev, receivableAccountId: val, receivable_account_id: val }))}
-                      options={coaAccounts.filter(a => a.classification === 'ASSET').map(a => ({
-                        value: a.code,
-                        label: `${a.code} - ${a.name}`,
-                        badge: 'ASSET'
-                      }))}
-                      placeholder="Select Receivable Account (1130-00)..."
-                      searchPlaceholder="Search trade receivables..."
-                      className="w-full bg-white"
-                    />
-                    <span className="text-[9px] text-slate-500">Debited when client purchases vintage apparel on credit</span>
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
-                      2. Sales Revenue Account (Revenue):
-                    </label>
-                    <SearchableSelect
-                      value={partyForm.revenueAccountId}
-                      onChange={val => setPartyForm(prev => ({ ...prev, revenueAccountId: val, revenue_account_id: val }))}
-                      options={coaAccounts.filter(a => a.classification === 'REVENUE').map(a => ({
-                        value: a.code,
-                        label: `${a.code} - ${a.name}`,
-                        badge: 'REVENUE'
-                      }))}
-                      placeholder="Select Sales Revenue Account..."
-                      searchPlaceholder="Search revenue accounts..."
-                      className="w-full bg-white"
-                    />
-                    <span className="text-[9px] text-slate-500">Credited when sales are finalized</span>
-                  </div>
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    Approved Credit Limit (AED):
+                  </label>
+                  <input
+                    type="number"
+                    value={partyForm.creditLimit}
+                    onChange={e => {
+                      const val = Number(e.target.value);
+                      setPartyForm(prev => ({ ...prev, creditLimit: val, credit_limit: val }));
+                    }}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800 focus:border-blue-500"
+                  />
                 </div>
-              )}
-
-              {partyForm.type === 'AGENT' && (
-                <div className="bg-indigo-50/70 p-3 rounded-lg border border-indigo-200 space-y-2 mt-2">
-                  <div className="text-[10px] font-bold text-indigo-900 uppercase flex items-center justify-between">
-                    <span>🛡️ Dual COA Accounting Link (Auto-Provisioned)</span>
-                    <span className="text-[9px] bg-indigo-200 text-indigo-900 px-1.5 py-0.5 rounded font-bold">AGENT / COURIER</span>
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
-                      1. Accounts Payable / Agent Clearing Account (Liability):
-                    </label>
-                    <SearchableSelect
-                      value={partyForm.payableAccountId || '2120-00'}
-                      onChange={val => setPartyForm(prev => ({ ...prev, payableAccountId: val, payable_account_id: val }))}
-                      options={agentPayableOptions}
-                      placeholder="Select Agent Payable (2120-00)..."
-                      searchPlaceholder="Search agent liabilities..."
-                      className="w-full bg-white"
-                    />
-                    <span className="text-[9px] text-slate-500">Default Parent: 2120-00 - Accounts Payable - Courier, Freight & Clearing Agents</span>
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 text-[10px] uppercase mb-0.5">
-                      2. Default Expense / Clearing Account:
-                    </label>
-                    <SearchableSelect
-                      value={partyForm.clearingAccountId || '1310-00'}
-                      onChange={val => setPartyForm(prev => ({ ...prev, clearingAccountId: val, clearing_account_id: val }))}
-                      options={expenseAndClearingOptions}
-                      placeholder="Select Expense or Clearing Asset Account..."
-                      searchPlaceholder="Search operating expenses or clearing assets..."
-                      className="w-full bg-white"
-                    />
-                    <span className="text-[9px] text-slate-500">Operating Expense (Courier/Demurrage/Duty) or Clearing Asset (1310-00)</span>
-                  </div>
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    Opening Balance (AED):
+                  </label>
+                  <input
+                    type="number"
+                    value={partyForm.openingBalance}
+                    onChange={e => {
+                      const val = Number(e.target.value);
+                      setPartyForm(prev => ({ ...prev, openingBalance: val, opening_balance: val }));
+                    }}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800 focus:border-blue-500"
+                  />
                 </div>
-              )}
+              </div>
 
-              <div className="flex justify-end gap-2 pt-2.5 border-t border-slate-200">
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
                 <button
                   type="button"
                   onClick={() => setShowNewPartyModal(false)}
-                  className="px-3 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px]"
+                  className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-3 py-1.5 rounded bg-[#0056b3] hover:bg-[#004494] text-white font-bold uppercase tracking-wider text-[11px] shadow-xs"
+                  disabled={isSubmitting}
+                  className="px-5 py-2 rounded-lg bg-[#0056b3] hover:bg-[#004494] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold uppercase tracking-wider text-[11px] shadow-xs flex items-center gap-2 cursor-pointer"
                 >
-                  Register & Provision
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Processing...</span>
+                    </>
+                  ) : (
+                    <span>Register & Provision</span>
+                  )}
                 </button>
               </div>
             </form>
@@ -1419,8 +1793,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
       {/* VIEW PARTY MODAL */}
       {showViewPartyModal && viewPartyData && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 max-h-[90vh] overflow-y-auto">
             <div className="flex items-start justify-between pb-3 border-b border-slate-200">
               <div>
                 <div className="flex items-center gap-2">
@@ -1442,7 +1816,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
               </div>
               <button
                 onClick={() => setShowViewPartyModal(false)}
-                className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
               >
                 ✕
               </button>
@@ -1451,7 +1825,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
             <div className="mt-4 space-y-4 text-xs">
               {/* Balances Highlight */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded bg-slate-50 border border-slate-200">
+                <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
                   <span className="text-[10px] font-bold uppercase text-slate-500 block">Current Ledger Balance</span>
                   <span className={`text-lg font-mono font-bold block mt-1 ${
                     Number(viewPartyData.currentBalance || (viewPartyData as any).current_balance || 0) > 0 ? 'text-emerald-700' :
@@ -1465,7 +1839,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   </span>
                 </div>
 
-                <div className="p-3 rounded bg-slate-50 border border-slate-200">
+                <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
                   <span className="text-[10px] font-bold uppercase text-slate-500 block">Credit Facility</span>
                   <span className="text-lg font-mono font-bold text-slate-800 block mt-1">
                     AED {Number(viewPartyData.creditLimit ?? (viewPartyData as any).credit_limit ?? 0).toLocaleString()}
@@ -1474,12 +1848,49 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 </div>
               </div>
 
+              {/* Scanned Business Card Display if available */}
+              {(viewPartyData.businessCardUrl || (viewPartyData as any).business_card_url) && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={viewPartyData.businessCardUrl || (viewPartyData as any).business_card_url}
+                      alt="Business Card"
+                      className="h-16 w-28 rounded object-cover border border-slate-300 shadow-xs"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        Scanned Business Card
+                      </span>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        Authenticated digital identity artifact attached to this party record.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handlePrintParty(viewPartyData)}
+                    className="px-2.5 py-1 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 flex items-center gap-1"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Print Card Dossier</span>
+                  </button>
+                </div>
+              )}
+
               {/* Details List */}
-              <div className="bg-slate-50/60 rounded-md p-3 border border-slate-200/80 divide-y divide-slate-200/60 space-y-2 text-[11px]">
+              <div className="bg-slate-50/60 rounded-lg p-3 border border-slate-200/80 divide-y divide-slate-200/60 space-y-2 text-[11px]">
                 <div className="flex justify-between items-center pt-1 first:pt-0">
                   <span className="font-semibold text-slate-500">Contact Person</span>
-                  <span className="font-medium text-slate-800">{viewPartyData.contactPerson || '-'}</span>
+                  <span className="font-medium text-slate-800">{viewPartyData.contactPerson || (viewPartyData as any).contact_person || '-'}</span>
                 </div>
+
+                {(viewPartyData.contactDesignation || (viewPartyData as any).contact_designation) && (
+                  <div className="flex justify-between items-center pt-2">
+                    <span className="font-semibold text-slate-500">Contact Designation</span>
+                    <span className="font-semibold text-blue-900">{viewPartyData.contactDesignation || (viewPartyData as any).contact_designation}</span>
+                  </div>
+                )}
 
                 <div className="flex justify-between items-center pt-2">
                   <span className="font-semibold text-slate-500">Phone Number</span>
@@ -1508,6 +1919,41 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   <span className="font-mono font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200">
                     {viewPartyData.trn_no || viewPartyData.trnNo || '-'}
                   </span>
+                </div>
+
+                {(viewPartyData.tradeLicenseNo || (viewPartyData as any).trade_license_no) && (
+                  <div className="flex justify-between items-center pt-2">
+                    <span className="font-semibold text-slate-500">Trade License No & Expiry</span>
+                    <span className="font-mono font-bold text-slate-800">
+                      {viewPartyData.tradeLicenseNo || (viewPartyData as any).trade_license_no}
+                      {(viewPartyData.licenseExpiryDate || (viewPartyData as any).license_expiry_date) && (
+                        <span className="text-[10px] font-normal text-slate-500 ml-1.5">
+                          (Exp: {viewPartyData.licenseExpiryDate || (viewPartyData as any).license_expiry_date})
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                )}
+
+                {(viewPartyData.bankName || (viewPartyData as any).bank_name || viewPartyData.iban) && (
+                  <div className="flex justify-between items-start pt-2">
+                    <span className="font-semibold text-slate-500">Bank & IBAN</span>
+                    <div className="text-right">
+                      <span className="font-semibold text-slate-800 block">
+                        {viewPartyData.bankName || (viewPartyData as any).bank_name || 'Bank Account'}
+                      </span>
+                      {viewPartyData.iban && (
+                        <span className="font-mono text-[10px] text-slate-600 block">
+                          {viewPartyData.iban}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-between items-center pt-2">
+                  <span className="font-semibold text-slate-500">Payment Terms</span>
+                  <span className="font-medium text-slate-800">{viewPartyData.paymentTerms || (viewPartyData as any).payment_terms || 'Cash on Delivery'}</span>
                 </div>
 
                 <div className="flex justify-between items-start pt-2">
@@ -1546,7 +1992,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       setShowViewPartyModal(false);
                       handleOpenDeleteParty(viewPartyData);
                     }}
-                    className="px-3 py-1.5 rounded text-red-600 hover:bg-red-50 text-xs font-semibold flex items-center gap-1.5 border border-red-200 cursor-pointer"
+                    className="px-3 py-1.5 rounded-lg text-red-600 hover:bg-red-50 text-xs font-semibold flex items-center gap-1.5 border border-red-200 cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Delete Party</span>
@@ -1555,7 +2001,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   <button
                     type="button"
                     disabled
-                    className="px-3 py-1.5 rounded text-slate-400 bg-slate-100 text-xs font-semibold flex items-center gap-1.5 border border-slate-200 cursor-not-allowed opacity-60"
+                    className="px-3 py-1.5 rounded-lg text-slate-400 bg-slate-100 text-xs font-semibold flex items-center gap-1.5 border border-slate-200 cursor-not-allowed opacity-60"
                     title="Cannot delete: This supplier has existing transactions. Please deactivate it instead."
                   >
                     <Lock className="w-3.5 h-3.5 text-slate-400" />
@@ -1566,19 +2012,29 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
+                    onClick={() => handlePrintParty(viewPartyData)}
+                    className="px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-black text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-blue-300" />
+                    <span>🖨️ Print Profile</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => {
                       setShowViewPartyModal(false);
                       handleOpenEditParty(viewPartyData);
                     }}
-                    className="px-3.5 py-1.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-800 text-xs font-bold flex items-center gap-1.5 border border-blue-300"
+                    className="px-3.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-800 text-xs font-bold flex items-center gap-1.5 border border-blue-300 cursor-pointer"
                   >
                     <Pencil className="w-3.5 h-3.5" />
                     <span>Edit Profile</span>
                   </button>
+
                   <button
                     type="button"
                     onClick={() => setShowViewPartyModal(false)}
-                    className="px-4 py-1.5 rounded bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold"
+                    className="px-4 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold"
                   >
                     Close
                   </button>
@@ -1591,31 +2047,119 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
       {/* EDIT PARTY MODAL */}
       {showEditPartyModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-start justify-between pb-3 border-b border-slate-200">
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-200 mb-4">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-                  Edit Party Profile & SQL Record
+                <h3 className="text-base font-bold text-slate-900 uppercase tracking-wider">
+                  Edit Party Profile & Enterprise Ledger
                 </h3>
                 <p className="text-[11px] text-slate-500 font-mono mt-0.5">Code: {editPartyForm.code}</p>
               </div>
               <button
+                type="button"
                 onClick={() => setShowEditPartyModal(false)}
-                className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSaveEditParty} className="mt-4 space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-3">
+            {/* AI VISITING CARD OCR BLOCK */}
+            <div className="bg-gradient-to-r from-blue-50/80 via-indigo-50/60 to-slate-50 border border-blue-200/80 rounded-xl p-3 mb-4 shadow-xs">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5 text-blue-950 font-bold text-xs">
+                  <Sparkles className="w-4 h-4 text-blue-600" />
+                  <span>Live AI Visiting Card Scanner & Update</span>
+                </div>
+                <span className="text-[9px] font-bold uppercase tracking-wider bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full border border-blue-200">
+                  Gemini Vision OCR
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 mb-2 leading-relaxed">
+                Scan or upload a visiting card to refresh executive contact details, phone, tax TRN, and save the card image.
+              </p>
+
+              {editPartyForm.businessCardUrl ? (
+                <div className="bg-white rounded-lg border border-slate-300 p-2 flex items-center justify-between gap-3 shadow-2xs">
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={editPartyForm.businessCardUrl}
+                      alt="Scanned Business Card"
+                      className="h-14 w-24 rounded object-cover border border-slate-200 shadow-xs"
+                    />
+                    <div>
+                      <span className="text-[11px] font-bold text-emerald-800 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        Business Card Preserved
+                      </span>
+                      <p className="text-[10px] text-slate-500">
+                        Image is embedded in SQL database and official print dossiers.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScannerTargetForm('EDIT');
+                        setShowLiveScannerModal(true);
+                      }}
+                      className="px-2.5 py-1 rounded text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200"
+                    >
+                      Rescan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditPartyForm(prev => ({ ...prev, businessCardUrl: '', business_card_url: '' }))}
+                      className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50"
+                      title="Remove Card"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScannerTargetForm('EDIT');
+                      setShowLiveScannerModal(true);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>📸 Live Camera Scan</span>
+                  </button>
+                  <label className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 border border-slate-300 shadow-xs transition cursor-pointer">
+                    <Upload className="w-3.5 h-3.5 text-blue-600" />
+                    <span>📁 Upload Card</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={e => handleCardFileUpload(e, 'EDIT')}
+                    />
+                  </label>
+                  {isOcrProcessing && (
+                    <div className="flex items-center gap-1.5 text-xs text-blue-700 font-semibold animate-pulse ml-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Extracting with Gemini AI...</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleSaveEditParty} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Party Entity Type:</label>
                   <select
                     value={editPartyForm.type}
                     onChange={e => setEditPartyForm({ ...editPartyForm, type: e.target.value as any })}
-                    className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500 bg-white"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500 bg-white"
                   >
                     <option value="CLIENT">Client (Customer)</option>
                     <option value="SUPPLIER">Supplier (Vendor / Sorter)</option>
@@ -1625,8 +2169,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
                 <div>
                   <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Status:</label>
-                  <div className="flex items-center gap-3 h-8">
-                    <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                  <div className="flex items-center gap-3 h-9 px-2 bg-slate-50 rounded-lg border border-slate-200">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={editPartyForm.isActive}
@@ -1644,9 +2188,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <input
                   type="text"
                   value={editPartyForm.name}
-                  onChange={e => setEditPartyForm({ ...editPartyForm, name: e.target.value })}
+                  onChange={e => setEditPartyForm({ ...editPartyForm, name: e.target.value, company_name: e.target.value })}
                   placeholder="e.g. Al Wasl Trading LLC"
-                  className={`w-full border rounded p-1.5 text-xs font-semibold text-slate-800 ${
+                  className={`w-full border rounded-lg p-2 text-xs font-semibold text-slate-800 ${
                     editPartyForm.name.trim() && parties.some(p => p.id !== editPartyForm.id && p.name.trim().toLowerCase() === editPartyForm.name.trim().toLowerCase())
                       ? 'border-red-500 bg-red-50/40 focus:border-red-600'
                       : 'border-slate-300 focus:border-blue-500'
@@ -1669,17 +2213,32 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 })()}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Contact Person & Designation */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Contact Person:</label>
                   <input
                     type="text"
                     value={editPartyForm.contactPerson}
-                    onChange={e => setEditPartyForm({ ...editPartyForm, contactPerson: e.target.value })}
+                    onChange={e => setEditPartyForm({ ...editPartyForm, contactPerson: e.target.value, contact_person: e.target.value })}
                     placeholder="Manager / Representative"
-                    className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
                   />
                 </div>
+                <div>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Contact Designation / Title:</label>
+                  <input
+                    type="text"
+                    value={editPartyForm.contactDesignation}
+                    onChange={e => setEditPartyForm({ ...editPartyForm, contactDesignation: e.target.value, contact_designation: e.target.value })}
+                    placeholder="e.g. Managing Director, Procurement Head"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Phone & Email */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Phone Number:</label>
                   <input
@@ -1687,12 +2246,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     value={editPartyForm.phone}
                     onChange={e => setEditPartyForm({ ...editPartyForm, phone: e.target.value })}
                     placeholder="+971 50 ..."
-                    className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Email Address:</label>
                   <input
@@ -1700,17 +2256,40 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     value={editPartyForm.email}
                     onChange={e => setEditPartyForm({ ...editPartyForm, email: e.target.value })}
                     placeholder="accountant@company.com"
-                    className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
                   />
                 </div>
+              </div>
+
+              {/* TRN Tax Number, Trade License No, License Expiry Date */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">TRN Tax Number:</label>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">TRN Tax Number (15 Digits):</label>
                   <input
                     type="text"
                     value={editPartyForm.trnNo}
-                    onChange={e => setEditPartyForm({ ...editPartyForm, trnNo: e.target.value })}
+                    onChange={e => setEditPartyForm({ ...editPartyForm, trnNo: e.target.value, trn_no: e.target.value })}
                     placeholder="100..."
-                    className="w-full border border-slate-300 rounded p-1.5 text-xs font-mono text-slate-800 focus:border-blue-500"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Trade License No:</label>
+                  <input
+                    type="text"
+                    value={editPartyForm.tradeLicenseNo}
+                    onChange={e => setEditPartyForm({ ...editPartyForm, tradeLicenseNo: e.target.value, trade_license_no: e.target.value })}
+                    placeholder="e.g. 748291"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">License Expiry Date:</label>
+                  <input
+                    type="date"
+                    value={editPartyForm.licenseExpiryDate}
+                    onChange={e => setEditPartyForm({ ...editPartyForm, licenseExpiryDate: e.target.value, license_expiry_date: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
                   />
                 </div>
               </div>
@@ -1722,18 +2301,85 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   value={editPartyForm.address}
                   onChange={e => setEditPartyForm({ ...editPartyForm, address: e.target.value })}
                   placeholder="Plot 12, Industrial Area, Dubai"
-                  className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:border-blue-500"
+                  className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
                 />
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Approved Credit Limit (AED):</label>
-                <input
-                  type="number"
-                  value={editPartyForm.creditLimit}
-                  onChange={e => setEditPartyForm({ ...editPartyForm, creditLimit: Number(e.target.value) })}
-                  className="w-full border border-slate-300 rounded p-1.5 text-xs font-mono text-slate-800 focus:border-blue-500"
-                />
+              {/* Corporate Banking & Settlement Section */}
+              <div className="bg-slate-50/80 border border-slate-200 rounded-xl p-3 space-y-2">
+                <div className="flex items-center gap-1.5 text-slate-800 font-bold text-[11px] uppercase tracking-wider">
+                  <Landmark className="w-3.5 h-3.5 text-blue-700" />
+                  <span>Corporate Banking & Wire Details</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block font-bold text-slate-600 text-[9px] uppercase mb-0.5">Bank Name:</label>
+                    <input
+                      type="text"
+                      value={editPartyForm.bankName}
+                      onChange={e => setEditPartyForm({ ...editPartyForm, bankName: e.target.value, bank_name: e.target.value })}
+                      placeholder="e.g. Emirates NBD"
+                      className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-800 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-600 text-[9px] uppercase mb-0.5">IBAN Number:</label>
+                    <input
+                      type="text"
+                      value={editPartyForm.iban}
+                      onChange={e => setEditPartyForm({ ...editPartyForm, iban: e.target.value })}
+                      placeholder="AE..."
+                      className="w-full border border-slate-300 rounded p-1.5 text-xs font-mono text-slate-800 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-600 text-[9px] uppercase mb-0.5">SWIFT / BIC Code:</label>
+                    <input
+                      type="text"
+                      value={editPartyForm.swiftCode}
+                      onChange={e => setEditPartyForm({ ...editPartyForm, swiftCode: e.target.value, swift_code: e.target.value })}
+                      placeholder="EBILAEAD..."
+                      className="w-full border border-slate-300 rounded p-1.5 text-xs font-mono text-slate-800 bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Commercial Payment Terms, Approved Credit Limit, and Opening Balance */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Commercial Payment Terms:</label>
+                  <select
+                    value={editPartyForm.paymentTerms}
+                    onChange={e => setEditPartyForm({ ...editPartyForm, paymentTerms: e.target.value, payment_terms: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 bg-white focus:border-blue-500"
+                  >
+                    <option value="Cash on Delivery">Cash on Delivery (COD)</option>
+                    <option value="100% Advance">100% Advance Payment</option>
+                    <option value="Net 15 Days">Net 15 Days</option>
+                    <option value="Net 30 Days">Net 30 Days</option>
+                    <option value="Net 60 Days">Net 60 Days</option>
+                    <option value="Custom Agreement">Custom Agreement</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Approved Credit Limit (AED):</label>
+                  <input
+                    type="number"
+                    value={editPartyForm.creditLimit}
+                    onChange={e => setEditPartyForm({ ...editPartyForm, creditLimit: Number(e.target.value) })}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Opening Balance (AED):</label>
+                  <input
+                    type="number"
+                    value={editPartyForm.openingBalance}
+                    onChange={e => setEditPartyForm({ ...editPartyForm, openingBalance: Number(e.target.value), opening_balance: Number(e.target.value) })}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono text-slate-800 focus:border-blue-500"
+                  />
+                </div>
               </div>
 
               {/* COA Accounts Mapping for Edit */}
@@ -1862,9 +2508,17 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 rounded bg-[#0056b3] hover:bg-[#004494] text-white font-bold uppercase tracking-wider text-[11px] shadow-xs"
+                  disabled={isSubmitting}
+                  className="px-5 py-2 rounded-lg bg-[#0056b3] hover:bg-[#004494] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold uppercase tracking-wider text-[11px] shadow-xs flex items-center gap-2 cursor-pointer"
                 >
-                  Save Changes
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving Changes...</span>
+                    </>
+                  ) : (
+                    <span>Save Changes</span>
+                  )}
                 </button>
               </div>
             </form>
@@ -2021,6 +2675,18 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
           </div>
         );
       })()}
+
+      {/* LIVE AI CARD SCANNER MODAL */}
+      <LiveCardScannerModal
+        isOpen={showLiveScannerModal}
+        onClose={() => setShowLiveScannerModal(false)}
+        onCardExtracted={handleVisitingCardExtracted}
+      />
+
+      {/* PRINT DOSSIER LAYOUT (Hidden on screen, rendered on @media print) */}
+      <PartyProfilePrintDossier
+        party={printingParty || viewPartyData || selectedParty}
+      />
     </div>
   );
 };
