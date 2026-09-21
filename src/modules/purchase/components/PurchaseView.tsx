@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { InwardGatePass, PieceBreakdownItem, PurchaseInvoice } from '../purchase.types.ts';
 import { Party } from '../../parties/parties.types.ts';
 import { ItemMaster, BrandMaster, LabelGrade, ShopMaster, CategoryMaster, SizeMaster } from '../../setup/setup.types.ts';
@@ -108,21 +108,25 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
   const [stickerData, setStickerData] = useState<StickerData | null>(null);
   const [isStickerModalOpen, setIsStickerModalOpen] = useState(false);
 
+  const isFetchingRef = useRef(false);
+
   const fetchPurchaseData = useCallback(async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     setIsLoading(true);
     try {
       const [balesRes, invRes, piecesRes, partiesRes, itemsRes, brandsRes, labelsRes, shopsRes, catRes, sizeRes, presetsRes] = await Promise.all([
-        PurchaseService.getInwardGatePasses().catch(() => []),
-        PurchaseService.getPurchaseInvoices().catch(() => []),
-        PurchaseService.getInventoryPieces().catch(() => []),
-        PartiesService.getParties().catch(() => []),
-        SetupService.getItems().catch(() => []),
-        SetupService.getBrands().catch(() => []),
-        SetupService.getLabelGrades().catch(() => []),
-        SetupService.getShops().catch(() => []),
-        SetupService.getCategories().catch(() => []),
-        SetupService.getSizes().catch(() => []),
-        PurchaseService.getBalePresets().catch(() => [])
+        PurchaseService.getInwardGatePasses().catch((err) => { console.warn('Gate pass sync warning:', err); return []; }),
+        PurchaseService.getPurchaseInvoices().catch((err) => { console.warn('Purchase invoice sync warning:', err); return []; }),
+        PurchaseService.getInventoryPieces().catch((err) => { console.warn('Inventory pieces sync warning:', err); return []; }),
+        PartiesService.getParties().catch((err) => { console.warn('Parties sync warning:', err); return []; }),
+        SetupService.getItems().catch((err) => { console.warn('Items sync warning:', err); return []; }),
+        SetupService.getBrands().catch((err) => { console.warn('Brands sync warning:', err); return []; }),
+        SetupService.getLabelGrades().catch((err) => { console.warn('Labels sync warning:', err); return []; }),
+        SetupService.getShops().catch((err) => { console.warn('Shops sync warning:', err); return []; }),
+        SetupService.getCategories().catch((err) => { console.warn('Categories sync warning:', err); return []; }),
+        SetupService.getSizes().catch((err) => { console.warn('Sizes sync warning:', err); return []; }),
+        PurchaseService.getBalePresets().catch((err) => { console.warn('Presets sync warning:', err); return []; })
       ]);
 
       if (Array.isArray(balesRes)) {
@@ -185,20 +189,22 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
       setIsOfflineMode(false);
 
       // Keep active sorting bale refreshed
-      const currentBales = Array.isArray(balesRes) ? balesRes : bales;
-      if (activeSortingBaleId && Array.isArray(currentBales)) {
-        const found = currentBales.find((b: InwardGatePass) => b.id === activeSortingBaleId);
-        if (!found) {
-          setActiveSortingBaleId(currentBales[0]?.id || null);
-        }
+      const currentBales = Array.isArray(balesRes) ? balesRes : [];
+      if (currentBales.length > 0) {
+        setActiveSortingBaleId(prev => {
+          if (!prev) return prev;
+          const found = currentBales.find((b: InwardGatePass) => b.id === prev);
+          return found ? prev : (currentBales[0]?.id || null);
+        });
       }
     } catch (err: any) {
       console.warn('Purchase data sync error:', err);
       setIsOfflineMode(true);
     } finally {
       setIsLoading(false);
+      isFetchingRef.current = false;
     }
-  }, [activeSortingBaleId, bales]);
+  }, []);
 
   useEffect(() => {
     fetchPurchaseData();

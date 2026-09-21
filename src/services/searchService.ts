@@ -93,7 +93,7 @@ export class SearchService {
       // 4. Search Inventory & Bale Pieces
       const { data: pieces } = await supabase
         .from('inventory_pieces')
-        .select('id, barcode, item_name, brand_name, selling_price_aed, status')
+        .select('id, barcode, item_name, brand_name, retail_price_aed, status')
         .or(`barcode.ilike.%${q}%,item_name.ilike.%${q}%,brand_name.ilike.%${q}%`)
         .limit(8);
 
@@ -106,7 +106,7 @@ export class SearchService {
             subtitle: `${p.item_name || 'Piece'} • ${p.brand_name || 'Vintage'}`,
             status: p.status || 'IN_STOCK',
             badge: 'PIECE',
-            amount: `AED ${Number(p.selling_price_aed || 0).toLocaleString()}`,
+            amount: `AED ${Number(p.retail_price_aed || 0).toLocaleString()}`,
             tab: 'sales',
             data: p
           });

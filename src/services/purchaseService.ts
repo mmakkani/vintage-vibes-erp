@@ -1179,97 +1179,126 @@ export class PurchaseService {
     return this.getInventoryPieces(limit);
   }
 
-  public static readonly PIECES_GRID_COLUMNS = 'id, gate_pass_id, barcode, piece_code, item_name, brand_name, brand_tier, label_grade, shop_location, weight_kg, weight_grams, cost_price, selling_price, estimated_resale_value, is_sold, status, created_at';
+  public static readonly INVENTORY_PIECES_COLUMNS = 'id, gate_pass_id, barcode, item_name, brand_name, brand_tier, label_grade, shop_location, weight_kg, weight_grams, cost_per_gram, cost_price, estimated_price, retail_price_aed, size_scanned, country_of_origin, style, front_image_url, back_image_url, tag_image_url, is_sold, status, locked_by_buyer, locked_by_booth, lock_expires_at, reserved_until, created_at';
+  public static readonly BALE_SORTED_PIECES_COLUMNS = 'id, bale_id, piece_code, weight_grams, cost_price, selling_price, brand_title, category, size, quality_grade, front_image, back_image, tag_image, created_at';
+  public static readonly PIECES_GRID_COLUMNS = PurchaseService.INVENTORY_PIECES_COLUMNS;
 
   public static async getInventoryPieces(limit = 1000): Promise<PieceBreakdownItem[]> {
-    const [invRes, sortedRes] = await Promise.all([
-      supabase
-        .from('inventory_pieces')
-        .select(PurchaseService.PIECES_GRID_COLUMNS)
-        .order('created_at', { ascending: false })
-        .limit(limit),
-      supabase
-        .from('bale_sorted_pieces')
-        .select(PurchaseService.PIECES_GRID_COLUMNS)
-        .order('created_at', { ascending: false })
-        .limit(limit)
-    ]);
+    try {
+      const [invRes, sortedRes] = await Promise.all([
+        supabase
+          .from('inventory_pieces')
+          .select(PurchaseService.INVENTORY_PIECES_COLUMNS)
+          .order('created_at', { ascending: false })
+          .limit(limit)
+          .then(res => {
+            if (res.error) {
+              console.error('[PurchaseService] Error fetching inventory_pieces:', res.error);
+              return { data: [], error: res.error };
+            }
+            return res;
+          })
+          .catch(err => {
+            console.error('[PurchaseService] Exception fetching inventory_pieces:', err);
+            return { data: [], error: err };
+          }),
+        supabase
+          .from('bale_sorted_pieces')
+          .select(PurchaseService.BALE_SORTED_PIECES_COLUMNS)
+          .order('created_at', { ascending: false })
+          .limit(limit)
+          .then(res => {
+            if (res.error) {
+              console.error('[PurchaseService] Error fetching bale_sorted_pieces:', res.error);
+              return { data: [], error: res.error };
+            }
+            return res;
+          })
+          .catch(err => {
+            console.error('[PurchaseService] Exception fetching bale_sorted_pieces:', err);
+            return { data: [], error: err };
+          })
+      ]);
 
-    const mappedPieces: PieceBreakdownItem[] = [];
-    const seenBarcodes = new Set<string>();
+      const mappedPieces: PieceBreakdownItem[] = [];
+      const seenBarcodes = new Set<string>();
 
-    (invRes.data || []).forEach((row: any) => {
-      const barcode = row.barcode || row.piece_code || row.id;
-      seenBarcodes.add(barcode);
-      mappedPieces.push({
-        id: row.id,
-        gatePassId: row.gate_pass_id || row.gatePassId,
-        barcode,
-        itemName: row.item_name || row.itemName || 'Garment Piece',
-        brandName: row.brand_name || row.brandName || '',
-        brandTier: row.brand_tier || row.brandTier || 'Grail',
-        labelGrade: row.label_grade || row.labelGrade || 'CREAM',
-        shopLocation: row.shop_location || row.shopLocation || 'Central Warehouse (Al Quoz)',
-        weightKg: Number(row.weight_kg ?? (Number(row.weight_grams || 0) / 1000)),
-        weightGrams: Number(row.weight_grams ?? (Number(row.weight_kg || 0) * 1000)),
-        costPrice: Number(row.cost_price ?? row.costPrice ?? 0),
-        calculatedCostPrice: Number(row.cost_price ?? row.costPrice ?? 0),
-        costPerGram: Number(row.cost_per_gram ?? (Number(row.weight_grams || 0) > 0 ? (Number(row.cost_price || 0) / Number(row.weight_grams)) : 0)),
-        estimatedPrice: Number(row.estimated_price ?? row.retailPriceAed ?? 0),
-        retailPriceAed: Number(row.retail_price_aed ?? row.retailPriceAed ?? row.estimated_price ?? 0),
-        sizeScanned: row.size_scanned || row.sizeScanned || 'L',
-        countryOfOrigin: row.country_of_origin || row.countryOfOrigin || '',
-        style: row.style || '',
-        frontImageUrl: row.front_image_url || row.frontImageUrl || '',
-        backImageUrl: row.back_image_url || row.backImageUrl || '',
-        tagImageUrl: row.tag_image_url || row.tagImageUrl || '',
-        isSold: Boolean(row.is_sold ?? row.isSold),
-        status: row.status || (row.is_sold ? 'SOLD' : 'AVAILABLE'),
-        lockedByBuyer: row.locked_by_buyer || row.lockedByBuyer || '',
-        lockedByBooth: row.locked_by_booth || row.lockedByBooth || '',
-        lockExpiresAt: row.lock_expires_at || row.lockExpiresAt,
-        reservedUntil: row.reserved_until || row.reservedUntil,
-        createdAt: row.created_at
-      });
-    });
-
-    (sortedRes.data || []).forEach((row: any) => {
-      const barcode = row.piece_code || row.barcode || row.id;
-      if (!seenBarcodes.has(barcode)) {
+      (invRes.data || []).forEach((row: any) => {
+        const barcode = row.barcode || row.piece_code || row.id;
         seenBarcodes.add(barcode);
-        const wGrams = Number(row.weight_grams || 0);
-        const cPrice = Number(row.cost_price || 0);
-        const sPrice = Number(row.selling_price || 0);
         mappedPieces.push({
           id: row.id,
-          gatePassId: row.bale_id || '',
+          gatePassId: row.gate_pass_id || row.gatePassId || '',
           barcode,
-          itemName: row.category || 'Garment Piece',
-          brandName: row.brand_title || '',
-          brandTier: 'Vintage Curated',
-          labelGrade: row.quality_grade || 'Grade A+',
-          shopLocation: 'Central Warehouse (Al Quoz)',
-          weightKg: wGrams > 0 ? Number((wGrams / 1000).toFixed(3)) : 0,
-          weightGrams: wGrams,
-          costPrice: cPrice,
-          calculatedCostPrice: cPrice,
-          costPerGram: wGrams > 0 ? Number((cPrice / wGrams).toFixed(6)) : 0,
-          estimatedPrice: sPrice,
-          retailPriceAed: sPrice,
-          sizeScanned: row.size || 'L',
-          countryOfOrigin: 'USA',
-          style: row.brand_title || '',
-          frontImageUrl: row.front_image || '',
-          backImageUrl: row.back_image || '',
-          tagImageUrl: row.tag_image || '',
-          isSold: false,
-          status: 'AVAILABLE',
+          itemName: row.item_name || row.itemName || 'Garment Piece',
+          brandName: row.brand_name || row.brandName || '',
+          brandTier: row.brand_tier || row.brandTier || 'Grail',
+          labelGrade: row.label_grade || row.labelGrade || 'CREAM',
+          shopLocation: row.shop_location || row.shopLocation || 'Central Warehouse (Al Quoz)',
+          weightKg: Number(row.weight_kg ?? (Number(row.weight_grams || 0) / 1000)),
+          weightGrams: Number(row.weight_grams ?? (Number(row.weight_kg || 0) * 1000)),
+          costPrice: Number(row.cost_price ?? row.costPrice ?? 0),
+          calculatedCostPrice: Number(row.cost_price ?? row.costPrice ?? 0),
+          costPerGram: Number(row.cost_per_gram ?? (Number(row.weight_grams || 0) > 0 ? (Number(row.cost_price || 0) / Number(row.weight_grams)) : 0)),
+          estimatedPrice: Number(row.estimated_price ?? row.retail_price_aed ?? row.retailPriceAed ?? 0),
+          retailPriceAed: Number(row.retail_price_aed ?? row.retailPriceAed ?? row.estimated_price ?? 0),
+          sizeScanned: row.size_scanned || row.sizeScanned || 'L',
+          countryOfOrigin: row.country_of_origin || row.countryOfOrigin || '',
+          style: row.style || '',
+          frontImageUrl: row.front_image_url || row.frontImageUrl || '',
+          backImageUrl: row.back_image_url || row.backImageUrl || '',
+          tagImageUrl: row.tag_image_url || row.tagImageUrl || '',
+          isSold: Boolean(row.is_sold ?? row.isSold),
+          status: row.status || (row.is_sold ? 'SOLD' : 'AVAILABLE'),
+          lockedByBuyer: row.locked_by_buyer || row.lockedByBuyer || '',
+          lockedByBooth: row.locked_by_booth || row.lockedByBooth || '',
+          lockExpiresAt: row.lock_expires_at || row.lockExpiresAt,
+          reservedUntil: row.reserved_until || row.reservedUntil,
           createdAt: row.created_at
         });
-      }
-    });
+      });
 
-    return mappedPieces;
+      (sortedRes.data || []).forEach((row: any) => {
+        const barcode = row.piece_code || row.barcode || row.id;
+        if (!seenBarcodes.has(barcode)) {
+          seenBarcodes.add(barcode);
+          const wGrams = Number(row.weight_grams || 0);
+          const cPrice = Number(row.cost_price || 0);
+          const sPrice = Number(row.selling_price || 0);
+          mappedPieces.push({
+            id: row.id,
+            gatePassId: row.bale_id || '',
+            barcode,
+            itemName: row.category || 'Garment Piece',
+            brandName: row.brand_title || '',
+            brandTier: 'Vintage Curated',
+            labelGrade: row.quality_grade || 'Grade A+',
+            shopLocation: 'Central Warehouse (Al Quoz)',
+            weightKg: wGrams > 0 ? Number((wGrams / 1000).toFixed(3)) : 0,
+            weightGrams: wGrams,
+            costPrice: cPrice,
+            calculatedCostPrice: cPrice,
+            costPerGram: wGrams > 0 ? Number((cPrice / wGrams).toFixed(6)) : 0,
+            estimatedPrice: sPrice,
+            retailPriceAed: sPrice,
+            sizeScanned: row.size || 'L',
+            countryOfOrigin: 'USA',
+            style: row.brand_title || '',
+            frontImageUrl: row.front_image || '',
+            backImageUrl: row.back_image || '',
+            tagImageUrl: row.tag_image || '',
+            isSold: false,
+            status: 'AVAILABLE',
+            createdAt: row.created_at
+          });
+        }
+      });
+
+      return mappedPieces;
+    } catch (err: any) {
+      console.error('[PurchaseService] Fatal exception in getInventoryPieces:', err);
+      return [];
+    }
   }
 
   public static async finalizeBaleSession(baleId: string): Promise<void> {
