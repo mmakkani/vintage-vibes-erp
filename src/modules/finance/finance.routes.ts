@@ -297,6 +297,169 @@ financeRouter.post('/coa', async (req, res) => {
   }
 });
 
+// DELETE /api/finance/coa/:id - Delete COA Account with strict transaction checks
+financeRouter.delete('/coa/:id', async (req, res) => {
+  const { id } = req.params;
+  let client: Client | null = null;
+  try {
+    client = await getDbClient();
+
+    // 1. Lookup account in accounts / chart_of_accounts
+    let accountCode = '';
+    let tierLevel = 3;
+    let currentBalance = 0;
+    let accountUuid: string | null = null;
+
+    // Check accounts table
+    const accLookup = await client.query(
+      `SELECT account_id, account_code, account_level, is_active FROM accounts WHERE account_id::text = $1 OR account_code = $1 LIMIT 1`,
+      [id]
+    ).catch(() => ({ rows: [] }));
+
+    // Check chart_of_accounts table
+    const coaLookup = await client.query(
+      `SELECT id, code, tier_level, is_active, current_balance FROM chart_of_accounts WHERE id::text = $1 OR code = $1 LIMIT 1`,
+      [id]
+    ).catch(() => ({ rows: [] }));
+
+    if (accLookup.rows.length === 0 && coaLookup.rows.length === 0) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    if (accLookup.rows.length > 0) {
+      accountCode = accLookup.rows[0].account_code;
+      tierLevel = Number(accLookup.rows[0].account_level || 3);
+    }
+    if (coaLookup.rows.length > 0) {
+      accountCode = accountCode || coaLookup.rows[0].code;
+      tierLevel = Number(coaLookup.rows[0].tier_level || tierLevel);
+      currentBalance = Number(coaLookup.rows[0].current_balance || 0);
+      accountUuid = coaLookup.rows[0].id;
+    }
+
+    // Master folder protection
+    if (tierLevel === 1 || accountCode.endsWith('000-00') || ['1000-00', '2000-00', '3000-00', '4000-00', '5000-00'].includes(accountCode)) {
+      return res.status(400).json({
+        error: "Cannot delete: Master tier folder accounts cannot be deleted. Please deactivate it instead."
+      });
+    }
+
+    // Current balance check
+    if (Math.abs(currentBalance) > 0.001) {
+      return res.status(400).json({
+        error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+      });
+    }
+
+    // Check journal_entries
+    const jeCheck = await client.query(
+      `SELECT id FROM journal_entries WHERE account_id::text = $1 ${accountUuid ? 'OR account_id = $2' : ''} LIMIT 1`,
+      accountUuid ? [id, accountUuid] : [id]
+    ).catch(() => ({ rows: [] }));
+    if (jeCheck.rows.length > 0) {
+      return res.status(400).json({
+        error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+      });
+    }
+
+    // Check voucher_entries
+    const veCheck = await client.query(
+      `SELECT id FROM voucher_entries WHERE account_id::text = $1 ${accountCode ? 'OR account_code = $2' : ''} LIMIT 1`,
+      accountCode ? [id, accountCode] : [id]
+    ).catch(() => ({ rows: [] }));
+    if (veCheck.rows.length > 0) {
+      return res.status(400).json({
+        error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+      });
+    }
+
+    // Check ledgers
+    const ledgerCheck = await client.query(
+      `SELECT id FROM ledgers WHERE account_id::text = $1 ${accountCode ? 'OR code = $2' : ''} LIMIT 1`,
+      accountCode ? [id, accountCode] : [id]
+    ).catch(() => ({ rows: [] }));
+    if (ledgerCheck.rows.length > 0) {
+      return res.status(400).json({
+        error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+      });
+    }
+
+    // Safe to delete: Delete from chart_of_accounts, accounts, and coa_accounts
+    await client.query('BEGIN').catch(() => {});
+    if (accountCode) {
+      await client.query('DELETE FROM chart_of_accounts WHERE id::text = $1 OR code = $2', [id, accountCode]).catch(() => {});
+      await client.query('DELETE FROM accounts WHERE account_id::text = $1 OR account_code = $2', [id, accountCode]).catch(() => {});
+      await client.query('DELETE FROM coa_accounts WHERE id::text = $1 OR code = $2', [id, accountCode]).catch(() => {});
+    } else {
+      await client.query('DELETE FROM chart_of_accounts WHERE id::text = $1', [id]).catch(() => {});
+      await client.query('DELETE FROM accounts WHERE account_id::text = $1', [id]).catch(() => {});
+      await client.query('DELETE FROM coa_accounts WHERE id::text = $1', [id]).catch(() => {});
+    }
+    await client.query('COMMIT').catch(() => {});
+
+    return res.status(200).json({
+      success: true,
+      message: `Account ${accountCode || id} successfully deleted.`
+    });
+  } catch (err: any) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('[Finance DELETE /coa/:id] Error:', err.message);
+    return res.status(500).json({ error: err.message || 'Failed to delete account' });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// PATCH /api/finance/coa/:id/toggle-active - Toggle Active/Inactive Status
+financeRouter.patch('/coa/:id/toggle-active', async (req, res) => {
+  const { id } = req.params;
+  let client: Client | null = null;
+  try {
+    client = await getDbClient();
+    const reqActive = req.body?.is_active ?? req.body?.isActive;
+
+    let newActiveState: boolean;
+    if (typeof reqActive === 'boolean') {
+      newActiveState = reqActive;
+    } else {
+      // Lookup current state
+      const curr = await client.query(
+        'SELECT is_active FROM accounts WHERE account_id::text = $1 OR account_code = $1 LIMIT 1',
+        [id]
+      ).catch(() => ({ rows: [] }));
+      const currentVal = curr.rows[0]?.is_active;
+      newActiveState = currentVal === undefined ? false : !currentVal;
+    }
+
+    await client.query('BEGIN').catch(() => {});
+    await client.query(
+      'UPDATE accounts SET is_active = $1 WHERE account_id::text = $2 OR account_code = $2',
+      [newActiveState, id]
+    ).catch(() => {});
+    await client.query(
+      'UPDATE chart_of_accounts SET is_active = $1 WHERE id::text = $2 OR code = $2',
+      [newActiveState, id]
+    ).catch(() => {});
+    await client.query(
+      'UPDATE coa_accounts SET is_active = $1 WHERE id::text = $2 OR code = $2',
+      [newActiveState, id]
+    ).catch(() => {});
+    await client.query('COMMIT').catch(() => {});
+
+    return res.status(200).json({
+      success: true,
+      is_active: newActiveState,
+      isActive: newActiveState
+    });
+  } catch (err: any) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('[Finance PATCH /coa/:id/toggle-active] Error:', err.message);
+    return res.status(500).json({ error: err.message || 'Failed to update account status' });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
 financeRouter.get('/vouchers', async (req, res) => {
   try {
     const data = await FinanceService.getVouchers();

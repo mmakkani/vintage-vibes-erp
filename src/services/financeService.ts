@@ -304,6 +304,127 @@ export class FinanceService {
     };
   }
 
+  public static async deleteCoaAccount(id: string, code?: string): Promise<any> {
+    if (!id || id === 'undefined' || id === 'null') {
+      throw new Error('Valid Account ID is required for deletion');
+    }
+
+    // 1. Strict Accounting Validation Check: Prevent deletion of accounts with transactions or non-zero balance
+    try {
+      const { data: coaAcc } = await supabase
+        .from('chart_of_accounts')
+        .select('id, code, current_balance, tier_level')
+        .or(`id.eq.${id}${code ? `,code.eq.${code}` : ''}`)
+        .maybeSingle();
+
+      if (coaAcc) {
+        if (Number(coaAcc.tier_level) === 1) {
+          throw new Error("Cannot delete: Master tier folder accounts cannot be deleted. Please deactivate it instead.");
+        }
+
+        const curBal = Math.abs(Number(coaAcc.current_balance || 0));
+        if (curBal > 0.001) {
+          throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+        }
+
+        const targetUuid = coaAcc.id;
+        const targetCode = coaAcc.code || code;
+
+        // Check journal_entries
+        const { data: je } = await supabase
+          .from('journal_entries')
+          .select('id')
+          .eq('account_id', targetUuid)
+          .limit(1);
+        if (je && je.length > 0) {
+          throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+        }
+
+        // Check voucher_entries
+        const { data: ve } = await supabase
+          .from('voucher_entries')
+          .select('id')
+          .or(`account_id.eq.${targetUuid}${targetCode ? `,account_code.eq.${targetCode}` : ''}`)
+          .limit(1);
+        if (ve && ve.length > 0) {
+          throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+        }
+      }
+    } catch (valErr: any) {
+      if (valErr.message?.includes('Cannot delete:')) {
+        throw valErr;
+      }
+    }
+
+    let apiSuccess = false;
+    let resultData: any = null;
+
+    // 2. Express Backend API
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const res = await rawFetch(`/api/finance/coa/${encodeURIComponent(id)}`, {
+          method: 'DELETE'
+        });
+        const resJson = await res.json().catch(() => ({}));
+        if (res.ok && resJson.success !== false) {
+          apiSuccess = true;
+          resultData = resJson;
+        } else {
+          const errMsg = resJson.error || resJson.detail || `Server returned HTTP ${res.status}`;
+          throw new Error(errMsg);
+        }
+      } catch (err: any) {
+        if (err.message && !err.message.includes('fetch') && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
+          throw err;
+        }
+      }
+    }
+
+    // 3. Direct Supabase Fallback
+    if (!apiSuccess) {
+      await supabase.from('chart_of_accounts').delete().or(`id.eq.${id}${code ? `,code.eq.${code}` : ''}`);
+      await supabase.from('accounts').delete().or(`account_id.eq.${id}${code ? `,account_code.eq.${code}` : ''}`).catch(() => {});
+      resultData = { success: true };
+    }
+
+    this.clearCoaCache();
+    return resultData;
+  }
+
+  public static async toggleCoaAccountActive(id: string, isActive: boolean, code?: string): Promise<any> {
+    if (!id || id === 'undefined' || id === 'null') {
+      throw new Error('Valid Account ID is required');
+    }
+
+    this.clearCoaCache();
+
+    // 1. Express Backend API
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const res = await rawFetch(`/api/finance/coa/${encodeURIComponent(id)}/toggle-active`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ is_active: isActive })
+        });
+        if (res && res.ok) {
+          const data = await res.json().catch(() => ({}));
+          this.clearCoaCache();
+          return data;
+        }
+      } catch (err) {
+        console.warn('[FinanceService] PATCH /api/finance/coa/:id/toggle-active failed, trying Supabase directly:', err);
+      }
+    }
+
+    // 2. Direct Supabase update
+    await supabase.from('chart_of_accounts').update({ is_active: isActive }).or(`id.eq.${id}${code ? `,code.eq.${code}` : ''}`);
+    await supabase.from('accounts').update({ is_active: isActive }).or(`account_id.eq.${id}${code ? `,account_code.eq.${code}` : ''}`).catch(() => {});
+    this.clearCoaCache();
+    return { success: true, is_active: isActive };
+  }
+
   // --- Vouchers ---
   public static async getVouchers(): Promise<Voucher[]> {
     let rows: any[] = [];

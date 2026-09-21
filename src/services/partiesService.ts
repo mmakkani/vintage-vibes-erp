@@ -521,6 +521,60 @@ export class PartiesService {
       throw new Error('Valid Party ID is required for deletion');
     }
 
+    // Strict Accounting Validation Check: Prevent deletion of parties with transactions or non-zero balance
+    try {
+      const { data: pCheck } = await supabase
+        .from('parties')
+        .select('id, current_balance, coa_account_id')
+        .or(`id.eq.${id},party_id.eq.${id}`)
+        .maybeSingle();
+
+      if (pCheck) {
+        const curBal = Math.abs(Number(pCheck.current_balance || 0));
+        if (curBal > 0.001) {
+          throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+        }
+
+        const partyId = pCheck.id || id;
+        const coaId = pCheck.coa_account_id;
+
+        // Check journal entries
+        const { data: je } = await supabase
+          .from('journal_entries')
+          .select('id')
+          .or(`party_id.eq.${partyId}${coaId ? `,account_id.eq.${coaId}` : ''}`)
+          .limit(1);
+        if (je && je.length > 0) {
+          throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+        }
+
+        // Check voucher entries
+        const { data: ve } = await supabase
+          .from('voucher_entries')
+          .select('id')
+          .eq('party_id', partyId)
+          .limit(1);
+        if (ve && ve.length > 0) {
+          throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+        }
+
+        // Check purchase invoices
+        const { data: pi } = await supabase
+          .from('purchase_invoices')
+          .select('id')
+          .eq('supplier_id', partyId)
+          .limit(1);
+        if (pi && pi.length > 0) {
+          throw new Error("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+        }
+      }
+    } catch (valErr: any) {
+      if (valErr.message?.includes('Cannot delete: This account/supplier')) {
+        throw valErr;
+      }
+      // If table query failed due to network/offline, continue to API
+    }
+
     let apiSuccess = false;
     let resultData: any = null;
 

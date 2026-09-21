@@ -4420,6 +4420,215 @@ export default async function handler(req: any, res: any) {
           }
         }
       }
+
+      // Handle DELETE /api/finance/coa/:id
+      if (req.method === 'DELETE') {
+        const idMatch = pathname.match(/\/finance\/coa\/([^\/]+)/);
+        const targetAccId = idMatch ? decodeURIComponent(idMatch[1]) : '';
+        if (!targetAccId || targetAccId === 'undefined' || targetAccId === 'null') {
+          return res.status(400).json({ error: 'Valid account ID is required for deletion' });
+        }
+
+        let client: any = null;
+        try {
+          client = await borrowClient();
+        } catch (_) {}
+
+        if (client) {
+          try {
+            // 1. Lookup account
+            let accountCode = '';
+            let tierLevel = 3;
+            let currentBalance = 0;
+            let accountUuid: string | null = null;
+
+            const accLookup = await client.query(
+              `SELECT account_id, account_code, account_level, is_active FROM accounts WHERE account_id::text = $1 OR account_code = $1 LIMIT 1`,
+              [targetAccId]
+            ).catch(() => ({ rows: [] }));
+
+            const coaLookup = await client.query(
+              `SELECT id, code, tier_level, is_active, current_balance FROM chart_of_accounts WHERE id::text = $1 OR code = $1 LIMIT 1`,
+              [targetAccId]
+            ).catch(() => ({ rows: [] }));
+
+            if (accLookup.rows.length === 0 && coaLookup.rows.length === 0) {
+              return res.status(404).json({ error: 'Account not found' });
+            }
+
+            if (accLookup.rows.length > 0) {
+              accountCode = accLookup.rows[0].account_code;
+              tierLevel = Number(accLookup.rows[0].account_level || 3);
+            }
+            if (coaLookup.rows.length > 0) {
+              accountCode = accountCode || coaLookup.rows[0].code;
+              tierLevel = Number(coaLookup.rows[0].tier_level || tierLevel);
+              currentBalance = Number(coaLookup.rows[0].current_balance || 0);
+              accountUuid = coaLookup.rows[0].id;
+            }
+
+            if (tierLevel === 1 || accountCode.endsWith('000-00') || ['1000-00', '2000-00', '3000-00', '4000-00', '5000-00'].includes(accountCode)) {
+              return res.status(400).json({
+                error: "Cannot delete: Master tier folder accounts cannot be deleted. Please deactivate it instead."
+              });
+            }
+
+            if (Math.abs(currentBalance) > 0.001) {
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+
+            const jeCheck = await client.query(
+              `SELECT id FROM journal_entries WHERE account_id::text = $1 ${accountUuid ? 'OR account_id = $2' : ''} LIMIT 1`,
+              accountUuid ? [targetAccId, accountUuid] : [targetAccId]
+            ).catch(() => ({ rows: [] }));
+            if (jeCheck.rows.length > 0) {
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+
+            const veCheck = await client.query(
+              `SELECT id FROM voucher_entries WHERE account_id::text = $1 ${accountCode ? 'OR account_code = $2' : ''} LIMIT 1`,
+              accountCode ? [targetAccId, accountCode] : [targetAccId]
+            ).catch(() => ({ rows: [] }));
+            if (veCheck.rows.length > 0) {
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+
+            const ledgerCheck = await client.query(
+              `SELECT id FROM ledgers WHERE account_id::text = $1 ${accountCode ? 'OR code = $2' : ''} LIMIT 1`,
+              accountCode ? [targetAccId, accountCode] : [targetAccId]
+            ).catch(() => ({ rows: [] }));
+            if (ledgerCheck.rows.length > 0) {
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+
+            await client.query('BEGIN').catch(() => {});
+            if (accountCode) {
+              await client.query('DELETE FROM chart_of_accounts WHERE id::text = $1 OR code = $2', [targetAccId, accountCode]).catch(() => {});
+              await client.query('DELETE FROM accounts WHERE account_id::text = $1 OR account_code = $2', [targetAccId, accountCode]).catch(() => {});
+              await client.query('DELETE FROM coa_accounts WHERE id::text = $1 OR code = $2', [targetAccId, accountCode]).catch(() => {});
+            } else {
+              await client.query('DELETE FROM chart_of_accounts WHERE id::text = $1', [targetAccId]).catch(() => {});
+              await client.query('DELETE FROM accounts WHERE account_id::text = $1', [targetAccId]).catch(() => {});
+              await client.query('DELETE FROM coa_accounts WHERE id::text = $1', [targetAccId]).catch(() => {});
+            }
+            await client.query('COMMIT').catch(() => {});
+
+            return res.status(200).json({ success: true, message: `Account ${accountCode || targetAccId} successfully deleted.` });
+          } catch (dbErr: any) {
+            if (client) await client.query('ROLLBACK').catch(() => {});
+            return res.status(500).json({ error: dbErr?.message || 'Failed to delete account' });
+          } finally {
+            if (client && typeof client.release === 'function') client.release();
+          }
+        }
+
+        // Supabase Admin Fallback
+        try {
+          const { data: coaAcc } = await supabaseAdmin
+            .from('chart_of_accounts')
+            .select('id, code, current_balance, tier_level')
+            .or(`id.eq.${targetAccId},code.eq.${targetAccId}`)
+            .maybeSingle();
+
+          if (coaAcc) {
+            if (Number(coaAcc.tier_level) === 1) {
+              return res.status(400).json({
+                error: "Cannot delete: Master tier folder accounts cannot be deleted. Please deactivate it instead."
+              });
+            }
+            if (Math.abs(Number(coaAcc.current_balance || 0)) > 0.001) {
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+            const { data: je } = await supabaseAdmin
+              .from('journal_entries')
+              .select('id')
+              .eq('account_id', coaAcc.id)
+              .limit(1);
+            if (je && je.length > 0) {
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+            const { data: ve } = await supabaseAdmin
+              .from('voucher_entries')
+              .select('id')
+              .or(`account_id.eq.${coaAcc.id},account_code.eq.${coaAcc.code}`)
+              .limit(1);
+            if (ve && ve.length > 0) {
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+
+            await supabaseAdmin.from('chart_of_accounts').delete().eq('id', coaAcc.id);
+            await supabaseAdmin.from('accounts').delete().or(`account_id.eq.${coaAcc.id},account_code.eq.${coaAcc.code}`).catch(() => {});
+          }
+          return res.status(200).json({ success: true, message: 'Account deleted' });
+        } catch (sbErr: any) {
+          return res.status(500).json({ error: sbErr.message });
+        }
+      }
+
+      // Handle PATCH /api/finance/coa/:id/toggle-active
+      if (req.method === 'PATCH' || (req.method === 'PUT' && pathname.includes('/toggle-active'))) {
+        const idMatch = pathname.match(/\/finance\/coa\/([^\/]+)/);
+        const targetAccId = idMatch ? decodeURIComponent(idMatch[1]) : '';
+        const reqActive = req.body?.is_active ?? req.body?.isActive;
+
+        let client: any = null;
+        try {
+          client = await borrowClient();
+        } catch (_) {}
+
+        if (client) {
+          try {
+            let newActiveState: boolean;
+            if (typeof reqActive === 'boolean') {
+              newActiveState = reqActive;
+            } else {
+              const curr = await client.query(
+                'SELECT is_active FROM accounts WHERE account_id::text = $1 OR account_code = $1 LIMIT 1',
+                [targetAccId]
+              ).catch(() => ({ rows: [] }));
+              const currentVal = curr.rows[0]?.is_active;
+              newActiveState = currentVal === undefined ? false : !currentVal;
+            }
+
+            await client.query('BEGIN').catch(() => {});
+            await client.query('UPDATE accounts SET is_active = $1 WHERE account_id::text = $2 OR account_code = $2', [newActiveState, targetAccId]).catch(() => {});
+            await client.query('UPDATE chart_of_accounts SET is_active = $1 WHERE id::text = $2 OR code = $2', [newActiveState, targetAccId]).catch(() => {});
+            await client.query('UPDATE coa_accounts SET is_active = $1 WHERE id::text = $2 OR code = $2', [newActiveState, targetAccId]).catch(() => {});
+            await client.query('COMMIT').catch(() => {});
+
+            return res.status(200).json({ success: true, is_active: newActiveState, isActive: newActiveState });
+          } catch (err: any) {
+            if (client) await client.query('ROLLBACK').catch(() => {});
+            return res.status(500).json({ error: err.message });
+          } finally {
+            if (client && typeof client.release === 'function') client.release();
+          }
+        }
+
+        // Supabase Admin fallback
+        try {
+          const newActive = typeof reqActive === 'boolean' ? reqActive : false;
+          await supabaseAdmin.from('chart_of_accounts').update({ is_active: newActive }).or(`id.eq.${targetAccId},code.eq.${targetAccId}`);
+          await supabaseAdmin.from('accounts').update({ is_active: newActive }).or(`account_id.eq.${targetAccId},account_code.eq.${targetAccId}`);
+          return res.status(200).json({ success: true, is_active: newActive, isActive: newActive });
+        } catch (sbErr: any) {
+          return res.status(500).json({ error: sbErr.message });
+        }
+      }
     }
 
     // Finance Vouchers
@@ -4669,11 +4878,67 @@ export default async function handler(req: any, res: any) {
         const client = await getPgClient();
         if (client) {
           try {
+            // Strict Accounting Safety Check: Prevent deletion of parties with existing transactions or non-zero balance
+            const pCheck = await client.query(
+              `SELECT id, party_id, current_balance, coa_account_id FROM parties WHERE id = $1 OR party_id::text = $1 LIMIT 1`,
+              [targetPartyId]
+            ).catch(() => ({ rows: [] }));
+
+            if (pCheck.rows.length > 0) {
+              const party = pCheck.rows[0];
+              const curBal = Math.abs(Number(party.current_balance || 0));
+              if (curBal > 0.001) {
+                await client.end().catch(() => {});
+                return res.status(400).json({
+                  error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+                });
+              }
+
+              const partyUuid = party.id || targetPartyId;
+              const coaId = party.coa_account_id;
+
+              const jeCheck = await client.query(
+                `SELECT id FROM journal_entries WHERE party_id = $1 ${coaId ? 'OR account_id = $2' : ''} LIMIT 1`,
+                coaId ? [partyUuid, coaId] : [partyUuid]
+              ).catch(() => ({ rows: [] }));
+              if (jeCheck.rows.length > 0) {
+                await client.end().catch(() => {});
+                return res.status(400).json({
+                  error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+                });
+              }
+
+              const veCheck = await client.query(
+                `SELECT id FROM voucher_entries WHERE party_id = $1 ${coaId ? 'OR account_id = $2' : ''} LIMIT 1`,
+                coaId ? [partyUuid, coaId] : [partyUuid]
+              ).catch(() => ({ rows: [] }));
+              if (veCheck.rows.length > 0) {
+                await client.end().catch(() => {});
+                return res.status(400).json({
+                  error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+                });
+              }
+
+              const piCheck = await client.query(
+                `SELECT id FROM purchase_invoices WHERE supplier_id = $1 LIMIT 1`,
+                [partyUuid]
+              ).catch(() => ({ rows: [] }));
+              if (piCheck.rows.length > 0) {
+                await client.end().catch(() => {});
+                return res.status(400).json({
+                  error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+                });
+              }
+            }
+
             const delRes = await client.query('SELECT public.delete_party_and_coa($1) as result;', [targetPartyId]);
             await client.end();
             const result = delRes.rows[0]?.result || {};
             if (result.success === false) {
-              return res.status(400).json({ error: result.error, ...result });
+              const errorMsg = result.error?.includes('transactions') || result.error?.includes('balance')
+                ? "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+                : (result.error || "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+              return res.status(400).json({ error: errorMsg, ...result });
             }
             return res.status(200).json({ success: true, ...result });
           } catch (delErr: any) {
@@ -4682,8 +4947,63 @@ export default async function handler(req: any, res: any) {
           }
         }
         try {
+          // Supabase fallback pre-check
+          const { data: party } = await supabaseAdmin
+            .from('parties')
+            .select('id, current_balance, coa_account_id')
+            .or(`id.eq.${targetPartyId},party_id.eq.${targetPartyId}`)
+            .maybeSingle();
+
+          if (party) {
+            const curBal = Math.abs(Number(party.current_balance || 0));
+            if (curBal > 0.001) {
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+
+            const { data: je } = await supabaseAdmin
+              .from('journal_entries')
+              .select('id')
+              .or(`party_id.eq.${party.id}${party.coa_account_id ? `,account_id.eq.${party.coa_account_id}` : ''}`)
+              .limit(1);
+            if (je && je.length > 0) {
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+
+            const { data: ve } = await supabaseAdmin
+              .from('voucher_entries')
+              .select('id')
+              .eq('party_id', party.id)
+              .limit(1);
+            if (ve && ve.length > 0) {
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+
+            const { data: pi } = await supabaseAdmin
+              .from('purchase_invoices')
+              .select('id')
+              .eq('supplier_id', party.id)
+              .limit(1);
+            if (pi && pi.length > 0) {
+              return res.status(400).json({
+                error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              });
+            }
+          }
+
           const { data, error } = await supabaseAdmin.rpc('delete_party_and_coa', { p_party_id: targetPartyId });
           if (error) throw error;
+          if (data && data.success === false) {
+            const errorMsg = data.error?.includes('transactions') || data.error?.includes('balance')
+              ? "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+              : (data.error || "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+            return res.status(400).json({ error: errorMsg, ...data });
+          }
           return res.status(200).json({ success: true, ...(data || {}) });
         } catch (rpcErr: any) {
           return res.status(500).json({ error: rpcErr.message });

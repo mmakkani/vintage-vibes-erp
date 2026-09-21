@@ -498,10 +498,82 @@ partiesRouter.delete('/:id', async (req, res) => {
 
   try {
     client = await getDbClient();
+
+    // Strict Accounting Safety Check: Prevent deletion of parties with existing transactions or balance
+    const partyRes = await client.query(
+      `SELECT id, party_id, code, current_balance, coa_account_id FROM parties WHERE id = $1 OR party_id::text = $1 LIMIT 1`,
+      [id]
+    ).catch(() => ({ rows: [] }));
+
+    if (partyRes.rows.length > 0) {
+      const party = partyRes.rows[0];
+      const curBal = Math.abs(Number(party.current_balance || 0));
+      if (curBal > 0.001) {
+        return res.status(400).json({
+          success: false,
+          error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+        });
+      }
+
+      const partyUuid = party.id || id;
+      const coaId = party.coa_account_id;
+
+      // Check journal_entries
+      const jeCheck = await client.query(
+        `SELECT id FROM journal_entries WHERE party_id = $1 ${coaId ? 'OR account_id = $2' : ''} LIMIT 1`,
+        coaId ? [partyUuid, coaId] : [partyUuid]
+      ).catch(() => ({ rows: [] }));
+      if (jeCheck.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+        });
+      }
+
+      // Check voucher_entries
+      const veCheck = await client.query(
+        `SELECT id FROM voucher_entries WHERE party_id = $1 ${coaId ? 'OR account_id = $2' : ''} LIMIT 1`,
+        coaId ? [partyUuid, coaId] : [partyUuid]
+      ).catch(() => ({ rows: [] }));
+      if (veCheck.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+        });
+      }
+
+      // Check purchase_invoices
+      const piCheck = await client.query(
+        `SELECT id FROM purchase_invoices WHERE supplier_id = $1 LIMIT 1`,
+        [partyUuid]
+      ).catch(() => ({ rows: [] }));
+      if (piCheck.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+        });
+      }
+
+      // Check party_khata_logs
+      const khataCheck = await client.query(
+        `SELECT id FROM party_khata_logs WHERE party_id = $1 LIMIT 1`,
+        [partyUuid]
+      ).catch(() => ({ rows: [] }));
+      if (khataCheck.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+        });
+      }
+    }
+
     const delRes = await client.query('SELECT public.delete_party_and_coa($1) as result;', [id]);
     const result = delRes.rows[0]?.result || {};
     if (result.success === false) {
-      return res.status(400).json({ error: result.error, ...result });
+      const errorMsg = result.error?.includes('transactions') || result.error?.includes('balance')
+        ? "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead."
+        : (result.error || "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+      return res.status(400).json({ error: errorMsg, ...result });
     }
 
     try {

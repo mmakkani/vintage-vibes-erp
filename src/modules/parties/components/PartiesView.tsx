@@ -15,6 +15,7 @@ import {
   Eye,
   Pencil,
   Trash2,
+  Lock,
   Printer,
   MapPin,
   CheckCircle2,
@@ -190,17 +191,49 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       setParties(safeData);
 
       // Auto-select party if none selected or if selectedParty was deleted
-      setParties(data || []);
-      if (data && data.length > 0) {
+      if (safeData && safeData.length > 0) {
         if (!selectedParty) {
-          selectParty(data[0]);
+          selectParty(safeData[0]);
         } else {
-          const stillThere = data.find(p => p.id === selectedParty.id);
+          const stillThere = safeData.find((p: any) => p.id === selectedParty.id);
           if (stillThere) setSelectedParty(stillThere);
         }
       }
     } catch (err: any) {
       console.error('Failed to load parties:', err);
+    }
+  };
+
+  // Helper to evaluate if a party can be safely deleted or must be preserved under GAAP/IFRS
+  const isPartyDeletable = (p: Party | any): boolean => {
+    if (!p) return false;
+    const curBal = Number(p.currentBalance ?? p.current_balance ?? 0);
+    const purC = Number(p.purchaseInvoicesCount ?? p.stats?.purchaseInvoicesCount ?? 0);
+    const salC = Number(p.salesInvoicesCount ?? p.stats?.salesInvoicesCount ?? 0);
+    const khtC = Number(p.khataLogsCount ?? p.stats?.khataTransactionsCount ?? 0);
+    const glC = Number(p.glEntriesCount ?? p.stats?.glEntriesCount ?? 0);
+    const totC = Number(p.totalEntriesCount ?? p.stats?.totalEntriesCount ?? (purC + salC + khtC + glC));
+    if (p.hasEntries) return false;
+    if (totC > 0) return false;
+    if (Math.abs(curBal) > 0.001) return false;
+    return true;
+  };
+
+  // One-click toggle between Active and Inactive (Archived)
+  const handleToggleActiveParty = async (party: Party, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const pAny = party as any;
+    const pId = String(party.id || pAny.party_id || '').trim();
+    const pName = party.name || pAny.company_name || 'Party';
+    const currentActive = party.isActive !== false && pAny.is_active !== false;
+    const newActive = !currentActive;
+    try {
+      await PartiesService.updateParty(pId, { isActive: newActive });
+      showMsg(`Party "${pName}" set to ${newActive ? 'Active' : 'Inactive (Archived)'}.`, 'success');
+      await loadParties();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err.message || 'Failed to update party status', 'error');
     }
   };
 
@@ -556,6 +589,12 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       return;
     }
 
+    if (!isPartyDeletable(deletingParty)) {
+      showMsg("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.", "error");
+      setDeleteError("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.");
+      return;
+    }
+
     setIsDeleting(true);
     setDeleteError(null);
     try {
@@ -731,10 +770,24 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   </span>
                   
                   <div className="flex items-center gap-1">
+                    {/* One-click Active/Inactive toggle */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleToggleActiveParty(party, e)}
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase transition-colors cursor-pointer ${
+                        party.isActive !== false && (party as any).is_active !== false
+                          ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                          : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                      }`}
+                      title={party.isActive !== false && (party as any).is_active !== false ? "Active - Click to Deactivate/Archive" : "Inactive - Click to Activate"}
+                    >
+                      {party.isActive !== false && (party as any).is_active !== false ? 'Active' : 'Archived'}
+                    </button>
+
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); handleOpenViewParty(party); }}
-                      className="p-1 rounded bg-slate-100 hover:bg-blue-100 text-blue-700 transition-colors"
+                      className="p-1 rounded bg-slate-100 hover:bg-blue-100 text-blue-700 transition-colors cursor-pointer"
                       title="View Full Party Profile"
                     >
                       <Eye className="w-3 h-3" />
@@ -742,19 +795,30 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); handleOpenEditParty(party); }}
-                      className="p-1 rounded bg-slate-100 hover:bg-amber-100 text-amber-800 transition-colors"
+                      className="p-1 rounded bg-slate-100 hover:bg-amber-100 text-amber-800 transition-colors cursor-pointer"
                       title="Edit Party Details in SQL"
                     >
                       <Pencil className="w-3 h-3" />
                     </button>
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); handleOpenDeleteParty(party); }}
-                      className="p-1 rounded transition-colors bg-slate-100 hover:bg-red-100 text-red-600"
-                      title="Delete Party from SQL Database"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                    {isPartyDeletable(party) ? (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleOpenDeleteParty(party); }}
+                        className="p-1 rounded transition-colors bg-slate-100 hover:bg-red-100 text-red-600 cursor-pointer"
+                        title="Delete Party from SQL Database"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled
+                        className="p-1 rounded bg-slate-100 text-slate-400 opacity-60 cursor-not-allowed"
+                        title="Cannot delete: This supplier has existing transactions. Please deactivate it instead."
+                      >
+                        <Lock className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -814,6 +878,19 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   </button>
 
                   <button
+                    onClick={() => handleToggleActiveParty(selectedParty)}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded font-bold text-[10px] uppercase tracking-wider border shadow-2xs transition-colors cursor-pointer ${
+                      selectedParty.isActive !== false && (selectedParty as any).is_active !== false
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                        : 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200'
+                    }`}
+                    title="Toggle Active / Inactive (Archive) Status"
+                  >
+                    <Shield className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>{selectedParty.isActive !== false && (selectedParty as any).is_active !== false ? 'Active' : 'Archived'}</span>
+                  </button>
+
+                  <button
                     onClick={handlePrintKhata}
                     className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white hover:bg-slate-100 text-slate-700 font-bold text-[10px] uppercase tracking-wider border border-slate-300 shadow-2xs transition-colors cursor-pointer"
                     title="Print / Export Statement"
@@ -822,14 +899,25 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     <span>Print</span>
                   </button>
 
-                  <button
-                    onClick={() => handleOpenDeleteParty(selectedParty)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded font-bold text-[10px] uppercase tracking-wider border shadow-2xs transition-colors cursor-pointer bg-white hover:bg-red-50 text-red-700 border-red-200"
-                    title="Delete Party from SQL Database"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                    <span>Delete</span>
-                  </button>
+                  {isPartyDeletable(selectedParty) ? (
+                    <button
+                      onClick={() => handleOpenDeleteParty(selectedParty)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded font-bold text-[10px] uppercase tracking-wider border shadow-2xs transition-colors cursor-pointer bg-white hover:bg-red-50 text-red-700 border-red-200"
+                      title="Delete Party from SQL Database"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                      <span>Delete</span>
+                    </button>
+                  ) : (
+                    <button
+                      disabled
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded font-bold text-[10px] uppercase tracking-wider border shadow-2xs opacity-50 bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                      title="Cannot delete: This supplier has existing transactions. Please deactivate it instead."
+                    >
+                      <Lock className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Delete</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1411,17 +1499,29 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
               {/* Modal Actions */}
               <div className="flex justify-between items-center pt-3 border-t border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowViewPartyModal(false);
-                    handleOpenDeleteParty(viewPartyData);
-                  }}
-                  className="px-3 py-1.5 rounded text-red-600 hover:bg-red-50 text-xs font-semibold flex items-center gap-1.5 border border-red-200"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Delete Party</span>
-                </button>
+                {isPartyDeletable(viewPartyData) ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowViewPartyModal(false);
+                      handleOpenDeleteParty(viewPartyData);
+                    }}
+                    className="px-3 py-1.5 rounded text-red-600 hover:bg-red-50 text-xs font-semibold flex items-center gap-1.5 border border-red-200 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Party</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className="px-3 py-1.5 rounded text-slate-400 bg-slate-100 text-xs font-semibold flex items-center gap-1.5 border border-slate-200 cursor-not-allowed opacity-60"
+                    title="Cannot delete: This supplier has existing transactions. Please deactivate it instead."
+                  >
+                    <Lock className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Delete (Protected)</span>
+                  </button>
+                )}
 
                 <div className="flex items-center gap-2">
                   <button
@@ -1752,26 +1852,26 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
               {hasAnyEntries ? (
                 /* BLOCK DELETION: PARTY HAS FINANCIAL ENTRIES */
                 <div>
-                  <div className="flex items-center gap-3 text-red-600 mb-3">
-                    <div className="p-3 rounded-full bg-red-100 border border-red-300">
-                      <Trash2 className="w-6 h-6 text-red-700" />
+                  <div className="flex items-center gap-3 text-amber-600 mb-3">
+                    <div className="p-3 rounded-full bg-amber-100 border border-amber-300">
+                      <Lock className="w-6 h-6 text-amber-700" />
                     </div>
                     <div>
                       <h3 className="text-base font-bold text-slate-900">
-                        Confirm Party Deletion
+                        Party Deletion Prohibited (Protected Record)
                       </h3>
-                      <p className="text-xs font-semibold text-rose-700">
-                        پارٹی اور اس کا COA اکاؤنٹ SQL ڈیٹا بیس سے مستقل ڈیلیٹ کریں
+                      <p className="text-xs font-semibold text-amber-800">
+                        یہ پارٹی ٹرانزیکشنز کی وجہ سے ڈیلیٹ نہیں ہو سکتی — برائے مہربانی غیر فعال (Deactivate) کریں
                       </p>
                     </div>
                   </div>
 
-                  <div className="bg-rose-50/80 border border-rose-300 rounded-lg p-3.5 space-y-2.5 text-xs text-slate-800">
+                  <div className="bg-amber-50/80 border border-amber-300 rounded-lg p-3.5 space-y-2.5 text-xs text-slate-800">
                     <p className="font-semibold text-slate-900">
-                      Party <strong className="text-blue-900 underline">{deletingParty.name}</strong> ({deletingParty.code}) contains recorded transactions:
+                      Party <strong className="text-blue-900 underline">{deletingParty.name}</strong> ({deletingParty.code}) has recorded transactions and cannot be deleted:
                     </p>
 
-                    <div className="grid grid-cols-2 gap-2 font-mono text-[11px] bg-white p-2.5 rounded border border-rose-200">
+                    <div className="grid grid-cols-2 gap-2 font-mono text-[11px] bg-white p-2.5 rounded border border-amber-200">
                       <div>• Purchase Invoices: <strong className="text-slate-900">{purCount}</strong></div>
                       <div>• Sales Invoices: <strong className="text-slate-900">{salesCount}</strong></div>
                       <div>• Khata Ledger Logs: <strong className="text-slate-900">{khataCount}</strong></div>
@@ -1781,11 +1881,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       </div>
                     </div>
 
-                    <p className="text-[11px] text-slate-600 leading-relaxed font-sans">
-                      اگر آپ اس پارٹی کو مستقل ختم کرنا چاہتے ہیں تو یہ پارٹی، اس کی تمام انٹریز، اور اس کا Chart of Accounts (COA) کھاتہ SQL ڈیٹا بیس سے ہمیشہ کے لیے ختم ہو جائیں گے۔
-                    </p>
-                    <p className="text-[11px] text-amber-900 font-bold bg-amber-100/70 p-2 rounded border border-amber-200">
-                      💡 آپشن: آپ اسے <strong>"Mark as Inactive"</strong> بھی کر سکتے ہیں تاکہ ہسٹری محفوظ رہے، یا مستقل ڈیلیٹ کے لیے لال بٹن دبائیں۔
+                    <p className="text-[11px] text-slate-700 leading-relaxed font-sans">
+                      اکاؤنٹنگ کے بین الاقوامی اصولوں (GAAP / IFRS) کے تحت جن پارٹیوں کا لین دین یا بیلنس موجود ہو، انہیں مستقل ڈیلیٹ کرنے کی اجازت نہیں ہے۔ آپ اس پارٹی کو <strong>"Mark Inactive"</strong> کر سکتے ہیں تاکہ مزید لین دین نہ ہو سکے جبکہ پچھلا مالیاتی ریکارڈ محفوظ رہے۔
                     </p>
                   </div>
 
@@ -1803,7 +1900,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                         setShowDeletePartyModal(false);
                         setDeleteError(null);
                       }}
-                      className="px-3.5 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px]"
+                      className="px-3.5 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px] cursor-pointer"
                     >
                       Cancel (منسوخ کریں)
                     </button>
@@ -1813,31 +1910,11 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                         type="button"
                         onClick={() => handleDeactivateParty(deletingParty)}
                         disabled={isDeleting}
-                        className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-700 text-white font-bold uppercase tracking-wider text-[10px] shadow-xs flex items-center gap-1 cursor-pointer"
+                        className="px-4 py-2 rounded bg-amber-600 hover:bg-amber-700 text-white font-bold uppercase tracking-wider text-[11px] shadow-xs flex items-center gap-1.5 cursor-pointer"
                         title="Mark party as inactive without deleting records"
                       >
-                        <Shield className="w-3 h-3" />
-                        <span>{isDeleting ? 'Archiving...' : 'Mark Inactive'}</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleConfirmDeleteParty}
-                        disabled={isDeleting}
-                        className="px-3.5 py-1.5 rounded bg-red-600 hover:bg-red-700 text-white font-bold uppercase tracking-wider text-[11px] shadow-xs flex items-center gap-1.5 cursor-pointer"
-                        title="Permanently remove party, its entries, and its COA account from PostgreSQL"
-                      >
-                        {isDeleting ? (
-                          <>
-                            <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                            <span>Deleting...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Delete from SQL (مستقل ڈیلیٹ)</span>
-                          </>
-                        )}
+                        <Shield className="w-3.5 h-3.5" />
+                        <span>{isDeleting ? 'Archiving...' : 'Deactivate / Mark Inactive (محفوظ رکھیں)'}</span>
                       </button>
                     </div>
                   </div>

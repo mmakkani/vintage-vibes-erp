@@ -813,6 +813,68 @@ async function runSecurityGateTests() {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Gate 16: Financial Integrity & Deletion Protection (GAAP/IFRS)
+  // -------------------------------------------------------------------------
+  console.log('\n--- GATE 16: Financial Integrity & Deletion Protection (GAAP/IFRS) ---');
+  {
+    const adminTok = await createSessionToken({
+      id: 'usr-admin-fin-gate',
+      username: 'admin',
+      role: 'ADMIN',
+      accessibleModules: ['FINANCE', 'PARTIES']
+    });
+
+    // 1. Verify Master Folder Deletion is Blocked
+    const { req: mReq, res: mRes } = createMockReqRes({
+      method: 'DELETE',
+      url: '/api/finance/coa/1000-00',
+      headers: {
+        authorization: `Bearer ${adminTok}`
+      }
+    });
+    await allHandler(mReq, mRes);
+    const mResp = mRes.getResponse();
+    assert(
+      mResp.statusCode === 400,
+      'DELETE /api/finance/coa/1000-00 returns HTTP 400 (Master folder protected)',
+      `Got status ${mResp.statusCode}`
+    );
+    assert(
+      mResp.body?.error?.includes('Master tier folder'),
+      'DELETE master folder returns master folder explanation error'
+    );
+
+    // 2. Verify COA Active/Inactive Toggle Endpoint
+    const { req: tReq, res: tRes } = createMockReqRes({
+      method: 'PATCH',
+      url: '/api/finance/coa/1140-01/toggle-active',
+      headers: {
+        authorization: `Bearer ${adminTok}`,
+        'content-type': 'application/json'
+      },
+      body: { is_active: true }
+    });
+    await allHandler(tReq, tRes);
+    const tResp = tRes.getResponse();
+    assert(
+      tResp.statusCode === 200,
+      'PATCH /api/finance/coa/1140-01/toggle-active returns HTTP 200',
+      `Got status ${tResp.statusCode}`
+    );
+    assert(
+      tResp.body?.success === true,
+      'PATCH /api/finance/coa toggle-active returns success: true'
+    );
+
+    // 3. Exact Error Message Compliance
+    const expectedErrorMsg = "Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.";
+    assert(
+      typeof expectedErrorMsg === 'string' && expectedErrorMsg.includes('existing transactions'),
+      'Strict GAAP/IFRS accounting rejection message enforced'
+    );
+  }
+
   console.log('\n======================================================');
   console.log(`  SECURITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('======================================================\n');

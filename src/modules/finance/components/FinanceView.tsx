@@ -50,10 +50,13 @@ import { ModuleMaintenanceGuard } from '../../../components/ModuleMaintenanceGua
 interface COARowProps {
   acc: COAAccount;
   isDebitNormal: boolean;
+  hasTransactions: boolean;
   onViewLedger?: (accId: string) => void;
+  onToggleActive?: (acc: COAAccount) => void;
+  onDeleteAccount?: (acc: COAAccount) => void;
 }
 
-const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, onViewLedger }) => {
+const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, hasTransactions, onViewLedger, onToggleActive, onDeleteAccount }) => {
   const code = (acc as any).account_code || acc.code || '';
   const name = (acc as any).account_name || acc.name || '';
   const rawType = ((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || acc.account_type || 'ASSET').toString().toUpperCase();
@@ -71,6 +74,9 @@ const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, onViewLe
     acc.partyId ||
     (!code.endsWith('-00') && (code.startsWith('2110-') || code.startsWith('1130-') || code.startsWith('2120-')))
   );
+
+  const curBal = Math.abs(currentBalance);
+  const isBlockedFromDelete = curBal > 0.001 || hasTransactions || tierLevel === 1;
 
   return (
     <tr className="hover:bg-amber-50/30 transition-colors">
@@ -113,19 +119,47 @@ const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, onViewLe
       </td>
       <td className="px-3.5 py-2.5 text-center">
         <div className="flex items-center justify-center gap-1.5">
-          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-            isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
-          }`}>
-            {isActive ? 'Active' : 'Inactive'}
-          </span>
+          {/* Active/Inactive Toggle */}
+          <button
+            type="button"
+            onClick={() => onToggleActive?.(acc)}
+            className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors cursor-pointer ${
+              isActive ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+            }`}
+            title={isActive ? "Active - Click to Deactivate/Archive" : "Inactive - Click to Activate"}
+          >
+            {isActive ? 'Active' : 'Archived'}
+          </button>
+
           {onViewLedger && (
             <button
               type="button"
               onClick={() => onViewLedger(acc.id || (acc as any).account_id || '')}
               title="View General Ledger for this account"
-              className="text-[10px] text-amber-700 hover:text-amber-900 font-bold hover:underline cursor-pointer ml-1"
+              className="text-[10px] text-amber-700 hover:text-amber-900 font-bold hover:underline cursor-pointer ml-0.5"
             >
               Ledger →
+            </button>
+          )}
+
+          {/* Delete or Protected Lock */}
+          {isBlockedFromDelete ? (
+            <button
+              type="button"
+              disabled
+              className="p-1 rounded bg-slate-100 text-slate-400 opacity-50 cursor-not-allowed"
+              title={tierLevel === 1 ? "Cannot delete: Master tier folder accounts cannot be deleted. Please deactivate it instead." : "Cannot delete: This account has existing transactions or non-zero balance. Please deactivate it instead."}
+            >
+              <Lock className="w-3.5 h-3.5" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onDeleteAccount?.(acc)}
+              className="p-1 rounded bg-slate-100 hover:bg-red-100 text-red-600 hover:text-red-800 transition-colors cursor-pointer"
+              title="Delete unused account"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
@@ -496,6 +530,86 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       showMsg(err.message || 'Error saving account', 'error');
     } finally {
       setIsSavingAccount(false);
+    }
+  };
+
+  // Calculate accounts with transaction history from ledgers and vouchers
+  const accountsWithTransactions = useMemo(() => {
+    const set = new Set<string>();
+    // 1. From ledgers
+    (ledgers || []).forEach((l: any) => {
+      if (l.accountId) set.add(String(l.accountId));
+      if (l.account_id) set.add(String(l.account_id));
+      if (l.code) set.add(String(l.code));
+      if (l.accountCode) set.add(String(l.accountCode));
+      if (l.account_code) set.add(String(l.account_code));
+    });
+    // 2. From vouchers
+    (vouchers || []).forEach((v: any) => {
+      (v.entries || []).forEach((e: any) => {
+        if (e.accountId) set.add(String(e.accountId));
+        if (e.account_id) set.add(String(e.account_id));
+        if (e.code) set.add(String(e.code));
+        if (e.accountCode) set.add(String(e.accountCode));
+        if (e.account_code) set.add(String(e.account_code));
+      });
+    });
+    return set;
+  }, [ledgers, vouchers]);
+
+  // Toggle active status for COA Account
+  const handleToggleCoaActive = async (acc: COAAccount) => {
+    const accId = String(acc.id || (acc as any).account_id || '').trim();
+    const accCode = String((acc as any).account_code || acc.code || '').trim();
+    const currentActive = acc.isActive !== false && (acc as any).is_active !== false;
+    const newActive = !currentActive;
+
+    try {
+      await FinanceService.toggleCoaAccountActive(accId || accCode, newActive, accCode);
+      showMsg(`Account "${accCode} - ${acc.name}" set to ${newActive ? 'Active' : 'Inactive (Archived)'}.`, 'success');
+      setAccounts(prev => prev.map(a => {
+        if (a.id === accId || a.code === accCode) {
+          return { ...a, isActive: newActive, is_active: newActive };
+        }
+        return a;
+      }));
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err.message || 'Failed to update account status', 'error');
+    }
+  };
+
+  // Delete unused COA Account (strictly blocked if transactions or balance > 0)
+  const handleDeleteCoaAccount = async (acc: COAAccount) => {
+    const accId = String(acc.id || (acc as any).account_id || '').trim();
+    const accCode = String((acc as any).account_code || acc.code || '').trim();
+    const accName = acc.name || (acc as any).account_name || '';
+    const curBal = Math.abs(Number(acc.currentBalance ?? (acc as any).current_balance ?? 0));
+    const hasTx = accountsWithTransactions.has(accId) || accountsWithTransactions.has(accCode);
+    const tierLevel = Number(acc.tierLevel ?? (acc as any).tier_level ?? 3);
+
+    if (tierLevel === 1) {
+      showMsg("Cannot delete: Master tier folder accounts cannot be deleted. Please deactivate it instead.", "error");
+      return;
+    }
+
+    if (curBal > 0.001 || hasTx) {
+      showMsg("Cannot delete: This account/supplier has existing transactions. Please deactivate it instead.", "error");
+      return;
+    }
+
+    const confirmed = window.confirm(`Are you sure you want to permanently delete unused account ${accCode} - ${accName}?`);
+    if (!confirmed) return;
+
+    try {
+      await FinanceService.deleteCoaAccount(accId || accCode, accCode);
+      showMsg(`Account "${accCode} - ${accName}" successfully deleted.`);
+      setAccounts(prev => prev.filter(a => a.id !== accId && a.code !== accCode));
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err.message || 'Failed to delete account', 'error');
     }
   };
 
@@ -1498,20 +1612,29 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       </td>
                     </tr>
                   ) : (
-                    filteredAccounts.map(acc => (
-                      <COARow
-                        key={acc.id || (acc as any).account_id || (acc as any).account_code || acc.code}
-                        acc={acc}
-                        isDebitNormal={
-                          (((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || '').toString().toUpperCase()) === 'ASSET' ||
-                          (((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || '').toString().toUpperCase()) === 'EXPENSE'
-                        }
-                        onViewLedger={(accId) => {
-                          setGlSelectedTarget(accId);
-                          setSubTab('ledger');
-                        }}
-                      />
-                    ))
+                    filteredAccounts.map(acc => {
+                      const accId = String(acc.id || (acc as any).account_id || '');
+                      const accCode = String((acc as any).account_code || acc.code || '');
+                      const hasTx = accountsWithTransactions.has(accId) || accountsWithTransactions.has(accCode);
+
+                      return (
+                        <COARow
+                          key={acc.id || (acc as any).account_id || (acc as any).account_code || acc.code}
+                          acc={acc}
+                          isDebitNormal={
+                            (((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || '').toString().toUpperCase()) === 'ASSET' ||
+                            (((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || '').toString().toUpperCase()) === 'EXPENSE'
+                          }
+                          hasTransactions={hasTx}
+                          onViewLedger={(accId) => {
+                            setGlSelectedTarget(accId);
+                            setSubTab('ledger');
+                          }}
+                          onToggleActive={handleToggleCoaActive}
+                          onDeleteAccount={handleDeleteCoaAccount}
+                        />
+                      );
+                    })
                   )}
                 </tbody>
               </table>
