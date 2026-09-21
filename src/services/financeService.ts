@@ -848,34 +848,45 @@ export class FinanceService {
 
   public static isAutoVoucher(v: any): boolean {
     if (!v) return false;
-    // Only lock as auto if it is an automated upstream document (PINV, INV, PAYROLL)
-    if (v.is_auto === true || v.isAuto === true) {
-      const vNo = String(v.voucher_no || v.voucherNo || '').toUpperCase();
-      if (vNo.startsWith('VCH-') || vNo.startsWith('BPV-') || vNo.startsWith('CPV-') || vNo.startsWith('BRV-') || vNo.startsWith('CRV-')) {
-        return false; // Manual voucher created by user
-      }
-      return true;
-    }
     const ref = String(v.reference || v.reference_no || '').trim().toUpperCase();
+    const narr = String(v.narration || '').toLowerCase();
+
+    // 1. Automated upstream reference document prefixes (Inward Gate Pass, Invoices, Payroll, Bales)
     if (
+      ref.startsWith('INWARD-') ||
+      ref.startsWith('IGP-') ||
+      ref.startsWith('IGP_VCH-') ||
       ref.startsWith('PINV-') ||
       ref.startsWith('INV-') ||
+      ref.startsWith('PUR-') ||
       ref.startsWith('PAYROLL-') ||
       ref.startsWith('COD-') ||
       ref.startsWith('BALE-') ||
       ref.startsWith('TAX-') ||
-      ref.startsWith('COMM-')
+      ref.startsWith('COMM-') ||
+      ref.startsWith('SAL-')
     ) {
       return true;
     }
-    const narr = String(v.narration || '').toLowerCase();
+
+    // 2. Automated narrations
     if (
       narr.startsWith('[auto]') ||
-      narr.includes('commercial purchase invoice posted') ||
-      narr.includes('commercial sales invoice posted')
+      narr.includes('inward gate pass') ||
+      narr.includes('commercial purchase invoice') ||
+      narr.includes('commercial sales invoice') ||
+      narr.includes('payroll voucher') ||
+      narr.includes('auto-posted') ||
+      narr.includes('system generated')
     ) {
       return true;
     }
+
+    // 3. Explicit is_auto flag
+    if (v.is_auto === true || v.isAuto === true) {
+      return true;
+    }
+
     return false;
   }
 
@@ -1070,10 +1081,17 @@ export class FinanceService {
     try {
       const vouchersList = await this.getVouchers();
       const existing = vouchersList.find(item => String(item.id) === cleanId || item.voucherNo === cleanId);
-      if (existing?.voucherNo) {
-        vNo = existing.voucherNo;
+      if (existing) {
+        vNo = existing.voucherNo || cleanId;
+        if (this.isAutoVoucher(existing)) {
+          throw new Error('Deletion Blocked: System auto-generated vouchers (Inward Gate Passes, Commercial Invoices, Payroll) are audit-locked and cannot be deleted. Only manual vouchers can be deleted.');
+        }
       }
-    } catch (_) {}
+    } catch (checkErr: any) {
+      if (checkErr?.message?.includes('Deletion Blocked')) {
+        throw checkErr;
+      }
+    }
 
     // Call serverless endpoint if available
     try {
@@ -1105,6 +1123,90 @@ export class FinanceService {
     } catch (_) {}
 
     return true;
+  }
+
+  /**
+   * System-level reversal: Reverses/deletes auto-vouchers and general ledger lines for a specific source document
+   * (e.g. when unposting a Commercial Invoice or deleting an Inward Gate Pass).
+   * This bypasses the manual-only deletion block specifically for system unpost flows.
+   */
+  public static async reverseAutoVouchersForDocument(docRef: string): Promise<void> {
+    if (!docRef || !docRef.trim()) return;
+    const cleanRef = docRef.trim();
+    const cleanNoSpecial = cleanRef.replace(/[^a-zA-Z0-9]/g, '');
+
+    try {
+      // 1. Fetch matching vouchers from financial_vouchers and vouchers
+      const [fvRes, vRes] = await Promise.all([
+        supabase.from('financial_vouchers').select('id, voucher_no, reference, narration'),
+        supabase.from('vouchers').select('id, voucher_no, reference, narration')
+      ]);
+
+      const targetUpper = cleanRef.toUpperCase();
+      const targetClean = cleanNoSpecial.toUpperCase();
+      const matched: { id: string; voucherNo: string }[] = [];
+
+      const checkAndAdd = (item: any) => {
+        const vRef = String(item.reference || item.reference_no || '').toUpperCase();
+        const vNo = String(item.voucher_no || '').toUpperCase();
+        const vNarr = String(item.narration || '').toUpperCase();
+
+        if (
+          vRef.includes(targetUpper) ||
+          vNarr.includes(targetUpper) ||
+          (targetClean && vNo.includes(targetClean)) ||
+          vRef === `PINV-${targetUpper}` ||
+          vRef === `INWARD-${targetUpper}` ||
+          vRef === `PUR-${targetUpper}` ||
+          vRef === `IGP-${targetUpper}` ||
+          vRef === `BALE-${targetUpper}`
+        ) {
+          if (!matched.some(m => m.id === String(item.id))) {
+            matched.push({ id: String(item.id), voucherNo: String(item.voucher_no || item.id) });
+          }
+        }
+      };
+
+      (fvRes.data || []).forEach(checkAndAdd);
+      (vRes.data || []).forEach(checkAndAdd);
+
+      // 2. Cascade delete lines, journal entries, ledger entries, and voucher headers
+      for (const m of matched) {
+        const cleanId = m.id;
+        const vNo = m.voucherNo;
+
+        try {
+          await supabase.from('journal_entries').delete().eq('voucher_id', cleanId);
+        } catch (_) {}
+        try {
+          await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
+        try {
+          await supabase.from('financial_voucher_lines').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
+        try {
+          await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
+        try {
+          await supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
+        try {
+          await supabase.from('financial_vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
+        try {
+          await supabase.from('vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
+      }
+
+      // 3. Clear cache and sync COA
+      this.clearCoaCache();
+      try {
+        await supabase.rpc('sync_coa_current_balances');
+      } catch (_) {}
+    } catch (err) {
+      console.error('[FinanceService] Error in reverseAutoVouchersForDocument:', err);
+      throw err;
+    }
   }
 
   // --- SQL DATABASE REPORTING RPCS ---

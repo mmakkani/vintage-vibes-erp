@@ -180,11 +180,26 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               style={{ transform: 'translateZ(20px)' }}
             >
               <div className="flex items-center justify-between gap-1">
-                {/* 1-of-1 Grail Badge */}
-                <span className="px-2.5 py-1 rounded-full bg-slate-950/90 backdrop-blur-md border border-amber-400/90 text-[10px] font-black uppercase tracking-wider text-amber-300 shadow-lg flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-amber-400" />
-                  <span>1-of-1 Grail</span>
-                </span>
+                {/* Dynamic Tier Badge */}
+                {((piece.marketSegment === 'Antique' || (piece as any).market_segment === 'Antique' || (piece.style || '').toLowerCase().includes('antique')) ? (
+                  <span className="px-2.5 py-1 rounded-full bg-purple-950/90 backdrop-blur-md border border-purple-400/90 text-[10px] font-black uppercase tracking-wider text-purple-200 shadow-lg flex items-center gap-1">
+                    <span>🏛️ Antique</span>
+                  </span>
+                ) : (piece.marketSegment === 'Boutique' || (piece as any).market_segment === 'Boutique') ? (
+                  <span className="px-2.5 py-1 rounded-full bg-pink-950/90 backdrop-blur-md border border-pink-400/90 text-[10px] font-black uppercase tracking-wider text-pink-200 shadow-lg flex items-center gap-1">
+                    <span>✨ Boutique</span>
+                  </span>
+                ) : (piece.isGrail || (piece as any).is_grail || piece.marketSegment === 'Grails' || (piece as any).market_segment === 'Grails') ? (
+                  <span className="px-2.5 py-1 rounded-full bg-slate-950/90 backdrop-blur-md border border-amber-400/90 text-[10px] font-black uppercase tracking-wider text-amber-300 shadow-lg flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-400" />
+                    <span>👑 Grail</span>
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-1 rounded-full bg-slate-950/90 backdrop-blur-md border border-amber-400/90 text-[10px] font-black uppercase tracking-wider text-amber-300 shadow-lg flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-400" />
+                    <span>1-of-1 Piece</span>
+                  </span>
+                ))}
 
                 <div className="flex items-center gap-1 pointer-events-auto">
                   <span className="px-2 py-0.5 rounded-md bg-white/95 backdrop-blur-md border border-amber-400 text-[10px] font-mono font-black text-slate-900 shadow-md">
@@ -219,43 +234,40 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleCardClick();
+                  luxuryAudio.playMechanicalClick();
+                  onInspectTag(piece);
                 }}
-                className="px-3 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black flex items-center gap-1.5 shadow-lg transition-transform active:scale-95 cursor-pointer"
+                className="px-2.5 py-1.5 rounded-xl bg-white/95 hover:bg-white text-slate-900 font-extrabold text-[10px] shadow-lg flex items-center gap-1 transition-transform hover:scale-105 cursor-pointer border border-amber-300"
               >
-                <Maximize2 className="w-3.5 h-3.5" />
-                <span>🔍 Inspect 360°</span>
+                <Tag className="w-3 h-3 text-amber-700" />
+                <span>Tag OCR</span>
               </button>
 
               <button
                 type="button"
-                onClick={toggleFlip}
-                className="px-2.5 py-1.5 rounded-lg bg-white/90 hover:bg-white text-slate-950 text-xs font-bold flex items-center gap-1 shadow-md cursor-pointer"
+                onClick={handleCardClick}
+                className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-[10px] shadow-lg flex items-center gap-1 transition-transform hover:scale-105 cursor-pointer border border-white/50"
               >
-                <RotateCw className="w-3 h-3" />
-                <span>See Back</span>
+                <Maximize2 className="w-3 h-3" />
+                <span>Inspect Look</span>
               </button>
             </div>
           </div>
 
-          {/* Product Details Section */}
-          <div className="p-3.5 sm:p-4 flex flex-col flex-1 justify-between gap-3 bg-gradient-to-b from-[#FFFDF8] to-[#F5EADB]">
+          {/* Piece Metadata Card Body */}
+          <div className="p-4 flex-1 flex flex-col justify-between space-y-2.5 bg-gradient-to-b from-[#FDF9EE] to-[#FAF4E6]">
             <div>
-              {/* Fresh From Sorting Terminal Badge + Barcode */}
-              <div className="flex items-center justify-between text-xs text-slate-600 mb-1.5 flex-wrap gap-1">
-                <span className="px-2 py-0.5 rounded-md bg-amber-200/90 border border-amber-400/80 text-amber-950 font-black text-[9px] uppercase tracking-wider flex items-center gap-1 shadow-2xs">
-                  <Zap className="w-3 h-3 text-amber-700 fill-amber-500" />
-                  <span>⚡ Fresh sorting</span>
-                </span>
-
-                <span className="text-[10px] font-mono text-indigo-900 font-black bg-indigo-100/90 px-2 py-0.5 rounded border border-indigo-300">
+              <div className="flex items-center justify-between gap-1 text-[10px] font-mono text-slate-500">
+                <span className="font-bold text-amber-900 bg-amber-200/60 px-1.5 py-0.5 rounded border border-amber-300/60">
                   {piece.barcode}
                 </span>
+                <span className="truncate">{piece.shopLocation || 'Al Ain Vault'}</span>
               </div>
 
               <h3
                 onClick={handleCardClick}
-                className="font-extrabold text-base text-slate-950 group-hover:text-amber-800 transition-colors line-clamp-1 font-serif cursor-pointer"
+                className="mt-1.5 font-bold text-sm text-slate-900 font-serif leading-snug line-clamp-1 hover:text-amber-800 transition-colors cursor-pointer"
+                title={`${piece.brandName} • ${piece.style || 'Original Wash'}`}
               >
                 {piece.brandName} • {piece.style || 'Original Wash'}
               </h3>
@@ -294,9 +306,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             <div className="pt-2.5 border-t border-amber-200/80 space-y-2">
               <div className="flex items-baseline justify-between">
                 <span className="text-[10px] text-slate-600 uppercase font-extrabold block leading-none">Price</span>
-                <span className="text-xl font-black text-amber-950 font-mono tracking-tight drop-shadow-xs">
-                  AED {Number(price).toLocaleString()}
-                </span>
+                <div className="text-right">
+                  <span className="text-xl font-black text-amber-950 font-mono tracking-tight drop-shadow-xs">
+                    AED {Number(price).toLocaleString()}
+                  </span>
+                  {(piece.globalInsights?.usa_market_usd || (piece as any).global_insights?.usa_market_usd) && (
+                    <div className="text-[9px] font-mono text-emerald-700 font-bold">
+                      Int'l Val: ~${piece.globalInsights?.usa_market_usd || (piece as any).global_insights?.usa_market_usd} USD
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-1.5">

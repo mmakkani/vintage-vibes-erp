@@ -2736,10 +2736,15 @@ class RelationalStore {
     let globalIndex = 1;
 
     if (invItems.length > 0) {
+      const grossSubtotal = invItems.reduce((sum, l) => sum + (Number(l.lineTotal) || 0), 0);
+      const grossSubtotalAed = invoice.currency === 'AED' ? grossSubtotal : Number((grossSubtotal * (invoice.exchangeRate || 1.0)).toFixed(2));
+      const prorateRatio = (grossSubtotalAed > 0 && totalInvoiceCostAed > 0) ? (totalInvoiceCostAed / grossSubtotalAed) : 1;
+
       invItems.forEach(line => {
         const count = Number(line.packageCount) || 1;
         const weightPerBale = Number(((Number(line.totalWeight) || 45) / count).toFixed(2));
-        const lineTotalAed = invoice.currency === 'AED' ? Number(line.lineTotal) : Number(((Number(line.lineTotal) || 0) * (invoice.exchangeRate || 1.0)).toFixed(2));
+        const rawLineTotalAed = invoice.currency === 'AED' ? Number(line.lineTotal) : Number(((Number(line.lineTotal) || 0) * (invoice.exchangeRate || 1.0)).toFixed(2));
+        const lineTotalAed = Number((rawLineTotalAed * prorateRatio).toFixed(2));
         const costPerBale = Number((lineTotalAed / count).toFixed(2));
         const costPerGram = weightPerBale > 0 ? Number((costPerBale / (weightPerBale * 1000)).toFixed(6)) : 0;
 

@@ -23,11 +23,13 @@ import {
   FileText,
   AlertTriangle,
   BellRing,
-  AlertCircle
+  AlertCircle,
+  Crown
 } from 'lucide-react';
 import { User } from '../../auth/auth.types.ts';
 import { BaleYieldAnalyticsWidget } from './BaleYieldAnalyticsWidget.tsx';
 import { safeFetchJson } from '../../../utils/fetchUtils.ts';
+import { PurchaseService } from '../../../services/purchaseService.ts';
 
 interface MainDashboardViewProps {
   onNavigateTab: (tabId: string) => void;
@@ -47,6 +49,7 @@ interface StockAlertItem {
 
 let cachedMainDashboardKpi: any = null;
 let cachedMainDashboardStockAlerts: StockAlertItem[] | null = null;
+let cachedMainDashboardGrails: any[] | null = null;
 let cachedMainDashboardThreshold: number = 20;
 let lastMainDashboardFetchTime = 0;
 const MAIN_DASHBOARD_TTL_MS = 60 * 1000; // 1 minute cache
@@ -57,6 +60,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
 }) => {
   const [loading, setLoading] = useState(() => !cachedMainDashboardKpi);
   const [stockAlerts, setStockAlerts] = useState<StockAlertItem[]>(() => cachedMainDashboardStockAlerts || []);
+  const [grailAlerts, setGrailAlerts] = useState<any[]>(() => cachedMainDashboardGrails || []);
   const [globalThreshold, setGlobalThreshold] = useState<number>(() => cachedMainDashboardThreshold);
   const [kpiData, setKpiData] = useState(() => cachedMainDashboardKpi || {
     totalInventoryValueAED: 0,
@@ -87,7 +91,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
         return;
       }
       try {
-        const [purchaseInvoicesRes, gatePassesRes, salesRes, partiesRes, financeRes, currRes, itemsRes, companyRes] = await Promise.all([
+        const [purchaseInvoicesRes, gatePassesRes, salesRes, partiesRes, financeRes, currRes, itemsRes, companyRes, grailsRes] = await Promise.all([
           safeFetchJson<any[]>('/api/purchase/invoices', undefined, 3, 300),
           safeFetchJson<any[]>('/api/purchase/gate-passes', undefined, 3, 300),
           safeFetchJson<any[]>('/api/sales/invoices', undefined, 3, 300),
@@ -95,7 +99,8 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
           safeFetchJson<any>('/api/finance/reports', undefined, 3, 300),
           safeFetchJson<any[]>('/api/setup/currency', undefined, 3, 300),
           safeFetchJson<any[]>('/api/setup/items', undefined, 3, 300),
-          safeFetchJson<any>('/api/setup/company', undefined, 3, 300)
+          safeFetchJson<any>('/api/setup/company', undefined, 3, 300),
+          safeFetchJson<any[]>('/api/purchase/grails', undefined, 2, 300)
         ]);
 
         if (companyRes?.globalStockAlertThreshold) {
@@ -199,6 +204,21 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
           setStockAlerts(triggered);
           cachedMainDashboardStockAlerts = triggered;
         }
+
+        if (Array.isArray(grailsRes) && grailsRes.length > 0) {
+          setGrailAlerts(grailsRes);
+          cachedMainDashboardGrails = grailsRes;
+        } else {
+          try {
+            const pieces = await PurchaseService.getInventoryPieces(100);
+            const foundGrails = (pieces || []).filter(p => p.isGrail || ['Antique', 'Grails', 'Boutique'].includes(p.marketSegment || ''));
+            if (foundGrails.length > 0) {
+              setGrailAlerts(foundGrails.slice(0, 6));
+              cachedMainDashboardGrails = foundGrails.slice(0, 6);
+            }
+          } catch (_) {}
+        }
+
         lastMainDashboardFetchTime = Date.now();
       } catch {
         // Fallback gracefully on network retry
@@ -281,6 +301,107 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 1.25 HIGH-VALUE ANTIQUE & GRAIL REAL-TIME SORTING ALERT BANNER */}
+      {grailAlerts.length > 0 && (
+        <motion.div
+          id="high-value-grail-alert-panel"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-2xl border-2 border-amber-500/80 bg-gradient-to-r from-purple-950 via-slate-950 to-amber-950 text-white p-4 shadow-lg shadow-amber-950/20"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-amber-500/30">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/30 animate-pulse">
+                <Crown className="w-5 h-5 text-slate-950" />
+              </div>
+              <div>
+                <h4 className="font-serif font-black text-amber-300 text-xs sm:text-sm uppercase tracking-wider flex items-center gap-2">
+                  <span>🚨 High-Value Antique / Grail Detected in Sorting!</span>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold">
+                    {grailAlerts.length} Vault Items Flagged
+                  </span>
+                </h4>
+                <p className="text-[11px] text-slate-300 font-medium">
+                  AI Vision & Geo-Arbitrage Appraisal identified museum/collector-grade archive pieces in sorting terminal. Grail Anti-Theft Lock active.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onNavigateTab('purchase')}
+              className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-md transition-all flex items-center gap-1.5 cursor-pointer self-start sm:self-auto shrink-0"
+            >
+              <span>Inspect in Sorting Terminal</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-3">
+            {grailAlerts.slice(0, 6).map((grail: any, idx: number) => {
+              const gi = grail.globalInsights || grail.global_insights || {};
+              const seg = grail.marketSegment || grail.market_segment || 'Grails';
+              const img = grail.frontImageUrl || grail.front_image_url || grail.front_image;
+              const price = grail.retailPriceAed || grail.retail_price_aed || grail.estimatedPrice || grail.selling_price || 0;
+
+              return (
+                <motion.div
+                  key={grail.id || idx}
+                  whileHover={{ scale: 1.02 }}
+                  className="p-3 rounded-xl border border-amber-500/30 bg-slate-900/90 hover:bg-slate-900 transition flex items-center gap-3 cursor-pointer"
+                  onClick={() => onNavigateTab('purchase')}
+                >
+                  {img ? (
+                    <img
+                      src={img}
+                      alt={grail.itemName || 'Grail'}
+                      className="w-14 h-14 object-cover rounded-lg border border-amber-500/40 shrink-0"
+                    />
+                  ) : (
+                    <div className="w-14 h-14 rounded-lg bg-amber-950/60 border border-amber-600/40 flex items-center justify-center text-amber-400 shrink-0 font-bold">
+                      <Sparkles className="w-6 h-6" />
+                    </div>
+                  )}
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                        seg === 'Antique'
+                          ? 'bg-purple-950 text-purple-300 border border-purple-500/50'
+                          : seg === 'Grails'
+                          ? 'bg-amber-950 text-amber-300 border border-amber-500/50'
+                          : 'bg-pink-950 text-pink-300 border border-pink-500/50'
+                      }`}>
+                        {seg}
+                      </span>
+                      <span className="text-[11px] text-amber-400 font-mono font-bold">
+                        AED {Number(price).toFixed(0)}
+                      </span>
+                    </div>
+
+                    <div className="text-xs font-bold text-white truncate mt-0.5">
+                      {grail.brandName || grail.brand_title || 'Archive'} &bull; {grail.itemName || grail.category || 'Garment'}
+                    </div>
+
+                    <div className="flex items-center gap-2 text-[10px] font-mono text-slate-400 mt-1">
+                      {gi.usa_market_usd && (
+                        <span className="text-emerald-400">🇺🇸 ${gi.usa_market_usd}</span>
+                      )}
+                      {gi.europe_market_eur && (
+                        <span className="text-sky-400">🇪🇺 €{gi.europe_market_eur}</span>
+                      )}
+                      {gi.australia_market_aud && (
+                        <span className="text-amber-400">🇦🇺 A${gi.australia_market_aud}</span>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        </motion.div>
+      )}
 
       {/* 1.5 GLOBAL STOCK-ALERT THRESHOLD VISUAL WARNING PANEL */}
       {stockAlerts.length > 0 && (

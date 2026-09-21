@@ -548,7 +548,8 @@ financeRouter.delete('/vouchers/:id', async (req, res) => {
     await FinanceService.deleteVoucher(id);
     return res.json({ success: true });
   } catch (err: any) {
-    return res.status(400).json({ error: err?.message || 'Failed to delete voucher' });
+    const isBlocked = err?.message?.includes('Deletion Blocked');
+    return res.status(isBlocked ? 403 : 400).json({ error: err?.message || 'Failed to delete voucher' });
   }
 });
 

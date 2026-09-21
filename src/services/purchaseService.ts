@@ -693,6 +693,9 @@ export class PurchaseService {
     // 1. Delete financial vouchers and reverse general ledger
     if (invoiceNo) {
       await this.deleteInvoiceFinancialVouchers(invoiceNo);
+      try {
+        await FinanceService.reverseAutoVouchersForDocument(invoiceNo);
+      } catch (_) {}
     }
 
     // 2. Reverse supplier party balance in parties table & party_khata_logs (read-only COA)
@@ -879,6 +882,10 @@ export class PurchaseService {
       } catch (_) {}
     }
 
+    try {
+      await FinanceService.reverseAutoVouchersForDocument(cleanId);
+    } catch (_) {}
+
     // 4. Reconcile COA in SQL
     try {
       FinanceService.clearCoaCache();
@@ -998,18 +1005,30 @@ export class PurchaseService {
       }];
     }
 
-    // 3. Generate inward gate pass records
+    // 3. Generate inward gate pass records with exact Net Landed Cost proration
     const createdPasses: InwardGatePass[] = [];
     let baleSeq = 1;
+
+    // Prorate Net Landed Cost (accounting for invoice discounts, deductions, and freight)
+    const linesGrossSubtotal = lines.reduce((sum: number, item: any) => {
+      const packageCount = Math.max(1, Number(item.package_count || item.quantity || 1));
+      const totalWeightKg = Number(item.total_weight || item.total_kg || 0) || (packageCount * 45);
+      const rawLineTotal = Number(item.line_total || 0) || (totalWeightKg * Number(item.rate_per_weight || item.rate || 0));
+      return sum + rawLineTotal;
+    }, 0);
+
+    const grossSubtotalAed = currency === 'AED' ? linesGrossSubtotal : Number((linesGrossSubtotal * exchangeRate).toFixed(2));
+    const prorateRatio = (grossSubtotalAed > 0 && invoiceTotalAed > 0) ? (invoiceTotalAed / grossSubtotalAed) : 1;
 
     for (const item of lines) {
       const packageCount = Math.max(1, Number(item.package_count || item.quantity || 1));
       const totalWeightKg = Number(item.total_weight || item.total_kg || 0) || (packageCount * 45);
-      const lineTotal = Number(item.line_total || 0) || (totalWeightKg * Number(item.rate_per_weight || item.rate || 0));
-      const lineTotalAed = currency === 'AED' ? lineTotal : Number((lineTotal * exchangeRate).toFixed(2));
+      const rawLineTotal = Number(item.line_total || 0) || (totalWeightKg * Number(item.rate_per_weight || item.rate || 0));
+      const lineTotalAed = currency === 'AED' ? rawLineTotal : Number((rawLineTotal * exchangeRate).toFixed(2));
+      const proratedLineTotalAed = Number((lineTotalAed * prorateRatio).toFixed(2));
 
       const weightPerBale = Number((totalWeightKg / packageCount).toFixed(2));
-      const costPerBale = Number((lineTotalAed / packageCount).toFixed(2));
+      const costPerBale = Number((proratedLineTotalAed / packageCount).toFixed(2));
       const costPerGram = weightPerBale > 0 ? Number((costPerBale / (weightPerBale * 1000)).toFixed(6)) : 0;
 
       for (let p = 0; p < packageCount; p++) {
@@ -1327,8 +1346,8 @@ export class PurchaseService {
     return this.getInventoryPieces(limit);
   }
 
-  public static readonly INVENTORY_PIECES_COLUMNS = 'id, gate_pass_id, barcode, item_name, brand_name, brand_tier, label_grade, shop_location, weight_kg, weight_grams, cost_per_gram, cost_price, estimated_price, retail_price_aed, size_scanned, country_of_origin, style, front_image_url, back_image_url, tag_image_url, is_sold, status, locked_by_buyer, locked_by_booth, lock_expires_at, reserved_until, created_at';
-  public static readonly BALE_SORTED_PIECES_COLUMNS = 'id, bale_id, piece_code, weight_grams, cost_price, selling_price, brand_title, category, size, quality_grade, front_image, back_image, tag_image, created_at';
+  public static readonly INVENTORY_PIECES_COLUMNS = 'id, gate_pass_id, barcode, item_name, brand_name, brand_tier, label_grade, shop_location, weight_kg, weight_grams, cost_per_gram, cost_price, estimated_price, retail_price_aed, size_scanned, country_of_origin, style, front_image_url, back_image_url, tag_image_url, is_sold, status, locked_by_buyer, locked_by_booth, lock_expires_at, reserved_until, market_segment, is_grail, ai_suggested_price, is_price_overridden, global_insights, created_at';
+  public static readonly BALE_SORTED_PIECES_COLUMNS = 'id, bale_id, piece_code, weight_grams, cost_price, selling_price, brand_title, category, size, quality_grade, front_image, back_image, tag_image, market_segment, is_grail, ai_suggested_price, is_price_overridden, global_insights, created_at';
   public static readonly PIECES_GRID_COLUMNS = PurchaseService.INVENTORY_PIECES_COLUMNS;
 
   public static async getInventoryPieces(limit = 1000): Promise<PieceBreakdownItem[]> {
@@ -1402,6 +1421,11 @@ export class PurchaseService {
           lockedByBooth: row.locked_by_booth || row.lockedByBooth || '',
           lockExpiresAt: row.lock_expires_at || row.lockExpiresAt,
           reservedUntil: row.reserved_until || row.reservedUntil,
+          marketSegment: row.market_segment || 'Regular Thrift',
+          isGrail: Boolean(row.is_grail),
+          aiSuggestedPrice: row.ai_suggested_price !== undefined && row.ai_suggested_price !== null ? Number(row.ai_suggested_price) : undefined,
+          isPriceOverridden: Boolean(row.is_price_overridden),
+          globalInsights: row.global_insights || undefined,
           createdAt: row.created_at
         });
       });
@@ -1437,6 +1461,11 @@ export class PurchaseService {
             tagImageUrl: row.tag_image || '',
             isSold: false,
             status: 'AVAILABLE',
+            marketSegment: row.market_segment || 'Regular Thrift',
+            isGrail: Boolean(row.is_grail),
+            aiSuggestedPrice: row.ai_suggested_price !== undefined && row.ai_suggested_price !== null ? Number(row.ai_suggested_price) : undefined,
+            isPriceOverridden: Boolean(row.is_price_overridden),
+            globalInsights: row.global_insights || undefined,
             createdAt: row.created_at
           });
         }
@@ -1488,7 +1517,12 @@ export class PurchaseService {
         back_image_url: p.back_image || '',
         tag_image_url: p.tag_image || '',
         is_sold: false,
-        status: 'AVAILABLE'
+        status: 'AVAILABLE',
+        market_segment: p.market_segment || 'Regular Thrift',
+        is_grail: Boolean(p.is_grail),
+        ai_suggested_price: p.ai_suggested_price !== undefined && p.ai_suggested_price !== null ? Number(p.ai_suggested_price) : null,
+        is_price_overridden: Boolean(p.is_price_overridden),
+        global_insights: p.global_insights || null
       }));
 
       await supabase
@@ -1521,7 +1555,12 @@ export class PurchaseService {
       back_image_url: piece.backImageUrl || '',
       tag_image_url: piece.tagImageUrl || '',
       is_sold: Boolean(piece.isSold),
-      status: piece.status || 'AVAILABLE'
+      status: piece.status || 'AVAILABLE',
+      market_segment: piece.marketSegment || 'Regular Thrift',
+      is_grail: Boolean(piece.isGrail),
+      ai_suggested_price: piece.aiSuggestedPrice !== undefined && piece.aiSuggestedPrice !== null ? Number(piece.aiSuggestedPrice) : null,
+      is_price_overridden: Boolean(piece.isPriceOverridden),
+      global_insights: piece.globalInsights || null
     };
 
     const { data, error } = await supabase
@@ -1556,6 +1595,11 @@ export class PurchaseService {
       tagImageUrl: data.tag_image_url,
       isSold: data.is_sold,
       status: data.status,
+      marketSegment: data.market_segment,
+      isGrail: data.is_grail,
+      aiSuggestedPrice: data.ai_suggested_price,
+      isPriceOverridden: data.is_price_overridden,
+      globalInsights: data.global_insights,
       createdAt: data.created_at
     };
   }
@@ -1574,6 +1618,11 @@ export class PurchaseService {
     if (updates.tagImageUrl !== undefined) payload.tag_image_url = updates.tagImageUrl;
     if (updates.isSold !== undefined) payload.is_sold = updates.isSold;
     if (updates.status !== undefined) payload.status = updates.status;
+    if (updates.marketSegment !== undefined) payload.market_segment = updates.marketSegment;
+    if (updates.isGrail !== undefined) payload.is_grail = updates.isGrail;
+    if (updates.aiSuggestedPrice !== undefined) payload.ai_suggested_price = updates.aiSuggestedPrice;
+    if (updates.isPriceOverridden !== undefined) payload.is_price_overridden = updates.isPriceOverridden;
+    if (updates.globalInsights !== undefined) payload.global_insights = updates.globalInsights;
 
     const { error } = await supabase
       .from('inventory_pieces')

@@ -11,6 +11,7 @@ import { CameraTagScannerModal, ExtractedTagData } from './CameraTagScannerModal
 import { StudioPhotoCaptureModal } from './StudioPhotoCaptureModal.tsx';
 import { BaleProfitHorizonGauge } from './BaleProfitHorizonGauge.tsx';
 import { compressImage } from '../../../utils/imageCompressor.ts';
+import { getDefaultSellingPrice } from '../../../utils/geminiVintageValuation.ts';
 import {
   Scale,
   Sparkles,
@@ -268,7 +269,18 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             backImageUrl: d.back_image || d.back_image_url,
             back_image: d.back_image || d.back_image_url,
             tagImageUrl: d.tag_image || d.tag_image_url,
-            tag_image: d.tag_image || d.tag_image_url
+            tag_image: d.tag_image || d.tag_image_url,
+            era: d.era || '1990s Vintage',
+            marketSegment: d.market_segment || 'Regular Thrift',
+            market_segment: d.market_segment || 'Regular Thrift',
+            isGrail: Boolean(d.is_grail),
+            is_grail: Boolean(d.is_grail),
+            aiSuggestedPrice: Number(d.ai_suggested_price) || 0,
+            ai_suggested_price: Number(d.ai_suggested_price) || 0,
+            isPriceOverridden: Boolean(d.is_price_overridden),
+            is_price_overridden: Boolean(d.is_price_overridden),
+            globalInsights: d.global_insights,
+            global_insights: d.global_insights
           }));
           setPieces(mapped);
         } else if (activeBale.pieces && activeBale.pieces.length > 0 && isMounted) {
@@ -330,6 +342,19 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const [shopLocation, setShopLocation] = useState<string>(shops[0]?.name || 'Central Warehouse (Al Quoz)');
   const [countryOfOrigin, setCountryOfOrigin] = useState<string>('Made in USA');
   const [styleNotes, setStyleNotes] = useState<string>('');
+  const [era, setEra] = useState<string>('1990s Vintage');
+  const [marketSegment, setMarketSegment] = useState<'Old Vintage' | 'Boutique' | 'Antique' | 'Grails' | 'Regular Thrift'>('Old Vintage');
+  const [isGrail, setIsGrail] = useState<boolean>(false);
+  const [aiSuggestedPrice, setAiSuggestedPrice] = useState<number>(0);
+  const [globalInsights, setGlobalInsights] = useState<{
+    usa_market_usd?: number;
+    europe_market_eur?: number;
+    australia_market_aud?: number;
+    uae_retail_aed?: number;
+    arbitrage_analysis?: string;
+    collector_notes?: string;
+  } | null>(null);
+  const [showGlobalInsightsPanel, setShowGlobalInsightsPanel] = useState<boolean>(false);
 
   // Update selected category if availableCategories loads
   useEffect(() => {
@@ -374,12 +399,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     return Number((numericGramWeight * costPerGram).toFixed(2));
   }, [numericGramWeight, costPerGram]);
 
-  // Suggested retail price (3.5x - 4x cost)
+  // Suggested retail price (Intelligent market model: Antique / 90s Grail / Y2K / Non-Brand)
   const suggestedSellingPrice = useMemo(() => {
-    const cost = autoPieceCostAed;
-    if (cost <= 0) return 120;
-    return Math.max(75, Math.round((cost * 3.8) / 5) * 5);
-  }, [autoPieceCostAed]);
+    const defaultMarketPrice = getDefaultSellingPrice(selectedCategory, era, brandTitle);
+    if (autoPieceCostAed > 0) {
+      // Ensure suggested price covers piece cost with healthy markup
+      return Math.max(defaultMarketPrice, Math.round((autoPieceCostAed * 2.5) / 5) * 5);
+    }
+    return defaultMarketPrice;
+  }, [selectedCategory, era, brandTitle, autoPieceCostAed]);
 
   const effectiveSellingPrice = useMemo(() => {
     if (sellingPriceOverride && Number(sellingPriceOverride) > 0) {
@@ -449,7 +477,26 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     if (tagData.size) setSizeScanned(tagData.size);
     if (tagData.countryOfOrigin) setCountryOfOrigin(tagData.countryOfOrigin);
 
-    // 3. Category matching
+    // 3. Era & Vintage lineage & Market Segment
+    if (tagData.era) setEra(tagData.era);
+    if ((tagData as any).marketSegment) {
+      setMarketSegment((tagData as any).marketSegment);
+    } else if (tagData.era?.toLowerCase().includes('antique')) {
+      setMarketSegment('Antique');
+    } else if (tagData.isGrail) {
+      setMarketSegment('Grails');
+    }
+
+    if (tagData.isGrail !== undefined) {
+      setIsGrail(Boolean(tagData.isGrail));
+    }
+
+    // 4. Photos if provided
+    if (tagData.frontImageUrl) setFrontImageUrl(tagData.frontImageUrl);
+    if (tagData.backImageUrl) setBackImageUrl(tagData.backImageUrl);
+    if (tagData.tagImageUrl) setTagImageUrl(tagData.tagImageUrl);
+
+    // 5. Category matching
     if (tagData.category) {
       const matchCat = availableCategories.find(c =>
         c.toLowerCase().includes(tagData.category!.toLowerCase()) ||
@@ -462,7 +509,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       }
     }
 
-    // 4. Quality Grade
+    // 6. Quality Grade
     if (tagData.suggestedQualityGrade) {
       const matchGrade = (labelsList || []).find(l =>
         l.name.toLowerCase().includes(tagData.suggestedQualityGrade!.toLowerCase()) ||
@@ -472,18 +519,27 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       else setSelectedGrade(tagData.suggestedQualityGrade);
     }
 
-    // 5. CRITICAL PROFIT PROTECTION: Auto-populate Selling Price Override
-    if (tagData.recommendedRetailPriceAed && tagData.recommendedRetailPriceAed > 0) {
-      setSellingPriceOverride(String(tagData.recommendedRetailPriceAed));
+    // 7. CRITICAL PROFIT PROTECTION: Auto-populate Selling Price Override & Record AI Suggested Price
+    const autoPrice = (tagData.recommendedRetailPriceAed && tagData.recommendedRetailPriceAed > 0)
+      ? tagData.recommendedRetailPriceAed
+      : getDefaultSellingPrice(tagData.category || selectedCategory, tagData.era || era, tagData.brand || brandTitle);
+
+    setAiSuggestedPrice(autoPrice);
+    setSellingPriceOverride(String(autoPrice));
+
+    // Global Geo-Arbitrage Insights
+    if ((tagData as any).global_insights) {
+      setGlobalInsights((tagData as any).global_insights);
+      setShowGlobalInsightsPanel(true);
     }
 
-    // 6. Style Notes & Tag Image
+    // 8. Style Notes & Tag Image
     const notesArr = [tagData.stitchType, tagData.era, tagData.grailNotes].filter(Boolean);
     if (notesArr.length > 0) setStyleNotes(notesArr.join(' • '));
-    if (tagData.tagImageUrl) setTagImageUrl(tagData.tagImageUrl);
 
-    // 7. Active Grail Alert Banner
-    if (tagData.isGrail || (tagData.estimatedMarketValueAed && tagData.estimatedMarketValueAed >= 350)) {
+    // 9. Active Grail Alert Banner
+    const isHighValue = tagData.isGrail || tagData.rarityTier === 'ANTIQUE' || (tagData.estimatedMarketValueAed && tagData.estimatedMarketValueAed >= 350);
+    if (isHighValue) {
       setActiveGrailAlert(tagData);
       luxuryAudio.playCashRegisterSound();
     } else {
@@ -491,10 +547,14 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       luxuryAudio.playMechanicalClick();
     }
 
+    const toastMsg = tagData.rarityTier === 'ANTIQUE'
+      ? `🏛️ ANTIQUE HERITAGE DETECTED: ${titleToUse} — Showroom Price: AED ${tagData.recommendedRetailPriceAed || 850}`
+      : tagData.isGrail
+      ? `🔥 GRAIL DETECTED: ${titleToUse} — Protected at AED ${tagData.recommendedRetailPriceAed || 750} (Market: AED ${tagData.estimatedMarketValueAed || 850})`
+      : `✓ AI Appraised: ${titleToUse} (${tagData.era || 'Modern'}) — Suggested AED ${tagData.recommendedRetailPriceAed || 35}`;
+
     setFeedbackToast({
-      text: tagData.isGrail
-        ? `🔥 GRAIL DETECTED: ${titleToUse} — Protected at AED ${tagData.recommendedRetailPriceAed || 750} (Market: AED ${tagData.estimatedMarketValueAed || 850})`
-        : `AI parsed: ${titleToUse} (Size: ${tagData.size})`,
+      text: toastMsg,
       type: 'success'
     });
 
@@ -583,6 +643,10 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const weightKg = Number((numericGramWeight / 1000).toFixed(3));
     const pieceId = String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : (`pc-${Date.now()}-${nextIdx}`));
 
+    const effectiveSellingPrice = Number(sellingPriceOverride || suggestedSellingPrice) || 0;
+    const isOverridden = aiSuggestedPrice > 0 && effectiveSellingPrice < aiSuggestedPrice;
+    const finalGrailStatus = Boolean(isGrail || ['Antique', 'Boutique', 'Grails'].includes(marketSegment) || era.toLowerCase().includes('antique'));
+
     // Payload for public.bale_sorted_pieces
     const newPieceDb = {
       id: pieceId,
@@ -597,7 +661,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       quality_grade: selectedGrade,
       front_image: frontImageUrl || null,
       back_image: backImageUrl || null,
-      tag_image: tagImageUrl || null
+      tag_image: tagImageUrl || null,
+      era: era || '1990s Vintage',
+      market_segment: marketSegment || 'Regular Thrift',
+      is_grail: finalGrailStatus,
+      ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
+      is_price_overridden: isOverridden,
+      global_insights: globalInsights || null
     };
 
     const newPiecePayload: PieceBreakdownItem = {
@@ -607,7 +677,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       barcode,
       itemName: selectedCategory,
       brandName: brandTitle.split(' ')[0] || "Levi's",
-      brandTier: 'Vintage Curated',
+      brandTier: finalGrailStatus ? 'Grail' : 'Vintage Curated',
       labelGrade: selectedGrade,
       shopLocation,
       weightGrams: numericGramWeight,
@@ -623,6 +693,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       frontImageUrl,
       backImageUrl,
       tagImageUrl,
+      era: era || '1990s Vintage',
+      marketSegment: marketSegment || 'Regular Thrift',
+      isGrail: finalGrailStatus,
+      aiSuggestedPrice: aiSuggestedPrice || effectiveSellingPrice,
+      isPriceOverridden: isOverridden,
+      globalInsights: globalInsights || undefined,
       isSold: false,
       isTagged: true,
       createdAt: new Date().toISOString()
@@ -726,6 +802,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setFrontImageUrl(undefined);
     setBackImageUrl(undefined);
     setTagImageUrl(undefined);
+    setEra('1990s Vintage');
+    setMarketSegment('Old Vintage');
+    setIsGrail(false);
+    setAiSuggestedPrice(0);
+    setGlobalInsights(null);
+    setShowGlobalInsightsPanel(false);
     setIsSubmitting(false);
 
     setTimeout(() => {
@@ -1347,15 +1429,6 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                     />
                     <span>Auto-Print 4"x2" Thermal Label on Add</span>
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => setShowTagScanner(true)}
-                    className="px-3 py-1.5 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-yellow-400 text-slate-950 border border-amber-300 rounded-lg text-xs font-black flex items-center gap-1.5 cursor-pointer transition-all shadow-md active:scale-95"
-                    title="AI Grail & Vintage Value Hunter (Gemini Vision)"
-                  >
-                    <Crown className="w-3.5 h-3.5 text-slate-950 animate-bounce" />
-                    <span>🤖 AI Grail Hunter</span>
-                  </button>
                 </div>
               </div>
 
@@ -1365,24 +1438,26 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
                       <Camera className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Garment 3-Angle Studio:</span>
+                      <span>Garment 3-Angle Studio & AI Valuation:</span>
                     </span>
                     <span className="text-[10px] text-slate-400 hidden sm:inline">
-                      Phone Camera or Upload syncs directly to public E-Commerce Storefront
+                      Unified Studio Camera auto-appraises Era (Antique/Vintage/Y2K/Non-Brand) & attaches 3 angles
                     </span>
                   </div>
 
-                  {/* Top Live Studio Viewfinder Button */}
+                  {/* Unified Live Studio & AI Appraiser Button */}
                   <button
                     type="button"
                     onClick={() => {
                       setStudioCameraSlot('front');
                       setShowStudioCamera(true);
                     }}
-                    className="bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-[11px] px-3 py-1 rounded-lg flex items-center gap-1.5 shadow shadow-indigo-600/30 active:scale-95 transition"
+                    className="bg-gradient-to-r from-indigo-600 via-purple-600 to-amber-500 hover:from-indigo-500 hover:to-amber-400 text-white font-black text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 active:scale-95 transition cursor-pointer"
+                    title="Unified 3-Angle Studio & AI Vintage Appraisal Hub"
                   >
-                    <Camera className="w-3.5 h-3.5 animate-pulse" />
-                    <span>🎥 Live Studio Viewfinder</span>
+                    <Camera className="w-3.5 h-3.5 animate-pulse text-indigo-200" />
+                    <span>🎥 Live Studio & AI Appraiser</span>
+                    <Sparkles className="w-3 h-3 text-amber-300 animate-bounce" />
                   </button>
                 </div>
 
@@ -1708,29 +1783,18 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                         </div>
                       ) : (
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 w-full">
-                          {/* Live camera for tag */}
+                          {/* Unified Studio Live Camera & AI Scanner for Tag */}
                           <button
                             type="button"
                             onClick={() => {
                               setStudioCameraSlot('tag');
                               setShowStudioCamera(true);
                             }}
-                            className="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 border border-amber-500/40 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition"
-                            title="Live Tag Camera"
+                            className="bg-gradient-to-r from-amber-600/40 to-yellow-600/40 hover:from-amber-600/60 hover:to-yellow-600/60 text-amber-200 border border-amber-400/60 py-1.5 px-2 rounded-lg text-[10px] font-black flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition shadow-xs col-span-2"
+                            title="Open Unified Studio Camera & Auto-Appraise Tag"
                           >
-                            <Camera className="w-3 h-3 text-amber-400" />
-                            <span>Live</span>
-                          </button>
-
-                          {/* AI Grail & Vintage Value Hunter */}
-                          <button
-                            type="button"
-                            onClick={() => setShowTagScanner(true)}
-                            className="bg-gradient-to-r from-amber-600/30 to-yellow-600/30 hover:from-amber-600/50 hover:to-yellow-600/50 text-amber-200 border border-amber-400/60 py-1.5 px-2 rounded-lg text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition shadow-xs"
-                            title="AI Grail & Vintage Value Hunter (Single-Stitch & Market Price)"
-                          >
-                            <Crown className="w-3 h-3 text-amber-300 animate-pulse" />
-                            <span>AI Grail</span>
+                            <Camera className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+                            <span>Live Camera & AI Scan</span>
                           </button>
 
                           {/* Snap Tag Photo with Phone */}
@@ -1831,68 +1895,196 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 </div>
               )}
 
+              {/* 🌍 GLOBAL GEO-ARBITRAGE MARKET INSIGHTS PANEL */}
+              {globalInsights && (
+                <div className="mb-3 rounded-xl border border-indigo-500/40 bg-gradient-to-r from-slate-950 via-indigo-950/40 to-slate-950 p-3 shadow-lg">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-indigo-800/40">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-lg bg-indigo-600/30 border border-indigo-400/50 flex items-center justify-center text-indigo-300 text-xs font-bold">
+                        🌍
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                          <span>Global Market Insights & Geo-Arbitrage</span>
+                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            {marketSegment.toUpperCase()}
+                          </span>
+                          {(isGrail || ['Antique', 'Boutique', 'Grails'].includes(marketSegment) || era.toLowerCase().includes('antique')) && (
+                            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                              <Lock className="w-2.5 h-2.5" /> GRAIL LOCK ACTIVE
+                            </span>
+                          )}
+                        </h4>
+                        <p className="text-[10px] text-slate-400">
+                          International collector resale benchmarks vs. UAE local wholesale cost
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setGlobalInsights(null)}
+                      className="text-xs text-slate-400 hover:text-white px-2 py-0.5 rounded hover:bg-slate-800 transition cursor-pointer"
+                    >
+                      ✕ Close
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2.5">
+                    <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2 text-center">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">🇺🇸 USA (eBay / Grailed)</div>
+                      <div className="text-sm font-black font-mono text-emerald-400 mt-0.5">
+                        ${globalInsights.usa_market_usd || 0}
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2 text-center">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">🇪🇺 Europe (Vinted / Vestiaire)</div>
+                      <div className="text-sm font-black font-mono text-cyan-400 mt-0.5">
+                        €{globalInsights.europe_market_eur || 0}
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2 text-center">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">🇦🇺 Australia (Depop)</div>
+                      <div className="text-sm font-black font-mono text-amber-400 mt-0.5">
+                        A${globalInsights.australia_market_aud || 0}
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/80 border border-indigo-700/60 bg-indigo-950/30 rounded-lg p-2 text-center">
+                      <div className="text-[10px] font-bold text-indigo-300 uppercase tracking-wide">🇦🇪 UAE Recommended</div>
+                      <div className="text-sm font-black font-mono text-indigo-200 mt-0.5">
+                        AED {globalInsights.uae_retail_aed || 0}
+                      </div>
+                    </div>
+                  </div>
+
+                  {globalInsights.arbitrage_analysis && (
+                    <div className="mt-2 text-[11px] text-slate-300 bg-slate-900/60 rounded-lg p-2 border border-slate-800 flex items-start gap-1.5">
+                      <span className="text-indigo-400 font-bold shrink-0">Arbitrage Margin:</span>
+                      <span>{globalInsights.arbitrage_analysis}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* RAPID INPUT CONTROLS ROW */}
-              <form onSubmit={handleAddPieceAndNext} className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-12 gap-2 sm:gap-2.5 items-end">
-                {/* 1. Weight in Grams (Auto-focused) */}
-                <div className="col-span-1 lg:col-span-2 space-y-1">
-                  <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide">
-                    Weight (Grams) *
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="weight-input-field"
-                      ref={gramInputRef}
-                      type="number"
-                      step="1"
-                      min="1"
-                      placeholder="[]"
-                      value={gramWeight}
-                      onChange={e => setGramWeight(e.target.value)}
-                      onFocus={e => e.target.select()}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleAddPieceAndNext();
-                        }
-                      }}
-                      disabled={hudStats.isCompleted}
-                      className="w-full bg-slate-900 border-2 border-amber-500/70 focus:border-amber-400 rounded-lg px-3 py-2 text-sm font-black font-mono text-amber-300 focus:outline-hidden text-right pr-8 shadow-inner disabled:opacity-50"
-                      required
-                    />
-                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-400">
-                      g
-                    </span>
-                  </div>
-                </div>
+              {(() => {
+                const isGrailLocked = Boolean(isGrail || ['Antique', 'Boutique', 'Grails'].includes(marketSegment) || era.toLowerCase().includes('antique') || activeGrailAlert?.isGrail);
+                const currentSellingPrice = Number(sellingPriceOverride || suggestedSellingPrice || 0);
+                const isBelowCost = autoPieceCostAed > 0 && currentSellingPrice > 0 && currentSellingPrice < autoPieceCostAed;
 
-                {/* 2. Auto Calculated Cost (AED) */}
-                <div className="col-span-1 lg:col-span-2 space-y-1">
-                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide">
-                    Piece Cost (AED)
-                  </label>
-                  <div className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono font-bold text-slate-300">
-                    AED {autoPieceCostAed.toFixed(2)}
-                  </div>
-                </div>
+                return (
+                  <form onSubmit={handleAddPieceAndNext} className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-12 gap-2 sm:gap-2.5 items-end">
+                    {/* 1. Weight in Grams (Auto-focused) */}
+                    <div className="col-span-1 lg:col-span-2 space-y-1">
+                      <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide">
+                        Weight (Grams) *
+                      </label>
+                      <div className="relative">
+                        <input
+                          id="weight-input-field"
+                          ref={gramInputRef}
+                          type="number"
+                          step="1"
+                          min="1"
+                          placeholder="[]"
+                          value={gramWeight}
+                          onChange={e => setGramWeight(e.target.value)}
+                          onFocus={e => e.target.select()}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddPieceAndNext();
+                            }
+                          }}
+                          disabled={hudStats.isCompleted}
+                          className="w-full bg-slate-900 border-2 border-amber-500/70 focus:border-amber-400 rounded-lg px-3 py-2 text-sm font-black font-mono text-amber-300 focus:outline-hidden text-right pr-8 shadow-inner disabled:opacity-50"
+                          required
+                        />
+                        <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-400">
+                          g
+                        </span>
+                      </div>
+                    </div>
 
-                {/* 3. Estimated Selling Price */}
-                <div className="col-span-1 lg:col-span-2 space-y-1">
-                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide">
-                    Selling Price (AED)
-                  </label>
-                  <input
-                    type="number"
-                    step="5"
-                    placeholder={String(suggestedSellingPrice)}
-                    value={sellingPriceOverride}
-                    onChange={e => setSellingPriceOverride(e.target.value)}
-                    onFocus={e => e.target.select()}
-                    disabled={hudStats.isCompleted}
-                    className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-400 rounded-lg px-3 py-2 text-sm font-mono font-bold text-emerald-400 focus:outline-hidden disabled:opacity-50"
-                  />
-                </div>
+                    {/* 2. Auto Calculated Cost (AED) */}
+                    <div className="col-span-1 lg:col-span-1 space-y-1">
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide">
+                        Cost (AED)
+                      </label>
+                      <div className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-sm font-mono font-bold text-slate-300">
+                        AED {autoPieceCostAed.toFixed(2)}
+                      </div>
+                    </div>
 
-                {/* 4. Brand / Title */}
+                    {/* 3. Estimated Selling Price with Anti-Theft Grail Lock & Below-Cost Warning */}
+                    <div className="col-span-1 lg:col-span-1 space-y-1">
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
+                        <span>Selling (AED)</span>
+                        {isGrailLocked ? (
+                          <span className="text-[9px] text-amber-400 font-bold flex items-center gap-0.5">
+                            <Lock className="w-2.5 h-2.5" /> LOCKED
+                          </span>
+                        ) : isBelowCost ? (
+                          <span className="text-[9px] text-rose-400 font-bold flex items-center gap-0.5 animate-pulse">
+                            <AlertTriangle className="w-2.5 h-2.5" /> LOSS
+                          </span>
+                        ) : null}
+                      </label>
+                      <input
+                        type="number"
+                        step="5"
+                        placeholder={String(suggestedSellingPrice)}
+                        value={sellingPriceOverride || String(suggestedSellingPrice)}
+                        onChange={e => setSellingPriceOverride(e.target.value)}
+                        onFocus={e => e.target.select()}
+                        disabled={hudStats.isCompleted || isGrailLocked}
+                        title={isGrailLocked ? "Anti-Theft Grail Lock: Selling price is locked by AI appraisal to prevent unauthorized markdown." : isBelowCost ? `⚠️ Warning: Price AED ${currentSellingPrice} is LOWER than piece cost AED ${autoPieceCostAed.toFixed(2)}!` : "Estimated retail selling price"}
+                        className={`w-full bg-slate-900 border rounded-lg px-2 py-2 text-sm font-mono font-bold focus:outline-hidden disabled:opacity-80 transition-all ${
+                          isGrailLocked
+                            ? 'border-amber-500/70 text-amber-300 bg-amber-950/30 cursor-not-allowed'
+                            : isBelowCost
+                            ? 'border-rose-500 text-rose-300 bg-rose-950/40 ring-2 ring-rose-500/50'
+                            : 'border-slate-700 text-emerald-400 focus:border-indigo-400'
+                        }`}
+                      />
+                      {isBelowCost && !isGrailLocked && (
+                        <div className="text-[8px] text-rose-400 font-bold flex items-center gap-0.5 mt-0.5 animate-pulse">
+                          <span>⚠️ BELOW COST (AED {autoPieceCostAed.toFixed(2)})</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 4. Segment & Era Selector */}
+                    <div className="col-span-1 lg:col-span-2 space-y-1">
+                      <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
+                        <span>Segment & Era</span>
+                        <span className="text-[9px] text-slate-400">AI Sync</span>
+                      </label>
+                      <select
+                        value={`${marketSegment}|${era}`}
+                        onChange={e => {
+                          const [newSeg, newEra] = e.target.value.split('|');
+                          setMarketSegment(newSeg as any);
+                          setEra(newEra);
+                          const isHigh = ['Antique', 'Boutique', 'Grails'].includes(newSeg) || newEra.toLowerCase().includes('antique');
+                          setIsGrail(isHigh);
+                          const autoPrice = getDefaultSellingPrice(selectedCategory, newEra, brandTitle);
+                          setSellingPriceOverride(String(autoPrice));
+                        }}
+                        disabled={hudStats.isCompleted}
+                        className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-lg px-2 py-2 text-xs text-amber-200 focus:outline-hidden cursor-pointer disabled:opacity-50 font-medium"
+                      >
+                        <option value="Antique|Antique Heritage (1920s-1960s)">🏛️ Antique (1920s-60s)</option>
+                        <option value="Grails|1970s-1980s Vintage">🔥 Grails (70s-80s Band/Tour)</option>
+                        <option value="Grails|1990s Vintage">🔥 Grails (90s Vintage)</option>
+                        <option value="Boutique|1990s Vintage">✨ Boutique / Designer</option>
+                        <option value="Old Vintage|1970s-1980s Vintage">🕰️ Old Vintage (70s-80s)</option>
+                        <option value="Old Vintage|1990s Vintage">🕰️ Old Vintage (90s)</option>
+                        <option value="Old Vintage|Y2K (Early 2000s)">🕰️ Y2K (Early 2000s)</option>
+                        <option value="Regular Thrift|Modern Non-Brand">📦 Regular Thrift (Basics)</option>
+                      </select>
+                    </div>
+
+                {/* 5. Brand / Title */}
                 <div className="col-span-1 lg:col-span-2 space-y-1">
                   <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide">
                     Brand / Title
@@ -1907,7 +2099,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   />
                 </div>
 
-                {/* 5. Category Dropdown */}
+                {/* 6. Category Dropdown */}
                 <div className="col-span-1 lg:col-span-2 space-y-1">
                   <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
                     <span>Category</span>
@@ -1915,7 +2107,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   </label>
                   <select
                     value={selectedCategory}
-                    onChange={e => setSelectedCategory(e.target.value)}
+                    onChange={e => {
+                      const newCat = e.target.value;
+                      setSelectedCategory(newCat);
+                      const autoPrice = getDefaultSellingPrice(newCat, era, brandTitle);
+                      setSellingPriceOverride(String(autoPrice));
+                    }}
                     disabled={hudStats.isCompleted}
                     className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-400 rounded-lg px-2.5 py-2 text-xs text-slate-200 focus:outline-hidden cursor-pointer disabled:opacity-50 font-medium"
                   >
@@ -2043,6 +2240,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   </button>
                 </div>
               </form>
+            );
+          })()}
 
               <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
                 <span className="font-mono">
@@ -2079,6 +2278,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                     <th className="py-2.5 px-3">#</th>
                     <th className="py-2.5 px-3">Barcode</th>
                     <th className="py-2.5 px-3 text-center">Date / Time</th>
+                    <th className="py-2.5 px-3">Era / Vintage</th>
                     <th className="py-2.5 px-3">Category</th>
                     <th className="py-2.5 px-3 text-center">Size</th>
                     <th className="py-2.5 px-3">Brand & Title</th>
@@ -2093,7 +2293,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 <tbody className="divide-y divide-slate-800/60 font-sans">
                   {(!pieces || pieces.length === 0) ? (
                     <tr>
-                      <td colSpan={12} className="py-12 text-center text-slate-500">
+                      <td colSpan={13} className="py-12 text-center text-slate-500">
                         <Tag className="w-8 h-8 text-slate-700 mx-auto mb-2" />
                         <p className="font-semibold text-slate-400">No pieces sorted in this bale yet</p>
                         <p className="text-[11px] text-slate-600 mt-0.5">
@@ -2115,6 +2315,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       const backImg = piece.back_image || piece.backImageUrl;
                       const tagImg = piece.tag_image || piece.tagImageUrl;
                       const qualityGrade = piece.quality_grade || piece.labelGrade;
+                      const isOverridden = Boolean(piece.is_price_overridden ?? piece.isPriceOverridden);
+                      const isGrailItem = Boolean(piece.is_grail ?? piece.isGrail ?? (piece.marketSegment === 'Antique' || piece.market_segment === 'Antique' || piece.marketSegment === 'Grails' || piece.market_segment === 'Grails' || piece.marketSegment === 'Boutique' || piece.market_segment === 'Boutique'));
+                      const aiPrice = piece.ai_suggested_price ?? piece.aiSuggestedPrice;
 
                       return (
                         <tr key={piece.id || idx} className="hover:bg-slate-900/80 transition-colors">
@@ -2124,6 +2327,26 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             {piece.created_at || (piece as any).createdAt
                               ? new Date(piece.created_at || (piece as any).createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                               : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="space-y-0.5">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border inline-block ${
+                                (piece.marketSegment === 'Antique' || piece.market_segment === 'Antique' || (piece.era || '').toLowerCase().includes('antique'))
+                                  ? 'bg-purple-950/80 text-purple-300 border-purple-500/50'
+                                  : (piece.marketSegment === 'Grails' || piece.market_segment === 'Grails' || (piece.era || '').toLowerCase().includes('grail'))
+                                  ? 'bg-amber-950/80 text-amber-300 border-amber-500/50'
+                                  : (piece.marketSegment === 'Boutique' || piece.market_segment === 'Boutique')
+                                  ? 'bg-pink-950/80 text-pink-300 border-pink-500/50'
+                                  : (piece.marketSegment === 'Old Vintage' || piece.market_segment === 'Old Vintage' || (piece.era || '').toLowerCase().includes('vintage'))
+                                  ? 'bg-cyan-950/80 text-cyan-300 border-cyan-500/50'
+                                  : 'bg-slate-800 text-slate-400 border-slate-700'
+                              }`}>
+                                {piece.marketSegment || piece.market_segment || piece.era || '1990s Vintage'}
+                              </span>
+                              {piece.era && (piece.marketSegment || piece.market_segment) && piece.era !== (piece.marketSegment || piece.market_segment) && (
+                                <div className="text-[9px] text-slate-500 font-mono truncate max-w-[120px]">{piece.era}</div>
+                              )}
+                            </div>
                           </td>
                           <td className="py-2.5 px-3 text-slate-300">{category}</td>
                           <td className="py-2.5 px-3 text-center">
@@ -2168,7 +2391,23 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono font-bold text-amber-400">{g} g</td>
                           <td className="py-2.5 px-3 text-right font-mono text-slate-300">AED {Number(cost).toFixed(2)}</td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-400">AED {Number(price).toFixed(2)}</td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {isGrailItem && (
+                                <span className="text-[10px] px-1 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-600/40 font-sans" title="Anti-Theft Grail Price Lock Active">
+                                  🔒 Grail
+                                </span>
+                              )}
+                              {isOverridden && (
+                                <span className="text-[10px] px-1 py-0.5 rounded bg-rose-950/80 text-rose-300 border border-rose-600/40 font-sans" title={`AI Price Overridden (AI Suggested: AED ${Number(aiPrice || 0).toFixed(2)})`}>
+                                  ⚡ Override
+                                </span>
+                              )}
+                              <span className={cost && price < cost ? "text-rose-400 font-black" : "text-emerald-400"}>
+                                AED {Number(price).toFixed(2)}
+                              </span>
+                            </div>
+                          </td>
                           <td className="py-2.5 px-3 text-center">
                             <button
                               type="button"
@@ -2381,7 +2620,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           />
         )}
 
-        {/* STUDIO 3-ANGLE LIVE CAMERA MODAL */}
+        {/* UNIFIED STUDIO 3-ANGLE & AI LIVE APPRAISAL CAMERA MODAL */}
         {showStudioCamera && (
           <StudioPhotoCaptureModal
             isOpen={showStudioCamera}
@@ -2390,10 +2629,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             frontImageUrl={frontImageUrl}
             backImageUrl={backImageUrl}
             tagImageUrl={tagImageUrl}
-            onSavePhotos={({ front, back, tag }) => {
+            onSavePhotos={({ front, back, tag }, appraisalData) => {
               setFrontImageUrl(front);
               setBackImageUrl(back);
               setTagImageUrl(tag);
+              if (appraisalData) {
+                handleApplyExtractedTag(appraisalData);
+              }
             }}
           />
         )}

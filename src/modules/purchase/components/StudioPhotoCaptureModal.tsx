@@ -13,11 +13,20 @@ import {
   Monitor,
   FolderOpen,
   Eye,
-  RefreshCw
+  RefreshCw,
+  Crown,
+  Flame,
+  AlertCircle,
+  ShieldCheck,
+  DollarSign,
+  Tag,
+  Loader2
 } from 'lucide-react';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { compressImage } from '../../../utils/imageCompressor.ts';
 import { autoCropGarment } from '../../../utils/garmentCropper.ts';
+import { analyzeVintageGarment, getDefaultSellingPrice } from '../../../utils/geminiVintageValuation.ts';
+import { ExtractedTagData } from './CameraTagScannerModal.tsx';
 
 export type PhotoSlot = 'front' | 'back' | 'tag';
 
@@ -28,7 +37,7 @@ interface StudioPhotoCaptureModalProps {
   frontImageUrl?: string;
   backImageUrl?: string;
   tagImageUrl?: string;
-  onSavePhotos: (photos: { front?: string; back?: string; tag?: string }) => void;
+  onSavePhotos: (photos: { front?: string; back?: string; tag?: string }, appraisal?: ExtractedTagData) => void;
 }
 
 export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = ({
@@ -61,6 +70,64 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewLightbox, setPreviewLightbox] = useState<string | null>(null);
+
+  // AI Appraisal State (Antique Heritage, Vintage Grails, Y2K, and Non-Brand Pricing Engine)
+  const [appraisal, setAppraisal] = useState<ExtractedTagData | null>(null);
+  const [isAppraising, setIsAppraising] = useState(false);
+  const [appraisalError, setAppraisalError] = useState<string | null>(null);
+  const [appraisalStep, setAppraisalStep] = useState<string>('');
+
+  const handleRunAppraisal = async (overrideImg?: string) => {
+    const targetImage = overrideImg || tagImg || frontImg || backImg;
+    if (!targetImage) {
+      setAppraisalError('Please capture or upload at least one photo (tag or front look) to run AI appraisal.');
+      return;
+    }
+    setIsAppraising(true);
+    setAppraisalError(null);
+    setAppraisalStep('🔍 Inspecting tag typography, stitch & garment era...');
+
+    try {
+      setTimeout(() => setAppraisalStep('🤖 Gemini Flash AI verifying era (Antique / Vintage / Y2K / Non-Brand)...'), 400);
+      setTimeout(() => setAppraisalStep('💰 Evaluating Dubai market retail price & turnover speed...'), 900);
+
+      const res = await analyzeVintageGarment({ imageBase64: targetImage });
+      const extracted: ExtractedTagData = {
+        brand: res.brand,
+        size: res.size,
+        countryOfOrigin: res.countryOfOrigin,
+        style: res.stitchType,
+        confidence: res.confidence,
+        notes: res.grailNotes,
+        tagImageUrl: targetImage,
+        garmentTitle: res.garmentTitle,
+        category: res.category,
+        era: res.era,
+        stitchType: res.stitchType,
+        tagType: res.tagType,
+        rarityTier: res.rarityTier,
+        isGrail: res.isGrail,
+        estimatedMarketValueAed: res.estimatedMarketValueAed,
+        estimatedMarketValueUsd: res.estimatedMarketValueUsd,
+        recommendedRetailPriceAed: res.recommendedRetailPriceAed,
+        suggestedQualityGrade: res.suggestedQualityGrade,
+        grailNotes: res.grailNotes,
+        collectorTipsUrdu: res.collectorTipsUrdu,
+        source: res.source
+      };
+      setAppraisal(extracted);
+      if (res.isGrail || res.rarityTier === 'ANTIQUE') {
+        luxuryAudio.playCashRegisterSound();
+      } else {
+        luxuryAudio.playMechanicalClick();
+      }
+    } catch (err: any) {
+      setAppraisalError(err?.message || 'Appraisal failed. Please try again with a clearer photo.');
+    } finally {
+      setIsAppraising(false);
+      setAppraisalStep('');
+    }
+  };
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -416,6 +483,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       }
     } else {
       setTagImg(dataUrl);
+      // Auto-trigger appraisal when garment tag is captured
+      handleRunAppraisal(dataUrl);
     }
   };
 
@@ -475,7 +544,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       front: frontImg,
       back: backImg,
       tag: tagImg
-    });
+    }, appraisal || undefined);
     stopCamera();
     onClose();
   };
@@ -827,6 +896,112 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
               </button>
             </div>
           </div>
+
+          {/* AI Vintage & Era Appraisal Bar */}
+          <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                <Crown className="w-3.5 h-3.5 text-amber-400" />
+                <span>AI Appraisal & Market Price:</span>
+              </span>
+              {isAppraising ? (
+                <span className="text-[11px] text-amber-200 flex items-center gap-1 font-mono animate-pulse">
+                  <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+                  <span>{appraisalStep || 'AI Analyzing...'}</span>
+                </span>
+              ) : appraisal ? (
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded border border-emerald-500/30 flex items-center gap-1">
+                  <Check className="w-2.5 h-2.5" /> Era: {appraisal.era} • AED {appraisal.recommendedRetailPriceAed}
+                </span>
+              ) : (
+                <span className="text-[10px] text-slate-400 hidden sm:inline">
+                  Auto-evaluates Antique, 90s Grail, Y2K & Non-Brand market resale values
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              disabled={isAppraising || (!frontImg && !backImg && !tagImg)}
+              onClick={() => handleRunAppraisal()}
+              className="bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-[11px] px-3 py-1 rounded-lg flex items-center gap-1.5 shadow shadow-amber-500/20 active:scale-95 transition disabled:opacity-40 cursor-pointer"
+              title="Run AI appraisal now on captured photos"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-slate-950" />
+              <span>{isAppraising ? 'Appraising...' : '🤖 Run AI Appraisal'}</span>
+            </button>
+          </div>
+
+          {appraisalError && (
+            <div className="p-2 rounded-lg bg-rose-950/60 border border-rose-800/80 text-[11px] text-rose-300 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{appraisalError}</span>
+            </div>
+          )}
+
+          {/* APPRAISAL RESULT CARD */}
+          {appraisal && (
+            <div className={`p-3 rounded-xl border space-y-2 animate-in fade-in duration-200 ${
+              appraisal.rarityTier === 'ANTIQUE'
+                ? 'bg-purple-950/80 border-purple-500/60'
+                : appraisal.isGrail
+                ? 'bg-amber-950/80 border-amber-500/60'
+                : appraisal.rarityTier === 'RARE_COLLECTIBLE'
+                ? 'bg-cyan-950/80 border-cyan-500/60'
+                : 'bg-slate-950 border-slate-700'
+            }`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                    appraisal.rarityTier === 'ANTIQUE'
+                      ? 'bg-purple-500/30 text-purple-200 border-purple-400'
+                      : appraisal.isGrail
+                      ? 'bg-amber-500/30 text-amber-200 border-amber-400'
+                      : appraisal.rarityTier === 'RARE_COLLECTIBLE'
+                      ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400'
+                      : 'bg-slate-800 text-slate-300 border-slate-600'
+                  }`}>
+                    {appraisal.rarityTier === 'ANTIQUE' ? '🏛️ Antique Heritage' : appraisal.isGrail ? '🔥 Vintage Grail' : appraisal.rarityTier === 'RARE_COLLECTIBLE' ? '✨ Y2K Archive' : '📦 Everyday Thrift Basic'}
+                  </span>
+                  <span className="text-xs font-bold text-white">
+                    {appraisal.garmentTitle || appraisal.brand}
+                  </span>
+                  <span className="text-[10px] font-mono text-amber-300 bg-black/40 px-1.5 py-0.5 rounded">
+                    {appraisal.era}
+                  </span>
+                  {appraisal.stitchType && (
+                    <span className="text-[10px] font-mono text-indigo-300 bg-indigo-950/50 px-1.5 py-0.5 rounded border border-indigo-500/30">
+                      {appraisal.stitchType}
+                    </span>
+                  )}
+                </div>
+
+                {/* Selling Price Adjustment */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-slate-300 font-medium">Selling Price:</span>
+                  <div className="flex items-center bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5">
+                    <span className="text-[10px] font-bold text-emerald-400 mr-1">AED</span>
+                    <input
+                      type="number"
+                      value={appraisal.recommendedRetailPriceAed || 0}
+                      onChange={e => {
+                        const val = Number(e.target.value) || 0;
+                        setAppraisal(prev => prev ? { ...prev, recommendedRetailPriceAed: val } : null);
+                      }}
+                      className="w-16 bg-transparent text-xs font-mono font-black text-emerald-300 text-right focus:outline-hidden"
+                    />
+                  </div>
+                  <span className="text-[9px] text-slate-400 font-mono">(Market: AED {appraisal.estimatedMarketValueAed || 0})</span>
+                </div>
+              </div>
+
+              {appraisal.collectorTipsUrdu && (
+                <p className="text-[11px] text-amber-200/90 font-sans italic bg-black/40 p-1.5 rounded border border-amber-500/20">
+                  {appraisal.collectorTipsUrdu}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Bottom Thumbnails Review Bar */}
           <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between gap-3">

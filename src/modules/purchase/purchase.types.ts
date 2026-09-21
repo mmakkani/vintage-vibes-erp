@@ -89,6 +89,28 @@ export interface PieceBreakdownItem {
   pitToPitInches?: number;
   lengthInches?: number;
   fitSilhouette?: string;
+  era?: string;
+  marketSegment?: 'Old Vintage' | 'Boutique' | 'Antique' | 'Grails' | 'Regular Thrift' | string;
+  isGrail?: boolean;
+  aiSuggestedPrice?: number;
+  isPriceOverridden?: boolean;
+  globalInsights?: {
+    usaMarketUsd?: number;
+    europeMarketEur?: number;
+    australiaMarketAud?: number;
+    uaeRetailAed?: number;
+    arbitrageAnalysis?: string;
+    collectorNotes?: string;
+  };
+}
+
+export interface GlobalMarketInsights {
+  usaMarketUsd?: number;
+  europeMarketEur?: number;
+  australiaMarketAud?: number;
+  uaeRetailAed?: number;
+  arbitrageAnalysis?: string;
+  collectorNotes?: string;
 }
 
 export interface InwardGatePass {

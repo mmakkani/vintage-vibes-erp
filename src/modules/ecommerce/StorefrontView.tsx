@@ -63,6 +63,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+  const [selectedSegment, setSelectedSegment] = useState<string>('ALL');
   const [showNoticeBar, setShowNoticeBar] = useState<boolean>(true);
   const [isLiveStreamBroadcasting, setIsLiveStreamBroadcasting] = useState<boolean>(false);
 
@@ -272,6 +273,11 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           retailPriceAed: Number(r.retail_price_aed || r.estimated_price || 295),
           isSold: Boolean(r.is_sold),
           status: r.status || 'IN_STOCK',
+          marketSegment: r.market_segment || 'Regular Thrift',
+          isGrail: Boolean(r.is_grail),
+          globalInsights: r.global_insights || null,
+          aiSuggestedPrice: r.ai_suggested_price !== undefined && r.ai_suggested_price !== null ? Number(r.ai_suggested_price) : null,
+          isPriceOverridden: Boolean(r.is_price_overridden),
           isCartLocked: false,
           createdAt: r.created_at
         })).filter((p: any) => !p.isSold && p.status !== 'SOLD');
@@ -355,10 +361,53 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     { id: 'shorts', label: 'Shorts' }
   ];
 
-  // Filtered pieces based on category and search query
+  // Dynamic piece counts across the 4 curated market segment suites
+  const segmentCounts = useMemo(() => {
+    let antique = 0;
+    let grails = 0;
+    let thrift = 0;
+
+    pieces.forEach(p => {
+      const seg = (p.marketSegment || (p as any).market_segment || '').toLowerCase();
+      const isGrail = p.isGrail || (p as any).is_grail;
+      const era = (p.era || (p as any).era || '').toLowerCase();
+      const style = (p.style || '').toLowerCase();
+
+      if (seg === 'antique' || era.includes('antique') || style.includes('antique')) {
+        antique++;
+      } else if (isGrail || seg === 'grails' || seg === 'boutique' || era.includes('grail') || era.includes('boutique')) {
+        grails++;
+      } else {
+        thrift++;
+      }
+    });
+
+    return { all: pieces.length, antique, grails, thrift };
+  }, [pieces]);
+
+  // Filtered pieces based on category, segment, and search query
   const filteredPieces = useMemo(() => {
     return pieces.filter(piece => {
       const itemText = `${piece.itemName || ''} ${piece.brandName || ''} ${piece.style || ''} ${piece.itemId || ''}`.toLowerCase();
+
+      // Market Segment Suite filter
+      if (selectedSegment !== 'ALL') {
+        const seg = (piece.marketSegment || (piece as any).market_segment || '').toLowerCase();
+        const isGrail = piece.isGrail || (piece as any).is_grail;
+        const era = (piece.era || (piece as any).era || '').toLowerCase();
+        const style = (piece.style || '').toLowerCase();
+
+        if (selectedSegment === 'ANTIQUE') {
+          const isAntique = seg === 'antique' || era.includes('antique') || style.includes('antique');
+          if (!isAntique) return false;
+        } else if (selectedSegment === 'GRAILS') {
+          const isGrailOrBoutique = isGrail || seg === 'grails' || seg === 'boutique' || era.includes('grail') || era.includes('boutique');
+          if (!isGrailOrBoutique) return false;
+        } else if (selectedSegment === 'THRIFT') {
+          const isThrift = (seg === 'regular thrift' || seg === 'old vintage' || (!seg && !isGrail)) && !era.includes('antique') && !era.includes('grail');
+          if (!isThrift) return false;
+        }
+      }
 
       // Category filter matching
       if (selectedCategory !== 'ALL') {
@@ -412,7 +461,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
       return true;
     });
-  }, [pieces, selectedCategory, searchQuery]);
+  }, [pieces, selectedCategory, selectedSegment, searchQuery]);
 
   // Cart Management Handlers with 10-Minute Lock Reservation in SQL Database
   const handleAddToCart = async (piece: PieceBreakdownItem) => {
@@ -961,6 +1010,110 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 className="w-full h-auto object-cover transform group-hover:scale-105 transition-transform duration-700"
               />
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 6.5 CURATED ARCHIVE COLLECTIONS SWITCHER */}
+      <section className="bg-slate-950 text-white border-y-2 border-amber-500/60 py-6 px-4 sm:px-8 shadow-2xl relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10 pointer-events-none bg-[radial-gradient(#d4af37_1px,transparent_1px)] [background-size:16px_16px]"></div>
+        <div className="max-w-7xl mx-auto relative z-10">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                <span className="text-[10px] font-mono font-black uppercase tracking-widest text-amber-400">
+                  CURATED ARCHIVE SUITES &bull; AUTHENTICATED VAULT
+                </span>
+              </div>
+              <h2 className="font-serif font-black text-xl sm:text-2xl text-white tracking-wide flex items-center gap-2">
+                <span>Vault Archives & Curated Collections</span>
+              </h2>
+              <p className="text-xs text-slate-300 font-medium mt-0.5">
+                Explore distinct historical eras &mdash; from museum-grade antique archives to single-stitch vintage grails and everyday streetwear thrift.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs font-mono text-amber-300/80 bg-slate-900/90 border border-amber-500/30 px-3 py-1.5 rounded-xl self-start md:self-auto">
+              <span>Verified 1-of-1 Inventory</span>
+              <span>&bull;</span>
+              <span className="text-white font-bold">{filteredPieces.length} Available</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
+            {[
+              {
+                id: 'ALL',
+                icon: '🌐',
+                title: 'All Vault Archives',
+                subtitle: 'Complete unfiltered collection',
+                count: segmentCounts.all,
+                activeClass: 'from-amber-600/40 via-amber-900/30 to-slate-950 border-amber-400 ring-2 ring-amber-400/40',
+                badgeClass: 'bg-amber-400/20 text-amber-300 border-amber-400/40'
+              },
+              {
+                id: 'ANTIQUE',
+                icon: '🏛️',
+                title: 'Antique Heritage',
+                subtitle: 'Pre-1970s museum archives',
+                count: segmentCounts.antique,
+                activeClass: 'from-purple-900/50 via-purple-950/40 to-slate-950 border-purple-400 ring-2 ring-purple-400/40',
+                badgeClass: 'bg-purple-400/20 text-purple-300 border-purple-400/40'
+              },
+              {
+                id: 'GRAILS',
+                icon: '✨',
+                title: 'Grails & Boutique',
+                subtitle: '90s single-stitch & luxury',
+                count: segmentCounts.grails,
+                activeClass: 'from-amber-600/50 via-yellow-950/40 to-slate-950 border-amber-400 ring-2 ring-amber-400/40',
+                badgeClass: 'bg-amber-400/20 text-amber-300 border-amber-400/40'
+              },
+              {
+                id: 'THRIFT',
+                icon: '🛍️',
+                title: 'Everyday Thrift Basics',
+                subtitle: 'Daily vintage streetwear',
+                count: segmentCounts.thrift,
+                activeClass: 'from-emerald-900/50 via-emerald-950/40 to-slate-950 border-emerald-400 ring-2 ring-emerald-400/40',
+                badgeClass: 'bg-emerald-400/20 text-emerald-300 border-emerald-400/40'
+              }
+            ].map(tier => {
+              const isSelected = selectedSegment === tier.id;
+              return (
+                <button
+                  key={tier.id}
+                  type="button"
+                  onClick={() => {
+                    luxuryAudio.playMechanicalClick();
+                    setSelectedSegment(tier.id);
+                  }}
+                  className={`p-3 sm:p-3.5 rounded-2xl border text-left transition-all duration-300 cursor-pointer flex flex-col justify-between group bg-gradient-to-br ${
+                    isSelected
+                      ? tier.activeClass
+                      : 'from-slate-900/80 to-slate-950 border-slate-800 hover:border-amber-500/50 hover:bg-slate-900'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <span className="text-xl sm:text-2xl p-1.5 rounded-xl bg-slate-950/60 border border-white/10 group-hover:scale-110 transition-transform">
+                      {tier.icon}
+                    </span>
+                    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${tier.badgeClass}`}>
+                      {tier.count} Pcs
+                    </span>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-xs sm:text-sm text-white group-hover:text-amber-300 transition-colors">
+                      {tier.title}
+                    </h3>
+                    <p className="text-[10px] sm:text-[11px] text-slate-400 font-medium truncate mt-0.5">
+                      {tier.subtitle}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
       </section>

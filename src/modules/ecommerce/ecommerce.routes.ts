@@ -19,6 +19,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
   try {
     const category = (req.query.category as string) || '';
     const search = (req.query.search as string) || '';
+    const segment = (req.query.segment as string) || '';
 
     let client: Client | null = null;
     try {
@@ -53,6 +54,19 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         params.push(`%${search}%`);
         query += ` AND (p.item_name ILIKE $${params.length} OR p.brand_name ILIKE $${params.length} OR p.barcode ILIKE $${params.length})`;
       }
+      if (segment && segment !== 'ALL') {
+        if (segment === 'Antique') {
+          params.push('Antique');
+          query += ` AND (p.market_segment = $${params.length} OR p.style ILIKE '%antique%')`;
+        } else if (segment === 'Grails' || segment === 'Grails & Boutique') {
+          query += ` AND (p.is_grail = true OR p.market_segment IN ('Grails', 'Boutique'))`;
+        } else if (segment === 'Regular Thrift' || segment === 'Everyday Thrift') {
+          query += ` AND (p.market_segment = 'Regular Thrift' OR p.market_segment IS NULL)`;
+        } else {
+          params.push(`%${segment}%`);
+          query += ` AND (p.market_segment ILIKE $${params.length})`;
+        }
+      }
 
       query += ` ORDER BY p.created_at DESC LIMIT 100`;
 
@@ -84,6 +98,11 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
           retailPriceAed: Number(r.retail_price_aed || r.estimated_price || 295),
           isSold: Boolean(r.is_sold),
           status: r.status || 'IN_STOCK',
+          marketSegment: r.market_segment || 'Regular Thrift',
+          isGrail: Boolean(r.is_grail),
+          globalInsights: r.global_insights || null,
+          aiSuggestedPrice: r.ai_suggested_price !== undefined && r.ai_suggested_price !== null ? Number(r.ai_suggested_price) : null,
+          isPriceOverridden: Boolean(r.is_price_overridden),
           isCartLocked: Boolean(r.is_cart_locked),
           cartLockExpiresAt: r.cart_lock_expires_at,
           cartLockedBySession: r.cart_locked_by_session,
@@ -96,16 +115,36 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
     }
 
     // Fallback via Supabase client if direct PG returned 0 rows
-    const { data: supaData } = await supabase
+    let supaQuery = supabase
       .from('inventory_pieces')
       .select('*')
       .eq('is_sold', false)
-      .neq('status', 'SOLD')
+      .neq('status', 'SOLD');
+
+    if (segment && segment !== 'ALL') {
+      if (segment === 'Antique') {
+        supaQuery = supaQuery.eq('market_segment', 'Antique');
+      } else if (segment === 'Grails' || segment === 'Grails & Boutique') {
+        supaQuery = supaQuery.or('is_grail.eq.true,market_segment.eq.Grails,market_segment.eq.Boutique');
+      } else if (segment === 'Regular Thrift' || segment === 'Everyday Thrift') {
+        supaQuery = supaQuery.eq('market_segment', 'Regular Thrift');
+      } else {
+        supaQuery = supaQuery.ilike('market_segment', `%${segment}%`);
+      }
+    }
+
+    const { data: supaData } = await supaQuery
       .order('created_at', { ascending: false })
       .limit(100);
 
     if (supaData && supaData.length > 0) {
-      return res.json(supaData);
+      return res.json(supaData.map(r => ({
+        ...r,
+        marketSegment: r.market_segment || 'Regular Thrift',
+        isGrail: Boolean(r.is_grail),
+        globalInsights: r.global_insights,
+        retailPriceAed: Number(r.retail_price_aed || r.estimated_price || 0)
+      })));
     }
 
     return res.json([]);
