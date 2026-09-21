@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Party, PartyKhataLog } from '../parties.types.ts';
+import { Party, PartyKhataLog, VisitingCard } from '../parties.types.ts';
 import {
   Users,
   Plus,
   ArrowDownLeft,
   ArrowUpRight,
+  ArrowRight,
   BookOpen,
   Building,
   Building2,
@@ -31,7 +32,9 @@ import {
   Sparkles,
   Upload,
   Landmark,
-  Calendar
+  Calendar,
+  Globe,
+  Search
 } from 'lucide-react';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
@@ -57,9 +60,30 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   // Double-submission protection & OCR Scanner state
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showLiveScannerModal, setShowLiveScannerModal] = useState(false);
-  const [scannerTargetForm, setScannerTargetForm] = useState<'NEW' | 'EDIT'>('NEW');
+  const [scannerTargetForm, setScannerTargetForm] = useState<'NEW' | 'EDIT' | 'CRM' | 'CRM_EDIT'>('NEW');
   const [isOcrProcessing, setIsOcrProcessing] = useState(false);
   const [printingParty, setPrintingParty] = useState<Party | null>(null);
+
+  // CRM Visiting Cards Directory State (Isolated from COA)
+  const [activeRegistryTab, setActiveRegistryTab] = useState<'PARTIES' | 'VISITING_CARDS'>('PARTIES');
+  const [visitingCards, setVisitingCards] = useState<VisitingCard[]>([]);
+  const [isLoadingCards, setIsLoadingCards] = useState(false);
+  const [cardSearch, setCardSearch] = useState('');
+  const [showNewCardModal, setShowNewCardModal] = useState(false);
+  const [showEditCardModal, setShowEditCardModal] = useState(false);
+  const [convertingCardId, setConvertingCardId] = useState<string | null>(null);
+  const [cardForm, setCardForm] = useState({
+    id: '',
+    companyName: '',
+    contactPerson: '',
+    designation: '',
+    phone: '',
+    email: '',
+    address: '',
+    website: '',
+    cardImageUrl: '',
+    notes: ''
+  });
 
   // Modals
   const [showNewPartyModal, setShowNewPartyModal] = useState(false);
@@ -310,9 +334,22 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     }
   };
 
+  const loadVisitingCards = async () => {
+    setIsLoadingCards(true);
+    try {
+      const cards = await PartiesService.getVisitingCards();
+      setVisitingCards(cards || []);
+    } catch (err: any) {
+      console.error('Failed to load visiting cards:', err);
+    } finally {
+      setIsLoadingCards(false);
+    }
+  };
+
   useEffect(() => {
     loadParties();
     loadCoaAccounts();
+    loadVisitingCards();
   }, []);
 
   const showMsg = (text: string, type: 'success' | 'error' = 'success') => {
@@ -344,7 +381,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         businessCardUrl: ocrResult.cardImageUrl || prev.businessCardUrl,
         business_card_url: ocrResult.cardImageUrl || prev.businessCardUrl
       }));
-    } else {
+      toast.success('✨ Visiting card scanned & party details auto-populated!');
+    } else if (scannerTargetForm === 'EDIT') {
       setEditPartyForm(prev => ({
         ...prev,
         name: ocrResult.companyName || prev.name,
@@ -361,11 +399,39 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         businessCardUrl: ocrResult.cardImageUrl || prev.businessCardUrl,
         business_card_url: ocrResult.cardImageUrl || prev.businessCardUrl
       }));
+      toast.success('✨ Visiting card scanned & party details auto-populated!');
+    } else if (scannerTargetForm === 'CRM') {
+      setCardForm({
+        id: '',
+        companyName: ocrResult.companyName || '',
+        contactPerson: ocrResult.contactPerson || '',
+        designation: ocrResult.designation || '',
+        phone: ocrResult.phone || '',
+        email: ocrResult.email || '',
+        address: ocrResult.address || '',
+        website: ocrResult.website || '',
+        cardImageUrl: ocrResult.cardImageUrl || '',
+        notes: ''
+      });
+      setShowNewCardModal(true);
+      toast.success('✨ Visiting card extracted! Review & save to CRM directory.');
+    } else if (scannerTargetForm === 'CRM_EDIT') {
+      setCardForm(prev => ({
+        ...prev,
+        companyName: ocrResult.companyName || prev.companyName,
+        contactPerson: ocrResult.contactPerson || prev.contactPerson,
+        designation: ocrResult.designation || prev.designation,
+        phone: ocrResult.phone || prev.phone,
+        email: ocrResult.email || prev.email,
+        address: ocrResult.address || prev.address,
+        website: ocrResult.website || prev.website,
+        cardImageUrl: ocrResult.cardImageUrl || prev.cardImageUrl
+      }));
+      toast.success('✨ Visiting card details refreshed from scanner.');
     }
-    toast.success('✨ Visiting card scanned & party details auto-populated!');
   };
 
-  const handleCardFileUpload = (e: React.ChangeEvent<HTMLInputElement>, target: 'NEW' | 'EDIT') => {
+  const handleCardFileUpload = (e: React.ChangeEvent<HTMLInputElement>, target: 'NEW' | 'EDIT' | 'CRM' | 'CRM_EDIT') => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -385,6 +451,118 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleStartCardConversion = (card: VisitingCard) => {
+    setConvertingCardId(card.id);
+    const cName = card.companyName || card.company_name || '';
+    const cPerson = card.contactPerson || card.contact_person || '';
+    const cDesig = card.designation || '';
+    const cPhone = card.phone || '';
+    const cEmail = card.email || '';
+    const cAddr = card.address || '';
+    const cImg = card.cardImageUrl || card.card_image_url || '';
+
+    setPartyForm(prev => ({
+      ...prev,
+      name: cName,
+      company_name: cName,
+      contactPerson: cPerson,
+      contact_person: cPerson,
+      contactDesignation: cDesig,
+      contact_designation: cDesig,
+      phone: cPhone,
+      email: cEmail,
+      address: cAddr,
+      businessCardUrl: cImg,
+      business_card_url: cImg
+    }));
+
+    setActiveRegistryTab('PARTIES');
+    setShowNewPartyModal(true);
+    toast.info(`Converting lead "${cName || cPerson}" into official party. Complete details and provision COA.`);
+  };
+
+  const handleSaveNewCard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmitting) return;
+
+    const company = cardForm.companyName.trim();
+    const contact = cardForm.contactPerson.trim();
+    if (!company && !contact) {
+      toast.error('Please enter at least Company Name or Contact Person');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await PartiesService.createVisitingCard(cardForm);
+      toast.success('📇 Visiting card saved to CRM directory!');
+      setShowNewCardModal(false);
+      setCardForm({
+        id: '',
+        companyName: '',
+        contactPerson: '',
+        designation: '',
+        phone: '',
+        email: '',
+        address: '',
+        website: '',
+        cardImageUrl: '',
+        notes: ''
+      });
+      await loadVisitingCards();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save visiting card');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleOpenEditCard = (card: VisitingCard) => {
+    setCardForm({
+      id: card.id,
+      companyName: card.companyName || card.company_name || '',
+      contactPerson: card.contactPerson || card.contact_person || '',
+      designation: card.designation || '',
+      phone: card.phone || '',
+      email: card.email || '',
+      address: card.address || '',
+      website: card.website || '',
+      cardImageUrl: card.cardImageUrl || card.card_image_url || '',
+      notes: card.notes || ''
+    });
+    setShowEditCardModal(true);
+  };
+
+  const handleSaveEditCard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
+    try {
+      await PartiesService.updateVisitingCard(cardForm.id, cardForm);
+      toast.success('📇 Visiting card details updated!');
+      setShowEditCardModal(false);
+      await loadVisitingCards();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update visiting card');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteCard = async (card: VisitingCard) => {
+    const label = card.companyName || card.contactPerson || 'this visiting card';
+    if (!window.confirm(`Delete ${label} from CRM Visiting Cards Directory?`)) return;
+
+    try {
+      await PartiesService.deleteVisitingCard(card.id);
+      toast.success('Visiting card removed from CRM directory');
+      await loadVisitingCards();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete visiting card');
+    }
   };
 
   const handlePrintParty = (party: Party) => {
@@ -507,6 +685,13 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
           business_card_url: formData.business_card_url
         }).eq('id', data.party_id);
         if (updateError) console.warn("Could not update extended party columns:", updateError);
+      }
+
+      if (convertingCardId && (data?.party_id || data?.id)) {
+        await PartiesService.markVisitingCardConverted(convertingCardId, data.party_id || data.id);
+        setConvertingCardId(null);
+        await loadVisitingCards();
+        toast.success('🎉 Visiting card converted to official party & linked!');
       }
 
       toast.success(`Created party & provisioned account ${data.code}`);
@@ -879,9 +1064,59 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     return p.type === filterType;
   });
 
+  const filteredCards = useMemo(() => {
+    if (!cardSearch.trim()) return visitingCards;
+    const q = cardSearch.trim().toLowerCase();
+    return visitingCards.filter(c => {
+      const comp = (c.companyName || c.company_name || '').toLowerCase();
+      const person = (c.contactPerson || c.contact_person || '').toLowerCase();
+      const ph = (c.phone || '').toLowerCase();
+      const em = (c.email || '').toLowerCase();
+      const des = (c.designation || '').toLowerCase();
+      const notes = (c.notes || '').toLowerCase();
+      return comp.includes(q) || person.includes(q) || ph.includes(q) || em.includes(q) || des.includes(q) || notes.includes(q);
+    });
+  }, [visitingCards, cardSearch]);
+
   return (
     <div className="space-y-3">
-      {/* Top Header & Filter Bar */}
+      {/* MODULE NAVIGATION TABS */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+        <button
+          type="button"
+          onClick={() => setActiveRegistryTab('PARTIES')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
+            activeRegistryTab === 'PARTIES'
+              ? 'bg-[#0056b3] text-white shadow-xs'
+              : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <Building2 className="w-4 h-4" />
+          <span>🏢 Registered Parties & Ledgers ({parties.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveRegistryTab('VISITING_CARDS')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
+            activeRegistryTab === 'VISITING_CARDS'
+              ? 'bg-amber-600 text-white shadow-xs'
+              : 'bg-white text-slate-700 hover:bg-amber-50 border border-slate-200'
+          }`}
+        >
+          <span className="text-sm">📇</span>
+          <span>Visiting Card Directory / CRM Leads ({visitingCards.length})</span>
+          {visitingCards.filter(c => c.status !== 'CONVERTED').length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-amber-200 text-amber-900 text-[10px] font-extrabold ml-1">
+              {visitingCards.filter(c => c.status !== 'CONVERTED').length} Leads
+            </span>
+          )}
+        </button>
+      </div>
+
+      {activeRegistryTab === 'PARTIES' && (
+        <div className="space-y-3">
+          {/* Top Header & Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-2 sm:p-2.5 rounded border border-slate-200 shadow-xs">
         <div className="flex items-center gap-1.5 flex-wrap">
           {['ALL', 'CLIENT', 'SUPPLIER', 'AGENT'].map(type => (
@@ -1276,6 +1511,305 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
           )}
         </div>
       </div>
+    </div>
+  )}
+
+    {/* VISITING CARDS CRM DIRECTORY TAB */}
+    {activeRegistryTab === 'VISITING_CARDS' && (
+      <div className="space-y-4 animate-in fade-in duration-200">
+        {/* Header Control Panel */}
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">📇</span>
+                <h2 className="text-base font-bold text-slate-900 tracking-tight">Visiting Card Directory (CRM Leads)</h2>
+                <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 rounded-full border border-amber-200">
+                  Isolated from COA
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Collect and digitize physical cards without creating accounting ledger records. Convert to official Party anytime.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  setScannerTargetForm('CRM');
+                  setShowLiveScannerModal(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs transition cursor-pointer"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>📸 Live Camera Scan</span>
+              </button>
+
+              <label className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs uppercase tracking-wider border border-slate-300 shadow-xs transition cursor-pointer">
+                <Upload className="w-3.5 h-3.5 text-blue-600" />
+                <span>📁 Upload Card</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={e => handleCardFileUpload(e, 'CRM')}
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCardForm({
+                    id: '',
+                    companyName: '',
+                    contactPerson: '',
+                    designation: '',
+                    phone: '',
+                    email: '',
+                    address: '',
+                    website: '',
+                    cardImageUrl: '',
+                    notes: ''
+                  });
+                  setShowNewCardModal(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-wider shadow-xs transition cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Manual Entry</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Search & Metrics Bar */}
+          <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="relative w-full sm:w-72">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                value={cardSearch}
+                onChange={e => setCardSearch(e.target.value)}
+                placeholder="Search company, person, phone..."
+                className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-blue-500 text-slate-800"
+              />
+              {cardSearch && (
+                <button
+                  onClick={() => setCardSearch('')}
+                  className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 self-end sm:self-auto">
+              <span>Total Leads: <strong className="text-slate-800">{visitingCards.length}</strong></span>
+              <span>•</span>
+              <span>Active Leads: <strong className="text-amber-700">{visitingCards.filter(c => c.status !== 'CONVERTED').length}</strong></span>
+              <span>•</span>
+              <span>Converted: <strong className="text-emerald-700">{visitingCards.filter(c => c.status === 'CONVERTED').length}</strong></span>
+            </div>
+          </div>
+        </div>
+
+        {/* Cards Grid */}
+        {isLoadingCards ? (
+          <div className="p-12 text-center bg-white rounded-xl border border-slate-200">
+            <Loader2 className="w-6 h-6 animate-spin text-blue-600 mx-auto mb-2" />
+            <p className="text-xs text-slate-500">Loading visiting card directory...</p>
+          </div>
+        ) : filteredCards.length === 0 ? (
+          <div className="p-12 text-center bg-white rounded-xl border border-dashed border-slate-300">
+            <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mx-auto mb-3">
+              <span className="text-2xl">📇</span>
+            </div>
+            <h3 className="text-sm font-bold text-slate-800">No Visiting Cards in Directory</h3>
+            <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+              {cardSearch ? 'No cards match your search criteria.' : 'Scan cards using your camera or upload card images to start building your CRM lead database.'}
+            </p>
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setScannerTargetForm('CRM');
+                  setShowLiveScannerModal(true);
+                }}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-xs shadow-xs"
+              >
+                📸 Start Camera Scan
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+            {filteredCards.map(card => {
+              const isConverted = card.status === 'CONVERTED';
+              const cCompany = card.companyName || card.company_name || 'Individual Contact';
+              const cPerson = card.contactPerson || card.contact_person || '';
+              const cImg = card.cardImageUrl || card.card_image_url;
+
+              return (
+                <div
+                  key={card.id}
+                  className={`bg-white rounded-xl border transition-all p-4 flex flex-col justify-between shadow-xs ${
+                    isConverted
+                      ? 'border-emerald-200/80 bg-gradient-to-b from-emerald-50/20 to-white'
+                      : 'border-slate-200 hover:border-blue-300 hover:shadow-md'
+                  }`}
+                >
+                  <div>
+                    {/* Top Status & Badge */}
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                        isConverted
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1'
+                          : 'bg-amber-100 text-amber-800 border border-amber-200'
+                      }`}>
+                        {isConverted ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-700" />
+                            <span>Converted to Party</span>
+                          </>
+                        ) : (
+                          'CRM Lead'
+                        )}
+                      </span>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditCard(card)}
+                          className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+                          title="Edit Lead Card"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCard(card)}
+                          className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
+                          title="Delete Card"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Card Image Preview if present */}
+                    {cImg && (
+                      <div className="mb-3 rounded-lg overflow-hidden border border-slate-200 aspect-[1.75/1] bg-slate-900/5 relative group">
+                        <img
+                          src={cImg}
+                          alt={cCompany}
+                          className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                        />
+                      </div>
+                    )}
+
+                    {/* Title & Person */}
+                    <h3 className="font-bold text-slate-900 text-sm leading-snug">{cCompany}</h3>
+                    {cPerson && (
+                      <div className="flex items-center gap-1.5 mt-1 text-slate-700 font-semibold text-xs">
+                        <span>{cPerson}</span>
+                        {card.designation && (
+                          <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-normal">
+                            {card.designation}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Details */}
+                    <div className="mt-2.5 space-y-1 text-xs text-slate-600">
+                      {card.phone && (
+                        <div className="flex items-center gap-2">
+                          <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <a href={`tel:${card.phone}`} className="hover:text-blue-600 font-mono text-[11px]">
+                            {card.phone}
+                          </a>
+                        </div>
+                      )}
+                      {card.email && (
+                        <div className="flex items-center gap-2">
+                          <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <a href={`mailto:${card.email}`} className="hover:text-blue-600 truncate text-[11px]">
+                            {card.email}
+                          </a>
+                        </div>
+                      )}
+                      {card.website && (
+                        <div className="flex items-center gap-2">
+                          <Globe className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <a
+                            href={card.website.startsWith('http') ? card.website : `https://${card.website}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="hover:text-blue-600 truncate text-[11px]"
+                          >
+                            {card.website}
+                          </a>
+                        </div>
+                      )}
+                      {card.address && (
+                        <div className="flex items-start gap-2 pt-0.5">
+                          <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                          <span className="text-[11px] leading-tight text-slate-500 line-clamp-2">
+                            {card.address}
+                          </span>
+                        </div>
+                      )}
+                      {card.notes && (
+                        <div className="mt-2 p-2 rounded bg-slate-50 border border-slate-100 text-[11px] text-slate-600 italic">
+                          "{card.notes}"
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Convert Button */}
+                  <div className="mt-4 pt-3 border-t border-slate-100">
+                    {isConverted ? (
+                      <div className="flex items-center justify-between text-[11px] text-emerald-800 font-semibold bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200">
+                        <span className="flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          Official Registry Linked
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const matched = parties.find(p => p.id === card.convertedPartyId || p.name.toLowerCase() === cCompany.toLowerCase());
+                            if (matched) {
+                              setActiveRegistryTab('PARTIES');
+                              selectParty(matched);
+                            } else {
+                              setActiveRegistryTab('PARTIES');
+                            }
+                          }}
+                          className="text-blue-700 hover:underline font-bold text-[10px] uppercase cursor-pointer"
+                        >
+                          View Khata →
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleStartCardConversion(card)}
+                        className="w-full py-2 px-3 rounded-lg bg-[#0056b3] hover:bg-[#004494] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
+                      >
+                        <Building2 className="w-3.5 h-3.5" />
+                        <span>Convert to Party & Provision COA</span>
+                        <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    )}
 
       {/* NEW PARTY MODAL */}
       {showNewPartyModal && (
@@ -2675,6 +3209,362 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
           </div>
         );
       })()}
+
+      {/* NEW VISITING CARD MODAL (CRM LEAD) */}
+      {showNewCardModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-200 mb-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>📇</span>
+                  <span>Save Visiting Card (CRM Lead)</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Stores contact card without affecting COA accounts or financial statements.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNewCardModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Live Camera & File Upload inside modal */}
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                  Live AI Scan / Re-extract
+                </span>
+                {cardForm.cardImageUrl && (
+                  <span className="text-[9px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded">
+                    Image Attached
+                  </span>
+                )}
+              </div>
+
+              {cardForm.cardImageUrl ? (
+                <div className="flex items-center gap-3 bg-white p-2 rounded border border-slate-200">
+                  <img
+                    src={cardForm.cardImageUrl}
+                    alt="Card Preview"
+                    className="h-14 w-24 object-cover rounded border border-slate-200"
+                  />
+                  <div className="flex-1 min-w-0 text-[10px] text-slate-500">
+                    <p className="font-semibold text-slate-700 truncate">Visiting card artifact preserved</p>
+                    <p>Stored in CRM leads directory</p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScannerTargetForm('CRM');
+                        setShowLiveScannerModal(true);
+                      }}
+                      className="px-2 py-1 text-xs text-blue-700 bg-blue-50 rounded hover:bg-blue-100 cursor-pointer"
+                    >
+                      Rescan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCardForm(prev => ({ ...prev, cardImageUrl: '' }))}
+                      className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScannerTargetForm('CRM');
+                      setShowLiveScannerModal(true);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>📸 Live Camera Scan</span>
+                  </button>
+                  <label className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 border border-slate-300 shadow-xs transition cursor-pointer">
+                    <Upload className="w-3.5 h-3.5 text-blue-600" />
+                    <span>📁 Upload Image</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={e => handleCardFileUpload(e, 'CRM')}
+                    />
+                  </label>
+                  {isOcrProcessing && (
+                    <div className="flex items-center gap-1.5 text-xs text-blue-700 font-semibold animate-pulse ml-1">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Parsing...</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleSaveNewCard} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Company / Organization Name:</label>
+                <input
+                  type="text"
+                  value={cardForm.companyName}
+                  onChange={e => setCardForm({ ...cardForm, companyName: e.target.value })}
+                  placeholder="e.g. Acme Corporation"
+                  className="w-full border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:border-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Contact Person:</label>
+                  <input
+                    type="text"
+                    value={cardForm.contactPerson}
+                    onChange={e => setCardForm({ ...cardForm, contactPerson: e.target.value })}
+                    placeholder="e.g. John Doe"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Designation / Role:</label>
+                  <input
+                    type="text"
+                    value={cardForm.designation}
+                    onChange={e => setCardForm({ ...cardForm, designation: e.target.value })}
+                    placeholder="e.g. Commercial Director"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Telephone / Mobile:</label>
+                  <input
+                    type="text"
+                    value={cardForm.phone}
+                    onChange={e => setCardForm({ ...cardForm, phone: e.target.value })}
+                    placeholder="+971 50 ..."
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Email Address:</label>
+                  <input
+                    type="email"
+                    value={cardForm.email}
+                    onChange={e => setCardForm({ ...cardForm, email: e.target.value })}
+                    placeholder="contact@company.com"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Website URL:</label>
+                  <input
+                    type="text"
+                    value={cardForm.website}
+                    onChange={e => setCardForm({ ...cardForm, website: e.target.value })}
+                    placeholder="www.example.com"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Office Address:</label>
+                  <input
+                    type="text"
+                    value={cardForm.address}
+                    onChange={e => setCardForm({ ...cardForm, address: e.target.value })}
+                    placeholder="Office 301, Dubai"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Meeting Notes / Lead Context:</label>
+                <textarea
+                  rows={2}
+                  value={cardForm.notes}
+                  onChange={e => setCardForm({ ...cardForm, notes: e.target.value })}
+                  placeholder="Met at Gitex / Exhibition booth. Interested in bulk vintage denim bales."
+                  className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowNewCardModal(false)}
+                  className="px-3.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-4 py-1.5 rounded-lg bg-[#0056b3] hover:bg-[#004494] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold uppercase tracking-wider text-[11px] shadow-xs flex items-center gap-2 cursor-pointer"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving Lead...</span>
+                    </>
+                  ) : (
+                    <span>Save to CRM Directory</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT VISITING CARD MODAL */}
+      {showEditCardModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-200 mb-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>📇</span>
+                  <span>Edit Lead Card</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Update visiting card contact details in CRM leads directory.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEditCardModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditCard} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Company / Organization Name:</label>
+                <input
+                  type="text"
+                  value={cardForm.companyName}
+                  onChange={e => setCardForm({ ...cardForm, companyName: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:border-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Contact Person:</label>
+                  <input
+                    type="text"
+                    value={cardForm.contactPerson}
+                    onChange={e => setCardForm({ ...cardForm, contactPerson: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Designation / Role:</label>
+                  <input
+                    type="text"
+                    value={cardForm.designation}
+                    onChange={e => setCardForm({ ...cardForm, designation: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Telephone / Mobile:</label>
+                  <input
+                    type="text"
+                    value={cardForm.phone}
+                    onChange={e => setCardForm({ ...cardForm, phone: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Email Address:</label>
+                  <input
+                    type="email"
+                    value={cardForm.email}
+                    onChange={e => setCardForm({ ...cardForm, email: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Website URL:</label>
+                  <input
+                    type="text"
+                    value={cardForm.website}
+                    onChange={e => setCardForm({ ...cardForm, website: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Office Address:</label>
+                  <input
+                    type="text"
+                    value={cardForm.address}
+                    onChange={e => setCardForm({ ...cardForm, address: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">Meeting Notes / Lead Context:</label>
+                <textarea
+                  rows={2}
+                  value={cardForm.notes}
+                  onChange={e => setCardForm({ ...cardForm, notes: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowEditCardModal(false)}
+                  className="px-3.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-4 py-1.5 rounded-lg bg-[#0056b3] hover:bg-[#004494] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold uppercase tracking-wider text-[11px] shadow-xs flex items-center gap-2 cursor-pointer"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving Changes...</span>
+                    </>
+                  ) : (
+                    <span>Save Changes</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* LIVE AI CARD SCANNER MODAL */}
       <LiveCardScannerModal

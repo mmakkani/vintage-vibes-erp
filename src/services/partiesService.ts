@@ -1,5 +1,5 @@
 import { supabase } from '../supabaseClient.ts';
-import { Party, PartyKhataLog } from '../modules/parties/parties.types.ts';
+import { Party, PartyKhataLog, VisitingCard } from '../modules/parties/parties.types.ts';
 import { FinanceService } from './financeService.ts';
 import { safeFetchJson, safeFetchMutation } from '../utils/fetchUtils.ts';
 
@@ -965,5 +965,186 @@ export class PartiesService {
       runningBalance: Number(data.running_balance),
       notes: data.notes
     };
+  }
+
+  // =========================================================================
+  // VISITING CARDS DIRECTORY (CRM LEADS - ISOLATED FROM COA)
+  // =========================================================================
+
+  public static async getVisitingCards(): Promise<VisitingCard[]> {
+    if (typeof window !== 'undefined') {
+      try {
+        const list = await safeFetchJson<any[]>('/api/visiting-cards?_t=' + Date.now(), { credentials: 'include' });
+        if (Array.isArray(list)) return list;
+      } catch (e) {
+        console.warn('Backend /api/visiting-cards failed, falling back to Supabase direct client:', e);
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('visiting_cards')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase error on visiting_cards:', error);
+      return [];
+    }
+
+    return (data || []).map((row: any) => ({
+      id: String(row.id),
+      companyName: row.company_name || '',
+      company_name: row.company_name || '',
+      contactPerson: row.contact_person || '',
+      contact_person: row.contact_person || '',
+      designation: row.designation || '',
+      phone: row.phone || '',
+      email: row.email || '',
+      address: row.address || '',
+      website: row.website || '',
+      cardImageUrl: row.card_image_url || '',
+      card_image_url: row.card_image_url || '',
+      notes: row.notes || '',
+      status: row.status || 'LEAD',
+      convertedPartyId: row.converted_party_id ? String(row.converted_party_id) : null,
+      converted_party_id: row.converted_party_id ? String(row.converted_party_id) : null,
+      createdAt: row.created_at,
+      created_at: row.created_at,
+      updatedAt: row.updated_at,
+      updated_at: row.updated_at
+    }));
+  }
+
+  public static async createVisitingCard(card: Partial<VisitingCard>): Promise<VisitingCard> {
+    const payload = {
+      company_name: card.companyName || card.company_name || '',
+      contact_person: card.contactPerson || card.contact_person || '',
+      designation: card.designation || '',
+      phone: card.phone || '',
+      email: card.email || '',
+      address: card.address || '',
+      website: card.website || '',
+      card_image_url: card.cardImageUrl || card.card_image_url || '',
+      notes: card.notes || '',
+      status: card.status || 'LEAD'
+    };
+
+    if (typeof window !== 'undefined') {
+      try {
+        const created = await safeFetchMutation<any>('/api/visiting-cards', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        if (created && created.id) return created;
+      } catch (e) {
+        console.warn('Backend POST /api/visiting-cards failed, falling back to Supabase:', e);
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('visiting_cards')
+      .insert([payload])
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message || 'Failed to save visiting card');
+
+    return {
+      id: String(data.id),
+      companyName: data.company_name || '',
+      company_name: data.company_name || '',
+      contactPerson: data.contact_person || '',
+      contact_person: data.contact_person || '',
+      designation: data.designation || '',
+      phone: data.phone || '',
+      email: data.email || '',
+      address: data.address || '',
+      website: data.website || '',
+      cardImageUrl: data.card_image_url || '',
+      card_image_url: data.card_image_url || '',
+      notes: data.notes || '',
+      status: data.status || 'LEAD',
+      convertedPartyId: data.converted_party_id ? String(data.converted_party_id) : null,
+      converted_party_id: data.converted_party_id ? String(data.converted_party_id) : null,
+      createdAt: data.created_at,
+      created_at: data.created_at
+    };
+  }
+
+  public static async updateVisitingCard(id: string, card: Partial<VisitingCard>): Promise<VisitingCard> {
+    const payload = {
+      company_name: card.companyName || card.company_name,
+      contact_person: card.contactPerson || card.contact_person,
+      designation: card.designation,
+      phone: card.phone,
+      email: card.email,
+      address: card.address,
+      website: card.website,
+      card_image_url: card.cardImageUrl || card.card_image_url,
+      notes: card.notes,
+      status: card.status
+    };
+
+    if (typeof window !== 'undefined') {
+      try {
+        const updated = await safeFetchMutation<any>(`/api/visiting-cards/${id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload)
+        });
+        if (updated && updated.id) return updated;
+      } catch (e) {
+        console.warn(`Backend PUT /api/visiting-cards/${id} failed, falling back to Supabase:`, e);
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('visiting_cards')
+      .update(payload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message || 'Failed to update visiting card');
+    return data;
+  }
+
+  public static async deleteVisitingCard(id: string): Promise<boolean> {
+    if (typeof window !== 'undefined') {
+      try {
+        const res = await safeFetchMutation<any>(`/api/visiting-cards/${id}`, {
+          method: 'DELETE'
+        });
+        if (res && res.success) return true;
+      } catch (e) {
+        console.warn(`Backend DELETE /api/visiting-cards/${id} failed, falling back to Supabase:`, e);
+      }
+    }
+
+    const { error } = await supabase
+      .from('visiting_cards')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw new Error(error.message || 'Failed to delete visiting card');
+    return true;
+  }
+
+  public static async markVisitingCardConverted(id: string, partyId: string): Promise<void> {
+    if (typeof window !== 'undefined') {
+      try {
+        await safeFetchMutation<any>(`/api/visiting-cards/${id}/convert`, {
+          method: 'POST',
+          body: JSON.stringify({ partyId })
+        });
+        return;
+      } catch (e) {
+        console.warn(`Backend POST /api/visiting-cards/${id}/convert failed:`, e);
+      }
+    }
+
+    await supabase
+      .from('visiting_cards')
+      .update({ status: 'CONVERTED', converted_party_id: partyId, updated_at: new Date().toISOString() })
+      .eq('id', id);
   }
 }

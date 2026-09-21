@@ -154,3 +154,27 @@ export interface Party {
   totalEntriesCount?: number;
   hasEntries?: boolean;
 }
+
+export interface VisitingCard {
+  id: string;
+  companyName?: string;
+  company_name?: string;
+  contactPerson?: string;
+  contact_person?: string;
+  designation?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  website?: string;
+  cardImageUrl?: string;
+  card_image_url?: string;
+  notes?: string;
+  status?: 'LEAD' | 'CONVERTED';
+  convertedPartyId?: string;
+  converted_party_id?: string;
+  createdAt?: string;
+  created_at?: string;
+  updatedAt?: string;
+  updated_at?: string;
+}
+

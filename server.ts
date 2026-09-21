@@ -10,6 +10,7 @@ import { authRouter } from './src/modules/auth/auth.routes.ts';
 import { setupRouter } from './src/modules/setup/setup.routes.ts';
 import { financeRouter } from './src/modules/finance/finance.routes.ts';
 import { partiesRouter } from './src/modules/parties/parties.routes.ts';
+import { visitingCardsRouter } from './src/modules/parties/visitingCards.routes.ts';
 import { hrRouter } from './src/modules/hr/hr.routes.ts';
 import { purchaseRouter } from './src/modules/purchase/purchase.routes.ts';
 import { salesRouter } from './src/modules/sales/sales.routes.ts';
@@ -197,6 +198,7 @@ async function startServer() {
   app.use('/api/chart-of-accounts', financeRouter);
   app.use('/api/coa', financeRouter);
   app.use('/api/parties', partiesRouter);
+  app.use('/api/visiting-cards', visitingCardsRouter);
   app.use('/api/hr', hrRouter);
   app.use('/api/purchase', purchaseRouter);
   app.use('/api/bales', purchaseRouter);

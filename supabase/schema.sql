@@ -1028,3 +1028,27 @@ CREATE TABLE IF NOT EXISTS public.booth_social_channels (
 
 CREATE INDEX IF NOT EXISTS idx_booth_social_booth_id ON public.booth_social_channels(booth_id);
 CREATE INDEX IF NOT EXISTS idx_booth_social_platform ON public.booth_social_channels(platform);
+
+-- ============================================================================
+-- 23. VISITING CARDS DIRECTORY (CRM LEADS - ISOLATED FROM COA)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.visiting_cards (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_name TEXT,
+    contact_person TEXT,
+    designation TEXT,
+    phone TEXT,
+    email TEXT,
+    address TEXT,
+    website TEXT,
+    card_image_url TEXT,
+    notes TEXT,
+    status TEXT DEFAULT 'LEAD',
+    converted_party_id UUID,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_visiting_cards_company ON public.visiting_cards(company_name);
+CREATE INDEX IF NOT EXISTS idx_visiting_cards_phone ON public.visiting_cards(phone);
+CREATE INDEX IF NOT EXISTS idx_visiting_cards_created ON public.visiting_cards(created_at DESC);

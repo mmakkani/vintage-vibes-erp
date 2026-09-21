@@ -2,8 +2,10 @@ import { Router } from 'express';
 import { Client } from 'pg';
 import { supabase } from '../../supabaseClient.ts';
 import { PartiesController } from './parties.controller.ts';
+import { visitingCardsRouter } from './visitingCards.routes.ts';
 
 export const partiesRouter = Router();
+partiesRouter.use('/visiting-cards', visitingCardsRouter);
 
 const getDbClient = async () => {
   let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
