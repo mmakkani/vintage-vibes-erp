@@ -45,23 +45,31 @@ export class FinanceService {
               const apiData = await apiRes.json();
               const list = Array.isArray(apiData) ? apiData : (apiData?.accounts || apiData?.coa || apiData?.data || []);
               if (Array.isArray(list) && list.length > 0) {
-                const normalized = list.map((r: any) => ({
-                  ...r,
-                  code: r.code || r.account_code || '',
-                  account_code: r.account_code || r.code || '',
-                  name: r.name || r.account_name || '',
-                  account_name: r.account_name || r.name || '',
-                  type: r.type || r.pillar_category || r.classification || 'ASSET',
-                  pillar_category: r.pillar_category || r.type || r.classification || 'ASSET',
-                  tierLevel: Number(r.tierLevel || r.tier_level || r.account_level || 1),
-                  tier_level: Number(r.tier_level || r.tierLevel || r.account_level || 1),
-                  currency: r.currency || 'AED',
-                  currentBalance: typeof r.currentBalance === 'number' ? r.currentBalance : (Number(r.current_balance) || 0),
-                  current_balance: typeof r.current_balance === 'number' ? r.current_balance : (Number(r.currentBalance) || 0),
-                  isActive: r.isActive !== false && r.is_active !== false,
-                  is_active: r.is_active !== false && r.isActive !== false,
-                  status: r.status || ((r.isActive !== false && r.is_active !== false) ? 'ACTIVE' : 'INACTIVE')
-                }));
+                const normalized = list.map((r: any) => {
+                  const code = r.code || r.account_code || '';
+                  const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
+                  const isSub = code.endsWith('-00') && !isMaster;
+                  const computedTier = isMaster ? 1 : (isSub ? 2 : 3);
+                  const tierLevel = Number(r.tierLevel || r.tier_level || r.account_level || computedTier);
+
+                  return {
+                    ...r,
+                    code: code,
+                    account_code: r.account_code || code,
+                    name: r.name || r.account_name || '',
+                    account_name: r.account_name || r.name || '',
+                    type: r.type || r.pillar_category || r.classification || 'ASSET',
+                    pillar_category: r.pillar_category || r.type || r.classification || 'ASSET',
+                    tierLevel,
+                    tier_level: tierLevel,
+                    currency: r.currency || 'AED',
+                    currentBalance: typeof r.currentBalance === 'number' ? r.currentBalance : (Number(r.current_balance) || 0),
+                    current_balance: typeof r.current_balance === 'number' ? r.current_balance : (Number(r.currentBalance) || 0),
+                    isActive: r.isActive !== false && r.is_active !== false,
+                    is_active: r.is_active !== false && r.isActive !== false,
+                    status: r.status || ((r.isActive !== false && r.is_active !== false) ? 'ACTIVE' : 'INACTIVE')
+                  };
+                });
                 this.cachedCoaAccounts = normalized;
                 this.lastCoaFetched = Date.now();
                 return normalized;
@@ -78,23 +86,33 @@ export class FinanceService {
             .order('code', { ascending: true });
 
           if (!coaErr && Array.isArray(coaData) && coaData.length > 0) {
-            const mapped = coaData.map((r: any) => ({
-              ...r,
-              id: String(r.id),
-              code: r.code || r.account_code || '',
-              account_code: r.code || r.account_code || '',
-              name: r.name || r.account_name || '',
-              account_name: r.name || r.account_name || '',
-              type: r.type || r.classification || 'ASSET',
-              classification: r.type || r.classification || 'ASSET',
-              pillar_category: r.type || r.classification || 'ASSET',
-              currentBalance: Number(r.current_balance || r.currentBalance || 0),
-              current_balance: Number(r.current_balance || r.currentBalance || 0),
-              isActive: r.is_active !== false,
-              is_active: r.is_active !== false,
-              status: (r.is_active !== false) ? 'ACTIVE' : 'INACTIVE',
-              createdAt: r.created_at || new Date().toISOString()
-            }));
+            const mapped = coaData.map((r: any) => {
+              const code = r.code || r.account_code || '';
+              const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
+              const isSub = code.endsWith('-00') && !isMaster;
+              const computedTier = isMaster ? 1 : (isSub ? 2 : 3);
+              const tierLevel = Number(r.tier_level || r.tierLevel || r.account_level || computedTier);
+
+              return {
+                ...r,
+                id: String(r.id),
+                code: code,
+                account_code: code,
+                name: r.name || r.account_name || '',
+                account_name: r.name || r.account_name || '',
+                type: r.type || r.classification || 'ASSET',
+                classification: r.type || r.classification || 'ASSET',
+                pillar_category: r.type || r.classification || 'ASSET',
+                tierLevel,
+                tier_level: tierLevel,
+                currentBalance: Number(r.current_balance || r.currentBalance || 0),
+                current_balance: Number(r.current_balance || r.currentBalance || 0),
+                isActive: r.is_active !== false,
+                is_active: r.is_active !== false,
+                status: (r.is_active !== false) ? 'ACTIVE' : 'INACTIVE',
+                createdAt: r.created_at || new Date().toISOString()
+              };
+            });
             this.cachedCoaAccounts = mapped;
             this.lastCoaFetched = Date.now();
             return mapped;

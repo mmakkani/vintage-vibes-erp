@@ -61,7 +61,9 @@ const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, onViewLe
   const currentBalance = typeof (acc as any).current_balance === 'number' ? (acc as any).current_balance : (Number(acc.currentBalance) || 0);
   const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
   const isSub = code.endsWith('-00') && !isMaster;
-  const tierLevel = (acc as any).tier_level || acc.tierLevel || (acc as any).account_level || (isMaster ? 1 : (isSub ? 2 : 3));
+  const computedTier = isMaster ? 1 : (isSub ? 2 : 3);
+  const rawTier = Number((acc as any).tier_level || acc.tierLevel || (acc as any).account_level);
+  const tierLevel = (rawTier && rawTier >= 1 && rawTier <= 5) ? rawTier : computedTier;
   const isDebit = type === 'ASSET' || type === 'EXPENSE';
   const isActive = (acc as any).status ? String((acc as any).status).toUpperCase() === 'ACTIVE' : (acc.is_active !== false && acc.isActive !== false);
   const isPartyAccount = Boolean(
@@ -206,6 +208,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
   // Search & Filter in COA
   const [coaFilterPillar, setCoaFilterPillar] = useState<string>('ALL');
+  const [coaFilterTier, setCoaFilterTier] = useState<string>('ALL');
   const [coaSearchText, setCoaSearchText] = useState<string>('');
 
   // General Ledger Unified Selector
@@ -1057,6 +1060,17 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       if (effectiveFilter !== 'ALL' && normAccType !== effectiveFilter) {
         return false;
       }
+      if (coaFilterTier !== 'ALL' && coaFilterTier !== '') {
+        const targetTier = Number(coaFilterTier);
+        const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
+        const isSub = code.endsWith('-00') && !isMaster;
+        const computedTier = isMaster ? 1 : (isSub ? 2 : 3);
+        const rawTier = Number((acc as any).tier_level || acc.tierLevel || (acc as any).account_level);
+        const accTier = (rawTier && rawTier >= 1 && rawTier <= 5) ? rawTier : computedTier;
+        if (accTier !== targetTier) {
+          return false;
+        }
+      }
       if (coaSearchText.trim()) {
         const query = coaSearchText.toLowerCase();
         return (
@@ -1074,7 +1088,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       const codeB = ((b as any).account_code || b.code || '').toString();
       return codeA.localeCompare(codeB, undefined, { numeric: true });
     });
-  }, [accounts, coaFilterPillar, coaSearchText]);
+  }, [accounts, coaFilterPillar, coaFilterTier, coaSearchText]);
 
   // General Ledger Entries strictly queried and aggregated via PostgreSQL window functions
   const filteredLedgers = ledgers;
@@ -1401,20 +1415,36 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               />
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-700 font-bold uppercase">Filter Pillar:</span>
-              <select
-                value={coaFilterPillar}
-                onChange={e => setCoaFilterPillar(e.target.value)}
-                className="text-xs border border-slate-300 rounded-lg px-2.5 py-1 bg-white font-medium focus:ring-2 focus:ring-amber-500"
-              >
-                <option value="ALL">All 5 Pillars ({accounts.length})</option>
-                <option value="ASSET">1000 - ASSETS</option>
-                <option value="LIABILITY">2000 - LIABILITIES</option>
-                <option value="EQUITY">3000 - EQUITY</option>
-                <option value="REVENUE">4000 - REVENUE</option>
-                <option value="EXPENSE">5000 - EXPENSES</option>
-              </select>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-700 font-bold uppercase">Filter Pillar:</span>
+                <select
+                  value={coaFilterPillar}
+                  onChange={e => setCoaFilterPillar(e.target.value)}
+                  className="text-xs border border-slate-300 rounded-lg px-2.5 py-1 bg-white font-medium focus:ring-2 focus:ring-amber-500"
+                >
+                  <option value="ALL">All 5 Pillars ({accounts.length})</option>
+                  <option value="ASSET">1000 - ASSETS</option>
+                  <option value="LIABILITY">2000 - LIABILITIES</option>
+                  <option value="EQUITY">3000 - EQUITY</option>
+                  <option value="REVENUE">4000 - REVENUE</option>
+                  <option value="EXPENSE">5000 - EXPENSES</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-700 font-bold uppercase">Tier Level:</span>
+                <select
+                  value={coaFilterTier}
+                  onChange={e => setCoaFilterTier(e.target.value)}
+                  className="text-xs border border-slate-300 rounded-lg px-2.5 py-1 bg-white font-medium focus:ring-2 focus:ring-amber-500"
+                >
+                  <option value="ALL">All Tiers ({accounts.length})</option>
+                  <option value="1">Tier 1: Master Folders</option>
+                  <option value="2">Tier 2: Sub-Folders</option>
+                  <option value="3">Tier 3: Transaction Accounts</option>
+                </select>
+              </div>
             </div>
           </div>
 

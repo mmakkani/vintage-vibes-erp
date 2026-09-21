@@ -80,7 +80,11 @@ financeRouter.get('/coa', async (req, res) => {
         const result = await client.query(`
           SELECT 
             c.*,
-            COALESCE(v.current_balance, c.current_balance, 0) as live_balance 
+            COALESCE(v.current_balance, c.current_balance, 0) as live_balance,
+            v.tier_level as tier_level,
+            v.sub_type as sub_type,
+            v.parent_code as parent_code,
+            COALESCE(v.is_active, true) as is_active
           FROM public.chart_of_accounts c 
           LEFT JOIN view_coa_live_balances v ON c.id::text = v.account_id::text OR c.code = v.account_code
           ORDER BY c.code ASC;
@@ -128,7 +132,10 @@ financeRouter.get('/coa', async (req, res) => {
         const detected = r.type || r.type_name || r.classification || typeMapById[Number(r.account_type_id)] || typeMapByDigit[code[0]] || 'ASSET';
         const rawType = String(detected).toUpperCase();
         const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
-        const tierLevel = Number(r.tier_level || r.tierLevel || r.account_level || 1);
+        const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
+        const isSub = code.endsWith('-00') && !isMaster;
+        const computedTier = isMaster ? 1 : (isSub ? 2 : 3);
+        const tierLevel = Number(r.tier_level || r.tierLevel || r.account_level || computedTier);
         const balance = Number(r.live_balance ?? r.current_balance ?? r.currentBalance ?? 0);
         const active = r.is_active !== false && r.isActive !== false && r.is_deleted !== true;
 
