@@ -12,13 +12,14 @@ import {
   HrService,
   SearchService
 } from '../services/index.ts';
+import { supabase } from '../supabaseClient.ts';
 
 /**
- * Universal Data & JSON resolver.
- * Transparently routes `/api/...` calls to Direct Supabase Queries on Vercel SPA deployments,
+ * Universal Data & JSON fallback resolver.
+ * Transparently routes `/api/...` calls to Direct Supabase Queries on offline / Vercel SPA deployments,
  * completely eliminating "Unexpected end of JSON input" and 404/500 errors.
  */
-export async function safeFetchJson<T = any>(
+export async function executeClientFallback<T = any>(
   url: string,
   options?: RequestInit
 ): Promise<T | null> {
@@ -49,7 +50,8 @@ export async function safeFetchJson<T = any>(
         return (await SetupService.getShops()) as any;
       }
       if (url.includes('/parties')) {
-        return (await PartiesService.getParties()) as any;
+        const { data } = await supabase.from('parties').select('*').order('name', { ascending: true });
+        return (data || []) as any;
       }
       if (url.includes('/purchase/gate-passes') || url.includes('/bales')) {
         return (await PurchaseService.getInwardGatePasses()) as any;
@@ -129,7 +131,11 @@ export async function safeFetchJson<T = any>(
         return (await FinanceService.getFinancialReports({ startDate: s, endDate: e, asOfDate: asOf })) as any;
       }
       if (url.includes('/finance/coa') || url.includes('/coa')) {
-        return (await FinanceService.getCoaAccounts()) as any;
+        const { data } = await supabase
+          .from('chart_of_accounts')
+          .select('*')
+          .order('code', { ascending: true });
+        return (data || []) as any;
       }
       if (url.includes('/finance/vouchers') || url.includes('/vouchers')) {
         return (await FinanceService.getVouchers()) as any;
@@ -509,6 +515,145 @@ export function isAllowedApiDestination(rawUrl: string): boolean {
 }
 
 /**
+ * Attach credentials: 'include' and authorization bearer token to API request options.
+ */
+export function attachAuthHeader(url: string, init?: RequestInit): RequestInit {
+  if (!isAllowedApiDestination(url)) {
+    return init || {};
+  }
+  const updatedInit: RequestInit = { ...init };
+  // Automatically include credentials (HttpOnly cookies like vv_session)
+  if (!updatedInit.credentials) {
+    updatedInit.credentials = 'include';
+  }
+  try {
+    let token: string | null = null;
+    const explicitToken = localStorage.getItem('vv_auth_token') || localStorage.getItem('session_token');
+    if (explicitToken && typeof explicitToken === 'string' && explicitToken.trim()) {
+      token = explicitToken.trim();
+    }
+    if (!token) {
+      const stored = localStorage.getItem('vintage_erp_logged_user') || localStorage.getItem('vintage_vibes_auth_user');
+      if (stored) {
+        const u = JSON.parse(stored);
+        token = u?.token || null;
+      }
+    }
+    if (token) {
+      const h = new Headers(updatedInit.headers);
+      if (!h.has('Authorization')) {
+        h.set('Authorization', `Bearer ${token}`);
+      }
+      updatedInit.headers = h;
+    }
+  } catch (_) {}
+  return updatedInit;
+}
+
+/**
+ * Centralized Secure Fetch function.
+ * Automatically injects credentials ('include') and cryptographic Bearer token
+ * for same-origin and approved API endpoints.
+ */
+export async function secureFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+  const effectiveInit = typeof url === 'string' ? attachAuthHeader(url, init) : init;
+  const rawFetch = (typeof window !== 'undefined' && (window as any).__originalFetch) || (typeof window !== 'undefined' ? window.fetch : fetch);
+  return rawFetch.apply(window, [input, effectiveInit]);
+}
+
+/**
+ * Centralized Secure JSON Query utility.
+ * Sends authenticated requests with retry support and direct database query fallback.
+ */
+export async function safeFetchJson<T = any>(
+  url: string,
+  options?: RequestInit,
+  retries: number = 2,
+  delayMs: number = 300
+): Promise<T | null> {
+  const method = options?.method?.toUpperCase() || 'GET';
+
+  // 1. Primary Network Request
+  if (typeof window !== 'undefined') {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const res = await secureFetch(url, options);
+        if (res.ok) {
+          const data = await res.json();
+          return data as T;
+        }
+        if (res.status === 401 || res.status === 403) {
+          console.warn(`[safeFetchJson] Auth required (HTTP ${res.status}) for ${url}`);
+          break;
+        }
+        if (attempt < retries && (res.status === 404 || res.status >= 500)) {
+          await new Promise(resolve => setTimeout(resolve, delayMs * (attempt + 1)));
+          continue;
+        }
+        break;
+      } catch (err: any) {
+        if (attempt < retries) {
+          await new Promise(resolve => setTimeout(resolve, delayMs * (attempt + 1)));
+          continue;
+        }
+      }
+    }
+  }
+
+  // 2. Client-side fallback if server is unreachable
+  try {
+    return await executeClientFallback<T>(url, options);
+  } catch (fbErr: any) {
+    console.warn(`[safeFetchJson Fallback Notice for ${url}]:`, fbErr?.message);
+    return null;
+  }
+}
+
+/**
+ * Centralized Secure Mutation utility for POST, PUT, PATCH, and DELETE requests.
+ * Ensures credentials: 'include' and authorization bearer token are attached.
+ */
+export async function safeFetchMutation<T = any>(
+  url: string,
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE' = 'POST',
+  body?: any,
+  options?: RequestInit
+): Promise<T> {
+  const init: RequestInit = {
+    ...options,
+    method
+  };
+
+  const headers = new Headers(init.headers || {});
+  if (body !== undefined && body !== null) {
+    if (!(body instanceof FormData) && !(body instanceof Blob) && typeof body !== 'string') {
+      if (!headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
+      }
+      init.body = JSON.stringify(body);
+    } else {
+      init.body = body;
+    }
+  }
+  init.headers = headers;
+
+  const res = await secureFetch(url, init);
+  const resData = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const errMsg = resData?.error || resData?.message || resData?.detail || `Request failed with HTTP ${res.status}`;
+    const err: any = new Error(errMsg);
+    err.status = res.status;
+    err.data = resData;
+    throw err;
+  }
+  return resData as T;
+}
+
+/**
  * Global Fetch Interceptor.
  * Installs transparently on window.fetch to route all `/api/...` calls directly to Supabase services.
  */
@@ -517,39 +662,6 @@ export function initUniversalFetchInterceptor() {
   (window as any).__vv_fetch_interceptor_installed = true;
 
   const rawFetch = window.fetch;
-
-  function attachAuthHeader(url: string, init?: RequestInit): RequestInit | undefined {
-    if (!isAllowedApiDestination(url)) {
-      return init;
-    }
-    const updatedInit: RequestInit = { ...init };
-    // Automatically include credentials (cookies) for approved same-origin/organization APIs
-    if (!updatedInit.credentials) {
-      updatedInit.credentials = 'include';
-    }
-    try {
-      let token: string | null = null;
-      const explicitToken = localStorage.getItem('vv_auth_token') || localStorage.getItem('session_token');
-      if (explicitToken && typeof explicitToken === 'string' && explicitToken.trim()) {
-        token = explicitToken.trim();
-      }
-      if (!token) {
-        const stored = localStorage.getItem('vintage_erp_logged_user') || localStorage.getItem('vintage_vibes_auth_user');
-        if (stored) {
-          const u = JSON.parse(stored);
-          token = u?.token || null;
-        }
-      }
-      if (token) {
-        const h = new Headers(updatedInit.headers);
-        if (!h.has('Authorization')) {
-          h.set('Authorization', `Bearer ${token}`);
-        }
-        updatedInit.headers = h;
-      }
-    } catch (_) {}
-    return updatedInit;
-  }
 
   const authenticatedFetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
@@ -575,7 +687,7 @@ export function initUniversalFetchInterceptor() {
 
       // 2. Client-side fallback if server is unreachable
       try {
-        const data = await safeFetchJson(url, effectiveInit);
+        const data = await executeClientFallback(url, effectiveInit);
         if (data !== null && data !== undefined) {
           const isErr = data && (data.success === false || data.error);
           return new Response(JSON.stringify(data), {

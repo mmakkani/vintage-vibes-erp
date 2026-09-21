@@ -1,17 +1,15 @@
 import { supabase } from '../supabaseClient.ts';
 import { Party, PartyKhataLog } from '../modules/parties/parties.types.ts';
 import { FinanceService } from './financeService.ts';
+import { safeFetchJson, safeFetchMutation } from '../utils/fetchUtils.ts';
 
 export class PartiesService {
   public static async getParties(): Promise<Party[]> {
     // 1. Primary & direct route: query server endpoint which connects directly to PostgreSQL
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
-        const apiRes = await rawFetch('/api/parties?_t=' + Date.now());
-        if (apiRes && apiRes.ok) {
-          const list = await apiRes.json();
-          if (Array.isArray(list)) {
+        const list = await safeFetchJson<any[]>('/api/parties?_t=' + Date.now(), { credentials: 'include' });
+        if (Array.isArray(list)) {
             const normalized = list.map((r: any) => ({
               id: r.id,
               code: r.code || `P-${r.id}`,
@@ -52,7 +50,6 @@ export class PartiesService {
             } catch {}
             return normalized;
           }
-        }
       } catch (_) {}
     }
 
@@ -226,17 +223,13 @@ export class PartiesService {
     if (!id || id === 'undefined' || id === 'null') return null;
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
-        const res = await rawFetch(`/api/parties/${encodeURIComponent(id)}`);
-        if (res.ok) {
-          const p = await res.json();
-          if (Array.isArray(p)) {
-            const found = p.find((x: any) => x.id === id || String(x.party_id) === String(id));
-            return found || null;
-          }
-          if (p && (p.id || p.party_id || p.name)) {
-            return p;
-          }
+        const p = await safeFetchJson<any>(`/api/parties/${encodeURIComponent(id)}`, { credentials: 'include' });
+        if (Array.isArray(p)) {
+          const found = p.find((x: any) => x.id === id || String(x.party_id) === String(id));
+          return found || null;
+        }
+        if (p && (p.id || p.party_id || p.name)) {
+          return p;
         }
       } catch (_) {}
     }
@@ -285,14 +278,8 @@ export class PartiesService {
     // 1. Primary route: Express PostgreSQL backend
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
-        const apiRes = await rawFetch('/api/parties', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(normalizedInput)
-        });
-        if (apiRes.ok) {
-          const resJson = await apiRes.json();
+        const resJson = await safeFetchMutation<any>('/api/parties', 'POST', normalizedInput);
+        if (resJson) {
           const created = resJson.party || resJson;
           FinanceService.clearCoaCache();
           try {
@@ -393,16 +380,9 @@ export class PartiesService {
     // 1. Primary route: Express PostgreSQL backend
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
-        const apiRes = await rawFetch(`/api/parties/${id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updates)
-        });
-        if (apiRes.ok) {
-          const resJson = await apiRes.json();
-          const p = resJson.party || (Array.isArray(resJson) ? resJson[0] : resJson);
-          if (p && (p.name || p.id || p.company_name)) {
+        const resJson = await safeFetchMutation<any>(`/api/parties/${id}`, 'PUT', updates);
+        const p = resJson?.party || (Array.isArray(resJson) ? resJson[0] : resJson);
+        if (p && (p.name || p.id || p.company_name)) {
             return {
               id: p.id || id,
               code: p.code || 'P-SAVED',
@@ -431,10 +411,6 @@ export class PartiesService {
               createdAt: p.createdAt || p.created_at || new Date().toISOString()
             };
           }
-        } else {
-          const errData = await apiRes.json().catch(() => ({}));
-          if (errData.error) throw new Error(errData.error);
-        }
       } catch (err: any) {
         if (err.message && !err.message.includes('fetch')) throw err;
       }
@@ -581,16 +557,12 @@ export class PartiesService {
     // 1. Primary route: Express PostgreSQL backend (invoking atomic delete_party_and_coa)
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
-        const apiRes = await rawFetch(`/api/parties/${encodeURIComponent(id)}`, {
-          method: 'DELETE'
-        });
-        const resData = await apiRes.json().catch(() => ({}));
-        if (apiRes.ok && resData.success !== false) {
+        const resData = await safeFetchMutation<any>(`/api/parties/${encodeURIComponent(id)}`, 'DELETE');
+        if (resData && resData.success !== false) {
           apiSuccess = true;
           resultData = resData;
         } else {
-          const errMsg = resData.error || resData.detail || resData.messageUrdu || `Server returned HTTP ${apiRes.status}`;
+          const errMsg = resData?.error || resData?.detail || resData?.messageUrdu || 'Failed to delete party';
           throw new Error(errMsg);
         }
       } catch (err: any) {
@@ -629,13 +601,9 @@ export class PartiesService {
     // 1. Primary route: Express PostgreSQL backend
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
-        const apiRes = await rawFetch(`/api/parties/${partyId}/khata`);
-        if (apiRes.ok) {
-          const logs = await apiRes.json();
-          if (Array.isArray(logs)) {
-            return logs;
-          }
+        const logs = await safeFetchJson<any[]>(`/api/parties/${partyId}/khata`, { credentials: 'include' });
+        if (Array.isArray(logs)) {
+          return logs;
         }
       } catch (_) {}
     }
@@ -700,23 +668,16 @@ export class PartiesService {
     // 1. Primary route: Express PostgreSQL backend
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
-        const apiRes = await rawFetch(`/api/parties/${log.partyId}/khata`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            amount: Number(log.debit || 0) > 0 ? log.debit : log.credit,
-            type: Number(log.debit || 0) > 0 ? 'PAYMENT' : 'RECEIPT',
-            docRef: log.reference,
-            description: log.notes,
-            date: log.date
-          })
-        });
-        if (apiRes.ok) {
-          const resJson = await apiRes.json();
-          if (resJson.khataLog) {
-            return resJson.khataLog;
-          }
+        const payload = {
+          amount: Number(log.debit || 0) > 0 ? log.debit : log.credit,
+          type: Number(log.debit || 0) > 0 ? 'PAYMENT' : 'RECEIPT',
+          docRef: log.reference,
+          description: log.notes,
+          date: log.date
+        };
+        const resJson = await safeFetchMutation<any>(`/api/parties/${log.partyId}/khata`, 'POST', payload);
+        if (resJson?.khataLog) {
+          return resJson.khataLog;
         }
       } catch (err: any) {
         if (err.message && !err.message.includes('fetch')) throw err;

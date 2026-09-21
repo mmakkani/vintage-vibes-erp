@@ -1,5 +1,6 @@
 import { supabase } from '../supabaseClient.ts';
 import { COAAccount, Voucher, LedgerEntry } from '../modules/finance/finance.types.ts';
+import { safeFetchJson, safeFetchMutation } from '../utils/fetchUtils.ts';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isValidUuid = (val: any): boolean => typeof val === 'string' && UUID_REGEX.test(val.trim());
@@ -42,10 +43,8 @@ export class FinanceService {
         // 1. Primary route: Query Express backend connected directly to PostgreSQL accounts table
         if (typeof window !== 'undefined') {
           try {
-            const rawFetch = (window as any).__originalFetch || window.fetch;
-            const apiRes = await rawFetch('/api/finance/coa?_t=' + Date.now());
-            if (apiRes && apiRes.ok) {
-              const apiData = await apiRes.json();
+            const apiData = await safeFetchJson<any>('/api/finance/coa?_t=' + Date.now(), { credentials: 'include' });
+            if (apiData) {
               const list = Array.isArray(apiData) ? apiData : (apiData?.accounts || apiData?.coa || apiData?.data || []);
               if (Array.isArray(list) && list.length > 0) {
                 const normalized = list.map((r: any) => {
@@ -201,18 +200,10 @@ export class FinanceService {
     // 1. Try Express backend POST /api/finance/coa
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
-        const res = await rawFetch('/api/finance/coa', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(acc)
-        });
-        if (res && res.ok) {
-          const created = await res.json();
-          if (created && (created.id || created.code)) {
-            this.clearCoaCache();
-            return created;
-          }
+        const created = await safeFetchMutation<any>('/api/finance/coa', 'POST', acc);
+        if (created && (created.id || created.code)) {
+          this.clearCoaCache();
+          return created;
         }
       } catch (err) {
         console.warn('[FinanceService] POST /api/finance/coa failed, trying Supabase directly:', err);
@@ -362,17 +353,10 @@ export class FinanceService {
     // 2. Express Backend API
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
-        const res = await rawFetch(`/api/finance/coa/${encodeURIComponent(id)}`, {
-          method: 'DELETE'
-        });
-        const resJson = await res.json().catch(() => ({}));
-        if (res.ok && resJson.success !== false) {
+        const resJson = await safeFetchMutation<any>(`/api/finance/coa/${encodeURIComponent(id)}`, 'DELETE');
+        if (resJson && resJson.success !== false) {
           apiSuccess = true;
           resultData = resJson;
-        } else {
-          const errMsg = resJson.error || resJson.detail || `Server returned HTTP ${res.status}`;
-          throw new Error(errMsg);
         }
       } catch (err: any) {
         if (err.message && !err.message.includes('fetch') && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
@@ -402,14 +386,8 @@ export class FinanceService {
     // 1. Express Backend API
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
-        const res = await rawFetch(`/api/finance/coa/${encodeURIComponent(id)}/toggle-active`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ is_active: isActive })
-        });
-        if (res && res.ok) {
-          const data = await res.json().catch(() => ({}));
+        const data = await safeFetchMutation<any>(`/api/finance/coa/${encodeURIComponent(id)}/toggle-active`, 'PATCH', { is_active: isActive });
+        if (data) {
           this.clearCoaCache();
           return data;
         }
@@ -1088,22 +1066,18 @@ export class FinanceService {
   }> {
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
         const q = new URLSearchParams();
         if (startDate) q.append('startDate', startDate);
         if (endDate) q.append('endDate', endDate);
-        const res = await rawFetch(`/api/finance/reports/trial-balance${q.toString() ? '?' + q.toString() : ''}`);
-        if (res && res.ok) {
-          const data = await res.json();
-          if (data && (Array.isArray(data.rows) || data.totalDebit !== undefined)) {
-            return {
-              rows: data.rows || [],
-              totalDebit: Number(data.totalDebit || 0),
-              totalCredit: Number(data.totalCredit || 0),
-              isBalanced: Boolean(data.isBalanced),
-              difference: Number(data.difference || 0)
-            };
-          }
+        const data = await safeFetchJson<any>(`/api/finance/reports/trial-balance${q.toString() ? '?' + q.toString() : ''}`, { credentials: 'include' });
+        if (data && (Array.isArray(data.rows) || data.totalDebit !== undefined)) {
+          return {
+            rows: data.rows || [],
+            totalDebit: Number(data.totalDebit || 0),
+            totalCredit: Number(data.totalCredit || 0),
+            isBalanced: Boolean(data.isBalanced),
+            difference: Number(data.difference || 0)
+          };
         }
       } catch (_) {}
     }
@@ -1140,14 +1114,11 @@ export class FinanceService {
   }> {
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
         const q = new URLSearchParams();
         if (startDate) q.append('startDate', startDate);
         if (endDate) q.append('endDate', endDate);
-        const res = await rawFetch(`/api/finance/reports/income-statement${q.toString() ? '?' + q.toString() : ''}`);
-        if (res && res.ok) {
-          const data = await res.json();
-          if (data && (data.revenue || data.netProfit !== undefined)) {
+        const data = await safeFetchJson<any>(`/api/finance/reports/income-statement${q.toString() ? '?' + q.toString() : ''}`, { credentials: 'include' });
+        if (data && (data.revenue || data.netProfit !== undefined)) {
             return {
               revenue: {
                 accounts: data.revenue?.accounts || [],
@@ -1171,7 +1142,6 @@ export class FinanceService {
               netOperatingProfit: Number(data.netOperatingProfit || data.netProfit || 0)
             };
           }
-        }
       } catch (_) {}
     }
 
@@ -1233,15 +1203,12 @@ export class FinanceService {
   }> {
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
         const q = asOfDate ? `?asOfDate=${encodeURIComponent(asOfDate)}` : '';
-        const res = await rawFetch(`/api/finance/reports/balance-sheet${q}`);
-        if (res && res.ok) {
-          const data = await res.json();
-          if (data && (data.assets || data.totalAssets !== undefined)) {
-            return {
-              assets: {
-                accounts: data.assets?.accounts || [],
+        const data = await safeFetchJson<any>(`/api/finance/reports/balance-sheet${q}`, { credentials: 'include' });
+        if (data && (data.assets || data.totalAssets !== undefined)) {
+          return {
+            assets: {
+              accounts: data.assets?.accounts || [],
                 total: Number(data.assets?.total || 0),
                 categories: data.assets?.categories || {}
               },
@@ -1264,7 +1231,6 @@ export class FinanceService {
               difference: Number(data.difference || 0)
             };
           }
-        }
       } catch (_) {}
     }
 
@@ -1319,17 +1285,13 @@ export class FinanceService {
   public static async getFinancialReports(params?: { startDate?: string; endDate?: string; asOfDate?: string }): Promise<any> {
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
         const q = new URLSearchParams();
         if (params?.startDate) q.append('startDate', params.startDate);
         if (params?.endDate) q.append('endDate', params.endDate);
         if (params?.asOfDate) q.append('asOfDate', params.asOfDate);
-        const res = await rawFetch(`/api/finance/reports${q.toString() ? '?' + q.toString() : ''}`);
-        if (res && res.ok) {
-          const data = await res.json();
-          if (data && (data.balanceSheet || data.trialBalance || data.incomeStatement)) {
-            return data;
-          }
+        const data = await safeFetchJson<any>(`/api/finance/reports${q.toString() ? '?' + q.toString() : ''}`, { credentials: 'include' });
+        if (data && (data.balanceSheet || data.trialBalance || data.incomeStatement)) {
+          return data;
         }
       } catch (_) {}
     }
@@ -1356,16 +1318,14 @@ export class FinanceService {
   }): Promise<{ entries: LedgerEntry[]; totalDebit: number; totalCredit: number }> {
     if (typeof window !== 'undefined') {
       try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
         const q = new URLSearchParams();
         if (filters?.accountId) q.append('accountId', filters.accountId);
         if (filters?.partyId) q.append('partyId', filters.partyId);
         if (filters?.startDate) q.append('startDate', filters.startDate);
         if (filters?.endDate) q.append('endDate', filters.endDate);
         if (filters?.search) q.append('search', filters.search);
-        const res = await rawFetch(`/api/finance/ledgers${q.toString() ? '?' + q.toString() : ''}`);
-        if (res && res.ok) {
-          const data = await res.json();
+        const data = await safeFetchJson<any>(`/api/finance/ledgers${q.toString() ? '?' + q.toString() : ''}`, { credentials: 'include' });
+        if (data) {
           const list: any[] = Array.isArray(data) ? data : (Array.isArray(data?.entries) ? data.entries : []);
           const entries: LedgerEntry[] = list.map((r: any) => ({
             id: r.id,

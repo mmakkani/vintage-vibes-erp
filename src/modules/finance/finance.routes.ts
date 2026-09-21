@@ -5,7 +5,7 @@ import { FinanceController } from './finance.controller.ts';
 import { FinanceService } from '../../services/financeService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { withDb, sanitizeDbUrl, DEFAULT_DB_URL } from '../../db/pgPool.ts';
-import { verifyAuthToken, checkModulePermission } from '../../server/authValidator.ts';
+import { verifyAuthToken, checkModulePermission, extractAuthToken } from '../../server/authValidator.ts';
 
 export const financeRouter = Router();
 
@@ -53,8 +53,8 @@ async function ensureFiveRootAccounts(client: Client): Promise<void> {
 
 financeRouter.get('/coa', async (req, res) => {
   const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}`;
-  const authHeader = (req.headers.authorization as string) || (req.headers['authorization'] as string) || '';
-  const authResult = await verifyAuthToken(authHeader);
+  const token = extractAuthToken(req);
+  const authResult = await verifyAuthToken(token);
 
   if (!authResult.valid || !authResult.user) {
     return res.status(401).json({
