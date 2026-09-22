@@ -1062,8 +1062,110 @@ setupRouter.post('/gemini-key/test', async (req, res) => {
   }
 });
 
-// Top-level Dashboard KPIs
-setupRouter.get('/dashboard-kpis', (req, res) => {
+// Top-level Dashboard KPIs (Live Database Aggregations)
+setupRouter.get('/dashboard-kpis', async (req, res) => {
+  try {
+    const kpis = await withDb(async (client) => {
+      // 1. Payables Khata: Sum current_balance from chart_of_accounts where parent_code is 2110-00 or 2120-00
+      const payablesRes = await client.query(`
+        SELECT COALESCE(SUM(ABS(COALESCE(current_balance, 0))), 0) AS total_payables
+        FROM chart_of_accounts
+        WHERE parent_code IN ('2110-00', '2120-00')
+           OR code LIKE '2110-%'
+           OR code LIKE '2120-%';
+      `);
+      const payablesKhata = Number(payablesRes.rows[0]?.total_payables || 0);
+
+      // 2. Receivables Khata: Sum current_balance from chart_of_accounts where parent_code is 1130-00
+      const receivablesRes = await client.query(`
+        SELECT COALESCE(SUM(ABS(COALESCE(current_balance, 0))), 0) AS total_receivables
+        FROM chart_of_accounts
+        WHERE parent_code = '1130-00'
+           OR code LIKE '1130-%';
+      `);
+      const receivablesKhata = Number(receivablesRes.rows[0]?.total_receivables || 0);
+
+      // 3. Inventory Value: Landed costs from inward_gate_passes (unopened) + inventory_pieces (sorted)
+      const balesRes = await client.query(`
+        SELECT 
+          COUNT(*) as total_bales,
+          COALESCE(SUM(COALESCE(total_bale_cost, cost_price, 0)), 0) AS total_bale_value
+        FROM inward_gate_passes
+        WHERE status != 'FULLY_SORTED' OR status IS NULL;
+      `);
+      const unopenedBalesValue = Number(balesRes.rows[0]?.total_bale_value || 0);
+      const totalBalesInStock = Number(balesRes.rows[0]?.total_bales || 0);
+
+      const piecesRes = await client.query(`
+        SELECT 
+          COUNT(*) as total_pieces,
+          COALESCE(SUM(COALESCE(cost_price, estimated_price, selling_price, 0)), 0) AS total_piece_value
+        FROM inventory_pieces
+        WHERE is_sold = false OR is_sold IS NULL;
+      `);
+      const sortedPiecesValue = Number(piecesRes.rows[0]?.total_piece_value || 0);
+      const totalSortedPcs = Number(piecesRes.rows[0]?.total_pieces || 0);
+
+      const totalInventoryValue = unopenedBalesValue + sortedPiecesValue;
+
+      // 4. Month Revenue: Sum credits from journal_entries linked to 4000-00 revenue accounts for current month
+      const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+      const endOfMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().slice(0, 10);
+
+      const revenueRes = await client.query(`
+        SELECT COALESCE(SUM(COALESCE(credit, credit_amount, 0)), 0) AS month_revenue
+        FROM journal_entries
+        WHERE (date >= $1 AND date <= $2)
+          AND (account_code LIKE '4%' OR account_code = '4000-00');
+      `, [startOfMonth, endOfMonth]);
+      let monthRevenue = Number(revenueRes.rows[0]?.month_revenue || 0);
+
+      if (monthRevenue === 0) {
+        const salesRes = await client.query(`
+          SELECT COALESCE(SUM(COALESCE(grand_total, total_amount, 0)), 0) AS sales_revenue
+          FROM sales_invoices
+          WHERE invoice_date >= $1 AND invoice_date <= $2;
+        `, [startOfMonth, endOfMonth]);
+        monthRevenue = Number(salesRes.rows[0]?.sales_revenue || 0);
+      }
+
+      const pendingVouchersRes = await client.query(`
+        SELECT COUNT(*) as cnt FROM financial_vouchers WHERE status = 'DRAFT';
+      `);
+      const unpostedVouchersCount = Number(pendingVouchersRes.rows[0]?.cnt || 0);
+
+      const pendingPassesRes = await client.query(`
+        SELECT COUNT(*) as cnt FROM inward_gate_passes WHERE status = 'DRAFT' OR status = 'UNOPENED';
+      `);
+      const awaitingGatePassesCount = Number(pendingPassesRes.rows[0]?.cnt || 0);
+
+      return {
+        totalInventoryValue,
+        totalInventoryCount: totalSortedPcs,
+        totalBalesInStock,
+        totalSortedPcs,
+        monthRevenue,
+        currentMonthRevenue: monthRevenue,
+        currentMonthSubtotal: monthRevenue,
+        currentMonthVat: 0,
+        openReceivables: receivablesKhata,
+        receivablesKhataAED: receivablesKhata,
+        payablesKhataAED: payablesKhata,
+        totalPurchasesAmount: payablesKhata,
+        netWorkingCapitalAED: totalInventoryValue + receivablesKhata - payablesKhata,
+        unpostedVouchersCount,
+        awaitingGatePassesCount,
+        pendingActionTotal: unpostedVouchersCount + awaitingGatePassesCount,
+        activeStaffCount: 1
+      };
+    });
+
+    if (kpis) {
+      return res.json(kpis);
+    }
+  } catch (err: any) {
+    console.warn('[dashboard-kpis] withDb query notice:', err?.message);
+  }
   return res.json(SetupController.getDashboardKPIs());
 });
 

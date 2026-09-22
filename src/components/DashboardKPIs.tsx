@@ -17,6 +17,7 @@ import {
 import { ActiveTab } from './Navigation.tsx';
 import { safeFetchJson } from '../utils/fetchUtils.ts';
 import { GoldenPulseWave } from './GoldenPulseWave.tsx';
+import { DashboardService } from '../services/dashboardService.ts';
 
 interface DashboardKPIsProps {
   activeTab: ActiveTab;
@@ -92,21 +93,49 @@ export const DashboardKPIs: React.FC<DashboardKPIsProps> = ({
     }
     try {
       setLoading(true);
-      const [kpiData, currencies] = await Promise.all([
+      const [kpiData, currencies, liveMetrics] = await Promise.all([
         safeFetchJson<KPIData>('/api/setup/dashboard-kpis', undefined, 3, 300),
-        safeFetchJson<any[]>('/api/setup/currency', undefined, 3, 300)
+        safeFetchJson<any[]>('/api/setup/currency', undefined, 3, 300),
+        DashboardService.getLiveKPIs().catch(() => null)
       ]);
-      if (kpiData) {
-        cachedKpiData = kpiData;
-        lastKpiFetchTime = Date.now();
-        setKpis(kpiData);
-      }
+
+      const base = (kpiData && (kpiData.totalInventoryValue > 0 || kpiData.openReceivables > 0)) ? kpiData : (liveMetrics || kpiData || {});
+      const merged: KPIData = {
+        totalInventoryValue: Number(base.totalInventoryValue ?? base.totalInventoryValueAED ?? liveMetrics?.totalInventoryValueAED ?? 0),
+        totalInventoryCount: Number(base.totalInventoryCount ?? base.totalSortedPcs ?? liveMetrics?.totalSortedPcs ?? 0),
+        pendingSalesCount: Number(base.pendingSalesCount ?? 0),
+        pendingSalesAmount: Number(base.pendingSalesAmount ?? 0),
+        currentMonthRevenue: Number(base.currentMonthRevenue ?? base.monthRevenueAED ?? liveMetrics?.monthRevenueAED ?? 0),
+        currentMonthSubtotal: Number(base.currentMonthSubtotal ?? base.monthRevenueAED ?? liveMetrics?.monthRevenueAED ?? 0),
+        currentMonthVat: Number(base.currentMonthVat ?? 0),
+        totalSalesCount: Number(base.totalSalesCount ?? 0),
+        totalPurchasesAmount: Number(base.totalPurchasesAmount ?? base.payablesKhataAED ?? liveMetrics?.payablesKhataAED ?? 0),
+        totalPurchasesCount: Number(base.totalPurchasesCount ?? 0),
+        openReceivables: Number(base.openReceivables ?? base.receivablesKhataAED ?? liveMetrics?.receivablesKhataAED ?? 0),
+        activeStaffCount: Number(base.activeStaffCount ?? 1),
+        unpostedVouchersCount: Number(base.unpostedVouchersCount ?? liveMetrics?.unpostedVouchersCount ?? 0),
+        awaitingGatePassesCount: Number(base.awaitingGatePassesCount ?? liveMetrics?.awaitingGatePassesCount ?? 0),
+        awaitingInwardGatePasses: Number(base.awaitingInwardGatePasses ?? 0),
+        awaitingSalesGatePasses: Number(base.awaitingSalesGatePasses ?? 0),
+        draftSalesInvoicesCount: Number(base.draftSalesInvoicesCount ?? 0),
+        unpostedPurchaseInvoicesCount: Number(base.unpostedPurchaseInvoicesCount ?? 0),
+        expiredLiveClaimsCount: Number(base.expiredLiveClaimsCount ?? 0),
+        pendingActionTotal: Number(base.pendingActionTotal ?? ((base.unpostedVouchersCount || 0) + (base.awaitingGatePassesCount || 0)))
+      };
+
+      cachedKpiData = merged;
+      lastKpiFetchTime = Date.now();
+      setKpis(merged);
+
       if (Array.isArray(currencies)) {
         const usd = currencies.find((c: any) => c.code === 'USD');
-        if (usd && usd.exchangeRate) {
-          const rate = Number(usd.exchangeRate);
-          cachedUsdRate = rate;
-          setUsdRate(rate);
+        if (usd && (usd.exchangeRate || usd.rate)) {
+          const rate = Number(usd.exchangeRate ?? usd.rate);
+          if (rate > 0 && !isNaN(rate)) {
+            const effUsdRate = rate < 1 ? rate : 1 / rate;
+            cachedUsdRate = effUsdRate;
+            setUsdRate(effUsdRate);
+          }
         }
       }
     } catch {
@@ -120,12 +149,15 @@ export const DashboardKPIs: React.FC<DashboardKPIsProps> = ({
     fetchKPIs();
   }, []);
 
-  const formatMoney = (valAED: number) => {
+  const formatMoney = (valAED: any) => {
+    const num = typeof valAED === 'number' && !isNaN(valAED) ? valAED : Number(valAED) || 0;
     if (currencyMode === 'USD') {
-      const valUSD = valAED * usdRate;
-      return `$ ${valUSD.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+      const effectiveRate = Number(usdRate) > 0 ? (usdRate < 1 ? usdRate : 1 / usdRate) : 0.2723;
+      const valUSD = num * effectiveRate;
+      const safeUSD = typeof valUSD === 'number' && !isNaN(valUSD) ? valUSD : 0;
+      return `$ ${safeUSD.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
     }
-    return `AED ${valAED.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+    return `AED ${num.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
   return (
@@ -171,7 +203,7 @@ export const DashboardKPIs: React.FC<DashboardKPIsProps> = ({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                USD ($ @ {usdRate.toFixed(3)})
+                USD ($ @ {(Number(usdRate) || 0.2723).toFixed(3)})
               </button>
             </div>
 

@@ -30,6 +30,7 @@ import { User } from '../../auth/auth.types.ts';
 import { BaleYieldAnalyticsWidget } from './BaleYieldAnalyticsWidget.tsx';
 import { safeFetchJson } from '../../../utils/fetchUtils.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
+import { DashboardService, getSafeFxRates, DEFAULT_FX_RATES } from '../../../services/dashboardService.ts';
 
 interface MainDashboardViewProps {
   onNavigateTab: (tabId: string) => void;
@@ -70,7 +71,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
     receivablesKhataAED: 0,
     payablesKhataAED: 0,
     netWorkingCapitalAED: 0,
-    currencyRates: [] as { code: string; rate: number; symbol: string }[],
+    currencyRates: DEFAULT_FX_RATES,
     recentGatePasses: [] as any[],
     clientKhatas: [] as any[]
   });
@@ -91,7 +92,8 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
         return;
       }
       try {
-        const [purchaseInvoicesRes, gatePassesRes, salesRes, partiesRes, financeRes, currRes, itemsRes, companyRes, grailsRes] = await Promise.all([
+        const [liveKpis, purchaseInvoicesRes, gatePassesRes, salesRes, partiesRes, financeRes, currRes, itemsRes, companyRes, grailsRes] = await Promise.all([
+          DashboardService.getLiveKPIs().catch(() => null),
           safeFetchJson<any[]>('/api/purchase/invoices', undefined, 3, 300),
           safeFetchJson<any[]>('/api/purchase/gate-passes', undefined, 3, 300),
           safeFetchJson<any[]>('/api/sales/invoices', undefined, 3, 300),
@@ -152,10 +154,37 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
           }
         }
 
-        let computedWorkingCapital = computedInventoryValue + computedReceivables - computedPayables;
-        if (computedInventoryValue === 0 && computedReceivables === 0 && computedPayables === 0) {
-          computedWorkingCapital = 0;
+        // Merge with live database KPIs from chart_of_accounts, inward_gate_passes, inventory_pieces, journal_entries
+        const finalInventoryValue = (liveKpis && liveKpis.totalInventoryValueAED > 0)
+          ? liveKpis.totalInventoryValueAED
+          : (computedInventoryValue > 0 ? computedInventoryValue : (liveKpis?.totalInventoryValueAED || 0));
+
+        const finalBalesCount = (liveKpis && liveKpis.totalBalesInStock > 0)
+          ? liveKpis.totalBalesInStock
+          : (computedBalesCount > 0 ? computedBalesCount : (liveKpis?.totalBalesInStock || 0));
+
+        const finalSortedPcs = (liveKpis && liveKpis.totalSortedPcs > 0)
+          ? liveKpis.totalSortedPcs
+          : (computedSortedPcs > 0 ? computedSortedPcs : (liveKpis?.totalSortedPcs || 0));
+
+        const finalRevenue = (liveKpis && liveKpis.monthRevenueAED > 0)
+          ? liveKpis.monthRevenueAED
+          : (computedRevenue > 0 ? computedRevenue : (liveKpis?.monthRevenueAED || 0));
+
+        const finalReceivables = (liveKpis && liveKpis.receivablesKhataAED > 0)
+          ? liveKpis.receivablesKhataAED
+          : (computedReceivables > 0 ? computedReceivables : (liveKpis?.receivablesKhataAED || 0));
+
+        const finalPayables = (liveKpis && liveKpis.payablesKhataAED > 0)
+          ? liveKpis.payablesKhataAED
+          : (computedPayables > 0 ? computedPayables : (liveKpis?.payablesKhataAED || 0));
+
+        let finalWorkingCapital = finalInventoryValue + finalReceivables - finalPayables;
+        if (finalInventoryValue === 0 && finalReceivables === 0 && finalPayables === 0) {
+          finalWorkingCapital = 0;
         }
+
+        const safeRates = getSafeFxRates(currRes);
 
         const recentGatePassesArr = Array.isArray(gatePassesRes) && gatePassesRes.length > 0
           ? gatePassesRes.slice(0, 5).map((gp: any, idx: number) => ({
@@ -169,14 +198,14 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
           : [];
 
         const newKpi = {
-          totalInventoryValueAED: computedInventoryValue,
-          totalBalesInStock: computedBalesCount,
-          totalSortedPcs: computedSortedPcs,
-          monthRevenueAED: computedRevenue,
-          receivablesKhataAED: computedReceivables,
-          payablesKhataAED: computedPayables,
-          netWorkingCapitalAED: computedWorkingCapital,
-          currencyRates: Array.isArray(currRes) ? currRes.filter((c: any) => !c.isBase) : [],
+          totalInventoryValueAED: finalInventoryValue,
+          totalBalesInStock: finalBalesCount,
+          totalSortedPcs: finalSortedPcs,
+          monthRevenueAED: finalRevenue,
+          receivablesKhataAED: finalReceivables,
+          payablesKhataAED: finalPayables,
+          netWorkingCapitalAED: finalWorkingCapital,
+          currencyRates: safeRates,
           recentGatePasses: recentGatePassesArr,
           clientKhatas: clientKhatasArr
         };
@@ -606,11 +635,11 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
         </div>
 
         <div className="flex items-center gap-4 overflow-x-auto flex-wrap font-mono text-xs">
-          {kpiData.currencyRates.map(c => (
+          {getSafeFxRates(kpiData.currencyRates).map(c => (
             <div key={c.code} className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-amber-200 shadow-2xs">
               <span className="font-bold text-slate-700">{c.code}:</span>
-              <span className="font-black text-amber-900">{c.rate} {c.symbol}</span>
-              <span className="text-[10px] text-slate-700">(1 {c.symbol} = {(1 / c.rate).toFixed(2)} AED)</span>
+              <span className="font-black text-amber-900">{Number(c.rate || 0).toFixed(4)} {c.symbol}</span>
+              <span className="text-[10px] text-slate-700">(1 {c.symbol} = {Number(c.aedEquivalent || 0).toFixed(2)} AED)</span>
             </div>
           ))}
         </div>
