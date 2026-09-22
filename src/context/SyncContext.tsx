@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useRef, useCallb
 
 import { PresenceService, OnlineUserPresence } from '../services/presenceService.ts';
 import { supabase } from '../supabaseClient.ts';
+import { queryClient } from '../services/queryClient.ts';
 
 export interface SyncEventPayload {
   type: 'ENTITY_MUTATED' | 'SYNC_TRIGGER' | 'CONNECTED';
@@ -59,6 +60,8 @@ interface SyncContextType {
   ) => void;
   syncToast: { message: string; id: number } | null;
   showSyncToast: (message: string) => void;
+  cleanupChannel?: () => void;
+  queryClient?: typeof queryClient;
 }
 
 const SyncContext = createContext<SyncContextType | null>(null);
@@ -108,6 +111,19 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSyncingRef = useRef(false);
   const lastSyncedAtRef = useRef<number>(Date.now());
+  const hasDisconnectedRef = useRef<boolean>(false);
+  const realtimeChannelRef = useRef<any>(null);
+
+  const cleanupChannel = useCallback(() => {
+    if (realtimeChannelRef.current) {
+      try {
+        console.log('[GlobalRealtimeManager] Cleaning up Realtime channel...');
+        supabase.removeChannel(realtimeChannelRef.current);
+      } catch (_) {}
+      realtimeChannelRef.current = null;
+      setIsLiveConnected(false);
+    }
+  }, []);
 
   const triggerGlobalSync = useCallback(async (targetModule?: string | string[]) => {
     if (isSyncingRef.current) return;
@@ -256,43 +272,107 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       reconnectTimeoutRef.current = null;
     }
 
-    const handleRealtimeChange = (table: string, eventType: string, record: any, oldRecord?: any) => {
-      if (unmounted || !record) return;
 
-      const docRef =
-        record.invoice_no ||
-        record.invoiceNo ||
-        record.voucher_no ||
-        record.voucherNo ||
-        record.pass_no ||
-        record.gate_pass_no ||
-        record.bale_code ||
-        record.id ||
-        '';
-
-      let targetModule = 'finance';
-      let affectedModules: string[] = ['finance'];
-
-      if (table === 'purchase_invoices' || table === 'inward_gate_passes') {
-        targetModule = 'purchase';
-        affectedModules = table === 'inward_gate_passes' ? ['purchase', 'inventory'] : ['purchase', 'finance'];
-      } else if (table === 'financial_vouchers' || table === 'journal_entries' || table === 'vouchers') {
-        targetModule = 'finance';
-        affectedModules = ['finance'];
-      } else if (table === 'orders' || table === 'sales_invoices') {
-        targetModule = 'sales';
-        affectedModules = ['sales'];
-      } else if (table === 'inventory_pieces') {
-        targetModule = 'inventory';
-        affectedModules = ['inventory'];
+    const getTargetAndAffectedModules = (table: string): { targetModule: string; affectedModules: string[] } => {
+      switch (table) {
+        case 'purchase_invoices':
+        case 'purchase_invoice_items':
+          return { targetModule: 'purchase', affectedModules: ['purchase', 'finance', 'inventory'] };
+        case 'inward_gate_passes':
+        case 'bale_sorted_pieces':
+          return { targetModule: 'purchase', affectedModules: ['purchase', 'inventory'] };
+        case 'inventory_pieces':
+          return { targetModule: 'inventory', affectedModules: ['inventory', 'sales', 'purchase'] };
+        case 'financial_vouchers':
+        case 'journal_entries':
+        case 'chart_of_accounts':
+        case 'vouchers':
+          return { targetModule: 'finance', affectedModules: ['finance'] };
+        case 'parties':
+          return { targetModule: 'registry', affectedModules: ['registry', 'parties', 'finance', 'sales', 'purchase'] };
+        case 'audit_logs':
+          return { targetModule: 'audit', affectedModules: ['audit'] };
+        case 'sales_invoices':
+        case 'sales_invoice_items':
+        case 'pos_sales':
+        case 'b2b_sales':
+        case 'live_stream_sales':
+        case 'orders':
+        case 'order_items':
+        case 'sales_gate_passes':
+        case 'parcel_returns':
+        case 'cart_reservations':
+          return { targetModule: 'sales', affectedModules: ['sales', 'inventory', 'finance'] };
+        case 'marketing_claim_logs':
+        case 'marketing_vip_drops':
+          return { targetModule: 'marketing', affectedModules: ['marketing', 'sales'] };
+        case 'device_installations':
+          return { targetModule: 'access', affectedModules: ['access'] };
+        case 'user_presences':
+          return { targetModule: 'presence', affectedModules: ['presence'] };
+        default:
+          return { targetModule: 'finance', affectedModules: ['finance'] };
       }
+    };
+
+    const handleRealtimeChange = (payload: any) => {
+      if (unmounted || !payload) return;
+
+      const table = payload.table;
+      const eventType = payload.eventType; // 'INSERT' | 'UPDATE' | 'DELETE'
+      const newRecord = payload.new;
+      const oldRecord = payload.old;
+
+      const { targetModule, affectedModules } = getTargetAndAffectedModules(table);
+
+      // Smart Cache Injection (DO NOT OVER-FETCH)
+      if (eventType === 'INSERT' || eventType === 'UPDATE') {
+        if (newRecord) {
+          queryClient.injectRecord(table, newRecord);
+          if (newRecord.status) {
+            queryClient.handleStatusChange(table, newRecord);
+          }
+        }
+      } else if (eventType === 'DELETE') {
+        // STRICT REQUIREMENT: MUST use payload.old.id
+        const deletedId = oldRecord?.id || oldRecord?.device_id || oldRecord?.code || oldRecord?.uuid;
+        if (deletedId) {
+          queryClient.removeRecord(table, String(deletedId), oldRecord);
+        }
+      }
+
+      // Invalidate aggregate queries (totals / KPIs) only when relevant data changes
+      if (
+        table.includes('invoice') ||
+        table.includes('voucher') ||
+        table.includes('sales') ||
+        table.includes('order') ||
+        table.includes('inventory')
+      ) {
+        queryClient.invalidateQueries({ queryKey: ['dashboard-kpis'] }).catch(() => {});
+      }
+      if (table === 'device_installations') {
+        queryClient.invalidateQueries({ queryKey: ['device-counts'] }).catch(() => {});
+      }
+
+      const activeRecord = newRecord || oldRecord || {};
+      const docRef =
+        activeRecord.invoice_no ||
+        activeRecord.invoiceNo ||
+        activeRecord.voucher_no ||
+        activeRecord.voucherNo ||
+        activeRecord.pass_no ||
+        activeRecord.gate_pass_no ||
+        activeRecord.bale_code ||
+        activeRecord.id ||
+        '';
 
       const delta: DeltaSyncPayload = {
         module: targetModule,
         entity: table,
         action: eventType,
         documentRef: String(docRef),
-        payload: { [table]: record, record, raw: record },
+        payload: { [table]: activeRecord, record: activeRecord, raw: activeRecord, oldRecord },
         timestamp: Date.now()
       };
 
@@ -306,7 +386,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
             detail: {
               table,
               eventType,
-              record,
+              record: newRecord || oldRecord,
               oldRecord,
               documentRef: String(docRef),
               affectedModules
@@ -320,7 +400,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
               entity: table,
               action: eventType,
               documentRef: String(docRef),
-              deltaPayload: { [table]: record, record, raw: record },
+              deltaPayload: { [table]: activeRecord, record: activeRecord, raw: activeRecord, oldRecord },
               affectedModules
             }
           })
@@ -336,86 +416,43 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       triggerGlobalSync(affectedModules);
     };
 
-    // Initialize Supabase Realtime WebSocket channel for cross-device updates
-    let realtimeChannel: any = null;
+    // Initialize single global Supabase Realtime WebSocket channel subscribing to schema 'public', event '*' ONCE
     try {
-      realtimeChannel = supabase
-        .channel('erp_multi_device_realtime')
-        // Purchase Invoices (INSERT & UPDATE)
+      const channel = supabase
+        .channel('global_supabase_realtime_sync')
         .on(
           'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'purchase_invoices' },
-          (payload: any) => handleRealtimeChange('purchase_invoices', 'INSERT', payload.new)
-        )
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'purchase_invoices' },
-          (payload: any) => handleRealtimeChange('purchase_invoices', 'UPDATE', payload.new, payload.old)
-        )
-        // Financial Vouchers (INSERT & UPDATE)
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'financial_vouchers' },
-          (payload: any) => handleRealtimeChange('financial_vouchers', 'INSERT', payload.new)
-        )
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'financial_vouchers' },
-          (payload: any) => handleRealtimeChange('financial_vouchers', 'UPDATE', payload.new, payload.old)
-        )
-        // Journal Entries (INSERT & UPDATE)
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'journal_entries' },
-          (payload: any) => handleRealtimeChange('journal_entries', 'INSERT', payload.new)
-        )
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'journal_entries' },
-          (payload: any) => handleRealtimeChange('journal_entries', 'UPDATE', payload.new, payload.old)
-        )
-        // Inward Gate Passes (INSERT & UPDATE)
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'inward_gate_passes' },
-          (payload: any) => handleRealtimeChange('inward_gate_passes', 'INSERT', payload.new)
-        )
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'inward_gate_passes' },
-          (payload: any) => handleRealtimeChange('inward_gate_passes', 'UPDATE', payload.new, payload.old)
-        )
-        // Fallback table: vouchers
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'vouchers' },
+          { event: '*', schema: 'public' },
           (payload: any) => {
-            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-              handleRealtimeChange('vouchers', payload.eventType, payload.new, payload.old);
-            } else {
-              triggerGlobalSync('finance');
-            }
+            handleRealtimeChange(payload);
           }
         )
-        // Sales & Inventory
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-          triggerGlobalSync('sales');
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'sales_invoices' }, () => {
-          triggerGlobalSync('sales');
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_pieces' }, () => {
-          triggerGlobalSync('inventory');
-        })
         .subscribe((status: string) => {
+          // Strictly log statuses: SUBSCRIBED, CHANNEL_ERROR, TIMED_OUT, CLOSED
+          console.log(`[GlobalRealtimeManager] Status: ${status}`);
+
           if (status === 'SUBSCRIBED') {
             setIsLiveConnected(true);
-          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            // Reconnect Handling: Automatically trigger a background refetch of active queries to recover missed changes
+            if (hasDisconnectedRef.current) {
+              console.log('[GlobalRealtimeManager] Reconnected to Realtime. Refetching active queries to recover missed changes...');
+              queryClient.refetchQueries().catch(() => {});
+              triggerGlobalSync();
+              if (onGlobalRefresh) {
+                Promise.resolve(onGlobalRefresh()).catch(() => {});
+              }
+              hasDisconnectedRef.current = false;
+            }
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
             setIsLiveConnected(false);
+            hasDisconnectedRef.current = true;
+            console.warn(`[GlobalRealtimeManager] Disconnected (${status}). Automatic background recovery queued for reconnect.`);
           }
         });
+
+      realtimeChannelRef.current = channel;
     } catch (rtErr) {
-      console.warn('[SyncContext] Realtime subscription notice:', rtErr);
+      console.warn('[GlobalRealtimeManager] Realtime subscription notice:', rtErr);
     }
 
     // Inter-tab sync fallback via localStorage storage events
@@ -472,12 +509,18 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
 
+    const handleLogoutEvent = () => {
+      cleanupChannel();
+    };
+    window.addEventListener('vv:sync-logout', handleLogoutEvent);
+
     return () => {
       unmounted = true;
-      if (realtimeChannel) {
+      if (realtimeChannelRef.current) {
         try {
-          supabase.removeChannel(realtimeChannel);
+          supabase.removeChannel(realtimeChannelRef.current);
         } catch (_) {}
+        realtimeChannelRef.current = null;
       }
       if (sseRef.current) {
         try {
@@ -493,10 +536,11 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       clearInterval(presenceInterval);
       window.removeEventListener('storage', handleStorage);
       window.removeEventListener('vv:entity-mutated', handleEntityMutated);
+      window.removeEventListener('vv:sync-logout', handleLogoutEvent);
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [triggerGlobalSync, refreshPresence]);
+  }, [triggerGlobalSync, refreshPresence, cleanupChannel]);
 
   return (
     <SyncContext.Provider
@@ -517,7 +561,9 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         isLocked,
         notifyMutation,
         syncToast,
-        showSyncToast
+        showSyncToast,
+        cleanupChannel,
+        queryClient
       }}
     >
       {children}
@@ -535,6 +581,8 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   );
 };
 
+export const GlobalSyncProvider = SyncProvider;
+
 export const useSync = (moduleKey?: string) => {
   const context = useContext(SyncContext);
   if (!context) {
@@ -551,3 +599,4 @@ export const useSync = (moduleKey?: string) => {
   }
   return context;
 };
+

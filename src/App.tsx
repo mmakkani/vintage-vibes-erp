@@ -292,6 +292,7 @@ export default function App() {
       url.searchParams.delete('tab');
       url.searchParams.delete('view');
       window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
+      window.dispatchEvent(new CustomEvent('vv:sync-logout'));
     } catch {}
     if (typeof timeoutReason === 'string') {
       setSessionTimeoutMsg(timeoutReason);
@@ -518,47 +519,45 @@ export default function App() {
     // Standalone Full-Screen Pop-up POS Register Window
     if (currentView === 'pos-standalone') {
       return (
-        <SyncProvider onGlobalRefresh={refreshGlobalData}>
-          <ErrorBoundary sectionName="Counter Sale Standalone POS Register">
-            <div className="min-h-screen bg-slate-950 text-white flex flex-col p-2 sm:p-4">
-              {/* Minimal Top Cashier Bar */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 mb-2.5 flex items-center justify-between shadow-lg">
-                <div className="flex items-center gap-3">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></span>
-                  <span className="text-xs sm:text-sm font-black tracking-widest text-amber-400 uppercase">
-                    VINTAGE VIBES • FULLSCREEN CASH REGISTER TERMINAL
-                  </span>
-                  <span className="hidden sm:inline-block text-[10px] bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded-full border border-emerald-500/30">
-                    ● POS HARDWARE CONNECTED
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-400 font-mono">
-                    Cashier: <strong className="text-white">{currentUser?.name || 'Counter Lead'}</strong>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => window.close()}
-                    className="px-3 py-1 bg-red-600/90 hover:bg-red-600 text-white rounded text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                  >
-                    ✕ Close Window
-                  </button>
-                </div>
+        <ErrorBoundary sectionName="Counter Sale Standalone POS Register">
+          <div className="min-h-screen bg-slate-950 text-white flex flex-col p-2 sm:p-4">
+            {/* Minimal Top Cashier Bar */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 mb-2.5 flex items-center justify-between shadow-lg">
+              <div className="flex items-center gap-3">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></span>
+                <span className="text-xs sm:text-sm font-black tracking-widest text-amber-400 uppercase">
+                  VINTAGE VIBES • FULLSCREEN CASH REGISTER TERMINAL
+                </span>
+                <span className="hidden sm:inline-block text-[10px] bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded-full border border-emerald-500/30">
+                  ● POS HARDWARE CONNECTED
+                </span>
               </div>
-
-              <div className="flex-1 overflow-auto">
-                <Suspense fallback={<ModuleLoadingFallback name="POS Terminal" />}>
-                  <CounterSalePOSTerminal
-                    companyProfile={companyProfile}
-                    operatorName={currentUser?.name || 'Cashier Lead'}
-                    onRefreshAll={refreshGlobalData}
-                    onSaleCompleted={refreshGlobalData}
-                  />
-                </Suspense>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-400 font-mono">
+                  Cashier: <strong className="text-white">{currentUser?.name || 'Counter Lead'}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => window.close()}
+                  className="px-3 py-1 bg-red-600/90 hover:bg-red-600 text-white rounded text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                >
+                  ✕ Close Window
+                </button>
               </div>
             </div>
-          </ErrorBoundary>
-        </SyncProvider>
+
+            <div className="flex-1 overflow-auto">
+              <Suspense fallback={<ModuleLoadingFallback name="POS Terminal" />}>
+                <CounterSalePOSTerminal
+                  companyProfile={companyProfile}
+                  operatorName={currentUser?.name || 'Cashier Lead'}
+                  onRefreshAll={refreshGlobalData}
+                  onSaleCompleted={refreshGlobalData}
+                />
+              </Suspense>
+            </div>
+          </div>
+        </ErrorBoundary>
       );
     }
 
@@ -632,7 +631,7 @@ export default function App() {
     }
 
     return (
-      <SyncProvider onGlobalRefresh={refreshGlobalData}>
+      <>
         <TabActiveSyncManager activeTab={activeTab} />
         <div className="min-h-screen flex flex-col bg-[#FAF4E6] text-slate-800 font-sans antialiased selection:bg-amber-200 selection:text-amber-950">
         
@@ -891,12 +890,12 @@ export default function App() {
         {/* Subtle Luxury Golden Starlight Cursor Dust Particle Trail */}
         <GoldenCursorDust />
       </div>
-    </SyncProvider>
+    </>
     );
   };
 
   return (
-    <>
+    <SyncProvider onGlobalRefresh={refreshGlobalData}>
       {showSplash && (
         <RoyalSplashScreen
           onFinish={() => setShowSplash(false)}
@@ -905,6 +904,6 @@ export default function App() {
       {renderViewContent()}
       {currentView !== 'live-overlay' && <IOSInstallBanner />}
       <PWAUpdatePrompt />
-    </>
+    </SyncProvider>
   );
 }
