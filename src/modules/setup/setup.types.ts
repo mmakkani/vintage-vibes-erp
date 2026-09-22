@@ -120,6 +120,17 @@ export interface CompanyProfile {
   maintenanceModules?: Record<string, boolean>;
   financialLockDate?: string; // e.g. "2026-08-31" - Locked financial transactions up to this date
   isFinancialLocked?: boolean;
+  pixelTracking?: PixelTrackingConfig;
+  metaPixelId?: string;
+  tiktokPixelId?: string;
+}
+
+export interface PixelTrackingConfig {
+  metaPixelId?: string;
+  tiktokPixelId?: string;
+  enableMetaPixel?: boolean;
+  enableTiktokPixel?: boolean;
+  testEventCode?: string;
 }
 
 export type MaintenanceModuleKey =

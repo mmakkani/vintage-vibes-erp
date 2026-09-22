@@ -37,6 +37,7 @@ import { supabase } from '../../../supabaseClient.ts';
 import { LiveBroadcastDeskTab } from './LiveBroadcastDeskTab.tsx';
 import { AutoPhotoBroadcastTab } from './AutoPhotoBroadcastTab.tsx';
 import { ChatClaimAutomationTab } from './ChatClaimAutomationTab.tsx';
+import { AdCatalogFeedsTab } from './AdCatalogFeedsTab.tsx';
 import { WhatsAppDeviceModal } from './WhatsAppDeviceModal.tsx';
 
 interface MarketingAutomationViewProps {
@@ -51,7 +52,8 @@ export type MarketingSubTab =
   | 'audiences'
   | 'chat-claim'
   | 'auto-broadcast'
-  | 'live-desk';
+  | 'live-desk'
+  | 'ad-catalog-pixels';
 
 export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = ({
   onRefreshAll,
@@ -595,6 +597,19 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
           <Radio className="w-3.5 h-3.5" />
           <span>Live Selling Studio Desk</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('ad-catalog-pixels')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap border ${
+            activeSubTab === 'ad-catalog-pixels'
+              ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-xs font-black ring-2 ring-amber-400/50'
+              : 'bg-white hover:bg-amber-50 text-slate-700 border-slate-200'
+          }`}
+        >
+          <Rss className="w-3.5 h-3.5" />
+          <span>Ad Feeds &amp; Tracking Pixels</span>
+        </button>
       </div>
 
       {/* 3. SUB-TAB 1: WHATSAPP & SMS BROADCASTS */}
@@ -1126,6 +1141,9 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
 
       {/* 9. SUPPLEMENTARY TAB: LIVE STREAM BROADCAST DESK */}
       {activeSubTab === 'live-desk' && <LiveBroadcastDeskTab />}
+
+      {/* 10. AD CATALOG FEEDS & TRACKING PIXELS */}
+      {activeSubTab === 'ad-catalog-pixels' && <AdCatalogFeedsTab />}
 
       {/* Multi-Device WhatsApp Linking Modal */}
       <WhatsAppDeviceModal

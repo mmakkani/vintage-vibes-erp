@@ -45,6 +45,7 @@ import { WinterMaaziStoryHero } from './WinterMaaziStoryHero.tsx';
 import { luxuryAudio } from '../../utils/luxuryAudio.ts';
 import { SalesService } from '../../services/salesService.ts';
 import { supabase } from '../../supabaseClient.ts';
+import { pixelTracking } from '../../utils/pixelTracking.ts';
 
 interface StorefrontViewProps {
   companyProfile: CompanyProfile;
@@ -82,6 +83,18 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     const interval = setInterval(checkLiveSession, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Initialize Meta & TikTok Pixels on Storefront entry and track PageView
+  useEffect(() => {
+    const config = companyProfile?.pixelTracking || {
+      metaPixelId: companyProfile?.metaPixelId,
+      tiktokPixelId: companyProfile?.tiktokPixelId,
+      enableMetaPixel: true,
+      enableTiktokPixel: true
+    };
+    pixelTracking.initPixels(config);
+    pixelTracking.trackPageView();
+  }, [companyProfile]);
 
   // Hero Slider State (Exactly matching the 3 slides from vintagevibesllcspc.com)
   const [currentSlide, setCurrentSlide] = useState<number>(0);
@@ -316,8 +329,10 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         if (urlParams.has('checkout')) {
           setCheckoutPieces([found]);
           setCheckoutModalOpen(true);
+          pixelTracking.trackInitiateCheckout([found], found.retailPriceAed || found.estimatedPrice || 295);
         } else {
           setVisualInspectorPiece(found);
+          pixelTracking.trackViewContent(found);
         }
       } else {
         // If not in default filtered stock, fetch directly from master inventory catalog
@@ -333,8 +348,10 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 if (urlParams.has('checkout')) {
                   setCheckoutPieces([matched]);
                   setCheckoutModalOpen(true);
+                  pixelTracking.trackInitiateCheckout([matched], matched.retailPriceAed || matched.estimatedPrice || 295);
                 } else {
                   setVisualInspectorPiece(matched);
+                  pixelTracking.trackViewContent(matched);
                 }
               }
             }
@@ -503,6 +520,9 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       return updated;
     });
 
+    // Track AddToCart conversion event on Meta and TikTok Pixels
+    pixelTracking.trackAddToCart(piece);
+
     setSuccessToast({
       title: `Added ${piece.brandName} (${piece.barcode}) to Cart!`,
       subtitle: '1-of-1 Vault reservation locked in SQL database for 10 minutes.'
@@ -532,6 +552,12 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     setIsCartOpen(false);
     setCheckoutPieces(cart);
     setCheckoutModalOpen(true);
+
+    const totalAed = cart.reduce(
+      (acc, it) => acc + (it.retailPriceAed || it.estimatedPrice || 295),
+      0
+    );
+    pixelTracking.trackInitiateCheckout(cart, totalAed);
   };
 
   // Handle successful purchase: mark piece(s) SOLD, vanish from UI, post sales invoice in ERP & send WhatsApp
@@ -580,8 +606,10 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       });
 
       let openedWa = false;
+      let confirmedOrderNo = `ORD-${Date.now().toString().slice(-6)}`;
       if (checkoutRes.ok) {
         const checkoutData = await checkoutRes.json();
+        if (checkoutData.orderNumber) confirmedOrderNo = checkoutData.orderNumber;
         if (checkoutData.whatsappUrl) {
           // Open pre-filled WhatsApp confirmation in new tab
           window.open(checkoutData.whatsappUrl, '_blank');
@@ -590,6 +618,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       } else {
         // Fallback to legacy SalesService if needed
         const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
+        confirmedOrderNo = orderNumber;
         const deliveryFee = totalAmount >= (companyProfile.freeShippingThresholdAed ?? 350) ? 0 : (companyProfile.standardShippingFeeAed ?? 25);
 
         await SalesService.createOnlineOrder({
@@ -613,6 +642,9 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           source: 'STOREFRONT'
         });
       }
+
+      // Track official Purchase conversion event on Meta and TikTok Pixels
+      pixelTracking.trackPurchase(confirmedOrderNo, piecesToBuy, totalAmount);
 
       // Remove pieces from local active list after vanishing animation completes
       setTimeout(() => {
@@ -1185,10 +1217,12 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 onInspectTag={p => {
                   luxuryAudio.playMechanicalClick();
                   setInspectingPiece(p);
+                  pixelTracking.trackViewContent(p);
                 }}
                 onInspectGarment={p => {
                   luxuryAudio.playMechanicalClick();
                   setVisualInspectorPiece(p);
+                  pixelTracking.trackViewContent(p);
                 }}
                 onOpenFitGuide={silhouetteId => {
                   luxuryAudio.playMechanicalClick();
@@ -1199,6 +1233,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                   luxuryAudio.playMechanicalClick();
                   setCheckoutPieces([p]);
                   setCheckoutModalOpen(true);
+                  pixelTracking.trackInitiateCheckout([p], p.retailPriceAed || p.estimatedPrice || 295);
                 }}
               />
             ))}
@@ -1678,6 +1713,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           setVisualInspectorPiece(null);
           setCheckoutPieces([p]);
           setCheckoutModalOpen(true);
+          pixelTracking.trackInitiateCheckout([p], p.retailPriceAed || p.estimatedPrice || 295);
         }}
         onOpenFitGuide={silhouetteId => {
           setFitGuideSilhouetteId(silhouetteId);

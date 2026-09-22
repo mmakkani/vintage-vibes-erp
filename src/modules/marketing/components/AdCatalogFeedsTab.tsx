@@ -13,9 +13,20 @@ import {
   FileCode,
   Sparkles,
   Layers,
-  Search
+  Search,
+  Activity,
+  Zap,
+  Target,
+  Send,
+  Eye,
+  ShoppingBag,
+  CreditCard,
+  CheckCheck
 } from 'lucide-react';
 import { AdFeedMetrics } from '../marketing.types.ts';
+import { CompanyProfileService } from '../../../services/companyProfileService.ts';
+import { pixelTracking } from '../../../utils/pixelTracking.ts';
+import { PixelTrackingConfig } from '../../setup/setup.types.ts';
 
 export const AdCatalogFeedsTab: React.FC = () => {
   const [metrics, setMetrics] = useState<AdFeedMetrics | null>(null);
@@ -26,6 +37,18 @@ export const AdCatalogFeedsTab: React.FC = () => {
   const [isXmlLoading, setIsXmlLoading] = useState(false);
   const [xmlSearch, setXmlSearch] = useState('');
   const [secondsUntilEvictionSweep, setSecondsUntilEvictionSweep] = useState(60);
+
+  // Pixel Tracking Configuration State
+  const [pixelConfig, setPixelConfig] = useState<PixelTrackingConfig>({
+    metaPixelId: '',
+    tiktokPixelId: '',
+    enableMetaPixel: true,
+    enableTiktokPixel: true,
+    testEventCode: ''
+  });
+  const [isSavingPixels, setIsSavingPixels] = useState(false);
+  const [pixelSavedSuccess, setPixelSavedSuccess] = useState(false);
+  const [testEventFeedback, setTestEventFeedback] = useState<string | null>(null);
 
   const fetchMetrics = async () => {
     setIsLoading(true);
@@ -57,9 +80,70 @@ export const AdCatalogFeedsTab: React.FC = () => {
     }
   };
 
+  // Load existing pixel configuration from CompanyProfile
+  const loadPixelConfig = async () => {
+    try {
+      const prof = await CompanyProfileService.getCompanyProfile();
+      if (prof) {
+        setPixelConfig({
+          metaPixelId: prof.pixelTracking?.metaPixelId || prof.metaPixelId || '',
+          tiktokPixelId: prof.pixelTracking?.tiktokPixelId || prof.tiktokPixelId || '',
+          enableMetaPixel: prof.pixelTracking?.enableMetaPixel ?? true,
+          enableTiktokPixel: prof.pixelTracking?.enableTiktokPixel ?? true,
+          testEventCode: prof.pixelTracking?.testEventCode || ''
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to load company profile for pixels:', err);
+    }
+  };
+
+  const handleSavePixels = async () => {
+    setIsSavingPixels(true);
+    setPixelSavedSuccess(false);
+    try {
+      const current = await CompanyProfileService.getCompanyProfile();
+      const updated = {
+        ...current,
+        pixelTracking: {
+          ...pixelConfig
+        },
+        metaPixelId: pixelConfig.metaPixelId,
+        tiktokPixelId: pixelConfig.tiktokPixelId
+      };
+      await CompanyProfileService.updateCompanyProfile(updated);
+      setPixelSavedSuccess(true);
+
+      // Re-initialize runtime tracker with fresh IDs
+      pixelTracking.initPixels(pixelConfig);
+
+      setTimeout(() => setPixelSavedSuccess(false), 3500);
+    } catch (err) {
+      alert('Failed to save pixel configuration. Please check network connection.');
+    } finally {
+      setIsSavingPixels(false);
+    }
+  };
+
+  const handleFireTestEvent = (platform: 'meta' | 'tiktok' | 'both') => {
+    pixelTracking.initPixels(pixelConfig);
+    const res = pixelTracking.fireTestEvent(platform);
+    if (res.metaFired && res.tiktokFired) {
+      setTestEventFeedback('✓ Fired test events to Meta & TikTok! Check your Events Manager.');
+    } else if (res.metaFired) {
+      setTestEventFeedback('✓ Fired test event to Meta Pixel! Check Meta Events Manager Test Events tab.');
+    } else if (res.tiktokFired) {
+      setTestEventFeedback('✓ Fired test event to TikTok Pixel! Check TikTok Test Events tab.');
+    } else {
+      setTestEventFeedback('Notice: Pixel script is loading or blocked by an active browser ad-blocker.');
+    }
+    setTimeout(() => setTestEventFeedback(null), 5000);
+  };
+
   useEffect(() => {
     fetchMetrics();
     fetchXmlPreview('google');
+    loadPixelConfig();
 
     // 60-second real-time eviction countdown visualizer
     const countdown = setInterval(() => {
@@ -295,6 +379,236 @@ export const AdCatalogFeedsTab: React.FC = () => {
             >
               Inspect XML
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 3. META & TIKTOK STOREFRONT PIXEL TRACKING HUB */}
+      <div className="bg-white border-2 border-indigo-200/80 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow space-y-5">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-indigo-100">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 text-white flex items-center justify-center shadow-md shrink-0">
+              <Target className="w-6 h-6 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-bold text-base text-slate-900">
+                  Storefront Meta (Facebook/IG) &amp; TikTok Pixel Integration
+                </h3>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 font-bold flex items-center gap-1">
+                  <Zap className="w-3 h-3 text-indigo-500" />
+                  Auto-Conversion Engine Active
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-0.5 max-w-2xl">
+                Automatically tracks high-intent vintage shoppers and synchronizes conversion events with Meta &amp; TikTok Ads algorithms to build high-spending UAE lookalikes and retarget cart-abandoners.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+            <button
+              type="button"
+              onClick={() => handleFireTestEvent('both')}
+              className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-lg border border-slate-300 transition cursor-pointer active:scale-95"
+              title="Dispatches live test payload to Meta and TikTok Events Manager"
+            >
+              <Activity className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Fire Test Event</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleSavePixels}
+              disabled={isSavingPixels}
+              className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow transition cursor-pointer active:scale-95 disabled:opacity-50"
+            >
+              {isSavingPixels ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : pixelSavedSuccess ? (
+                <CheckCheck className="w-3.5 h-3.5 text-emerald-300" />
+              ) : (
+                <Save className="w-3.5 h-3.5" />
+              )}
+              <span>{pixelSavedSuccess ? 'Saved!' : 'Save Pixels'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Live Feedback Toast Banner */}
+        {testEventFeedback && (
+          <div className="p-3 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs font-medium flex items-center gap-2 animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
+            <span>{testEventFeedback}</span>
+          </div>
+        )}
+
+        {/* Pixel Input Columns */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {/* A. Meta Pixel (Facebook & Instagram) */}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-md bg-blue-600 text-white flex items-center justify-center font-bold text-xs">
+                  f
+                </span>
+                <span className="font-bold text-xs text-slate-900">Meta Pixel (Facebook &amp; Instagram)</span>
+              </div>
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={pixelConfig.enableMetaPixel !== false}
+                  onChange={e => setPixelConfig(prev => ({ ...prev, enableMetaPixel: e.target.checked }))}
+                  className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                />
+                <span>Active</span>
+              </label>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+                Meta Pixel ID / Dataset ID:
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={pixelConfig.metaPixelId || ''}
+                  onChange={e => setPixelConfig(prev => ({ ...prev, metaPixelId: e.target.value.trim() }))}
+                  placeholder="e.g. 892341238912345"
+                  className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 shadow-inner"
+                />
+                <a
+                  href="https://business.facebook.com/events_manager2"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs rounded-lg font-medium flex items-center gap-1 shrink-0"
+                  title="Open Meta Business Events Manager"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  <span className="text-[11px]">Get ID</span>
+                </a>
+              </div>
+              <span className="text-[10px] text-slate-500 mt-1 block">
+                Found in Meta Business Suite &rarr; Events Manager &rarr; Data Sources &rarr; Settings.
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+                Meta Test Event Code (Optional for verification):
+              </label>
+              <input
+                type="text"
+                value={pixelConfig.testEventCode || ''}
+                onChange={e => setPixelConfig(prev => ({ ...prev, testEventCode: e.target.value.trim() }))}
+                placeholder="e.g. TEST12345"
+                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500"
+              />
+              <span className="text-[10px] text-slate-500 mt-1 block">
+                Copy from "Test Events" tab in Meta Events Manager to see real-time testing.
+              </span>
+            </div>
+          </div>
+
+          {/* B. TikTok Pixel */}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-md bg-black text-white flex items-center justify-center font-bold text-xs">
+                  ♫
+                </span>
+                <span className="font-bold text-xs text-slate-900">TikTok Pixel</span>
+              </div>
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={pixelConfig.enableTiktokPixel !== false}
+                  onChange={e => setPixelConfig(prev => ({ ...prev, enableTiktokPixel: e.target.checked }))}
+                  className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                />
+                <span>Active</span>
+              </label>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+                TikTok Pixel ID:
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={pixelConfig.tiktokPixelId || ''}
+                  onChange={e => setPixelConfig(prev => ({ ...prev, tiktokPixelId: e.target.value.trim() }))}
+                  placeholder="e.g. C9ABCDEF123456"
+                  className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 shadow-inner"
+                />
+                <a
+                  href="https://ads.tiktok.com/i18n/events_manager/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs rounded-lg font-medium flex items-center gap-1 shrink-0"
+                  title="Open TikTok Ads Events Manager"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  <span className="text-[11px]">Get ID</span>
+                </a>
+              </div>
+              <span className="text-[10px] text-slate-500 mt-1 block">
+                Found in TikTok Ads Manager &rarr; Assets &rarr; Events &rarr; Web Events &rarr; Pixel Code.
+              </span>
+            </div>
+
+            <div className="p-2.5 bg-indigo-50/60 border border-indigo-100 rounded-lg text-[11px] text-indigo-950 space-y-1">
+              <span className="font-bold flex items-center gap-1 text-indigo-900">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                TikTok Live &amp; Video Shopping Sync
+              </span>
+              <p className="text-[10px] text-indigo-900/80 leading-normal">
+                Matches visitors who discover Vintage Vibes through TikTok Live drops, streaming clips, and viral streetwear reels.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* 5-Stage Automated Event Flow Visualization */}
+        <div className="bg-slate-900 text-slate-200 rounded-xl p-4 border border-slate-800 space-y-3">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-bold text-amber-300 flex items-center gap-1.5">
+              <Activity className="w-4 h-4" />
+              Automated E-Commerce Conversion Pipeline (Zero Manual Tracking Needed):
+            </span>
+            <span className="font-mono text-[10px] text-slate-400">Strict UAE Dirhams (AED) Valuation</span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-center font-mono text-[11px]">
+            <div className="p-2 rounded-lg bg-slate-800/80 border border-slate-700 space-y-1">
+              <Eye className="w-4 h-4 mx-auto text-blue-400" />
+              <div className="font-bold text-white text-xs">1. PageView</div>
+              <div className="text-[10px] text-slate-400">Storefront Visit</div>
+            </div>
+
+            <div className="p-2 rounded-lg bg-slate-800/80 border border-slate-700 space-y-1">
+              <Search className="w-4 h-4 mx-auto text-purple-400" />
+              <div className="font-bold text-white text-xs">2. ViewContent</div>
+              <div className="text-[10px] text-slate-400">Inspect Garment</div>
+            </div>
+
+            <div className="p-2 rounded-lg bg-slate-800/80 border border-slate-700 space-y-1">
+              <ShoppingBag className="w-4 h-4 mx-auto text-amber-400" />
+              <div className="font-bold text-white text-xs">3. AddToCart</div>
+              <div className="text-[10px] text-slate-400">Reserve / Bag Item</div>
+            </div>
+
+            <div className="p-2 rounded-lg bg-slate-800/80 border border-slate-700 space-y-1">
+              <CreditCard className="w-4 h-4 mx-auto text-emerald-400" />
+              <div className="font-bold text-white text-xs">4. InitiateCheckout</div>
+              <div className="text-[10px] text-slate-400">Checkout Modal</div>
+            </div>
+
+            <div className="p-2 rounded-lg bg-emerald-950/80 border border-emerald-500/60 space-y-1 col-span-2 sm:col-span-1">
+              <CheckCircle2 className="w-4 h-4 mx-auto text-emerald-400" />
+              <div className="font-bold text-emerald-300 text-xs">5. Purchase</div>
+              <div className="text-[10px] text-emerald-200">Order Confirmed</div>
+            </div>
           </div>
         </div>
       </div>
