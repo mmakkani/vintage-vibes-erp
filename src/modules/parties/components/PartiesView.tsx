@@ -44,6 +44,7 @@ import { supabase } from '../../../supabaseClient.ts';
 import { LiveCardScannerModal } from './LiveCardScannerModal.tsx';
 import { PartyProfilePrintDossier } from './PartyProfilePrintDossier.tsx';
 import { extractVisitingCardDetails, VisitingCardOcrResult } from '../services/visitingCardOcrService.ts';
+import { Pagination } from '../../../components/Pagination.tsx';
 
 const KNOWN_ACCOUNT_UUIDS: Record<string, string> = {
   '1130-00': '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7',
@@ -69,6 +70,12 @@ interface PartiesViewProps {
 export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   const [parties, setParties] = useState<Party[]>([]);
   const [filterType, setFilterType] = useState<string>('ALL');
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [totalParties, setTotalParties] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [partySearch, setPartySearch] = useState<string>('');
+  const [isLoadingParties, setIsLoadingParties] = useState<boolean>(false);
 
   // Selected party for Khata statement
   const [selectedParty, setSelectedParty] = useState<Party | null>(null);
@@ -400,10 +407,16 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const loadParties = async () => {
+  const loadParties = React.useCallback(async (targetPage = page, targetPageSize = pageSize, targetSearch = partySearch, targetType = filterType) => {
     try {
-      const data = await PartiesService.getParties();
-      const safeData = (Array.isArray(data) ? data : []).map((p: any) => {
+      setIsLoadingParties(true);
+      const res = await PartiesService.getPartiesPaginated({
+        page: targetPage,
+        pageSize: targetPageSize,
+        search: targetSearch,
+        type: targetType
+      });
+      const safeData = (Array.isArray(res.data) ? res.data : []).map((p: any) => {
         const curBal = Number(p.currentBalance ?? p.current_balance ?? 0);
         const purC = Number(p.purchaseInvoicesCount ?? p.stats?.purchaseInvoicesCount ?? 0);
         const salC = Number(p.salesInvoicesCount ?? p.stats?.salesInvoicesCount ?? 0);
@@ -424,6 +437,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         };
       });
       setParties(safeData);
+      setTotalParties(res.total);
+      setTotalPages(res.totalPages);
 
       // Auto-select party if none selected or if selectedParty was deleted
       if (safeData && safeData.length > 0) {
@@ -436,8 +451,11 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       }
     } catch (err: any) {
       console.error('Failed to load parties:', err);
+    } finally {
+      setIsLoadingParties(false);
     }
-  };
+  }, [page, pageSize, partySearch, filterType, selectedParty]);
+
 
   // Helper to evaluate if a party can be safely deleted or must be preserved under GAAP/IFRS
   const isPartyDeletable = (p: Party | any): boolean => {
@@ -520,10 +538,27 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   };
 
   useEffect(() => {
-    loadParties();
+    loadParties(page, pageSize, partySearch, filterType);
+  }, [loadParties, page, pageSize, partySearch, filterType]);
+
+  useEffect(() => {
     loadCoaAccounts();
     loadVisitingCards();
   }, []);
+
+  // Realtime refetch current page on Supabase CDC update
+  useEffect(() => {
+    const handleRealtimeRecord = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.record) return;
+      if (detail.table === 'parties' || detail.table === 'chart_of_accounts') {
+        loadParties(page, pageSize, partySearch, filterType);
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleRealtimeRecord);
+    return () => window.removeEventListener('vv:realtime-record', handleRealtimeRecord);
+  }, [loadParties, page, pageSize, partySearch, filterType]);
+
 
   const showMsg = (text: string, type: 'success' | 'error' = 'success') => {
     setActionMessage({ type, text });
@@ -1280,11 +1315,19 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       await PartiesService.deleteParty(delId);
 
       // 1. Immediately mutate local state so the party is removed from the screen instantaneously
-      setParties(prev => prev.filter(p => {
-        const pId = String(p.id || (p as any).party_id || '');
-        const pCode = p.code || '';
-        return pId !== delId && pCode !== delCode;
-      }));
+      setParties(prev => {
+        const next = prev.filter(p => {
+          const pId = String(p.id || (p as any).party_id || '');
+          const pCode = p.code || '';
+          return pId !== delId && pCode !== delCode;
+        });
+        if (next.length === 0 && page > 1) {
+          setPage(p => Math.max(1, p - 1));
+        }
+        return next;
+      });
+      setTotalParties(prev => Math.max(0, prev - 1));
+
 
       setShowDeletePartyModal(false);
       showMsg(`Party "${delName}" (${delCode}) and linked Chart of Accounts entry deleted from SQL database!`, 'success');
@@ -1360,7 +1403,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
           }`}
         >
           <Building2 className="w-4 h-4" />
-          <span>🏢 Registered Parties & Ledgers ({parties.length})</span>
+          <span>🏢 Registered Parties & Ledgers ({totalParties || parties.length})</span>
         </button>
 
         <button
@@ -1386,29 +1429,44 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         <div className="space-y-3">
           {/* Top Header & Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-2 sm:p-2.5 rounded border border-slate-200 shadow-xs">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {['ALL', 'CUSTOMER', 'SUPPLIER', 'AGENT', 'COURIER'].map(type => {
-            const count = parties.filter(p => matchesPartyEntityType(p, type)).length;
-            return (
+        <div className="flex items-center gap-2 flex-wrap flex-1">
+          <div className="relative min-w-[200px] max-w-xs">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+            <input
+              type="text"
+              placeholder="Search code, name, phone, trn..."
+              value={partySearch}
+              onChange={e => {
+                setPartySearch(e.target.value);
+                setPage(1);
+              }}
+              className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {['ALL', 'CUSTOMER', 'SUPPLIER', 'AGENT', 'COURIER'].map(type => (
               <button
                 key={type}
-                onClick={() => setFilterType(type)}
-                className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all ${
+                onClick={() => {
+                  setFilterType(type);
+                  setPage(1);
+                }}
+                className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
                   filterType === type
                     ? 'bg-[#0056b3] text-white shadow-xs'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                 }`}
               >
-                {type === 'ALL' ? 'All Parties' : (type === 'CUSTOMER' || type === 'CLIENT') ? 'Clients (Customers)' : type === 'SUPPLIER' ? 'Suppliers' : type === 'AGENT' ? 'Agents' : 'Couriers'} ({count})
+                {type === 'ALL' ? 'All Parties' : (type === 'CUSTOMER' || type === 'CLIENT') ? 'Clients (Customers)' : type === 'SUPPLIER' ? 'Suppliers' : type === 'AGENT' ? 'Agents' : 'Couriers'}
               </button>
-            );
-          })}
+            ))}
+          </div>
         </div>
 
         <button
           id="btn-add-new-party"
           onClick={() => setShowNewPartyModal(true)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#0056b3] hover:bg-[#004494] text-white text-xs font-bold uppercase tracking-wider shadow-xs transition-colors"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#0056b3] hover:bg-[#004494] text-white text-xs font-bold uppercase tracking-wider shadow-xs transition-colors cursor-pointer"
         >
           <Plus className="w-3.5 h-3.5" />
           <span>Add Party (COA Auto-Provision)</span>
@@ -1586,6 +1644,20 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
             );
           })
           )}
+
+          <Pagination
+            currentPage={page}
+            totalPages={totalPages}
+            totalItems={totalParties}
+            pageSize={pageSize}
+            onPageChange={newPage => setPage(newPage)}
+            onPageSizeChange={newSize => {
+              setPageSize(newSize);
+              setPage(1);
+            }}
+            isLoading={isLoadingParties}
+            itemLabel="parties"
+          />
         </div>
 
         {/* Khata Ledger Statement (7 cols) */}

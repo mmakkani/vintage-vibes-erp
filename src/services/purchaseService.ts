@@ -2,6 +2,7 @@ import { supabase } from '../supabaseClient.ts';
 import { PurchaseInvoice, InwardGatePass, PieceBreakdownItem } from '../modules/purchase/purchase.types.ts';
 import { FinanceService } from './financeService.ts';
 import { PartiesService } from './partiesService.ts';
+import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
 
 export class PurchaseService {
   private static _invoicesCache: { data: PurchaseInvoice[]; timestamp: number } | null = null;
@@ -164,6 +165,139 @@ export class PurchaseService {
     });
     PurchaseService._invoicesCache = { data: mappedInvoices, timestamp: Date.now() };
     return mappedInvoices;
+  }
+
+  public static async getPurchaseInvoicesPaginated(options?: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    status?: string;
+  }): Promise<PaginatedResponse<PurchaseInvoice>> {
+    const page = Math.max(1, options?.page || 1);
+    const pageSize = Math.max(1, options?.pageSize || 10);
+    const search = options?.search?.trim() || '';
+    const status = options?.status?.trim() || '';
+
+    let query = supabase
+      .from('purchase_invoices')
+      .select('*', { count: 'exact' });
+
+    if (search) {
+      query = query.or(`invoice_no.ilike.%${search}%,supplier_name.ilike.%${search}%,notes.ilike.%${search}%`);
+    }
+    if (status && status !== 'ALL') {
+      query = query.eq('status', status);
+    }
+
+    query = applyPagination(query, page, pageSize, {
+      orderBy: 'created_at',
+      ascending: false,
+      secondaryOrderBy: 'id',
+      secondaryAscending: false
+    });
+
+    const { data, count, error } = await query;
+    if (error) {
+      console.warn('[PurchaseService] Paginated invoices query warning:', error.message);
+      return buildPaginatedResponse([], 0, page, pageSize);
+    }
+
+    const invData = Array.isArray(data) ? data : [];
+    const invIds = invData.map((row: any) => String(row.id)).filter(Boolean);
+
+    let itemsData: any[] = [];
+    if (invIds.length > 0) {
+      try {
+        const itemsResult = await supabase
+          .from('purchase_invoice_items')
+          .select('*')
+          .in('invoice_id', invIds);
+        if (!itemsResult.error && Array.isArray(itemsResult.data)) {
+          itemsData = itemsResult.data;
+        }
+      } catch (_) {}
+    }
+
+    const itemsByInvoiceId = new Map<string, any[]>();
+    itemsData.forEach((itemRow: any) => {
+      const invId = String(itemRow.invoice_id);
+      if (!itemsByInvoiceId.has(invId)) {
+        itemsByInvoiceId.set(invId, []);
+      }
+      itemsByInvoiceId.get(invId)!.push({
+        id: String(itemRow.id),
+        itemId: itemRow.item_code || itemRow.id,
+        itemCode: itemRow.item_code || 'VINT-01',
+        itemName: itemRow.item_name || itemRow.description || 'Vintage Mix Bales',
+        packagingUom: itemRow.packaging_uom || itemRow.packaging || 'BALES',
+        packageCount: Number(itemRow.package_count ?? itemRow.quantity ?? 1),
+        weightUom: 'KG',
+        totalWeight: Number(itemRow.total_weight ?? itemRow.total_kg ?? 0),
+        ratePerWeight: Number(itemRow.rate_per_weight ?? itemRow.rate ?? 0),
+        lineTotal: Number(itemRow.line_total ?? 0)
+      });
+    });
+
+    const mappedInvoices = invData.map((row: any) => {
+      const rawDate = row.issue_date || row.invoice_date || row.created_at;
+      let cleanDate = '';
+      if (rawDate) {
+        try {
+          const d = new Date(rawDate);
+          cleanDate = !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : String(rawDate).slice(0, 10);
+        } catch {
+          cleanDate = String(rawDate).slice(0, 10);
+        }
+      }
+
+      const totalWeightKg = Number(row.total_weight_kg ?? row.totalWeightKg ?? 0);
+      const totalAmount = Number(row.total_amount ?? row.total_payable ?? row.totalAmount ?? 0);
+      const loadedItems = itemsByInvoiceId.get(String(row.id)) || [];
+
+      const items = loadedItems.length > 0 ? loadedItems : [
+        {
+          id: `item-${row.id}-1`,
+          itemId: 'VINT-BAL-01',
+          itemCode: 'VINT-BAL-01',
+          itemName: row.notes || 'Vintage Mixed Apparel Cargo Bales',
+          packagingUom: 'BALES',
+          packageCount: Number(row.bales_count || row.package_count || 1),
+          weightUom: 'KG',
+          totalWeight: totalWeightKg,
+          ratePerWeight: totalWeightKg > 0 ? totalAmount / totalWeightKg : 0,
+          lineTotal: totalAmount
+        }
+      ];
+
+      return {
+        id: String(row.id),
+        invoiceNo: row.invoice_no,
+        supplierId: row.supplier_id ? String(row.supplier_id) : '',
+        supplierName: row.supplier_name || 'Trade Supplier',
+        date: cleanDate,
+        invoiceDate: cleanDate,
+        currency: (row.currency || 'AED').toUpperCase(),
+        exchangeRate: Number(row.exchange_rate || 1),
+        subtotal: Number(row.subtotal ?? row.total_amount ?? 0),
+        subTotal: Number(row.subtotal ?? row.total_amount ?? 0),
+        grossAmount: Number(row.gross_amount ?? row.subtotal ?? row.total_amount ?? 0),
+        deductionAmount: Number(row.deduction_amount ?? row.discount_amount ?? 0),
+        discountAmount: Number(row.discount_amount ?? row.deduction_amount ?? 0),
+        netAmount: Number(row.net_amount ?? row.total_amount ?? 0),
+        taxAmount: Number(row.tax_amount || 0),
+        vatAmount: Number(row.tax_amount || 0),
+        totalAmount,
+        grandTotalAED: totalAmount,
+        totalWeightKg,
+        status: (row.status || 'DRAFT').toUpperCase() as any,
+        notes: row.notes || '',
+        items,
+        convertedToInward: Boolean(row.converted_to_inward),
+        createdAt: row.created_at
+      } as PurchaseInvoice;
+    });
+
+    return buildPaginatedResponse(mappedInvoices, count || 0, page, pageSize);
   }
 
 
@@ -665,7 +799,8 @@ export class PurchaseService {
     }
 
     if (!invRow) {
-      throw new Error(`Purchase invoice ${cleanInvId} not found`);
+      console.info(`[PurchaseService] Purchase invoice ${cleanInvId} not found or already deleted; treating as idempotent success.`);
+      return;
     }
 
     const invoiceNo = invRow.invoice_no || explicitInvoiceNo || cleanInvId;
@@ -707,8 +842,12 @@ export class PurchaseService {
       .eq('id', cleanInvId);
 
     if (invoiceError) {
-      console.error("Failed to delete invoice:", invoiceError);
-      throw new Error(invoiceError.message || 'Failed to delete invoice');
+      if (invoiceError.code === 'PGRST116' || invoiceError.message?.toLowerCase().includes('not found') || invoiceError.message?.toLowerCase().includes('0 rows')) {
+        console.info(`[PurchaseService] Invoice ${cleanInvId} deletion returned not found or 0 rows; idempotent success.`);
+      } else {
+        console.error("Failed to delete invoice:", invoiceError);
+        throw new Error(invoiceError.message || 'Failed to delete invoice');
+      }
     }
 
     // 3. Purge local cache
@@ -1065,6 +1204,75 @@ export class PurchaseService {
 
   public static async getGatePasses(): Promise<InwardGatePass[]> {
     return this.getInwardGatePasses();
+  }
+
+  public static async getInwardGatePassesPaginated(options?: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    status?: string;
+  }): Promise<PaginatedResponse<InwardGatePass>> {
+    const page = Math.max(1, options?.page || 1);
+    const pageSize = Math.max(1, options?.pageSize || 10);
+    const search = options?.search?.trim() || '';
+    const status = options?.status?.trim() || '';
+
+    let query = supabase
+      .from('inward_gate_passes')
+      .select('*', { count: 'exact' });
+
+    if (search) {
+      query = query.or(`gate_pass_no.ilike.%${search}%,bale_code.ilike.%${search}%,supplier_name.ilike.%${search}%,bale_category.ilike.%${search}%,purchase_invoice_no.ilike.%${search}%`);
+    }
+    if (status && status !== 'ALL') {
+      query = query.eq('status', status);
+    }
+
+    query = applyPagination(query, page, pageSize, {
+      orderBy: 'created_at',
+      ascending: false,
+      secondaryOrderBy: 'id',
+      secondaryAscending: false
+    });
+
+    const { data, count, error } = await query;
+    if (error) {
+      console.warn('[PurchaseService] Paginated inward gate passes query warning:', error.message);
+      return buildPaginatedResponse([], 0, page, pageSize);
+    }
+
+    const mappedPasses = (data || []).map((row: any) => {
+      const grossKg = Number(row.total_bale_weight ?? row.weight_kg ?? 0);
+      const brokenDownKg = Number(row.broken_down_weight ?? 0);
+      const totalCost = Number(row.total_bale_cost ?? row.cost_price ?? 0);
+      const costPerGram = Number(row.cost_per_gram ?? (grossKg > 0 ? (totalCost / (grossKg * 1000)) : 0));
+      const piecesList = Array.isArray(row.pieces) ? row.pieces : [];
+      const pieceCount = Number(row.piece_count ?? row.pieces_count ?? piecesList.length ?? 0);
+
+      return {
+        id: String(row.id),
+        passNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
+        gatePassNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
+        baleCode: row.bale_code || row.bale_tag_no || `BAL-${String(row.id).slice(-6)}`,
+        baleCategory: row.bale_category || 'Vintage Mixed Bales',
+        purchaseInvoiceId: row.purchase_invoice_id || row.purchaseInvoiceId || '',
+        purchaseInvoiceNo: row.purchase_invoice_no || row.purchaseInvoiceNo || '',
+        supplierName: row.supplier_name || row.supplierName || 'Trade Supplier',
+        date: (row.created_at || new Date().toISOString()).slice(0, 10),
+        status: (row.status || 'UNOPENED') as any,
+        sortingStatus: (row.status || 'UNOPENED') as any,
+        totalBaleCost: totalCost,
+        totalBaleWeight: grossKg,
+        costPerGram,
+        brokenDownWeight: brokenDownKg,
+        remainingWeight: Math.max(0, grossKg - brokenDownKg),
+        pieceCount,
+        pieces: piecesList,
+        createdAt: row.created_at
+      } as InwardGatePass;
+    });
+
+    return buildPaginatedResponse(mappedPasses, count || 0, page, pageSize);
   }
 
   public static async convertToInwardGatePass(invoiceId: string): Promise<InwardGatePass[]> {
@@ -1639,6 +1847,81 @@ export class PurchaseService {
       console.error('[PurchaseService] Fatal exception in getInventoryPieces:', err);
       return [];
     }
+  }
+
+  public static async getInventoryPiecesPaginated(options?: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    status?: string;
+    baleId?: string;
+  }): Promise<PaginatedResponse<PieceBreakdownItem>> {
+    const page = Math.max(1, options?.page || 1);
+    const pageSize = Math.max(1, options?.pageSize || 10);
+    const search = options?.search?.trim() || '';
+    const status = options?.status?.trim() || '';
+    const baleId = options?.baleId?.trim() || '';
+
+    let query = supabase
+      .from('inventory_pieces')
+      .select('*', { count: 'exact' });
+
+    if (search) {
+      query = query.or(`barcode.ilike.%${search}%,item_name.ilike.%${search}%,brand_name.ilike.%${search}%,market_segment.ilike.%${search}%`);
+    }
+    if (status && status !== 'ALL') {
+      query = query.eq('status', status);
+    }
+    if (baleId && baleId !== 'ALL') {
+      query = query.eq('gate_pass_id', baleId);
+    }
+
+    query = applyPagination(query, page, pageSize, {
+      orderBy: 'created_at',
+      ascending: false,
+      secondaryOrderBy: 'id',
+      secondaryAscending: false
+    });
+
+    const { data, count, error } = await query;
+    if (error) {
+      console.warn('[PurchaseService] Paginated inventory pieces query warning:', error.message);
+      return buildPaginatedResponse([], 0, page, pageSize);
+    }
+
+    const mapped = (data || []).map((row: any) => ({
+      id: row.id,
+      gatePassId: row.gate_pass_id || row.gatePassId || '',
+      barcode: row.barcode || row.piece_code || row.id,
+      itemName: row.item_name || row.itemName || 'Garment Piece',
+      brandName: row.brand_name || row.brandName || '',
+      brandTier: row.brand_tier || row.brandTier || 'Grail',
+      labelGrade: row.label_grade || row.labelGrade || 'CREAM',
+      shopLocation: row.shop_location || row.shopLocation || 'Central Warehouse (Al Quoz)',
+      weightKg: Number(row.weight_kg ?? (Number(row.weight_grams || 0) / 1000)),
+      weightGrams: Number(row.weight_grams ?? (Number(row.weight_kg || 0) * 1000)),
+      costPrice: Number(row.cost_price ?? row.costPrice ?? 0),
+      calculatedCostPrice: Number(row.cost_price ?? row.costPrice ?? 0),
+      costPerGram: Number(row.cost_per_gram ?? 0),
+      estimatedPrice: Number(row.estimated_price ?? row.retail_price_aed ?? 0),
+      retailPriceAed: Number(row.retail_price_aed ?? row.retailPriceAed ?? row.estimated_price ?? 0),
+      sizeScanned: row.size_scanned || row.sizeScanned || 'L',
+      countryOfOrigin: row.country_of_origin || row.countryOfOrigin || '',
+      style: row.style || '',
+      frontImageUrl: row.front_image_url || row.frontImageUrl || '',
+      backImageUrl: row.back_image_url || row.backImageUrl || '',
+      tagImageUrl: row.tag_image_url || row.tagImageUrl || '',
+      isSold: Boolean(row.is_sold ?? row.isSold),
+      status: row.status || (row.is_sold ? 'SOLD' : 'AVAILABLE'),
+      marketSegment: row.market_segment || 'Regular Thrift',
+      isGrail: Boolean(row.is_grail),
+      aiSuggestedPrice: row.ai_suggested_price !== undefined && row.ai_suggested_price !== null ? Number(row.ai_suggested_price) : undefined,
+      isPriceOverridden: Boolean(row.is_price_overridden),
+      globalInsights: row.global_insights || undefined,
+      createdAt: row.created_at
+    }));
+
+    return buildPaginatedResponse(mapped, count || 0, page, pageSize);
   }
 
   public static async finalizeBaleSession(baleId: string): Promise<void> {

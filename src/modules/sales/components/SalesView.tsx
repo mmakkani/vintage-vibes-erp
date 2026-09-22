@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { SalesGatePass, SalesInvoice } from '../sales.types.ts';
 import { Party } from '../../parties/parties.types.ts';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
@@ -19,6 +19,8 @@ import { useSync } from '../../../context/SyncContext.tsx';
 import { SalesService } from '../../../services/salesService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
+import { Pagination } from '../../../components/Pagination.tsx';
+
 import {
   ShoppingCart,
   Store,
@@ -79,13 +81,38 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
 
   const [gatePasses, setGatePasses] = useState<SalesGatePass[]>([]);
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
-  const [invPage, setInvPage] = useState(1);
-  const invPageSize = 50;
-  const paginatedInvoices = useMemo(
-    () => (invoices || []).slice((invPage - 1) * invPageSize, invPage * invPageSize),
-    [invoices, invPage]
-  );
-  const totalInvPages = Math.max(1, Math.ceil((invoices || []).length / invPageSize));
+  const [invPage, setInvPage] = useState<number>(1);
+  const [invPageSize, setInvPageSize] = useState<number>(10);
+  const [totalInvoices, setTotalInvoices] = useState<number>(0);
+  const [totalInvPages, setTotalInvPages] = useState<number>(1);
+  const [salesSearch, setSalesSearch] = useState<string>('');
+  const [salesStatusFilter, setSalesStatusFilter] = useState<string>('ALL');
+  const [isLoadingSales, setIsLoadingSales] = useState<boolean>(false);
+
+  const fetchPaginatedSales = useCallback(async (
+    targetPage = invPage,
+    targetPageSize = invPageSize,
+    targetSearch = salesSearch,
+    targetStatus = salesStatusFilter
+  ) => {
+    setIsLoadingSales(true);
+    try {
+      const res = await SalesService.getSalesInvoicesPaginated({
+        page: targetPage,
+        pageSize: targetPageSize,
+        search: targetSearch,
+        status: targetStatus
+      });
+      setInvoices(res.data);
+      setTotalInvoices(res.total);
+      setTotalInvPages(res.totalPages);
+    } catch (err) {
+      console.warn('[SalesView] Sales pagination notice:', err);
+    } finally {
+      setIsLoadingSales(false);
+    }
+  }, [invPage, invPageSize, salesSearch, salesStatusFilter]);
+
   const [clients, setClients] = useState<Party[]>([]);
   const [stockPieces, setStockPieces] = useState<PieceBreakdownItem[]>([]);
 
@@ -166,19 +193,18 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
     };
 
     try {
-      const [invRes, clientsRes, stockRes] = await Promise.all([
-        SalesService.getSalesInvoices().catch(() => []),
+      const [clientsRes, stockRes] = await Promise.all([
         PartiesService.getParties().then(pts => pts.filter(p => p.type === 'CLIENT')).catch(() => []),
         PurchaseService.getInventoryPieces().then(pcs => pcs.filter(p => !p.isSold)).catch(() => [])
       ]);
 
-      if (Array.isArray(invRes)) setInvoices(invRes);
       if (Array.isArray(clientsRes)) setClients(clientsRes);
       if (Array.isArray(stockRes)) setStockPieces(stockRes);
 
       if (Array.isArray(clientsRes) && clientsRes.length > 0 && !newGatePassCustomer) {
         setNewGatePassCustomer(clientsRes[0].id);
       }
+      await fetchPaginatedSales(invPage, invPageSize, salesSearch, salesStatusFilter);
     } catch (err) {
       console.warn('Sales sync warning:', err);
     }
@@ -187,6 +213,24 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
   useEffect(() => {
     loadData();
   }, [syncVersion]);
+
+  useEffect(() => {
+    fetchPaginatedSales(invPage, invPageSize, salesSearch, salesStatusFilter);
+  }, [fetchPaginatedSales, invPage, invPageSize, salesSearch, salesStatusFilter]);
+
+  // Realtime refetch current page on Supabase CDC update
+  useEffect(() => {
+    const handleRealtimeRecord = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.record) return;
+      if (detail.table === 'sales_invoices' || detail.table === 'sales_items') {
+        fetchPaginatedSales(invPage, invPageSize, salesSearch, salesStatusFilter);
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleRealtimeRecord);
+    return () => window.removeEventListener('vv:realtime-record', handleRealtimeRecord);
+  }, [fetchPaginatedSales, invPage, invPageSize, salesSearch, salesStatusFilter]);
+
 
   const showMsg = (text: string, type: 'success' | 'error' = 'success') => {
     setActionMessage({ type, text });
@@ -758,12 +802,40 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
       {subTab === 'invoices' && (
         <div className="space-y-3">
           <div className="bg-white rounded border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+            <div className="p-3 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider">Finalized Sales Invoices & Customer Receipts</h3>
+                <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider">Finalized Sales Invoices & Customer Receipts ({totalInvoices || (Array.isArray(invoices) ? invoices.length : 0)})</h3>
                 <p className="text-[11px] text-slate-500">
                   Includes 5% UAE VAT, stock deduction, and automatic dual-entry COA ledger postings
                 </p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative min-w-[180px] max-w-xs">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Search invoice, customer, phone..."
+                    value={salesSearch}
+                    onChange={e => {
+                      setSalesSearch(e.target.value);
+                      setInvPage(1);
+                    }}
+                    className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
+                  />
+                </div>
+                <select
+                  value={salesStatusFilter}
+                  onChange={e => {
+                    setSalesStatusFilter(e.target.value);
+                    setInvPage(1);
+                  }}
+                  className="px-2.5 py-1.5 border border-slate-200 rounded text-xs bg-white text-slate-700 font-bold focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="ALL">All Statuses</option>
+                  <option value="PAID">Paid</option>
+                  <option value="DRAFT">Draft</option>
+                  <option value="POSTED">Posted</option>
+                </select>
               </div>
             </div>
 
@@ -783,7 +855,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {paginatedInvoices.map(inv => (
+                  {invoices.map(inv => (
                     <tr key={inv.id} className="hover:bg-blue-50/40 transition-colors">
                       <td className="px-3 py-2 font-mono font-bold text-blue-900">{inv.invoiceNo}</td>
                       <td className="px-3 py-2 font-medium text-slate-800">{inv.customerName}</td>
@@ -843,34 +915,20 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                   ))}
                 </tbody>
               </table>
-              {invoices.length > invPageSize && (
-                <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
-                  <div>
-                    Showing <span className="font-bold font-mono">{(invPage - 1) * invPageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(invPage * invPageSize, invoices.length)}</span> of <span className="font-bold font-mono">{invoices.length}</span> invoices
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setInvPage(p => Math.max(1, p - 1))}
-                      disabled={invPage === 1}
-                      className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      Previous
-                    </button>
-                    <span className="px-2 font-mono font-bold">
-                      Page {invPage} of {totalInvPages}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setInvPage(p => Math.min(totalInvPages, p + 1))}
-                      disabled={invPage === totalInvPages}
-                      className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              )}
+
+              <Pagination
+                currentPage={invPage}
+                totalPages={totalInvPages}
+                totalItems={totalInvoices}
+                pageSize={invPageSize}
+                onPageChange={newPage => setInvPage(newPage)}
+                onPageSizeChange={newSize => {
+                  setInvPageSize(newSize);
+                  setInvPage(1);
+                }}
+                isLoading={isLoadingSales}
+                itemLabel="invoices"
+              />
             </div>
           </div>
         </div>

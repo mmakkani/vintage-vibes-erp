@@ -1,6 +1,7 @@
 import { supabase } from '../supabaseClient.ts';
 import { COAAccount, Voucher, LedgerEntry } from '../modules/finance/finance.types.ts';
 import { safeFetchJson, safeFetchMutation } from '../utils/fetchUtils.ts';
+import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isValidUuid = (val: any): boolean => typeof val === 'string' && UUID_REGEX.test(val.trim());
@@ -23,9 +24,143 @@ export class FinanceService {
           'vintage_coa',
           'vibe_cached_parties'
         ];
-        keysToRemove.forEach(k => localStorage.removeItem(k));
+        keysToRemove.forEach(k => window.localStorage.removeItem(k));
+      } catch (_) {}
+    }
+  }
+
+  // --- Vouchers Paginated ---
+  public static async getVouchersPaginated(options?: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    type?: string;
+    status?: string;
+  }): Promise<PaginatedResponse<Voucher>> {
+    const page = Math.max(1, options?.page || 1);
+    const pageSize = Math.max(1, options?.pageSize || 10);
+    const search = options?.search?.trim() || '';
+    const type = options?.type?.trim() || 'ALL';
+    const status = options?.status?.trim() || 'ALL';
+
+    let query = supabase
+      .from('financial_vouchers')
+      .select('*', { count: 'exact' });
+
+    if (search) {
+      query = query.or(`voucher_no.ilike.%${search}%,reference.ilike.%${search}%,reference_no.ilike.%${search}%,narration.ilike.%${search}%`);
+    }
+    if (type && type !== 'ALL') {
+      query = query.or(`type.eq.${type},voucher_type.eq.${type}`);
+    }
+    if (status && status !== 'ALL') {
+      query = query.eq('status', status);
+    }
+
+    query = applyPagination(query, page, pageSize, {
+      orderBy: 'created_at',
+      ascending: false,
+      secondaryOrderBy: 'id',
+      secondaryAscending: false
+    });
+
+    let { data, count, error } = await query;
+    if (error || !data || data.length === 0) {
+      // Fallback to 'vouchers' table if financial_vouchers has error or is empty
+      let fallbackQuery = supabase
+        .from('vouchers')
+        .select('*', { count: 'exact' });
+
+      if (search) {
+        fallbackQuery = fallbackQuery.or(`voucher_no.ilike.%${search}%,reference.ilike.%${search}%,reference_no.ilike.%${search}%,narration.ilike.%${search}%`);
+      }
+      if (type && type !== 'ALL') {
+        fallbackQuery = fallbackQuery.or(`type.eq.${type},voucher_type.eq.${type}`);
+      }
+      if (status && status !== 'ALL') {
+        fallbackQuery = fallbackQuery.eq('status', status);
+      }
+
+      fallbackQuery = applyPagination(fallbackQuery, page, pageSize, {
+        orderBy: 'created_at',
+        ascending: false,
+        secondaryOrderBy: 'id',
+        secondaryAscending: false
+      });
+
+      const fallbackRes = await fallbackQuery;
+      if (!fallbackRes.error && fallbackRes.data) {
+        data = fallbackRes.data;
+        count = fallbackRes.count;
+      }
+    }
+
+    // Fetch entries/lines for the current page vouchers
+    const voucherIds = (data || []).map((r: any) => String(r.id)).filter(Boolean);
+    const voucherNos = (data || []).map((r: any) => String(r.voucher_no || r.voucherNo)).filter(Boolean);
+
+    let allEntries: any[] = [];
+    if (voucherIds.length > 0 || voucherNos.length > 0) {
+      try {
+        const { data: veData } = await supabase
+          .from('voucher_entries')
+          .select('*')
+          .or(`voucher_id.in.(${voucherIds.join(',')})${voucherNos.length > 0 ? `,voucher_no.in.(${voucherNos.map(n => `"${n}"`).join(',')})` : ''}`);
+        if (veData) {
+          allEntries = veData;
+        }
       } catch {}
     }
+
+    const mapped = (data || []).map((row: any) => {
+      const voucherId = String(row.id || '');
+      const voucherNo = row.voucher_no || row.voucherNo || '';
+      const matchedEntries = allEntries
+        .filter((e: any) => (voucherId && String(e.voucher_id) === voucherId) || (voucherNo && e.voucher_no === voucherNo))
+        .map((e: any) => ({
+          id: e.id,
+          voucherId: e.voucher_id || voucherId,
+          accountId: e.account_id || '',
+          accountCode: e.account_code || '',
+          accountName: e.account_name || '',
+          partyId: e.party_id || undefined,
+          partyName: e.party_name || undefined,
+          debitAmount: Number(e.debit ?? e.debit_amount ?? 0),
+          creditAmount: Number(e.credit ?? e.credit_amount ?? 0),
+          debit: Number(e.debit ?? e.debit_amount ?? 0),
+          credit: Number(e.credit ?? e.credit_amount ?? 0),
+          memo: e.memo || e.particulars || e.narration || ''
+        }));
+
+      const dateStr = typeof row.date === 'string' 
+        ? row.date.slice(0, 10) 
+        : (row.date ? new Date(row.date).toISOString().slice(0, 10) : (row.voucher_date || new Date().toISOString().slice(0, 10)));
+
+      const isAuto = Boolean(row.is_auto === true || row.isAuto === true || FinanceService.isAutoVoucher(row));
+
+      return {
+        id: row.id,
+        voucherNo: voucherNo || row.id,
+        date: dateStr,
+        type: row.type || row.voucher_type || 'JOURNAL',
+        reference: row.reference || row.reference_no || '',
+        narration: row.narration || '',
+        totalDebit: Number(row.total_debit ?? row.totalDebit ?? (matchedEntries.reduce((acc: number, e: any) => acc + (Number(e.debit) || 0), 0)) ?? 0),
+        totalCredit: Number(row.total_credit ?? row.totalCredit ?? (matchedEntries.reduce((acc: number, e: any) => acc + (Number(e.credit) || 0), 0)) ?? 0),
+        status: row.status || 'POSTED',
+        currency: (row.currency || 'AED').toUpperCase(),
+        exchangeRate: Number(row.exchange_rate || 1.0),
+        baseCurrency: (row.base_currency || 'AED').toUpperCase(),
+        foreignTotalAmount: Number(row.foreign_total_amount || 0),
+        createdBy: row.created_by || row.createdBy || 'System',
+        isAuto,
+        entries: matchedEntries,
+        lines: matchedEntries,
+        createdAt: row.created_at
+      } as Voucher;
+    });
+
+    return buildPaginatedResponse(mapped, count || 0, page, pageSize);
   }
 
   // --- Chart of Accounts (COA) ---
@@ -1541,6 +1676,45 @@ export class FinanceService {
     }
     return { entries: [], totalDebit: 0, totalCredit: 0 };
   }
+
+  public static async getGeneralLedgerEntriesPaginated(options?: {
+    page?: number;
+    pageSize?: number;
+    accountId?: string;
+    partyId?: string;
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+  }): Promise<PaginatedResponse<LedgerEntry> & { totalDebit: number; totalCredit: number }> {
+    const page = Math.max(1, options?.page || 1);
+    const pageSize = Math.max(1, options?.pageSize || 10);
+    const accountId = options?.accountId?.trim() || '';
+    const partyId = options?.partyId?.trim() || '';
+    const startDate = options?.startDate?.trim() || '';
+    const endDate = options?.endDate?.trim() || '';
+    const search = options?.search?.trim() || '';
+
+    const { entries: allEntries, totalDebit, totalCredit } = await this.getGeneralLedgerEntries({
+      accountId: accountId || undefined,
+      partyId: partyId || undefined,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+      search: search || undefined
+    });
+
+    const total = allEntries.length;
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize;
+    const pageEntries = allEntries.slice(from, to);
+
+    const baseRes = buildPaginatedResponse(pageEntries, total, page, pageSize);
+    return {
+      ...baseRes,
+      totalDebit,
+      totalCredit
+    };
+  }
+
 
   // --- Ledgers ---
   public static async getLedgers(accountId?: string): Promise<LedgerEntry[]> {

@@ -42,10 +42,13 @@ import {
   RefreshCw,
   Edit3,
   Trash2,
-  Lock
+  Lock,
+  Loader2
 } from 'lucide-react';
 import { AccessDeniedNotice } from '../../../components/AccessDeniedNotice.tsx';
 import { ModuleMaintenanceGuard } from '../../../components/ModuleMaintenanceGuard.tsx';
+import { Pagination } from '../../../components/Pagination.tsx';
+
 
 interface COARowProps {
   acc: COAAccount;
@@ -240,6 +243,24 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const [parties, setParties] = useState<Party[]>([]);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Vouchers Pagination State
+  const [voucherPage, setVoucherPage] = useState<number>(1);
+  const [voucherPageSize, setVoucherPageSize] = useState<number>(10);
+  const [totalVouchers, setTotalVouchers] = useState<number>(0);
+  const [totalVoucherPages, setTotalVoucherPages] = useState<number>(1);
+  const [voucherSearch, setVoucherSearch] = useState<string>('');
+  const [voucherTypeFilter, setVoucherTypeFilter] = useState<string>('ALL');
+  const [isLoadingVouchers, setIsLoadingVouchers] = useState<boolean>(false);
+  const [deletingVoucherId, setDeletingVoucherId] = useState<string | null>(null);
+
+  // General Ledger Pagination State
+  const [ledgerPage, setLedgerPage] = useState<number>(1);
+  const [ledgerPageSize, setLedgerPageSize] = useState<number>(10);
+  const [totalLedgers, setTotalLedgers] = useState<number>(0);
+  const [totalLedgerPages, setTotalLedgerPages] = useState<number>(1);
+  const [isLoadingLedgers, setIsLoadingLedgers] = useState<boolean>(false);
+
+
   // State-Based Row Glow Animation (UX Enhancement across all devices)
   const [glowingRowIds, setGlowingRowIds] = useState<string[]>([]);
 
@@ -400,27 +421,73 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     }
   };
 
+  const fetchPaginatedVouchers = useCallback(async (
+    targetPage = voucherPage,
+    targetPageSize = voucherPageSize,
+    targetSearch = voucherSearch,
+    targetType = voucherTypeFilter
+  ) => {
+    setIsLoadingVouchers(true);
+    try {
+      const res = await FinanceService.getVouchersPaginated({
+        page: targetPage,
+        pageSize: targetPageSize,
+        search: targetSearch,
+        type: targetType
+      });
+      setVouchers(res.data);
+      setTotalVouchers(res.total);
+      setTotalVoucherPages(res.totalPages);
+    } catch (err) {
+      console.warn('[FinanceView] Vouchers pagination notice:', err);
+    } finally {
+      setIsLoadingVouchers(false);
+    }
+  }, [voucherPage, voucherPageSize, voucherSearch, voucherTypeFilter]);
+
+  const fetchPaginatedLedger = useCallback(async (
+    targetPage = ledgerPage,
+    targetPageSize = ledgerPageSize,
+    targetAccount = glSelectedTarget,
+    targetFrom = glDateFrom,
+    targetTo = glDateTo,
+    targetSearch = glSearchText
+  ) => {
+    setIsLoadingLedgers(true);
+    try {
+      const res = await FinanceService.getGeneralLedgerEntriesPaginated({
+        page: targetPage,
+        pageSize: targetPageSize,
+        accountId: targetAccount.startsWith('ACC:') ? targetAccount.replace('ACC:', '') : undefined,
+        partyId: targetAccount.startsWith('PTY:') ? targetAccount.replace('PTY:', '') : undefined,
+        startDate: targetFrom || undefined,
+        endDate: targetTo || undefined,
+        search: targetSearch || undefined
+      });
+      setLedgers(res.data);
+      setTotalLedgers(res.total);
+      setTotalLedgerPages(res.totalPages);
+      setGlTotals({ debit: res.totalDebit, credit: res.totalCredit });
+    } catch (err) {
+      console.warn('[FinanceView] General ledger pagination notice:', err);
+    } finally {
+      setIsLoadingLedgers(false);
+    }
+  }, [ledgerPage, ledgerPageSize, glSelectedTarget, glDateFrom, glDateTo, glSearchText]);
+
   const loadData = async (customParams?: { startDate?: string; endDate?: string }) => {
     setLoading(true);
     try {
       const sDate = customParams?.startDate !== undefined ? customParams.startDate : (reportPeriod === 'ALL' ? undefined : (reportStartDate || undefined));
       const eDate = customParams?.endDate !== undefined ? customParams.endDate : (reportPeriod === 'ALL' ? undefined : (reportEndDate || undefined));
 
-      const [coaRes, vchRes, ledRes, repRes, ptyRes] = await Promise.all([
+      const [coaRes, repRes, ptyRes] = await Promise.all([
         safeFetchJson<any>('/api/finance/coa')
           .catch(() => null)
           .then(res => {
             if (res) return res;
             return FinanceService.getCoaAccounts(true).catch(() => safeFetchJson<any>('/api/finance/coa', undefined, 3, 300));
           }),
-        FinanceService.getVouchers().catch(() => safeFetchJson<Voucher[]>('/api/finance/vouchers', undefined, 3, 300)),
-        FinanceService.getGeneralLedgerEntries({
-          accountId: glSelectedTarget.startsWith('ACC:') ? glSelectedTarget.replace('ACC:', '') : undefined,
-          partyId: glSelectedTarget.startsWith('PTY:') ? glSelectedTarget.replace('PTY:', '') : undefined,
-          startDate: glDateFrom || undefined,
-          endDate: glDateTo || undefined,
-          search: glSearchText || undefined
-        }).then(r => r.entries).catch(() => safeFetchJson<LedgerEntry[]>('/api/finance/ledgers', undefined, 3, 300)),
         FinanceService.getFinancialReports({
           startDate: sDate,
           endDate: eDate,
@@ -432,8 +499,6 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       const list = Array.isArray(coaRes) ? coaRes : ((coaRes as any)?.accounts || (coaRes as any)?.coa || (coaRes as any)?.data || []);
       const finalCoa = Array.isArray(list) ? list : [];
       setAccounts(finalCoa);
-      setVouchers(Array.isArray(vchRes) ? vchRes : []);
-      setLedgers(Array.isArray(ledRes) ? ledRes : []);
       if (repRes) setReports(repRes);
       setParties(Array.isArray(ptyRes) ? ptyRes : []);
 
@@ -453,6 +518,11 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           return prev;
         });
       }
+
+      await fetchPaginatedVouchers(voucherPage, voucherPageSize, voucherSearch, voucherTypeFilter);
+      if (subTab === 'ledger') {
+        await fetchPaginatedLedger(ledgerPage, ledgerPageSize, glSelectedTarget, glDateFrom, glDateTo, glSearchText);
+      }
     } catch {
       // Graceful fallback
     } finally {
@@ -467,20 +537,36 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     }
   }, [reportStartDate, reportEndDate, subTab]);
 
-  // Reactively re-fetch General Ledger entries from PostgreSQL when filters change
+  // Reactively fetch vouchers when voucher tab or pagination/filters change
+  useEffect(() => {
+    if (subTab === 'vouchers') {
+      fetchPaginatedVouchers(voucherPage, voucherPageSize, voucherSearch, voucherTypeFilter);
+    }
+  }, [fetchPaginatedVouchers, voucherPage, voucherPageSize, voucherSearch, voucherTypeFilter, subTab]);
+
+  // Reactively fetch General Ledger entries from PostgreSQL when filters or pagination change
   useEffect(() => {
     if (subTab === 'ledger') {
-      FinanceService.getGeneralLedgerEntries({
-        accountId: glSelectedTarget.startsWith('ACC:') ? glSelectedTarget.replace('ACC:', '') : undefined,
-        partyId: glSelectedTarget.startsWith('PTY:') ? glSelectedTarget.replace('PTY:', '') : undefined,
-        startDate: glDateFrom || undefined,
-        endDate: glDateTo || undefined,
-        search: glSearchText || undefined
-      }).then(res => {
-        setLedgers(res.entries || []);
-      });
+      fetchPaginatedLedger(ledgerPage, ledgerPageSize, glSelectedTarget, glDateFrom, glDateTo, glSearchText);
     }
-  }, [glSelectedTarget, glDateFrom, glDateTo, glSearchText, subTab, syncVersion]);
+  }, [fetchPaginatedLedger, ledgerPage, ledgerPageSize, glSelectedTarget, glDateFrom, glDateTo, glSearchText, subTab, syncVersion]);
+
+  // Realtime refetch current page on Supabase CDC update
+  useEffect(() => {
+    const handleRealtimeRecord = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.record) return;
+      if (detail.table === 'financial_vouchers' || detail.table === 'voucher_entries' || detail.table === 'vouchers') {
+        fetchPaginatedVouchers(voucherPage, voucherPageSize, voucherSearch, voucherTypeFilter);
+        if (subTab === 'ledger') {
+          fetchPaginatedLedger(ledgerPage, ledgerPageSize, glSelectedTarget, glDateFrom, glDateTo, glSearchText);
+        }
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleRealtimeRecord);
+    return () => window.removeEventListener('vv:realtime-record', handleRealtimeRecord);
+  }, [fetchPaginatedVouchers, fetchPaginatedLedger, voucherPage, voucherPageSize, voucherSearch, voucherTypeFilter, ledgerPage, ledgerPageSize, glSelectedTarget, glDateFrom, glDateTo, glSearchText, subTab]);
+
 
   useEffect(() => {
     FinanceService.clearCoaCache();
@@ -1346,16 +1432,28 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     if (!window.confirm(confirmPrompt)) {
       return;
     }
+    setDeletingVoucherId(String(v.id));
     try {
       await FinanceService.deleteVoucher(v.id, true);
       showMsg(`Voucher ${v.voucherNo} deleted successfully from SQL!`);
       notifyMutation('FINANCE', 'VOUCHER', 'DELETE', v.voucherNo);
-      loadData();
+      setVouchers(prev => {
+        const next = prev.filter(item => String(item.id) !== String(v.id));
+        if (next.length === 0 && voucherPage > 1) {
+          setVoucherPage(p => Math.max(1, p - 1));
+        }
+        return next;
+      });
+      setTotalVouchers(prev => Math.max(0, prev - 1));
+      fetchPaginatedVouchers(voucherPage, voucherPageSize, voucherSearch, voucherTypeFilter);
       onRefreshAll();
     } catch (err: any) {
       showMsg(err?.message || 'Failed to delete voucher', 'error');
+    } finally {
+      setDeletingVoucherId(null);
     }
   };
+
 
   const handlePostVoucher = async (voucherId: string) => {
     const lockKey = `post-voucher-${voucherId}`;
@@ -1895,10 +1993,40 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           <div className="space-y-4">
             <div className="bg-white rounded-xl border border-amber-200/90 shadow-xs overflow-hidden">
               <div className="p-3.5 border-b border-amber-200/70 bg-amber-50/50 flex flex-wrap items-center justify-between gap-2">
-                <span className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-amber-600" />
-                  <span>Financial Vouchers Register {Array.isArray(vouchers) ? `(${vouchers.length} records)` : ''}</span>
-                </span>
+                <div className="flex items-center gap-2 flex-wrap flex-1">
+                  <span className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2 mr-2">
+                    <FileText className="w-4 h-4 text-amber-600" />
+                    <span>Financial Vouchers ({totalVouchers || (Array.isArray(vouchers) ? vouchers.length : 0)})</span>
+                  </span>
+                  <div className="relative min-w-[180px] max-w-xs">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Search voucher no, narration..."
+                      value={voucherSearch}
+                      onChange={e => {
+                        setVoucherSearch(e.target.value);
+                        setVoucherPage(1);
+                      }}
+                      className="w-full pl-8 pr-3 py-1.5 border border-amber-200 rounded text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none bg-white"
+                    />
+                  </div>
+                  <select
+                    value={voucherTypeFilter}
+                    onChange={e => {
+                      setVoucherTypeFilter(e.target.value);
+                      setVoucherPage(1);
+                    }}
+                    className="px-2.5 py-1.5 border border-amber-200 rounded text-xs bg-white text-slate-700 font-bold focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="ALL">All Voucher Types</option>
+                    <option value="JOURNAL">Journal (JV)</option>
+                    <option value="BPV">Bank Payment (BPV)</option>
+                    <option value="BRV">Bank Receipt (BRV)</option>
+                    <option value="CPV">Cash Payment (CPV)</option>
+                    <option value="CRV">Cash Receipt (CRV)</option>
+                  </select>
+                </div>
                 <button
                   type="button"
                   onClick={() => {
@@ -2060,12 +2188,17 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                                     </button>
                                     <button
                                       type="button"
+                                      disabled={deletingVoucherId === String(v.id)}
                                       onClick={() => handleDeleteVoucher(v)}
-                                      className="px-2 py-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-[10px] uppercase tracking-wider inline-flex items-center gap-1 cursor-pointer"
+                                      className="px-2 py-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-[10px] uppercase tracking-wider inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
                                       title="Delete Manual Voucher"
                                     >
-                                      <Trash2 className="w-3 h-3" />
-                                      <span>Delete</span>
+                                      {deletingVoucherId === String(v.id) ? (
+                                        <Loader2 className="w-3 h-3 animate-spin text-rose-600" />
+                                      ) : (
+                                        <Trash2 className="w-3 h-3" />
+                                      )}
+                                      <span>{deletingVoucherId === String(v.id) ? 'Deleting...' : 'Delete'}</span>
                                     </button>
                                   </>
                                 ) : (
@@ -2114,6 +2247,20 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   </tbody>
                 </table>
               </div>
+
+              <Pagination
+                currentPage={voucherPage}
+                totalPages={totalVoucherPages}
+                totalItems={totalVouchers}
+                pageSize={voucherPageSize}
+                onPageChange={newPage => setVoucherPage(newPage)}
+                onPageSizeChange={newSize => {
+                  setVoucherPageSize(newSize);
+                  setVoucherPage(1);
+                }}
+                isLoading={isLoadingVouchers}
+                itemLabel="vouchers"
+              />
             </div>
           </div>
         </ModuleMaintenanceGuard>
@@ -2144,7 +2291,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 </label>
                 <SearchableSelect
                   value={glSelectedTarget}
-                  onChange={val => setGlSelectedTarget(val || 'ALL')}
+                  onChange={val => {
+                    setGlSelectedTarget(val || 'ALL');
+                    setLedgerPage(1);
+                  }}
                   options={glTargetFlatOptions}
                   groups={glTargetGroups}
                   placeholder="Select Account or Party..."
@@ -2161,7 +2311,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <input
                   type="text"
                   value={glSearchText}
-                  onChange={e => setGlSearchText(e.target.value)}
+                  onChange={e => {
+                    setGlSearchText(e.target.value);
+                    setLedgerPage(1);
+                  }}
                   placeholder="e.g. JV-2026, customs, boutique..."
                   className="w-full text-xs px-2.5 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500"
                 />
@@ -2175,7 +2328,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <input
                   type="date"
                   value={glDateFrom}
-                  onChange={e => setGlDateFrom(e.target.value)}
+                  onChange={e => {
+                    setGlDateFrom(e.target.value);
+                    setLedgerPage(1);
+                  }}
                   className="w-full text-xs px-2.5 py-2 border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-amber-500"
                 />
               </div>
@@ -2188,7 +2344,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <input
                   type="date"
                   value={glDateTo}
-                  onChange={e => setGlDateTo(e.target.value)}
+                  onChange={e => {
+                    setGlDateTo(e.target.value);
+                    setLedgerPage(1);
+                  }}
                   className="w-full text-xs px-2.5 py-2 border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-amber-500"
                 />
               </div>
@@ -2199,7 +2358,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           <div className="bg-white rounded-xl border border-amber-200/90 shadow-xs overflow-hidden">
             <div className="p-3.5 border-b border-amber-200/70 bg-amber-50/50 flex flex-wrap items-center justify-between gap-2">
               <span className="font-bold text-slate-900 text-xs uppercase tracking-wider">
-                Chronological Ledger Statement ({filteredLedgers.length} postings)
+                Chronological Ledger Statement ({totalLedgers || filteredLedgers.length} postings)
               </span>
               <div className="text-xs font-mono font-bold text-slate-800 space-x-4">
                 <span>Total Debits: <strong className="text-emerald-800">AED {Number(glTotals.debit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></span>
@@ -2237,6 +2396,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                               setGlSearchText('');
                               setGlDateFrom('');
                               setGlDateTo('');
+                              setLedgerPage(1);
                             }}
                             className="mt-2 text-xs bg-amber-100 text-amber-900 px-3 py-1.5 rounded-lg font-bold hover:bg-amber-200 transition-colors shadow-xs cursor-pointer"
                           >
@@ -2275,6 +2435,20 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 </tbody>
               </table>
             </div>
+
+            <Pagination
+              currentPage={ledgerPage}
+              totalPages={totalLedgerPages}
+              totalItems={totalLedgers}
+              pageSize={ledgerPageSize}
+              onPageChange={newPage => setLedgerPage(newPage)}
+              onPageSizeChange={newSize => {
+                setLedgerPageSize(newSize);
+                setLedgerPage(1);
+              }}
+              isLoading={isLoadingLedgers}
+              itemLabel="postings"
+            />
           </div>
         </div>
       )}

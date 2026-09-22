@@ -20,13 +20,15 @@ import {
   Edit,
   Trash2,
   AlertCircle,
-  RotateCcw
+  RotateCcw,
+  Loader2
 } from 'lucide-react';
 import { openBatchBaleThermalTagsPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { openCommercialInvoiceA4PrintWindow, numberToWords } from '../../../utils/printInvoiceA4.ts';
 import { supabase } from '../../../supabaseClient.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { useSync } from '../../../context/SyncContext.tsx';
+import { Pagination } from '../../../components/Pagination.tsx';
 
 interface CommercialInvoicesTabProps {
   invoices: PurchaseInvoice[];
@@ -209,6 +211,12 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   const [invoicesList, setInvoicesList] = useState<PurchaseInvoice[]>(invoices);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isConvertingId, setIsConvertingId] = useState<string | null>(null);
+  const [deletingInvoiceId, setDeletingInvoiceId] = useState<string | null>(null);
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [totalInvoices, setTotalInvoices] = useState<number>(invoices?.length || 0);
+  const [totalPages, setTotalPages] = useState<number>(Math.max(1, Math.ceil((invoices?.length || 0) / 10)));
+  const [isLoadingPage, setIsLoadingPage] = useState<boolean>(false);
   const [lockedModalInfo, setLockedModalInfo] = useState<{
     invoiceNo: string;
     actionType: 'EDIT' | 'DELETE';
@@ -217,9 +225,40 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
     balesCount: number;
   } | null>(null);
 
+  const fetchPaginatedInvoices = React.useCallback(async (targetPage = page, targetPageSize = pageSize, targetSearch = searchTerm) => {
+    setIsLoadingPage(true);
+    try {
+      const res = await PurchaseService.getPurchaseInvoicesPaginated({
+        page: targetPage,
+        pageSize: targetPageSize,
+        search: targetSearch
+      });
+      setInvoicesList(res.data);
+      setTotalInvoices(res.total);
+      setTotalPages(res.totalPages);
+    } catch (err) {
+      console.warn('[CommercialInvoicesTab] Pagination fetch notice:', err);
+    } finally {
+      setIsLoadingPage(false);
+    }
+  }, [page, pageSize, searchTerm]);
+
   React.useEffect(() => {
-    setInvoicesList(invoices);
-  }, [invoices]);
+    fetchPaginatedInvoices(page, pageSize, searchTerm);
+  }, [page, pageSize, searchTerm, fetchPaginatedInvoices]);
+
+  // Realtime refetch current page on Supabase CDC update
+  React.useEffect(() => {
+    const handleRealtimeRecord = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.record) return;
+      if (detail.table === 'purchase_invoices') {
+        fetchPaginatedInvoices(page, pageSize, searchTerm);
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleRealtimeRecord);
+    return () => window.removeEventListener('vv:realtime-record', handleRealtimeRecord);
+  }, [fetchPaginatedInvoices, page, pageSize, searchTerm]);
 
   React.useEffect(() => {
     if (toastMessage) {
@@ -614,11 +653,21 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
 
   // 3. FIX DELETE BUTTON (Strict ERP Constraints)
   const handleDeleteInvoice = async (invoiceId: string, invoiceNo?: string) => {
+    setDeletingInvoiceId(String(invoiceId));
     try {
       await PurchaseService.deletePurchaseInvoice(String(invoiceId), invoiceNo);
 
-      // Immediately remove the deleted invoice from React state:
-      setInvoicesList(prev => prev.filter(inv => String(inv.id) !== String(invoiceId)));
+      // Immediately filter out the deleted ID from local state upon success:
+      setInvoicesList(prev => {
+        const next = prev.filter(inv => String(inv.id) !== String(invoiceId));
+        // Smart Deletion: If user deletes the LAST row on the current page (and currentPage > 1), navigate to currentPage - 1
+        if (next.length === 0 && page > 1) {
+          setPage(p => Math.max(1, p - 1));
+        }
+        return next;
+      });
+      setTotalInvoices(prev => Math.max(0, prev - 1));
+
       if (onDeleteInvoice) {
         onDeleteInvoice(String(invoiceId));
       }
@@ -630,10 +679,13 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
         }
       } catch {}
 
+      fetchPaginatedInvoices(page, pageSize, searchTerm);
       onRefresh();
     } catch (e: any) {
       console.error("Error deleting invoice:", e);
       alert(e.message || "Failed to delete purchase invoice");
+    } finally {
+      setDeletingInvoiceId(null);
     }
   };
 
@@ -703,7 +755,10 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
             type="text"
             placeholder="Search by Invoice No, Container, Supplier, B/L..."
             value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
+            onChange={e => {
+              setSearchTerm(e.target.value);
+              setPage(1);
+            }}
             className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
           />
         </div>
@@ -863,13 +918,13 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                             <span>{isEditLocked ? 'Locked' : 'Edit'}</span>
                           </button>
 
-                          {/* Delete Button (Immediately disabled if Inward Pass exists or is POSTED) */}
+                          {/* Delete Button (Immediately disabled if Inward Pass exists, is POSTED, or is deleting) */}
                           <button
                             type="button"
-                            disabled={isDeleteLocked}
+                            disabled={isDeleteLocked || deletingInvoiceId === String(inv.id)}
                             onClick={() => handleDeleteInvoiceClick(inv)}
                             className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 transition-colors border ${
-                              isDeleteLocked
+                              isDeleteLocked || deletingInvoiceId === String(inv.id)
                                 ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-75'
                                 : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200 cursor-pointer'
                             }`}
@@ -881,8 +936,14 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                                 : 'Delete Commercial Invoice'
                             }
                           >
-                            {isDeleteLocked ? <Lock className="w-3 h-3 text-slate-400" /> : <Trash2 className="w-3 h-3 text-rose-600" />}
-                            <span>{isDeleteLocked ? 'Locked' : 'Delete'}</span>
+                            {deletingInvoiceId === String(inv.id) ? (
+                              <Loader2 className="w-3 h-3 text-rose-600 animate-spin" />
+                            ) : isDeleteLocked ? (
+                              <Lock className="w-3 h-3 text-slate-400" />
+                            ) : (
+                              <Trash2 className="w-3 h-3 text-rose-600" />
+                            )}
+                            <span>{deletingInvoiceId === String(inv.id) ? 'Deleting...' : isDeleteLocked ? 'Locked' : 'Delete'}</span>
                           </button>
 
                           {/* Direct Print A4 with Monogram and Expenses */}
@@ -995,6 +1056,20 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
             </tbody>
           </table>
         </div>
+
+        <Pagination
+          currentPage={page}
+          totalPages={totalPages}
+          totalItems={totalInvoices}
+          pageSize={pageSize}
+          onPageChange={newPage => setPage(newPage)}
+          onPageSizeChange={newSize => {
+            setPageSize(newSize);
+            setPage(1);
+          }}
+          isLoading={isLoadingPage}
+          itemLabel="invoices"
+        />
       </div>
 
       {/* Locked Sorting Protection Modal */}

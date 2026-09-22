@@ -2,8 +2,139 @@ import { supabase } from '../supabaseClient.ts';
 import { Party, PartyKhataLog, VisitingCard, PartyType } from '../modules/parties/parties.types.ts';
 import { FinanceService } from './financeService.ts';
 import { safeFetchJson, safeFetchMutation } from '../utils/fetchUtils.ts';
+import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
 
 export class PartiesService {
+  public static async getPartiesPaginated(options?: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    type?: string;
+  }): Promise<PaginatedResponse<Party>> {
+    const page = Math.max(1, options?.page || 1);
+    const pageSize = Math.max(1, options?.pageSize || 10);
+    const search = options?.search?.trim() || '';
+    const type = options?.type?.trim().toUpperCase() || 'ALL';
+
+    let query = supabase
+      .from('parties')
+      .select('*', { count: 'exact' });
+
+    if (search) {
+      query = query.or(`name.ilike.%${search}%,code.ilike.%${search}%,phone.ilike.%${search}%,email.ilike.%${search}%,trn_no.ilike.%${search}%`);
+    }
+
+    if (type && type !== 'ALL') {
+      if (type === 'CUSTOMER' || type === 'CLIENT') {
+        query = query.or('type.ilike.%CUSTOMER%,type.ilike.%CLIENT%,party_type.ilike.%CUSTOMER%,party_type.ilike.%CLIENT%');
+      } else if (type === 'SUPPLIER' || type === 'VENDOR') {
+        query = query.or('type.ilike.%SUPPLIER%,type.ilike.%VENDOR%,party_type.ilike.%SUPPLIER%,party_type.ilike.%VENDOR%');
+      } else if (type === 'AGENT' || type === 'BROKER') {
+        query = query.or('type.ilike.%AGENT%,type.ilike.%BROKER%,party_type.ilike.%AGENT%,party_type.ilike.%BROKER%');
+      } else if (type === 'COURIER' || type === 'FREIGHT' || type === 'LOGISTICS') {
+        query = query.or('type.ilike.%COURIER%,type.ilike.%FREIGHT%,type.ilike.%LOGISTICS%,party_type.ilike.%COURIER%,party_type.ilike.%FREIGHT%,party_type.ilike.%LOGISTICS%');
+      } else {
+        query = query.or(`type.eq.${type},party_type.eq.${type}`);
+      }
+    }
+
+    query = applyPagination(query, page, pageSize, {
+      orderBy: 'created_at',
+      ascending: false,
+      secondaryOrderBy: 'id',
+      secondaryAscending: false
+    });
+
+    const [partiesRes, liveBalancesRes] = await Promise.all([
+      query,
+      supabase.from('view_coa_live_balances').select('party_id, account_id, current_balance')
+    ]);
+
+    if (partiesRes.error) {
+      console.warn('[PartiesService] Paginated parties query warning:', partiesRes.error.message);
+      return buildPaginatedResponse([], 0, page, pageSize);
+    }
+
+    const liveBalancesMap = new Map<string, number>();
+    if (liveBalancesRes.data) {
+      liveBalancesRes.data.forEach((row: any) => {
+        if (row.party_id) {
+          liveBalancesMap.set(String(row.party_id), Number(row.current_balance || 0));
+        }
+        if (row.account_id) {
+          liveBalancesMap.set(String(row.account_id), Number(row.current_balance || 0));
+        }
+      });
+    }
+
+    const mapped = (partiesRes.data || []).map((row: any) => {
+      const liveBal = liveBalancesMap.has(String(row.id))
+        ? liveBalancesMap.get(String(row.id))!
+        : (row.coa_account_id && liveBalancesMap.has(String(row.coa_account_id))
+          ? liveBalancesMap.get(String(row.coa_account_id))!
+          : Number(row.current_balance ?? row.currentBalance ?? 0));
+
+      const rawT = String(row.type || row.party_type || 'CLIENT').trim().toUpperCase();
+      const normType: PartyType = (rawT.includes('COURIER') || rawT.includes('FREIGHT') || rawT.includes('LOGISTICS'))
+        ? 'COURIER'
+        : (rawT.includes('AGENT') || rawT.includes('BROKER'))
+        ? 'AGENT'
+        : (rawT.includes('SUPPLIER') || rawT.includes('VENDOR'))
+        ? 'SUPPLIER'
+        : 'CUSTOMER';
+
+      return {
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        type: normType,
+        contactPerson: row.contact_person || row.contactPerson || '',
+        contact_person: row.contact_person || row.contactPerson || '',
+        contactDesignation: row.contact_designation || row.contactDesignation || '',
+        contact_designation: row.contact_designation || row.contactDesignation || '',
+        tradeLicenseNo: row.trade_license_no || row.tradeLicenseNo || '',
+        trade_license_no: row.trade_license_no || row.tradeLicenseNo || '',
+        licenseExpiryDate: row.license_expiry_date || row.licenseExpiryDate || null,
+        license_expiry_date: row.license_expiry_date || row.licenseExpiryDate || null,
+        bankName: row.bank_name || row.bankName || '',
+        bank_name: row.bank_name || row.bankName || '',
+        iban: row.iban || '',
+        swiftCode: row.swift_code || row.swiftCode || '',
+        swift_code: row.swift_code || row.swiftCode || '',
+        paymentTerms: row.payment_terms || row.paymentTerms || '',
+        payment_terms: row.payment_terms || row.paymentTerms || '',
+        openingBalance: Number(row.opening_balance ?? row.openingBalance ?? 0),
+        opening_balance: Number(row.opening_balance ?? row.openingBalance ?? 0),
+        businessCardUrl: row.business_card_url || row.businessCardUrl || '',
+        business_card_url: row.business_card_url || row.businessCardUrl || '',
+        phone: row.phone || '',
+        email: row.email || '',
+        address: row.address || '',
+        trnNo: row.trn_no || row.trnNo || '',
+        trn_no: row.trn_no || row.trnNo || '',
+        party_id: row.party_id,
+        company_name: row.company_name || row.name,
+        party_type: row.party_type || row.type,
+        linked_account_id: row.linked_account_id,
+        creditLimit: Number(row.credit_limit ?? row.creditLimit ?? 0),
+        credit_limit: Number(row.credit_limit ?? row.creditLimit ?? 0),
+        currentBalance: Number(liveBal.toFixed(2)),
+        current_balance: Number(liveBal.toFixed(2)),
+        currency: row.currency || 'AED',
+        isActive: row.is_active !== false && row.isActive !== false,
+        is_active: row.is_active !== false && row.isActive !== false,
+        accountMap: row.account_map || row.accountMap || {},
+        account_map: row.account_map || row.accountMap || {},
+        coaAccountId: row.coa_account_id,
+        coa_account_id: row.coa_account_id,
+        createdAt: row.created_at || new Date().toISOString(),
+        created_at: row.created_at || new Date().toISOString()
+      } as Party;
+    });
+
+    return buildPaginatedResponse(mapped, partiesRes.count || 0, page, pageSize);
+  }
+
   public static async getParties(): Promise<Party[]> {
     // 1. Primary & direct route: query server endpoint which connects directly to PostgreSQL
     if (typeof window !== 'undefined') {

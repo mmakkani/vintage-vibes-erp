@@ -1,8 +1,102 @@
 import { supabase } from '../supabaseClient.ts';
 import { SalesInvoice } from '../modules/sales/sales.types.ts';
+import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
 
 export class SalesService {
   public static readonly SALES_INVOICE_GRID_COLUMNS = 'id, invoice_no, client_id, customer_name, customer_phone, subtotal, tax_amount, total_amount, status, payment_method, invoice_date, created_at, items';
+
+  public static async getSalesInvoicesPaginated(options?: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    status?: string;
+    paymentMethod?: string;
+  }): Promise<PaginatedResponse<SalesInvoice>> {
+    const page = Math.max(1, options?.page || 1);
+    const pageSize = Math.max(1, options?.pageSize || 10);
+    const search = options?.search?.trim() || '';
+    const status = options?.status?.trim() || '';
+    const paymentMethod = options?.paymentMethod?.trim() || '';
+
+    let query = supabase
+      .from('sales_invoices')
+      .select(SalesService.SALES_INVOICE_GRID_COLUMNS, { count: 'exact' });
+
+    if (search) {
+      query = query.or(`invoice_no.ilike.%${search}%,customer_name.ilike.%${search}%,customer_phone.ilike.%${search}%`);
+    }
+    if (status && status !== 'ALL') {
+      query = query.eq('status', status);
+    }
+    if (paymentMethod && paymentMethod !== 'ALL') {
+      query = query.eq('payment_method', paymentMethod);
+    }
+
+    query = applyPagination(query, page, pageSize, {
+      orderBy: 'created_at',
+      ascending: false,
+      secondaryOrderBy: 'id',
+      secondaryAscending: false
+    });
+
+    const { data, count, error } = await query;
+    if (error) {
+      console.warn('[SalesService] Paginated sales invoices query notice:', error.message);
+      return buildPaginatedResponse([], 0, page, pageSize);
+    }
+
+    const mapped = (data || []).map((row: any) => {
+      let parsedItems: any[] = [];
+      if (Array.isArray(row.items)) {
+        parsedItems = row.items;
+      } else if (typeof row.items === 'string') {
+        try {
+          const parsed = JSON.parse(row.items);
+          if (Array.isArray(parsed)) parsedItems = parsed;
+        } catch {}
+      }
+      const rawDate = row.invoice_date || row.invoiceDate || (row.created_at ? String(row.created_at).slice(0, 10) : new Date().toISOString().slice(0, 10));
+      const subVal = Number(row.subtotal ?? row.sub_total ?? row.total_amount ?? 0);
+      const vatVal = Number(row.tax_amount ?? row.vat_amount ?? row.taxAmount ?? row.vatAmount ?? 0);
+      const totalVal = Number(row.total_amount ?? row.totalAmount ?? (subVal + vatVal));
+
+      return {
+        id: row.id,
+        invoiceNo: row.invoice_no || row.invoiceNo || `SINV-${row.id || Date.now()}`,
+        clientId: row.client_id || row.clientId,
+        customerId: row.client_id || row.clientId || row.customer_id || '',
+        customerName: row.customer_name || row.customerName || 'Walk-in Guest',
+        customerPhone: row.customer_phone || row.customerPhone || '',
+        invoiceDate: rawDate,
+        date: rawDate,
+        time: row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '14:30',
+        channel: row.channel || 'POS_COUNTER',
+        paymentMethod: row.payment_method || row.paymentMethod || 'CASH',
+        paymentStatus: row.payment_status || row.paymentStatus || (row.status === 'PAID' ? 'PAID' : 'UNPAID_PENDING_COD'),
+        paymentReference: row.payment_reference || row.paymentReference || '',
+        shippingAddress: row.shipping_address || row.shippingAddress || '',
+        city: row.city || '',
+        courierPartyId: row.courier_party_id || row.courierPartyId || row.courier_partner_id,
+        trackingNumber: row.tracking_number || row.trackingNumber,
+        buyerHandle: row.buyer_handle || row.buyerHandle,
+        boothId: row.booth_id || row.boothId,
+        expiresAt: row.expires_at || row.expiresAt,
+        orderId: row.order_id || row.orderId,
+        subtotal: subVal,
+        subTotal: subVal,
+        discountAmount: Number(row.discount_amount ?? row.discountAmount ?? 0),
+        taxAmount: vatVal,
+        vatAmount: vatVal,
+        totalAmount: totalVal,
+        grandTotalAED: totalVal,
+        status: row.status || 'PAID',
+        items: parsedItems,
+        createdAt: row.created_at
+      } as SalesInvoice;
+    });
+
+    return buildPaginatedResponse(mapped, count || 0, page, pageSize);
+  }
 
   public static async getSalesInvoices(options?: { limit?: number; offset?: number; page?: number }): Promise<SalesInvoice[]> {
     const limit = options?.limit || 50;

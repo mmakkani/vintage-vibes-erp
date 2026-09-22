@@ -19,10 +19,12 @@ import {
   Building2,
   AlertCircle,
   Printer,
-  Tag,
-  Trash2
+  Trash2,
+  Loader2
 } from 'lucide-react';
 import { PurchaseService } from '../../../services/purchaseService.ts';
+import { Pagination } from '../../../components/Pagination.tsx';
+
 
 interface BaleMasterRegistryProps {
   bales: InwardGatePass[];
@@ -41,6 +43,43 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'UNOPENED' | 'IN_PROGRESS' | 'FULLY_SORTED'>('ALL');
+
+  // Server-Side Pagination State
+  const [balesList, setBalesList] = useState<InwardGatePass[]>(bales);
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [totalBales, setTotalBales] = useState<number>(bales.length);
+  const [totalPages, setTotalPages] = useState<number>(Math.max(1, Math.ceil(bales.length / 10)));
+  const [isLoadingPage, setIsLoadingPage] = useState<boolean>(false);
+  const [deletingBaleId, setDeletingBaleId] = useState<string | null>(null);
+
+  const fetchPaginatedBales = useCallback(async (
+    targetPage = page,
+    targetPageSize = pageSize,
+    targetSearch = searchTerm,
+    targetStatus = statusFilter
+  ) => {
+    setIsLoadingPage(true);
+    try {
+      const res = await PurchaseService.getInwardGatePassesPaginated({
+        page: targetPage,
+        pageSize: targetPageSize,
+        search: targetSearch,
+        status: targetStatus
+      });
+      setBalesList(res.data);
+      setTotalBales(res.total);
+      setTotalPages(res.totalPages);
+    } catch (err) {
+      console.warn('[BaleMasterRegistry] Pagination notice:', err);
+    } finally {
+      setIsLoadingPage(false);
+    }
+  }, [page, pageSize, searchTerm, statusFilter]);
+
+  useEffect(() => {
+    fetchPaginatedBales(page, pageSize, searchTerm, statusFilter);
+  }, [fetchPaginatedBales, page, pageSize, searchTerm, statusFilter]);
 
   // State-Based Row Glow Animation (UX Enhancement across all devices)
   const [glowingRowIds, setGlowingRowIds] = useState<string[]>([]);
@@ -63,11 +102,12 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
         if (id) triggerRowGlow(String(id));
         if (r.bale_code) triggerRowGlow(String(r.bale_code));
         if (r.gate_pass_no) triggerRowGlow(String(r.gate_pass_no));
+        fetchPaginatedBales(page, pageSize, searchTerm, statusFilter);
       }
     };
     window.addEventListener('vv:realtime-record', handleRealtime);
     return () => window.removeEventListener('vv:realtime-record', handleRealtime);
-  }, [triggerRowGlow]);
+  }, [triggerRowGlow, fetchPaginatedBales, page, pageSize, searchTerm, statusFilter]);
 
   // Modal State
   const [showNewBaleModal, setShowNewBaleModal] = useState(false);
@@ -92,7 +132,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
 
   // Overall Bale Registry KPIs
   const kpis = useMemo(() => {
-    const totalBales = bales.length;
+    const totalBalesCount = bales.length;
     const totalWeight = bales.reduce((sum, b) => sum + (b.totalBaleWeight || 0), 0);
     const totalCost = bales.reduce((sum, b) => sum + (b.totalBaleCost || 0), 0);
     const sortedWeight = bales.reduce((sum, b) => sum + (b.brokenDownWeight || 0), 0);
@@ -100,7 +140,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
     const avgCostPerGram = totalWeight > 0 ? totalCost / (totalWeight * 1000) : 0;
 
     return {
-      totalBales,
+      totalBales: totalBalesCount,
       totalWeight,
       totalCost,
       sortedWeight,
@@ -111,7 +151,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
 
   // Filtered Bales
   const filteredBales = useMemo(() => {
-    return bales.filter(bale => {
+    return balesList.filter(bale => {
       const matchesSearch =
         (bale.baleCode || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (bale.gatePassNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -130,7 +170,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
 
       return true;
     });
-  }, [bales, searchTerm, statusFilter]);
+  }, [balesList, searchTerm, statusFilter]);
 
   const handlePrintBatchAll = () => {
     if (filteredBales.length === 0) return;
@@ -143,9 +183,9 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
       costPerGram: b.costPerGram || 0,
       purchaseInvoiceNo: b.purchaseInvoiceNo,
       supplierName: b.supplierName,
-      status: 'In Registry',
-      timestamp: new Date().toLocaleString(),
-      index: idx + 1,
+      status: b.sortingStatus || 'UNOPENED',
+      timestamp: b.date || new Date().toLocaleString(),
+      batchIndex: idx + 1,
       totalCount: filteredBales.length
     }));
     openBatchBaleThermalTagsPrintWindow(tags);
@@ -156,12 +196,24 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
     if (!window.confirm(`Are you sure you want to permanently delete Bale "${baleTitle}"? All sorted garment pieces, sessions, and associated inward vouchers will be purged from SQL.`)) {
       return;
     }
+    setDeletingBaleId(String(bale.id));
     try {
       await PurchaseService.deleteInwardGatePass(bale.id);
       alert(`Bale ${baleTitle} deleted successfully from SQL.`);
+      setBalesList(prev => {
+        const next = prev.filter(b => String(b.id) !== String(bale.id));
+        if (next.length === 0 && page > 1) {
+          setPage(p => Math.max(1, p - 1));
+        }
+        return next;
+      });
+      setTotalBales(prev => Math.max(0, prev - 1));
+      fetchPaginatedBales(page, pageSize, searchTerm, statusFilter);
       onRefresh();
     } catch (err: any) {
       alert(`Failed to delete bale: ${err?.message || 'Error'}`);
+    } finally {
+      setDeletingBaleId(null);
     }
   };
 
@@ -410,7 +462,10 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
             type="text"
             placeholder="Search by Bale Code, Invoice, Supplier, Category..."
             value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
+            onChange={e => {
+              setSearchTerm(e.target.value);
+              setPage(1);
+            }}
             className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
           />
         </div>
@@ -419,8 +474,12 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
           {(['ALL', 'UNOPENED', 'IN_PROGRESS', 'FULLY_SORTED'] as const).map(tab => (
             <button
               key={tab}
-              onClick={() => setStatusFilter(tab)}
+              onClick={() => {
+                setStatusFilter(tab);
+                setPage(1);
+              }}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+
                 statusFilter === tab
                   ? 'bg-slate-900 text-white'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -591,11 +650,16 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                           </button>
                           <button
                             type="button"
+                            disabled={deletingBaleId === String(bale.id)}
                             onClick={() => handleDeleteBale(bale)}
-                            className="p-1.5 hover:bg-rose-50 text-rose-600 rounded cursor-pointer transition-colors border border-rose-200"
+                            className="p-1.5 hover:bg-rose-50 text-rose-600 rounded cursor-pointer transition-colors border border-rose-200 disabled:opacity-50"
                             title="Delete Bale & Remove from SQL"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            {deletingBaleId === String(bale.id) ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-600" />
+                            ) : (
+                              <Trash2 className="w-3.5 h-3.5" />
+                            )}
                           </button>
                         </div>
                       </td>
@@ -606,6 +670,20 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
             </tbody>
           </table>
         </div>
+
+        <Pagination
+          currentPage={page}
+          totalPages={totalPages}
+          totalItems={totalBales}
+          pageSize={pageSize}
+          onPageChange={newPage => setPage(newPage)}
+          onPageSizeChange={newSize => {
+            setPageSize(newSize);
+            setPage(1);
+          }}
+          isLoading={isLoadingPage}
+          itemLabel="bales"
+        />
       </div>
 
       {/* Modal: Register New Bale Inward */}
