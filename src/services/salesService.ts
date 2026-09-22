@@ -1,6 +1,7 @@
 import { supabase } from '../supabaseClient.ts';
 import { SalesInvoice } from '../modules/sales/sales.types.ts';
 import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
+import { FinanceService } from './financeService.ts';
 
 export class SalesService {
   public static readonly SALES_INVOICE_GRID_COLUMNS = 'id, invoice_no, client_id, customer_name, customer_phone, subtotal, tax_amount, total_amount, status, payment_method, invoice_date, created_at, items';
@@ -270,10 +271,83 @@ export class SalesService {
   }
 
   public static async deleteSalesInvoice(id: string): Promise<void> {
-    const { error } = await supabase.from('sales_invoices').delete().eq('id', id);
+    const cleanId = String(id).trim();
+
+    // 0. Fetch sales invoice row to retrieve metadata
+    let invoiceNo = cleanId;
+    let customerId: string | undefined;
+
+    try {
+      const { data: invRow } = await supabase
+        .from('sales_invoices')
+        .select('id, invoice_no, client_id, customer_name')
+        .eq('id', cleanId)
+        .maybeSingle();
+
+      if (invRow) {
+        invoiceNo = invRow.invoice_no || cleanId;
+        customerId = invRow.client_id;
+        if (!customerId && invRow.customer_name) {
+          const { data: pty } = await supabase
+            .from('parties')
+            .select('id')
+            .ilike('name', invRow.customer_name.trim())
+            .maybeSingle();
+          if (pty?.id) customerId = pty.id;
+        }
+      }
+    } catch (_) {}
+
+    // 1. Cascade delete all financial vouchers, journal entries, ledger rows, and party khata logs BEFORE deleting sales invoice
+    try {
+      await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo, {
+        invoiceId: cleanId,
+        partyId: customerId,
+        docType: 'SALES'
+      });
+    } catch (vchErr) {
+      console.warn('[SalesService] Notice cascading vouchers on sales invoice deletion:', vchErr);
+    }
+
+    // 2. Delete child items
+    try {
+      await supabase.from('sales_invoice_items').delete().eq('invoice_id', cleanId);
+    } catch (_) {}
+    try {
+      await supabase.from('sales_items').delete().eq('invoice_id', cleanId);
+    } catch (_) {}
+
+    // 3. Delete parent sales invoice record
+    const { error } = await supabase.from('sales_invoices').delete().eq('id', cleanId);
     if (error) {
-      console.error('Supabase error on sales_invoices:', error);
+      console.error('Supabase error on sales_invoices deletion:', error);
       throw new Error(error.message || 'Failed to delete sales invoice');
+    }
+
+    // 4. Recalculate customer balance & COA in SQL
+    if (customerId) {
+      try {
+        await FinanceService.recalculatePartyBalance(customerId);
+      } catch (_) {}
+    }
+    try {
+      FinanceService.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
+    } catch (_) {}
+
+    // 5. Dispatch entity mutation event
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+          detail: {
+            module: 'sales',
+            entity: 'sales_invoices',
+            action: 'DELETED',
+            documentRef: invoiceNo,
+            affectedModules: ['sales', 'finance']
+          }
+        }));
+      } catch (_) {}
     }
   }
 

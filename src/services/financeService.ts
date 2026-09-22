@@ -1261,43 +1261,131 @@ export class FinanceService {
   }
 
   /**
-   * System-level reversal: Reverses/deletes auto-vouchers and general ledger lines for a specific source document
-   * (e.g. when unposting a Commercial Invoice or deleting an Inward Gate Pass).
-   * This bypasses the manual-only deletion block specifically for system unpost flows.
+   * Recalculates a party's running balance from parties.opening_balance and party_khata_logs,
+   * updates parties.current_balance, and updates the mapped coa_account if present.
    */
-  public static async reverseAutoVouchersForDocument(docRef: string): Promise<void> {
+  public static async recalculatePartyBalance(partyId: string): Promise<number> {
+    if (!partyId) return 0;
+    const cleanId = String(partyId).trim();
+
+    try {
+      // 1. Fetch party record
+      const { data: party, error: pErr } = await supabase
+        .from('parties')
+        .select('id, type, party_type, opening_balance, current_balance, coa_account_id')
+        .eq('id', cleanId)
+        .maybeSingle();
+
+      if (pErr || !party) {
+        return 0;
+      }
+
+      const rawType = String(party.type || party.party_type || '').toUpperCase();
+      const isSupplier = rawType.includes('SUPPLIER') || rawType.includes('VENDOR') || rawType.includes('COURIER');
+      const openingBalance = Number(party.opening_balance || 0);
+
+      // 2. Fetch all remaining khata logs for this party ordered chronologically
+      const { data: logs } = await supabase
+        .from('party_khata_logs')
+        .select('id, debit, credit')
+        .eq('party_id', cleanId)
+        .order('date', { ascending: true })
+        .order('created_at', { ascending: true });
+
+      let calculatedBalance = openingBalance;
+
+      if (logs && logs.length > 0) {
+        for (const log of logs) {
+          const dr = Number(log.debit || 0);
+          const cr = Number(log.credit || 0);
+          if (isSupplier) {
+            calculatedBalance = calculatedBalance + cr - dr;
+          } else {
+            calculatedBalance = calculatedBalance + dr - cr;
+          }
+        }
+      }
+
+      calculatedBalance = Math.max(0, Number(calculatedBalance.toFixed(2)));
+
+      // 3. Update parties.current_balance
+      await supabase
+        .from('parties')
+        .update({ current_balance: calculatedBalance })
+        .eq('id', cleanId);
+
+      // 4. Update mapped coa_account if present
+      if (party.coa_account_id) {
+        try {
+          await supabase
+            .from('coa_accounts')
+            .update({ current_balance: calculatedBalance })
+            .eq('id', party.coa_account_id);
+        } catch (_) {}
+        try {
+          await supabase
+            .from('chart_of_accounts')
+            .update({ current_balance: calculatedBalance })
+            .eq('id', party.coa_account_id);
+        } catch (_) {}
+      }
+
+      return calculatedBalance;
+    } catch (err) {
+      console.warn(`[FinanceService] Error recalculating party balance for ${cleanId}:`, err);
+      return 0;
+    }
+  }
+
+  /**
+   * Cascades full deletion of financial vouchers, cascading journal entries, ledger lines,
+   * party khata logs, and recalculates party and COA balances.
+   */
+  public static async cascadeDeleteVouchersForDocument(
+    docRef: string,
+    options?: { invoiceId?: string; partyId?: string; docType?: 'PURCHASE' | 'SALES' | 'INWARD' }
+  ): Promise<void> {
     if (!docRef || !docRef.trim()) return;
     const cleanRef = docRef.trim();
     const cleanNoSpecial = cleanRef.replace(/[^a-zA-Z0-9]/g, '');
+    const cleanUpper = cleanRef.toUpperCase();
+    const cleanNoSpecialUpper = cleanNoSpecial.toUpperCase();
+    const invIdClean = options?.invoiceId ? String(options.invoiceId).trim() : '';
+
+    const affectedPartyIds = new Set<string>();
+    if (options?.partyId) {
+      affectedPartyIds.add(String(options.partyId));
+    }
 
     try {
       // 1. Fetch matching vouchers from financial_vouchers and vouchers
       const [fvRes, vRes] = await Promise.all([
-        supabase.from('financial_vouchers').select('id, voucher_no, reference, narration'),
-        supabase.from('vouchers').select('id, voucher_no, reference, narration')
+        supabase.from('financial_vouchers').select('id, voucher_no, reference, reference_no, narration, party_id'),
+        supabase.from('vouchers').select('id, voucher_no, reference, reference_no, narration, party_id')
       ]);
 
-      const targetUpper = cleanRef.toUpperCase();
-      const targetClean = cleanNoSpecial.toUpperCase();
       const matched: { id: string; voucherNo: string }[] = [];
 
       const checkAndAdd = (item: any) => {
-        const vRef = String(item.reference || item.reference_no || '').toUpperCase();
+        const vId = String(item.id || '');
+        const vRef = String(item.reference || '').toUpperCase();
+        const vRefNo = String(item.reference_no || '').toUpperCase();
         const vNo = String(item.voucher_no || '').toUpperCase();
         const vNarr = String(item.narration || '').toUpperCase();
 
-        if (
-          vRef.includes(targetUpper) ||
-          vNarr.includes(targetUpper) ||
-          (targetClean && vNo.includes(targetClean)) ||
-          vRef === `PINV-${targetUpper}` ||
-          vRef === `INWARD-${targetUpper}` ||
-          vRef === `PUR-${targetUpper}` ||
-          vRef === `IGP-${targetUpper}` ||
-          vRef === `BALE-${targetUpper}`
-        ) {
-          if (!matched.some(m => m.id === String(item.id))) {
-            matched.push({ id: String(item.id), voucherNo: String(item.voucher_no || item.id) });
+        const isMatch =
+          (vRef && (vRef === cleanUpper || vRef.includes(cleanUpper) || vRef === `PINV-${cleanUpper}` || vRef === `PUR-${cleanUpper}` || vRef === `INWARD-${cleanUpper}` || vRef === `SINV-${cleanUpper}` || vRef === `SLS-${cleanUpper}` || vRef === `IGP-${cleanUpper}` || vRef === `BALE-${cleanUpper}`)) ||
+          (vRefNo && (vRefNo === cleanUpper || vRefNo.includes(cleanUpper) || vRefNo === `PINV-${cleanUpper}` || vRefNo === `PUR-${cleanUpper}` || vRefNo === `INWARD-${cleanUpper}` || vRefNo === `SINV-${cleanUpper}` || vRefNo === `SLS-${cleanUpper}` || vRefNo === `IGP-${cleanUpper}` || vRefNo === `BALE-${cleanUpper}`)) ||
+          (vNarr && vNarr.includes(cleanUpper)) ||
+          (cleanNoSpecialUpper && (vNo.includes(cleanNoSpecialUpper) || vNo.includes(`JV-SLS-${cleanNoSpecialUpper}`) || vNo.includes(`JV-PUR-${cleanNoSpecialUpper}`) || vNo.includes(`JV-PINV-${cleanNoSpecialUpper}`) || vNo.includes(`JV-INW-${cleanNoSpecialUpper}`))) ||
+          (invIdClean && (vRef === invIdClean || vRefNo === invIdClean || vNarr.includes(invIdClean)));
+
+        if (isMatch) {
+          if (!matched.some(m => m.id === vId)) {
+            matched.push({ id: vId, voucherNo: String(item.voucher_no || vId) });
+          }
+          if (item.party_id) {
+            affectedPartyIds.add(String(item.party_id));
           }
         }
       };
@@ -1305,14 +1393,29 @@ export class FinanceService {
       (fvRes.data || []).forEach(checkAndAdd);
       (vRes.data || []).forEach(checkAndAdd);
 
-      // 2. Cascade delete lines, journal entries, ledger entries, and voucher headers
+      // 2. Cascade delete journal entries FIRST for all matched vouchers (prevents FK violation and orphaned rows)
       for (const m of matched) {
         const cleanId = m.id;
         const vNo = m.voucherNo;
 
+        // Fetch any party IDs associated with these journal entries or voucher entries
+        try {
+          const { data: jeParties } = await supabase
+            .from('journal_entries')
+            .select('party_id')
+            .eq('voucher_id', cleanId);
+          (jeParties || []).forEach((r: any) => {
+            if (r.party_id) affectedPartyIds.add(String(r.party_id));
+          });
+        } catch (_) {}
+
+        // Delete journal entries first
         try {
           await supabase.from('journal_entries').delete().eq('voucher_id', cleanId);
-        } catch (_) {}
+        } catch (jeErr) {
+          console.warn(`[FinanceService] Notice deleting journal_entries for voucher ${cleanId}:`, jeErr);
+        }
+
         try {
           await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
@@ -1333,15 +1436,71 @@ export class FinanceService {
         } catch (_) {}
       }
 
-      // 3. Clear cache and sync COA
+      // 3. Safety broad delete on journal_entries, general_ledger, financial_vouchers matching invoice/document number
+      try {
+        await supabase.from('journal_entries').delete().ilike('description', `%${cleanRef}%`);
+      } catch (_) {}
+      try {
+        await supabase.from('general_ledger').delete().or(`reference.eq.${cleanRef},reference.eq.PINV-${cleanRef},reference.eq.INWARD-${cleanRef},reference.eq.SINV-${cleanRef},description.ilike.%${cleanRef}%,narration.ilike.%${cleanRef}%`);
+      } catch (_) {}
+      try {
+        await supabase.from('financial_vouchers').delete().or(`reference.eq.${cleanRef},reference_no.eq.${cleanRef},reference.eq.PINV-${cleanRef},reference_no.eq.PINV-${cleanRef},reference.eq.INWARD-${cleanRef},reference_no.eq.INWARD-${cleanRef},reference.eq.SINV-${cleanRef},reference_no.eq.SINV-${cleanRef}`);
+      } catch (_) {}
+      try {
+        await supabase.from('vouchers').delete().or(`reference.eq.${cleanRef},reference_no.eq.${cleanRef},reference.eq.PINV-${cleanRef},reference_no.eq.PINV-${cleanRef},reference.eq.INWARD-${cleanRef},reference_no.eq.INWARD-${cleanRef},reference.eq.SINV-${cleanRef},reference_no.eq.SINV-${cleanRef}`);
+      } catch (_) {}
+
+      // 4. Delete associated party_khata_logs (including reversal entries like UNPOST-${docRef})
+      try {
+        // Collect parties from the logs before deleting them
+        const { data: khtRows } = await supabase
+          .from('party_khata_logs')
+          .select('party_id')
+          .or(`reference.eq.${cleanRef},reference.eq.PINV-${cleanRef},reference.eq.UNPOST-${cleanRef},reference.eq.DEL-${cleanRef},reference.eq.INWARD-${cleanRef},reference.eq.SINV-${cleanRef},reference.eq.SLS-${cleanRef},notes.ilike.%${cleanRef}%`);
+
+        (khtRows || []).forEach((r: any) => {
+          if (r.party_id) affectedPartyIds.add(String(r.party_id));
+        });
+
+        await supabase
+          .from('party_khata_logs')
+          .delete()
+          .or(`reference.eq.${cleanRef},reference.eq.PINV-${cleanRef},reference.eq.UNPOST-${cleanRef},reference.eq.DEL-${cleanRef},reference.eq.INWARD-${cleanRef},reference.eq.SINV-${cleanRef},reference.eq.SLS-${cleanRef},notes.ilike.%${cleanRef}%`);
+      } catch (khtErr) {
+        console.warn(`[FinanceService] Notice deleting party_khata_logs for ${cleanRef}:`, khtErr);
+      }
+
+      // 5. Recalculate balances for all affected parties
+      for (const pId of affectedPartyIds) {
+        await this.recalculatePartyBalance(pId);
+      }
+
+      // 6. Clear cache and synchronize COA in SQL
       this.clearCoaCache();
       try {
         await supabase.rpc('sync_coa_current_balances');
       } catch (_) {}
+
+      // 7. If zero purchase invoices and zero inward gate passes remain, reset raw materials & supplier accounts to 0
+      try {
+        const { count: invCount } = await supabase.from('purchase_invoices').select('id', { count: 'exact', head: true });
+        const { count: baleCount } = await supabase.from('inward_gate_passes').select('id', { count: 'exact', head: true });
+        if (Number(invCount || 0) === 0 && Number(baleCount || 0) === 0) {
+          await supabase.from('coa_accounts').update({ current_balance: 0 }).in('code', ['1140-00', '1140-01', '1150-00', '1150-01', '2110-00', '2110-01']);
+          await supabase.from('chart_of_accounts').update({ current_balance: 0 }).in('code', ['1140-00', '1140-01', '1150-00', '1150-01', '2110-00', '2110-01']);
+        }
+      } catch (_) {}
     } catch (err) {
-      console.error('[FinanceService] Error in reverseAutoVouchersForDocument:', err);
+      console.error('[FinanceService] Error in cascadeDeleteVouchersForDocument:', err);
       throw err;
     }
+  }
+
+  /**
+   * System-level reversal: Reverses/deletes auto-vouchers, journal entries, and general ledger lines for a specific source document.
+   */
+  public static async reverseAutoVouchersForDocument(docRef: string): Promise<void> {
+    return this.cascadeDeleteVouchersForDocument(docRef);
   }
 
   // --- SQL DATABASE REPORTING RPCS ---

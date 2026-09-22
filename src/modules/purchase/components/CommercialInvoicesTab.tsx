@@ -709,13 +709,14 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       return;
     }
 
-    // Rule B (Delete Constraint): An invoice CANNOT be deleted if its status is 'POSTED'.
+    // Rule B (Delete Confirmation): Warn if POSTED that all linked vouchers and ledger entries will be cascade deleted
     if (inv.status === 'POSTED') {
-      alert(`Cannot delete commercial invoice "${inv.invoiceNo}" because it is in POSTED status.\n\nYou must explicitly click "Unpost" first.`);
-      return;
+      if (!window.confirm(`Commercial Invoice "${inv.invoiceNo}" is currently POSTED.\n\nDeleting it will cascade delete all linked financial vouchers, journal entries, reversal logs, and recalculate party and COA balances.\n\nAre you sure you want to permanently delete it?`)) {
+        return;
+      }
+    } else {
+      if (!window.confirm(`Are you sure you want to permanently delete purchase invoice "${inv.invoiceNo}"?`)) return;
     }
-
-    if (!window.confirm(`Are you sure you want to permanently delete purchase invoice "${inv.invoiceNo}"?`)) return;
 
     await handleDeleteInvoice(inv.id, inv.invoiceNo);
   };

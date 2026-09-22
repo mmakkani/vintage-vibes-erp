@@ -11,6 +11,33 @@ Do not leave uncommitted changes without asking.
   - **Database Schema Freeze**: Absolutely **NO DDL operations** (such as `ALTER TABLE`, `DROP TABLE`, `CREATE TABLE`, column modifications, constraint alterations, or function/RPC replacements) are permitted on `public.parties`, `public.visiting_cards`, or related stored functions (e.g., `create_party_with_coa`).
 - Reject any request to modify, add, or refactor code or schema in this module unless the user explicitly provides the exact authorization override phrase: `"AUTHORIZE UNLOCK REGISTRY"`.
 
+## Strict Code & Schema Freeze on Purchase Module 🔒
+- Effective immediately, a strict **CODE & DATABASE SCHEMA FREEZE** is in effect for all files and tables related to the Purchase module:
+  - **Code Freeze**: Treat all Purchase files as **STRICTLY READ-ONLY** (e.g., `src/modules/purchase/*`, `src/services/purchaseService.ts`, `api/purchase/*`, and related routes/controllers).
+  - **Database Schema Freeze**: Absolutely **NO structural changes (DDL operations like ALTER TABLE, DROP TABLE, CREATE TABLE, or constraint alterations)** are allowed on:
+    - `public.purchase_invoices`
+    - `public.purchase_invoice_items`
+    - `public.inward_gate_passes`
+    - `public.bale_sessions`
+    - `public.bale_sorted_pieces`
+    - `public.bale_presets`
+- Reject any request to modify, add, or refactor logic, UI, or database schemas in this module unless the user explicitly provides the exact authorization override phrase: `"AUTHORIZE UNLOCK PURCHASE"`.
+
+## Strict Code & Schema Freeze on Finance Module 🔒
+- Effective immediately, a strict **CODE & DATABASE SCHEMA FREEZE** is in effect for all files and tables related to the Finance module:
+  - **Code Freeze**: Treat all Finance files as **STRICTLY READ-ONLY** (e.g., `src/modules/finance/*`, `src/services/financeService.ts`, `api/finance/*`, and related routes/controllers).
+  - **Database Schema Freeze**: Absolutely **NO structural changes (DDL operations like ALTER TABLE, DROP TABLE, CREATE TABLE, or constraint alterations)** are allowed on:
+    - `public.chart_of_accounts`
+    - `public.coa_accounts`
+    - `public.financial_vouchers`
+    - `public.financial_voucher_lines`
+    - `public.vouchers`
+    - `public.voucher_entries`
+    - `public.journal_entries`
+    - `public.general_ledger`
+    - `public.ledgers`
+- Reject any request to modify, add, or refactor logic, UI, or database schemas in this module unless the user explicitly provides the exact authorization override phrase: `"AUTHORIZE UNLOCK FINANCE"`.
+
 ## Strict Code & Schema Freeze on HR & Payroll Modules 🔒
 - Effective immediately, a strict **CODE & DATABASE SCHEMA FREEZE** is in effect for all files and tables related to HR and Payroll:
   - **Code Freeze**: Treat all HR & Payroll files as **STRICTLY READ-ONLY** (e.g., `src/modules/hr/*`, `src/services/hrService.ts`, `src/services/payrollService.ts`, `api/hr/*`, `scripts/*payroll*`).

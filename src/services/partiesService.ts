@@ -1154,6 +1154,10 @@ export class PartiesService {
     };
   }
 
+  public static async recalculatePartyBalance(partyId: string): Promise<number> {
+    return FinanceService.recalculatePartyBalance(partyId);
+  }
+
   // =========================================================================
   // VISITING CARDS DIRECTORY (CRM LEADS - ISOLATED FROM COA)
   // =========================================================================
