@@ -1099,7 +1099,7 @@ setupRouter.get('/dashboard-kpis', async (req, res) => {
       const piecesRes = await client.query(`
         SELECT 
           COUNT(*) as total_pieces,
-          COALESCE(SUM(COALESCE(cost_price, estimated_price, selling_price, 0)), 0) AS total_piece_value
+          COALESCE(SUM(COALESCE(cost_price, estimated_price, retail_price_aed, 0)), 0) AS total_piece_value
         FROM inventory_pieces
         WHERE is_sold = false OR is_sold IS NULL;
       `);
@@ -1108,25 +1108,35 @@ setupRouter.get('/dashboard-kpis', async (req, res) => {
 
       const totalInventoryValue = unopenedBalesValue + sortedPiecesValue;
 
-      // 4. Month Revenue: Sum credits from journal_entries linked to 4000-00 revenue accounts for current month
-      const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
-      const endOfMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().slice(0, 10);
+      // 4. Month Revenue: Sum credits from journal_entries for current month
+      const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+      const endOfMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+      const startDateStr = startOfMonth.slice(0, 10);
+      const endDateStr = endOfMonth.slice(0, 10);
 
-      const revenueRes = await client.query(`
-        SELECT COALESCE(SUM(COALESCE(credit, credit_amount, 0)), 0) AS month_revenue
-        FROM journal_entries
-        WHERE (date >= $1 AND date <= $2)
-          AND (account_code LIKE '4%' OR account_code = '4000-00');
-      `, [startOfMonth, endOfMonth]);
-      let monthRevenue = Number(revenueRes.rows[0]?.month_revenue || 0);
+      let monthRevenue = 0;
+      try {
+        const revenueRes = await client.query(`
+          SELECT COALESCE(SUM(COALESCE(credit, 0)), 0) AS month_revenue
+          FROM journal_entries
+          WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz;
+        `, [startOfMonth, endOfMonth]);
+        monthRevenue = Number(revenueRes.rows[0]?.month_revenue || 0);
+      } catch (e: any) {
+        console.warn('[dashboard-kpis] journal_entries query notice:', e?.message);
+      }
 
       if (monthRevenue === 0) {
-        const salesRes = await client.query(`
-          SELECT COALESCE(SUM(COALESCE(grand_total, total_amount, 0)), 0) AS sales_revenue
-          FROM sales_invoices
-          WHERE invoice_date >= $1 AND invoice_date <= $2;
-        `, [startOfMonth, endOfMonth]);
-        monthRevenue = Number(salesRes.rows[0]?.sales_revenue || 0);
+        try {
+          const salesRes = await client.query(`
+            SELECT COALESCE(SUM(COALESCE(total_amount, 0)), 0) AS sales_revenue
+            FROM sales_invoices
+            WHERE invoice_date >= $1 AND invoice_date <= $2;
+          `, [startDateStr, endDateStr]);
+          monthRevenue = Number(salesRes.rows[0]?.sales_revenue || 0);
+        } catch (e: any) {
+          console.warn('[dashboard-kpis] sales_invoices query notice:', e?.message);
+        }
       }
 
       const pendingVouchersRes = await client.query(`

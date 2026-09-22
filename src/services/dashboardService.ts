@@ -97,20 +97,20 @@ export class DashboardService {
         // 4. Inventory: Landed costs from inventory_pieces (sorted)
         supabase
           .from('inventory_pieces')
-          .select('id, cost_price, estimated_price, selling_price, is_sold, status')
+          .select('id, cost_price, estimated_price, retail_price_aed, is_sold, status')
           .neq('is_sold', true),
 
-        // 5. Month Revenue: Sum credits from journal_entries linked to 4000-00 accounts for current month
+        // 5. Month Revenue: Sum credits from journal_entries for current month
         supabase
           .from('journal_entries')
-          .select('credit, credit_amount, date, account_code')
-          .gte('date', firstDayOfMonth)
-          .lte('date', lastDayOfMonth),
+          .select('credit, created_at')
+          .gte('created_at', `${firstDayOfMonth}T00:00:00.000Z`)
+          .lte('created_at', `${lastDayOfMonth}T23:59:59.999Z`),
 
         // 6. Secondary fallback for Month Revenue from sales_invoices
         supabase
           .from('sales_invoices')
-          .select('grand_total, total_amount, invoice_date')
+          .select('total_amount, invoice_date')
           .gte('invoice_date', firstDayOfMonth)
           .lte('invoice_date', lastDayOfMonth),
 
@@ -169,20 +169,23 @@ export class DashboardService {
       if (Array.isArray(piecesRes.data)) {
         totalSortedPcs = piecesRes.data.length;
         sortedPiecesValue = piecesRes.data.reduce(
-          (sum, p: any) => sum + Number(p.cost_price ?? p.estimated_price ?? p.selling_price ?? 0),
+          (sum, p: any) => {
+            const val = Number(p.cost_price ?? p.estimated_price ?? p.retail_price_aed ?? 0);
+            return sum + (!isNaN(val) && isFinite(val) ? val : 0);
+          },
           0
         );
       }
 
       const totalInventoryValueAED = unopenedBalesValue + sortedPiecesValue;
 
-      // Calculate Month Revenue: Credits from 4000-00 accounts
+      // Calculate Month Revenue: Credits from journal entries
       let monthRevenueAED = 0;
       if (Array.isArray(revenueRes.data) && revenueRes.data.length > 0) {
         for (const entry of revenueRes.data) {
-          const code = String(entry.account_code || '');
-          if (code.startsWith('4') || code === '4000-00') {
-            monthRevenueAED += Number(entry.credit ?? entry.credit_amount ?? 0);
+          const credit = Number(entry.credit ?? 0);
+          if (!isNaN(credit) && isFinite(credit)) {
+            monthRevenueAED += credit;
           }
         }
       }
@@ -190,7 +193,10 @@ export class DashboardService {
       // Fallback to sales invoices if journal entries yielded 0
       if (monthRevenueAED === 0 && Array.isArray(salesRes.data) && salesRes.data.length > 0) {
         monthRevenueAED = salesRes.data.reduce(
-          (sum, inv: any) => sum + Number(inv.grand_total ?? inv.total_amount ?? 0),
+          (sum, inv: any) => {
+            const val = Number(inv.total_amount ?? 0);
+            return sum + (!isNaN(val) && isFinite(val) ? val : 0);
+          },
           0
         );
       }
