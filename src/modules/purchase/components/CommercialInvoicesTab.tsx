@@ -49,7 +49,33 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   onInvoiceCreated,
   onDeleteInvoice
 }) => {
-  const { notifyMutation } = useSync();
+  const { notifyMutation, lastDelta } = useSync('purchase');
+  const [highlightedInvoiceIds, setHighlightedInvoiceIds] = useState<Set<string>>(new Set());
+
+  const triggerRowGlow = React.useCallback((id?: string) => {
+    if (!id) return;
+    const cleanId = String(id).trim();
+    if (!cleanId) return;
+    setHighlightedInvoiceIds(prev => new Set(prev).add(cleanId));
+    setTimeout(() => {
+      setHighlightedInvoiceIds(prev => {
+        const next = new Set(prev);
+        next.delete(cleanId);
+        return next;
+      });
+    }, 2500);
+  }, []);
+
+  React.useEffect(() => {
+    if (!lastDelta) return;
+    if (lastDelta.module === 'purchase' || lastDelta.entity === 'purchase_invoices' || lastDelta.payload?.invoice) {
+      const invId = lastDelta.documentRef || lastDelta.payload?.invoice?.id || lastDelta.payload?.invoiceId;
+      const invNo = lastDelta.payload?.invoice?.invoiceNo || lastDelta.payload?.invoiceNo;
+      if (invId) triggerRowGlow(invId);
+      if (invNo) triggerRowGlow(invNo);
+    }
+  }, [lastDelta, triggerRowGlow]);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<PurchaseInvoice | null>(null);
@@ -238,9 +264,16 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
 
   const handlePostInvoice = async (invId: string) => {
     try {
-      await PurchaseService.postPurchaseInvoice(invId);
+      // 1. Strict Pessimistic: Await PostgreSQL / Supabase commit first
+      const createdVoucher = await PurchaseService.postPurchaseInvoice(invId);
+
+      // 2. ONLY AFTER DB confirmation, inject confirmed state into local cache
+      setInvoicesList(prev => prev.map(inv => String(inv.id) === String(invId) ? { ...inv, status: 'POSTED' } : inv));
+      triggerRowGlow(invId);
       setToastMessage("Purchase invoice posted to General Ledger & Supplier Khata!");
-      notifyMutation('finance', 'vouchers', 'POSTED', invId);
+
+      // 3. Broadcast confirmed delta payload
+      notifyMutation('finance', 'vouchers', 'POSTED', invId, { voucher: createdVoucher });
       notifyMutation('purchase', 'purchase_invoices', 'POSTED', invId);
       onRefresh();
     } catch (e: any) {
@@ -264,9 +297,16 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
 
     if (!window.confirm(`Are you sure you want to unpost invoice "${invoiceNo}" back to DRAFT? Auto-generated financial vouchers and ledger entries will be reversed.`)) return;
     try {
+      // 1. Strict Pessimistic: Await PostgreSQL reversal transaction first
       await PurchaseService.unpostPurchaseInvoice(invId);
+
+      // 2. ONLY AFTER DB confirmation, update local state
+      setInvoicesList(prev => prev.map(inv => String(inv.id) === String(invId) ? { ...inv, status: 'DRAFT' } : inv));
+      triggerRowGlow(invId);
       setToastMessage("Purchase invoice unposted to DRAFT and financial vouchers reversed");
-      notifyMutation('finance', 'vouchers', 'UNPOSTED', invId);
+
+      // 3. Broadcast confirmed unpost delta
+      notifyMutation('finance', 'vouchers', 'UNPOSTED', invId, { invoiceNo, invoiceId: invId });
       notifyMutation('purchase', 'purchase_invoices', 'UNPOSTED', invId);
       onRefresh();
     } catch (e: any) {
@@ -281,6 +321,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       const createdBales = await PurchaseService.convertToInwardGatePass(invId);
       // Immediately reflect convertedToInward in local state so UI updates without waiting
       setInvoicesList(prev => prev.map(item => item.id === invId ? { ...item, convertedToInward: true, status: 'POSTED' } : item));
+      triggerRowGlow(invId);
       notifyMutation('finance', 'vouchers', 'INWARD_POSTED', invId);
       notifyMutation('purchase', 'inward_gate_passes', 'CREATED', invId);
       alert(`✅ Inward Gate Pass Created!\n\n${createdBales.length} bale(s) generated and ready for sorting in Terminal.\nConsignment value successfully booked to COA & Supplier Khata.`);
@@ -595,7 +636,14 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                   const currSymbol = (inv.currency || 'AED') === 'USD' ? '$' : (inv.currency || 'AED');
 
                   return (
-                    <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
+                    <tr
+                      key={inv.id}
+                      className={`hover:bg-slate-50/80 transition-colors ${
+                        highlightedInvoiceIds.has(String(inv.id)) || (inv.invoiceNo && highlightedInvoiceIds.has(inv.invoiceNo))
+                          ? 'animate-row-glow'
+                          : ''
+                      }`}
+                    >
                       <td className="px-4 py-3 font-mono font-bold text-indigo-600">
                         {inv.invoiceNo}
                       </td>

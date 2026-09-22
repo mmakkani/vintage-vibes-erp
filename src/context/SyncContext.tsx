@@ -14,6 +14,26 @@ export interface SyncEventPayload {
   activeClientsCount?: number;
 }
 
+export interface DeltaSyncPayload {
+  module: string;
+  entity: string;
+  action: string;
+  documentRef?: string;
+  payload?: any;
+  timestamp: number;
+}
+
+export type SyncModuleKey = 'finance' | 'purchase' | 'sales' | 'inventory' | 'registry' | string;
+
+export interface SyncVersions {
+  finance: number;
+  purchase: number;
+  sales: number;
+  inventory: number;
+  registry: number;
+  [key: string]: number;
+}
+
 interface SyncContextType {
   isLiveConnected: boolean;
   activeClientsCount: number;
@@ -21,12 +41,22 @@ interface SyncContextType {
   lastSyncedAt: Date | null;
   isSyncing: boolean;
   syncVersion: number;
-  triggerGlobalSync: (module?: string) => Promise<void>;
+  syncVersions: SyncVersions;
+  lastDelta: DeltaSyncPayload | null;
+  triggerGlobalSync: (module?: string | string[]) => Promise<void>;
+  triggerSync: (module?: string | string[]) => Promise<void>;
   refreshPresence: () => Promise<void>;
   acquireLock: (lockKey: string) => boolean;
   releaseLock: (lockKey: string) => void;
   isLocked: (lockKey: string) => boolean;
-  notifyMutation: (module: string, entity: string, action: string, documentRef?: string) => void;
+  notifyMutation: (
+    module: string,
+    entity: string,
+    action: string,
+    documentRef?: string,
+    deltaPayload?: Record<string, any>,
+    affectedModules?: string[]
+  ) => void;
   syncToast: { message: string; id: number } | null;
   showSyncToast: (message: string) => void;
 }
@@ -43,6 +73,14 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(new Date());
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncVersion, setSyncVersion] = useState(1);
+  const [syncVersions, setSyncVersions] = useState<SyncVersions>({
+    finance: 1,
+    purchase: 1,
+    sales: 1,
+    inventory: 1,
+    registry: 1
+  });
+  const [lastDelta, setLastDelta] = useState<DeltaSyncPayload | null>(null);
   const [syncToast, setSyncToast] = useState<{ message: string; id: number } | null>(null);
 
   const showSyncToast = useCallback((message: string) => {
@@ -72,7 +110,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   const lastSyncedAtRef = useRef<number>(Date.now());
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
 
-  const triggerGlobalSync = useCallback(async (module?: string) => {
+  const triggerGlobalSync = useCallback(async (targetModule?: string | string[]) => {
     if (isSyncingRef.current) return;
     isSyncingRef.current = true;
     setIsSyncing(true);
@@ -81,6 +119,32 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       if (onGlobalRefresh) {
         await onGlobalRefresh();
       }
+
+      // Determine which module versions to increment
+      const modulesToBump: string[] = [];
+      if (Array.isArray(targetModule)) {
+        modulesToBump.push(...targetModule.map(m => m.toLowerCase()));
+      } else if (typeof targetModule === 'string' && targetModule.trim() !== '') {
+        const parts = targetModule.toLowerCase().split(/[,/| ]+/).filter(Boolean);
+        modulesToBump.push(...parts);
+      }
+
+      setSyncVersions(prev => {
+        if (modulesToBump.length === 0) {
+          // Bump all registered modules
+          const next: SyncVersions = { ...prev };
+          Object.keys(next).forEach(k => {
+            next[k] = (next[k] || 0) + 1;
+          });
+          return next;
+        }
+        const next: SyncVersions = { ...prev };
+        modulesToBump.forEach(m => {
+          next[m] = (next[m] || 0) + 1;
+        });
+        return next;
+      });
+
       setSyncVersion(v => v + 1);
       const now = new Date();
       setLastSyncedAt(now);
@@ -110,46 +174,88 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     return lockSetRef.current.has(lockKey);
   }, []);
 
-  const notifyMutation = useCallback(async (module: string, entity: string, action: string, documentRef?: string) => {
-    // 1. Immediate multi-tab broadcast via BroadcastChannel
-    if (broadcastChannelRef.current) {
+  const notifyMutation = useCallback(
+    async (
+      module: string,
+      entity: string,
+      action: string,
+      documentRef?: string,
+      deltaPayload?: Record<string, any>,
+      affectedModules?: string[]
+    ) => {
+      const delta: DeltaSyncPayload = {
+        module,
+        entity,
+        action,
+        documentRef,
+        payload: deltaPayload,
+        timestamp: Date.now()
+      };
+
+      // 0. Set confirmed delta cache (caller provides verified post-commit payload)
+      setLastDelta(delta);
+
+      // Determine selective modules to bump
+      const normMod = module.toLowerCase();
+      let targetedModules: string[] = [];
+      if (affectedModules && affectedModules.length > 0) {
+        targetedModules = affectedModules.map(m => m.toLowerCase());
+      } else if (
+        (normMod === 'purchase' && (entity === 'purchase_invoices' || action === 'POSTED' || action === 'UNPOSTED')) ||
+        (normMod === 'finance' && entity === 'vouchers' && (documentRef?.includes('PINV') || documentRef?.includes('PUR')))
+      ) {
+        // Posting a purchase invoice ONLY bumps purchase and finance versions (leaving inventory and registry untouched)
+        targetedModules = ['purchase', 'finance'];
+      } else {
+        targetedModules = [normMod];
+      }
+
+      // 1. Immediate multi-tab broadcast via BroadcastChannel
+      if (broadcastChannelRef.current) {
+        try {
+          broadcastChannelRef.current.postMessage({
+            type: 'ENTITY_MUTATED',
+            module,
+            entity,
+            action,
+            documentRef,
+            deltaPayload,
+            affectedModules: targetedModules,
+            timestamp: Date.now()
+          });
+        } catch (_) {}
+      }
+
+      // 2. Local window event bus
       try {
-        broadcastChannelRef.current.postMessage({
-          type: 'ENTITY_MUTATED',
-          module,
-          entity,
-          action,
-          documentRef,
-          timestamp: Date.now()
-        });
+        window.dispatchEvent(
+          new CustomEvent('vv:entity-mutated', {
+            detail: { module, entity, action, documentRef, deltaPayload, affectedModules: targetedModules }
+          })
+        );
       } catch (_) {}
-    }
 
-    // 2. Local window event bus
-    try {
-      window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
-        detail: { module, entity, action, documentRef }
-      }));
-    } catch (_) {}
+      // 3. Subtle micro-toast badge (flicker-free, no UI shift)
+      const readableEntity = entity.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const refText = documentRef ? ` #${documentRef}` : '';
+      showSyncToast(`✓ Live Synced: ${readableEntity}${refText} (${action.toLowerCase()})`);
 
-    // 3. Subtle micro-toast badge (flicker-free, no UI shift)
-    const readableEntity = entity.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    showSyncToast(`✓ Live Synced: ${readableEntity} (${action.toLowerCase()})`);
+      // 4. Server broadcast endpoint (non-blocking)
+      try {
+        await fetch('/api/events/broadcast', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ module, entity, action, documentRef, affectedModules: targetedModules })
+        });
+      } catch (_) {
+        // Non-blocking
+      }
 
-    // 4. Server broadcast endpoint (non-blocking)
-    try {
-      await fetch('/api/events/broadcast', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ module, entity, action, documentRef })
-      });
-    } catch (_) {
-      // Non-blocking
-    }
-
-    // 5. Local syncVersion increment
-    triggerGlobalSync(module);
-  }, [triggerGlobalSync, showSyncToast]);
+      // 5. Scoped selective syncVersion increment
+      triggerGlobalSync(targetedModules);
+    },
+    [triggerGlobalSync, showSyncToast]
+  );
 
   // Clean multi-tab synchronization via BroadcastChannel (avoids broken EventSource MIME type 'text/html' spam)
   useEffect(() => {
@@ -199,7 +305,18 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
             peers.delete(data.clientId);
             updateOnlineCount();
           } else if (data.type === 'ENTITY_MUTATED' || data.type === 'SYNC_TRIGGER') {
-            triggerGlobalSync(data.module);
+            if (data.deltaPayload) {
+              setLastDelta({
+                module: data.module,
+                entity: data.entity,
+                action: data.action,
+                documentRef: data.documentRef,
+                payload: data.deltaPayload,
+                timestamp: data.timestamp || Date.now()
+              });
+            }
+            const mod = data.affectedModules || data.module;
+            triggerGlobalSync(mod);
           }
         };
         setIsLiveConnected(true);
@@ -273,7 +390,18 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
 
     const handleEntityMutated = (e: any) => {
       if (unmounted) return;
-      triggerGlobalSync(e.detail?.module);
+      if (e.detail?.deltaPayload) {
+        setLastDelta({
+          module: e.detail.module,
+          entity: e.detail.entity,
+          action: e.detail.action,
+          documentRef: e.detail.documentRef,
+          payload: e.detail.deltaPayload,
+          timestamp: Date.now()
+        });
+      }
+      const mod = e.detail?.affectedModules || e.detail?.module;
+      triggerGlobalSync(mod);
     };
     window.addEventListener('vv:entity-mutated', handleEntityMutated);
 
@@ -347,7 +475,10 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         lastSyncedAt,
         isSyncing,
         syncVersion,
+        syncVersions,
+        lastDelta,
         triggerGlobalSync,
+        triggerSync: triggerGlobalSync,
         refreshPresence,
         acquireLock,
         releaseLock,
@@ -372,10 +503,19 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   );
 };
 
-export const useSync = () => {
+export const useSync = (moduleKey?: string) => {
   const context = useContext(SyncContext);
   if (!context) {
     throw new Error('useSync must be used within a SyncProvider');
+  }
+  if (moduleKey) {
+    const key = moduleKey.toLowerCase();
+    const scopedVersion = context.syncVersions[key] ?? context.syncVersion;
+    return {
+      ...context,
+      syncVersion: scopedVersion,
+      moduleVersion: scopedVersion
+    };
   }
   return context;
 };

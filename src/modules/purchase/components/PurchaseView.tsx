@@ -47,7 +47,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
   currentUserRole,
   maintenanceModules
 }) => {
-  const { syncVersion } = useSync();
+  const { syncVersion } = useSync('purchase');
   const [activeSubTab, setActiveSubTabState] = useState<PurchaseSubTab>(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);

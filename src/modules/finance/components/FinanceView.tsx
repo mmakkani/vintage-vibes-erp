@@ -195,7 +195,7 @@ interface SingleVoucherLineItem {
 }
 
 export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentUserRole, initialSubTab = 'coa', maintenanceModules, companyProfile }) => {
-  const { syncVersion, acquireLock, releaseLock, notifyMutation } = useSync();
+  const { syncVersion, lastDelta, acquireLock, releaseLock, notifyMutation } = useSync('finance');
 
   const [subTab, setSubTabState] = useState<
     'coa' | 'vouchers' | 'cod-reconciliation' | 'recurring-vouchers' | 'budgeting' | 'tax-compliance' | 'ledger' | 'trial-balance' | 'income-statement' | 'custom-reports' | 'balance-sheet'
@@ -239,6 +239,23 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const [reports, setReports] = useState<FinancialStatements | null>(null);
   const [parties, setParties] = useState<Party[]>([]);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Visual Row Glow state for newly injected/updated rows (UX enhancement)
+  const [highlightedRowIds, setHighlightedRowIds] = useState<Set<string>>(new Set());
+
+  const triggerRowGlow = useCallback((id?: string) => {
+    if (!id) return;
+    const cleanId = String(id).trim();
+    if (!cleanId) return;
+    setHighlightedRowIds(prev => new Set(prev).add(cleanId));
+    setTimeout(() => {
+      setHighlightedRowIds(prev => {
+        const next = new Set(prev);
+        next.delete(cleanId);
+        return next;
+      });
+    }, 2500);
+  }, []);
 
   // Search & Filter in COA
   const [coaFilterPillar, setCoaFilterPillar] = useState<string>('ALL');
@@ -473,6 +490,85 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     FinanceService.clearCoaCache();
     loadData();
   }, [syncVersion]);
+
+  // ⚡ PESSIMISTIC CONFIRMED DELTA CACHE INJECTION (Strictly injected ONLY after DB confirmation)
+  useEffect(() => {
+    if (!lastDelta) return;
+
+    if (
+      (lastDelta.action === 'POSTED' || lastDelta.action === 'CREATE' || lastDelta.action === 'INWARD_POSTED') &&
+      lastDelta.payload?.voucher
+    ) {
+      const newVoucher = lastDelta.payload.voucher;
+      if (newVoucher && (newVoucher.id || newVoucher.voucherNo)) {
+        // 1. Instantly prepend to vouchers state in RAM (0ms)
+        setVouchers(prev => {
+          const exists = prev.some(
+            v => (newVoucher.id && v.id === newVoucher.id) || (newVoucher.voucherNo && v.voucherNo === newVoucher.voucherNo)
+          );
+          if (exists) return prev;
+          if (newVoucher.id) triggerRowGlow(newVoucher.id);
+          if (newVoucher.voucherNo) triggerRowGlow(newVoucher.voucherNo);
+          return [newVoucher, ...prev];
+        });
+
+        // 2. Instantly inject lines into general ledger state in RAM (0ms)
+        const rawLines = newVoucher.lines || newVoucher.entries || [];
+        if (Array.isArray(rawLines) && rawLines.length > 0) {
+          const newEntries: LedgerEntry[] = rawLines.map((line: any, idx: number) => {
+            const entryId = line.id || `delta-led-${newVoucher.voucherNo}-${idx}`;
+            triggerRowGlow(entryId);
+            if (newVoucher.voucherNo) triggerRowGlow(newVoucher.voucherNo);
+            return {
+              id: entryId,
+              voucherId: newVoucher.id,
+              voucherNo: newVoucher.voucherNo,
+              accountCode: line.accountCode || '',
+              accountName: line.accountName || '',
+              accountId: line.accountId || '',
+              date: newVoucher.date || new Date().toISOString().slice(0, 10),
+              debit: Number(line.debitAmount ?? line.debit ?? 0),
+              credit: Number(line.creditAmount ?? line.credit ?? 0),
+              debitAmount: Number(line.debitAmount ?? line.debit ?? 0),
+              creditAmount: Number(line.creditAmount ?? line.credit ?? 0),
+              runningBalance: 0,
+              documentRef: newVoucher.reference || newVoucher.documentRef || '',
+              partyId: line.partyId,
+              partyName: line.partyName,
+              narration: line.memo || line.narration || newVoucher.narration || ''
+            };
+          });
+
+          setLedgers(prev => {
+            const existingVchNo = newVoucher.voucherNo;
+            const alreadyInLedgers = prev.some(e => e.voucherNo === existingVchNo);
+            if (alreadyInLedgers) return prev;
+            return [...newEntries, ...prev];
+          });
+        }
+      }
+    } else if (lastDelta.action === 'UNPOSTED') {
+      const ref = lastDelta.documentRef || lastDelta.payload?.invoiceNo;
+      if (ref) {
+        setVouchers(prev =>
+          prev.filter(
+            v =>
+              !v.reference?.includes(ref) &&
+              !v.voucherNo?.includes(ref) &&
+              v.id !== ref
+          )
+        );
+        setLedgers(prev =>
+          prev.filter(
+            l =>
+              !l.documentRef?.includes(ref) &&
+              !l.voucherNo?.includes(ref) &&
+              l.voucherId !== ref
+          )
+        );
+      }
+    }
+  }, [lastDelta]);
 
   const showMsg = (text: string, type: 'success' | 'error' = 'success') => {
     setActionMessage({ type, text });
@@ -984,7 +1080,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         showMsg(`Voucher ${voucher.voucherNo} posted successfully to PostgreSQL General Ledger!`);
         setShowNewVoucherModal(false);
         releaseLock('finance-create-voucher');
-        notifyMutation('FINANCE', 'VOUCHER', 'CREATE', voucher.voucherNo);
+        setVouchers(prev => [voucher, ...prev]);
+        triggerRowGlow(voucher.id);
+        triggerRowGlow(voucher.voucherNo);
+        notifyMutation('FINANCE', 'VOUCHER', 'CREATE', voucher.voucherNo, { voucher });
         loadData();
         onRefreshAll();
       }
@@ -1710,7 +1809,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       const isAuto = Boolean(v.isAuto || (v as any).is_auto || FinanceService.isAutoVoucher(v));
                       const isLocked = isPeriodLocked(v.date);
                       return (
-                        <tr key={v.id} className="hover:bg-amber-50/40 transition-colors">
+                        <tr
+                          key={v.id}
+                          className={`hover:bg-amber-50/40 transition-colors ${
+                            highlightedRowIds.has(v.id) || highlightedRowIds.has(v.voucherNo)
+                              ? 'animate-row-glow'
+                              : ''
+                          }`}
+                        >
                           <td className="px-3.5 py-2 font-bold text-amber-900">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span>{v.voucherNo}</span>
@@ -2003,7 +2109,14 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     </tr>
                   ) : (
                     (filteredLedgers || []).map(l => (
-                      <tr key={l.id} className="hover:bg-amber-50/30 transition-colors">
+                      <tr
+                        key={l.id}
+                        className={`hover:bg-amber-50/30 transition-colors ${
+                          highlightedRowIds.has(l.id) || (l.voucherNo && highlightedRowIds.has(l.voucherNo))
+                            ? 'animate-row-glow'
+                            : ''
+                        }`}
+                      >
                         <td className="px-3.5 py-2 text-slate-600">{l.date}</td>
                         <td className="px-3.5 py-2 font-bold text-slate-900">{l.voucherNo || '-'}</td>
                         <td className="px-3.5 py-2 font-bold text-amber-900">{l.accountCode}</td>

@@ -50,7 +50,7 @@ interface SalesViewProps {
 }
 
 export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserRole, onSubTabChange }) => {
-  const { syncVersion } = useSync();
+  const { syncVersion } = useSync('sales');
   const [subTab, setSubTabState] = useState<'counterSale' | 'customSale' | 'liveSelling' | 'drafts' | 'bounties' | 'masterLog' | 'returns' | 'salesSettings'>(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);

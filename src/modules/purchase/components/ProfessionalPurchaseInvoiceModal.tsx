@@ -714,8 +714,8 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
         }
       } else if (submitStatus === 'POSTED') {
         try {
-          await PurchaseService.postPurchaseInvoice(targetInvoiceId);
-          notifyMutation('finance', 'vouchers', 'POSTED', targetInvoiceId);
+          const createdVoucher = await PurchaseService.postPurchaseInvoice(targetInvoiceId);
+          notifyMutation('finance', 'vouchers', 'POSTED', targetInvoiceId, { voucher: createdVoucher });
           notifyMutation('purchase', 'purchase_invoices', 'POSTED', targetInvoiceId);
         } catch (postErr: any) {
           console.warn('Notice on auto post invoice:', postErr);

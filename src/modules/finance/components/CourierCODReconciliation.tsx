@@ -193,7 +193,23 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
       };
 
       // Post voucher directly into PostgreSQL Database via FinanceService
-      await FinanceService.addVoucher(voucherPayload);
+      const createdVoucher = await FinanceService.addVoucher(voucherPayload);
+
+      if (typeof window !== 'undefined') {
+        try {
+          window.dispatchEvent(
+            new CustomEvent('vv:entity-mutated', {
+              detail: {
+                module: 'finance',
+                entity: 'vouchers',
+                action: 'POSTED',
+                documentRef: voucherPayload.voucherNo,
+                deltaPayload: { voucher: createdVoucher }
+              }
+            })
+          );
+        } catch (_) {}
+      }
 
       // Update local invoice states
       setInvoices(prev =>

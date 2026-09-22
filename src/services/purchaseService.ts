@@ -280,7 +280,7 @@ export class PurchaseService {
     };
   }
 
-  public static async postPurchaseInvoice(invoiceId: string): Promise<void> {
+  public static async postPurchaseInvoice(invoiceId: string): Promise<any> {
     const { data: invRows, error: invError } = await supabase
       .from('purchase_invoices')
       .select('*')
@@ -319,6 +319,8 @@ export class PurchaseService {
       .or(`reference.eq.PINV-${invoiceNo},reference.eq.INWARD-${invoiceNo},reference.eq.PUR-${invoiceNo}`)
       .limit(1);
 
+    let createdVoucher: any = null;
+
     if (!existingVouchers || existingVouchers.length === 0) {
       // Requirement 4: Apply Same Logic to Inventory Account:
       // If the system needs the Inventory account (e.g., 1140-01), perform a strict SELECT id FROM chart_of_accounts WHERE code = '1140-01'. Do not upsert or rename it.
@@ -352,7 +354,7 @@ export class PurchaseService {
 
       // Requirement 1: USE THIS ID IMMEDIATELY for the journal_entries payload.
       // Post Journal Voucher: Dr 1140-01 (Raw Material Unsorted) / Cr Supplier Liability Account (Strict Registry Account)
-      await FinanceService.addVoucher({
+      createdVoucher = await FinanceService.addVoucher({
         voucherNo: `JV-PUR-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
         date: invoice.invoice_date || invoice.issue_date || new Date().toISOString().slice(0, 10),
         type: 'JOURNAL',
@@ -409,16 +411,26 @@ export class PurchaseService {
           notes: `Purchase Commercial Invoice: ${invoiceNo}`
         });
       }
+    } else {
+      createdVoucher = existingVouchers[0];
     }
 
     PurchaseService.invalidateInvoicesCache();
     if (typeof window !== 'undefined') {
       try {
         window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
-          detail: { module: 'finance', entity: 'vouchers', action: 'POSTED', documentRef: invoiceNo }
+          detail: {
+            module: 'finance',
+            entity: 'vouchers',
+            action: 'POSTED',
+            documentRef: invoiceNo,
+            deltaPayload: { voucher: createdVoucher, invoice }
+          }
         }));
       } catch (_) {}
     }
+
+    return createdVoucher;
   }
 
   public static async addPurchaseInvoice(inv: Partial<PurchaseInvoice>): Promise<PurchaseInvoice> {
@@ -817,7 +829,13 @@ export class PurchaseService {
     if (typeof window !== 'undefined') {
       try {
         window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
-          detail: { module: 'finance', entity: 'vouchers', action: 'UNPOSTED', documentRef: invoiceNo }
+          detail: {
+            module: 'finance',
+            entity: 'vouchers',
+            action: 'UNPOSTED',
+            documentRef: invoiceNo,
+            deltaPayload: { invoiceNo, invoiceId: cleanInvId }
+          }
         }));
       } catch (_) {}
     }
@@ -1215,6 +1233,7 @@ export class PurchaseService {
     }
 
     // 4. POST TO COA (WIP INVENTORY & SUPPLIER AP)
+    let createdInwardVoucher: any = null;
     try {
       const supplierCoa = await PurchaseService.resolveSupplierCoaAccount(
         invoice.supplier_id,
@@ -1256,7 +1275,7 @@ export class PurchaseService {
         }
 
         // Post full Journal Entry: Dr 1150-01 (Sorting WIP Inventory) / Cr Supplier Liability Account
-        await FinanceService.addVoucher({
+        createdInwardVoucher = await FinanceService.addVoucher({
           voucherNo: `JV-INW-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
           date: new Date().toISOString().slice(0, 10),
           type: 'JOURNAL',
@@ -1322,7 +1341,7 @@ export class PurchaseService {
         if (existingInwTransfer && existingInwTransfer.length > 0) {
           console.log(`Inward transfer voucher already exists for ${invoiceNo}: ${existingInwTransfer[0].voucher_no}. Skipping duplicate voucher creation.`);
         } else {
-          await FinanceService.addVoucher({
+          createdInwardVoucher = await FinanceService.addVoucher({
             voucherNo: `JV-INW-TRF-${cleanInvNo}-${Date.now().toString().slice(-4)}`,
             date: new Date().toISOString().slice(0, 10),
             type: 'JOURNAL',
@@ -1360,6 +1379,21 @@ export class PurchaseService {
       .from('purchase_invoices')
       .update({ converted_to_inward: true, status: 'POSTED' })
       .eq('id', invoiceId);
+
+    PurchaseService.invalidateInvoicesCache();
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+          detail: {
+            module: 'finance',
+            entity: 'vouchers',
+            action: 'INWARD_POSTED',
+            documentRef: invoiceNo,
+            deltaPayload: { voucher: createdInwardVoucher, invoice }
+          }
+        }));
+      } catch (_) {}
+    }
 
     return createdPasses;
   }

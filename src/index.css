@@ -533,3 +533,21 @@ body.theme-obsidian #global-stock-alert-panel {
   }
 }
 
+/* ==========================================================================
+   Row Glow / Visual Highlight (UX Enhancement)
+   Pessimistic Delta Cache Injection Instant Visual Feedback
+   ========================================================================== */
+@keyframes row-glow {
+  0% {
+    background-color: #ecfdf5 !important;
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.animate-row-glow,
+.row-glow {
+  animation: row-glow 2s ease-out forwards;
+}
+
