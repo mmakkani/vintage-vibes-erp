@@ -493,15 +493,15 @@ export function openAuthorityMatrixPopup(options: AuthorityPopupOptions): Window
       
       <div class="pin-input-group">
         <label>Current Master PIN</label>
-        <input type="password" id="currPin" placeholder="Default: 9988" maxlength="6">
+        <input type="password" id="currPin" placeholder="Default: 9988" maxlength="6" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true">
       </div>
       <div class="pin-input-group">
         <label>New Master PIN (4-6 digits)</label>
-        <input type="password" id="newPin" placeholder="e.g. 8899" maxlength="6">
+        <input type="password" id="newPin" placeholder="e.g. 8899" maxlength="6" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true">
       </div>
       <div class="pin-input-group">
         <label>Confirm New Master PIN</label>
-        <input type="password" id="confirmPin" placeholder="e.g. 8899" maxlength="6">
+        <input type="password" id="confirmPin" placeholder="e.g. 8899" maxlength="6" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true">
       </div>
 
       <div id="pinError" style="font-size:11px;color:#f43f5e;margin-bottom:10px;display:none;"></div>

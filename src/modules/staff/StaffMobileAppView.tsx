@@ -761,7 +761,8 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
           <div className="space-y-3.5 animate-in fade-in duration-200">
             {!isBossUnlocked ? (
               <form
-                onSubmit={handleUnlockBoss}
+                onSubmit={handleUnlockBossVault}
+                autoComplete="off"
                 className="p-6 bg-gradient-to-b from-[#1C1814] to-[#120F0D] rounded-2xl border-2 border-amber-400 text-center space-y-4 shadow-2xl"
               >
                 <div className="w-14 h-14 rounded-2xl bg-amber-400/20 border-2 border-amber-400 flex items-center justify-center text-amber-400 mx-auto">
@@ -781,6 +782,9 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
                   placeholder="Enter 4-Digit Boss PIN"
                   value={bossPinInput}
                   onChange={e => setBossPinInput(e.target.value)}
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   className="w-full text-center tracking-widest text-lg font-mono bg-black border-2 border-amber-400/70 rounded-xl py-2 text-white focus:outline-hidden"
                   autoFocus
                 />

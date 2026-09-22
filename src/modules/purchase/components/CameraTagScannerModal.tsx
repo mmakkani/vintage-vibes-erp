@@ -509,6 +509,9 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                 placeholder="AIzaSy..."
                 value={geminiApiKeyInput}
                 onChange={e => setGeminiApiKeyInput(e.target.value)}
+                autoComplete="new-password"
+                data-lpignore="true"
+                data-1p-ignore="true"
                 className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white font-mono"
               />
               <button

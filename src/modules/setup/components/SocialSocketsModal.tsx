@@ -321,6 +321,9 @@ export const SocialSocketsModal: React.FC<SocialSocketsModalProps> = ({
                   type="password"
                   value={streamLinks.tiktokKey}
                   onChange={(e) => setStreamLinks({ ...streamLinks, tiktokKey: e.target.value })}
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   className="w-full border border-slate-300 rounded-lg p-1.5 font-mono text-[11px] bg-white"
                 />
               </div>
@@ -345,6 +348,9 @@ export const SocialSocketsModal: React.FC<SocialSocketsModalProps> = ({
                   type="password"
                   value={streamLinks.instagramKey}
                   onChange={(e) => setStreamLinks({ ...streamLinks, instagramKey: e.target.value })}
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   className="w-full border border-slate-300 rounded-lg p-1.5 font-mono text-[11px] bg-white"
                 />
               </div>

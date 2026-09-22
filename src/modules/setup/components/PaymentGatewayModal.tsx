@@ -242,6 +242,9 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                 placeholder="sk_test_... or sk_live_..."
                 value={gatewayConfig.secretKey || ''}
                 onChange={(e) => setGatewayConfig({ ...gatewayConfig, secretKey: e.target.value })}
+                autoComplete="new-password"
+                data-lpignore="true"
+                data-1p-ignore="true"
                 className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-white focus:ring-2 focus:ring-amber-500"
               />
             </div>
@@ -255,6 +258,9 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                 placeholder="whsec_..."
                 value={gatewayConfig.webhookSecret || ''}
                 onChange={(e) => setGatewayConfig({ ...gatewayConfig, webhookSecret: e.target.value })}
+                autoComplete="new-password"
+                data-lpignore="true"
+                data-1p-ignore="true"
                 className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-white focus:ring-2 focus:ring-amber-500"
               />
             </div>

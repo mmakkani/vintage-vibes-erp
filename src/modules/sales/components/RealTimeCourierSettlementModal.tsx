@@ -144,7 +144,7 @@ export const RealTimeCourierSettlementModal: React.FC<RealTimeCourierSettlementM
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSettle} className="p-6 space-y-4 text-xs font-sans">
+        <form onSubmit={handleSettle} autoComplete="off" className="p-6 space-y-4 text-xs font-sans">
           {feedback && (
             <div
               className={`p-3 rounded-xl border flex items-start gap-2 ${
@@ -260,6 +260,9 @@ export const RealTimeCourierSettlementModal: React.FC<RealTimeCourierSettlementM
                   placeholder="Enter 4-digit PIN"
                   value={bankPin}
                   onChange={e => setBankPin(e.target.value)}
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   className="w-full p-2 rounded-lg border border-amber-300 bg-white font-mono text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
                 />
               </div>

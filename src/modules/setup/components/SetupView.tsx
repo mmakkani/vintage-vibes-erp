@@ -3288,6 +3288,9 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                     value={currentPinInput}
                     onChange={e => setCurrentPinInput(e.target.value)}
                     placeholder="e.g. 9988"
+                    autoComplete="new-password"
+                    data-lpignore="true"
+                    data-1p-ignore="true"
                     className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
@@ -3299,6 +3302,9 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                     value={newPinInput}
                     onChange={e => setNewPinInput(e.target.value)}
                     placeholder="e.g. 8899"
+                    autoComplete="new-password"
+                    data-lpignore="true"
+                    data-1p-ignore="true"
                     className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
@@ -3310,6 +3316,9 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                     value={confirmPinInput}
                     onChange={e => setConfirmPinInput(e.target.value)}
                     placeholder="e.g. 8899"
+                    autoComplete="new-password"
+                    data-lpignore="true"
+                    data-1p-ignore="true"
                     className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold focus:ring-2 focus:ring-amber-500"
                   />
                 </div>

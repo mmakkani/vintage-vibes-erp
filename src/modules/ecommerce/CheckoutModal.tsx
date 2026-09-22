@@ -554,6 +554,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     maxLength={4}
                     value={cardCvc}
                     onChange={e => setCardCvc(e.target.value)}
+                    autoComplete="new-password"
+                    data-lpignore="true"
+                    data-1p-ignore="true"
                     className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-indigo-500 font-mono shadow-xs"
                     required
                   />

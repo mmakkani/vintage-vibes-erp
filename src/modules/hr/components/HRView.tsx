@@ -14,6 +14,7 @@ import { HrService } from '../../../services/hrService.ts';
 import { PayrollService } from '../../../services/payrollService.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import { printEmployeeProfileA4, printAttendanceSheetA4, printPayrollRegisterA4 } from '../../../utils/printHrA4.ts';
+import { Pagination } from '../../../components/Pagination.tsx';
 import {
   Briefcase,
   Plus,
@@ -52,6 +53,7 @@ import {
   History,
   Bell,
   AlertCircle,
+  Search,
   Loader2
 } from 'lucide-react';
 
@@ -232,26 +234,109 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   // General Ledger COA Accounts
   const [coaAccounts, setCoaAccounts] = useState<any[]>([]);
 
-  // Grid Pagination States (Prevents memory bloat & browser freezing)
+  // Grid Pagination & Search States (10 rows default per page, prevents memory bloat)
+  // 1. Employee Master Directory
+  const [empSearch, setEmpSearch] = useState('');
   const [empPage, setEmpPage] = useState(1);
-  const empPageSize = 50;
-  const paginatedEmployees = useMemo(() => employees.slice((empPage - 1) * empPageSize, empPage * empPageSize), [employees, empPage]);
-  const totalEmpPages = Math.max(1, Math.ceil(employees.length / empPageSize));
+  const [empPageSize, setEmpPageSize] = useState(10);
+  const filteredEmployees = useMemo(() => {
+    if (!empSearch.trim()) return employees;
+    const q = empSearch.toLowerCase().trim();
+    return employees.filter(e =>
+      (e.name || '').toLowerCase().includes(q) ||
+      (e.empCode || '').toLowerCase().includes(q) ||
+      (e.designation || '').toLowerCase().includes(q) ||
+      (e.department || '').toLowerCase().includes(q)
+    );
+  }, [employees, empSearch]);
+  const paginatedEmployees = useMemo(
+    () => filteredEmployees.slice((empPage - 1) * empPageSize, empPage * empPageSize),
+    [filteredEmployees, empPage, empPageSize]
+  );
+  const totalEmpPages = Math.max(1, Math.ceil(filteredEmployees.length / empPageSize));
 
+  // 2. Attendance Sheets Log
+  const [attLogSearch, setAttLogSearch] = useState('');
   const [attLogPage, setAttLogPage] = useState(1);
-  const attLogPageSize = 25;
-  const paginatedAttLogs = useMemo(() => attendanceSheetsLog.slice((attLogPage - 1) * attLogPageSize, attLogPage * attLogPageSize), [attendanceSheetsLog, attLogPage]);
-  const totalAttLogPages = Math.max(1, Math.ceil(attendanceSheetsLog.length / attLogPageSize));
+  const [attLogPageSize, setAttLogPageSize] = useState(10);
+  const filteredAttLogs = useMemo(() => {
+    if (!attLogSearch.trim()) return attendanceSheetsLog;
+    const q = attLogSearch.toLowerCase().trim();
+    return attendanceSheetsLog.filter((s: any) =>
+      (s.monthYear || '').toLowerCase().includes(q) ||
+      (s.status || '').toLowerCase().includes(q)
+    );
+  }, [attendanceSheetsLog, attLogSearch]);
+  const paginatedAttLogs = useMemo(
+    () => filteredAttLogs.slice((attLogPage - 1) * attLogPageSize, attLogPage * attLogPageSize),
+    [filteredAttLogs, attLogPage, attLogPageSize]
+  );
+  const totalAttLogPages = Math.max(1, Math.ceil(filteredAttLogs.length / attLogPageSize));
 
+  // 3. Monthly Payroll Sheets Log
+  const [payLogSearch, setPayLogSearch] = useState('');
   const [payLogPage, setPayLogPage] = useState(1);
-  const payLogPageSize = 25;
-  const paginatedPayLogs = useMemo(() => payrollSheetsLog.slice((payLogPage - 1) * payLogPageSize, payLogPage * payLogPageSize), [payrollSheetsLog, payLogPage]);
-  const totalPayLogPages = Math.max(1, Math.ceil(payrollSheetsLog.length / payLogPageSize));
+  const [payLogPageSize, setPayLogPageSize] = useState(10);
+  const filteredPayLogs = useMemo(() => {
+    if (!payLogSearch.trim()) return payrollSheetsLog;
+    const q = payLogSearch.toLowerCase().trim();
+    return payrollSheetsLog.filter((s: any) =>
+      (s.monthYear || '').toLowerCase().includes(q) ||
+      (s.status || '').toLowerCase().includes(q) ||
+      (s.voucherNo || '').toLowerCase().includes(q)
+    );
+  }, [payrollSheetsLog, payLogSearch]);
+  const paginatedPayLogs = useMemo(
+    () => filteredPayLogs.slice((payLogPage - 1) * payLogPageSize, payLogPage * payLogPageSize),
+    [filteredPayLogs, payLogPage, payLogPageSize]
+  );
+  const totalPayLogPages = Math.max(1, Math.ceil(filteredPayLogs.length / payLogPageSize));
 
+  // 4. Advance & Loans Register
+  const [loanSearch, setLoanSearch] = useState('');
+  const [loanPage, setLoanPage] = useState(1);
+  const [loanPageSize, setLoanPageSize] = useState(10);
+  const filteredLoans = useMemo(() => {
+    if (!loanSearch.trim()) return employeeLoans;
+    const q = loanSearch.toLowerCase().trim();
+    return employeeLoans.filter(l =>
+      (l.employeeName || '').toLowerCase().includes(q) ||
+      (l.empCode || '').toLowerCase().includes(q) ||
+      (l.type || '').toLowerCase().includes(q) ||
+      (l.status || '').toLowerCase().includes(q)
+    );
+  }, [employeeLoans, loanSearch]);
+  const paginatedLoans = useMemo(
+    () => filteredLoans.slice((loanPage - 1) * loanPageSize, loanPage * loanPageSize),
+    [filteredLoans, loanPage, loanPageSize]
+  );
+  const totalLoanPages = Math.max(1, Math.ceil(filteredLoans.length / loanPageSize));
+
+  // 5. Payroll Register Window (Individual Slips)
+  const [paySlipSearch, setPaySlipSearch] = useState('');
   const [paySlipPage, setPaySlipPage] = useState(1);
-  const paySlipPageSize = 50;
-  const paginatedPaySlips = useMemo(() => payrollSlips.slice((paySlipPage - 1) * paySlipPageSize, paySlipPage * paySlipPageSize), [payrollSlips, paySlipPage]);
-  const totalPaySlipPages = Math.max(1, Math.ceil(payrollSlips.length / paySlipPageSize));
+  const [paySlipPageSize, setPaySlipPageSize] = useState(10);
+  const filteredPaySlips = useMemo(() => {
+    if (!paySlipSearch.trim()) return payrollSlips;
+    const q = paySlipSearch.toLowerCase().trim();
+    return payrollSlips.filter(s =>
+      (s.employeeName || '').toLowerCase().includes(q) ||
+      (s.empCode || '').toLowerCase().includes(q) ||
+      (s.designation || '').toLowerCase().includes(q)
+    );
+  }, [payrollSlips, paySlipSearch]);
+  const paginatedPaySlips = useMemo(
+    () => filteredPaySlips.slice((paySlipPage - 1) * paySlipPageSize, paySlipPage * paySlipPageSize),
+    [filteredPaySlips, paySlipPage, paySlipPageSize]
+  );
+  const totalPaySlipPages = Math.max(1, Math.ceil(filteredPaySlips.length / paySlipPageSize));
+
+  // Reset pagination on month change
+  useEffect(() => {
+    setAttLogPage(1);
+    setPayLogPage(1);
+    setPaySlipPage(1);
+  }, [selectedMonth]);
 
   const loadData = async () => {
     try {
@@ -1647,6 +1732,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Refresh</span>
                 </button>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Filter sheets..."
+                    value={payLogSearch}
+                    onChange={e => {
+                      setPayLogSearch(e.target.value);
+                      setPayLogPage(1);
+                    }}
+                    className="pl-8 pr-3 py-1 bg-white border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 w-40"
+                  />
+                </div>
                 <button
                   type="button"
                   onClick={() => handlePrintPayrollRegister(selectedMonth)}
@@ -1795,34 +1893,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     ))}
                   </tbody>
                 </table>
-                {payrollSheetsLog.length > payLogPageSize && (
-                  <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
-                    <div>
-                      Showing <span className="font-bold font-mono">{(payLogPage - 1) * payLogPageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(payLogPage * payLogPageSize, payrollSheetsLog.length)}</span> of <span className="font-bold font-mono">{payrollSheetsLog.length}</span> sheets
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setPayLogPage(p => Math.max(1, p - 1))}
-                        disabled={payLogPage === 1}
-                        className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        Previous
-                      </button>
-                      <span className="px-2 font-mono font-bold">
-                        Page {payLogPage} of {totalPayLogPages}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setPayLogPage(p => Math.min(totalPayLogPages, p + 1))}
-                        disabled={payLogPage === totalPayLogPages}
-                        className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        Next
-                      </button>
-                    </div>
-                  </div>
-                )}
+                <Pagination
+                  currentPage={payLogPage}
+                  totalPages={totalPayLogPages}
+                  totalItems={filteredPayLogs.length}
+                  pageSize={payLogPageSize}
+                  onPageChange={setPayLogPage}
+                  onPageSizeChange={(sz) => {
+                    setPayLogPageSize(sz);
+                    setPayLogPage(1);
+                  }}
+                  pageSizeOptions={[10, 25, 50, 100]}
+                  itemLabel="payroll sheets"
+                />
               </div>
             )}
           </div>
@@ -1907,6 +1990,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Refresh</span>
                 </button>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Filter sheets..."
+                    value={attLogSearch}
+                    onChange={e => {
+                      setAttLogSearch(e.target.value);
+                      setAttLogPage(1);
+                    }}
+                    className="pl-8 pr-3 py-1 bg-white border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 w-40"
+                  />
+                </div>
                 <button
                   type="button"
                   onClick={() => handlePrintAttendanceSheet(selectedMonth)}
@@ -2050,34 +2146,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     ))}
                   </tbody>
                 </table>
-                {attendanceSheetsLog.length > attLogPageSize && (
-                  <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
-                    <div>
-                      Showing <span className="font-bold font-mono">{(attLogPage - 1) * attLogPageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(attLogPage * attLogPageSize, attendanceSheetsLog.length)}</span> of <span className="font-bold font-mono">{attendanceSheetsLog.length}</span> sheets
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setAttLogPage(p => Math.max(1, p - 1))}
-                        disabled={attLogPage === 1}
-                        className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        Previous
-                      </button>
-                      <span className="px-2 font-mono font-bold">
-                        Page {attLogPage} of {totalAttLogPages}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setAttLogPage(p => Math.min(totalAttLogPages, p + 1))}
-                        disabled={attLogPage === totalAttLogPages}
-                        className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        Next
-                      </button>
-                    </div>
-                  </div>
-                )}
+                <Pagination
+                  currentPage={attLogPage}
+                  totalPages={totalAttLogPages}
+                  totalItems={filteredAttLogs.length}
+                  pageSize={attLogPageSize}
+                  onPageChange={setAttLogPage}
+                  onPageSizeChange={(sz) => {
+                    setAttLogPageSize(sz);
+                    setAttLogPage(1);
+                  }}
+                  pageSizeOptions={[10, 25, 50, 100]}
+                  itemLabel="attendance sheets"
+                />
               </div>
             )}
           </div>
@@ -2087,10 +2168,23 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       {/* ===================== SUBTAB 3: EMPLOYEE MASTER ===================== */}
       {subTab === 'employees' && (
         <div className="bg-white rounded border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-2.5 sm:p-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+          <div className="p-2.5 sm:p-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between flex-wrap gap-2">
             <div>
               <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider">Employee Master Directory & Legal IDs</h3>
               <p className="text-[11px] text-slate-500">Emirates ID, Residency Card, Passport details, and secure document records</p>
+            </div>
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search code, name, dept..."
+                value={empSearch}
+                onChange={e => {
+                  setEmpSearch(e.target.value);
+                  setEmpPage(1);
+                }}
+                className="pl-8 pr-3 py-1 bg-white border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 w-56"
+              />
             </div>
           </div>
 
@@ -2486,34 +2580,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 )}
               </tbody>
             </table>
-            {employees.length > empPageSize && (
-              <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
-                <div>
-                  Showing <span className="font-bold font-mono">{(empPage - 1) * empPageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(empPage * empPageSize, employees.length)}</span> of <span className="font-bold font-mono">{employees.length}</span> employees
-                </div>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setEmpPage(p => Math.max(1, p - 1))}
-                    disabled={empPage === 1}
-                    className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    Previous
-                  </button>
-                  <span className="px-2 font-mono font-bold">
-                    Page {empPage} of {totalEmpPages}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setEmpPage(p => Math.min(totalEmpPages, p + 1))}
-                    disabled={empPage === totalEmpPages}
-                    className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            )}
+            <Pagination
+              currentPage={empPage}
+              totalPages={totalEmpPages}
+              totalItems={filteredEmployees.length}
+              pageSize={empPageSize}
+              onPageChange={setEmpPage}
+              onPageSizeChange={(sz) => {
+                setEmpPageSize(sz);
+                setEmpPage(1);
+              }}
+              pageSizeOptions={[10, 25, 50, 100]}
+              itemLabel="employees"
+            />
           </div>
         </div>
       )}
@@ -2561,9 +2640,23 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search loans..."
+                    value={loanSearch}
+                    onChange={e => {
+                      setLoanSearch(e.target.value);
+                      setLoanPage(1);
+                    }}
+                    className="pl-8 pr-3 py-1 bg-white border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 w-44"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
                   setLoanForm({
                     employeeId: employees[0]?.id || '',
                     type: 'INSTALLMENT_LOAN',
@@ -2575,12 +2668,13 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     notes: ''
                   });
                   setShowLoanModal(true);
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#0056b3] hover:bg-[#004494] text-white text-xs font-bold uppercase tracking-wider shadow-xs transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>+ Issue Advance / Loan</span>
-              </button>
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#0056b3] hover:bg-[#004494] text-white text-xs font-bold uppercase tracking-wider shadow-xs transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Issue Advance / Loan</span>
+                </button>
+              </div>
             </div>
 
             {employeeLoans.length === 0 ? (
@@ -2611,7 +2705,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-mono">
-                    {employeeLoans.map(loan => (
+                    {paginatedLoans.map(loan => (
                       <tr key={loan.id} className="hover:bg-blue-50/40 transition-colors font-sans">
                         <td className="px-3 py-2.5 font-mono font-bold text-blue-900">{loan.empCode}</td>
                         <td className="px-3 py-2.5 font-semibold text-slate-800">{loan.employeeName}</td>
@@ -2667,6 +2761,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     ))}
                   </tbody>
                 </table>
+                <Pagination
+                  currentPage={loanPage}
+                  totalPages={totalLoanPages}
+                  totalItems={filteredLoans.length}
+                  pageSize={loanPageSize}
+                  onPageChange={setLoanPage}
+                  onPageSizeChange={(sz) => {
+                    setLoanPageSize(sz);
+                    setLoanPage(1);
+                  }}
+                  pageSizeOptions={[10, 25, 50, 100]}
+                  itemLabel="advances & loans"
+                />
               </div>
             )}
           </div>
@@ -3886,6 +3993,23 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
               </div>
             </div>
 
+            {/* Search Filter Strip */}
+            <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Filter slips by name or code..."
+                  value={paySlipSearch}
+                  onChange={e => {
+                    setPaySlipSearch(e.target.value);
+                    setPaySlipPage(1);
+                  }}
+                  className="pl-8 pr-3 py-1 bg-white border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 w-64"
+                />
+              </div>
+            </div>
+
             {/* Employee Full Register Table */}
             <div className="overflow-y-auto p-4 flex-1">
               <div className="border border-slate-200 rounded-lg overflow-hidden shadow-2xs">
@@ -3940,34 +4064,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     )}
                   </tbody>
                 </table>
-                {payrollSlips.length > paySlipPageSize && (
-                  <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
-                    <div>
-                      Showing <span className="font-bold font-mono">{(paySlipPage - 1) * paySlipPageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(paySlipPage * paySlipPageSize, payrollSlips.length)}</span> of <span className="font-bold font-mono">{payrollSlips.length}</span> slips
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setPaySlipPage(p => Math.max(1, p - 1))}
-                        disabled={paySlipPage === 1}
-                        className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                      >
-                        Previous
-                      </button>
-                      <span className="px-2 font-mono font-bold">
-                        Page {paySlipPage} of {totalPaySlipPages}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setPaySlipPage(p => Math.min(totalPaySlipPages, p + 1))}
-                        disabled={paySlipPage === totalPaySlipPages}
-                        className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                      >
-                        Next
-                      </button>
-                    </div>
-                  </div>
-                )}
+                <Pagination
+                  currentPage={paySlipPage}
+                  totalPages={totalPaySlipPages}
+                  totalItems={filteredPaySlips.length}
+                  pageSize={paySlipPageSize}
+                  onPageChange={setPaySlipPage}
+                  onPageSizeChange={(sz) => {
+                    setPaySlipPageSize(sz);
+                    setPaySlipPage(1);
+                  }}
+                  pageSizeOptions={[10, 25, 50, 100]}
+                  itemLabel="payroll slips"
+                />
               </div>
             </div>
 

@@ -506,7 +506,7 @@ export const AccessControlView: React.FC<AccessControlViewProps> = ({ onRefreshA
               </button>
             </div>
 
-            <form onSubmit={handleSaveUser} className="space-y-3.5">
+            <form onSubmit={handleSaveUser} className="space-y-3.5" autoComplete="off">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-wider text-slate-700 mb-1">
@@ -517,6 +517,7 @@ export const AccessControlView: React.FC<AccessControlViewProps> = ({ onRefreshA
                     value={formUsername}
                     onChange={e => setFormUsername(e.target.value)}
                     placeholder="e.g. farhan_acct"
+                    autoComplete="off"
                     required
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-slate-50 font-mono font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
                   />
@@ -531,6 +532,9 @@ export const AccessControlView: React.FC<AccessControlViewProps> = ({ onRefreshA
                       value={formPassword}
                       onChange={e => setFormPassword(e.target.value)}
                       placeholder={editingUserId ? 'Leave blank to keep' : 'e.g. pass123'}
+                      autoComplete="new-password"
+                      data-lpignore="true"
+                      data-1p-ignore="true"
                       className="w-full px-3 pr-8 py-2 rounded-xl border border-slate-300 text-xs bg-slate-50 font-mono font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
                     />
                     <button

@@ -4,6 +4,7 @@ import { StatusBadge } from '../../../components/StatusBadge.tsx';
 import { NumericInput } from '../../../components/NumericInput.tsx';
 import { Calendar, Lock, UserPlus, CheckCircle, XCircle, Printer } from 'lucide-react';
 import { printAttendanceSheetA4 } from '../../../utils/printHrA4.ts';
+import { Pagination } from '../../../components/Pagination.tsx';
 
 export interface AttendanceModalProps {
   isOpen: boolean;
@@ -133,7 +134,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
   const isWindowSheetPosted = isPosted || (attendance.length > 0 && attendance.every(a => a.status === 'POSTED'));
 
   const [attPage, setAttPage] = useState(1);
-  const attPageSize = 50;
+  const [attPageSize, setAttPageSize] = useState(10);
 
   useEffect(() => {
     setAttPage(1);
@@ -141,7 +142,7 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
 
   const paginatedAttendance = useMemo(
     () => attendance.slice((attPage - 1) * attPageSize, attPage * attPageSize),
-    [attendance, attPage]
+    [attendance, attPage, attPageSize]
   );
   const totalAttPages = Math.max(1, Math.ceil(attendance.length / attPageSize));
 
@@ -283,34 +284,19 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
                   ))}
                 </tbody>
               </table>
-              {attendance.length > attPageSize && (
-                <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 font-sans">
-                  <div>
-                    Showing <span className="font-bold font-mono">{(attPage - 1) * attPageSize + 1}</span> to <span className="font-bold font-mono">{Math.min(attPage * attPageSize, attendance.length)}</span> of <span className="font-bold font-mono">{attendance.length}</span> records
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setAttPage(p => Math.max(1, p - 1))}
-                      disabled={attPage === 1}
-                      className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      Previous
-                    </button>
-                    <span className="px-2 font-mono font-bold">
-                      Page {attPage} of {totalAttPages}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setAttPage(p => Math.min(totalAttPages, p + 1))}
-                      disabled={attPage === totalAttPages}
-                      className="px-2.5 py-1 rounded border border-slate-300 bg-white font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              )}
+              <Pagination
+                currentPage={attPage}
+                totalPages={totalAttPages}
+                totalItems={attendance.length}
+                pageSize={attPageSize}
+                onPageChange={setAttPage}
+                onPageSizeChange={(sz) => {
+                  setAttPageSize(sz);
+                  setAttPage(1);
+                }}
+                pageSizeOptions={[10, 25, 50, 100]}
+                itemLabel="staff records"
+              />
             </div>
           )}
         </div>

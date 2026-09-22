@@ -370,6 +370,9 @@ export const WhatsAppConfigEngine: React.FC<WhatsAppConfigEngineProps> = ({ onSa
                     })
                   }
                   placeholder="EAAG..."
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-xs focus:border-blue-500 focus:outline-hidden"
                 />
               </div>

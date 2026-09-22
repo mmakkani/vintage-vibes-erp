@@ -269,6 +269,9 @@ export const PaymentGatewaySetupCard: React.FC<PaymentGatewaySetupCardProps> = (
               placeholder="sk_live_... or sk_test_..."
               value={gatewayConfig.secretKey || ''}
               onChange={e => setGatewayConfig({ ...gatewayConfig, secretKey: e.target.value })}
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-1p-ignore="true"
               className="w-full text-xs font-mono border border-slate-300 rounded p-2 focus:ring-1 focus:ring-blue-500"
             />
             <span className="text-[10px] text-slate-400">Never exposed to clients. Strictly processed in Node backend.</span>
@@ -283,6 +286,9 @@ export const PaymentGatewaySetupCard: React.FC<PaymentGatewaySetupCardProps> = (
               placeholder="whsec_..."
               value={gatewayConfig.webhookSecret || ''}
               onChange={e => setGatewayConfig({ ...gatewayConfig, webhookSecret: e.target.value })}
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-1p-ignore="true"
               className="w-full text-xs font-mono border border-slate-300 rounded p-2 focus:ring-1 focus:ring-blue-500"
             />
             <span className="text-[10px] text-slate-400">Verifies webhook callbacks for automated payment reconciliation.</span>

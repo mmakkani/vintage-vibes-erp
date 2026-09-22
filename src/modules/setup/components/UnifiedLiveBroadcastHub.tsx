@@ -1123,6 +1123,9 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                   value={globalMulticast.tikTokStreamKey || ''}
                   onChange={e => setGlobalMulticast({ ...globalMulticast, tikTokStreamKey: e.target.value })}
                   placeholder="live_tt_..."
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   className="w-full px-2 py-1 text-xs font-mono bg-white border border-slate-300 rounded focus:outline-none"
                 />
               </div>
@@ -1133,6 +1136,9 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                   value={globalMulticast.instagramStreamKey || ''}
                   onChange={e => setGlobalMulticast({ ...globalMulticast, instagramStreamKey: e.target.value })}
                   placeholder="live_ig_..."
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   className="w-full px-2 py-1 text-xs font-mono bg-white border border-slate-300 rounded focus:outline-none"
                 />
               </div>
@@ -1143,6 +1149,9 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                   value={globalMulticast.facebookStreamKey || ''}
                   onChange={e => setGlobalMulticast({ ...globalMulticast, facebookStreamKey: e.target.value })}
                   placeholder="FB-live-..."
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   className="w-full px-2 py-1 text-xs font-mono bg-white border border-slate-300 rounded focus:outline-none"
                 />
               </div>
@@ -1153,6 +1162,9 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                   value={globalMulticast.youTubeStreamKey || ''}
                   onChange={e => setGlobalMulticast({ ...globalMulticast, youTubeStreamKey: e.target.value })}
                   placeholder="yt_live_..."
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   className="w-full px-2 py-1 text-xs font-mono bg-white border border-slate-300 rounded focus:outline-none"
                 />
               </div>

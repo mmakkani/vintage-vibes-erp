@@ -1918,6 +1918,9 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
                         value={metaAccessToken}
                         onChange={e => setMetaAccessToken(e.target.value)}
                         placeholder="EAABwz..."
+                        autoComplete="new-password"
+                        data-lpignore="true"
+                        data-1p-ignore="true"
                         className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-900 focus:outline-none focus:border-amber-500"
                       />
                     </div>
@@ -1995,6 +1998,9 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
                           value={gatewayApiToken}
                           onChange={e => setGatewayApiToken(e.target.value)}
                           placeholder="Token string..."
+                          autoComplete="new-password"
+                          data-lpignore="true"
+                          data-1p-ignore="true"
                           className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-900 focus:outline-none focus:border-blue-500"
                         />
                       </div>

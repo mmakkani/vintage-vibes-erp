@@ -2,6 +2,7 @@ import { supabase } from '../supabaseClient.ts';
 import { Employee, AttendanceRecord, EmployeeLoan, PayrollRecord } from '../modules/hr/hr.types.ts';
 import { AuditService } from './auditService.ts';
 import { FinanceService } from './financeService.ts';
+import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
 
 function generateId(prefix: string): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -222,7 +223,8 @@ export class HrService {
           .or('is_deleted.is.null,is_deleted.eq.false')
           .or('is_active.is.null,is_active.eq.true')
           .neq('status', 'DELETED')
-          .order('created_at', { ascending: false });
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false });
 
         if (options?.limit) {
           const limit = options.limit;
@@ -277,6 +279,55 @@ export class HrService {
       }
     } else {
       return await runFetch();
+    }
+  }
+
+  public static async getEmployeesPaginated(
+    page: number = 1,
+    pageSize: number = 10,
+    search?: string
+  ): Promise<PaginatedResponse<Employee>> {
+    try {
+      let query = supabase
+        .from('employees')
+        .select(HrService.EMPLOYEES_GRID_COLUMNS, { count: 'exact' })
+        .or('is_deleted.is.null,is_deleted.eq.false')
+        .or('is_active.is.null,is_active.eq.true')
+        .neq('status', 'DELETED');
+
+      if (search && search.trim()) {
+        const s = search.trim();
+        query = query.or(`name.ilike.%${s}%,emp_code.ilike.%${s}%,designation.ilike.%${s}%,department.ilike.%${s}%`);
+      }
+
+      query = applyPagination(query, page, pageSize, {
+        orderBy: 'created_at',
+        ascending: false,
+        secondaryOrderBy: 'id',
+        secondaryAscending: false
+      });
+
+      const { data, count, error } = await query;
+      if (error) {
+        console.warn('[HrService] getEmployeesPaginated query notice:', error.message);
+        const all = await this.getEmployees();
+        const filtered = search && search.trim()
+          ? all.filter(e =>
+              (e.name || '').toLowerCase().includes(search.toLowerCase()) ||
+              (e.empCode || '').toLowerCase().includes(search.toLowerCase()) ||
+              (e.designation || '').toLowerCase().includes(search.toLowerCase()) ||
+              (e.department || '').toLowerCase().includes(search.toLowerCase())
+            )
+          : all;
+        const from = (page - 1) * pageSize;
+        return buildPaginatedResponse(filtered.slice(from, from + pageSize), filtered.length, page, pageSize);
+      }
+
+      const mapped = (data || []).map((row: any) => this.mapEmployeeRow(row));
+      return buildPaginatedResponse(mapped, count ?? mapped.length, page, pageSize);
+    } catch (err: any) {
+      console.warn('[HrService] getEmployeesPaginated exception:', err?.message);
+      return buildPaginatedResponse([], 0, page, pageSize);
     }
   }
 
@@ -690,7 +741,8 @@ export class HrService {
     let query = supabase
       .from('employee_attendance')
       .select(HrService.ATTENDANCE_GRID_COLUMNS)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
 
     if (monthYear) {
       query = query.eq('month_year', monthYear);
@@ -720,6 +772,66 @@ export class HrService {
       lockedAt: row.locked_at || '',
       lockedBy: row.locked_by || ''
     }));
+  }
+
+  public static async getAttendancePaginated(
+    monthYear?: string,
+    page: number = 1,
+    pageSize: number = 10,
+    search?: string
+  ): Promise<PaginatedResponse<AttendanceRecord>> {
+    try {
+      let query = supabase
+        .from('employee_attendance')
+        .select(HrService.ATTENDANCE_GRID_COLUMNS, { count: 'exact' });
+
+      if (monthYear) {
+        query = query.eq('month_year', monthYear);
+      }
+      if (search && search.trim()) {
+        const s = search.trim();
+        query = query.or(`employee_name.ilike.%${s}%,emp_code.ilike.%${s}%`);
+      }
+
+      query = applyPagination(query, page, pageSize, {
+        orderBy: 'created_at',
+        ascending: false,
+        secondaryOrderBy: 'id',
+        secondaryAscending: false
+      });
+
+      const { data, count, error } = await query;
+      if (error) {
+        console.warn('[HrService] getAttendancePaginated notice:', error.message);
+        const all = await this.getAttendance(monthYear);
+        const filtered = search && search.trim()
+          ? all.filter(a =>
+              (a.employeeName || '').toLowerCase().includes(search.toLowerCase()) ||
+              (a.empCode || '').toLowerCase().includes(search.toLowerCase())
+            )
+          : all;
+        const from = (page - 1) * pageSize;
+        return buildPaginatedResponse(filtered.slice(from, from + pageSize), filtered.length, page, pageSize);
+      }
+
+      const mapped = (data || []).map((row: any) => ({
+        id: String(row.id),
+        employeeId: String(row.employee_id),
+        employeeName: row.employee_name || '',
+        empCode: row.emp_code || '',
+        monthYear: row.month_year || '',
+        daysWorked: Number(row.days_worked || 0),
+        overtimeHours: Number(row.overtime_hours || 0),
+        status: row.status || 'DRAFT',
+        lockedAt: row.locked_at || '',
+        lockedBy: row.locked_by || ''
+      }));
+
+      return buildPaginatedResponse(mapped, count ?? mapped.length, page, pageSize);
+    } catch (err: any) {
+      console.warn('[HrService] getAttendancePaginated exception:', err?.message);
+      return buildPaginatedResponse([], 0, page, pageSize);
+    }
   }
 
   public static async createAttendanceSheet(monthYear: string): Promise<AttendanceRecord[]> {
@@ -912,6 +1024,7 @@ export class HrService {
       .from('hr_attendance_sheets')
       .select('id, month_year, total_employees, status, created_at')
       .order('month_year', { ascending: false })
+      .order('id', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (error) {
@@ -926,6 +1039,46 @@ export class HrService {
       status: row.status,
       createdAt: row.created_at
     }));
+  }
+
+  public static async getAttendanceSheetsPaginated(
+    page: number = 1,
+    pageSize: number = 10
+  ): Promise<PaginatedResponse<any>> {
+    try {
+      let query = supabase
+        .from('hr_attendance_sheets')
+        .select('id, month_year, total_employees, status, created_at', { count: 'exact' });
+
+      query = applyPagination(query, page, pageSize, {
+        orderBy: 'month_year',
+        ascending: false,
+        secondaryOrderBy: 'id',
+        secondaryAscending: false
+      });
+
+      const { data, count, error } = await query;
+      if (error) {
+        console.warn('[HrService] getAttendanceSheetsPaginated notice:', error.message);
+        const all = await this.getAttendanceSheets();
+        const from = (page - 1) * pageSize;
+        return buildPaginatedResponse(all.slice(from, from + pageSize), all.length, page, pageSize);
+      }
+
+      const mapped = (data || []).map((row: any) => ({
+        id: row.id,
+        monthYear: row.month_year,
+        totalEmployees: Number(row.total_employees || 0),
+        totalStaff: Number(row.total_employees || 0),
+        status: row.status,
+        createdAt: row.created_at
+      }));
+
+      return buildPaginatedResponse(mapped, count ?? mapped.length, page, pageSize);
+    } catch (err: any) {
+      console.warn('[HrService] getAttendanceSheetsPaginated exception:', err?.message);
+      return buildPaginatedResponse([], 0, page, pageSize);
+    }
   }
 
   public static async deleteAttendanceSheet(sheetIdOrMonthYear: string): Promise<void> {
@@ -1020,7 +1173,8 @@ export class HrService {
     const { data, error } = await supabase
       .from('employee_loans')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
 
     if (error) {
       console.error('Error fetching loans:', error);
@@ -1044,6 +1198,68 @@ export class HrService {
       notes: row.notes || '',
       createdAt: row.created_at || new Date().toISOString()
     }));
+  }
+
+  public static async getLoansPaginated(
+    page: number = 1,
+    pageSize: number = 10,
+    search?: string
+  ): Promise<PaginatedResponse<EmployeeLoan>> {
+    try {
+      let query = supabase
+        .from('employee_loans')
+        .select('*', { count: 'exact' });
+
+      if (search && search.trim()) {
+        const s = search.trim();
+        query = query.or(`employee_name.ilike.%${s}%,emp_code.ilike.%${s}%,type.ilike.%${s}%`);
+      }
+
+      query = applyPagination(query, page, pageSize, {
+        orderBy: 'created_at',
+        ascending: false,
+        secondaryOrderBy: 'id',
+        secondaryAscending: false
+      });
+
+      const { data, count, error } = await query;
+      if (error) {
+        console.warn('[HrService] getLoansPaginated notice:', error.message);
+        const all = await this.getLoans();
+        const filtered = search && search.trim()
+          ? all.filter(l =>
+              (l.employeeName || '').toLowerCase().includes(search.toLowerCase()) ||
+              (l.empCode || '').toLowerCase().includes(search.toLowerCase()) ||
+              (l.type || '').toLowerCase().includes(search.toLowerCase())
+            )
+          : all;
+        const from = (page - 1) * pageSize;
+        return buildPaginatedResponse(filtered.slice(from, from + pageSize), filtered.length, page, pageSize);
+      }
+
+      const mapped = (data || []).map((row: any) => ({
+        id: String(row.id),
+        employeeId: String(row.employee_id),
+        employeeName: row.employee_name || '',
+        empCode: row.emp_code || '',
+        type: row.type || 'SALARY_ADVANCE',
+        principalAmount: Number(row.principal_amount || 0),
+        emiAmount: Number(row.emi_amount || 0),
+        totalMonths: Number(row.total_months || 1),
+        startMonth: row.start_month || '',
+        remainingAmount: Number(row.remaining_amount || 0),
+        status: row.status || 'ACTIVE',
+        disbursementAccount: row.disbursement_account || '',
+        disbursementMethod: row.disbursement_method || 'BANK_TRANSFER',
+        notes: row.notes || '',
+        createdAt: row.created_at || new Date().toISOString()
+      }));
+
+      return buildPaginatedResponse(mapped, count ?? mapped.length, page, pageSize);
+    } catch (err: any) {
+      console.warn('[HrService] getLoansPaginated exception:', err?.message);
+      return buildPaginatedResponse([], 0, page, pageSize);
+    }
   }
 
   public static async createLoan(loan: Partial<EmployeeLoan>): Promise<EmployeeLoan> {
@@ -1108,7 +1324,8 @@ export class HrService {
     let query = supabase
       .from('employee_payroll')
       .select(HrService.PAYROLL_GRID_COLUMNS)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
 
     if (monthYear) {
       query = query.eq('month_year', monthYear);
@@ -1659,6 +1876,7 @@ export class HrService {
           .from('hr_payroll_sheets')
           .select('id, month_year, total_employees, total_gross, total_deductions, total_net, status, voucher_no, voucher_id, created_at')
           .order('month_year', { ascending: false })
+          .order('id', { ascending: false })
           .range(offset, offset + limit - 1);
 
         if (error) {
@@ -1692,6 +1910,50 @@ export class HrService {
       return this.payrollSheetsPromise;
     } else {
       return await runFetch();
+    }
+  }
+
+  public static async getPayrollSheetsPaginated(
+    page: number = 1,
+    pageSize: number = 10
+  ): Promise<PaginatedResponse<any>> {
+    try {
+      let query = supabase
+        .from('hr_payroll_sheets')
+        .select('id, month_year, total_employees, total_gross, total_deductions, total_net, status, voucher_no, voucher_id, created_at', { count: 'exact' });
+
+      query = applyPagination(query, page, pageSize, {
+        orderBy: 'month_year',
+        ascending: false,
+        secondaryOrderBy: 'id',
+        secondaryAscending: false
+      });
+
+      const { data, count, error } = await query;
+      if (error) {
+        console.warn('[HrService] getPayrollSheetsPaginated notice:', error.message);
+        const all = await this.getPayrollSheets();
+        const from = (page - 1) * pageSize;
+        return buildPaginatedResponse(all.slice(from, from + pageSize), all.length, page, pageSize);
+      }
+
+      const mapped = (data || []).map((row: any) => ({
+        id: row.id,
+        monthYear: row.month_year,
+        totalEmployees: row.total_employees,
+        totalGross: Number(row.total_gross || 0),
+        totalDeductions: Number(row.total_deductions || 0),
+        totalNet: Number(row.total_net || 0),
+        status: row.status,
+        voucherNo: row.voucher_no,
+        voucherId: row.voucher_id,
+        createdAt: row.created_at
+      }));
+
+      return buildPaginatedResponse(mapped, count ?? mapped.length, page, pageSize);
+    } catch (err: any) {
+      console.warn('[HrService] getPayrollSheetsPaginated exception:', err?.message);
+      return buildPaginatedResponse([], 0, page, pageSize);
     }
   }
 
@@ -1829,6 +2091,7 @@ export class HrService {
         .from('hr_ocr_logs')
         .select(HrService.OCR_LOGS_GRID_COLUMNS)
         .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
         .range(offset, offset + limit - 1);
 
       if (!error && Array.isArray(data)) {
