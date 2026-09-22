@@ -81,7 +81,7 @@ const safeFixed = (val: any, decimals: number = 2): string => {
 };
 
 export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
-  const { syncVersion, acquireLock, releaseLock, notifyMutation } = useSync();
+  const { syncVersion, acquireLock, releaseLock, notifyMutation } = useSync('hr');
   const [subTab, setSubTabState] = useState<'payroll' | 'attendance' | 'employees' | 'loans' | 'vault' | 'ocr-logs'>(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
@@ -292,25 +292,52 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   );
   const totalPayLogPages = Math.max(1, Math.ceil(filteredPayLogs.length / payLogPageSize));
 
-  // 4. Advance & Loans Register
+  // 4. Advance & Loans Register (Server-Side Paginated via applyPagination)
   const [loanSearch, setLoanSearch] = useState('');
   const [loanPage, setLoanPage] = useState(1);
   const [loanPageSize, setLoanPageSize] = useState(10);
-  const filteredLoans = useMemo(() => {
-    if (!loanSearch.trim()) return employeeLoans;
-    const q = loanSearch.toLowerCase().trim();
-    return employeeLoans.filter(l =>
-      (l.employeeName || '').toLowerCase().includes(q) ||
-      (l.empCode || '').toLowerCase().includes(q) ||
-      (l.type || '').toLowerCase().includes(q) ||
-      (l.status || '').toLowerCase().includes(q)
-    );
-  }, [employeeLoans, loanSearch]);
-  const paginatedLoans = useMemo(
-    () => filteredLoans.slice((loanPage - 1) * loanPageSize, loanPage * loanPageSize),
-    [filteredLoans, loanPage, loanPageSize]
-  );
-  const totalLoanPages = Math.max(1, Math.ceil(filteredLoans.length / loanPageSize));
+  const [loansTotalItems, setLoansTotalItems] = useState(0);
+  const [totalLoanPages, setTotalLoanPages] = useState(1);
+  const [paginatedLoans, setPaginatedLoans] = useState<EmployeeLoan[]>([]);
+  const [isLoansLoading, setIsLoansLoading] = useState(false);
+
+  const fetchLoansPaginated = useCallback(async (
+    targetPage = loanPage,
+    targetPageSize = loanPageSize,
+    targetSearch = loanSearch
+  ) => {
+    setIsLoansLoading(true);
+    try {
+      const res = await HrService.getLoansPaginated(targetPage, targetPageSize, targetSearch);
+      if (res && Array.isArray(res.data)) {
+        setPaginatedLoans(res.data);
+        setLoansTotalItems(res.total);
+        setTotalLoanPages(res.totalPages);
+      }
+    } catch (err) {
+      console.warn('[HRView] fetchLoansPaginated error:', err);
+    } finally {
+      setIsLoansLoading(false);
+    }
+  }, [loanPage, loanPageSize, loanSearch]);
+
+  // Reactive fetch for paginated loans
+  useEffect(() => {
+    fetchLoansPaginated(loanPage, loanPageSize, loanSearch);
+  }, [loanPage, loanPageSize, loanSearch, fetchLoansPaginated]);
+
+  // Realtime CDC Listener for employee_loans: Refetch current page silently
+  useEffect(() => {
+    const handleRealtimeRecord = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.record) return;
+      if (detail.table === 'employee_loans') {
+        fetchLoansPaginated(loanPage, loanPageSize, loanSearch);
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleRealtimeRecord);
+    return () => window.removeEventListener('vv:realtime-record', handleRealtimeRecord);
+  }, [loanPage, loanPageSize, loanSearch, fetchLoansPaginated]);
 
   // 5. Payroll Register Window (Individual Slips)
   const [paySlipSearch, setPaySlipSearch] = useState('');
@@ -371,6 +398,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       setPayrollSlips(Array.isArray(payRes) ? payRes : []);
       setAttendanceSheetsLog(Array.isArray(sheetsLogRes) ? sheetsLogRes : []);
       setEmployeeLoans(Array.isArray(loansRes) ? loansRes : []);
+      fetchLoansPaginated(loanPage, loanPageSize, loanSearch);
       setPayrollSheetsLog(Array.isArray(paySheetsLogRes) ? paySheetsLogRes : []);
       setOcrLogs(Array.isArray(ocrLogsRes) ? ocrLogsRes : []);
       const hrLogs = Array.isArray(auditLogsRes) ? auditLogsRes.filter((l: any) => l.module === 'HR') : [];
@@ -468,6 +496,16 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   useEffect(() => {
     loadData();
   }, []);
+
+  // 1b. Silent Background Realtime Synchronization on global syncVersion bump
+  const isFirstSyncMount = useRef(true);
+  useEffect(() => {
+    if (isFirstSyncMount.current) {
+      isFirstSyncMount.current = false;
+      return;
+    }
+    loadData();
+  }, [syncVersion]);
 
   // 2. Month selector switch: ONLY re-fetches attendance and payroll for that specific month
   const isFirstMonthMount = useRef(true);
@@ -2677,7 +2715,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
               </div>
             </div>
 
-            {employeeLoans.length === 0 ? (
+            {loansTotalItems === 0 && !isLoansLoading ? (
               <div className="p-10 text-center text-slate-500">
                 <HandCoins className="w-10 h-10 text-slate-300 mx-auto mb-2" />
                 <div className="font-bold text-sm text-slate-800 uppercase tracking-wide">
@@ -2764,7 +2802,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 <Pagination
                   currentPage={loanPage}
                   totalPages={totalLoanPages}
-                  totalItems={filteredLoans.length}
+                  totalItems={loansTotalItems}
                   pageSize={loanPageSize}
                   onPageChange={setLoanPage}
                   onPageSizeChange={(sz) => {
@@ -2773,6 +2811,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   }}
                   pageSizeOptions={[10, 25, 50, 100]}
                   itemLabel="advances & loans"
+                  isLoading={isLoansLoading}
                 />
               </div>
             )}

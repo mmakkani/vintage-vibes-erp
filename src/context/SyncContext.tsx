@@ -32,6 +32,7 @@ export interface SyncVersions {
   sales: number;
   inventory: number;
   registry: number;
+  hr: number;
   [key: string]: number;
 }
 
@@ -81,17 +82,15 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     purchase: 1,
     sales: 1,
     inventory: 1,
-    registry: 1
+    registry: 1,
+    hr: 1
   });
   const [lastDelta, setLastDelta] = useState<DeltaSyncPayload | null>(null);
   const [syncToast, setSyncToast] = useState<{ message: string; id: number } | null>(null);
 
-  const showSyncToast = useCallback((message: string) => {
-    const id = Date.now();
-    setSyncToast({ message, id });
-    setTimeout(() => {
-      setSyncToast(prev => (prev?.id === id ? null : prev));
-    }, 2500);
+  // 100% Silent Background Sync: Disabled noisy toasts and custom banners
+  const showSyncToast = useCallback((_message: string) => {
+    // Silent background sync: Do not trigger visible toast notifications
   }, []);
 
   const refreshPresence = useCallback(async () => {
@@ -234,10 +233,10 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         );
       } catch (_) {}
 
-      // 3. Subtle micro-toast badge (flicker-free, no UI shift)
-      const readableEntity = entity.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      const refText = documentRef ? ` #${documentRef}` : '';
-      showSyncToast(`✓ Live Synced: ${readableEntity}${refText} (${action.toLowerCase()})`);
+      // 3. Silent micro sync (Micro-toast banner removed for 100% silent background sync)
+      // const readableEntity = entity.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      // const refText = documentRef ? ` #${documentRef}` : '';
+      // showSyncToast(`✓ Live Synced: ${readableEntity}${refText} (${action.toLowerCase()})`);
 
       // 4. Server broadcast endpoint (non-blocking)
       try {
@@ -310,6 +309,18 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
           return { targetModule: 'access', affectedModules: ['access'] };
         case 'user_presences':
           return { targetModule: 'presence', affectedModules: ['presence'] };
+        case 'employees':
+        case 'employee_documents':
+        case 'employee_loans':
+        case 'staff_attendance':
+        case 'employee_attendance':
+        case 'hr_attendance_sheets':
+        case 'overtime_logs':
+        case 'employee_payroll':
+        case 'payroll_records':
+        case 'hr_payroll_sheets':
+        case 'hr_ocr_logs':
+          return { targetModule: 'hr', affectedModules: ['hr', 'finance'] };
         default:
           return { targetModule: 'finance', affectedModules: ['finance'] };
       }
@@ -353,6 +364,24 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       }
       if (table === 'device_installations') {
         queryClient.invalidateQueries({ queryKey: ['device-counts'] }).catch(() => {});
+      }
+
+      // Invalidate queries for HR tables upon realtime change
+      if (
+        table === 'employees' ||
+        table === 'employee_documents' ||
+        table === 'employee_loans' ||
+        table === 'staff_attendance' ||
+        table === 'employee_attendance' ||
+        table === 'hr_attendance_sheets' ||
+        table === 'overtime_logs' ||
+        table === 'employee_payroll' ||
+        table === 'payroll_records' ||
+        table === 'hr_payroll_sheets' ||
+        table === 'hr_ocr_logs'
+      ) {
+        queryClient.invalidateQueries({ queryKey: [table] }).catch(() => {});
+        queryClient.invalidateQueries({ queryKey: ['hr'] }).catch(() => {});
       }
 
       const activeRecord = newRecord || oldRecord || {};
@@ -407,10 +436,10 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         );
       } catch (_) {}
 
-      // 3. Subtle micro-toast badge (flicker-free, cross-device confirmation)
-      const readableEntity = table.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      const refText = docRef ? ` #${docRef}` : '';
-      showSyncToast(`✓ Live Synced: ${readableEntity}${refText} (${eventType.toLowerCase()})`);
+      // 3. Silent micro sync (Micro-toast banner removed for 100% silent background sync)
+      // const readableEntity = table.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      // const refText = docRef ? ` #${docRef}` : '';
+      // showSyncToast(`✓ Live Synced: ${readableEntity}${refText} (${eventType.toLowerCase()})`);
 
       // 4. Scoped selective version bump
       triggerGlobalSync(affectedModules);
@@ -568,15 +597,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     >
       {children}
 
-      {/* Zero-Flicker Micro Toast Badge (Non-intrusive floating indicator) */}
-      {syncToast && (
-        <div className="fixed bottom-4 right-4 z-50 pointer-events-none transition-all duration-300 transform translate-y-0 opacity-100 animate-in fade-in slide-in-from-bottom-2">
-          <div className="bg-slate-900/95 text-emerald-400 border border-emerald-500/40 shadow-2xl rounded-full px-3.5 py-1.5 flex items-center gap-2 text-xs font-mono font-medium backdrop-blur-md">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <span>{syncToast.message}</span>
-          </div>
-        </div>
-      )}
+      {/* 100% Silent Background Sync: Micro-toast UI banner removed */}
     </SyncContext.Provider>
   );
 };

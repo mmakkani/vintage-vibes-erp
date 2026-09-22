@@ -1,97 +1,93 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Employee } from '../hr.types.ts';
-import { Shield, Lock, FileText, CheckCircle, AlertTriangle, Search, ExternalLink, Calendar, RefreshCw } from 'lucide-react';
+import { Shield, Lock, Search, ExternalLink, Calendar, RefreshCw, CheckCircle } from 'lucide-react';
+import { Pagination } from '../../../components/Pagination.tsx';
+import { HrService } from '../../../services/hrService.ts';
 
 interface DocumentVaultProps {
-  employees: Employee[];
-  onRefresh: () => void;
+  employees?: Employee[];
+  onRefresh?: () => void;
 }
 
-export const DocumentVault: React.FC<DocumentVaultProps> = ({ employees }) => {
+export const DocumentVault: React.FC<DocumentVaultProps> = ({ onRefresh }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedDocType, setSelectedDocType] = useState<'ALL' | 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY'>('ALL');
-
-  // Flatten out documents from employees
-  const allDocuments: Array<{
+  const [selectedDocType, setSelectedDocType] = useState<'ALL' | 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_CARD'>('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [isLoading, setIsLoading] = useState(false);
+  const [documents, setDocuments] = useState<Array<{
     id: string;
     employeeId: string;
     empCode: string;
     employeeName: string;
-    docType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_CARD';
+    docType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_CARD' | string;
     documentNo: string;
     expiryDate: string;
     ocrStatus: 'VERIFIED' | 'PENDING' | 'MANUAL_OVERRIDE';
     encryptedRef: string;
     fileUrl?: string;
-  }> = [];
+  }>>([]);
 
-  employees.forEach(emp => {
-    if (emp.emiratesId) {
-      allDocuments.push({
-        id: `doc-eid-front-${emp.id}`,
-        employeeId: emp.id,
-        empCode: emp.empCode,
-        employeeName: emp.name,
-        docType: 'EMIRATES_ID',
-        documentNo: `${emp.emiratesId} (Front)`,
-        expiryDate: emp.emiratesIdExpiry || '2028-11-30',
-        ocrStatus: 'VERIFIED',
-        encryptedRef: `sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855-${emp.empCode}-front`,
-        fileUrl: emp.idFrontImageUrl
+  const loadDocuments = useCallback(async (
+    targetPage = currentPage,
+    targetPageSize = pageSize,
+    targetSearch = searchTerm,
+    targetDocType = selectedDocType
+  ) => {
+    setIsLoading(true);
+    try {
+      const res = await HrService.getDocumentsPaginated({
+        page: targetPage,
+        pageSize: targetPageSize,
+        search: targetSearch,
+        docType: targetDocType
       });
-      if (emp.idBackImageUrl) {
-        allDocuments.push({
-          id: `doc-eid-back-${emp.id}`,
-          employeeId: emp.id,
-          empCode: emp.empCode,
-          employeeName: emp.name,
-          docType: 'EMIRATES_ID',
-          documentNo: `${emp.idCardNo || emp.emiratesId} (Back)`,
-          expiryDate: emp.emiratesIdExpiry || '2028-11-30',
-          ocrStatus: 'VERIFIED',
-          encryptedRef: `sha256:7392a83819283719823719827391823719283719283719283719283719283719-${emp.empCode}-back`,
-          fileUrl: emp.idBackImageUrl
-        });
+      setDocuments(Array.isArray(res?.data) ? res.data : []);
+      setTotalItems(res?.total || 0);
+      setTotalPages(res?.totalPages || 1);
+    } catch (err) {
+      console.warn('[DocumentVault] load error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentPage, pageSize, searchTerm, selectedDocType]);
+
+  // Reactive fetch on pagination, search, or document type filter change
+  useEffect(() => {
+    loadDocuments(currentPage, pageSize, searchTerm, selectedDocType);
+  }, [currentPage, pageSize, searchTerm, selectedDocType, loadDocuments]);
+
+  // Realtime CDC Listener: Refetches current page silently without resetting user's page position
+  useEffect(() => {
+    const handleRealtimeRecord = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.record) return;
+      if (detail.table === 'employee_documents' || detail.table === 'employees') {
+        loadDocuments(currentPage, pageSize, searchTerm, selectedDocType);
       }
-    }
-    if (emp.residencyCardNo) {
-      allDocuments.push({
-        id: `doc-rc-${emp.id}`,
-        employeeId: emp.id,
-        empCode: emp.empCode,
-        employeeName: emp.name,
-        docType: 'RESIDENCY_CARD',
-        documentNo: `${emp.residencyCardNo}${emp.uidNo ? ` • UID: ${emp.uidNo}` : ''}`,
-        expiryDate: emp.residencyExpiryDate || '2027-06-15',
-        ocrStatus: 'VERIFIED',
-        encryptedRef: `sha256:8f434346648f1c149afbf4c8996fb92427ae41e4649b934ca495991b7852cf9-${emp.empCode}`,
-        fileUrl: emp.residencyImageUrl || emp.idBackImageUrl
-      });
-    }
-    if (emp.passportNo) {
-      allDocuments.push({
-        id: `doc-pass-${emp.id}`,
-        employeeId: emp.id,
-        empCode: emp.empCode,
-        employeeName: emp.name,
-        docType: 'PASSPORT',
-        documentNo: `${emp.passportNo}${emp.passportCountry ? ` (${emp.passportCountry})` : ''}`,
-        expiryDate: emp.passportExpiry || '2031-01-20',
-        ocrStatus: 'VERIFIED',
-        encryptedRef: `sha256:9a83019283fa1c149afbf4c8996fb92427ae41e4649b934ca495991b7852a12-${emp.empCode}`,
-        fileUrl: emp.passportImageUrl || emp.idFrontImageUrl
-      });
-    }
-  });
+    };
+    window.addEventListener('vv:realtime-record', handleRealtimeRecord);
+    return () => window.removeEventListener('vv:realtime-record', handleRealtimeRecord);
+  }, [currentPage, pageSize, searchTerm, selectedDocType, loadDocuments]);
 
-  const filteredDocs = allDocuments.filter(doc => {
-    const matchesSearch =
-      doc.employeeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      doc.documentNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      doc.empCode.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = selectedDocType === 'ALL' || doc.docType === selectedDocType;
-    return matchesSearch && matchesType;
-  });
+  const handleSearchChange = (val: string) => {
+    setSearchTerm(val);
+    setCurrentPage(1);
+  };
+
+  const handleDocTypeChange = (val: any) => {
+    setSelectedDocType(val);
+    setCurrentPage(1);
+  };
+
+  const handleManualRefresh = async () => {
+    await loadDocuments(currentPage, pageSize, searchTerm, selectedDocType);
+    if (onRefresh) {
+      onRefresh();
+    }
+  };
 
   return (
     <div className="space-y-3">
@@ -114,14 +110,14 @@ export const DocumentVault: React.FC<DocumentVaultProps> = ({ employees }) => {
               type="text"
               placeholder="Search vault (Name, ID, Code)..."
               value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
+              onChange={e => handleSearchChange(e.target.value)}
               className="pl-8 pr-3 py-1.5 border border-slate-300 rounded text-xs w-56 bg-slate-50 focus:bg-white"
             />
           </div>
 
           <select
             value={selectedDocType}
-            onChange={e => setSelectedDocType(e.target.value as any)}
+            onChange={e => handleDocTypeChange(e.target.value)}
             className="px-2.5 py-1.5 border border-slate-300 rounded text-xs font-semibold bg-slate-50"
           >
             <option value="ALL">All Document Types</option>
@@ -129,6 +125,16 @@ export const DocumentVault: React.FC<DocumentVaultProps> = ({ employees }) => {
             <option value="RESIDENCY_CARD">Residency Cards</option>
             <option value="PASSPORT">Passports</option>
           </select>
+
+          <button
+            type="button"
+            onClick={handleManualRefresh}
+            disabled={isLoading}
+            className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors cursor-pointer"
+            title="Refresh Vault"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-blue-600' : ''}`} />
+          </button>
         </div>
       </div>
 
@@ -137,7 +143,7 @@ export const DocumentVault: React.FC<DocumentVaultProps> = ({ employees }) => {
         <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
           <div className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
             <Lock className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Encrypted Document Registry ({filteredDocs.length} items secured)</span>
+            <span>Encrypted Document Registry ({totalItems} items secured)</span>
           </div>
           <div className="text-[10px] text-slate-500">Zero-Knowledge Storage • SHA-256 Hashes</div>
         </div>
@@ -156,8 +162,8 @@ export const DocumentVault: React.FC<DocumentVaultProps> = ({ employees }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-mono">
-              {filteredDocs.map(doc => {
-                const isExpiringSoon = new Date(doc.expiryDate) < new Date(Date.now() + 180 * 24 * 60 * 60 * 1000);
+              {documents.map(doc => {
+                const isExpiringSoon = doc.expiryDate ? new Date(doc.expiryDate) < new Date(Date.now() + 180 * 24 * 60 * 60 * 1000) : false;
                 return (
                   <tr key={doc.id} className="hover:bg-slate-50">
                     <td className="px-3 py-2 font-sans">
@@ -165,14 +171,14 @@ export const DocumentVault: React.FC<DocumentVaultProps> = ({ employees }) => {
                       <div className="text-[10px] text-slate-500 font-mono">{doc.empCode}</div>
                     </td>
                     <td className="px-3 py-2 font-sans font-semibold text-blue-900">
-                      {doc.docType.replace('_', ' ')}
+                      {(doc.docType || '').replace(/_/g, ' ')}
                     </td>
                     <td className="px-3 py-2 font-bold text-slate-900">{doc.documentNo}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1">
                         <Calendar className="w-3 h-3 text-slate-400" />
                         <span className={isExpiringSoon ? 'text-amber-700 font-bold' : 'text-slate-700'}>
-                          {doc.expiryDate}
+                          {doc.expiryDate || 'N/A'}
                         </span>
                         {isExpiringSoon && (
                           <span className="text-[9px] bg-amber-100 text-amber-800 px-1 rounded font-sans">Renewal Due</span>
@@ -211,16 +217,39 @@ export const DocumentVault: React.FC<DocumentVaultProps> = ({ employees }) => {
                   </tr>
                 );
               })}
-              {filteredDocs.length === 0 && (
+              {documents.length === 0 && !isLoading && (
                 <tr>
                   <td colSpan={7} className="text-center py-6 text-slate-500 font-sans italic">
                     No documents found matching the filter criteria.
                   </td>
                 </tr>
               )}
+              {isLoading && (
+                <tr>
+                  <td colSpan={7} className="text-center py-6 text-slate-400 font-sans">
+                    <RefreshCw className="w-5 h-5 mx-auto animate-spin mb-1 text-blue-600" />
+                    <span>Loading documents from encrypted vault...</span>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
+
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={totalItems}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(sz) => {
+            setPageSize(sz);
+            setCurrentPage(1);
+          }}
+          pageSizeOptions={[10, 25, 50, 100]}
+          itemLabel="documents"
+          isLoading={isLoading}
+        />
       </div>
     </div>
   );
