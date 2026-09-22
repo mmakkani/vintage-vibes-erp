@@ -112,14 +112,20 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   const lastSyncedAtRef = useRef<number>(Date.now());
   const hasDisconnectedRef = useRef<boolean>(false);
   const realtimeChannelRef = useRef<any>(null);
+  const channelRef = realtimeChannelRef;
+
+  const onGlobalRefreshRef = useRef(onGlobalRefresh);
+  useEffect(() => {
+    onGlobalRefreshRef.current = onGlobalRefresh;
+  }, [onGlobalRefresh]);
 
   const cleanupChannel = useCallback(() => {
-    if (realtimeChannelRef.current) {
+    if (channelRef.current) {
       try {
         console.log('[GlobalRealtimeManager] Cleaning up Realtime channel...');
-        supabase.removeChannel(realtimeChannelRef.current);
+        supabase.removeChannel(channelRef.current);
       } catch (_) {}
-      realtimeChannelRef.current = null;
+      channelRef.current = null;
       setIsLiveConnected(false);
     }
   }, []);
@@ -130,8 +136,8 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     setIsSyncing(true);
 
     try {
-      if (onGlobalRefresh) {
-        await onGlobalRefresh();
+      if (onGlobalRefreshRef.current) {
+        await onGlobalRefreshRef.current();
       }
 
       // Determine which module versions to increment
@@ -169,7 +175,22 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       isSyncingRef.current = false;
       setIsSyncing(false);
     }
-  }, [onGlobalRefresh]);
+  }, []);
+
+  const triggerGlobalSyncRef = useRef(triggerGlobalSync);
+  useEffect(() => {
+    triggerGlobalSyncRef.current = triggerGlobalSync;
+  }, [triggerGlobalSync]);
+
+  const refreshPresenceRef = useRef(refreshPresence);
+  useEffect(() => {
+    refreshPresenceRef.current = refreshPresence;
+  }, [refreshPresence]);
+
+  const cleanupChannelRef = useRef(cleanupChannel);
+  useEffect(() => {
+    cleanupChannelRef.current = cleanupChannel;
+  }, [cleanupChannel]);
 
   // Lock manager to prevent double submissions across forms
   const acquireLock = useCallback((lockKey: string): boolean => {
@@ -447,39 +468,43 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
 
     // Initialize single global Supabase Realtime WebSocket channel subscribing to schema 'public', event '*' ONCE
     try {
-      const channel = supabase
-        .channel('global_supabase_realtime_sync')
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public' },
-          (payload: any) => {
-            handleRealtimeChange(payload);
-          }
-        )
-        .subscribe((status: string) => {
-          // Strictly log statuses: SUBSCRIBED, CHANNEL_ERROR, TIMED_OUT, CLOSED
-          console.log(`[GlobalRealtimeManager] Status: ${status}`);
-
-          if (status === 'SUBSCRIBED') {
-            setIsLiveConnected(true);
-            // Reconnect Handling: Automatically trigger a background refetch of active queries to recover missed changes
-            if (hasDisconnectedRef.current) {
-              console.log('[GlobalRealtimeManager] Reconnected to Realtime. Refetching active queries to recover missed changes...');
-              queryClient.refetchQueries().catch(() => {});
-              triggerGlobalSync();
-              if (onGlobalRefresh) {
-                Promise.resolve(onGlobalRefresh()).catch(() => {});
-              }
-              hasDisconnectedRef.current = false;
+      if (!channelRef.current) {
+        const channel = supabase
+          .channel('global_supabase_realtime_sync')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public' },
+            (payload: any) => {
+              handleRealtimeChange(payload);
             }
-          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-            setIsLiveConnected(false);
-            hasDisconnectedRef.current = true;
-            console.warn(`[GlobalRealtimeManager] Disconnected (${status}). Automatic background recovery queued for reconnect.`);
-          }
-        });
+          )
+          .subscribe((status: string) => {
+            if (unmounted) return;
+            // Strictly log statuses: SUBSCRIBED, CHANNEL_ERROR, TIMED_OUT, CLOSED
+            console.log(`[GlobalRealtimeManager] Status: ${status}`);
 
-      realtimeChannelRef.current = channel;
+            if (status === 'SUBSCRIBED') {
+              setIsLiveConnected(true);
+              // Reconnect Handling: Automatically trigger a background refetch of active queries to recover missed changes
+              if (hasDisconnectedRef.current) {
+                // Guard the reconnect: reset flag immediately before triggers to prevent recursive loop storms
+                hasDisconnectedRef.current = false;
+                console.log('[GlobalRealtimeManager] Reconnected to Realtime. Refetching active queries to recover missed changes...');
+                queryClient.refetchQueries().catch(() => {});
+                triggerGlobalSyncRef.current?.();
+                if (onGlobalRefreshRef.current) {
+                  Promise.resolve(onGlobalRefreshRef.current()).catch(() => {});
+                }
+              }
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+              setIsLiveConnected(false);
+              hasDisconnectedRef.current = true;
+              console.warn(`[GlobalRealtimeManager] Disconnected (${status}). Automatic background recovery queued for reconnect.`);
+            }
+          });
+
+        channelRef.current = channel;
+      }
     } catch (rtErr) {
       console.warn('[GlobalRealtimeManager] Realtime subscription notice:', rtErr);
     }
@@ -488,7 +513,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     const handleStorage = (e: StorageEvent) => {
       if (unmounted) return;
       if (e.key === 'vintage_sync_ping') {
-        triggerGlobalSync();
+        triggerGlobalSyncRef.current?.();
       }
     };
     window.addEventListener('storage', handleStorage);
@@ -506,28 +531,28 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         });
       }
       const mod = e.detail?.affectedModules || e.detail?.module;
-      triggerGlobalSync(mod);
+      triggerGlobalSyncRef.current?.(mod);
     };
     window.addEventListener('vv:entity-mutated', handleEntityMutated);
 
     // Throttled fallback polling (every 5 minutes) to guarantee consistency across dormant tabs without spamming
     const fallbackInterval = setInterval(() => {
       if (Date.now() - lastSyncedAtRef.current >= 5 * 60 * 1000) {
-        triggerGlobalSync();
+        triggerGlobalSyncRef.current?.();
       }
     }, 5 * 60 * 1000);
 
     // SQL-backed presence tracking timer (every 12 seconds)
-    refreshPresence();
+    refreshPresenceRef.current?.();
     const presenceInterval = setInterval(() => {
-      if (!unmounted) refreshPresence();
+      if (!unmounted) refreshPresenceRef.current?.();
     }, 12000);
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        refreshPresence();
+        refreshPresenceRef.current?.();
         if (Date.now() - lastSyncedAtRef.current >= 5 * 60 * 1000) {
-          triggerGlobalSync();
+          triggerGlobalSyncRef.current?.();
         }
       }
     };
@@ -539,17 +564,17 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     const handleLogoutEvent = () => {
-      cleanupChannel();
+      cleanupChannelRef.current?.();
     };
     window.addEventListener('vv:sync-logout', handleLogoutEvent);
 
     return () => {
       unmounted = true;
-      if (realtimeChannelRef.current) {
+      if (channelRef.current) {
         try {
-          supabase.removeChannel(realtimeChannelRef.current);
+          supabase.removeChannel(channelRef.current);
         } catch (_) {}
-        realtimeChannelRef.current = null;
+        channelRef.current = null;
       }
       if (sseRef.current) {
         try {
@@ -569,7 +594,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [triggerGlobalSync, refreshPresence, cleanupChannel]);
+  }, []);
 
   return (
     <SyncContext.Provider

@@ -481,17 +481,15 @@ export default function App() {
     // 1. If in dedicated streamer mobile host mode (/live-host/:boothId), render isolated mobile app    // 1. MOBILE LIVE SELLING STREAMER BROADCASTER VIEW
     if (liveHostState.isHostMode) {
       return (
-        <SyncProvider onGlobalRefresh={refreshGlobalData}>
-          <Suspense fallback={<ModuleLoadingFallback name="Live Host Terminal" />}>
-            <MobileLiveHostView
-              initialBoothId={liveHostState.boothId}
-              onExitToERP={() => {
-                window.history.pushState({}, '', '/');
-                setLiveHostState({ isHostMode: false, boothId: 'booth-01' });
-              }}
-            />
-          </Suspense>
-        </SyncProvider>
+        <Suspense fallback={<ModuleLoadingFallback name="Live Host Terminal" />}>
+          <MobileLiveHostView
+            initialBoothId={liveHostState.boothId}
+            onExitToERP={() => {
+              window.history.pushState({}, '', '/');
+              setLiveHostState({ isHostMode: false, boothId: 'booth-01' });
+            }}
+          />
+        </Suspense>
       );
     }
 
