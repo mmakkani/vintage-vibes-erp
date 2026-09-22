@@ -57,6 +57,9 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
   const [metaWabaId, setMetaWabaId] = useState<string>('');
   const [metaAccessToken, setMetaAccessToken] = useState<string>('');
   const [metaBusinessNumber, setMetaBusinessNumber] = useState<string>('+971 55 418 6086');
+  const [metaWebhookVerifyToken, setMetaWebhookVerifyToken] = useState<string>('vintage_vibes_verify_2026');
+  const [copiedWebhookUrl, setCopiedWebhookUrl] = useState<boolean>(false);
+  const [copiedVerifyToken, setCopiedVerifyToken] = useState<boolean>(false);
   const [isSavingMeta, setIsSavingMeta] = useState<boolean>(false);
   const [isTestingMeta, setIsTestingMeta] = useState<boolean>(false);
   const [metaTestPhone, setMetaTestPhone] = useState<string>('');
@@ -92,6 +95,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
           setMetaWabaId(cfg.metaCloudConfig.wabaId || '');
           setMetaAccessToken(cfg.metaCloudConfig.accessToken || '');
           if (cfg.metaCloudConfig.businessNumber) setMetaBusinessNumber(cfg.metaCloudConfig.businessNumber);
+          if (cfg.metaCloudConfig.webhookVerifyToken) setMetaWebhookVerifyToken(cfg.metaCloudConfig.webhookVerifyToken);
         }
         if (cfg.baileysConfig?.workerBridgeUrl) {
           setBridgeUrl(cfg.baileysConfig.workerBridgeUrl);
@@ -281,7 +285,8 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
             phoneNumberId: metaPhoneNumberId.trim(),
             wabaId: metaWabaId.trim(),
             accessToken: metaAccessToken.trim(),
-            businessNumber: metaBusinessNumber.trim()
+            businessNumber: metaBusinessNumber.trim(),
+            webhookVerifyToken: metaWebhookVerifyToken.trim() || 'vintage_vibes_verify_2026'
           }
         })
       });
@@ -946,6 +951,78 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                           placeholder="+971 55 418 6086"
                           className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-xs focus:border-blue-500 focus:outline-hidden"
                         />
+                      </div>
+
+                      <div className="sm:col-span-2 p-3 bg-blue-50/60 border border-blue-200 rounded-xl space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-blue-950 text-xs flex items-center gap-1.5">
+                            <Globe className="w-3.5 h-3.5 text-blue-600" />
+                            <span>Meta Cloud Webhook Handshake (Dhamaka 1: AI Sales Concierge)</span>
+                          </span>
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-full border border-emerald-300">
+                            Serverless REST
+                          </span>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-0.5">Webhook Callback URL (Paste into Meta Portal):</label>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              readOnly
+                              value={`${typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/whatsapp`}
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono text-[11px] text-slate-800 select-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const url = `${window.location.origin}/api/webhooks/whatsapp`;
+                                navigator.clipboard.writeText(url);
+                                setCopiedWebhookUrl(true);
+                                setTimeout(() => setCopiedWebhookUrl(false), 2000);
+                              }}
+                              className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shrink-0 transition flex items-center gap-1 cursor-pointer"
+                            >
+                              <Copy className="w-3 h-3" />
+                              <span>{copiedWebhookUrl ? 'Copied!' : 'Copy'}</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-0.5">Webhook Verify Token:</label>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              value={metaWebhookVerifyToken}
+                              onChange={e => setMetaWebhookVerifyToken(e.target.value)}
+                              placeholder="vintage_vibes_verify_2026"
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono text-[11px] text-slate-800 focus:border-blue-500 focus:outline-hidden"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(metaWebhookVerifyToken);
+                                setCopiedVerifyToken(true);
+                                setTimeout(() => setCopiedVerifyToken(false), 2000);
+                              }}
+                              className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-xs font-bold shrink-0 transition flex items-center gap-1 cursor-pointer"
+                            >
+                              <Copy className="w-3 h-3" />
+                              <span>{copiedVerifyToken ? 'Copied!' : 'Copy'}</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="pt-1 text-[10px] text-slate-600 space-y-1">
+                          <p>
+                            ⚡ <strong>Dhamaka 1 Features:</strong>
+                          </p>
+                          <ul className="list-disc list-inside space-y-0.5 text-slate-600 pl-1">
+                            <li><strong>Auto-Invoicing:</strong> WhatsApp sends an official tax invoice receipt automatically on Sales & Purchase invoice posting.</li>
+                            <li><strong>AI Sales Agent:</strong> Customers messaging this WhatsApp number get immediate, accurate answers powered by Google Gemini AI with live in-stock inventory & raw bales from Supabase.</li>
+                          </ul>
+                        </div>
                       </div>
                     </div>
 

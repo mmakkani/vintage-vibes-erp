@@ -942,7 +942,7 @@ const defaultCurrencies = [
 const RAILWAY_WORKER_URL = 'https://vintage-vibes-erp-production.up.railway.app';
 
 let whatsappGatewayConfig = {
-  connectionMode: 'BAILEYS_DIRECT_WEB' as 'BAILEYS_DIRECT_WEB' | 'META_CLOUD_API' | 'GATEWAY_API',
+  connectionMode: ((process.env.META_PHONE_NUMBER_ID && process.env.META_ACCESS_TOKEN) ? 'META_CLOUD_API' : 'BAILEYS_DIRECT_WEB') as 'BAILEYS_DIRECT_WEB' | 'META_CLOUD_API' | 'GATEWAY_API',
   baileysConfig: {
     enabled: true,
     sessionName: 'vintage-vibes-prod',
@@ -952,7 +952,7 @@ let whatsappGatewayConfig = {
     workerBridgeUrl: process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL
   },
   metaCloudConfig: {
-    enabled: false,
+    enabled: Boolean(process.env.META_PHONE_NUMBER_ID && process.env.META_ACCESS_TOKEN),
     phoneNumberId: process.env.META_PHONE_NUMBER_ID || '',
     wabaId: process.env.META_WABA_ID || '',
     accessToken: process.env.META_ACCESS_TOKEN || '',
@@ -987,6 +987,7 @@ async function getWhatsappGatewayConfigFromDb(): Promise<typeof whatsappGatewayC
       whatsappGatewayConfig = {
         ...whatsappGatewayConfig,
         ...dbCfg,
+        connectionMode: dbCfg.connectionMode || (dbCfg.metaCloudConfig?.enabled ? 'META_CLOUD_API' : whatsappGatewayConfig.connectionMode),
         baileysConfig: {
           ...whatsappGatewayConfig.baileysConfig,
           ...(dbCfg.baileysConfig || {}),
@@ -1035,6 +1036,111 @@ async function saveWhatsappGatewayConfigToDb(newConfig: typeof whatsappGatewayCo
     try { await client.end(); } catch (_) {}
   }
 }
+
+// In-memory cache for deduplicating incoming WhatsApp webhook deliveries
+const processedWebhookMessageIds = new Set<string>();
+
+/**
+ * Universal Meta WhatsApp Cloud API Dispatcher (Vercel Serverless Ready)
+ */
+async function sendMetaCloudWhatsAppMessage(
+  to: string,
+  text: string,
+  mediaUrl?: string,
+  caption?: string
+): Promise<{ success: boolean; metaData?: any; error?: string }> {
+  const currentCfg = await getWhatsappGatewayConfigFromDb();
+  const metaCfg = currentCfg.metaCloudConfig;
+  const phoneNumberId = metaCfg?.phoneNumberId || process.env.META_PHONE_NUMBER_ID;
+  const accessToken = metaCfg?.accessToken || process.env.META_ACCESS_TOKEN;
+
+  if (!phoneNumberId || !accessToken) {
+    return {
+      success: false,
+      error: 'Meta WhatsApp Cloud API is not configured. Please supply Phone Number ID and Permanent Access Token.'
+    };
+  }
+
+  const cleanTo = (to || '').replace(/\D/g, '');
+  if (!cleanTo || cleanTo.length < 8) {
+    return { success: false, error: 'Recipient phone number is invalid or too short.' };
+  }
+
+  const metaUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+  const reqBody: any = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: cleanTo
+  };
+
+  if (mediaUrl) {
+    reqBody.type = 'image';
+    reqBody.image = {
+      link: mediaUrl,
+      caption: caption || text || 'Vintage Vibes Dubai Exclusive Drop'
+    };
+  } else {
+    reqBody.type = 'text';
+    reqBody.text = { preview_url: false, body: text || 'Salam from Vintage Vibes VIP Hub!' };
+  }
+
+  try {
+    const metaResp = await fetch(metaUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(reqBody)
+    });
+
+    const metaData = await metaResp.json().catch(() => ({}));
+    if (metaResp.ok) {
+      return { success: true, metaData };
+    } else {
+      return {
+        success: false,
+        error: metaData.error?.message || `Meta Cloud API returned HTTP ${metaResp.status}`,
+        metaData
+      };
+    }
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error connecting to Meta Graph API' };
+  }
+}
+
+/**
+ * Dhamaka 1: Multi-Model Gemini AI Concierge Cascading Engine
+ */
+async function callGeminiSalesAgent(prompt: string, apiKey: string): Promise<string> {
+  const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.7-flash'];
+  for (const model of models) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 600
+          }
+        }),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const candidate = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (candidate && candidate.trim()) {
+          return candidate.trim();
+        }
+      }
+    } catch (_) {}
+  }
+  return `Salam! 🌟 Thank you for contacting Vintage Vibes Dubai. Our VIP sales desk has received your request. To reserve or view items right away, message us at +971 55 418 6086 or visit our Dubai showroom!`;
+}
+
 
 let channelsList: WhatsAppChannelItem[] = [
   {
@@ -2888,6 +2994,275 @@ export default async function handler(req: any, res: any) {
     // WHATSAPP BROADCASTER & PAIRING ENDPOINTS
     // ========================================================================
 
+    // 0a. Meta WhatsApp Cloud API Webhook Verification Handshake
+    if ((pathname === '/api/webhooks/whatsapp' || pathname.endsWith('/webhooks/whatsapp')) && method === 'GET') {
+      const mode = parsedUrl.searchParams.get('hub.mode');
+      const token = parsedUrl.searchParams.get('hub.verify_token');
+      const challenge = parsedUrl.searchParams.get('hub.challenge');
+
+      const currentCfg = await getWhatsappGatewayConfigFromDb();
+      const expectedToken = (currentCfg.metaCloudConfig?.webhookVerifyToken || process.env.META_WEBHOOK_VERIFY_TOKEN || 'vintage_vibes_verify_2026').trim();
+
+      if (mode === 'subscribe' && token === expectedToken) {
+        console.log('[Meta Webhook Handshake] Verified successfully with challenge:', challenge);
+        res.setHeader('Content-Type', 'text/plain');
+        return res.status(200).send(challenge || '');
+      }
+
+      console.warn('[Meta Webhook Handshake] Verification failed. Mode:', mode, 'Token received:', token);
+      return res.status(403).json({ error: 'Webhook verification token mismatch' });
+    }
+
+    // 0b. Dhamaka 1: Meta WhatsApp Inbound Webhook Receiver & Gemini AI Sales Concierge
+    if ((pathname === '/api/webhooks/whatsapp' || pathname.endsWith('/webhooks/whatsapp')) && method === 'POST') {
+      const entry = body?.entry?.[0];
+      const changes = entry?.changes?.[0];
+      const value = changes?.value;
+      const messages = value?.messages;
+
+      // Delivery receipts, read receipts, or non-message webhook events
+      if (!messages || messages.length === 0) {
+        return res.status(200).json({ success: true, status: 'EVENT_ACKNOWLEDGED' });
+      }
+
+      const message = messages[0];
+      const senderPhone = message.from;
+      const messageId = message.id;
+      const messageType = message.type;
+      const userText = message.text?.body || '';
+
+      // De-duplicate webhook retries
+      if (messageId && processedWebhookMessageIds.has(messageId)) {
+        return res.status(200).json({ success: true, duplicate: true });
+      }
+      if (messageId) {
+        processedWebhookMessageIds.add(messageId);
+        if (processedWebhookMessageIds.size > 2000) {
+          const first = processedWebhookMessageIds.values().next().value;
+          if (first) processedWebhookMessageIds.delete(first);
+        }
+      }
+
+      if (messageType !== 'text' || !userText.trim()) {
+        const replyText = `Salam! 🌟 Welcome to Vintage Vibes Dubai. Our AI Concierge received your message. For immediate inquiries, please text us your item name or SKU (e.g., "Carhartt Jacket" or "Bale info"). You can also call us directly at +971 55 418 6086.`;
+        await sendMetaCloudWhatsAppMessage(senderPhone, replyText).catch(() => {});
+        return res.status(200).json({ success: true, replied: true });
+      }
+
+      // 1. Ingest Live Inventory Context from PostgreSQL
+      let inventorySummary = '• No active pieces in catalog currently.';
+      let balesSummary = '• No active bales in catalog currently.';
+
+      const dbClient = await getPgClient();
+      if (dbClient) {
+        try {
+          const [piecesRes, balesRes] = await Promise.all([
+            dbClient.query(`
+              SELECT barcode, item_name, brand_name, label_grade, retail_price_aed, style, size_scanned, is_grail
+              FROM public.inventory_pieces
+              WHERE COALESCE(is_sold, false) = false
+                AND (status IS NULL OR status = 'IN_STOCK' OR status = 'AVAILABLE')
+              ORDER BY is_grail DESC, created_at DESC
+              LIMIT 15;
+            `),
+            dbClient.query(`
+              SELECT gate_pass_no, bale_category, supplier_name, piece_count, weight_kg
+              FROM public.inward_gate_passes
+              WHERE status IN ('UNOPENED', 'IN_PROGRESS', 'DRAFT')
+              ORDER BY created_at DESC
+              LIMIT 5;
+            `)
+          ]);
+
+          if (piecesRes.rows && piecesRes.rows.length > 0) {
+            inventorySummary = piecesRes.rows.map((r: any) =>
+              `• [${r.barcode}] ${r.brand_name || ''} ${r.item_name || 'Vintage Garment'} | Size: ${r.size_scanned || 'Free'} | Grade: ${r.label_grade || 'A'} | AED ${r.retail_price_aed || 'N/A'}${r.is_grail ? ' ★ [GRAIL PIECE]' : ''}`
+            ).join('\n');
+          }
+
+          if (balesRes.rows && balesRes.rows.length > 0) {
+            balesSummary = balesRes.rows.map((b: any) =>
+              `• [Bale #${b.gate_pass_no}] ${b.bale_category || 'Vintage Mixed'} | ~${b.piece_count || 150} pcs | ${b.weight_kg || 45} kg | Supplier: ${b.supplier_name || 'Verified Exporter'}`
+            ).join('\n');
+          }
+        } catch (dbErr: any) {
+          console.warn('[Meta Webhook Live Context Notice]:', dbErr?.message);
+        } finally {
+          try { await dbClient.end(); } catch (_) {}
+        }
+      }
+
+      // 2. Resolve Gemini API Key
+      let geminiKey = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
+      if (!geminiKey) {
+        const keyClient = await getPgClient();
+        if (keyClient) {
+          try {
+            const q = await keyClient.query("SELECT api_key FROM gemini_api_config WHERE id = 'default' LIMIT 1;");
+            if (q.rows && q.rows[0]?.api_key) geminiKey = q.rows[0].api_key.trim();
+          } catch (_) {
+          } finally {
+            try { await keyClient.end(); } catch (_) {}
+          }
+        }
+      }
+
+      // 3. Format Prompt & Execute Gemini AI Concierge
+      const prompt = `You are the exclusive AI Sales Concierge for Vintage Vibes Dubai (@vintagevibes_official), a premier vintage clothing & collector enterprise based in UAE.
+Our warehouse/showroom is located in Dubai, UAE. We specialize in authentic vintage garments (90s streetwear, Carhartt, Nike, band tees, leather jackets, denim) and wholesale raw vintage bales.
+
+LIVE IN-STOCK PIECES (Available Right Now):
+${inventorySummary}
+
+ACTIVE WHOLESALE BALES:
+${balesSummary}
+
+CUSTOMER INQUIRY (from WhatsApp +${senderPhone}):
+"${userText}"
+
+RULES FOR YOUR RESPONSE:
+1. Greet the customer warmly and professionally (e.g. "Salam!", "Welcome to Vintage Vibes!").
+2. Answer their question directly based on the live inventory list above. Quote exact prices in AED, sizes, and barcodes/SKUs for matching pieces.
+3. If the customer wants to reserve or buy an item, tell them to reply: "MINE <BARCODE>" or visit our Dubai showroom.
+4. Keep the message concise, energetic, and formatted cleanly for WhatsApp with emojis and bullet points.
+5. If the customer writes in Arabic, respond in fluent polite Arabic; otherwise in English.
+6. Never make up items not listed in inventory. If not found, say it is currently sold out but new bales arrive weekly.`;
+
+      let aiResponseText = '';
+      if (geminiKey) {
+        aiResponseText = await callGeminiSalesAgent(prompt, geminiKey);
+      } else {
+        aiResponseText = `Salam! 🌟 Welcome to Vintage Vibes Dubai. We received your message: "${userText.slice(0, 50)}...". Our Dubai showroom is open daily with thousands of vintage grails and fresh bales! For immediate assistance, call +971 55 418 6086 or reply with MINE <SKU> to claim.`;
+      }
+
+      // 4. Dispatch response via Meta Official WhatsApp Cloud API
+      const sendResult = await sendMetaCloudWhatsAppMessage(senderPhone, aiResponseText);
+
+      // 5. Log interaction in marketing_claim_logs for ERP dashboard visibility
+      const logClient = await getPgClient();
+      if (logClient) {
+        try {
+          await logClient.query(`
+            CREATE TABLE IF NOT EXISTS marketing_claim_logs (
+              id VARCHAR(64) PRIMARY KEY,
+              customer_name VARCHAR(255),
+              platform VARCHAR(64),
+              raw_comment TEXT,
+              action_taken TEXT,
+              status VARCHAR(32),
+              created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            INSERT INTO marketing_claim_logs (id, customer_name, platform, raw_comment, action_taken, status, created_at)
+            VALUES ($1, $2, 'WHATSAPP_AI_AGENT', $3, $4, $5, NOW())
+            ON CONFLICT (id) DO NOTHING;
+          `, [
+            `wapp-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            `WhatsApp +${senderPhone}`,
+            userText.slice(0, 500),
+            aiResponseText.slice(0, 500),
+            sendResult.success ? 'AI_REPLIED' : 'FAILED_SEND'
+          ]);
+        } catch (_) {
+        } finally {
+          try { await logClient.end(); } catch (_) {}
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        ai_replied: true,
+        sender: senderPhone,
+        delivered: sendResult.success,
+        error: sendResult.error
+      });
+    }
+
+    // 0c. Dhamaka 1: Automated Tax Invoice WhatsApp Dispatch
+    if ((pathname.endsWith('/whatsapp/send-invoice') || pathname.endsWith('/marketing/whatsapp/send-invoice')) && method === 'POST') {
+      const { to, text, invoiceNo, customerName, totalAmount, currency } = body || {};
+      if (!to) {
+        return res.status(400).json({ success: false, error: 'Recipient phone number is required.' });
+      }
+
+      const result = await sendMetaCloudWhatsAppMessage(to, text);
+      if (result.success) {
+        return res.status(200).json({
+          success: true,
+          message: `Invoice #${invoiceNo || ''} dispatched successfully via Meta Official WhatsApp Cloud API!`,
+          messageId: result.metaData?.messages?.[0]?.id,
+          metaData: result.metaData
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: result.error || 'Failed to dispatch WhatsApp invoice',
+          details: result.metaData
+        });
+      }
+    }
+
+    // 0d. Backend Gateway Audit (Real vs Mock Endpoints Transparency)
+    if ((pathname.endsWith('/whatsapp/audit') || pathname.endsWith('/marketing/whatsapp/audit')) && method === 'GET') {
+      const currentCfg = await getWhatsappGatewayConfigFromDb();
+      return res.status(200).json({
+        success: true,
+        auditDate: new Date().toISOString(),
+        primaryGateway: 'META_OFFICIAL_CLOUD_API',
+        serverlessStatus: 'OPTIMIZED_FOR_VERCEL_SERVERLESS',
+        metaConfigured: Boolean(currentCfg.metaCloudConfig?.phoneNumberId && currentCfg.metaCloudConfig?.accessToken),
+        endpointsAudit: {
+          authenticMetaCloudEndpoints: [
+            {
+              route: 'POST /api/marketing/whatsapp/meta-cloud-send',
+              protocol: 'Meta Graph API v21.0 (REST)',
+              status: 'AUTHENTIC_ENTERPRISE',
+              notes: 'Direct HTTPS REST to Meta servers with Bearer authentication; 100% serverless compatible.'
+            },
+            {
+              route: 'POST /api/marketing/whatsapp/send-invoice',
+              protocol: 'Meta Graph API v21.0 (REST)',
+              status: 'AUTHENTIC_ENTERPRISE',
+              notes: 'Dhamaka 1 Auto-Invoicing engine dispatching formatted tax receipts to customers/suppliers.'
+            },
+            {
+              route: 'GET /api/webhooks/whatsapp',
+              protocol: 'Meta Webhook Handshake (REST)',
+              status: 'AUTHENTIC_ENTERPRISE',
+              notes: 'hub.challenge verification handshake for Meta Developer Portal.'
+            },
+            {
+              route: 'POST /api/webhooks/whatsapp',
+              protocol: 'Dhamaka 1 Gemini AI Sales Agent (REST)',
+              status: 'AUTHENTIC_ENTERPRISE',
+              notes: 'Inbound message processor with live Supabase inventory injection and Gemini AI response generation.'
+            }
+          ],
+          workerBridgeAndLegacyEndpoints: [
+            {
+              route: 'GET /api/marketing/whatsapp/session',
+              type: 'HYBRID_WORKER_PROXY',
+              notes: 'Proxies to external 24/7 Railway Baileys worker if configured, or falls back to in-memory state.'
+            },
+            {
+              route: 'POST /api/marketing/whatsapp/channels/resolve',
+              type: 'STUBBED_MOCK',
+              notes: 'Simulated newsletter channel metadata when no external worker channel is bound.'
+            },
+            {
+              route: 'POST /api/marketing/whatsapp/channels/test-post',
+              type: 'STUBBED_MOCK',
+              notes: 'Simulated channel drop confirmation without active Baileys socket.'
+            },
+            {
+              route: 'POST /api/marketing/whatsapp/directory/sync-phone-contacts',
+              type: 'IN_MEMORY_STUB',
+              notes: 'Simulated contacts directory.'
+            }
+          ]
+        }
+      });
+    }
+
     // 1. WhatsApp Session
     if ((pathname.endsWith('/whatsapp/session') || pathname.endsWith('/whatsapp/status')) && method === 'GET') {
       const currentCfg = await getWhatsappGatewayConfigFromDb();
@@ -3151,66 +3526,18 @@ export default async function handler(req: any, res: any) {
     // 7. Meta Cloud API Send (Tab 3)
     if (pathname.endsWith('/whatsapp/meta-cloud-send') && method === 'POST') {
       const { to, text, mediaUrl, caption } = body;
-      const metaCfg = whatsappGatewayConfig.metaCloudConfig;
-
-      if (!metaCfg.phoneNumberId || !metaCfg.accessToken) {
+      const result = await sendMetaCloudWhatsAppMessage(to, text, mediaUrl, caption);
+      if (result.success) {
+        return res.status(200).json({
+          success: true,
+          message: 'WhatsApp message dispatched successfully via Official Meta Cloud API!',
+          metaData: result.metaData
+        });
+      } else {
         return res.status(400).json({
           success: false,
-          error: 'Meta WhatsApp Cloud API is not configured. Please enter your Phone Number ID and Permanent Access Token in Tab 3.'
-        });
-      }
-
-      const cleanTo = (to || '').replace(/\D/g, '');
-      if (!cleanTo) {
-        return res.status(400).json({ success: false, error: 'Recipient phone number is required.' });
-      }
-
-      const metaUrl = `https://graph.facebook.com/v21.0/${metaCfg.phoneNumberId}/messages`;
-      const reqBody: any = {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: cleanTo
-      };
-
-      if (mediaUrl) {
-        reqBody.type = 'image';
-        reqBody.image = {
-          link: mediaUrl,
-          caption: caption || text || 'Vintage Vibes Dubai Exclusive Drop'
-        };
-      } else {
-        reqBody.type = 'text';
-        reqBody.text = { preview_url: false, body: text || 'Salam from Vintage Vibes VIP Hub!' };
-      }
-
-      try {
-        const metaResp = await fetch(metaUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${metaCfg.accessToken}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(reqBody)
-        });
-
-        const metaData = await metaResp.json();
-        if (metaResp.ok) {
-          return res.status(200).json({
-            success: true,
-            message: 'WhatsApp message dispatched successfully via Official Meta Cloud API!',
-            metaData
-          });
-        } else {
-          return res.status(metaResp.status).json({
-            success: false,
-            error: metaData.error?.message || 'Meta Cloud API error',
-            details: metaData
-          });
-        }
-      } catch (err: any) {
-        return res.status(500).json({
-          success: false,
-          error: `Failed to contact Meta Graph API: ${err?.message || 'Network error'}`
+          error: result.error || 'Meta Cloud API error',
+          details: result.metaData
         });
       }
     }

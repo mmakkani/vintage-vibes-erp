@@ -309,6 +309,16 @@ async function startServer() {
     return res.json({ success: true, broadcastedAt: new Date().toISOString() });
   });
 
+  // Delegate unhandled /api/* routes to master serverless handler (WhatsApp webhooks, Dhamaka 1 AI, auto-invoicing, etc.)
+  app.all('/api/*', async (req, res, next) => {
+    try {
+      const handler = (await import('./api/[...all].ts')).default;
+      return await handler(req, res);
+    } catch (e) {
+      next(e);
+    }
+  });
+
   // Structured Server-side API Error Logging Middleware
   app.use((err: any, req: any, res: any, next: any) => {
     const correlationId = req.correlationId || (req.headers?.['x-correlation-id'] as string) || 'unknown';

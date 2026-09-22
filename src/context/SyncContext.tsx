@@ -364,6 +364,31 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
           if (newRecord.status) {
             queryClient.handleStatusChange(table, newRecord);
           }
+
+          // Dhamaka 1: Automated WhatsApp Tax Invoicing on Invoice Posting
+          if (table === 'sales_invoices' || table === 'purchase_invoices') {
+            const isNowPosted = newRecord.status === 'POSTED' || newRecord.status === 'PAID';
+            const wasPosted = oldRecord?.status === 'POSTED' || oldRecord?.status === 'PAID';
+            if (isNowPosted && !wasPosted) {
+              const recipientPhone = newRecord.customer_phone || newRecord.party_phone || newRecord.phone || newRecord.supplier_phone;
+              if (recipientPhone) {
+                import('../services/whatsappService.ts').then(({ WhatsAppService }) => {
+                  WhatsAppService.sendInvoiceNotification({
+                    invoiceNo: newRecord.invoice_no || newRecord.invoiceNo || String(newRecord.id).slice(0, 8),
+                    type: table === 'purchase_invoices' ? 'PURCHASE' : 'SALES',
+                    customerName: newRecord.customer_name || newRecord.party_name || newRecord.supplier_name,
+                    customerPhone: recipientPhone,
+                    totalAmount: Number(newRecord.total_amount || newRecord.total || 0),
+                    currency: newRecord.currency || 'AED',
+                    subtotal: Number(newRecord.subtotal || 0),
+                    taxAmount: Number(newRecord.tax_amount || newRecord.tax || 0),
+                    invoiceDate: newRecord.invoice_date || (newRecord.created_at ? String(newRecord.created_at).slice(0, 10) : undefined),
+                    items: Array.isArray(newRecord.items) ? newRecord.items : []
+                  }).catch(err => console.warn('[Auto-Invoicing Notice]:', err?.message));
+                }).catch(() => {});
+              }
+            }
+          }
         }
       } else if (eventType === 'DELETE') {
         // STRICT REQUIREMENT: MUST use payload.old.id
