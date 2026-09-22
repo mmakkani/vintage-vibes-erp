@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { InwardGatePass } from '../purchase.types.ts';
 import { Party } from '../../parties/parties.types.ts';
 import { PurchaseEngine } from '../purchase.engine.ts';
@@ -41,6 +41,33 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'UNOPENED' | 'IN_PROGRESS' | 'FULLY_SORTED'>('ALL');
+
+  // State-Based Row Glow Animation (UX Enhancement across all devices)
+  const [glowingRowIds, setGlowingRowIds] = useState<string[]>([]);
+
+  const triggerRowGlow = useCallback((id?: string) => {
+    if (!id) return;
+    const cleanId = String(id).trim();
+    if (!cleanId) return;
+    setGlowingRowIds(prev => (prev.includes(cleanId) ? prev : [...prev, cleanId]));
+    setTimeout(() => {
+      setGlowingRowIds(prev => prev.filter(item => item !== cleanId));
+    }, 3000);
+  }, []);
+
+  useEffect(() => {
+    const handleRealtime = (e: any) => {
+      if (e.detail?.table === 'inward_gate_passes' && e.detail?.record) {
+        const r = e.detail.record;
+        const id = r.id || r.pass_no || r.bale_code || '';
+        if (id) triggerRowGlow(String(id));
+        if (r.bale_code) triggerRowGlow(String(r.bale_code));
+        if (r.gate_pass_no) triggerRowGlow(String(r.gate_pass_no));
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleRealtime);
+    return () => window.removeEventListener('vv:realtime-record', handleRealtime);
+  }, [triggerRowGlow]);
 
   // Modal State
   const [showNewBaleModal, setShowNewBaleModal] = useState(false);
@@ -451,7 +478,16 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                   const percentUnsorted = baleTotalWeight > 0 ? Math.round((remainingKg / baleTotalWeight) * 100) : 0;
 
                   return (
-                    <tr key={bale.id} className="hover:bg-slate-50/80 transition-colors">
+                    <tr
+                      key={bale.id}
+                      className={`hover:bg-slate-50/80 transition-colors ${
+                        glowingRowIds.includes(String(bale.id)) ||
+                        (bale.baleCode && glowingRowIds.includes(String(bale.baleCode))) ||
+                        (bale.gatePassNo && glowingRowIds.includes(String(bale.gatePassNo)))
+                          ? 'animate-row-glow'
+                          : ''
+                      }`}
+                    >
                       <td className="px-4 py-3 font-mono font-bold text-indigo-600 whitespace-nowrap">
                         {bale.baleCode || bale.gatePassNo}
                         <div className="text-[10px] text-slate-400 font-normal font-sans">

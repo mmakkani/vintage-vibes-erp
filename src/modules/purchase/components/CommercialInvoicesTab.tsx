@@ -50,31 +50,157 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   onDeleteInvoice
 }) => {
   const { notifyMutation, lastDelta } = useSync('purchase');
-  const [highlightedInvoiceIds, setHighlightedInvoiceIds] = useState<Set<string>>(new Set());
+  // State-Based Row Glow Animation (UX Enhancement across all devices)
+  const [glowingRowIds, setGlowingRowIds] = useState<string[]>([]);
 
   const triggerRowGlow = React.useCallback((id?: string) => {
     if (!id) return;
     const cleanId = String(id).trim();
     if (!cleanId) return;
-    setHighlightedInvoiceIds(prev => new Set(prev).add(cleanId));
+    setGlowingRowIds(prev => (prev.includes(cleanId) ? prev : [...prev, cleanId]));
     setTimeout(() => {
-      setHighlightedInvoiceIds(prev => {
-        const next = new Set(prev);
-        next.delete(cleanId);
-        return next;
-      });
-    }, 2500);
+      setGlowingRowIds(prev => prev.filter(item => item !== cleanId));
+    }, 3000);
   }, []);
 
   React.useEffect(() => {
     if (!lastDelta) return;
-    if (lastDelta.module === 'purchase' || lastDelta.entity === 'purchase_invoices' || lastDelta.payload?.invoice) {
-      const invId = lastDelta.documentRef || lastDelta.payload?.invoice?.id || lastDelta.payload?.invoiceId;
-      const invNo = lastDelta.payload?.invoice?.invoiceNo || lastDelta.payload?.invoiceNo;
+    if (
+      lastDelta.module === 'purchase' ||
+      lastDelta.entity === 'purchase_invoices' ||
+      lastDelta.payload?.invoice ||
+      lastDelta.payload?.purchase_invoices
+    ) {
+      const raw =
+        lastDelta.payload?.invoice ||
+        lastDelta.payload?.purchase_invoices ||
+        lastDelta.payload?.record ||
+        lastDelta.payload;
+
+      const invId = String(lastDelta.documentRef || raw?.id || raw?.invoice_id || '');
+      const invNo = String(raw?.invoice_no || raw?.invoiceNo || invId);
+
+      if (raw && (raw.id || raw.invoice_no || raw.invoiceNo)) {
+        const rawDate = raw.issue_date || raw.invoice_date || raw.date || raw.created_at;
+        let cleanDate = '';
+        if (rawDate) {
+          try {
+            const d = new Date(rawDate);
+            cleanDate = !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : String(rawDate).slice(0, 10);
+          } catch {
+            cleanDate = String(rawDate).slice(0, 10);
+          }
+        }
+
+        const mappedInv: PurchaseInvoice = {
+          id: invId || raw.id,
+          invoiceNo: invNo || raw.id,
+          supplierId: raw.supplier_id || raw.supplierId || '',
+          supplierName: raw.supplier_name || raw.supplierName || '',
+          supplierTrn: raw.supplier_trn || raw.supplierTrn,
+          date: cleanDate || new Date().toISOString().slice(0, 10),
+          dueDate: raw.due_date || raw.dueDate,
+          status: raw.status || 'DRAFT',
+          currency: (raw.currency || 'AED').toUpperCase() as any,
+          exchangeRate: Number(raw.exchange_rate || 1.0),
+          subTotal: Number(raw.sub_total ?? raw.subTotal ?? raw.total_amount ?? 0),
+          applyVat: Boolean(raw.apply_vat ?? raw.applyVat),
+          vatRatePercent: Number(raw.vat_rate_percent ?? raw.vatRatePercent ?? 0),
+          vatAmount: Number(raw.vat_amount ?? raw.vatAmount ?? 0),
+          totalAmount: Number(raw.total_amount ?? raw.total_payable ?? raw.totalAmount ?? 0),
+          netAmount: Number(raw.net_amount ?? raw.netAmount ?? raw.total_amount ?? 0),
+          notes: raw.notes || '',
+          convertedToInward: Boolean(raw.converted_to_inward ?? raw.convertedToInward),
+          inwardGatePassId: raw.inward_gate_pass_id || raw.inwardGatePassId,
+          items: raw.items || [],
+          containerNo: raw.container_no || raw.containerNo,
+          blAirwayBillNo: raw.bl_airway_bill_no || raw.blAirwayBillNo,
+          portOfEntry: raw.port_of_entry || raw.portOfEntry,
+          totalBalesCount: Number(raw.total_bales_count ?? raw.totalBalesCount ?? 0),
+          totalGrossWeightKg: Number(raw.total_gross_weight_kg ?? raw.totalGrossWeightKg ?? 0)
+        };
+
+        setInvoicesList(prev => {
+          const exists = prev.some(i => String(i.id) === invId || (invNo && i.invoiceNo === invNo));
+          if (exists) {
+            return prev.map(i => (String(i.id) === invId || (invNo && i.invoiceNo === invNo) ? { ...i, ...mappedInv } : i));
+          }
+          return [mappedInv, ...prev];
+        });
+      }
+
       if (invId) triggerRowGlow(invId);
       if (invNo) triggerRowGlow(invNo);
     }
   }, [lastDelta, triggerRowGlow]);
+
+  // Real-Time Cross-Device WebSocket Listener for Instant Cache Injection
+  React.useEffect(() => {
+    const handleRealtimeRecord = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.record) return;
+      const { table, record } = detail;
+
+      if (table === 'purchase_invoices') {
+        const invId = String(record.id || '');
+        const invNo = String(record.invoice_no || record.invoiceNo || invId);
+        const rawDate = record.issue_date || record.invoice_date || record.date || record.created_at;
+        let cleanDate = '';
+        if (rawDate) {
+          try {
+            const d = new Date(rawDate);
+            cleanDate = !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : String(rawDate).slice(0, 10);
+          } catch {
+            cleanDate = String(rawDate).slice(0, 10);
+          }
+        }
+
+        const mappedInv: PurchaseInvoice = {
+          id: invId,
+          invoiceNo: invNo,
+          supplierId: record.supplier_id || record.supplierId || '',
+          supplierName: record.supplier_name || record.supplierName || '',
+          supplierTrn: record.supplier_trn || record.supplierTrn,
+          date: cleanDate || new Date().toISOString().slice(0, 10),
+          dueDate: record.due_date || record.dueDate,
+          status: record.status || 'DRAFT',
+          currency: (record.currency || 'AED').toUpperCase() as any,
+          exchangeRate: Number(record.exchange_rate || 1.0),
+          subTotal: Number(record.sub_total ?? record.subTotal ?? record.total_amount ?? 0),
+          applyVat: Boolean(record.apply_vat ?? record.applyVat),
+          vatRatePercent: Number(record.vat_rate_percent ?? record.vatRatePercent ?? 0),
+          vatAmount: Number(record.vat_amount ?? record.vatAmount ?? 0),
+          totalAmount: Number(record.total_amount ?? record.total_payable ?? record.totalAmount ?? 0),
+          netAmount: Number(record.net_amount ?? record.netAmount ?? record.total_amount ?? 0),
+          notes: record.notes || '',
+          convertedToInward: Boolean(record.converted_to_inward ?? record.convertedToInward),
+          inwardGatePassId: record.inward_gate_pass_id || record.inwardGatePassId,
+          items: record.items || [],
+          containerNo: record.container_no || record.containerNo,
+          blAirwayBillNo: record.bl_airway_bill_no || record.blAirwayBillNo,
+          portOfEntry: record.port_of_entry || record.portOfEntry,
+          totalBalesCount: Number(record.total_bales_count ?? record.totalBalesCount ?? 0),
+          totalGrossWeightKg: Number(record.total_gross_weight_kg ?? record.totalGrossWeightKg ?? 0)
+        };
+
+        setInvoicesList(prev => {
+          const exists = prev.some(i => String(i.id) === invId || (invNo && i.invoiceNo === invNo));
+          if (exists) {
+            return prev.map(i => (String(i.id) === invId || (invNo && i.invoiceNo === invNo) ? { ...i, ...mappedInv } : i));
+          }
+          return [mappedInv, ...prev];
+        });
+
+        if (invId) triggerRowGlow(invId);
+        if (invNo) triggerRowGlow(invNo);
+      }
+    };
+
+    window.addEventListener('vv:realtime-record', handleRealtimeRecord);
+    return () => {
+      window.removeEventListener('vv:realtime-record', handleRealtimeRecord);
+    };
+  }, [triggerRowGlow]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -639,7 +765,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                     <tr
                       key={inv.id}
                       className={`hover:bg-slate-50/80 transition-colors ${
-                        highlightedInvoiceIds.has(String(inv.id)) || (inv.invoiceNo && highlightedInvoiceIds.has(inv.invoiceNo))
+                        glowingRowIds.includes(String(inv.id)) || (inv.invoiceNo && glowingRowIds.includes(String(inv.invoiceNo)))
                           ? 'animate-row-glow'
                           : ''
                       }`}

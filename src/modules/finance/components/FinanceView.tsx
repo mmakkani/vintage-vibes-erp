@@ -240,21 +240,17 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const [parties, setParties] = useState<Party[]>([]);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Visual Row Glow state for newly injected/updated rows (UX enhancement)
-  const [highlightedRowIds, setHighlightedRowIds] = useState<Set<string>>(new Set());
+  // State-Based Row Glow Animation (UX Enhancement across all devices)
+  const [glowingRowIds, setGlowingRowIds] = useState<string[]>([]);
 
   const triggerRowGlow = useCallback((id?: string) => {
     if (!id) return;
     const cleanId = String(id).trim();
     if (!cleanId) return;
-    setHighlightedRowIds(prev => new Set(prev).add(cleanId));
+    setGlowingRowIds(prev => (prev.includes(cleanId) ? prev : [...prev, cleanId]));
     setTimeout(() => {
-      setHighlightedRowIds(prev => {
-        const next = new Set(prev);
-        next.delete(cleanId);
-        return next;
-      });
-    }, 2500);
+      setGlowingRowIds(prev => prev.filter(item => item !== cleanId));
+    }, 3000);
   }, []);
 
   // Search & Filter in COA
@@ -496,57 +492,117 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     if (!lastDelta) return;
 
     if (
-      (lastDelta.action === 'POSTED' || lastDelta.action === 'CREATE' || lastDelta.action === 'INWARD_POSTED') &&
-      lastDelta.payload?.voucher
+      (lastDelta.action === 'POSTED' || lastDelta.action === 'CREATE' || lastDelta.action === 'INWARD_POSTED' || lastDelta.action === 'INSERT' || lastDelta.action === 'UPDATE') &&
+      (lastDelta.payload?.voucher || lastDelta.payload?.financial_vouchers || lastDelta.payload?.vouchers || (lastDelta.entity === 'financial_vouchers' && lastDelta.payload?.record))
     ) {
-      const newVoucher = lastDelta.payload.voucher;
-      if (newVoucher && (newVoucher.id || newVoucher.voucherNo)) {
-        // 1. Instantly prepend to vouchers state in RAM (0ms)
+      const raw = lastDelta.payload.voucher || lastDelta.payload.financial_vouchers || lastDelta.payload.vouchers || lastDelta.payload.record;
+      if (raw && (raw.id || raw.voucher_no || raw.voucherNo)) {
+        const vId = String(raw.id || '');
+        const vNo = String(raw.voucher_no || raw.voucherNo || vId);
+        const dateStr = typeof raw.date === 'string' ? raw.date.slice(0, 10) : (raw.voucher_date ? String(raw.voucher_date).slice(0, 10) : new Date().toISOString().slice(0, 10));
+        const rawLines = raw.lines || raw.entries || [];
+
+        const newVoucher: Voucher = {
+          id: vId,
+          voucherNo: vNo,
+          date: dateStr,
+          type: raw.type || raw.voucher_type || 'JOURNAL',
+          reference: raw.reference || raw.reference_no || '',
+          narration: raw.narration || '',
+          totalDebit: Number(raw.total_debit ?? raw.totalDebit ?? (rawLines.reduce((acc: number, l: any) => acc + Number(l.debitAmount || l.debit || 0), 0)) ?? 0),
+          totalCredit: Number(raw.total_credit ?? raw.totalCredit ?? (rawLines.reduce((acc: number, l: any) => acc + Number(l.creditAmount || l.credit || 0), 0)) ?? 0),
+          status: raw.status || 'POSTED',
+          currency: (raw.currency || 'AED').toUpperCase() as any,
+          exchangeRate: Number(raw.exchange_rate || 1.0),
+          baseCurrency: (raw.base_currency || 'AED').toUpperCase(),
+          foreignTotalAmount: Number(raw.foreign_total_amount || 0),
+          createdBy: raw.created_by || raw.createdBy || 'System',
+          isAuto: Boolean(raw.is_auto || raw.isAuto),
+          entries: rawLines,
+          lines: rawLines,
+          createdAt: raw.created_at
+        };
+
+        // 1. Instantly prepend or update vouchers state in RAM (0ms)
         setVouchers(prev => {
           const exists = prev.some(
-            v => (newVoucher.id && v.id === newVoucher.id) || (newVoucher.voucherNo && v.voucherNo === newVoucher.voucherNo)
+            v => (vId && v.id === vId) || (vNo && v.voucherNo === vNo)
           );
-          if (exists) return prev;
-          if (newVoucher.id) triggerRowGlow(newVoucher.id);
-          if (newVoucher.voucherNo) triggerRowGlow(newVoucher.voucherNo);
+          if (exists) {
+            return prev.map(v => ((vId && v.id === vId) || (vNo && v.voucherNo === vNo) ? { ...v, ...newVoucher } : v));
+          }
           return [newVoucher, ...prev];
         });
+        if (vId) triggerRowGlow(vId);
+        if (vNo) triggerRowGlow(vNo);
 
         // 2. Instantly inject lines into general ledger state in RAM (0ms)
-        const rawLines = newVoucher.lines || newVoucher.entries || [];
         if (Array.isArray(rawLines) && rawLines.length > 0) {
           const newEntries: LedgerEntry[] = rawLines.map((line: any, idx: number) => {
-            const entryId = line.id || `delta-led-${newVoucher.voucherNo}-${idx}`;
+            const entryId = line.id || `delta-led-${vNo}-${idx}`;
             triggerRowGlow(entryId);
-            if (newVoucher.voucherNo) triggerRowGlow(newVoucher.voucherNo);
+            if (vNo) triggerRowGlow(vNo);
             return {
               id: entryId,
-              voucherId: newVoucher.id,
-              voucherNo: newVoucher.voucherNo,
-              accountCode: line.accountCode || '',
-              accountName: line.accountName || '',
-              accountId: line.accountId || '',
-              date: newVoucher.date || new Date().toISOString().slice(0, 10),
+              voucherId: vId,
+              voucherNo: vNo,
+              accountCode: line.account_code || line.accountCode || '',
+              accountName: line.account_name || line.accountName || '',
+              accountId: line.account_id || line.accountId || '',
+              date: dateStr,
               debit: Number(line.debitAmount ?? line.debit ?? 0),
               credit: Number(line.creditAmount ?? line.credit ?? 0),
               debitAmount: Number(line.debitAmount ?? line.debit ?? 0),
               creditAmount: Number(line.creditAmount ?? line.credit ?? 0),
               runningBalance: 0,
               documentRef: newVoucher.reference || newVoucher.documentRef || '',
-              partyId: line.partyId,
-              partyName: line.partyName,
+              partyId: line.party_id || line.partyId,
+              partyName: line.party_name || line.partyName,
               narration: line.memo || line.narration || newVoucher.narration || ''
             };
           });
 
           setLedgers(prev => {
-            const existingVchNo = newVoucher.voucherNo;
-            const alreadyInLedgers = prev.some(e => e.voucherNo === existingVchNo);
+            const alreadyInLedgers = prev.some(e => e.voucherNo === vNo);
             if (alreadyInLedgers) return prev;
             return [...newEntries, ...prev];
           });
         }
       }
+    } else if (
+      (lastDelta.action === 'INSERT' || lastDelta.action === 'UPDATE') &&
+      lastDelta.entity === 'journal_entries' &&
+      lastDelta.payload?.record
+    ) {
+      const rec = lastDelta.payload.record;
+      const entryId = String(rec.id || '');
+      const mappedEntry: LedgerEntry = {
+        id: entryId,
+        voucherId: String(rec.voucher_id || ''),
+        voucherNo: String(rec.voucher_no || ''),
+        accountId: String(rec.account_id || ''),
+        accountCode: String(rec.account_code || ''),
+        accountName: String(rec.account_name || ''),
+        date: typeof rec.date === 'string' ? rec.date.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        debit: Number(rec.debit ?? rec.debit_amount ?? 0),
+        credit: Number(rec.credit ?? rec.credit_amount ?? 0),
+        debitAmount: Number(rec.debit ?? rec.debit_amount ?? 0),
+        creditAmount: Number(rec.credit ?? rec.credit_amount ?? 0),
+        runningBalance: 0,
+        documentRef: String(rec.document_ref || rec.reference || ''),
+        narration: String(rec.memo || rec.particulars || rec.narration || '')
+      };
+
+      setLedgers(prev => {
+        const exists = prev.some(e => e.id === entryId);
+        if (exists) {
+          return prev.map(e => (e.id === entryId ? { ...e, ...mappedEntry } : e));
+        }
+        return [mappedEntry, ...prev];
+      });
+
+      if (entryId) triggerRowGlow(entryId);
+      if (mappedEntry.voucherNo) triggerRowGlow(mappedEntry.voucherNo);
     } else if (lastDelta.action === 'UNPOSTED') {
       const ref = lastDelta.documentRef || lastDelta.payload?.invoiceNo;
       if (ref) {
@@ -568,7 +624,89 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         );
       }
     }
-  }, [lastDelta]);
+  }, [lastDelta, triggerRowGlow]);
+
+  // Real-Time Cross-Device WebSocket Listener for Instant Cache Injection
+  useEffect(() => {
+    const handleRealtimeRecord = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.record) return;
+      const { table, eventType, record } = detail;
+
+      if (table === 'financial_vouchers' || table === 'vouchers') {
+        const vId = String(record.id || '');
+        const vNo = String(record.voucher_no || record.voucherNo || vId);
+        const dateStr = typeof record.date === 'string' ? record.date.slice(0, 10) : (record.voucher_date ? String(record.voucher_date).slice(0, 10) : new Date().toISOString().slice(0, 10));
+        const rawLines = record.lines || record.entries || [];
+
+        const mappedVoucher: Voucher = {
+          id: vId,
+          voucherNo: vNo,
+          date: dateStr,
+          type: record.type || record.voucher_type || 'JOURNAL',
+          reference: record.reference || record.reference_no || '',
+          narration: record.narration || '',
+          totalDebit: Number(record.total_debit ?? record.totalDebit ?? (rawLines.reduce((acc: number, l: any) => acc + Number(l.debitAmount || l.debit || 0), 0)) ?? 0),
+          totalCredit: Number(record.total_credit ?? record.totalCredit ?? (rawLines.reduce((acc: number, l: any) => acc + Number(l.creditAmount || l.credit || 0), 0)) ?? 0),
+          status: record.status || 'POSTED',
+          currency: (record.currency || 'AED').toUpperCase() as any,
+          exchangeRate: Number(record.exchange_rate || 1.0),
+          baseCurrency: (record.base_currency || 'AED').toUpperCase(),
+          foreignTotalAmount: Number(record.foreign_total_amount || 0),
+          createdBy: record.created_by || record.createdBy || 'System',
+          isAuto: Boolean(record.is_auto || record.isAuto),
+          entries: rawLines,
+          lines: rawLines,
+          createdAt: record.created_at
+        };
+
+        setVouchers(prev => {
+          const exists = prev.some(v => (vId && v.id === vId) || (vNo && v.voucherNo === vNo));
+          if (exists) {
+            return prev.map(v => ((vId && v.id === vId) || (vNo && v.voucherNo === vNo) ? { ...v, ...mappedVoucher } : v));
+          }
+          return [mappedVoucher, ...prev];
+        });
+
+        if (vId) triggerRowGlow(vId);
+        if (vNo) triggerRowGlow(vNo);
+      } else if (table === 'journal_entries') {
+        const entryId = String(record.id || '');
+        const mappedEntry: LedgerEntry = {
+          id: entryId,
+          voucherId: String(record.voucher_id || ''),
+          voucherNo: String(record.voucher_no || ''),
+          accountId: String(record.account_id || ''),
+          accountCode: String(record.account_code || ''),
+          accountName: String(record.account_name || ''),
+          date: typeof record.date === 'string' ? record.date.slice(0, 10) : new Date().toISOString().slice(0, 10),
+          debit: Number(record.debit ?? record.debit_amount ?? 0),
+          credit: Number(record.credit ?? record.credit_amount ?? 0),
+          debitAmount: Number(record.debit ?? record.debit_amount ?? 0),
+          creditAmount: Number(record.credit ?? record.credit_amount ?? 0),
+          runningBalance: 0,
+          documentRef: String(record.document_ref || record.reference || ''),
+          narration: String(record.memo || record.particulars || record.narration || '')
+        };
+
+        setLedgers(prev => {
+          const exists = prev.some(e => e.id === entryId);
+          if (exists) {
+            return prev.map(e => (e.id === entryId ? { ...e, ...mappedEntry } : e));
+          }
+          return [mappedEntry, ...prev];
+        });
+
+        if (entryId) triggerRowGlow(entryId);
+        if (mappedEntry.voucherNo) triggerRowGlow(mappedEntry.voucherNo);
+      }
+    };
+
+    window.addEventListener('vv:realtime-record', handleRealtimeRecord);
+    return () => {
+      window.removeEventListener('vv:realtime-record', handleRealtimeRecord);
+    };
+  }, [triggerRowGlow]);
 
   const showMsg = (text: string, type: 'success' | 'error' = 'success') => {
     setActionMessage({ type, text });
@@ -1812,7 +1950,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                         <tr
                           key={v.id}
                           className={`hover:bg-amber-50/40 transition-colors ${
-                            highlightedRowIds.has(v.id) || highlightedRowIds.has(v.voucherNo)
+                            glowingRowIds.includes(String(v.id)) || glowingRowIds.includes(String(v.voucherNo))
                               ? 'animate-row-glow'
                               : ''
                           }`}
@@ -2112,7 +2250,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       <tr
                         key={l.id}
                         className={`hover:bg-amber-50/30 transition-colors ${
-                          highlightedRowIds.has(l.id) || (l.voucherNo && highlightedRowIds.has(l.voucherNo))
+                          glowingRowIds.includes(String(l.id)) || (l.voucherNo && glowingRowIds.includes(String(l.voucherNo)))
                             ? 'animate-row-glow'
                             : ''
                         }`}

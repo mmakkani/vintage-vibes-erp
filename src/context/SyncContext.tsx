@@ -108,7 +108,6 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSyncingRef = useRef(false);
   const lastSyncedAtRef = useRef<number>(Date.now());
-  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
 
   const triggerGlobalSync = useCallback(async (targetModule?: string | string[]) => {
     if (isSyncingRef.current) return;
@@ -210,23 +209,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         targetedModules = [normMod];
       }
 
-      // 1. Immediate multi-tab broadcast via BroadcastChannel
-      if (broadcastChannelRef.current) {
-        try {
-          broadcastChannelRef.current.postMessage({
-            type: 'ENTITY_MUTATED',
-            module,
-            entity,
-            action,
-            documentRef,
-            deltaPayload,
-            affectedModules: targetedModules,
-            timestamp: Date.now()
-          });
-        } catch (_) {}
-      }
-
-      // 2. Local window event bus
+      // 1. Local window event bus
       try {
         window.dispatchEvent(
           new CustomEvent('vv:entity-mutated', {
@@ -257,11 +240,11 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     [triggerGlobalSync, showSyncToast]
   );
 
-  // Clean multi-tab synchronization via BroadcastChannel (avoids broken EventSource MIME type 'text/html' spam)
+  // Supabase Realtime (WebSockets PostgreSQL CDC) for Cross-Device Synchronization
   useEffect(() => {
     let unmounted = false;
 
-    // Safely close any lingering EventSource instances
+    // Safely close any lingering legacy EventSource instances
     if (sseRef.current) {
       try {
         sseRef.current.close();
@@ -273,75 +256,148 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       reconnectTimeoutRef.current = null;
     }
 
-    let broadcastChannel: BroadcastChannel | null = null;
-    const clientId = `tab_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
-    const peers = new Map<string, number>();
+    const handleRealtimeChange = (table: string, eventType: string, record: any, oldRecord?: any) => {
+      if (unmounted || !record) return;
 
-    const updateOnlineCount = () => {
-      if (unmounted) return;
-      const now = Date.now();
-      // Purge peers not heard from in 8 seconds
-      for (const [id, lastSeen] of peers.entries()) {
-        if (now - lastSeen > 8000) {
-          peers.delete(id);
-        }
+      const docRef =
+        record.invoice_no ||
+        record.invoiceNo ||
+        record.voucher_no ||
+        record.voucherNo ||
+        record.pass_no ||
+        record.gate_pass_no ||
+        record.bale_code ||
+        record.id ||
+        '';
+
+      let targetModule = 'finance';
+      let affectedModules: string[] = ['finance'];
+
+      if (table === 'purchase_invoices' || table === 'inward_gate_passes') {
+        targetModule = 'purchase';
+        affectedModules = table === 'inward_gate_passes' ? ['purchase', 'inventory'] : ['purchase', 'finance'];
+      } else if (table === 'financial_vouchers' || table === 'journal_entries' || table === 'vouchers') {
+        targetModule = 'finance';
+        affectedModules = ['finance'];
+      } else if (table === 'orders' || table === 'sales_invoices') {
+        targetModule = 'sales';
+        affectedModules = ['sales'];
+      } else if (table === 'inventory_pieces') {
+        targetModule = 'inventory';
+        affectedModules = ['inventory'];
       }
-      setActiveClientsCount(peers.size + 1); // Peers + self
+
+      const delta: DeltaSyncPayload = {
+        module: targetModule,
+        entity: table,
+        action: eventType,
+        documentRef: String(docRef),
+        payload: { [table]: record, record, raw: record },
+        timestamp: Date.now()
+      };
+
+      // 1. Set confirmed delta cache (received straight from PostgreSQL CDC)
+      setLastDelta(delta);
+
+      // 2. Dispatch real-time record event for instant component-level state injection
+      try {
+        window.dispatchEvent(
+          new CustomEvent('vv:realtime-record', {
+            detail: {
+              table,
+              eventType,
+              record,
+              oldRecord,
+              documentRef: String(docRef),
+              affectedModules
+            }
+          })
+        );
+        window.dispatchEvent(
+          new CustomEvent('vv:entity-mutated', {
+            detail: {
+              module: targetModule,
+              entity: table,
+              action: eventType,
+              documentRef: String(docRef),
+              deltaPayload: { [table]: record, record, raw: record },
+              affectedModules
+            }
+          })
+        );
+      } catch (_) {}
+
+      // 3. Subtle micro-toast badge (flicker-free, cross-device confirmation)
+      const readableEntity = table.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const refText = docRef ? ` #${docRef}` : '';
+      showSyncToast(`✓ Live Synced: ${readableEntity}${refText} (${eventType.toLowerCase()})`);
+
+      // 4. Scoped selective version bump
+      triggerGlobalSync(affectedModules);
     };
 
-    try {
-      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-        broadcastChannel = new BroadcastChannel('vintage_vibes_erp_sync');
-        broadcastChannelRef.current = broadcastChannel;
-        broadcastChannel.onmessage = (event) => {
-          if (unmounted) return;
-          const data = event.data;
-          if (!data) return;
-
-          if (data.type === 'HEARTBEAT' && data.clientId && data.clientId !== clientId) {
-            peers.set(data.clientId, data.timestamp || Date.now());
-            updateOnlineCount();
-          } else if (data.type === 'DISCONNECT' && data.clientId) {
-            peers.delete(data.clientId);
-            updateOnlineCount();
-          } else if (data.type === 'ENTITY_MUTATED' || data.type === 'SYNC_TRIGGER') {
-            if (data.deltaPayload) {
-              setLastDelta({
-                module: data.module,
-                entity: data.entity,
-                action: data.action,
-                documentRef: data.documentRef,
-                payload: data.deltaPayload,
-                timestamp: data.timestamp || Date.now()
-              });
-            }
-            const mod = data.affectedModules || data.module;
-            triggerGlobalSync(mod);
-          }
-        };
-        setIsLiveConnected(true);
-      }
-    } catch {
-      // Fallback silently if BroadcastChannel restricted
-    }
-
-    // Realtime PostgreSQL CDC over WebSocket for cross-device updates
+    // Initialize Supabase Realtime WebSocket channel for cross-device updates
     let realtimeChannel: any = null;
     try {
       realtimeChannel = supabase
-        .channel('erp_global_realtime')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'financial_vouchers' }, () => {
-          triggerGlobalSync('finance');
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'vouchers' }, () => {
-          triggerGlobalSync('finance');
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'purchase_invoices' }, () => {
-          triggerGlobalSync('purchase');
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'inward_gate_passes' }, () => {
-          triggerGlobalSync('purchase');
-        })
+        .channel('erp_multi_device_realtime')
+        // Purchase Invoices (INSERT & UPDATE)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'purchase_invoices' },
+          (payload: any) => handleRealtimeChange('purchase_invoices', 'INSERT', payload.new)
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'purchase_invoices' },
+          (payload: any) => handleRealtimeChange('purchase_invoices', 'UPDATE', payload.new, payload.old)
+        )
+        // Financial Vouchers (INSERT & UPDATE)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'financial_vouchers' },
+          (payload: any) => handleRealtimeChange('financial_vouchers', 'INSERT', payload.new)
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'financial_vouchers' },
+          (payload: any) => handleRealtimeChange('financial_vouchers', 'UPDATE', payload.new, payload.old)
+        )
+        // Journal Entries (INSERT & UPDATE)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'journal_entries' },
+          (payload: any) => handleRealtimeChange('journal_entries', 'INSERT', payload.new)
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'journal_entries' },
+          (payload: any) => handleRealtimeChange('journal_entries', 'UPDATE', payload.new, payload.old)
+        )
+        // Inward Gate Passes (INSERT & UPDATE)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'inward_gate_passes' },
+          (payload: any) => handleRealtimeChange('inward_gate_passes', 'INSERT', payload.new)
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'inward_gate_passes' },
+          (payload: any) => handleRealtimeChange('inward_gate_passes', 'UPDATE', payload.new, payload.old)
+        )
+        // Fallback table: vouchers
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'vouchers' },
+          (payload: any) => {
+            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+              handleRealtimeChange('vouchers', payload.eventType, payload.new, payload.old);
+            } else {
+              triggerGlobalSync('finance');
+            }
+          }
+        )
+        // Sales & Inventory
         .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
           triggerGlobalSync('sales');
         })
@@ -351,33 +407,16 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_pieces' }, () => {
           triggerGlobalSync('inventory');
         })
-        .subscribe((status) => {
+        .subscribe((status: string) => {
           if (status === 'SUBSCRIBED') {
             setIsLiveConnected(true);
+          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            setIsLiveConnected(false);
           }
         });
     } catch (rtErr) {
       console.warn('[SyncContext] Realtime subscription notice:', rtErr);
     }
-
-    // Send heartbeat every 3 seconds to announce active presence
-    const sendHeartbeat = () => {
-      if (unmounted) return;
-      const now = Date.now();
-      if (broadcastChannel) {
-        try {
-          broadcastChannel.postMessage({
-            type: 'HEARTBEAT',
-            clientId,
-            timestamp: now
-          });
-        } catch {}
-      }
-      updateOnlineCount();
-    };
-
-    sendHeartbeat();
-    const heartbeatInterval = setInterval(sendHeartbeat, 3000);
 
     // Inter-tab sync fallback via localStorage storage events
     const handleStorage = (e: StorageEvent) => {
@@ -412,8 +451,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       }
     }, 5 * 60 * 1000);
 
-    // Sync on tab visibility focus only if at least 5 minutes have elapsed since last sync
-    // SQL-backed presence tracking timer
+    // SQL-backed presence tracking timer (every 12 seconds)
     refreshPresence();
     const presenceInterval = setInterval(() => {
       if (!unmounted) refreshPresence();
@@ -421,7 +459,6 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        sendHeartbeat();
         refreshPresence();
         if (Date.now() - lastSyncedAtRef.current >= 5 * 60 * 1000) {
           triggerGlobalSync();
@@ -434,29 +471,24 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       PresenceService.logout();
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
+
     return () => {
       unmounted = true;
-      if (broadcastChannelRef.current) {
-        broadcastChannelRef.current = null;
-      }
       if (realtimeChannel) {
-        try { supabase.removeChannel(realtimeChannel); } catch (_) {}
-      }
-      if (broadcastChannel) {
         try {
-          broadcastChannel.postMessage({ type: 'DISCONNECT', clientId });
-          broadcastChannel.close();
-        } catch {}
+          supabase.removeChannel(realtimeChannel);
+        } catch (_) {}
       }
       if (sseRef.current) {
-        try { sseRef.current.close(); } catch {}
+        try {
+          sseRef.current.close();
+        } catch {}
         sseRef.current = null;
       }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
-      clearInterval(heartbeatInterval);
       clearInterval(fallbackInterval);
       clearInterval(presenceInterval);
       window.removeEventListener('storage', handleStorage);
