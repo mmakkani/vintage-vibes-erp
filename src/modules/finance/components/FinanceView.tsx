@@ -259,6 +259,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const [totalLedgers, setTotalLedgers] = useState<number>(0);
   const [totalLedgerPages, setTotalLedgerPages] = useState<number>(1);
   const [isLoadingLedgers, setIsLoadingLedgers] = useState<boolean>(false);
+  const [glTotals, setGlTotals] = useState<{ debit: number; credit: number }>({ debit: 0, credit: 0 });
 
 
   // State-Based Row Glow Animation (UX Enhancement across all devices)
@@ -1543,13 +1544,6 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   // General Ledger Entries strictly queried and aggregated via PostgreSQL window functions
   const filteredLedgers = ledgers;
 
-  // Memoized GL Totals
-  const glTotals = useMemo(() => {
-    const list = Array.isArray(filteredLedgers) ? filteredLedgers : [];
-    const debit = list.reduce((sum, entry) => sum + (Number(entry.debit) || 0), 0);
-    const credit = list.reduce((sum, entry) => sum + (Number(entry.credit) || 0), 0);
-    return { debit, credit, count: list.length };
-  }, [filteredLedgers]);
 
   // Groups for SearchableSelect in General Ledger
   const glTargetGroups: SearchableGroup[] = useMemo(() => {

@@ -2,6 +2,7 @@ import { supabase } from '../supabaseClient.ts';
 import { PurchaseInvoice, InwardGatePass, PieceBreakdownItem } from '../modules/purchase/purchase.types.ts';
 import { FinanceService } from './financeService.ts';
 import { PartiesService } from './partiesService.ts';
+import { SequenceService } from './sequenceService.ts';
 import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
 
 export class PurchaseService {
@@ -573,12 +574,17 @@ export class PurchaseService {
     const cleanSupplierId = (rawSupplierId && String(rawSupplierId).trim() !== '' && String(rawSupplierId) !== 'undefined' && String(rawSupplierId) !== 'null') ? String(rawSupplierId) : null;
     const vesselName = (inv as any).vesselName || (inv as any).vessel_name || null;
     const portOfArrival = (inv as any).portOfArrival || (inv as any).portOfEntry || (inv as any).port_of_arrival || null;
+    const invoiceDate = (inv as any).invoiceDate || inv.date || (inv as any).invoice_date || new Date().toISOString().slice(0, 10);
+    let invoiceNo = String(inv.invoiceNo || (inv as any).invoice_no || '').trim();
+    if (!invoiceNo || invoiceNo.startsWith('PINV-')) {
+      invoiceNo = await SequenceService.getNextNumber('PUR', invoiceDate);
+    }
     const payload = {
       id,
-      invoice_no: inv.invoiceNo || (inv as any).invoice_no || `PINV-${Date.now().toString().slice(-6)}`,
+      invoice_no: invoiceNo,
       supplier_id: cleanSupplierId,
       supplier_name: inv.supplierName || (inv as any).supplier_name || '',
-      invoice_date: (inv as any).invoiceDate || inv.date || (inv as any).invoice_date || new Date().toISOString().slice(0, 10),
+      invoice_date: invoiceDate,
       status: inv.status || 'DRAFT',
       currency: (inv.currency || 'AED').toUpperCase(),
       exchange_rate: Number(inv.exchangeRate || (inv as any).exchange_rate || 1),
@@ -957,15 +963,17 @@ export class PurchaseService {
     const invoiceTotalAed = currency === 'AED' ? invoiceTotalAmount : Number((invoiceTotalAmount * exchangeRate).toFixed(2));
     const supplierName = invRow.supplier_name || 'Trade Supplier';
 
-    // 1. Delete financial vouchers and reverse general ledger
+    // 1. Delete financial vouchers, journal entries, and ledger rows (Strict Hard Delete - No Reversals)
     if (invoiceNo) {
+      await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo, {
+        invoiceId: cleanInvId,
+        partyId: invRow.supplier_id,
+        docType: 'PURCHASE'
+      });
       await this.deleteInvoiceFinancialVouchers(invoiceNo);
-      try {
-        await FinanceService.reverseAutoVouchersForDocument(invoiceNo);
-      } catch (_) {}
     }
 
-    // 2. Reverse supplier party balance in parties table & party_khata_logs (read-only COA)
+    // 2. Cascade delete party khata logs and recalculate balance to accurate zero state
     try {
       let partyId = invRow.supplier_id;
       if (!partyId && supplierName) {
@@ -973,28 +981,18 @@ export class PurchaseService {
         if (pty?.id) partyId = pty.id;
       }
 
+      if (invoiceNo) {
+        await supabase
+          .from('party_khata_logs')
+          .delete()
+          .or(`reference.ilike.%${invoiceNo}%,notes.ilike.%${invoiceNo}%`);
+      }
+
       if (partyId) {
-        const { data: ptyRow } = await supabase.from('parties').select('current_balance').eq('id', partyId).maybeSingle();
-        const currentPartyBal = Number(ptyRow?.current_balance ?? 0);
-        const updatedPartyBal = Math.max(0, currentPartyBal - invoiceTotalAed);
-
-        await supabase.from('parties').update({
-          current_balance: updatedPartyBal
-        }).eq('id', partyId);
-
-        // Add reversal entry in party_khata_logs
-        await PartiesService.addKhataLog({
-          partyId,
-          date: new Date().toISOString().slice(0, 10),
-          reference: `UNPOST-${invoiceNo}`,
-          debit: invoiceTotalAed,
-          credit: 0,
-          runningBalance: updatedPartyBal,
-          notes: `Reversal on unposting invoice ${invoiceNo}`
-        });
+        await FinanceService.recalculatePartyBalance(partyId);
       }
     } catch (partyRevErr) {
-      console.warn('Notice on unpost party reversal:', partyRevErr);
+      console.warn('Notice on unpost party recalculation:', partyRevErr);
     }
 
     // 5. Update invoice status to 'DRAFT'
@@ -1425,10 +1423,8 @@ export class PurchaseService {
       const costPerGram = weightPerBale > 0 ? Number((costPerBale / (weightPerBale * 1000)).toFixed(6)) : 0;
 
       for (let p = 0; p < packageCount; p++) {
-        const passSeqStr = String(baleSeq).padStart(2, '0');
-        const baleSeqStr = String(baleSeq).padStart(3, '0');
-        const passNo = `IGP-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${passSeqStr}`;
-        const baleCode = `BAL-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${baleSeqStr}`;
+        const passNo = await SequenceService.getNextNumber('IGP', invoice.invoice_date);
+        const baleCode = `BAL-${passNo.replace(/^IGP-/, '')}`;
         const baleId = `igp-${Date.now()}-${baleSeq}-${Math.random().toString(36).slice(2, 6)}`;
 
         const gatePassPayload = {
@@ -1671,9 +1667,14 @@ export class PurchaseService {
     const id = igp.id || `igp-${Date.now()}`;
     const grossKg = Number(igp.totalBaleWeight || igp.weightKg || (igp as any).totalBaleWeightKg || (igp as any).weight_kg || 0);
     const cost = Number(igp.totalBaleCost || (igp as any).totalBaleCostAed || (igp as any).total_bale_cost || 0);
-    const costPerGram = Number(igp.costPerGram || (igp as any).cost_per_gram || (grossKg > 0 ? (cost / (grossKg * 1000)) : 0));
-    const passNo = igp.gatePassNo || igp.passNo || (igp as any).gate_pass_no || (igp as any).pass_no || `IGP-${Date.now().toString().slice(-6)}`;
-    const baleCode = igp.baleCode || igp.baleTagNo || (igp as any).bale_code || (igp as any).bale_tag_no || `BAL-${Date.now().toString().slice(-6)}`;
+    const passDate = igp.date || (igp as any).created_at || (igp as any).createdAt || new Date();
+    let passNo = String(igp.gatePassNo || igp.passNo || (igp as any).gate_pass_no || (igp as any).pass_no || '').trim();
+    if (!passNo || !/^IGP-\d{2}-\d{4}-\d{4}$/.test(passNo)) {
+      if (!passNo || passNo.length <= 12) {
+        passNo = await SequenceService.getNextNumber('IGP', passDate);
+      }
+    }
+    const baleCode = igp.baleCode || igp.baleTagNo || (igp as any).bale_code || (igp as any).bale_tag_no || `BAL-${passNo.replace(/^IGP-/, '')}`;
     const pieceCount = Number((igp as any).piece_count ?? (igp as any).pieces_count ?? igp.pieceCount ?? 0);
     const brokenDownWeight = Number((igp as any).broken_down_weight ?? igp.brokenDownWeight ?? 0);
 

@@ -72,8 +72,8 @@ export class DashboardService {
         receivablesRes,
         balesRes,
         piecesRes,
-        revenueRes,
         salesRes,
+        revenueRes,
         pendingVouchersRes,
         pendingGatePassesRes
       ] = await Promise.all([
@@ -89,30 +89,37 @@ export class DashboardService {
           .select('current_balance, code, parent_code')
           .or('parent_code.eq.1130-00,code.like.1130-%'),
 
-        // 3. Inventory: Landed costs from inward_gate_passes (unopened)
+        // 3. Inventory: Landed costs from inward_gate_passes (unopened, non-deleted)
         supabase
           .from('inward_gate_passes')
-          .select('id, total_bale_cost, cost_price, status, total_bale_weight, broken_down_weight'),
+          .select('id, total_bale_cost, cost_price, status, total_bale_weight, broken_down_weight')
+          .neq('status', 'CANCELLED')
+          .neq('status', 'DELETED'),
 
-        // 4. Inventory: Landed costs from inventory_pieces (sorted)
+        // 4. Inventory: Landed costs from inventory_pieces (sorted, unsold, non-deleted)
         supabase
           .from('inventory_pieces')
           .select('id, cost_price, estimated_price, retail_price_aed, is_sold, status')
-          .neq('is_sold', true),
+          .neq('is_sold', true)
+          .neq('status', 'DELETED')
+          .neq('status', 'ARCHIVED')
+          .neq('status', 'SOLD'),
 
-        // 5. Month Revenue: Sum credits from journal_entries for current month
-        supabase
-          .from('journal_entries')
-          .select('credit, created_at')
-          .gte('created_at', `${firstDayOfMonth}T00:00:00.000Z`)
-          .lte('created_at', `${lastDayOfMonth}T23:59:59.999Z`),
-
-        // 6. Secondary fallback for Month Revenue from sales_invoices
+        // 5. Month Revenue: Primary source of truth is POSTED sales_invoices
         supabase
           .from('sales_invoices')
-          .select('total_amount, invoice_date')
+          .select('total_amount, invoice_date, status')
+          .eq('status', 'POSTED')
           .gte('invoice_date', firstDayOfMonth)
           .lte('invoice_date', lastDayOfMonth),
+
+        // 6. Secondary revenue journal entries strictly on Pillar 4 (Revenue accounts)
+        supabase
+          .from('journal_entries')
+          .select('credit, created_at, account_code')
+          .like('account_code', '4%')
+          .gte('created_at', `${firstDayOfMonth}T00:00:00.000Z`)
+          .lte('created_at', `${lastDayOfMonth}T23:59:59.999Z`),
 
         // 7. Pending action: Unposted vouchers
         supabase
@@ -179,19 +186,9 @@ export class DashboardService {
 
       const totalInventoryValueAED = unopenedBalesValue + sortedPiecesValue;
 
-      // Calculate Month Revenue: Credits from journal entries
+      // Calculate Month Revenue: Strictly from POSTED sales invoices first
       let monthRevenueAED = 0;
-      if (Array.isArray(revenueRes.data) && revenueRes.data.length > 0) {
-        for (const entry of revenueRes.data) {
-          const credit = Number(entry.credit ?? 0);
-          if (!isNaN(credit) && isFinite(credit)) {
-            monthRevenueAED += credit;
-          }
-        }
-      }
-
-      // Fallback to sales invoices if journal entries yielded 0
-      if (monthRevenueAED === 0 && Array.isArray(salesRes.data) && salesRes.data.length > 0) {
+      if (Array.isArray(salesRes.data) && salesRes.data.length > 0) {
         monthRevenueAED = salesRes.data.reduce(
           (sum, inv: any) => {
             const val = Number(inv.total_amount ?? 0);
@@ -199,6 +196,13 @@ export class DashboardService {
           },
           0
         );
+      } else if (Array.isArray(revenueRes.data) && revenueRes.data.length > 0) {
+        for (const entry of revenueRes.data) {
+          const credit = Number(entry.credit ?? 0);
+          if (!isNaN(credit) && isFinite(credit)) {
+            monthRevenueAED += credit;
+          }
+        }
       }
 
       const netWorkingCapitalAED = totalInventoryValueAED + receivablesKhataAED - payablesKhataAED;

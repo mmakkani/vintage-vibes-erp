@@ -3233,13 +3233,15 @@ class RelationalStore {
     const pendingSalesCount = pendingSales.length;
     const pendingSalesAmount = pendingSales.reduce((sum, sgp) => sum + (sgp.estimatedAmount || 0), 0);
 
-    const currentMonthRevenue = this.salesInvoices.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
-    const currentMonthVat = this.salesInvoices.reduce((sum, inv) => sum + (inv.vatAmount || 0), 0);
-    const currentMonthSubtotal = this.salesInvoices.reduce((sum, inv) => sum + (inv.subTotal || 0), 0);
-    const totalSalesCount = this.salesInvoices.length;
+    const postedSalesInvoices = this.salesInvoices.filter(inv => inv.status === 'POSTED');
+    const currentMonthRevenue = postedSalesInvoices.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
+    const currentMonthVat = postedSalesInvoices.reduce((sum, inv) => sum + (inv.vatAmount || 0), 0);
+    const currentMonthSubtotal = postedSalesInvoices.reduce((sum, inv) => sum + (inv.subTotal || 0), 0);
+    const totalSalesCount = postedSalesInvoices.length;
 
-    const totalPurchasesAmount = this.purchaseInvoices.reduce((sum, p) => sum + (p.totalAmount || 0), 0);
-    const totalPurchasesCount = this.purchaseInvoices.length;
+    const postedPurchaseInvoices = this.purchaseInvoices.filter(p => p.status === 'POSTED');
+    const totalPurchasesAmount = postedPurchaseInvoices.reduce((sum, p) => sum + (p.totalAmount || 0), 0);
+    const totalPurchasesCount = postedPurchaseInvoices.length;
     const openReceivables = this.parties.filter(p => p.type === 'CLIENT').reduce((sum, c) => sum + Math.max(0, c.currentBalance), 0);
     const activeStaffCount = this.employees.filter(e => e.isActive).length;
 
@@ -3644,8 +3646,11 @@ class RelationalStore {
     const customer = this.parties.find(p => p.id === gatePass.customerId);
     if (!customer) return { success: false, error: 'Customer not found in Parties Khata' };
 
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const yyyy = String(now.getFullYear());
     const nextIdx = this.salesInvoices.length + 1;
-    const invoiceNo = `SLS-2026-${String(nextIdx).padStart(4, '0')}`;
+    const invoiceNo = `SAL-${mm}-${yyyy}-${String(nextIdx).padStart(4, '0')}`;
 
     const result = SalesEngine.convertGatePassToInvoice(
       gatePass,

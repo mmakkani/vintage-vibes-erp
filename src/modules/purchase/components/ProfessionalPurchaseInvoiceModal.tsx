@@ -5,6 +5,7 @@ import { ItemMaster } from '../../setup/setup.types.ts';
 import { PurchaseInvoice, PurchaseInvoiceItem } from '../purchase.types.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
+import { SequenceService } from '../../../services/sequenceService.ts';
 import { CameraInvoiceScannerOverlay } from './CameraInvoiceScannerOverlay.tsx';
 import { useFormAutoSave } from '../../../hooks/useFormAutoSave.ts';
 import { AutoSaveDraftBanner, AutoSaveIndicator } from '../../../components/AutoSaveNotice.tsx';
@@ -180,6 +181,14 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
     }
   }, [suppliers, supplierId]);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+
+  useEffect(() => {
+    if (isOpen && !editingInvoice && (!invoiceNo || !/^PUR-\d{2}-\d{4}-\d{4}$/.test(invoiceNo))) {
+      SequenceService.getNextNumber('PUR', invoiceDate).then(seq => {
+        setInvoiceNo(seq);
+      }).catch(console.error);
+    }
+  }, [isOpen, editingInvoice, invoiceDate]);
   const [dueDate, setDueDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 30);

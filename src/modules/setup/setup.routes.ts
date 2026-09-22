@@ -1116,26 +1116,26 @@ setupRouter.get('/dashboard-kpis', async (req, res) => {
 
       let monthRevenue = 0;
       try {
-        const revenueRes = await client.query(`
-          SELECT COALESCE(SUM(COALESCE(credit, 0)), 0) AS month_revenue
-          FROM journal_entries
-          WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz;
-        `, [startOfMonth, endOfMonth]);
-        monthRevenue = Number(revenueRes.rows[0]?.month_revenue || 0);
+        const salesRes = await client.query(`
+          SELECT COALESCE(SUM(COALESCE(total_amount, 0)), 0) AS sales_revenue
+          FROM sales_invoices
+          WHERE status = 'POSTED' AND invoice_date >= $1 AND invoice_date <= $2;
+        `, [startDateStr, endDateStr]);
+        monthRevenue = Number(salesRes.rows[0]?.sales_revenue || 0);
       } catch (e: any) {
-        console.warn('[dashboard-kpis] journal_entries query notice:', e?.message);
+        console.warn('[dashboard-kpis] sales_invoices query notice:', e?.message);
       }
 
       if (monthRevenue === 0) {
         try {
-          const salesRes = await client.query(`
-            SELECT COALESCE(SUM(COALESCE(total_amount, 0)), 0) AS sales_revenue
-            FROM sales_invoices
-            WHERE invoice_date >= $1 AND invoice_date <= $2;
-          `, [startDateStr, endDateStr]);
-          monthRevenue = Number(salesRes.rows[0]?.sales_revenue || 0);
+          const revenueRes = await client.query(`
+            SELECT COALESCE(SUM(COALESCE(credit, 0)), 0) AS month_revenue
+            FROM journal_entries
+            WHERE account_code LIKE '4%' AND created_at >= $1::timestamptz AND created_at <= $2::timestamptz;
+          `, [startOfMonth, endOfMonth]);
+          monthRevenue = Number(revenueRes.rows[0]?.month_revenue || 0);
         } catch (e: any) {
-          console.warn('[dashboard-kpis] sales_invoices query notice:', e?.message);
+          console.warn('[dashboard-kpis] journal_entries query notice:', e?.message);
         }
       }
 

@@ -354,8 +354,8 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
 
   const handleUnpostInvoice = async (id: string) => {
     try {
-      await SalesService.updateSalesInvoice(id, { status: 'DRAFT' });
-      showMsg('Sales Invoice unposted, stock barcodes restored, and COA journal reversed.');
+      await SalesService.unpostSalesInvoice(id);
+      showMsg('Sales Invoice unposted, stock barcodes restored, and ledger records removed.');
       loadData();
       onRefreshAll();
     } catch (err: any) {

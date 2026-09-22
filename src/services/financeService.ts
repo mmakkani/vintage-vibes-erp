@@ -2,6 +2,7 @@ import { supabase } from '../supabaseClient.ts';
 import { COAAccount, Voucher, LedgerEntry } from '../modules/finance/finance.types.ts';
 import { safeFetchJson, safeFetchMutation } from '../utils/fetchUtils.ts';
 import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
+import { SequenceService } from './sequenceService.ts';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isValidUuid = (val: any): boolean => typeof val === 'string' && UUID_REGEX.test(val.trim());
@@ -677,9 +678,22 @@ export class FinanceService {
 
   public static async addVoucher(v: any): Promise<Voucher> {
     const id = String(v.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `vch-${Date.now()}`));
-    const voucherNo = String(v.voucherNo || `VCH-${Date.now().toString().slice(-6)}`);
     const date = v.date || new Date().toISOString().slice(0, 10);
     const type = String(v.type || 'JOURNAL');
+    const typeUpper = type.toUpperCase();
+
+    let prefix = 'JV';
+    if (typeUpper.includes('CASH_RECEIPT') || typeUpper === 'CRV') prefix = 'CRV';
+    else if (typeUpper.includes('BANK_RECEIPT') || typeUpper === 'BRV') prefix = 'BRV';
+    else if (typeUpper.includes('CASH_PAYMENT') || typeUpper === 'CPV') prefix = 'CPV';
+    else if (typeUpper.includes('BANK_PAYMENT') || typeUpper === 'BPV') prefix = 'BPV';
+    else if (typeUpper.includes('CONTRA') || typeUpper === 'CV') prefix = 'CV';
+    else prefix = 'JV';
+
+    let voucherNo = String(v.voucherNo || '').trim();
+    if (!voucherNo || voucherNo.startsWith('VCH-')) {
+      voucherNo = await SequenceService.getNextNumber(prefix, date);
+    }
     const reference = String(v.reference || v.documentRef || '');
     const narration = String(v.narration || '');
     const totalDebit = Number(v.totalDebit || 0);

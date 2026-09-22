@@ -2,6 +2,7 @@ import { supabase } from '../supabaseClient.ts';
 import { SalesInvoice } from '../modules/sales/sales.types.ts';
 import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
 import { FinanceService } from './financeService.ts';
+import { SequenceService } from './sequenceService.ts';
 
 export class SalesService {
   public static readonly SALES_INVOICE_GRID_COLUMNS = 'id, invoice_no, client_id, customer_name, customer_phone, subtotal, tax_amount, total_amount, status, payment_method, invoice_date, created_at, items';
@@ -188,7 +189,11 @@ export class SalesService {
 
   public static async createSalesInvoice(inv: Partial<SalesInvoice>): Promise<SalesInvoice> {
     const id = String(inv.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `inv-${Date.now()}`));
-    const invoiceNo = inv.invoiceNo || `SINV-${Date.now().toString().slice(-6)}`;
+    const invoiceDate = inv.invoiceDate || (inv as any).date || new Date().toISOString().slice(0, 10);
+    let invoiceNo = String(inv.invoiceNo || (inv as any).invoice_no || '').trim();
+    if (!invoiceNo || invoiceNo.startsWith('SINV-')) {
+      invoiceNo = await SequenceService.getNextNumber('SAL', invoiceDate);
+    }
     const rawClientId = inv.clientId ? String(inv.clientId).trim() : '';
     const cleanClientId = (rawClientId && !rawClientId.toLowerCase().includes('walk') && rawClientId !== 'none' && rawClientId !== 'undefined' && rawClientId !== 'null') ? rawClientId : null;
     const payload = {
@@ -197,7 +202,7 @@ export class SalesService {
       client_id: cleanClientId,
       customer_name: inv.customerName || 'Walk-in Buyer',
       customer_phone: inv.customerPhone || '',
-      invoice_date: inv.invoiceDate || new Date().toISOString().slice(0, 10),
+      invoice_date: invoiceDate,
       channel: inv.channel || 'POS_COUNTER',
       payment_method: inv.paymentMethod || 'CASH',
       subtotal: Number(inv.subtotal || 0),
@@ -267,6 +272,113 @@ export class SalesService {
     if (error) {
       console.error('Supabase error on sales_invoices:', error);
       throw new Error(error.message || 'Failed to update sales invoice');
+    }
+  }
+
+  public static async unpostSalesInvoice(id: string): Promise<void> {
+    const cleanId = String(id).trim();
+
+    // 0. Fetch sales invoice row to retrieve metadata
+    const { data: invRow, error: invFetchErr } = await supabase
+      .from('sales_invoices')
+      .select('id, invoice_no, client_id, customer_name, status, items')
+      .eq('id', cleanId)
+      .maybeSingle();
+
+    if (invFetchErr || !invRow) {
+      throw new Error(`Sales invoice ${cleanId} not found`);
+    }
+
+    const invoiceNo = invRow.invoice_no || cleanId;
+    let customerId = invRow.client_id;
+    if (!customerId && invRow.customer_name) {
+      try {
+        const { data: pty } = await supabase
+          .from('parties')
+          .select('id')
+          .ilike('name', invRow.customer_name.trim())
+          .maybeSingle();
+        if (pty?.id) customerId = pty.id;
+      } catch (_) {}
+    }
+
+    // 1. Restore piece inventory (unmark is_sold)
+    let parsedItems: any[] = [];
+    if (Array.isArray(invRow.items)) {
+      parsedItems = invRow.items;
+    } else if (typeof invRow.items === 'string') {
+      try {
+        parsedItems = JSON.parse(invRow.items);
+      } catch (_) {}
+    }
+
+    if (Array.isArray(parsedItems) && parsedItems.length > 0) {
+      const pieceIds = parsedItems.map((item: any) => item.pieceId || item.id || item.barcode).filter(Boolean);
+      if (pieceIds.length > 0) {
+        await Promise.all([
+          supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK' }).in('id', pieceIds),
+          supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK' }).in('barcode', pieceIds)
+        ]).catch(err => console.warn('[SalesService] Batch restore unsold pieces notice:', err));
+      }
+    }
+
+    // 2. Cascade delete all financial vouchers, journal entries, and ledger rows (Strict Hard Delete - No Reversals)
+    try {
+      await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo, {
+        invoiceId: cleanId,
+        partyId: customerId,
+        docType: 'SALES'
+      });
+    } catch (vchErr) {
+      console.warn('[SalesService] Notice cascading vouchers on sales invoice unpost:', vchErr);
+    }
+
+    // 3. Cascade delete party khata logs for this invoice
+    try {
+      await supabase
+        .from('party_khata_logs')
+        .delete()
+        .or(`reference.ilike.%${invoiceNo}%,notes.ilike.%${invoiceNo}%`);
+    } catch (khataErr) {
+      console.warn('[SalesService] Notice deleting khata logs on sales invoice unpost:', khataErr);
+    }
+
+    // 4. Recalculate customer balance to accurate zero state
+    if (customerId) {
+      try {
+        await FinanceService.recalculatePartyBalance(customerId);
+      } catch (_) {}
+    }
+
+    // 5. Update invoice status back to 'DRAFT'
+    const { error: updateErr } = await supabase
+      .from('sales_invoices')
+      .update({ status: 'DRAFT' })
+      .eq('id', cleanId);
+
+    if (updateErr) {
+      throw new Error(`Failed to update sales invoice status to DRAFT: ${updateErr.message}`);
+    }
+
+    // 6. Refresh COA cache and balances
+    try {
+      FinanceService.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
+    } catch (_) {}
+
+    // 7. Dispatch entity mutation event
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+          detail: {
+            module: 'sales',
+            entity: 'sales_invoices',
+            action: 'UNPOSTED',
+            documentRef: invoiceNo,
+            affectedModules: ['sales', 'finance']
+          }
+        }));
+      } catch (_) {}
     }
   }
 
