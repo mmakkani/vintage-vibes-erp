@@ -297,6 +297,23 @@ export async function executeClientFallback<T = any>(
           report: `*${comp?.companyName || comp?.company_name || 'VINTAGE VIBES'} - STATUS REPORT*\nGenerated: ${new Date().toLocaleString()}\nStatus: Cloud Database Online`
         } as any;
       }
+
+      // Enterprise Audit Log Query (GET /api/audit)
+      if (url.includes('/api/audit') || url.includes('/audit/logs')) {
+        try {
+          const urlObj = new URL(url, 'http://localhost');
+          const pageParam = urlObj.searchParams.get('page');
+          const pageSizeParam = urlObj.searchParams.get('pageSize');
+          const module = urlObj.searchParams.get('module') || undefined;
+          const search = urlObj.searchParams.get('search') || undefined;
+          if (pageParam !== null || pageSizeParam !== null) {
+            const page = Math.max(1, Number(pageParam) || 1);
+            const pageSize = Math.max(1, Math.min(100, Number(pageSizeParam) || 10));
+            return (await AuditService.getAuditLogsPaginated({ page, pageSize, module, search })) as any;
+          }
+        } catch (_) {}
+        return (await AuditService.getAuditLogs()) as any;
+      }
     } catch (dbErr: any) {
       console.warn(`[Supabase Direct Query Notice for ${url}]:`, dbErr?.message);
     }

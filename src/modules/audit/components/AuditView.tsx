@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AuditLogEntry } from '../audit.types.ts';
+import { AuditService } from '../../../services/auditService.ts';
 import { History, Search, ShieldCheck, Filter, Clock, User, RefreshCw } from 'lucide-react';
+import { Pagination } from '../../../components/Pagination.tsx';
 
 interface AuditViewProps {
   onRefreshAll?: () => void;
@@ -11,39 +13,63 @@ export const AuditView: React.FC<AuditViewProps> = () => {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [filterModule, setFilterModule] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
 
-  const loadLogs = async () => {
+  const loadLogs = useCallback(async (
+    targetPage = currentPage,
+    targetPageSize = pageSize,
+    targetModule = filterModule,
+    targetSearch = searchTerm
+  ) => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/audit');
-      const data = await res.json();
-      setLogs(Array.isArray(data) ? data : []);
+      const res = await AuditService.getAuditLogsPaginated({
+        page: targetPage,
+        pageSize: targetPageSize,
+        module: targetModule,
+        search: targetSearch
+      });
+      setLogs(Array.isArray(res?.data) ? res.data : []);
+      setTotalItems(res?.total || 0);
+      setTotalPages(res?.totalPages || 1);
     } catch (err) {
-      console.error(err);
+      console.error('[AuditView] loadLogs error:', err);
     } finally {
       setIsLoading(false);
     }
+  }, [currentPage, pageSize, filterModule, searchTerm]);
+
+  // Reactive fetch on pagination, search, or module filter change
+  useEffect(() => {
+    loadLogs(currentPage, pageSize, filterModule, searchTerm);
+  }, [currentPage, pageSize, filterModule, searchTerm, loadLogs]);
+
+  // Realtime CDC Listener: Refetches current page silently without resetting user's page position
+  useEffect(() => {
+    const handleRealtimeRecord = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.record) return;
+      if (detail.table === 'audit_logs') {
+        loadLogs(currentPage, pageSize, filterModule, searchTerm);
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleRealtimeRecord);
+    return () => window.removeEventListener('vv:realtime-record', handleRealtimeRecord);
+  }, [currentPage, pageSize, filterModule, searchTerm, loadLogs]);
+
+  const handleFilterModuleChange = (newModule: string) => {
+    setFilterModule(newModule);
+    setCurrentPage(1);
   };
 
-  useEffect(() => {
-    loadLogs();
-  }, []);
-
-  const filteredLogs = (Array.isArray(logs) ? logs : []).filter(log => {
-    if (!log) return false;
-    if (filterModule !== 'ALL' && log.module !== filterModule) return false;
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      return (
-        (log.documentRef || '').toLowerCase().includes(term) ||
-        (log.userName || '').toLowerCase().includes(term) ||
-        (log.action || '').toLowerCase().includes(term) ||
-        Boolean(log.details && log.details.toLowerCase().includes(term))
-      );
-    }
-    return true;
-  });
+  const handleSearchChange = (newSearch: string) => {
+    setSearchTerm(newSearch);
+    setCurrentPage(1);
+  };
 
   return (
     <div className="space-y-3">
@@ -65,14 +91,14 @@ export const AuditView: React.FC<AuditViewProps> = () => {
               type="text"
               placeholder="Search ref, user, or action..."
               value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
+              onChange={e => handleSearchChange(e.target.value)}
               className="w-full pl-7 pr-2.5 py-1 text-xs border border-slate-300 rounded bg-white text-slate-800 placeholder-slate-400 focus:border-blue-500"
             />
           </div>
 
           <select
             value={filterModule}
-            onChange={e => setFilterModule(e.target.value)}
+            onChange={e => handleFilterModuleChange(e.target.value)}
             className="border border-slate-300 rounded px-2 py-1 text-xs font-semibold text-slate-700 bg-white focus:border-blue-500"
           >
             <option value="ALL">All Modules</option>
@@ -87,9 +113,9 @@ export const AuditView: React.FC<AuditViewProps> = () => {
 
           <button
             type="button"
-            onClick={loadLogs}
+            onClick={() => loadLogs(currentPage, pageSize, filterModule, searchTerm)}
             disabled={isLoading}
-            className="px-2.5 py-1 text-xs font-bold text-[#0056b3] bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded flex items-center gap-1.5 transition-colors"
+            className="px-2.5 py-1 text-xs font-bold text-[#0056b3] bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
             title="Refresh enterprise audit logs"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
@@ -113,7 +139,7 @@ export const AuditView: React.FC<AuditViewProps> = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-mono">
-              {filteredLogs.map(log => {
+              {logs.map(log => {
                 const isPost = log.action === 'POST';
                 const isUnpost = log.action === 'UNPOST';
                 const isDelete = log.action === 'DELETE';
@@ -159,7 +185,7 @@ export const AuditView: React.FC<AuditViewProps> = () => {
                   </tr>
                 );
               })}
-              {filteredLogs.length === 0 && (
+              {logs.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-4 py-8 text-center text-slate-400 font-sans">
                     <ShieldCheck className="w-8 h-8 mx-auto mb-2 text-slate-300" />
@@ -173,6 +199,25 @@ export const AuditView: React.FC<AuditViewProps> = () => {
             </tbody>
           </table>
         </div>
+
+        {totalItems > 0 && (
+          <div className="p-2.5 sm:p-3 border-t border-slate-200 bg-slate-50/50">
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={(p) => setCurrentPage(p)}
+              onPageSizeChange={(sz) => {
+                setPageSize(sz);
+                setCurrentPage(1);
+              }}
+              pageSizeOptions={[10, 25, 50, 100]}
+              isLoading={isLoading}
+              itemLabel="audit logs"
+            />
+          </div>
+        )}
       </div>
     </div>
   );

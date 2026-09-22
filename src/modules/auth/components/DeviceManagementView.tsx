@@ -25,6 +25,7 @@ import {
   Code,
   FileText
 } from 'lucide-react';
+import { Pagination } from '../../../components/Pagination.tsx';
 
 export const DeviceManagementView: React.FC = () => {
   const [devices, setDevices] = useState<DeviceInstallation[]>([]);
@@ -35,6 +36,17 @@ export const DeviceManagementView: React.FC = () => {
   const [editingLimitId, setEditingLimitId] = useState<string | null>(null);
   const [newLimitVal, setNewLimitVal] = useState<number>(2);
   const [filterTab, setFilterTab] = useState<'all' | 'operators' | 'bad_bots' | 'verified_bots' | 'visitors'>('all');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [totalItems, setTotalItems] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [summaryCounts, setSummaryCounts] = useState<{
+    total: number;
+    staff: number;
+    badBots: number;
+    verifiedBots: number;
+    visitors: number;
+  }>({ total: 0, staff: 0, badBots: 0, verifiedBots: 0, visitors: 0 });
 
   // Forensic Inspector Modal State
   const [selectedThreatDevice, setSelectedThreatDevice] = useState<DeviceInstallation | null>(null);
@@ -47,21 +59,60 @@ export const DeviceManagementView: React.FC = () => {
     setTimeout(() => setMsg(null), 4500);
   };
 
-  const fetchDevices = async () => {
+  const fetchSummaryCounts = async () => {
+    try {
+      const counts = await DeviceService.getDeviceCounts();
+      setSummaryCounts(counts);
+    } catch (_) {}
+  };
+
+  const fetchDevices = React.useCallback(async (targetPage = currentPage, targetPageSize = pageSize, targetFilter = filterTab) => {
     setLoading(true);
     try {
-      const data = await DeviceService.getDevices();
-      setDevices(data);
+      const res = await DeviceService.getDevicesPaginated({
+        page: targetPage,
+        pageSize: targetPageSize,
+        filterTab: targetFilter
+      });
+      setDevices(res.data);
+      setTotalItems(res.total);
+      setTotalPages(res.totalPages);
     } catch (err: any) {
       showNotice(err?.message || 'Failed to fetch registered devices from SQL', 'error');
     } finally {
       setLoading(false);
     }
+  }, [currentPage, pageSize, filterTab]);
+
+  // Tab change handler: Reset currentPage to 1!
+  const handleTabChange = (newTab: 'all' | 'operators' | 'bad_bots' | 'verified_bots' | 'visitors') => {
+    if (newTab !== filterTab) {
+      setFilterTab(newTab);
+      setCurrentPage(1);
+    }
   };
 
   useEffect(() => {
-    fetchDevices();
+    fetchDevices(currentPage, pageSize, filterTab);
+  }, [currentPage, pageSize, filterTab, fetchDevices]);
+
+  useEffect(() => {
+    fetchSummaryCounts();
   }, []);
+
+  // Realtime CDC listener: Refreshes current page without losing pagination position
+  useEffect(() => {
+    const handleRealtimeRecord = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.record) return;
+      if (detail.table === 'device_installations') {
+        fetchDevices(currentPage, pageSize, filterTab);
+        fetchSummaryCounts();
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleRealtimeRecord);
+    return () => window.removeEventListener('vv:realtime-record', handleRealtimeRecord);
+  }, [currentPage, pageSize, filterTab, fetchDevices]);
 
   const handleToggleStatus = async (device: DeviceInstallation) => {
     const isCurrentlyBlocked = device.install_status === 'BLOCKED' || device.bot_type === 'BAD_BOT';
@@ -198,19 +249,13 @@ export const DeviceManagementView: React.FC = () => {
   const isVerifiedBot = (d: DeviceInstallation) => d.bot_type === 'VERIFIED_BOT';
   const isVisitor = (d: DeviceInstallation) => !isOperator(d) && !isBadBot(d) && !isVerifiedBot(d);
 
-  const totalCount = devices.length;
-  const staffCount = devices.filter(isOperator).length;
-  const badBotCount = devices.filter(isBadBot).length;
-  const verifiedBotCount = devices.filter(isVerifiedBot).length;
-  const visitorCount = devices.filter(isVisitor).length;
+  const totalCount = summaryCounts.total || totalItems;
+  const staffCount = summaryCounts.staff;
+  const badBotCount = summaryCounts.badBots;
+  const verifiedBotCount = summaryCounts.verifiedBots;
+  const visitorCount = summaryCounts.visitors;
 
-  const filteredDevices = devices.filter(d => {
-    if (filterTab === 'operators') return isOperator(d);
-    if (filterTab === 'bad_bots') return isBadBot(d);
-    if (filterTab === 'verified_bots') return isVerifiedBot(d);
-    if (filterTab === 'visitors') return isVisitor(d);
-    return true;
-  });
+  const displayDevices = devices;
 
   const currentLog: SecurityThreatLog | null = threatLogs[activeLogIndex] || null;
 
@@ -269,7 +314,7 @@ export const DeviceManagementView: React.FC = () => {
       {/* KPI Stats Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <div
-          onClick={() => setFilterTab('all')}
+          onClick={() => handleTabChange('all')}
           className={`p-4 rounded-2xl border transition cursor-pointer ${
             filterTab === 'all'
               ? 'bg-amber-50/80 border-amber-400 ring-2 ring-amber-400/30 shadow-sm'
@@ -282,7 +327,7 @@ export const DeviceManagementView: React.FC = () => {
         </div>
 
         <div
-          onClick={() => setFilterTab('operators')}
+          onClick={() => handleTabChange('operators')}
           className={`p-4 rounded-2xl border transition cursor-pointer ${
             filterTab === 'operators'
               ? 'bg-emerald-50/80 border-emerald-500 ring-2 ring-emerald-500/30 shadow-sm'
@@ -298,7 +343,7 @@ export const DeviceManagementView: React.FC = () => {
         </div>
 
         <div
-          onClick={() => setFilterTab('bad_bots')}
+          onClick={() => handleTabChange('bad_bots')}
           className={`p-4 rounded-2xl border transition cursor-pointer ${
             filterTab === 'bad_bots'
               ? 'bg-rose-50/80 border-rose-500 ring-2 ring-rose-500/30 shadow-sm'
@@ -314,7 +359,7 @@ export const DeviceManagementView: React.FC = () => {
         </div>
 
         <div
-          onClick={() => setFilterTab('verified_bots')}
+          onClick={() => handleTabChange('verified_bots')}
           className={`p-4 rounded-2xl border transition cursor-pointer ${
             filterTab === 'verified_bots'
               ? 'bg-sky-50/80 border-sky-500 ring-2 ring-sky-500/30 shadow-sm'
@@ -330,7 +375,7 @@ export const DeviceManagementView: React.FC = () => {
         </div>
 
         <div
-          onClick={() => setFilterTab('visitors')}
+          onClick={() => handleTabChange('visitors')}
           className={`p-4 rounded-2xl border transition cursor-pointer ${
             filterTab === 'visitors'
               ? 'bg-amber-50/80 border-amber-500 ring-2 ring-amber-500/30 shadow-sm'
@@ -353,7 +398,7 @@ export const DeviceManagementView: React.FC = () => {
           <div className="flex items-center gap-2">
             <Smartphone className="w-4 h-4 text-amber-600" />
             <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider">
-              Monitored Sessions & Trapped Attackers ({filteredDevices.length} / {devices.length})
+              Monitored Sessions & Trapped Attackers ({totalItems})
             </h4>
           </div>
 
@@ -361,7 +406,7 @@ export const DeviceManagementView: React.FC = () => {
           <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
             <button
               type="button"
-              onClick={() => setFilterTab('all')}
+              onClick={() => handleTabChange('all')}
               className={`px-3 py-1 rounded-lg transition text-[11px] cursor-pointer ${
                 filterTab === 'all'
                   ? 'bg-slate-900 text-white font-bold shadow-xs'
@@ -372,56 +417,56 @@ export const DeviceManagementView: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => setFilterTab('operators')}
+              onClick={() => handleTabChange('operators')}
               className={`px-3 py-1 rounded-lg transition text-[11px] cursor-pointer flex items-center gap-1 ${
                 filterTab === 'operators'
                   ? 'bg-emerald-700 text-white font-bold shadow-xs'
                   : 'bg-white text-emerald-700 hover:bg-emerald-50 border border-emerald-200'
               }`}
             >
-              <UserCheck className="w-3 h-3" />
+              <UserCheck className="w-3.5 h-3.5" />
               <span>Staff ({staffCount})</span>
             </button>
             <button
               type="button"
-              onClick={() => setFilterTab('bad_bots')}
+              onClick={() => handleTabChange('bad_bots')}
               className={`px-3 py-1 rounded-lg transition text-[11px] cursor-pointer flex items-center gap-1 ${
                 filterTab === 'bad_bots'
                   ? 'bg-rose-700 text-white font-bold shadow-xs'
                   : 'bg-white text-rose-700 hover:bg-rose-50 border border-rose-200'
               }`}
             >
-              <ShieldAlert className="w-3 h-3" />
+              <ShieldAlert className="w-3.5 h-3.5" />
               <span>Sentinel Trapped ({badBotCount})</span>
             </button>
             <button
               type="button"
-              onClick={() => setFilterTab('verified_bots')}
+              onClick={() => handleTabChange('verified_bots')}
               className={`px-3 py-1 rounded-lg transition text-[11px] cursor-pointer flex items-center gap-1 ${
                 filterTab === 'verified_bots'
                   ? 'bg-sky-700 text-white font-bold shadow-xs'
                   : 'bg-white text-sky-700 hover:bg-sky-50 border border-sky-200'
               }`}
             >
-              <Globe className="w-3 h-3" />
+              <Globe className="w-3.5 h-3.5" />
               <span>Verified Bots ({verifiedBotCount})</span>
             </button>
             <button
               type="button"
-              onClick={() => setFilterTab('visitors')}
+              onClick={() => handleTabChange('visitors')}
               className={`px-3 py-1 rounded-lg transition text-[11px] cursor-pointer flex items-center gap-1 ${
                 filterTab === 'visitors'
                   ? 'bg-amber-700 text-white font-bold shadow-xs'
                   : 'bg-white text-amber-700 hover:bg-amber-50 border border-amber-200'
               }`}
             >
-              <Eye className="w-3 h-3" />
+              <Eye className="w-3.5 h-3.5" />
               <span>Visitors ({visitorCount})</span>
             </button>
           </div>
         </div>
 
-        {filteredDevices.length === 0 ? (
+        {displayDevices.length === 0 ? (
           <div className="text-center py-16 px-4">
             <Smartphone className="w-12 h-12 text-slate-300 mx-auto mb-3 animate-pulse" />
             <h5 className="text-sm font-bold text-slate-700">No Records Found</h5>
@@ -446,7 +491,7 @@ export const DeviceManagementView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
-                {filteredDevices.map((device) => {
+                {displayDevices.map((device) => {
                   const isBlocked = device.install_status === 'BLOCKED' || device.bot_type === 'BAD_BOT';
                   const isOp = isOperator(device);
                   const isSearchBot = device.bot_type === 'VERIFIED_BOT';
@@ -710,6 +755,25 @@ export const DeviceManagementView: React.FC = () => {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {displayDevices.length > 0 && (
+          <div className="p-3 border-t border-slate-100 bg-slate-50/50">
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={(p) => setCurrentPage(p)}
+              onPageSizeChange={(sz) => {
+                setPageSize(sz);
+                setCurrentPage(1);
+              }}
+              pageSizeOptions={[10, 25, 50, 100]}
+              isLoading={loading}
+              itemLabel="endpoints"
+            />
           </div>
         )}
       </div>

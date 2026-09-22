@@ -2,6 +2,8 @@
  * Device Installation & Security Tracking Service
  * Tracks client devices, IP addresses, standalone PWA installs, and enforces per-operator device limits in PostgreSQL.
  */
+import { supabase } from '../supabaseClient.ts';
+import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
 
 export interface DeviceInstallation {
   id: string;
@@ -192,10 +194,118 @@ export const DeviceService = {
       const res = await fetch('/api/devices');
       if (!res.ok) throw new Error(`HTTP error ${res.status}`);
       const data = await res.json();
-      return Array.isArray(data) ? data : (data.devices || []);
+      return Array.isArray(data) ? data : (data.devices || data.data || []);
     } catch (err) {
       console.error('[DeviceService] Failed to fetch devices:', err);
       return [];
+    }
+  },
+
+  /**
+   * Fetch paginated devices with stable ordering and tab filtering
+   */
+  async getDevicesPaginated(options?: {
+    page?: number;
+    pageSize?: number;
+    filterTab?: string;
+    search?: string;
+  }): Promise<PaginatedResponse<DeviceInstallation>> {
+    const page = Math.max(1, options?.page || 1);
+    const pageSize = Math.max(1, options?.pageSize || 10);
+    const filterTab = options?.filterTab || 'all';
+    const search = options?.search?.trim() || '';
+
+    try {
+      let query = supabase
+        .from('device_installations')
+        .select('*', { count: 'exact' });
+
+      if (filterTab === 'operators') {
+        query = query.neq('bot_type', 'BAD_BOT').neq('username', 'Guest / Visitor').not('username', 'ilike', '[BAD BOT]%');
+      } else if (filterTab === 'bad_bots') {
+        query = query.or('bot_type.eq.BAD_BOT,install_status.eq.BLOCKED');
+      } else if (filterTab === 'verified_bots') {
+        query = query.eq('bot_type', 'VERIFIED_BOT');
+      } else if (filterTab === 'visitors') {
+        query = query.or('username.eq.Guest / Visitor,username.is.null').neq('bot_type', 'BAD_BOT').neq('bot_type', 'VERIFIED_BOT');
+      }
+
+      if (search) {
+        query = query.or(`ip_address.ilike.%${search}%,username.ilike.%${search}%,device_model.ilike.%${search}%,device_type.ilike.%${search}%`);
+      }
+
+      query = applyPagination(query, page, pageSize, {
+        orderBy: 'last_active_at',
+        ascending: false,
+        secondaryOrderBy: 'id',
+        secondaryAscending: false
+      });
+
+      const { data, count, error } = await query;
+      if (!error && Array.isArray(data)) {
+        return buildPaginatedResponse(data, count || 0, page, pageSize);
+      }
+      if (error) {
+        console.warn('[DeviceService] Supabase getDevicesPaginated notice:', error.message);
+      }
+    } catch (err: any) {
+      console.warn('[DeviceService] Supabase getDevicesPaginated exception:', err?.message || err);
+    }
+
+    // Fallback to /api/devices with query params
+    try {
+      const q = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+        filterTab,
+        search
+      });
+      const res = await fetch(`/api/devices?${q.toString()}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json && Array.isArray(json.data)) {
+          return buildPaginatedResponse(json.data, json.total ?? json.data.length, json.page || page, json.pageSize || pageSize);
+        } else if (Array.isArray(json)) {
+          const from = (page - 1) * pageSize;
+          return buildPaginatedResponse(json.slice(from, from + pageSize), json.length, page, pageSize);
+        }
+      }
+    } catch (e: any) {
+      console.error('[DeviceService] Fallback getDevicesPaginated error:', e?.message || e);
+    }
+
+    return buildPaginatedResponse([], 0, page, pageSize);
+  },
+
+  /**
+   * Fetch aggregate summary counts for KPI cards across all monitored sessions
+   */
+  async getDeviceCounts(): Promise<{
+    total: number;
+    staff: number;
+    badBots: number;
+    verifiedBots: number;
+    visitors: number;
+  }> {
+    try {
+      const [allRes, staffRes, badRes, verifiedRes, visitorRes] = await Promise.all([
+        supabase.from('device_installations').select('id', { count: 'exact', head: true }),
+        supabase.from('device_installations').select('id', { count: 'exact', head: true }).neq('bot_type', 'BAD_BOT').neq('username', 'Guest / Visitor').not('username', 'ilike', '[BAD BOT]%'),
+        supabase.from('device_installations').select('id', { count: 'exact', head: true }).or('bot_type.eq.BAD_BOT,install_status.eq.BLOCKED'),
+        supabase.from('device_installations').select('id', { count: 'exact', head: true }).eq('bot_type', 'VERIFIED_BOT'),
+        supabase.from('device_installations').select('id', { count: 'exact', head: true }).or('username.eq.Guest / Visitor,username.is.null').neq('bot_type', 'BAD_BOT').neq('bot_type', 'VERIFIED_BOT')
+      ]);
+
+      return {
+        total: allRes.count || 0,
+        staff: staffRes.count || 0,
+        badBots: badRes.count || 0,
+        verifiedBots: verifiedRes.count || 0,
+        visitors: visitorRes.count || 0
+      };
+    } catch (err) {
+      console.warn('[DeviceService] getDeviceCounts fallback:', err);
+      return { total: 0, staff: 0, badBots: 0, verifiedBots: 0, visitors: 0 };
     }
   },
 

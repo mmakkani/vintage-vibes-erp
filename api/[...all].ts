@@ -6395,16 +6395,93 @@ export default async function handler(req: any, res: any) {
       }
 
       if (method === 'GET') {
+        const pageParam = parsedUrl.searchParams.get('page');
+        const pageSizeParam = parsedUrl.searchParams.get('pageSize');
+        const isPaginated = pageParam !== null || pageSizeParam !== null;
+        const page = Math.max(1, Math.floor(Number(pageParam) || 1));
+        const pageSize = Math.max(1, Math.min(100, Math.floor(Number(pageSizeParam) || 10)));
+        const offset = (page - 1) * pageSize;
+        const filterTab = (parsedUrl.searchParams.get('filterTab') || 'all').toLowerCase();
+        const search = (parsedUrl.searchParams.get('search') || '').trim();
+
         const client = await getPgClient();
         if (client) {
           try {
-            const result = await client.query('SELECT * FROM device_installations ORDER BY last_active_at DESC LIMIT 100;');
+            if (!isPaginated) {
+              const result = await client.query('SELECT * FROM device_installations ORDER BY last_active_at DESC, id DESC LIMIT 100;');
+              await client.end();
+              return res.status(200).json(result.rows || []);
+            }
+
+            const whereClauses: string[] = ['1=1'];
+            const params: any[] = [];
+            let pIdx = 1;
+
+            if (filterTab === 'operators') {
+              whereClauses.push(`(bot_type != 'BAD_BOT' AND user_id IS NOT NULL AND user_id != 'guest')`);
+            } else if (filterTab === 'bad_bots') {
+              whereClauses.push(`(bot_type = 'BAD_BOT' OR install_status = 'BLOCKED')`);
+            } else if (filterTab === 'verified_bots') {
+              whereClauses.push(`bot_type = 'VERIFIED_BOT'`);
+            } else if (filterTab === 'visitors') {
+              whereClauses.push(`(bot_type = 'HUMAN' AND (user_id IS NULL OR user_id = 'guest'))`);
+            }
+
+            if (search) {
+              whereClauses.push(`(ip_address ILIKE $${pIdx} OR username ILIKE $${pIdx} OR device_model ILIKE $${pIdx} OR device_type ILIKE $${pIdx})`);
+              params.push(`%${search}%`);
+              pIdx++;
+            }
+
+            const whereSql = whereClauses.join(' AND ');
+            const countRes = await client.query(`SELECT COUNT(*) as total FROM device_installations WHERE ${whereSql};`, params);
+            const total = Number(countRes.rows[0]?.total || 0);
+
+            const result = await client.query(`
+              SELECT * FROM device_installations
+              WHERE ${whereSql}
+              ORDER BY last_active_at DESC, id DESC
+              LIMIT $${pIdx} OFFSET $${pIdx + 1};
+            `, [...params, pageSize, offset]);
             await client.end();
-            return res.status(200).json(result.rows || []);
+            return res.status(200).json({
+              data: result.rows || [],
+              total,
+              page,
+              pageSize,
+              totalPages: Math.max(1, Math.ceil(total / pageSize))
+            });
           } catch (e) { try { await client.end(); } catch (_) {} }
         }
-        const { data } = await supabaseAdmin.from('device_installations').select('*').order('last_active_at', { ascending: false }).limit(100);
-        return res.status(200).json(data || []);
+
+        if (!isPaginated) {
+          const { data } = await supabaseAdmin.from('device_installations').select('*').order('last_active_at', { ascending: false }).limit(100);
+          return res.status(200).json(data || []);
+        }
+
+        let query = supabaseAdmin.from('device_installations').select('*', { count: 'exact' });
+        if (filterTab === 'operators') {
+          query = query.neq('bot_type', 'BAD_BOT').neq('user_id', 'guest').not('user_id', 'is', null);
+        } else if (filterTab === 'bad_bots') {
+          query = query.or('bot_type.eq.BAD_BOT,install_status.eq.BLOCKED');
+        } else if (filterTab === 'verified_bots') {
+          query = query.eq('bot_type', 'VERIFIED_BOT');
+        } else if (filterTab === 'visitors') {
+          query = query.eq('bot_type', 'HUMAN').or('user_id.is.null,user_id.eq.guest');
+        }
+        if (search) {
+          query = query.or(`ip_address.ilike.%${search}%,username.ilike.%${search}%,device_model.ilike.%${search}%,device_type.ilike.%${search}%`);
+        }
+        query = query.order('last_active_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + pageSize - 1);
+        const { data, count } = await query;
+        const total = count || 0;
+        return res.status(200).json({
+          data: data || [],
+          total,
+          page,
+          pageSize,
+          totalPages: Math.max(1, Math.ceil(total / pageSize))
+        });
       }
     }
 
@@ -6536,25 +6613,98 @@ export default async function handler(req: any, res: any) {
       }
 
       if (method === 'GET') {
+        const pageParam = parsedUrl.searchParams.get('page');
+        const pageSizeParam = parsedUrl.searchParams.get('pageSize');
+        const isPaginated = pageParam !== null || pageSizeParam !== null;
+        const page = Math.max(1, Math.floor(Number(pageParam) || 1));
+        const pageSize = Math.max(1, Math.min(100, Math.floor(Number(pageSizeParam) || 10)));
+        const offset = (page - 1) * pageSize;
+        const filterModule = parsedUrl.searchParams.get('module') || undefined;
+        const search = (parsedUrl.searchParams.get('search') || '').trim();
+
         const client = await getPgClient();
         if (client) {
           try {
-            const result = await client.query('SELECT * FROM public.audit_logs ORDER BY "timestamp" DESC LIMIT 200;');
+            if (!isPaginated) {
+              const result = await client.query('SELECT * FROM public.audit_logs ORDER BY "timestamp" DESC, id DESC LIMIT 200;');
+              await client.end();
+              return res.status(200).json(result.rows || []);
+            }
+
+            const whereClauses: string[] = ['1=1'];
+            const params: any[] = [];
+            let pIdx = 1;
+
+            if (filterModule && filterModule !== 'ALL') {
+              whereClauses.push(`module = $${pIdx}`);
+              params.push(filterModule);
+              pIdx++;
+            }
+
+            if (search) {
+              whereClauses.push(`(document_ref ILIKE $${pIdx} OR actor ILIKE $${pIdx} OR action ILIKE $${pIdx} OR details ILIKE $${pIdx})`);
+              params.push(`%${search}%`);
+              pIdx++;
+            }
+
+            const whereSql = whereClauses.join(' AND ');
+            const countRes = await client.query(`SELECT COUNT(*) as total FROM public.audit_logs WHERE ${whereSql};`, params);
+            const total = Number(countRes.rows[0]?.total || 0);
+
+            const result = await client.query(`
+              SELECT * FROM public.audit_logs
+              WHERE ${whereSql}
+              ORDER BY "timestamp" DESC, id DESC
+              LIMIT $${pIdx} OFFSET $${pIdx + 1};
+            `, [...params, pageSize, offset]);
             await client.end();
-            return res.status(200).json(result.rows || []);
+
+            return res.status(200).json({
+              data: result.rows || [],
+              total,
+              page,
+              pageSize,
+              totalPages: Math.max(1, Math.ceil(total / pageSize))
+            });
           } catch (dbErr: any) {
             try { await client.end(); } catch (_) {}
             console.warn('[Serverless Audit Query Error]:', dbErr?.message);
           }
         }
         try {
-          const { data, error } = await supabaseAdmin
-            .from('audit_logs')
-            .select('*')
-            .order('timestamp', { ascending: false })
-            .limit(200);
-          if (!error && Array.isArray(data)) {
-            return res.status(200).json(data);
+          if (!isPaginated) {
+            const { data, error } = await supabaseAdmin
+              .from('audit_logs')
+              .select('*')
+              .order('timestamp', { ascending: false })
+              .order('id', { ascending: false })
+              .limit(200);
+            if (!error && Array.isArray(data)) {
+              return res.status(200).json(data);
+            }
+          } else {
+            let query = supabaseAdmin.from('audit_logs').select('*', { count: 'exact' });
+            if (filterModule && filterModule !== 'ALL') {
+              query = query.eq('module', filterModule);
+            }
+            if (search) {
+              query = query.or(`document_ref.ilike.%${search}%,actor.ilike.%${search}%,action.ilike.%${search}%,details.ilike.%${search}%`);
+            }
+            query = query
+              .order('timestamp', { ascending: false })
+              .order('id', { ascending: false })
+              .range(offset, offset + pageSize - 1);
+            const { data, count, error } = await query;
+            if (!error && Array.isArray(data)) {
+              const total = count || 0;
+              return res.status(200).json({
+                data,
+                total,
+                page,
+                pageSize,
+                totalPages: Math.max(1, Math.ceil(total / pageSize))
+              });
+            }
           }
         } catch (_) {}
 

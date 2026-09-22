@@ -10,7 +10,7 @@ async function fetchAuditLogsFromPg(limit = 200) {
   return await withDb(async (client) => {
     const result = await client.query(`
       SELECT * FROM public.audit_logs
-      ORDER BY "timestamp" DESC
+      ORDER BY "timestamp" DESC, id DESC
       LIMIT $1;
     `, [limit]);
     return (result.rows || []).map((row: any) => ({
@@ -24,6 +24,59 @@ async function fetchAuditLogsFromPg(limit = 200) {
       details: row.details || '',
       timestamp: row.timestamp || new Date().toISOString()
     }));
+  });
+}
+
+async function fetchAuditLogsFromPgPaginated(options: { page: number; pageSize: number; module?: string; search?: string }) {
+  const { page, pageSize, module: filterModule, search } = options;
+  const offset = (page - 1) * pageSize;
+  return await withDb(async (client) => {
+    const whereClauses: string[] = ['1=1'];
+    const params: any[] = [];
+    let pIdx = 1;
+
+    if (filterModule && filterModule !== 'ALL') {
+      whereClauses.push(`module = $${pIdx}`);
+      params.push(filterModule);
+      pIdx++;
+    }
+
+    if (search) {
+      whereClauses.push(`(document_ref ILIKE $${pIdx} OR actor ILIKE $${pIdx} OR action ILIKE $${pIdx} OR details ILIKE $${pIdx})`);
+      params.push(`%${search}%`);
+      pIdx++;
+    }
+
+    const whereSql = whereClauses.join(' AND ');
+    const countRes = await client.query(`SELECT COUNT(*) as total FROM public.audit_logs WHERE ${whereSql};`, params);
+    const total = Number(countRes.rows[0]?.total || 0);
+
+    const result = await client.query(`
+      SELECT * FROM public.audit_logs
+      WHERE ${whereSql}
+      ORDER BY "timestamp" DESC, id DESC
+      LIMIT $${pIdx} OFFSET $${pIdx + 1};
+    `, [...params, pageSize, offset]);
+
+    const mapped = (result.rows || []).map((row: any) => ({
+      id: row.id,
+      module: row.module || 'HR',
+      action: row.action || 'POST',
+      documentRef: row.document_ref || row.documentRef || '',
+      status: row.status || 'POSTED',
+      userId: row.user_id || row.userId || 'usr-admin',
+      userName: row.user_name || row.userName || row.actor || 'HR Department',
+      details: row.details || '',
+      timestamp: row.timestamp || new Date().toISOString()
+    }));
+
+    return {
+      data: mapped,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize))
+    };
   });
 }
 
@@ -47,6 +100,43 @@ auditRouter.get(['/', '/logs'], async (req, res) => {
       error: perm.reason || 'Forbidden: Insufficient privileges to view audit logs. Required role: ADMIN.',
       correlationId
     });
+  }
+
+  const pageParam = req.query.page;
+  const pageSizeParam = req.query.pageSize;
+  const isPaginated = pageParam !== undefined || pageSizeParam !== undefined;
+  const page = Math.max(1, Math.floor(Number(pageParam) || 1));
+  const pageSize = Math.max(1, Math.min(100, Math.floor(Number(pageSizeParam) || 10)));
+  const filterModule = typeof req.query.module === 'string' ? req.query.module : undefined;
+  const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
+
+  if (isPaginated) {
+    try {
+      const pgPaginated = await fetchAuditLogsFromPgPaginated({ page, pageSize, module: filterModule, search });
+      if (pgPaginated && Array.isArray(pgPaginated.data)) {
+        return res.json(pgPaginated);
+      }
+    } catch (pgErr: any) {
+      console.warn('[Audit Routes] PG paginated query notice:', pgErr?.message);
+    }
+
+    try {
+      const paginatedLogs = await AuditService.getAuditLogsPaginated({ page, pageSize, module: filterModule, search });
+      return res.json(paginatedLogs);
+    } catch (svcErr: any) {
+      console.error('[Audit Routes] AuditService paginated query error:', svcErr?.message);
+      return res.status(503).json({
+        success: false,
+        degraded: true,
+        error: 'Audit logs query failed. Service unavailable.',
+        correlationId,
+        data: [],
+        total: 0,
+        page,
+        pageSize,
+        totalPages: 1
+      });
+    }
   }
 
   const filters = req.query as any;
