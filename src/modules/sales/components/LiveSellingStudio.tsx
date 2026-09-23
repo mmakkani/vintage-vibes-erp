@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { supabase } from '../../../supabaseClient.ts';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
 import { Party } from '../../parties/parties.types.ts';
 import { SalesInvoice } from '../sales.types.ts';
@@ -152,7 +153,46 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
   const [activeBooth, setActiveBooth] = useState<BoothSession | null>(null);
 
+  // ==================== 5 CONCURRENT OPERATOR STATIONS ====================
+  const STATIONS = ['Station 1', 'Station 2', 'Station 3', 'Station 4', 'Station 5'] as const;
+  const [activeStation, setActiveStation] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('vv_active_station') || 'Station 1';
+    }
+    return 'Station 1';
+  });
+
+  const handleStationChange = (st: string) => {
+    setActiveStation(st);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('vv_active_station', st);
+    }
+    setClaimFeedback({
+      type: 'success',
+      text: `⚡ Active Terminal switched to ${st}. All claims and concurrency locks are now attributed to ${st}.`
+    });
+  };
+
+  // ==================== SOCIAL MEDIA WEBHOOK SIMULATOR STATE ====================
+  const [simWebhookCustomer, setSimWebhookCustomer] = useState('@dubai_collector');
+  const [simWebhookPhone, setSimWebhookPhone] = useState('+971 50 892 4110');
+  const [simWebhookPlatform, setSimWebhookPlatform] = useState<string>('TikTok Live');
+  const [simWebhookComment, setSimWebhookComment] = useState('Claim VV-BAL-001-0001');
+  const [isSimulatingWebhook, setIsSimulatingWebhook] = useState(false);
+  const [simWebhookLogs, setSimWebhookLogs] = useState<Array<{
+    id: string;
+    timestamp: string;
+    customer: string;
+    platform: string;
+    comment: string;
+    station: string;
+    status: 'SUCCESS' | 'CONFLICT' | 'ERROR';
+    message: string;
+  }>>([]);
+  const [showWebhookSimulator, setShowWebhookSimulator] = useState(true);
+
   // ==================== FUNCTIONAL CAMERA & WEBRTC INGEST ====================
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const activeStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -545,6 +585,35 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     loadPoolData();
   }, [selectedBoothId, syncVersion, loadBoothsOverview, loadPoolData]);
 
+  // Real-time Supabase CDC on inventory_pieces for multi-station live concurrency sync
+  useEffect(() => {
+    const channel = supabase
+      .channel(`live-selling-inventory-cdc-${selectedBoothId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'inventory_pieces' },
+        (payload: any) => {
+          loadPoolData();
+          onRefreshAll();
+          if (payload.new && payload.new.locked_by_station) {
+            const piece = payload.new;
+            if (piece.locked_by_station !== activeStation) {
+              setClaimFeedback({
+                type: 'warning',
+                text: `⚡ REALTIME CDC: ${piece.barcode || piece.sku} was claimed by ${piece.locked_by_station} for ${piece.locked_by_buyer || 'a buyer'}.`
+              });
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedBoothId, activeStation, loadPoolData, onRefreshAll]);
+
+
   // Periodic uptime ticker
   useEffect(() => {
     const timer = setInterval(() => {
@@ -613,7 +682,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  // Atomic SKU Claiming
+  // Atomic SKU Claiming with Strict Pessimistic Lock
   const handleClaimSku = async (skuToClaim: string, buyerToCredit: string, offeredPrice?: number) => {
     const cleanSku = skuToClaim.trim();
     if (!cleanSku) {
@@ -631,6 +700,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
           buyerPhone: activeBuyerPhone,
           channel: activeBooth?.tiktokHandle || 'TikTok Live',
           boothId: selectedBoothId,
+          stationId: activeStation,
           offeredPrice,
           lockDurationSeconds: 180,
           reservationTimeoutMinutes: activeBooth?.reservationTimeoutMinutes || 120
@@ -639,6 +709,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
       const data = await res.json();
       if (!res.ok || !data.success) {
+        soundEffects.playAuctionGavel();
         setClaimFeedback({
           text: data.error || `SKU ${cleanSku} is already locked by another host! Concurrency lock preserved.`,
           type: 'error'
@@ -647,7 +718,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         soundEffects.playCashChime();
         setLastClaimedPiece(data.piece);
         setClaimFeedback({
-          text: `🔒 LOCKED: Claimed ${data.piece.brandName} ${data.piece.itemName} for ${buyerToCredit} in ${activeBooth?.boothName} (Hold active).`,
+          text: `🔒 LOCKED: Claimed ${data.piece.brandName || data.piece.brand_name || ''} ${data.piece.itemName || data.piece.item_name || ''} by ${activeStation} for ${buyerToCredit} in ${activeBooth?.boothName} (Hold active).`,
           type: 'success'
         });
         setBarcodeInput('');
@@ -661,19 +732,19 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
   };
 
-  // Fast Drop & Re-Auction Action
+  // Fast Drop & Re-Auction Action with Station Attribution
   const handleFastDropPiece = async (barcode: string) => {
     try {
       const res = await fetch('/api/live-stream/release-lock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ barcode, boothId: selectedBoothId })
+        body: JSON.stringify({ barcode, boothId: selectedBoothId, stationId: activeStation })
       });
       const data = await res.json();
       if (data.success) {
         soundEffects.playAuctionGavel();
         setClaimFeedback({
-          text: `🔄 FAST DROP: ${barcode} returned to live inventory rack. Ready for immediate re-bidding!`,
+          text: `🔄 FAST DROP: ${barcode} returned to live inventory rack by ${activeStation}. Ready for immediate re-bidding!`,
           type: 'warning'
         });
         if (lastClaimedPiece?.barcode === barcode) {
@@ -690,6 +761,87 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       setClaimFeedback({ text: 'Error executing fast drop', type: 'error' });
     }
   };
+
+  // Social Media Webhook Simulator Execution
+  const handleSimulateWebhookComment = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!simWebhookComment.trim() || !simWebhookCustomer.trim()) {
+      setClaimFeedback({ type: 'error', text: 'Please enter both customer name and comment text for the webhook simulator.' });
+      return;
+    }
+
+    setIsSimulatingWebhook(true);
+    try {
+      const res = await fetch('/api/live-stream/webhook/simulate-comment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerName: simWebhookCustomer.trim(),
+          customerPhone: simWebhookPhone.trim(),
+          platform: simWebhookPlatform,
+          commentText: simWebhookComment.trim(),
+          stationId: activeStation,
+          boothId: selectedBoothId
+        })
+      });
+
+      const data = await res.json();
+      const nowStr = new Date().toLocaleTimeString();
+
+      if (res.ok && data.success) {
+        soundEffects.playCashChime();
+        setClaimFeedback({
+          type: 'success',
+          text: `⚡ WEBHOOK 200 OK: ${data.message || `Claimed ${data.claimedSku} for ${simWebhookCustomer} via ${simWebhookPlatform} on ${activeStation}!`}`
+        });
+        setSimWebhookLogs(prev => [
+          {
+            id: `sim-${Date.now()}`,
+            timestamp: nowStr,
+            customer: simWebhookCustomer,
+            platform: simWebhookPlatform,
+            comment: simWebhookComment,
+            station: activeStation,
+            status: 'SUCCESS',
+            message: `200 OK: Lock acquired on ${data.claimedSku || 'item'} for ${simWebhookCustomer}`
+          },
+          ...prev.slice(0, 19)
+        ]);
+        if (data.piece) {
+          setLastClaimedPiece(data.piece);
+        }
+        notifyMutation('SALES', 'LIVE_CLAIM', 'UPDATE', data.claimedSku || 'SIM_CLAIM');
+        loadPoolData();
+        loadBoothsOverview();
+        onRefreshAll();
+      } else {
+        soundEffects.playAuctionGavel();
+        const errText = data.error || 'Concurrency collision or claim rejection';
+        setClaimFeedback({
+          type: 'error',
+          text: `⚠️ WEBHOOK 409 CONFLICT: ${errText}`
+        });
+        setSimWebhookLogs(prev => [
+          {
+            id: `sim-${Date.now()}`,
+            timestamp: nowStr,
+            customer: simWebhookCustomer,
+            platform: simWebhookPlatform,
+            comment: simWebhookComment,
+            station: activeStation,
+            status: 'CONFLICT',
+            message: `409 Conflict: ${errText}`
+          },
+          ...prev.slice(0, 19)
+        ]);
+      }
+    } catch (err: any) {
+      setClaimFeedback({ type: 'error', text: `Webhook simulation network error: ${err.message}` });
+    } finally {
+      setIsSimulatingWebhook(false);
+    }
+  };
+
 
   // Reservation Timeout Engine: Sweep Expired Holds
   const handleSweepReservations = async () => {
@@ -925,9 +1077,33 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 <span className="text-xs text-amber-400 font-mono font-bold hidden sm:inline px-2 py-1 rounded bg-stone-950 border border-stone-800">
                   {(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.tiktokHandle}
                 </span>
+
+                {/* 5 Concurrent Operator Stations Selector */}
+                <div className="flex items-center gap-1.5 sm:ml-2 sm:pl-2 sm:border-l border-stone-700">
+                  <span className="text-[10px] uppercase font-bold text-amber-400 flex items-center gap-1">
+                    <Zap className="w-3 h-3 text-amber-400" />
+                    Station:
+                  </span>
+                  <select
+                    value={activeStation}
+                    onChange={e => handleStationChange(e.target.value)}
+                    className="bg-amber-500/20 border-2 border-amber-400 text-amber-300 font-black text-xs rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-amber-300 cursor-pointer shadow-sm"
+                    title="Select Operator Station identity (5 Concurrent Stations supported)"
+                  >
+                    {STATIONS.map(st => (
+                      <option key={st} value={st} className="bg-stone-900 text-amber-300 font-bold">
+                        ⚡ {st} {st === activeStation ? '(Active)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-950 text-emerald-300 border border-emerald-700 hidden lg:inline">
+                    CONCURRENCY LOCKED
+                  </span>
+                </div>
               </div>
             </div>
           </div>
+
 
           {/* Quick Actions: Supervisor View Toggle, Mobile Host Launcher, Sweeper */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -1692,33 +1868,134 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 ))}
               </div>
 
-              {/* Simulated Live Comment Input for Auction Testing */}
-              <div className="p-2.5 bg-stone-100 border-t border-stone-200 rounded-b-xl">
-                <form onSubmit={handlePostComment} className="flex gap-1.5">
-                  <select
-                    value={simulatedPlatform}
-                    onChange={e => setSimulatedPlatform(e.target.value as any)}
-                    className="text-[10px] bg-white border border-stone-300 rounded px-1.5 py-1 font-bold text-stone-700"
-                  >
-                    <option value="tiktok">TikTok</option>
-                    <option value="instagram">Insta</option>
-                    <option value="facebook">FB</option>
-                  </select>
-                  <input
-                    type="text"
-                    placeholder="Simulate live comment (e.g. CLAIM VV-BAL-001-0001)..."
-                    value={simulatedInputComment}
-                    onChange={e => setSimulatedInputComment(e.target.value)}
-                    className="flex-1 px-2.5 py-1 text-xs bg-white border border-stone-300 rounded text-stone-900 focus:outline-none focus:border-amber-500 font-medium"
-                  />
+              {/* ======================= SOCIAL MEDIA WEBHOOK SIMULATOR (DEV/TEST PANEL) ======================= */}
+              <div className="p-3 bg-stone-900 border-t border-stone-800 rounded-b-xl text-white space-y-2.5">
+                <div className="flex items-center justify-between pb-1.5 border-b border-stone-800">
+                  <div className="flex items-center gap-1.5">
+                    <Radio className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                    <span className="text-xs font-black uppercase text-amber-300 tracking-wide">
+                      Social Webhook Simulator
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-950 text-amber-300 border border-amber-800">
+                      ⚡ {activeStation}
+                    </span>
+                  </div>
                   <button
-                    type="submit"
-                    className="px-2.5 py-1 bg-stone-900 hover:bg-stone-800 text-white rounded text-xs font-bold flex items-center gap-1 cursor-pointer"
+                    type="button"
+                    onClick={() => setShowWebhookSimulator(prev => !prev)}
+                    className="text-[10px] text-stone-400 hover:text-stone-200 underline font-mono cursor-pointer"
                   >
-                    <Send className="w-3 h-3" />
+                    {showWebhookSimulator ? 'Hide Panel' : 'Expand Panel'}
                   </button>
-                </form>
+                </div>
+
+                {showWebhookSimulator && (
+                  <form onSubmit={handleSimulateWebhookComment} className="space-y-2 text-xs">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] font-bold text-stone-400">Customer Name / Handle</label>
+                        <input
+                          type="text"
+                          value={simWebhookCustomer}
+                          onChange={e => setSimWebhookCustomer(e.target.value)}
+                          placeholder="@dxb_collector"
+                          className="w-full mt-0.5 px-2 py-1 bg-stone-950 border border-stone-700 rounded text-stone-100 font-bold focus:outline-none focus:border-amber-400 text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-stone-400">Social Platform</label>
+                        <select
+                          value={simWebhookPlatform}
+                          onChange={e => setSimWebhookPlatform(e.target.value)}
+                          className="w-full mt-0.5 px-2 py-1 bg-stone-950 border border-stone-700 rounded text-amber-300 font-bold focus:outline-none focus:border-amber-400 text-xs cursor-pointer"
+                        >
+                          <option value="TikTok Live">TikTok Live</option>
+                          <option value="Instagram Live">Instagram Live</option>
+                          <option value="Facebook Live">Facebook Live</option>
+                          <option value="YouTube Live">YouTube Live</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-bold text-stone-400">Comment Text (Webhook Payload)</label>
+                        {availablePieces.length > 0 && (
+                          <span className="text-[9px] text-stone-500 font-mono">
+                            Stock: {availablePieces.length}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex gap-1.5 mt-0.5">
+                        <input
+                          type="text"
+                          value={simWebhookComment}
+                          onChange={e => setSimWebhookComment(e.target.value)}
+                          placeholder="e.g. Claim VIN-MEN-0001 or take VV-001"
+                          className="flex-1 px-2.5 py-1.5 bg-stone-950 border border-stone-700 rounded-lg text-stone-100 font-mono text-xs focus:outline-none focus:border-amber-400"
+                        />
+                        <button
+                          type="submit"
+                          disabled={isSimulatingWebhook}
+                          className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black rounded-lg text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition-all disabled:opacity-50 shrink-0"
+                        >
+                          {isSimulatingWebhook ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Zap className="w-3.5 h-3.5 fill-current" />
+                          )}
+                          <span>Simulate Comment</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Quick SKU Fill Buttons */}
+                    {availablePieces.length > 0 && (
+                      <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                        <span className="text-[9px] text-stone-500 font-mono">Quick SKUs:</span>
+                        {availablePieces.slice(0, 4).map(p => (
+                          <button
+                            key={p.barcode}
+                            type="button"
+                            onClick={() => setSimWebhookComment(`Claim ${p.barcode}`)}
+                            className="px-1.5 py-0.5 rounded bg-stone-800 hover:bg-stone-750 text-stone-300 hover:text-amber-300 font-mono text-[9px] border border-stone-700 cursor-pointer"
+                            title={`Simulate claim for ${p.brandName} ${p.itemName}`}
+                          >
+                            {p.barcode}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Simulator Transaction Log */}
+                    {simWebhookLogs.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-stone-800 space-y-1 max-h-[110px] overflow-y-auto">
+                        <div className="text-[9px] font-bold uppercase tracking-wider text-stone-400">
+                          Webhook Execution Log ({simWebhookLogs.length})
+                        </div>
+                        {simWebhookLogs.slice(0, 3).map(log => (
+                          <div
+                            key={log.id}
+                            className={`p-1.5 rounded text-[10px] font-mono flex items-center justify-between border ${
+                              log.status === 'SUCCESS'
+                                ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300'
+                                : 'bg-red-950/60 border-red-800 text-red-300'
+                            }`}
+                          >
+                            <span className="truncate max-w-[210px]">
+                              [{log.station}] {log.customer}: "{log.comment}"
+                            </span>
+                            <span className="shrink-0 font-bold ml-1">
+                              {log.status === 'SUCCESS' ? '✓ 200 OK' : '⚠️ 409 CONFLICT'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </form>
+                )}
               </div>
+
             </div>
           </div>
 
@@ -1819,7 +2096,15 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     <span>SKU: <strong className="font-mono text-amber-300">{lastClaimedPiece.barcode}</strong></span>
                     <span>Buyer: <strong className="text-emerald-400">{lastClaimedPiece.lockedByBuyer}</strong></span>
                   </div>
+                  <div className="text-[10px] text-amber-200/90 flex items-center justify-between mt-1 pt-1 border-t border-stone-800">
+                    <span className="flex items-center gap-1 font-bold">
+                      <Zap className="w-3 h-3 text-amber-400" />
+                      Station: <strong className="font-mono bg-stone-800 px-1 py-0.5 rounded text-amber-300">{(lastClaimedPiece as any).locked_by_station || (lastClaimedPiece as any).lockedByStation || activeStation}</strong>
+                    </span>
+                    <span className="font-mono text-[9px] text-stone-400">Pessimistic Hold: ACTIVE</span>
+                  </div>
                 </div>
+
 
                 <div className="pt-2 border-t border-stone-800 flex items-center justify-between gap-2">
                   <span className="text-xs font-black text-amber-400">
@@ -1884,7 +2169,24 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       <span>VAT (5%): AED {pool.vatAed.toFixed(2)}</span>
                     </div>
 
+                    {/* Show Station attribution tag for claimed garments */}
+                    {pool.items && pool.items.length > 0 && (
+                      <div className="flex flex-wrap gap-1 items-center pt-1 text-[10px]">
+                        <span className="text-stone-400 font-mono text-[9px]">Claimed:</span>
+                        {pool.items.slice(0, 3).map((it, idx) => (
+                          <span key={it.barcode || idx} className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 font-mono text-[9px] text-stone-700 flex items-center gap-1">
+                            <span className="font-bold">{it.barcode}</span>
+                            <span className="text-amber-800 font-black">⚡ {(it as any).locked_by_station || (it as any).lockedByStation || 'Station 1'}</span>
+                          </span>
+                        ))}
+                        {pool.items.length > 3 && (
+                          <span className="text-stone-400 text-[9px]">+{pool.items.length - 3} more</span>
+                        )}
+                      </div>
+                    )}
+
                     <div className="pt-1.5 border-t border-stone-200 flex flex-wrap items-center justify-between gap-1.5">
+
                       <div>
                         <div className="text-[9px] text-stone-400 uppercase font-semibold">Total</div>
                         <div className="font-black text-stone-900 text-sm">AED {pool.grandTotalAed.toFixed(2)}</div>

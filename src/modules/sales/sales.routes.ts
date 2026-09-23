@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { Client } from 'pg';
 import { SalesController } from './sales.controller.ts';
 import { SalesService } from '../../services/salesService.ts';
+import { executePessimisticClaim, executeReleaseLock } from '../liveStreaming/liveStreaming.routes.ts';
 
 export const salesRouter = Router();
 
@@ -610,3 +611,148 @@ salesRouter.get('/grail-bounties/auto-match', async (req, res) => {
     if (client) await client.end().catch(() => {});
   }
 });
+
+// ======================== LIVE STREAM CONCURRENCY & SIMULATOR ENDPOINTS ========================
+salesRouter.post('/live/claim', async (req, res) => {
+  const {
+    barcode,
+    buyerHandle,
+    buyerPhone,
+    channel,
+    boothId,
+    stationId,
+    offeredPrice,
+    lockDurationSeconds,
+    reservationTimeoutMinutes
+  } = req.body;
+
+  if (!barcode || !buyerHandle) {
+    return res.status(400).json({ error: 'Barcode and buyerHandle are required' });
+  }
+
+  const result = await executePessimisticClaim({
+    barcode,
+    buyerHandle,
+    buyerPhone,
+    channel,
+    boothId: boothId || 'booth-1',
+    stationId: stationId || 'Station 1',
+    offeredPrice,
+    lockDurationSeconds,
+    reservationTimeoutMinutes
+  });
+
+  if (!result.success) {
+    return res.status(result.statusCode || 409).json({
+      success: false,
+      error: result.error,
+      lockedByStation: result.lockedByStation,
+      lockedByBuyer: result.lockedByBuyer
+    });
+  }
+
+  return res.json({
+    success: true,
+    piece: result.piece,
+    stationId: stationId || 'Station 1',
+    buyerHandle,
+    message: `Locked by ${stationId || 'Station 1'} for ${buyerHandle}`
+  });
+});
+
+salesRouter.post('/live/release-lock', async (req, res) => {
+  const { barcode, boothId, stationId } = req.body;
+  if (!barcode) return res.status(400).json({ error: 'Barcode required' });
+
+  const result = await executeReleaseLock({
+    barcode,
+    boothId: boothId || 'booth-1',
+    stationId: stationId || 'Station 1'
+  });
+  if (!result.success) {
+    return res.status(400).json({ error: result.error });
+  }
+  return res.json(result);
+});
+
+salesRouter.post('/live/simulate-comment', async (req, res) => {
+  const { customerName, customerPhone, platform, commentText, stationId, boothId } = req.body;
+  if (!customerName || !commentText) {
+    return res.status(400).json({ success: false, error: 'Customer name and comment text are required' });
+  }
+
+  const bId = boothId || 'booth-1';
+  const stId = stationId || 'Station 1';
+  const cleanComment = String(commentText).trim();
+  const cleanPlatform = String(platform || 'TikTok Live').trim();
+  const cleanBuyer = String(customerName).trim().startsWith('@') ? customerName.trim() : `@${customerName.trim()}`;
+
+  const claimRegex = /\b(?:claim|mine|bin|take|buy)\s+([A-Za-z0-9\-_]+)/i;
+  const match = cleanComment.match(claimRegex);
+  let targetSku = match ? match[1].trim() : null;
+
+  if (!targetSku) {
+    const skuPattern = /\b((?:VIN|VV|BAL|DXB)[A-Za-z0-9\-_]+)/i;
+    const skuMatch = cleanComment.match(skuPattern);
+    if (skuMatch) {
+      targetSku = skuMatch[1].trim();
+    }
+  }
+
+  if (!targetSku) {
+    const client = await getDbClient();
+    try {
+      const findRes = await client.query(
+        `SELECT barcode FROM inventory_pieces 
+         WHERE (status = 'IN_STOCK' OR status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT') 
+           AND (is_sold = false OR is_sold IS NULL) 
+         ORDER BY created_at DESC LIMIT 1;`
+      );
+      if (findRes.rows.length > 0) {
+        targetSku = findRes.rows[0].barcode;
+      }
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  if (!targetSku) {
+    return res.status(404).json({
+      success: false,
+      isClaim: true,
+      error: 'No active SKU found on air or available in stock to claim.'
+    });
+  }
+
+  const claimResult = await executePessimisticClaim({
+    stationId: stId,
+    barcode: targetSku,
+    buyerHandle: cleanBuyer,
+    buyerPhone: customerPhone,
+    channel: cleanPlatform,
+    boothId: bId
+  });
+
+  if (!claimResult.success) {
+    return res.status(claimResult.statusCode || 409).json({
+      success: false,
+      isClaim: true,
+      attemptedSku: targetSku,
+      error: claimResult.error,
+      lockedByStation: claimResult.lockedByStation,
+      lockedByBuyer: claimResult.lockedByBuyer
+    });
+  }
+
+  return res.json({
+    success: true,
+    isClaim: true,
+    claimedSku: targetSku,
+    stationId: stId,
+    buyerHandle: cleanBuyer,
+    platform: cleanPlatform,
+    piece: claimResult.piece,
+    message: `✓ Concurrency Lock Acquired: Item ${targetSku} successfully claimed by ${stId} for ${cleanBuyer} via ${cleanPlatform}!`
+  });
+});
+

@@ -882,5 +882,101 @@ export class SalesService {
     }
     return json;
   }
+
+  // ==========================================
+  // LIVE STREAM PESSIMISTIC LOCKING & WEBHOOK SIMULATION
+  // ==========================================
+
+  public static async claimPieceWithPessimisticLock(params: {
+    stationId: string;
+    itemIdentifier: string; // barcode, sku, or id
+    buyerHandle: string;
+    buyerPhone?: string;
+    channel?: string;
+    boothId?: string;
+    offeredPrice?: number;
+    lockDurationSeconds?: number;
+    reservationTimeoutMinutes?: number;
+  }): Promise<{
+    success: boolean;
+    piece?: any;
+    error?: string;
+    statusCode?: number;
+    lockedByStation?: string;
+    lockedByBuyer?: string;
+  }> {
+    try {
+      const res = await fetch('/api/live-stream/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          barcode: params.itemIdentifier,
+          buyerHandle: params.buyerHandle,
+          buyerPhone: params.buyerPhone,
+          channel: params.channel,
+          boothId: params.boothId,
+          stationId: params.stationId,
+          offeredPrice: params.offeredPrice,
+          lockDurationSeconds: params.lockDurationSeconds || 180,
+          reservationTimeoutMinutes: params.reservationTimeoutMinutes || 120
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        return {
+          success: false,
+          error: data.error || 'Already Claimed',
+          statusCode: res.status,
+          lockedByStation: data.lockedByStation,
+          lockedByBuyer: data.lockedByBuyer
+        };
+      }
+      return { success: true, piece: data.piece, statusCode: 200 };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Network error executing pessimistic claim', statusCode: 500 };
+    }
+  }
+
+  public static async releasePieceLock(params: {
+    barcode: string;
+    stationId?: string;
+    boothId?: string;
+  }): Promise<{ success: boolean; piece?: any; error?: string }> {
+    try {
+      const res = await fetch('/api/live-stream/release-lock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+      });
+      const data = await res.json();
+      return data;
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Network error releasing piece lock' };
+    }
+  }
+
+  public static async simulateSocialWebhookComment(params: {
+    customerName: string;
+    customerPhone?: string;
+    platform: string;
+    commentText: string;
+    stationId: string;
+    boothId?: string;
+  }): Promise<any> {
+    const res = await fetch('/api/live-stream/webhook/simulate-comment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params)
+    });
+    const data = await res.json();
+    if (!res.ok || data.success === false) {
+      const err = new Error(data.error || 'Webhook simulation failed');
+      (err as any).response = data;
+      (err as any).status = res.status;
+      throw err;
+    }
+    return data;
+  }
 }
+
 

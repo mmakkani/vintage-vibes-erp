@@ -1011,64 +1011,278 @@ liveStreamingRouter.post('/comments', (req, res) => {
 });
 
 // ======================== ATOMIC SKU LOCK ENGINE & POOL ========================
+
+export async function executePessimisticClaim(params: {
+  stationId: string;
+  barcode: string;
+  buyerHandle: string;
+  buyerPhone?: string;
+  channel?: string;
+  boothId?: string;
+  offeredPrice?: number;
+  lockDurationSeconds?: number;
+  reservationTimeoutMinutes?: number;
+}): Promise<{
+  success: boolean;
+  piece?: any;
+  error?: string;
+  statusCode: number;
+  lockedByStation?: string;
+  lockedByBuyer?: string;
+}> {
+  const cleanId = (params.barcode || '').trim();
+  if (!cleanId) {
+    return { success: false, error: 'Barcode or SKU is required', statusCode: 400 };
+  }
+  const station = params.stationId || 'Station 1';
+  const buyer = (params.buyerHandle || 'Guest Buyer').trim();
+  const booth = params.boothId || 'booth-1';
+  const lockSeconds = params.lockDurationSeconds || 180;
+  const timeoutMin = params.reservationTimeoutMinutes || 120;
+  const nowMs = Date.now();
+  const lockExpiresAt = nowMs + lockSeconds * 1000;
+  const reservedUntil = nowMs + timeoutMin * 60 * 1000;
+
+  const pool = getPgClient();
+  if (!pool) {
+    const memResult = relationalStore.claimPieceAtomically({
+      barcode: cleanId,
+      buyerHandle: buyer,
+      buyerPhone: params.buyerPhone,
+      channel: params.channel,
+      boothId: booth,
+      offeredPrice: params.offeredPrice,
+      lockDurationSeconds: lockSeconds,
+      reservationTimeoutMinutes: timeoutMin
+    });
+    if (!memResult.success) {
+      return { success: false, error: memResult.error, statusCode: 409 };
+    }
+    const memPiece = { ...memResult.piece, locked_by_station: station, lockedByStation: station };
+    return { success: true, piece: memPiece, statusCode: 200 };
+  }
+
+  try {
+    // 1. Pessimistic concurrency lock via single atomic UPDATE
+    const updateRes = await pool.query(
+      `UPDATE inventory_pieces
+       SET status = 'RESERVED',
+           locked_by_station = $1,
+           locked_by_buyer = $2,
+           locked_by_booth = $3,
+           locked_at = NOW(),
+           lock_expires_at = $4,
+           reserved_until = $5,
+           updated_at = NOW()
+       WHERE (LOWER(barcode) = LOWER($6) OR LOWER(sku) = LOWER($6) OR id = $6)
+         AND (status = 'IN_STOCK' OR status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT')
+         AND (is_sold = false OR is_sold IS NULL)
+       RETURNING *;`,
+      [station, buyer, booth, lockExpiresAt, reservedUntil, cleanId]
+    );
+
+    if (updateRes.rowCount && updateRes.rowCount > 0) {
+      const piece = updateRes.rows[0];
+      // Keep in-memory relationalStore synchronized
+      try {
+        relationalStore.claimPieceAtomically({
+          barcode: piece.barcode || cleanId,
+          buyerHandle: buyer,
+          buyerPhone: params.buyerPhone,
+          channel: params.channel,
+          boothId: booth,
+          offeredPrice: params.offeredPrice,
+          lockDurationSeconds: lockSeconds,
+          reservationTimeoutMinutes: timeoutMin
+        });
+      } catch (_) {}
+
+      return {
+        success: true,
+        piece: {
+          ...piece,
+          lockedByStation: station,
+          locked_by_station: station,
+          lockedByBuyer: buyer,
+          locked_by_buyer: buyer
+        },
+        statusCode: 200
+      };
+    }
+
+    // 2. Row count was 0: query current state to diagnose concurrency collision
+    const checkRes = await pool.query(
+      `SELECT id, barcode, sku, item_name, brand_name, status, locked_by_station, locked_by_buyer, is_sold, sold_invoice_id
+       FROM inventory_pieces
+       WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id = $1
+       LIMIT 1;`,
+      [cleanId]
+    );
+
+    if (checkRes.rowCount === 0) {
+      return {
+        success: false,
+        error: `SKU "${cleanId}" does not exist in inventory.`,
+        statusCode: 404
+      };
+    }
+
+    const row = checkRes.rows[0];
+    if (row.is_sold || row.status === 'SOLD') {
+      return {
+        success: false,
+        error: `Already Sold: SKU "${cleanId}" has already been sold on invoice ${row.sold_invoice_id || 'PREV'}.`,
+        statusCode: 409
+      };
+    }
+
+    const holdingStation = row.locked_by_station || 'another station';
+    const holdingBuyer = row.locked_by_buyer || 'another buyer';
+
+    return {
+      success: false,
+      error: `Already Claimed: Piece "${cleanId}" is currently locked by ${holdingStation} for ${holdingBuyer}. Concurrency lock preserved.`,
+      statusCode: 409,
+      lockedByStation: holdingStation,
+      lockedByBuyer: holdingBuyer
+    };
+  } catch (err: any) {
+    console.error('[Pessimistic Lock Error]', err);
+    return {
+      success: false,
+      error: `Database lock error: ${err.message}`,
+      statusCode: 500
+    };
+  }
+}
+
+export async function executeReleaseLock(params: {
+  barcode: string;
+  stationId?: string;
+  boothId?: string;
+}): Promise<{ success: boolean; piece?: any; error?: string }> {
+  const cleanId = (params.barcode || '').trim();
+  const pool = getPgClient();
+
+  if (pool) {
+    try {
+      const res = await pool.query(
+        `UPDATE inventory_pieces
+         SET status = 'IN_STOCK',
+             locked_by_station = NULL,
+             locked_at = NULL,
+             locked_by_buyer = NULL,
+             locked_by_booth = NULL,
+             lock_expires_at = NULL,
+             reserved_until = NULL,
+             updated_at = NOW()
+         WHERE (LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id = $1)
+           AND (status = 'RESERVED' OR status = 'CLAIMED_PENDING')
+         RETURNING *;`,
+        [cleanId]
+      );
+      if (res.rowCount && res.rowCount > 0) {
+        try {
+          relationalStore.releasePieceLock(cleanId, params.boothId);
+        } catch (_) {}
+        return { success: true, piece: res.rows[0] };
+      }
+    } catch (err: any) {
+      console.warn('DB release lock error:', err.message);
+    }
+  }
+
+  return relationalStore.releasePieceLock(cleanId, params.boothId);
+}
+
 liveStreamingRouter.get('/pool', (req, res) => {
   const boothId = req.query.boothId as string | undefined;
   const pool = relationalStore.getLiveClaimedPool(boothId);
   return res.json(pool);
 });
 
-liveStreamingRouter.post('/claim', (req, res) => {
-  const { barcode, buyerHandle, buyerPhone, channel, boothId, offeredPrice, lockDurationSeconds, reservationTimeoutMinutes } = req.body;
+liveStreamingRouter.post('/claim', async (req, res) => {
+  const {
+    barcode,
+    buyerHandle,
+    buyerPhone,
+    channel,
+    boothId,
+    stationId,
+    offeredPrice,
+    lockDurationSeconds,
+    reservationTimeoutMinutes
+  } = req.body;
+
   if (!barcode || !buyerHandle) {
     return res.status(400).json({ error: 'Barcode and buyerHandle are required' });
   }
 
-  const bId = boothId || 'booth-01';
+  const bId = boothId || 'booth-1';
+  const stId = stationId || 'Station 1';
 
-  const result = relationalStore.claimPieceAtomically({
+  const result = await executePessimisticClaim({
     barcode,
     buyerHandle,
     buyerPhone,
     channel,
     boothId: bId,
+    stationId: stId,
     offeredPrice,
     lockDurationSeconds: lockDurationSeconds || 180,
     reservationTimeoutMinutes: reservationTimeoutMinutes || 120
   });
 
   if (!result.success) {
-    return res.status(409).json({ error: result.error });
+    return res.status(result.statusCode || 409).json({
+      success: false,
+      error: result.error,
+      lockedByStation: result.lockedByStation,
+      lockedByBuyer: result.lockedByBuyer
+    });
   }
 
   // Update booth stats
-  const price = result.piece?.lockedPrice || result.piece?.estimatedPrice || result.piece?.retailPriceAed || 120;
+  const price = result.piece?.lockedPrice || result.piece?.retail_price_aed || result.piece?.estimated_price || 120;
   streamController.recordClaim(bId, barcode, price);
 
-  // Broadcast to all active clients for instant real-time HUD updates
+  // Broadcast to all active stations and clients for instant real-time HUD updates
   eventHub.broadcast({
     type: 'ENTITY_MUTATED',
     module: 'SALES',
     entity: 'LIVE_CLAIM',
     action: 'UPDATE',
     documentRef: barcode,
-    data: { piece: result.piece, boothId: bId }
+    data: {
+      piece: result.piece,
+      boothId: bId,
+      stationId: stId,
+      buyerHandle
+    }
   });
 
-  return res.json(result);
+  return res.json({
+    success: true,
+    piece: result.piece,
+    stationId: stId,
+    buyerHandle,
+    message: `Locked by ${stId} for ${buyerHandle}`
+  });
 });
 
 // Fast Drop / Re-Auction Action
-liveStreamingRouter.post('/release-lock', (req, res) => {
-  const { barcode, boothId } = req.body;
+liveStreamingRouter.post('/release-lock', async (req, res) => {
+  const { barcode, boothId, stationId } = req.body;
   if (!barcode) return res.status(400).json({ error: 'Barcode required' });
 
-  const bId = boothId || 'booth-01';
-  const result = relationalStore.releasePieceLock(barcode, bId);
+  const bId = boothId || 'booth-1';
+  const stId = stationId || 'Station 1';
+  const result = await executeReleaseLock({ barcode, boothId: bId, stationId: stId });
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
 
-  const price = result.piece?.lockedPrice || result.piece?.estimatedPrice || result.piece?.retailPriceAed || 120;
+  const price = result.piece?.lockedPrice || result.piece?.retail_price_aed || result.piece?.estimated_price || 120;
   streamController.recordRelease(bId, barcode, price);
 
   eventHub.broadcast({
@@ -1077,11 +1291,173 @@ liveStreamingRouter.post('/release-lock', (req, res) => {
     entity: 'LIVE_CLAIM',
     action: 'UPDATE',
     documentRef: barcode,
-    data: { piece: result.piece, boothId: bId }
+    data: { piece: result.piece, boothId: bId, stationId: stId, isReleased: true }
   });
 
   return res.json(result);
 });
+
+// ======================== SOCIAL MEDIA WEBHOOK SIMULATOR ========================
+// Simulates incoming social live comments (TikTok, Instagram, Facebook, YouTube Live)
+// and executes the identical pessimistic locking logic with station attribution
+liveStreamingRouter.post('/webhook/simulate-comment', async (req, res) => {
+  const {
+    customerName,
+    customerPhone,
+    platform,
+    commentText,
+    stationId,
+    boothId
+  } = req.body;
+
+  if (!customerName || !commentText) {
+    return res.status(400).json({ success: false, error: 'Customer name and comment text are required' });
+  }
+
+  const bId = boothId || 'booth-1';
+  const stId = stationId || 'Station 1';
+  const cleanComment = String(commentText).trim();
+  const cleanPlatform = String(platform || 'TikTok Live').trim();
+  const cleanBuyer = String(customerName).trim().startsWith('@') ? customerName.trim() : `@${customerName.trim()}`;
+
+  // Log comment into stream controller feed
+  const newComment = streamController.addComment(
+    bId,
+    cleanComment,
+    cleanPlatform.toLowerCase().includes('tiktok') ? 'tiktok' :
+    cleanPlatform.toLowerCase().includes('insta') ? 'instagram' :
+    cleanPlatform.toLowerCase().includes('face') ? 'facebook' :
+    cleanPlatform.toLowerCase().includes('you') ? 'youtube' : 'tiktok',
+    cleanBuyer
+  );
+
+  // Parse for claim intent & extract SKU/barcode
+  const claimRegex = /\b(?:claim|mine|bin|take|buy)\s+([A-Za-z0-9\-_]+)/i;
+  const match = cleanComment.match(claimRegex);
+  let targetSku = match ? match[1].trim() : null;
+
+  if (!targetSku) {
+    const skuPattern = /\b((?:VIN|VV|BAL|DXB)[A-Za-z0-9\-_]+)/i;
+    const skuMatch = cleanComment.match(skuPattern);
+    if (skuMatch) {
+      targetSku = skuMatch[1].trim();
+    }
+  }
+
+  const isClaimIntent = Boolean(targetSku) || /\b(?:claim|mine|bin|take|buy)\b/i.test(cleanComment);
+
+  if (!isClaimIntent && !targetSku) {
+    eventHub.broadcast({
+      type: 'ENTITY_MUTATED',
+      module: 'SALES',
+      entity: 'LIVE_COMMENT',
+      action: 'CREATE',
+      documentRef: newComment.id,
+      data: newComment
+    });
+    return res.json({
+      success: true,
+      isClaim: false,
+      comment: newComment,
+      message: 'Comment posted to live feed.'
+    });
+  }
+
+  // If claim keyword used but no explicit SKU in text, fallback to booth's on-air SKU or first in-stock item
+  if (!targetSku) {
+    const boothSession = streamController.getBooth(bId);
+    targetSku = boothSession?.activeOnAirSku || null;
+  }
+  if (!targetSku) {
+    const pool = getPgClient();
+    if (pool) {
+      const findRes = await pool.query(
+        `SELECT barcode FROM inventory_pieces 
+         WHERE (status = 'IN_STOCK' OR status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT') 
+           AND (is_sold = false OR is_sold IS NULL) 
+         ORDER BY created_at DESC LIMIT 1;`
+      );
+      if (findRes.rows.length > 0) {
+        targetSku = findRes.rows[0].barcode;
+      }
+    }
+  }
+
+  if (!targetSku) {
+    return res.status(404).json({
+      success: false,
+      isClaim: true,
+      error: 'No active SKU found on air or available in stock to claim.',
+      comment: newComment
+    });
+  }
+
+  // Execute identical PostgreSQL pessimistic lock
+  const claimResult = await executePessimisticClaim({
+    stationId: stId,
+    barcode: targetSku,
+    buyerHandle: cleanBuyer,
+    buyerPhone: customerPhone,
+    channel: cleanPlatform,
+    boothId: bId
+  });
+
+  if (!claimResult.success) {
+    return res.status(claimResult.statusCode || 409).json({
+      success: false,
+      isClaim: true,
+      attemptedSku: targetSku,
+      error: claimResult.error,
+      lockedByStation: claimResult.lockedByStation,
+      lockedByBuyer: claimResult.lockedByBuyer,
+      comment: newComment
+    });
+  }
+
+  newComment.isClaimIntent = true;
+  newComment.extractedSku = targetSku;
+  newComment.isProcessed = true;
+
+  const price = claimResult.piece?.lockedPrice || claimResult.piece?.retail_price_aed || 120;
+  streamController.recordClaim(bId, targetSku, price);
+
+  eventHub.broadcast({
+    type: 'ENTITY_MUTATED',
+    module: 'SALES',
+    entity: 'LIVE_CLAIM',
+    action: 'UPDATE',
+    documentRef: targetSku,
+    data: {
+      piece: claimResult.piece,
+      boothId: bId,
+      stationId: stId,
+      buyerHandle: cleanBuyer,
+      platform: cleanPlatform
+    }
+  });
+
+  eventHub.broadcast({
+    type: 'ENTITY_MUTATED',
+    module: 'SALES',
+    entity: 'LIVE_COMMENT',
+    action: 'CREATE',
+    documentRef: newComment.id,
+    data: newComment
+  });
+
+  return res.json({
+    success: true,
+    isClaim: true,
+    claimedSku: targetSku,
+    stationId: stId,
+    buyerHandle: cleanBuyer,
+    platform: cleanPlatform,
+    piece: claimResult.piece,
+    comment: newComment,
+    message: `✓ Concurrency Lock Acquired: Item ${targetSku} successfully claimed by ${stId} for ${cleanBuyer} via ${cleanPlatform}!`
+  });
+});
+
 
 // Reservation Timeout Engine: sweep expired reservations
 liveStreamingRouter.post('/sweep-reservations', (req, res) => {
