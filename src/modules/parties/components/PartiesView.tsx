@@ -440,21 +440,38 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       setTotalParties(res.total);
       setTotalPages(res.totalPages);
 
-      // Auto-select party if none selected or if selectedParty was deleted
-      if (safeData && safeData.length > 0) {
-        if (!selectedParty) {
-          selectParty(safeData[0]);
-        } else {
-          const stillThere = safeData.find((p: any) => p.id === selectedParty.id);
-          if (stillThere) setSelectedParty(stillThere);
+      // Auto-select party only once on mount or if no party is currently selected
+      setSelectedParty(prev => {
+        if (!prev) {
+          if (safeData && safeData.length > 0) {
+            const first = safeData[0];
+            PartiesService.getKhataLogs(first.id)
+              .then(logs => setKhataLogs(logs || []))
+              .catch(() => setKhataLogs([]));
+            return first;
+          }
+          return null;
         }
-      }
+        // If a party is already selected, only update if balance or key metadata changed
+        const stillThere = safeData.find((p: any) => p.id === prev.id);
+        if (stillThere) {
+          if (
+            stillThere.currentBalance !== prev.currentBalance ||
+            stillThere.totalEntriesCount !== prev.totalEntriesCount ||
+            stillThere.hasEntries !== prev.hasEntries ||
+            stillThere.name !== prev.name
+          ) {
+            return stillThere;
+          }
+        }
+        return prev;
+      });
     } catch (err: any) {
       console.error('Failed to load parties:', err);
     } finally {
       setIsLoadingParties(false);
     }
-  }, [page, pageSize, partySearch, filterType, selectedParty]);
+  }, [page, pageSize, partySearch, filterType]);
 
 
   // Helper to evaluate if a party can be safely deleted or must be preserved under GAAP/IFRS
@@ -514,11 +531,12 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   };
 
   const selectParty = async (party: Party) => {
+    if (!party) return;
     const memoryParty = parties.find(p => p.id === party.id || String((p as any).party_id) === String((party as any).party_id)) || party;
     setSelectedParty(memoryParty);
     try {
       const logs = await PartiesService.getKhataLogs(memoryParty.id);
-      setKhataLogs(logs);
+      setKhataLogs(logs || []);
     } catch (err: any) {
       console.error(err);
       setKhataLogs([]);
