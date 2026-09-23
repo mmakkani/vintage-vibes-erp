@@ -110,9 +110,9 @@ export const LiveSellingTerminal: React.FC<LiveSellingTerminalProps> = ({
   const [sessionCompletedCount, setSessionCompletedCount] = useState(3);
   const [sessionRevenueAed, setSessionRevenueAed] = useState(1450);
 
-  // Available pieces in stock
+  // Available pieces in stock (strictly IN_STOCK, unsold)
   const availablePieces = useMemo(() => {
-    return stockPieces.filter(p => !p.isSold && p.status !== 'SOLD');
+    return stockPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
   }, [stockPieces]);
 
   // Filtered available stock

@@ -128,7 +128,7 @@ class TikTokSocketService {
         if (extractedSku) {
           try {
             const piece = relationalStore.getInventoryPieces().find(p => p.barcode.toLowerCase() === extractedSku!.toLowerCase());
-            if (piece && !piece.isSold && piece.status !== 'SOLD') {
+            if (piece && !piece.isSold && piece.status === 'IN_STOCK') {
               console.log(`[TikTok Live Auto-Claim] Real buyer ${commenterHandle} claimed SKU ${extractedSku}!`);
               relationalStore.claimPieceAtomically({
                 barcode: extractedSku,

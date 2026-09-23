@@ -266,9 +266,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     courierNote: string;
   } | null>(null);
 
-  // Available stock pieces
+  // Available stock pieces (strictly IN_STOCK, unsold)
   const availablePieces = useMemo(() => {
-    return stockPieces.filter(p => !p.isSold && p.status !== 'SOLD');
+    return stockPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
   }, [stockPieces]);
 
   // Dynamic Browser Session Pairing URL for Dedicated Mobile Streamer App

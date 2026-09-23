@@ -88,6 +88,15 @@ export class SalesController {
     if (!piece) {
       return { success: false, error: `SKU "${barcode}" not found in inventory database.` };
     }
+    if (piece.isSold || piece.status === 'SOLD') {
+      return { success: false, error: `SKU "${barcode}" (${piece.brandName} ${piece.itemName}) has already been SOLD.` };
+    }
+    if (piece.status === 'RESERVED') {
+      return { success: false, error: `SKU "${barcode}" (${piece.brandName} ${piece.itemName}) is currently RESERVED in an active draft or cart.` };
+    }
+    if (piece.status !== 'IN_STOCK') {
+      return { success: false, error: `SKU "${barcode}" is not available for sale (status: ${piece.status}).` };
+    }
     return { success: true, piece };
   }
 
@@ -145,6 +154,12 @@ export class SalesController {
     if (piece) {
       if (piece.isSold || piece.status === 'SOLD') {
         return { success: false, error: `Garment Piece "${piece.barcode}" (${piece.brandName} ${piece.itemName}) has already been SOLD!` };
+      }
+      if (piece.status === 'RESERVED') {
+        return { success: false, error: `Garment Piece "${piece.barcode}" (${piece.brandName} ${piece.itemName}) is currently RESERVED in another draft or cart!` };
+      }
+      if (piece.status !== 'IN_STOCK') {
+        return { success: false, error: `Garment Piece "${piece.barcode}" is not available for sale (status: ${piece.status}).` };
       }
       const grams = piece.weightGrams || Math.round((piece.weightKg || 0.45) * 1000);
       const cogs = piece.calculatedCostPrice || piece.costPrice || (piece.costPerGram ? Number((grams * piece.costPerGram).toFixed(2)) : 18.5);

@@ -130,7 +130,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   const [scanFeedback, setScanFeedback] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   // Available pieces for manual search dropdown
-  const [allPieces, setAllPieces] = useState<PieceBreakdownItem[]>(stockPieces || []);
+  const [allPieces, setAllPieces] = useState<PieceBreakdownItem[]>((stockPieces || []).filter(p => !p.isSold && p.status === 'IN_STOCK'));
   const [parties, setParties] = useState<Party[]>(clients || []);
   const [selectedCustomer, setSelectedCustomer] = useState<Party | null>(null);
 
@@ -215,7 +215,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
   const loadInventoryAndParties = async () => {
     if (stockPieces && stockPieces.length > 0) {
-      setAllPieces(stockPieces);
+      setAllPieces(stockPieces.filter(p => !p.isSold && p.status === 'IN_STOCK'));
     }
     if (clients && clients.length > 0) {
       setParties(clients.filter(p => p.type === 'CLIENT'));
@@ -226,7 +226,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         fetch('/api/parties').then(r => r.ok ? r.json() : []).catch(() => [])
       ]);
       if (Array.isArray(piecesRes) && piecesRes.length > 0) {
-        setAllPieces(piecesRes);
+        setAllPieces(piecesRes.filter((p: any) => !p.isSold && p.status === 'IN_STOCK'));
       }
       if (Array.isArray(partiesRes) && partiesRes.length > 0) {
         setParties(partiesRes.filter(p => p.type === 'CLIENT'));
@@ -348,6 +348,24 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     if (piece.isSold || piece.status === 'SOLD') {
       setScanFeedback({
         text: `🚫 SKU "${code}" (${piece.brandName} ${piece.itemName}) has already been SOLD.`,
+        type: 'error'
+      });
+      setBarcodeInput('');
+      return;
+    }
+
+    if (piece.status === 'RESERVED') {
+      setScanFeedback({
+        text: `⚠️ SKU "${code}" (${piece.brandName} ${piece.itemName}) is currently RESERVED in an active draft or cart.`,
+        type: 'error'
+      });
+      setBarcodeInput('');
+      return;
+    }
+
+    if (piece.status !== 'IN_STOCK') {
+      setScanFeedback({
+        text: `⚠️ SKU "${code}" (${piece.brandName} ${piece.itemName}) is not available for sale (status: ${piece.status}).`,
         type: 'error'
       });
       setBarcodeInput('');

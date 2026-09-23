@@ -224,14 +224,17 @@ export class SalesService {
       throw new Error(error.message || 'Failed to record sales invoice');
     }
 
-    // Auto mark pieces as sold in batch (eliminates N+1 sequential loop)
+    // 3-State Lifecycle: If DRAFT, reserve pieces. If POSTED/PAID, mark SOLD.
     if (Array.isArray(inv.items) && inv.items.length > 0) {
       const pieceIds = inv.items.map((item: any) => item.pieceId || item.id || item.barcode).filter(Boolean);
       if (pieceIds.length > 0) {
+        const isDraft = (inv.status || 'PAID') === 'DRAFT';
+        const targetStatus = isDraft ? 'RESERVED' : 'SOLD';
+        const isSoldFlag = !isDraft;
         await Promise.all([
-          supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('id', pieceIds),
-          supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('barcode', pieceIds)
-        ]).catch(err => console.warn('[SalesService] Batch update sold pieces notice:', err));
+          supabase.from('inventory_pieces').update({ is_sold: isSoldFlag, status: targetStatus }).in('id', pieceIds),
+          supabase.from('inventory_pieces').update({ is_sold: isSoldFlag, status: targetStatus }).in('barcode', pieceIds)
+        ]).catch(err => console.warn('[SalesService] Batch update piece status notice:', err));
       }
     }
 
@@ -272,6 +275,24 @@ export class SalesService {
     if (error) {
       console.error('Supabase error on sales_invoices:', error);
       throw new Error(error.message || 'Failed to update sales invoice');
+    }
+
+    // 3-State Lifecycle transitions on invoice update
+    if (updates.status === 'POSTED' || updates.status === 'PAID') {
+      let itemsToMark: any = updates.items;
+      if (!itemsToMark) {
+        const { data: currentInv } = await supabase.from('sales_invoices').select('items').eq('id', id).maybeSingle();
+        itemsToMark = currentInv?.items;
+      }
+      if (Array.isArray(itemsToMark) && itemsToMark.length > 0) {
+        const pieceIds = itemsToMark.map((it: any) => it.pieceId || it.id || it.barcode).filter(Boolean);
+        if (pieceIds.length > 0) {
+          await Promise.all([
+            supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('id', pieceIds),
+            supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('barcode', pieceIds)
+          ]).catch(err => console.warn('[SalesService] Error marking items SOLD on invoice update:', err));
+        }
+      }
     }
   }
 

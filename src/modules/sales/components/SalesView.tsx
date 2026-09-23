@@ -195,7 +195,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
     try {
       const [clientsRes, stockRes] = await Promise.all([
         PartiesService.getParties().then(pts => pts.filter(p => p.type === 'CLIENT')).catch(() => []),
-        PurchaseService.getInventoryPieces().then(pcs => pcs.filter(p => !p.isSold)).catch(() => [])
+        PurchaseService.getInventoryPieces().then(pcs => pcs.filter(p => !p.isSold && p.status === 'IN_STOCK')).catch(() => [])
       ]);
 
       if (Array.isArray(clientsRes)) setClients(clientsRes);

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { Client } from 'pg';
 import { SalesController } from './sales.controller.ts';
 import { SalesService } from '../../services/salesService.ts';
+import { relationalStore } from '../../db/relationalStore.ts';
 import { executePessimisticClaim, executeReleaseLock } from '../liveStreaming/liveStreaming.routes.ts';
 
 export const salesRouter = Router();
@@ -122,38 +123,83 @@ salesRouter.post('/live-checkout', (req, res) => {
   return res.json(result);
 });
 
-salesRouter.post('/live-draft-invoice', (req, res) => {
+salesRouter.post('/live-draft-invoice', async (req, res) => {
   const result = SalesController.createDraftLiveInvoice(req.body);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
+  const barcode = (req.body.pieceBarcode || req.body.barcode || '').trim();
+  if (barcode) {
+    try {
+      const client = await getDbClient();
+      await client.query(`
+        UPDATE inventory_pieces
+        SET status = 'RESERVED',
+            is_sold = false,
+            locked_by_buyer = $1,
+            locked_by_booth = $2,
+            updated_at = NOW()
+        WHERE (LOWER(barcode) = LOWER($3) OR LOWER(sku) = LOWER($3) OR id = $3)
+          AND (status = 'IN_STOCK' OR status IS NULL OR status = 'AVAILABLE')
+          AND (is_sold = false OR is_sold IS NULL)
+      `, [req.body.buyerHandle || 'Live Stream Buyer', req.body.boothId || 'Booth 1', barcode]);
+      await client.end().catch(() => {});
+    } catch (_) {}
+  }
   return res.json(result);
 });
 
-salesRouter.put('/invoices/:id/draft', (req, res) => {
+const handleUpdateDraftInvoice = async (req: any, res: any) => {
   const { id } = req.params;
   const result = SalesController.updateDraftInvoice(id, req.body);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
+  try {
+    const client = await getDbClient();
+    if (req.body.additionalBarcode) {
+      await client.query(`
+        UPDATE inventory_pieces
+        SET status = 'RESERVED', is_sold = false, updated_at = NOW()
+        WHERE (LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id = $1)
+          AND (status = 'IN_STOCK' OR status IS NULL OR status = 'AVAILABLE')
+          AND (is_sold = false OR is_sold IS NULL)
+      `, [req.body.additionalBarcode.trim()]);
+    }
+    if (req.body.removeBarcode) {
+      await client.query(`
+        UPDATE inventory_pieces
+        SET status = 'IN_STOCK', is_sold = false, locked_by_buyer = NULL, locked_by_booth = NULL, updated_at = NOW()
+        WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id = $1
+      `, [req.body.removeBarcode.trim()]);
+    }
+    await client.end().catch(() => {});
+  } catch (_) {}
   return res.json(result);
-});
+};
 
-salesRouter.post('/invoices/:id/draft', (req, res) => {
-  const { id } = req.params;
-  const result = SalesController.updateDraftInvoice(id, req.body);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
-  }
-  return res.json(result);
-});
+salesRouter.put('/invoices/:id/draft', handleUpdateDraftInvoice);
+salesRouter.post('/invoices/:id/draft', handleUpdateDraftInvoice);
 
-salesRouter.post('/invoices/:id/cancel', (req, res) => {
+salesRouter.post('/invoices/:id/cancel', async (req, res) => {
   const { id } = req.params;
   const { cancelledBy } = req.body;
+  const inv = relationalStore.getSalesInvoices().find(i => i.id === id);
   const result = SalesController.cancelInvoice(id, cancelledBy);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
+  }
+  if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
+    const barcodes = inv.items.map(it => it.barcode).filter(Boolean);
+    try {
+      const client = await getDbClient();
+      await client.query(`
+        UPDATE inventory_pieces
+        SET status = 'IN_STOCK', is_sold = false, locked_by_buyer = NULL, locked_by_booth = NULL, updated_at = NOW()
+        WHERE barcode = ANY($1)
+      `, [barcodes]);
+      await client.end().catch(() => {});
+    } catch (_) {}
   }
   return res.json(result);
 });
@@ -180,30 +226,68 @@ salesRouter.post('/returns/process', (req, res) => {
   return res.json(result);
 });
 
-salesRouter.post('/invoices/:id/post', (req, res) => {
+salesRouter.post('/invoices/:id/post', async (req, res) => {
   const { id } = req.params;
   const { postedBy } = req.body;
+  const inv = relationalStore.getSalesInvoices().find(i => i.id === id);
   const result = SalesController.postInvoice(id, postedBy || 'Accounts Lead');
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
+  if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
+    const barcodes = inv.items.map(it => it.barcode).filter(Boolean);
+    try {
+      const client = await getDbClient();
+      await client.query(`
+        UPDATE inventory_pieces
+        SET status = 'SOLD', is_sold = true, updated_at = NOW()
+        WHERE barcode = ANY($1)
+      `, [barcodes]);
+      await client.end().catch(() => {});
+    } catch (_) {}
+  }
   return res.json(result);
 });
 
-salesRouter.post('/invoices/:id/unpost', (req, res) => {
+salesRouter.post('/invoices/:id/unpost', async (req, res) => {
   const { id } = req.params;
+  const inv = relationalStore.getSalesInvoices().find(i => i.id === id);
   const result = SalesController.unpostInvoice(id);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
+  }
+  if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
+    const barcodes = inv.items.map(it => it.barcode).filter(Boolean);
+    try {
+      const client = await getDbClient();
+      await client.query(`
+        UPDATE inventory_pieces
+        SET status = 'IN_STOCK', is_sold = false, updated_at = NOW()
+        WHERE barcode = ANY($1)
+      `, [barcodes]);
+      await client.end().catch(() => {});
+    } catch (_) {}
   }
   return res.json(result);
 });
 
 // Retail POS Counter Sale Endpoints
-salesRouter.post('/counter-sale/checkout', (req, res) => {
+salesRouter.post('/counter-sale/checkout', async (req, res) => {
   const result = SalesController.confirmCounterSale(req.body);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
+  }
+  if (Array.isArray(req.body.items) && req.body.items.length > 0) {
+    const barcodes = req.body.items.map((it: any) => it.barcode).filter(Boolean);
+    try {
+      const client = await getDbClient();
+      await client.query(`
+        UPDATE inventory_pieces
+        SET status = 'SOLD', is_sold = true, updated_at = NOW()
+        WHERE barcode = ANY($1)
+      `, [barcodes]);
+      await client.end().catch(() => {});
+    } catch (_) {}
   }
   return res.json(result);
 });
@@ -231,38 +315,97 @@ salesRouter.get('/custom-b2b/scan/:barcode', (req, res) => {
   return res.json(result);
 });
 
-salesRouter.post('/custom-b2b/save', (req, res) => {
+salesRouter.post('/custom-b2b/save', async (req, res) => {
   const result = SalesController.createOrUpdateCustomB2BInvoice(req.body);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
+  if (Array.isArray(req.body.items) && req.body.items.length > 0) {
+    const pieceBarcodes = req.body.items.filter((it: any) => !it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+    if (pieceBarcodes.length > 0) {
+      try {
+        const client = await getDbClient();
+        await client.query(`
+          UPDATE inventory_pieces
+          SET status = 'RESERVED', is_sold = false, updated_at = NOW()
+          WHERE barcode = ANY($1) AND (is_sold = false OR is_sold IS NULL)
+        `, [pieceBarcodes]);
+        await client.end().catch(() => {});
+      } catch (_) {}
+    }
+  }
   return res.json(result);
 });
 
-salesRouter.post('/custom-b2b/:id/post', (req, res) => {
+salesRouter.post('/custom-b2b/:id/post', async (req, res) => {
   const { id } = req.params;
   const { postedBy } = req.body;
+  const inv = relationalStore.getSalesInvoices().find(i => i.id === id);
   const result = SalesController.postCustomB2BInvoice(id, postedBy || 'Sales Lead');
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
-  return res.json(result);
-});
-
-salesRouter.post('/custom-b2b/:id/unpost', (req, res) => {
-  const { id } = req.params;
-  const result = SalesController.unpostCustomB2BInvoice(id);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
+    const pieceBarcodes = inv.items.filter(it => !it.isRawBale).map(it => it.barcode).filter(Boolean);
+    if (pieceBarcodes.length > 0) {
+      try {
+        const client = await getDbClient();
+        await client.query(`
+          UPDATE inventory_pieces
+          SET status = 'SOLD', is_sold = true, updated_at = NOW()
+          WHERE barcode = ANY($1)
+        `, [pieceBarcodes]);
+        await client.end().catch(() => {});
+      } catch (_) {}
+    }
   }
   return res.json(result);
 });
 
-salesRouter.delete('/custom-b2b/:id', (req, res) => {
+salesRouter.post('/custom-b2b/:id/unpost', async (req, res) => {
   const { id } = req.params;
+  const inv = relationalStore.getSalesInvoices().find(i => i.id === id);
+  const result = SalesController.unpostCustomB2BInvoice(id);
+  if (!result.success) {
+    return res.status(400).json({ error: result.error });
+  }
+  if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
+    const pieceBarcodes = inv.items.filter(it => !it.isRawBale).map(it => it.barcode).filter(Boolean);
+    if (pieceBarcodes.length > 0) {
+      try {
+        const client = await getDbClient();
+        await client.query(`
+          UPDATE inventory_pieces
+          SET status = 'IN_STOCK', is_sold = false, updated_at = NOW()
+          WHERE barcode = ANY($1)
+        `, [pieceBarcodes]);
+        await client.end().catch(() => {});
+      } catch (_) {}
+    }
+  }
+  return res.json(result);
+});
+
+salesRouter.delete('/custom-b2b/:id', async (req, res) => {
+  const { id } = req.params;
+  const inv = relationalStore.getSalesInvoices().find(i => i.id === id);
   const result = SalesController.deleteDraftCustomB2BInvoice(id);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
+  }
+  if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
+    const pieceBarcodes = inv.items.filter(it => !it.isRawBale).map(it => it.barcode).filter(Boolean);
+    if (pieceBarcodes.length > 0) {
+      try {
+        const client = await getDbClient();
+        await client.query(`
+          UPDATE inventory_pieces
+          SET status = 'IN_STOCK', is_sold = false, updated_at = NOW()
+          WHERE barcode = ANY($1)
+        `, [pieceBarcodes]);
+        await client.end().catch(() => {});
+      } catch (_) {}
+    }
   }
   return res.json(result);
 });
@@ -590,7 +733,7 @@ salesRouter.get('/grail-bounties/auto-match', async (req, res) => {
       SELECT barcode, brand_name, item_name, style, size_scanned, estimated_price, retail_price_aed, status
       FROM inventory_pieces 
       WHERE (is_sold = false OR is_sold IS NULL) 
-        AND (status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT')
+        AND status = 'IN_STOCK'
     `;
     const params: any[] = [];
     if (brand) {
@@ -704,7 +847,7 @@ salesRouter.post('/live/simulate-comment', async (req, res) => {
     try {
       const findRes = await client.query(
         `SELECT barcode FROM inventory_pieces 
-         WHERE (status = 'IN_STOCK' OR status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT') 
+         WHERE status = 'IN_STOCK' 
            AND (is_sold = false OR is_sold IS NULL) 
          ORDER BY created_at DESC LIMIT 1;`
       );

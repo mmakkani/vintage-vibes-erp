@@ -369,12 +369,22 @@ class RelationalStore {
           const weightGrams = Number(p.weightGrams || (p.weightKg ? Math.round(p.weightKg * 1000) : 500));
           const costPerGram = Number(p.costPerGram || 0.14);
           const calculatedCostPrice = Number(p.calculatedCostPrice || Number((weightGrams * costPerGram).toFixed(2)));
+          let normalizedStatus: 'IN_STOCK' | 'RESERVED' | 'SOLD' = 'IN_STOCK';
+          if (p.isSold || p.status === 'SOLD') {
+            normalizedStatus = 'SOLD';
+          } else if (p.status === 'RESERVED' || p.status === 'CLAIMED_PENDING') {
+            normalizedStatus = 'RESERVED';
+          } else {
+            normalizedStatus = 'IN_STOCK';
+          }
           return {
             ...p,
             weightGrams,
             costPerGram,
             calculatedCostPrice,
-            costPrice: Number(p.costPrice || calculatedCostPrice)
+            costPrice: Number(p.costPrice || calculatedCostPrice),
+            status: normalizedStatus,
+            isSold: normalizedStatus === 'SOLD'
           };
         });
       }
@@ -3169,9 +3179,11 @@ class RelationalStore {
     if (!filters) return pieces;
 
     if (filters.soldStatus === 'IN_STOCK') {
-      pieces = pieces.filter(p => !p.isSold && p.status !== 'SOLD');
+      pieces = pieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
     } else if (filters.soldStatus === 'SOLD') {
       pieces = pieces.filter(p => p.isSold || p.status === 'SOLD');
+    } else if (filters.soldStatus === 'RESERVED') {
+      pieces = pieces.filter(p => p.status === 'RESERVED');
     }
 
     if (filters.searchQuery) {
@@ -3217,7 +3229,7 @@ class RelationalStore {
   }
 
   public getDashboardKPIs() {
-    const inStockPieces = this.inventoryPieces.filter(p => !p.isSold);
+    const inStockPieces = this.inventoryPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
     const totalInventoryValue = inStockPieces.reduce((sum, p) => sum + (p.estimatedPrice || 0), 0);
     const totalInventoryCount = inStockPieces.length;
 
@@ -3570,7 +3582,9 @@ class RelationalStore {
 
     const piece = this.inventoryPieces.find(p => p.barcode.toLowerCase() === barcode.toLowerCase().trim());
     if (!piece) return { success: false, error: `Barcode ${barcode} not found in Inventory Room stock` };
-    if (piece.isSold) return { success: false, error: `Piece ${barcode} is already marked SOLD` };
+    if (piece.isSold || piece.status === 'SOLD') return { success: false, error: `Piece ${barcode} is already marked SOLD` };
+    if (piece.status === 'RESERVED') return { success: false, error: `Piece ${barcode} is currently RESERVED in another draft or cart` };
+    if (piece.status !== 'IN_STOCK') return { success: false, error: `Piece ${barcode} is not available for sale (status: ${piece.status})` };
 
     if (gatePass.items.some(i => i.barcode.toLowerCase() === barcode.toLowerCase().trim())) {
       return { success: false, error: `Barcode ${barcode} is already added to this gate pass` };
@@ -3590,6 +3604,7 @@ class RelationalStore {
     };
 
     gatePass.items.push(item);
+    piece.status = 'RESERVED';
     gatePass.totalPieces = gatePass.items.length;
     gatePass.totalWeight = Number(gatePass.items.reduce((sum, i) => sum + i.weightKg, 0).toFixed(2));
     gatePass.estimatedAmount = Number(gatePass.items.reduce((sum, i) => sum + i.netPrice, 0).toFixed(2));
@@ -3619,6 +3634,12 @@ class RelationalStore {
     if (gatePass.isConverted) return { success: false, error: 'Cannot unpost gate pass that has already been converted into a Sales Invoice' };
 
     gatePass.status = 'UNPOSTED';
+    gatePass.items.forEach(it => {
+      const piece = this.inventoryPieces.find(p => p.barcode.toLowerCase() === it.barcode.toLowerCase());
+      if (piece && !piece.isSold) {
+        piece.status = 'IN_STOCK';
+      }
+    });
 
     this.auditLogs.unshift(
       AuditEngine.createLogEntry('SALES', 'UNPOST', gatePass.gatePassNo, 'UNPOSTED', 'Sales Manager', `Unposted Sales Gate Pass ${gatePass.gatePassNo}`)
@@ -3780,7 +3801,7 @@ class RelationalStore {
       }
       // Check if locked by someone else and lock has not expired
       if (
-        piece.status === 'CLAIMED_PENDING' &&
+        (piece.status === 'RESERVED' || piece.status === 'CLAIMED_PENDING') &&
         piece.lockExpiresAt &&
         piece.lockExpiresAt > now &&
         piece.lockedByBuyer?.toLowerCase() !== params.buyerHandle.toLowerCase()
@@ -3796,7 +3817,7 @@ class RelationalStore {
       // Lock item with booth affinity & reservation timeout
       const lockSeconds = params.lockDurationSeconds || 180; // 3 minutes fast claim hold
       const timeoutMin = params.reservationTimeoutMinutes || 120; // 2 hours reservation
-      piece.status = 'CLAIMED_PENDING';
+      piece.status = 'RESERVED';
       piece.lockedByBuyer = params.buyerHandle;
       piece.lockedByBooth = params.boothId || 'booth-01';
       piece.lockedChannel = params.channel || 'Multistream Live';
@@ -4400,6 +4421,20 @@ class RelationalStore {
           };
         }
 
+        if (piece.status === 'RESERVED') {
+          return {
+            success: false,
+            error: `SKU "${piece.barcode}" (${piece.brandName} ${piece.itemName}) is currently RESERVED in an active draft or cart.`
+          };
+        }
+
+        if (piece.status !== 'IN_STOCK') {
+          return {
+            success: false,
+            error: `SKU "${piece.barcode}" (${piece.brandName} ${piece.itemName}) is not available for sale (status: ${piece.status}).`
+          };
+        }
+
         // Selling price override (preserves 0 for complimentary/promotional gift pieces)
         const sellingPrice = (item.unitPrice !== undefined && item.unitPrice !== null)
           ? Number(item.unitPrice)
@@ -4881,8 +4916,14 @@ class RelationalStore {
         if (!piece) {
           return { success: false, error: `Barcode ${barcodeToBundle} not found in inventory` };
         }
-        if (piece.isSold) {
+        if (piece.isSold || piece.status === 'SOLD') {
           return { success: false, error: `Piece ${barcodeToBundle} is already sold` };
+        }
+        if (piece.status === 'RESERVED') {
+          return { success: false, error: `Piece ${barcodeToBundle} is currently RESERVED in another draft or cart` };
+        }
+        if (piece.status !== 'IN_STOCK') {
+          return { success: false, error: `Piece ${barcodeToBundle} is not available for sale (status: ${piece.status})` };
         }
         if (invoice.items.some(it => it.barcode.toLowerCase() === barcodeToBundle.toLowerCase())) {
           return { success: false, error: `Barcode ${barcodeToBundle} already included in this invoice` };
@@ -4903,7 +4944,7 @@ class RelationalStore {
           lineTotal: itemPrice
         };
         invoice.items.push(newItem);
-        piece.status = 'CLAIMED_PENDING';
+        piece.status = 'RESERVED';
         piece.lockedByBuyer = invoice.customerName;
       }
 
@@ -4914,6 +4955,7 @@ class RelationalStore {
         const unlockedPiece = this.inventoryPieces.find(p => p.barcode.toLowerCase() === removeCode);
         if (unlockedPiece && !unlockedPiece.isSold) {
           unlockedPiece.status = 'IN_STOCK';
+          unlockedPiece.isSold = false;
           unlockedPiece.lockedByBuyer = undefined;
           unlockedPiece.lockedByBooth = undefined;
         }
@@ -4951,11 +4993,13 @@ class RelationalStore {
       invoice.status = 'CANCELLED';
       invoice.items.forEach(it => {
         const piece = this.inventoryPieces.find(p => p.barcode === it.barcode);
-        if (piece && !piece.isSold) {
+        if (piece) {
+          piece.isSold = false;
           piece.status = 'IN_STOCK';
           piece.lockedByBuyer = undefined;
           piece.lockedByBooth = undefined;
           piece.lockExpiresAt = undefined;
+          piece.reservedUntil = undefined;
         }
       });
 
@@ -5200,6 +5244,17 @@ class RelationalStore {
           return { success: false, error: 'Cannot edit a POSTED invoice. Please UNPOST it first.' };
         }
         Object.assign(invoice, invoiceData, { isB2BCustomSale: true });
+      }
+
+      if (invoice.status === 'DRAFT' && Array.isArray(invoice.items)) {
+        invoice.items.forEach(it => {
+          if (!it.isRawBale) {
+            const piece = this.inventoryPieces.find(p => p.barcode.toLowerCase() === it.barcode.toLowerCase());
+            if (piece && !piece.isSold) {
+              piece.status = 'RESERVED';
+            }
+          }
+        });
       }
 
       return { success: true, invoice };
@@ -5486,9 +5541,13 @@ class RelationalStore {
       const voucher = this.vouchers.find(v => v.documentRef === invoice.invoiceNo || v.referenceNo === invoice.invoiceNo || v.id === `vch-b2b-${invoice.id}`);
       if (voucher) {
         this.vouchers = this.vouchers.filter(v => v.id !== voucher.id);
-        this.voucherEntries = this.voucherEntries.filter(e => e.voucherId !== voucher.id);
+        if ((this as any).voucherEntries) {
+          (this as any).voucherEntries = (this as any).voucherEntries.filter((e: any) => e.voucherId !== voucher.id);
+        }
       }
-      this.journalEntries = this.journalEntries.filter(j => j.reference !== invoice.invoiceNo && (!voucher || j.voucherId !== voucher.id));
+      if ((this as any).journalEntries) {
+        (this as any).journalEntries = (this as any).journalEntries.filter((j: any) => j.reference !== invoice.invoiceNo && (!voucher || j.voucherId !== voucher.id));
+      }
 
       this.auditLogs.unshift(
         AuditEngine.createLogEntry('SALES', 'UNPOST', invoice.invoiceNo, 'DRAFT', 'Accounts Lead', `Unposted B2B Wholesale Invoice ${invoice.invoiceNo}, restored raw bales and garments to stock, and deleted financial impact`)
@@ -5505,6 +5564,18 @@ class RelationalStore {
       const invoice = this.salesInvoices[idx];
       if (invoice.status === 'POSTED') {
         return { success: false, error: 'Cannot delete a POSTED invoice. Please UNPOST it first.' };
+      }
+
+      if (Array.isArray(invoice.items)) {
+        invoice.items.forEach(item => {
+          if (!item.isRawBale) {
+            const piece = this.inventoryPieces.find(p => p.barcode.toLowerCase() === item.barcode.toLowerCase());
+            if (piece && !piece.isSold) {
+              piece.status = 'IN_STOCK';
+              piece.isSold = false;
+            }
+          }
+        });
       }
 
       this.salesInvoices.splice(idx, 1);
@@ -5912,7 +5983,8 @@ class RelationalStore {
 
         return { success: true, invoice, voucher };
       } else {
-        piece.status = 'CLAIMED_PENDING';
+        piece.status = 'RESERVED';
+        piece.isSold = false;
         piece.lockedByBuyer = customer.name;
         piece.lockedByBooth = params.boothId || 'booth-01';
         this.salesInvoices.unshift(invoice);

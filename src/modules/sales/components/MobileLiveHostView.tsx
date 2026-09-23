@@ -240,7 +240,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       if (piecesRes.ok) {
         const pieces = await piecesRes.json();
         if (Array.isArray(pieces)) {
-          const available = pieces.filter((p: PieceBreakdownItem) => !p.isSold && p.status !== 'SOLD');
+          const available = pieces.filter((p: PieceBreakdownItem) => !p.isSold && p.status === 'IN_STOCK');
           setStockPieces(available);
           if (!selectedPiece && available.length > 0) {
             setSelectedPiece(available[0]);

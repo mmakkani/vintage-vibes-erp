@@ -47,6 +47,14 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
 
     const formatted = await withDb(async (client) => {
       // Expire stale cart reservations
+      // Deactivate expired cart reservations and restore pieces to IN_STOCK if not sold
+      await client.query(`
+        UPDATE inventory_pieces
+        SET status = 'IN_STOCK', reserved_until = NULL, updated_at = NOW()
+        WHERE barcode IN (
+          SELECT barcode FROM cart_reservations WHERE is_active = true AND expires_at <= NOW()
+        ) AND status = 'RESERVED' AND (is_sold = false OR is_sold IS NULL);
+      `).catch(() => {});
       await client.query(`
         UPDATE cart_reservations 
         SET is_active = false 
@@ -65,7 +73,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         LEFT JOIN cart_reservations r 
           ON p.barcode = r.barcode AND r.is_active = true AND r.expires_at > NOW()
         WHERE p.is_sold = false 
-          AND (p.status IS NULL OR p.status NOT IN ('SOLD', 'WIP_LAUNDRY'))
+          AND p.status = 'IN_STOCK'
           AND (p.ready_for_ecommerce IS NULL OR p.ready_for_ecommerce = true)
       `;
 
@@ -223,8 +231,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
       .from('inventory_pieces')
       .select('*')
       .eq('is_sold', false)
-      .neq('status', 'SOLD')
-      .neq('status', 'WIP_LAUNDRY')
+      .eq('status', 'IN_STOCK')
       .or('ready_for_ecommerce.is.null,ready_for_ecommerce.eq.true');
 
     if (collectionId && collectionId !== 'ALL') {
@@ -360,6 +367,16 @@ ecommerceRouter.post('/cart/reserve', async (req: Request, res: Response) => {
         VALUES ($1, $2, $3, $4, $5, NOW(), NOW() + INTERVAL '10 minutes', true)
       `, [id, barcode, sessionId, pieceTitle || 'Vintage Piece', Number(priceAed || 0)]);
 
+      // Atomically update inventory_pieces to RESERVED
+      await client.query(`
+        UPDATE inventory_pieces
+        SET status = 'RESERVED',
+            is_sold = false,
+            reserved_until = EXTRACT(EPOCH FROM (NOW() + INTERVAL '10 minutes')) * 1000,
+            updated_at = NOW()
+        WHERE barcode = $1 AND (is_sold = false OR is_sold IS NULL)
+      `, [barcode]);
+
       const expiryTime = new Date(Date.now() + 10 * 60 * 1000).toISOString();
       return {
         status: 200,
@@ -396,6 +413,20 @@ ecommerceRouter.post('/cart/release', async (req: Request, res: Response) => {
         SET is_active = false 
         WHERE barcode = $1 ${sessionId ? 'AND session_id = $2' : ''}
       `, sessionId ? [barcode, sessionId] : [barcode]);
+
+      // If no other active reservations remain, restore piece to IN_STOCK if not sold
+      const remainingCheck = await client.query(`
+        SELECT id FROM cart_reservations
+        WHERE barcode = $1 AND is_active = true AND expires_at > NOW()
+      `, [barcode]);
+
+      if (remainingCheck.rows.length === 0) {
+        await client.query(`
+          UPDATE inventory_pieces
+          SET status = 'IN_STOCK', is_sold = false, reserved_until = NULL, updated_at = NOW()
+          WHERE barcode = $1 AND status = 'RESERVED' AND (is_sold = false OR is_sold IS NULL)
+        `, [barcode]);
+      }
     });
 
     clearProductsCache();
@@ -493,10 +524,10 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           isOnlinePaid ? `Online Payment Ref: ${computedPaymentRef}` : `Cash on Delivery (Collect AED ${totalAmount.toFixed(2)})`
         ]);
 
-        // 5. Atomically lock pieces: status = 'CLAIMED_PENDING', is_sold = true
+        // 5. Atomically reserve pieces for Draft invoice: status = 'RESERVED', is_sold = false
         await client.query(`
           UPDATE inventory_pieces 
-          SET is_sold = true, status = 'CLAIMED_PENDING' 
+          SET is_sold = false, status = 'RESERVED', updated_at = NOW() 
           WHERE barcode = ANY($1)
         `, [barcodes]);
 
@@ -706,7 +737,7 @@ ecommerceRouter.get('/bounties/auto-match', async (req: Request, res: Response) 
       SELECT barcode, brand_name, item_name, style, size_scanned, estimated_price, retail_price_aed, status
       FROM inventory_pieces 
       WHERE (is_sold = false OR is_sold IS NULL) 
-        AND (status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT')
+        AND status = 'IN_STOCK'
     `;
     const params: any[] = [];
     if (brand) {

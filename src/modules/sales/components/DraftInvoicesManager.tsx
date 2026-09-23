@@ -170,9 +170,9 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
     });
   }, [draftInvoices, searchTerm, boothFilter, channelFilter]);
 
-  // Available pieces for bundling / new claims (not sold, not claimed)
+  // Available pieces for bundling / new claims (not sold, strictly IN_STOCK)
   const availableStock = useMemo(() => {
-    return stockPieces.filter(p => !p.isSold && p.status !== 'CLAIMED_PENDING');
+    return stockPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
   }, [stockPieces]);
 
   // Expiry detection

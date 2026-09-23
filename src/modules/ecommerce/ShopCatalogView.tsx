@@ -217,7 +217,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
           return;
         } else if (Array.isArray(payload)) {
           // Fallback array handling
-          const filtered = payload.filter(p => !p.isSold && p.status !== 'SOLD' && p.status !== 'WIP_LAUNDRY' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
+          const filtered = payload.filter(p => !p.isSold && p.status === 'IN_STOCK' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
           setTotalItems(filtered.length);
           const computedTotalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
           setTotalPages(computedTotalPages);
@@ -232,8 +232,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
         .from('inventory_pieces')
         .select('*', { count: 'exact' })
         .eq('is_sold', false)
-        .neq('status', 'SOLD')
-        .neq('status', 'WIP_LAUNDRY')
+        .eq('status', 'IN_STOCK')
         .or('ready_for_ecommerce.is.null,ready_for_ecommerce.eq.true');
 
       if (selectedCollectionId && selectedCollectionId !== 'ALL') {
