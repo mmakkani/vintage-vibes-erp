@@ -113,13 +113,25 @@ export class DashboardService {
           .gte('invoice_date', firstDayOfMonth)
           .lte('invoice_date', lastDayOfMonth),
 
-        // 6. Secondary revenue journal entries strictly on Pillar 4 (Revenue accounts)
-        supabase
-          .from('journal_entries')
-          .select('credit, created_at, account_code')
-          .like('account_code', '4%')
-          .gte('created_at', `${firstDayOfMonth}T00:00:00.000Z`)
-          .lte('created_at', `${lastDayOfMonth}T23:59:59.999Z`),
+        // 6. Secondary revenue entries strictly on Pillar 4 (Revenue accounts) via general_ledger
+        (async () => {
+          try {
+            const res = await supabase
+              .from('general_ledger')
+              .select('credit, created_at, account_code')
+              .like('account_code', '4%')
+              .gte('created_at', `${firstDayOfMonth}T00:00:00.000Z`)
+              .lte('created_at', `${lastDayOfMonth}T23:59:59.999Z`);
+            if (res.error) {
+              console.warn('[dashboardService] general_ledger query notice:', res.error.message);
+              return { data: [] };
+            }
+            return res;
+          } catch (err: any) {
+            console.warn('[dashboardService] general_ledger query catch:', err?.message);
+            return { data: [] };
+          }
+        })(),
 
         // 7. Pending action: Unposted vouchers
         supabase
@@ -188,21 +200,26 @@ export class DashboardService {
 
       // Calculate Month Revenue: Strictly from POSTED sales invoices first
       let monthRevenueAED = 0;
-      if (Array.isArray(salesRes.data) && salesRes.data.length > 0) {
-        monthRevenueAED = salesRes.data.reduce(
-          (sum, inv: any) => {
-            const val = Number(inv.total_amount ?? 0);
-            return sum + (!isNaN(val) && isFinite(val) ? val : 0);
-          },
-          0
-        );
-      } else if (Array.isArray(revenueRes.data) && revenueRes.data.length > 0) {
-        for (const entry of revenueRes.data) {
-          const credit = Number(entry.credit ?? 0);
-          if (!isNaN(credit) && isFinite(credit)) {
-            monthRevenueAED += credit;
+      try {
+        if (Array.isArray(salesRes?.data) && salesRes.data.length > 0) {
+          monthRevenueAED = salesRes.data.reduce(
+            (sum, inv: any) => {
+              const val = Number(inv.total_amount ?? 0);
+              return sum + (!isNaN(val) && isFinite(val) ? val : 0);
+            },
+            0
+          );
+        } else if (Array.isArray(revenueRes?.data) && revenueRes.data.length > 0) {
+          for (const entry of revenueRes.data) {
+            const credit = Number(entry.credit ?? 0);
+            if (!isNaN(credit) && isFinite(credit)) {
+              monthRevenueAED += credit;
+            }
           }
         }
+      } catch (revErr) {
+        console.warn('[dashboardService] month revenue calculation notice:', revErr);
+        monthRevenueAED = 0;
       }
 
       const netWorkingCapitalAED = totalInventoryValueAED + receivablesKhataAED - payablesKhataAED;

@@ -28,6 +28,10 @@ export async function executeClientFallback<T = any>(
   // Direct Supabase Query Dispatch for GET requests
   if (method === 'GET') {
     try {
+      if (url.includes('/dashboard-kpis')) {
+        const { DashboardService } = await import('../services/dashboardService.ts');
+        return (await DashboardService.getLiveKPIs()) as any;
+      }
       if (url.includes('/company-profile') || url.includes('/setup/company')) {
         return (await CompanyProfileService.getCompanyProfile()) as any;
       }

@@ -1130,12 +1130,13 @@ setupRouter.get('/dashboard-kpis', async (req, res) => {
         try {
           const revenueRes = await client.query(`
             SELECT COALESCE(SUM(COALESCE(credit, 0)), 0) AS month_revenue
-            FROM journal_entries
+            FROM general_ledger
             WHERE account_code LIKE '4%' AND created_at >= $1::timestamptz AND created_at <= $2::timestamptz;
           `, [startOfMonth, endOfMonth]);
           monthRevenue = Number(revenueRes.rows[0]?.month_revenue || 0);
         } catch (e: any) {
-          console.warn('[dashboard-kpis] journal_entries query notice:', e?.message);
+          console.warn('[dashboard-kpis] general_ledger query notice:', e?.message);
+          monthRevenue = 0;
         }
       }
 

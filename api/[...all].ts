@@ -6182,6 +6182,126 @@ RULES FOR YOUR RESPONSE:
       return res.status(200).json(defaultCurrencies);
     }
 
+    // Dashboard KPIs Live Aggregation
+    if (pathname.includes('/setup/dashboard-kpis') || pathname.includes('/dashboard-kpis')) {
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+      const startDateStr = startOfMonth.slice(0, 10);
+      const endDateStr = endOfMonth.slice(0, 10);
+
+      let monthRevenue = 0;
+      let totalInventoryValue = 0;
+      let totalBalesInStock = 0;
+      let totalSortedPcs = 0;
+      let payablesKhata = 0;
+      let receivablesKhata = 0;
+      let unpostedVouchersCount = 0;
+      let awaitingGatePassesCount = 0;
+
+      try {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const payRes = await client.query(`
+              SELECT COALESCE(SUM(ABS(COALESCE(current_balance, 0))), 0) AS total_payables
+              FROM chart_of_accounts
+              WHERE parent_code IN ('2110-00', '2120-00') OR code LIKE '2110-%' OR code LIKE '2120-%';
+            `);
+            payablesKhata = Number(payRes.rows[0]?.total_payables || 0);
+
+            const recRes = await client.query(`
+              SELECT COALESCE(SUM(ABS(COALESCE(current_balance, 0))), 0) AS total_receivables
+              FROM chart_of_accounts
+              WHERE parent_code = '1130-00' OR code LIKE '1130-%';
+            `);
+            receivablesKhata = Number(recRes.rows[0]?.total_receivables || 0);
+
+            const balesRes = await client.query(`
+              SELECT COUNT(*) as total_bales, COALESCE(SUM(COALESCE(total_bale_cost, cost_price, 0)), 0) AS total_bale_value
+              FROM inward_gate_passes WHERE status != 'FULLY_SORTED' OR status IS NULL;
+            `);
+            const unopenedBalesValue = Number(balesRes.rows[0]?.total_bale_value || 0);
+            totalBalesInStock = Number(balesRes.rows[0]?.total_bales || 0);
+
+            const piecesRes = await client.query(`
+              SELECT COUNT(*) as total_pieces, COALESCE(SUM(COALESCE(cost_price, estimated_price, retail_price_aed, 0)), 0) AS total_piece_value
+              FROM inventory_pieces WHERE is_sold = false OR is_sold IS NULL;
+            `);
+            const sortedPiecesValue = Number(piecesRes.rows[0]?.total_piece_value || 0);
+            totalSortedPcs = Number(piecesRes.rows[0]?.total_pieces || 0);
+            totalInventoryValue = unopenedBalesValue + sortedPiecesValue;
+
+            const salesRes = await client.query(`
+              SELECT COALESCE(SUM(COALESCE(total_amount, 0)), 0) AS sales_revenue
+              FROM sales_invoices WHERE status = 'POSTED' AND invoice_date >= $1 AND invoice_date <= $2;
+            `, [startDateStr, endDateStr]);
+            monthRevenue = Number(salesRes.rows[0]?.sales_revenue || 0);
+
+            if (monthRevenue === 0) {
+              try {
+                const revRes = await client.query(`
+                  SELECT COALESCE(SUM(COALESCE(credit, 0)), 0) AS month_revenue
+                  FROM general_ledger
+                  WHERE account_code LIKE '4%' AND created_at >= $1::timestamptz AND created_at <= $2::timestamptz;
+                `, [startOfMonth, endOfMonth]);
+                monthRevenue = Number(revRes.rows[0]?.month_revenue || 0);
+              } catch (_) {
+                monthRevenue = 0;
+              }
+            }
+
+            const pvRes = await client.query(`SELECT COUNT(*) as cnt FROM financial_vouchers WHERE status = 'DRAFT';`);
+            unpostedVouchersCount = Number(pvRes.rows[0]?.cnt || 0);
+
+            const gpRes = await client.query(`SELECT COUNT(*) as cnt FROM inward_gate_passes WHERE status = 'DRAFT' OR status = 'UNOPENED';`);
+            awaitingGatePassesCount = Number(gpRes.rows[0]?.cnt || 0);
+          } finally {
+            try { await client.end(); } catch (_) {}
+          }
+        }
+      } catch (e: any) {
+        console.warn('[dashboard-kpis] client query catch:', e?.message);
+      }
+
+      // Supabase fallback if PG client yielded 0 or failed
+      if (monthRevenue === 0) {
+        try {
+          const revRes = await supabaseAdmin
+            .from('general_ledger')
+            .select('credit, created_at, account_code')
+            .like('account_code', '4%')
+            .gte('created_at', `${startDateStr}T00:00:00.000Z`)
+            .lte('created_at', `${endDateStr}T23:59:59.999Z`);
+          if (Array.isArray(revRes.data) && revRes.data.length > 0) {
+            monthRevenue = revRes.data.reduce((sum: number, r: any) => sum + (Number(r.credit) || 0), 0);
+          }
+        } catch (_) {
+          monthRevenue = 0;
+        }
+      }
+
+      return res.status(200).json({
+        totalInventoryValue,
+        totalInventoryCount: totalSortedPcs,
+        totalBalesInStock,
+        totalSortedPcs,
+        monthRevenue,
+        currentMonthRevenue: monthRevenue,
+        currentMonthSubtotal: monthRevenue,
+        currentMonthVat: 0,
+        openReceivables: receivablesKhata,
+        receivablesKhataAED: receivablesKhata,
+        payablesKhataAED: payablesKhata,
+        totalPurchasesAmount: payablesKhata,
+        netWorkingCapitalAED: totalInventoryValue + receivablesKhata - payablesKhata,
+        unpostedVouchersCount,
+        awaitingGatePassesCount,
+        pendingActionTotal: unpostedVouchersCount + awaitingGatePassesCount,
+        activeStaffCount: 1
+      });
+    }
+
     // Payment Gateway
     if (pathname.includes('/payments/test-credentials')) {
       return res.status(200).json({
