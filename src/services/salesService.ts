@@ -324,21 +324,33 @@ export class SalesService {
 
     // 2. Cascade delete all financial vouchers, journal entries, and ledger rows (Strict Hard Delete - No Reversals)
     try {
-      await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo, {
+      await FinanceService.cascadeDeleteVouchersForDocument(cleanId, {
         invoiceId: cleanId,
         partyId: customerId,
         docType: 'SALES'
       });
+      if (invoiceNo && invoiceNo !== cleanId) {
+        await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo, {
+          invoiceId: cleanId,
+          partyId: customerId,
+          docType: 'SALES'
+        });
+      }
     } catch (vchErr) {
       console.warn('[SalesService] Notice cascading vouchers on sales invoice unpost:', vchErr);
     }
 
-    // 3. Cascade delete party khata logs for this invoice
+    // 3. Cascade delete party khata logs for this invoice (Strict Hard Delete - No Reversals)
     try {
-      await supabase
-        .from('party_khata_logs')
-        .delete()
-        .or(`reference.ilike.%${invoiceNo}%,notes.ilike.%${invoiceNo}%`);
+      const delTokens = [cleanId];
+      if (invoiceNo) delTokens.push(invoiceNo);
+
+      for (const tok of delTokens) {
+        await supabase
+          .from('party_khata_logs')
+          .delete()
+          .or(`reference.eq.${tok},reference.ilike.%${tok}%,notes.ilike.%${tok}%`);
+      }
     } catch (khataErr) {
       console.warn('[SalesService] Notice deleting khata logs on sales invoice unpost:', khataErr);
     }

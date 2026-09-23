@@ -281,7 +281,15 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const [coaSearchText, setCoaSearchText] = useState<string>('');
 
   // General Ledger Unified Selector
-  const [glSelectedTarget, setGlSelectedTarget] = useState<string>('ALL');
+  const [glSelectedTarget, setGlSelectedTarget] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const p = new URLSearchParams(window.location.search).get('targetAccount');
+        if (p) return p;
+      } catch (_) {}
+    }
+    return 'ALL';
+  });
   const [glSearchText, setGlSearchText] = useState<string>('');
   const [glDateFrom, setGlDateFrom] = useState<string>('2026-01-01');
   const [glDateTo, setGlDateTo] = useState<string>('2026-12-31');
@@ -456,11 +464,30 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   ) => {
     setIsLoadingLedgers(true);
     try {
+      const rawTarget = String(targetAccount || '').trim();
+      let filterAccId: string | undefined = undefined;
+      let filterPartyId: string | undefined = undefined;
+
+      if (rawTarget && rawTarget !== 'ALL') {
+        if (rawTarget.startsWith('ACC:')) {
+          filterAccId = rawTarget.replace('ACC:', '').trim();
+        } else if (rawTarget.startsWith('PTY:')) {
+          filterPartyId = rawTarget.replace('PTY:', '').trim();
+        } else {
+          const isParty = Array.isArray(parties) && parties.some(p => p.id === rawTarget);
+          if (isParty) {
+            filterPartyId = rawTarget;
+          } else {
+            filterAccId = rawTarget;
+          }
+        }
+      }
+
       const res = await FinanceService.getGeneralLedgerEntriesPaginated({
         page: targetPage,
         pageSize: targetPageSize,
-        accountId: targetAccount.startsWith('ACC:') ? targetAccount.replace('ACC:', '') : undefined,
-        partyId: targetAccount.startsWith('PTY:') ? targetAccount.replace('PTY:', '') : undefined,
+        accountId: filterAccId,
+        partyId: filterPartyId,
         startDate: targetFrom || undefined,
         endDate: targetTo || undefined,
         search: targetSearch || undefined

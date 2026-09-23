@@ -1812,46 +1812,31 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 </div>
               </div>
 
-              {/* Transactions Table */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-[11px] border-collapse">
-                  <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
-                    <tr>
-                      <th className="px-3 py-2">Date</th>
-                      <th className="px-3 py-2">Doc Ref</th>
-                      <th className="px-3 py-2">Description</th>
-                      <th className="px-3 py-2 text-right">Debit (Dr)</th>
-                      <th className="px-3 py-2 text-right">Credit (Cr)</th>
-                      <th className="px-3 py-2 text-right">Balance</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 font-mono">
-                    {khataLogs.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="px-3 py-6 text-center text-slate-400 font-sans text-xs">
-                          No transaction history recorded yet for this party.
-                        </td>
-                      </tr>
-                    ) : (
-                      khataLogs.map(log => (
-                        <tr key={log.id} className="hover:bg-blue-50/40">
-                          <td className="px-3 py-1.5 text-slate-600">{log.date}</td>
-                          <td className="px-3 py-1.5 font-bold text-blue-900">{log.docRef}</td>
-                          <td className="px-3 py-1.5 font-sans text-slate-700 max-w-xs truncate">{log.description}</td>
-                          <td className="px-3 py-1.5 text-right font-semibold text-emerald-700">
-                            {Number(log.debit || 0) > 0 ? `AED ${Number(log.debit || 0).toLocaleString()}` : '-'}
-                          </td>
-                          <td className="px-3 py-1.5 text-right font-semibold text-rose-700">
-                            {Number(log.credit || 0) > 0 ? `AED ${Number(log.credit || 0).toLocaleString()}` : '-'}
-                          </td>
-                          <td className="px-3 py-1.5 text-right font-bold text-slate-900">
-                            AED {Number(log.balance ?? (log as any).running_balance ?? (log as any).runningBalance ?? 0).toLocaleString()}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+              {/* General Ledger Direct View Notice */}
+              <div className="p-4 rounded-lg bg-blue-50/70 border border-blue-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                <div>
+                  <div className="font-bold text-blue-950 flex items-center gap-1.5">
+                    <BookOpen className="w-4 h-4 text-blue-700" />
+                    Consolidated General Ledger
+                  </div>
+                  <p className="text-slate-600 text-[11px] mt-0.5">
+                    Transaction postings, vouchers, and statements of account for this party are maintained strictly in the Finance module.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('tab', 'finance');
+                    url.searchParams.set('financeSubTab', 'ledger');
+                    url.searchParams.set('targetAccount', `PTY:${selectedParty.id}`);
+                    window.location.href = url.toString();
+                  }}
+                  className="px-3 py-1.5 rounded-md font-bold text-xs bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors shrink-0 cursor-pointer flex items-center gap-1.5"
+                >
+                  <ArrowRight className="w-3.5 h-3.5" />
+                  Open in General Ledger
+                </button>
               </div>
             </div>
           ) : (

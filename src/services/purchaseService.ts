@@ -964,7 +964,12 @@ export class PurchaseService {
     const supplierName = invRow.supplier_name || 'Trade Supplier';
 
     // 1. Delete financial vouchers, journal entries, and ledger rows (Strict Hard Delete - No Reversals)
-    if (invoiceNo) {
+    await FinanceService.cascadeDeleteVouchersForDocument(cleanInvId, {
+      invoiceId: cleanInvId,
+      partyId: invRow.supplier_id,
+      docType: 'PURCHASE'
+    });
+    if (invoiceNo && invoiceNo !== cleanInvId) {
       await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo, {
         invoiceId: cleanInvId,
         partyId: invRow.supplier_id,
@@ -981,11 +986,14 @@ export class PurchaseService {
         if (pty?.id) partyId = pty.id;
       }
 
-      if (invoiceNo) {
+      const delTokens = [cleanInvId];
+      if (invoiceNo) delTokens.push(invoiceNo);
+
+      for (const tok of delTokens) {
         await supabase
           .from('party_khata_logs')
           .delete()
-          .or(`reference.ilike.%${invoiceNo}%,notes.ilike.%${invoiceNo}%`);
+          .or(`reference.eq.${tok},reference.ilike.%${tok}%,notes.ilike.%${tok}%`);
       }
 
       if (partyId) {

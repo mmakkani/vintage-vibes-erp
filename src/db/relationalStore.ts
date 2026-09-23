@@ -2465,24 +2465,21 @@ class RelationalStore {
     const check = PurchaseEngine.validateInvoiceDeletion(invoice, relatedBales);
     if (!check.canDelete) return { success: false, error: check.error };
 
-    // If was POSTED, reverse supplier balance
+    // If was POSTED, remove AP Khata logs and recalculate supplier balance (Strict Hard Delete - No Reversals)
     if (invoice.status === 'POSTED') {
-      const totalAed = invoice.currency === 'AED' ? invoice.totalAmount : Number((invoice.totalAmount * (invoice.exchangeRate || 1.0)).toFixed(2));
       const supplier = this.parties.find(p => p.id === invoice.supplierId) ||
                        this.parties.find(p => p.name.toLowerCase() === (invoice.supplierName || '').toLowerCase());
       if (supplier) {
-        supplier.currentBalance = Number((supplier.currentBalance + totalAed).toFixed(2));
-        this.partyKhataLogs.push({
-          id: `pkl-rev-${invoice.id}-${Date.now()}`,
-          partyId: supplier.id,
-          date: new Date().toISOString().slice(0, 10),
-          docType: 'JV',
-          docRef: `DEL-${invoice.invoiceNo}`,
-          debit: totalAed,
-          credit: 0,
-          balance: supplier.currentBalance,
-          description: `Reversal on deletion of invoice ${invoice.invoiceNo}`
-        });
+        this.partyKhataLogs = this.partyKhataLogs.filter(
+          l => l.docRef !== invoice.invoiceNo &&
+               l.docRef !== `PINV-${invoice.invoiceNo}` &&
+               !l.docRef?.includes(invoice.invoiceNo) &&
+               !l.description?.includes(invoice.invoiceNo)
+        );
+        const remLogs = this.partyKhataLogs.filter(l => l.partyId === supplier.id);
+        let newBal = supplier.openingBalance || 0;
+        remLogs.forEach(l => { newBal = newBal + Number(l.credit || 0) - Number(l.debit || 0); });
+        supplier.currentBalance = Math.max(0, Number(newBal.toFixed(2)));
       }
     }
 
@@ -2629,23 +2626,20 @@ class RelationalStore {
       this.unpostVoucher(existingVoucher.id);
     }
 
-    // Reverse supplier AP in base currency AED
-    const totalAed = invoice.currency === 'AED' ? invoice.totalAmount : Number((invoice.totalAmount * (invoice.exchangeRate || 1.0)).toFixed(2));
+    // Remove supplier AP khata entries and recalculate balance (Strict Hard Delete - No Reversals)
     const supplier = this.parties.find(p => p.id === invoice.supplierId) ||
                      this.parties.find(p => p.name.toLowerCase() === (invoice.supplierName || '').toLowerCase());
     if (supplier) {
-      supplier.currentBalance = Number((supplier.currentBalance + totalAed).toFixed(2));
-      this.partyKhataLogs.push({
-        id: `pkl-rev-${invoice.id}-${Date.now()}`,
-        partyId: supplier.id,
-        date: new Date().toISOString().slice(0, 10),
-        docType: 'JV',
-        docRef: `UNPOST-${invoice.invoiceNo}`,
-        debit: totalAed,
-        credit: 0,
-        balance: supplier.currentBalance,
-        description: `Unposted purchase invoice ${invoice.invoiceNo} reversal`
-      });
+      this.partyKhataLogs = this.partyKhataLogs.filter(
+        l => l.docRef !== invoice.invoiceNo &&
+             l.docRef !== `PINV-${invoice.invoiceNo}` &&
+             !l.docRef?.includes(invoice.invoiceNo) &&
+             !l.description?.includes(invoice.invoiceNo)
+      );
+      const remLogs = this.partyKhataLogs.filter(l => l.partyId === supplier.id);
+      let newBal = supplier.openingBalance || 0;
+      remLogs.forEach(l => { newBal = newBal + Number(l.credit || 0) - Number(l.debit || 0); });
+      supplier.currentBalance = Math.max(0, Number(newBal.toFixed(2)));
     }
 
     this.auditLogs.unshift(
@@ -2687,18 +2681,16 @@ class RelationalStore {
       }
     } else if (previousStatus === 'POSTED' && newStatus !== 'POSTED') {
       if (supplier) {
-        supplier.currentBalance = Number((supplier.currentBalance + totalAed).toFixed(2));
-        this.partyKhataLogs.push({
-          id: `pkl-rev-${invoice.id}-${Date.now()}`,
-          partyId: supplier.id,
-          date: new Date().toISOString().slice(0, 10),
-          docType: 'JV',
-          docRef: `REV-${invoice.invoiceNo}`,
-          debit: totalAed,
-          credit: 0,
-          balance: supplier.currentBalance,
-          description: `Reversal on status change from POSTED to ${newStatus}`
-        });
+        this.partyKhataLogs = this.partyKhataLogs.filter(
+          l => l.docRef !== invoice.invoiceNo &&
+               l.docRef !== `PINV-${invoice.invoiceNo}` &&
+               !l.docRef?.includes(invoice.invoiceNo) &&
+               !l.description?.includes(invoice.invoiceNo)
+        );
+        const remLogs = this.partyKhataLogs.filter(l => l.partyId === supplier.id);
+        let newBal = supplier.openingBalance || 0;
+        remLogs.forEach(l => { newBal = newBal + Number(l.credit || 0) - Number(l.debit || 0); });
+        supplier.currentBalance = Math.max(0, Number(newBal.toFixed(2)));
       }
     }
 
@@ -5101,7 +5093,7 @@ class RelationalStore {
     const invoice = this.salesInvoices.find(i => i.id === invoiceId);
     if (!invoice) return { success: false, error: 'Invoice not found' };
 
-    invoice.status = 'UNPOSTED';
+    invoice.status = 'DRAFT';
 
     // 1. Restore piece inventory
     invoice.items.forEach(item => {
@@ -5113,20 +5105,32 @@ class RelationalStore {
       }
     });
 
-    // 2. Reverse customer khata
-    const customer = this.parties.find(p => p.id === invoice.customerId);
+    // 2. Remove customer khata entries and recalculate balance (Strict Hard Delete - No Reversals)
+    const customer = this.parties.find(p => p.id === invoice.customerId) ||
+                     this.parties.find(p => p.name.toLowerCase() === (invoice.customerName || '').toLowerCase());
     if (customer) {
-      customer.currentBalance = Number((customer.currentBalance - invoice.totalAmount).toFixed(2));
+      this.partyKhataLogs = this.partyKhataLogs.filter(
+        l => l.docRef !== invoice.invoiceNo &&
+             l.docRef !== `SINV-${invoice.invoiceNo}` &&
+             !l.docRef?.includes(invoice.invoiceNo) &&
+             !l.description?.includes(invoice.invoiceNo)
+      );
+      const remLogs = this.partyKhataLogs.filter(l => l.partyId === customer.id);
+      let newBal = customer.openingBalance || 0;
+      remLogs.forEach(l => { newBal = newBal + Number(l.debit || 0) - Number(l.credit || 0); });
+      customer.currentBalance = Math.max(0, Number(newBal.toFixed(2)));
     }
 
-    // 3. Unpost associated voucher
-    const voucher = this.vouchers.find(v => v.documentRef === invoice.invoiceNo);
+    // 3. Cascade delete associated vouchers and journal entries
+    const voucher = this.vouchers.find(v => v.documentRef === invoice.invoiceNo || v.referenceNo === invoice.invoiceNo || v.id === `vch-sal-${invoice.id}`);
     if (voucher) {
-      this.unpostVoucher(voucher.id);
+      this.vouchers = this.vouchers.filter(v => v.id !== voucher.id);
+      this.voucherEntries = this.voucherEntries.filter(e => e.voucherId !== voucher.id);
     }
+    this.journalEntries = this.journalEntries.filter(j => j.reference !== invoice.invoiceNo && (!voucher || j.voucherId !== voucher.id));
 
     this.auditLogs.unshift(
-      AuditEngine.createLogEntry('SALES', 'UNPOST', invoice.invoiceNo, 'UNPOSTED', 'Accounts Lead', `Unposted Sales Invoice ${invoice.invoiceNo}, restored pieces to stock, and reversed ledger debits/credits`)
+      AuditEngine.createLogEntry('SALES', 'UNPOST', invoice.invoiceNo, 'DRAFT', 'Accounts Lead', `Unposted Sales Invoice ${invoice.invoiceNo}, restored pieces to stock, and deleted financial impact`)
     );
 
     return { success: true };
@@ -5438,7 +5442,7 @@ class RelationalStore {
       if (!invoice) return { success: false, error: 'Invoice not found' };
       if (invoice.status !== 'POSTED') return { success: false, error: 'Only POSTED invoices can be unposted' };
 
-      invoice.status = 'UNPOSTED';
+      invoice.status = 'DRAFT';
 
       // 1. Restore raw bales
       invoice.items.forEach(item => {
@@ -5462,33 +5466,32 @@ class RelationalStore {
         }
       });
 
-      // 2. Reverse customer khata
-      const totalAed = invoice.currency === 'AED' ? invoice.totalAmount : Number((invoice.totalAmount * (invoice.exchangeRate || 1.0)).toFixed(2));
+      // 2. Remove customer khata entries and recalculate balance (Strict Hard Delete - No Reversals)
       const customer = this.parties.find(p => p.id === invoice.customerId) ||
                        this.parties.find(p => p.name.toLowerCase() === invoice.customerName.toLowerCase());
       if (customer) {
-        customer.currentBalance = Number((customer.currentBalance - totalAed).toFixed(2));
-        this.partyKhataLogs.push({
-          id: `pkl-rev-${invoice.id}-${Date.now()}`,
-          partyId: customer.id,
-          date: new Date().toISOString().slice(0, 10),
-          docType: 'JV',
-          docRef: `UNPOST-${invoice.invoiceNo}`,
-          debit: 0,
-          credit: totalAed,
-          balance: customer.currentBalance,
-          description: `Unposted B2B Wholesale Invoice ${invoice.invoiceNo} reversal`
-        });
+        this.partyKhataLogs = this.partyKhataLogs.filter(
+          l => l.docRef !== invoice.invoiceNo &&
+               l.docRef !== `SINV-${invoice.invoiceNo}` &&
+               !l.docRef?.includes(invoice.invoiceNo) &&
+               !l.description?.includes(invoice.invoiceNo)
+        );
+        const remLogs = this.partyKhataLogs.filter(l => l.partyId === customer.id);
+        let newBal = customer.openingBalance || 0;
+        remLogs.forEach(l => { newBal = newBal + Number(l.debit || 0) - Number(l.credit || 0); });
+        customer.currentBalance = Math.max(0, Number(newBal.toFixed(2)));
       }
 
-      // 3. Unpost associated COA voucher
-      const voucher = this.vouchers.find(v => v.documentRef === invoice.invoiceNo || v.id === `vch-b2b-${invoice.id}`);
-      if (voucher && voucher.status === 'POSTED') {
-        this.unpostVoucher(voucher.id);
+      // 3. Cascade delete associated COA voucher and journal entries
+      const voucher = this.vouchers.find(v => v.documentRef === invoice.invoiceNo || v.referenceNo === invoice.invoiceNo || v.id === `vch-b2b-${invoice.id}`);
+      if (voucher) {
+        this.vouchers = this.vouchers.filter(v => v.id !== voucher.id);
+        this.voucherEntries = this.voucherEntries.filter(e => e.voucherId !== voucher.id);
       }
+      this.journalEntries = this.journalEntries.filter(j => j.reference !== invoice.invoiceNo && (!voucher || j.voucherId !== voucher.id));
 
       this.auditLogs.unshift(
-        AuditEngine.createLogEntry('SALES', 'UNPOST', invoice.invoiceNo, 'UNPOSTED', 'Accounts Lead', `Unposted B2B Wholesale Invoice ${invoice.invoiceNo}, restored raw bales and garments to stock`)
+        AuditEngine.createLogEntry('SALES', 'UNPOST', invoice.invoiceNo, 'DRAFT', 'Accounts Lead', `Unposted B2B Wholesale Invoice ${invoice.invoiceNo}, restored raw bales and garments to stock, and deleted financial impact`)
       );
 
       return { success: true };

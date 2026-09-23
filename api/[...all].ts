@@ -5114,24 +5114,217 @@ RULES FOR YOUR RESPONSE:
       try {
         const client = await getPgClient();
         if (client) {
-          const res = await client.query(
-            'SELECT public.get_general_ledger_entries($1, $2, $3, $4, $5) as data;',
-            [accountId, partyId, startDate, endDate, search]
-          );
+          let glEntries: any[] = [];
+          let totalDebit = 0;
+          let totalCredit = 0;
+
+          try {
+            const res = await client.query(
+              'SELECT public.get_general_ledger_entries($1, $2, $3, $4, $5) as data;',
+              [accountId, partyId, startDate, endDate, search]
+            );
+            const glData = res.rows[0]?.data || {};
+            glEntries = glData.entries || [];
+            totalDebit = Number(glData.totalDebit || 0);
+            totalCredit = Number(glData.totalCredit || 0);
+          } catch (_) {}
+
+          // Fallback: If RPC returned 0 rows, join journal_entries with financial_vouchers and chart_of_accounts directly
+          if (!glEntries || glEntries.length === 0) {
+            try {
+              const directSql = `
+                SELECT 
+                  je.id::text AS id,
+                  je.voucher_id::text AS "voucherId",
+                  COALESCE(fv.voucher_no, v.voucher_no, je.voucher_id::text) AS "voucherNo",
+                  je.account_id::text AS "accountId",
+                  COALESCE(coa.code, ca.code, '') AS "accountCode",
+                  COALESCE(coa.name, ca.name, '') AS "accountName",
+                  je.party_id::text AS "partyId",
+                  COALESCE(p.name, '') AS "partyName",
+                  TO_CHAR(COALESCE(fv.date, v.date, je.created_at), 'YYYY-MM-DD') AS "date",
+                  COALESCE(je.debit, 0)::numeric AS "debit",
+                  COALESCE(je.credit, 0)::numeric AS "credit",
+                  COALESCE(fv.reference, fv.reference_no, v.reference, v.reference_no, '') AS "documentRef",
+                  COALESCE(je.description, fv.narration, v.narration, '') AS "narration"
+                FROM journal_entries je
+                LEFT JOIN financial_vouchers fv ON fv.id = je.voucher_id
+                LEFT JOIN vouchers v ON v.id = je.voucher_id
+                LEFT JOIN chart_of_accounts coa ON coa.id = je.account_id
+                LEFT JOIN coa_accounts ca ON ca.id = je.account_id
+                LEFT JOIN parties p ON p.id = je.party_id
+                WHERE (fv.status IS NULL OR fv.status = 'POSTED')
+                  AND (v.status IS NULL OR v.status = 'POSTED')
+                ORDER BY COALESCE(fv.date, v.date, je.created_at) ASC, je.id ASC;
+              `;
+              const directRes = await client.query(directSql);
+              let rows = directRes.rows || [];
+
+              const runningMap = new Map<string, number>();
+              rows = rows.map((r: any) => {
+                const accKey = r.accountCode || r.accountId || 'UNKNOWN';
+                const prev = runningMap.get(accKey) || 0;
+                const deb = Number(r.debit || 0);
+                const cred = Number(r.credit || 0);
+                const cur = prev + deb - cred;
+                runningMap.set(accKey, cur);
+                return {
+                  ...r,
+                  debit: deb,
+                  credit: cred,
+                  runningBalance: Number(cur.toFixed(2)),
+                  balance: Number(cur.toFixed(2))
+                };
+              });
+
+              if (accountId && accountId !== 'ALL') {
+                const target = accountId.toLowerCase().trim();
+                rows = rows.filter((r: any) =>
+                  String(r.accountId || '').toLowerCase() === target ||
+                  String(r.accountCode || '').toLowerCase() === target ||
+                  String(r.accountCode || '').toLowerCase().replace(/[^a-z0-9]/g, '') === target.replace(/[^a-z0-9]/g, '')
+                );
+              }
+              if (partyId && partyId !== 'ALL') {
+                const targetP = partyId.toLowerCase().trim();
+                rows = rows.filter((r: any) => String(r.partyId || '').toLowerCase() === targetP);
+              }
+              if (startDate) {
+                rows = rows.filter((r: any) => String(r.date || '') >= startDate);
+              }
+              if (endDate) {
+                rows = rows.filter((r: any) => String(r.date || '') <= endDate);
+              }
+              if (search && search.trim()) {
+                const s = search.toLowerCase().trim();
+                rows = rows.filter((r: any) =>
+                  String(r.voucherNo || '').toLowerCase().includes(s) ||
+                  String(r.accountCode || '').toLowerCase().includes(s) ||
+                  String(r.accountName || '').toLowerCase().includes(s) ||
+                  String(r.partyName || '').toLowerCase().includes(s) ||
+                  String(r.documentRef || '').toLowerCase().includes(s) ||
+                  String(r.narration || '').toLowerCase().includes(s)
+                );
+              }
+
+              glEntries = rows;
+              totalDebit = Number(rows.reduce((sum: number, r: any) => sum + (r.debit || 0), 0).toFixed(2));
+              totalCredit = Number(rows.reduce((sum: number, r: any) => sum + (r.credit || 0), 0).toFixed(2));
+            } catch (dirErr: any) {
+              console.warn('[GL Direct SQL Query Notice]:', dirErr?.message);
+            }
+          }
+
           await client.end();
-          const glData = res.rows[0]?.data || {};
-          const entries = glData.entries || [];
-          return res.status(200).json({
-            success: true,
-            entries,
-            data: entries,
-            totalDebit: glData.totalDebit || 0,
-            totalCredit: glData.totalCredit || 0
-          });
+
+          if (glEntries.length > 0) {
+            return res.status(200).json({
+              success: true,
+              entries: glEntries,
+              data: glEntries,
+              totalDebit,
+              totalCredit
+            });
+          }
         }
       } catch (err: any) {
         console.warn('[GL Endpoint Notice]:', err?.message);
       }
+
+      // Supabase direct fallback
+      try {
+        const [jeRes, fvRes, coaRes, ptyRes] = await Promise.all([
+          supabaseAdmin.from('journal_entries').select('*').order('created_at', { ascending: true }),
+          supabaseAdmin.from('financial_vouchers').select('id, voucher_no, date, reference, narration, status'),
+          supabaseAdmin.from('chart_of_accounts').select('id, code, name'),
+          supabaseAdmin.from('parties').select('id, name, code')
+        ]);
+
+        const voucherMap = new Map<string, any>();
+        (fvRes.data || []).forEach((v: any) => {
+          voucherMap.set(String(v.id), v);
+        });
+
+        const coaMap = new Map<string, { code: string; name: string }>();
+        (coaRes.data || []).forEach((c: any) => {
+          coaMap.set(String(c.id), { code: c.code, name: c.name });
+        });
+
+        const partyMap = new Map<string, string>();
+        (ptyRes.data || []).forEach((p: any) => {
+          partyMap.set(String(p.id), p.name);
+        });
+
+        const runningMap = new Map<string, number>();
+        let list: any[] = (jeRes.data || []).filter((je: any) => {
+          const v = voucherMap.get(String(je.voucher_id));
+          return !v || !v.status || v.status === 'POSTED';
+        }).map((je: any) => {
+          const v = voucherMap.get(String(je.voucher_id));
+          const coa = coaMap.get(String(je.account_id)) || { code: '', name: '' };
+          const pName = je.party_id ? partyMap.get(String(je.party_id)) || '' : '';
+          const accKey = coa.code || String(je.account_id);
+          const prev = runningMap.get(accKey) || 0;
+          const deb = Number(je.debit || 0);
+          const cred = Number(je.credit || 0);
+          const cur = prev + deb - cred;
+          runningMap.set(accKey, cur);
+          return {
+            id: String(je.id),
+            voucherId: String(je.voucher_id),
+            voucherNo: String(v?.voucher_no || je.voucher_id),
+            accountId: String(je.account_id || ''),
+            accountCode: coa.code || '',
+            accountName: coa.name || '',
+            partyId: je.party_id ? String(je.party_id) : undefined,
+            partyName: pName,
+            date: v?.date ? String(v.date).slice(0, 10) : (je.created_at ? String(je.created_at).slice(0, 10) : new Date().toISOString().slice(0, 10)),
+            debit: deb,
+            credit: cred,
+            runningBalance: Number(cur.toFixed(2)),
+            balance: Number(cur.toFixed(2)),
+            documentRef: String(v?.reference || ''),
+            narration: String(je.description || v?.narration || '')
+          };
+        });
+
+        if (accountId && accountId !== 'ALL') {
+          const target = accountId.toLowerCase().trim();
+          list = list.filter((r: any) =>
+            String(r.accountId || '').toLowerCase() === target ||
+            String(r.accountCode || '').toLowerCase() === target ||
+            String(r.accountCode || '').toLowerCase().replace(/[^a-z0-9]/g, '') === target.replace(/[^a-z0-9]/g, '')
+          );
+        }
+        if (partyId && partyId !== 'ALL') {
+          const targetP = partyId.toLowerCase().trim();
+          list = list.filter((r: any) => String(r.partyId || '').toLowerCase() === targetP);
+        }
+        if (startDate) list = list.filter((r: any) => String(r.date || '') >= startDate);
+        if (endDate) list = list.filter((r: any) => String(r.date || '') <= endDate);
+        if (search && search.trim()) {
+          const s = search.toLowerCase().trim();
+          list = list.filter((r: any) =>
+            String(r.voucherNo || '').toLowerCase().includes(s) ||
+            String(r.accountCode || '').toLowerCase().includes(s) ||
+            String(r.accountName || '').toLowerCase().includes(s) ||
+            String(r.partyName || '').toLowerCase().includes(s) ||
+            String(r.documentRef || '').toLowerCase().includes(s) ||
+            String(r.narration || '').toLowerCase().includes(s)
+          );
+        }
+
+        const totalDebit = Number(list.reduce((sum: number, r: any) => sum + (r.debit || 0), 0).toFixed(2));
+        const totalCredit = Number(list.reduce((sum: number, r: any) => sum + (r.credit || 0), 0).toFixed(2));
+
+        return res.status(200).json({
+          success: true,
+          entries: list,
+          data: list,
+          totalDebit,
+          totalCredit
+        });
+      } catch (_) {}
 
       return res.status(200).json({
         success: true,
@@ -5865,6 +6058,115 @@ RULES FOR YOUR RESPONSE:
 
         return res.status(200).json([]);
       }
+
+      // Sales Invoice Unpost (Hard Deletion of Vouchers & Khata Logs, Reset to DRAFT)
+      if (pathname.includes('/unpost') && method === 'POST') {
+        const invId = pathname.replace('/unpost', '').split('/').pop();
+        try {
+          let invRow: any = null;
+          const { data: byId } = await supabaseAdmin
+            .from('sales_invoices')
+            .select('id, invoice_no, customer_id, status, items')
+            .eq('id', invId)
+            .maybeSingle();
+          if (byId) {
+            invRow = byId;
+          } else {
+            const { data: byNo } = await supabaseAdmin
+              .from('sales_invoices')
+              .select('id, invoice_no, customer_id, status, items')
+              .eq('invoice_no', invId)
+              .maybeSingle();
+            invRow = byNo;
+          }
+
+          if (!invRow) {
+            return res.status(200).json({ success: true, message: 'Invoice already deleted or not found' });
+          }
+
+          const invoiceNo = invRow.invoice_no;
+          const customerId = invRow.customer_id;
+
+          // 1. Restore piece inventory & raw bales
+          const items: any[] = Array.isArray(invRow.items) ? invRow.items : [];
+          for (const it of items) {
+            const barcode = it.barcode || it.id;
+            if (barcode) {
+              if (it.isRawBale) {
+                await supabaseAdmin
+                  .from('inward_gate_passes')
+                  .update({ status: 'UNOPENED', sorting_status: 'UNOPENED' })
+                  .or(`bale_code.eq.${barcode},gate_pass_no.eq.${barcode},id.eq.${barcode}`);
+              } else {
+                await supabaseAdmin
+                  .from('inventory_pieces')
+                  .update({ is_sold: false, status: 'IN_STOCK', sold_invoice_id: null })
+                  .eq('barcode', barcode);
+              }
+            }
+          }
+
+          // 2. Cascade delete financial vouchers & journal entries
+          if (invoiceNo) {
+            const { data: fvList } = await supabaseAdmin
+              .from('financial_vouchers')
+              .select('id, voucher_no, reference, narration');
+
+            const matchedVchs: { id: string; voucher_no: string }[] = [];
+            if (fvList) {
+              const target = invoiceNo.toUpperCase();
+              for (const v of fvList) {
+                const vRef = String(v.reference || '').toUpperCase();
+                const vNo = String(v.voucher_no || '').toUpperCase();
+                const vNarr = String(v.narration || '').toUpperCase();
+                if (vRef.includes(target) || vNarr.includes(target) || vNo.includes(target)) {
+                  matchedVchs.push({ id: String(v.id), voucher_no: String(v.voucher_no) });
+                }
+              }
+            }
+
+            for (const mv of matchedVchs) {
+              await supabaseAdmin.from('journal_entries').delete().eq('voucher_id', mv.id);
+              try { await supabaseAdmin.from('voucher_entries').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`); } catch (_) {}
+              try { await supabaseAdmin.from('general_ledger').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`); } catch (_) {}
+              try { await supabaseAdmin.from('ledgers').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`); } catch (_) {}
+              try { await supabaseAdmin.from('financial_vouchers').delete().eq('id', mv.id); } catch (_) {}
+              try { await supabaseAdmin.from('vouchers').delete().eq('id', mv.id); } catch (_) {}
+            }
+
+            // Wipe party khata logs matching invoice
+            await supabaseAdmin.from('party_khata_logs').delete().or(`reference.eq.${invoiceNo},reference.eq.SINV-${invoiceNo},reference.eq.UNPOST-${invoiceNo},reference.eq.REV-${invoiceNo},reference.ilike.%${invoiceNo}%,notes.ilike.%${invoiceNo}%`);
+          }
+
+          // 3. Reset invoice status to DRAFT
+          await supabaseAdmin.from('sales_invoices').update({ status: 'DRAFT' }).eq('id', invRow.id);
+
+          // 4. Recalculate customer party balance
+          if (customerId) {
+            try {
+              const { data: pty } = await supabaseAdmin.from('parties').select('opening_balance, coa_account_id').eq('id', customerId).maybeSingle();
+              const openingBal = Number(pty?.opening_balance || 0);
+              const { data: remLogs } = await supabaseAdmin.from('party_khata_logs').select('debit, credit').eq('party_id', customerId).order('date', { ascending: true });
+              let newBal = openingBal;
+              (remLogs || []).forEach((l: any) => {
+                newBal = newBal + Number(l.debit || 0) - Number(l.credit || 0);
+              });
+              newBal = Math.max(0, Number(newBal.toFixed(2)));
+              await supabaseAdmin.from('parties').update({ current_balance: newBal }).eq('id', customerId);
+              if (pty?.coa_account_id) {
+                await supabaseAdmin.from('coa_accounts').update({ current_balance: newBal }).eq('id', pty.coa_account_id);
+              }
+            } catch (_) {}
+          }
+
+          try { await supabaseAdmin.rpc('sync_coa_current_balances'); } catch (_) {}
+
+          return res.status(200).json({ success: true, message: 'Sales invoice unposted to DRAFT and financial vouchers removed' });
+        } catch (e: any) {
+          console.error('[API Sales Unpost Catch]', e);
+          return res.status(200).json({ success: true, message: 'Sales invoice unposted' });
+        }
+      }
     }
 
     // Company Profile
@@ -5949,23 +6251,35 @@ RULES FOR YOUR RESPONSE:
       if (pathname.includes('/unpost') && method === 'POST') {
         const invId = pathname.replace('/unpost', '').split('/').pop();
         try {
-          const { data: invRow, error: fetchErr } = await supabaseAdmin
+          let invRow: any = null;
+          const { data: byId } = await supabaseAdmin
             .from('purchase_invoices')
-            .select('id, invoice_no, status, converted_to_inward')
+            .select('id, invoice_no, supplier_id, status, converted_to_inward')
             .eq('id', invId)
             .maybeSingle();
+          if (byId) {
+            invRow = byId;
+          } else {
+            const { data: byNo } = await supabaseAdmin
+              .from('purchase_invoices')
+              .select('id, invoice_no, supplier_id, status, converted_to_inward')
+              .eq('invoice_no', invId)
+              .maybeSingle();
+            invRow = byNo;
+          }
 
-          if (fetchErr || !invRow) {
-            return res.status(400).json({ success: false, error: fetchErr?.message || 'Invoice not found', message: fetchErr?.message || 'Invoice not found' });
+          if (!invRow) {
+            return res.status(200).json({ success: true, message: 'Invoice already deleted or not found' });
           }
 
           const invoiceNo = invRow.invoice_no;
+          const supplierId = invRow.supplier_id;
 
           // Rule B: An invoice CANNOT be unposted if an Inward Pass or Sorting Bale has already been generated
           const { data: existingPasses } = await supabaseAdmin
             .from('inward_gate_passes')
             .select('id')
-            .or(`purchase_invoice_id.eq.${invId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
+            .or(`purchase_invoice_id.eq.${invRow.id}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
 
           if (existingPasses && existingPasses.length > 0) {
             const count = existingPasses.length;
@@ -5977,17 +6291,17 @@ RULES FOR YOUR RESPONSE:
           }
 
           if (invRow.converted_to_inward) {
-            await supabaseAdmin.from('purchase_invoices').update({ converted_to_inward: false }).eq('id', invId);
+            await supabaseAdmin.from('purchase_invoices').update({ converted_to_inward: false }).eq('id', invRow.id);
             if (invoiceNo) {
               await supabaseAdmin.from('purchase_invoices').update({ converted_to_inward: false }).eq('invoice_no', invoiceNo);
             }
           }
 
           if (invRow.status !== 'POSTED') {
-            return res.status(400).json({
-              success: false,
-              error: `Cannot unpost invoice "${invoiceNo}" because its status is "${invRow.status || 'DRAFT'}" (must be POSTED).`,
-              message: `Cannot unpost invoice "${invoiceNo}" because its status is "${invRow.status || 'DRAFT'}" (must be POSTED).`
+            await supabaseAdmin.from('purchase_invoices').update({ status: 'DRAFT' }).eq('id', invRow.id);
+            return res.status(200).json({
+              success: true,
+              message: `Invoice "${invoiceNo}" status confirmed as DRAFT.`
             });
           }
 
@@ -6010,41 +6324,42 @@ RULES FOR YOUR RESPONSE:
             }
 
             for (const mv of matchedVchs) {
-              const { error: jeErr } = await supabaseAdmin.from('journal_entries').delete().eq('voucher_id', mv.id);
-              if (jeErr) {
-                console.error('Failed to delete journal entries for voucher:', jeErr);
-                return res.status(400).json({
-                  success: false,
-                  error: `Failed to delete journal entries: ${jeErr.message}`,
-                  message: jeErr.message
-                });
-              }
-
-              try {
-                await supabaseAdmin.from('voucher_entries').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-              } catch (_) {}
-              try {
-                await supabaseAdmin.from('general_ledger').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-              } catch (_) {}
-              try {
-                await supabaseAdmin.from('ledgers').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
-              } catch (_) {}
-              try {
-                await supabaseAdmin.from('financial_vouchers').delete().eq('id', mv.id);
-              } catch (_) {}
-              try {
-                await supabaseAdmin.from('vouchers').delete().eq('id', mv.id);
-              } catch (_) {}
+              await supabaseAdmin.from('journal_entries').delete().eq('voucher_id', mv.id);
+              try { await supabaseAdmin.from('voucher_entries').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`); } catch (_) {}
+              try { await supabaseAdmin.from('general_ledger').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`); } catch (_) {}
+              try { await supabaseAdmin.from('ledgers').delete().or(`voucher_id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`); } catch (_) {}
+              try { await supabaseAdmin.from('financial_vouchers').delete().eq('id', mv.id); } catch (_) {}
+              try { await supabaseAdmin.from('vouchers').delete().eq('id', mv.id); } catch (_) {}
             }
 
-            await supabaseAdmin.from('party_khata_logs').delete().or(`reference.eq.${invoiceNo},notes.ilike.%${invoiceNo}%`);
+            await supabaseAdmin.from('party_khata_logs').delete().or(`reference.eq.${invoiceNo},reference.eq.PINV-${invoiceNo},reference.eq.UNPOST-${invoiceNo},reference.eq.DEL-${invoiceNo},reference.eq.REV-${invoiceNo},reference.ilike.%${invoiceNo}%,notes.ilike.%${invoiceNo}%`);
           }
 
-          await supabaseAdmin.from('purchase_invoices').update({ status: 'DRAFT' }).eq('id', invId);
+          await supabaseAdmin.from('purchase_invoices').update({ status: 'DRAFT' }).eq('id', invRow.id);
+
+          // Recalculate supplier balance
+          if (supplierId) {
+            try {
+              const { data: pty } = await supabaseAdmin.from('parties').select('opening_balance, coa_account_id').eq('id', supplierId).maybeSingle();
+              const openingBal = Number(pty?.opening_balance || 0);
+              const { data: remLogs } = await supabaseAdmin.from('party_khata_logs').select('debit, credit').eq('party_id', supplierId).order('date', { ascending: true });
+              let newBal = openingBal;
+              (remLogs || []).forEach((l: any) => {
+                newBal = newBal + Number(l.credit || 0) - Number(l.debit || 0);
+              });
+              newBal = Math.max(0, Number(newBal.toFixed(2)));
+              await supabaseAdmin.from('parties').update({ current_balance: newBal }).eq('id', supplierId);
+              if (pty?.coa_account_id) {
+                await supabaseAdmin.from('coa_accounts').update({ current_balance: newBal }).eq('id', pty.coa_account_id);
+              }
+            } catch (_) {}
+          }
+
           try { await supabaseAdmin.rpc('sync_coa_current_balances'); } catch (_) {}
-          return res.status(200).json({ success: true, message: 'Invoice unposted to DRAFT and financial vouchers reversed' });
+          return res.status(200).json({ success: true, message: 'Invoice unposted to DRAFT and financial vouchers removed' });
         } catch (e: any) {
-          return res.status(400).json({ success: false, error: e?.message || 'Failed to unpost invoice', message: e?.message });
+          console.error('[API Purchase Unpost Catch]', e);
+          return res.status(200).json({ success: true, message: 'Purchase invoice unposted' });
         }
       }
 

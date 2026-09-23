@@ -1371,7 +1371,28 @@ export class FinanceService {
       affectedPartyIds.add(String(options.partyId));
     }
 
+    // Auto-resolve any document aliases (e.g. invoice_no from invoice ID or vice versa)
+    const tokens = new Set<string>([cleanRef]);
+    if (invIdClean) tokens.add(invIdClean);
+
     try {
+      // 0. Lookup purchase_invoices or sales_invoices to extract both ID and invoice_no
+      const [piLookup, siLookup] = await Promise.all([
+        supabase.from('purchase_invoices').select('id, invoice_no, supplier_id').or(`id.eq.${cleanRef},invoice_no.eq.${cleanRef}`).maybeSingle(),
+        supabase.from('sales_invoices').select('id, invoice_no, customer_id').or(`id.eq.${cleanRef},invoice_no.eq.${cleanRef}`).maybeSingle()
+      ]);
+
+      if (piLookup.data) {
+        if (piLookup.data.id) tokens.add(String(piLookup.data.id));
+        if (piLookup.data.invoice_no) tokens.add(String(piLookup.data.invoice_no));
+        if (piLookup.data.supplier_id) affectedPartyIds.add(String(piLookup.data.supplier_id));
+      }
+      if (siLookup.data) {
+        if (siLookup.data.id) tokens.add(String(siLookup.data.id));
+        if (siLookup.data.invoice_no) tokens.add(String(siLookup.data.invoice_no));
+        if (siLookup.data.customer_id) affectedPartyIds.add(String(siLookup.data.customer_id));
+      }
+
       // 1. Fetch matching vouchers from financial_vouchers and vouchers
       const [fvRes, vRes] = await Promise.all([
         supabase.from('financial_vouchers').select('id, voucher_no, reference, reference_no, narration, party_id'),
@@ -1387,12 +1408,20 @@ export class FinanceService {
         const vNo = String(item.voucher_no || '').toUpperCase();
         const vNarr = String(item.narration || '').toUpperCase();
 
-        const isMatch =
-          (vRef && (vRef === cleanUpper || vRef.includes(cleanUpper) || vRef === `PINV-${cleanUpper}` || vRef === `PUR-${cleanUpper}` || vRef === `INWARD-${cleanUpper}` || vRef === `SINV-${cleanUpper}` || vRef === `SLS-${cleanUpper}` || vRef === `IGP-${cleanUpper}` || vRef === `BALE-${cleanUpper}`)) ||
-          (vRefNo && (vRefNo === cleanUpper || vRefNo.includes(cleanUpper) || vRefNo === `PINV-${cleanUpper}` || vRefNo === `PUR-${cleanUpper}` || vRefNo === `INWARD-${cleanUpper}` || vRefNo === `SINV-${cleanUpper}` || vRefNo === `SLS-${cleanUpper}` || vRefNo === `IGP-${cleanUpper}` || vRefNo === `BALE-${cleanUpper}`)) ||
-          (vNarr && vNarr.includes(cleanUpper)) ||
-          (cleanNoSpecialUpper && (vNo.includes(cleanNoSpecialUpper) || vNo.includes(`JV-SLS-${cleanNoSpecialUpper}`) || vNo.includes(`JV-PUR-${cleanNoSpecialUpper}`) || vNo.includes(`JV-PINV-${cleanNoSpecialUpper}`) || vNo.includes(`JV-INW-${cleanNoSpecialUpper}`))) ||
-          (invIdClean && (vRef === invIdClean || vRefNo === invIdClean || vNarr.includes(invIdClean)));
+        let isMatch = false;
+        for (const t of tokens) {
+          const tUpper = t.toUpperCase();
+          const tClean = t.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+          if (
+            (vRef && (vRef === tUpper || vRef.includes(tUpper) || vRef === `PINV-${tUpper}` || vRef === `PUR-${tUpper}` || vRef === `INWARD-${tUpper}` || vRef === `SINV-${tUpper}` || vRef === `SLS-${tUpper}` || vRef === `IGP-${tUpper}` || vRef === `BALE-${tUpper}`)) ||
+            (vRefNo && (vRefNo === tUpper || vRefNo.includes(tUpper) || vRefNo === `PINV-${tUpper}` || vRefNo === `PUR-${tUpper}` || vRefNo === `INWARD-${tUpper}` || vRefNo === `SINV-${tUpper}` || vRefNo === `SLS-${tUpper}` || vRefNo === `IGP-${tUpper}` || vRefNo === `BALE-${tUpper}`)) ||
+            (vNarr && vNarr.includes(tUpper)) ||
+            (tClean && (vNo.includes(tClean) || vNo.includes(`JV-SLS-${tClean}`) || vNo.includes(`JV-PUR-${tClean}`) || vNo.includes(`JV-PINV-${tClean}`) || vNo.includes(`JV-INW-${tClean}`)))
+          ) {
+            isMatch = true;
+            break;
+          }
+        }
 
         if (isMatch) {
           if (!matched.some(m => m.id === vId)) {
@@ -1450,41 +1479,44 @@ export class FinanceService {
         } catch (_) {}
       }
 
-      // 3. Safety broad delete on journal_entries, general_ledger, financial_vouchers matching invoice/document number
-      try {
-        await supabase.from('journal_entries').delete().ilike('description', `%${cleanRef}%`);
-      } catch (_) {}
-      try {
-        await supabase.from('general_ledger').delete().or(`reference.eq.${cleanRef},reference.eq.PINV-${cleanRef},reference.eq.INWARD-${cleanRef},reference.eq.SINV-${cleanRef},description.ilike.%${cleanRef}%,narration.ilike.%${cleanRef}%`);
-      } catch (_) {}
-      try {
-        await supabase.from('financial_vouchers').delete().or(`reference.eq.${cleanRef},reference_no.eq.${cleanRef},reference.eq.PINV-${cleanRef},reference_no.eq.PINV-${cleanRef},reference.eq.INWARD-${cleanRef},reference_no.eq.INWARD-${cleanRef},reference.eq.SINV-${cleanRef},reference_no.eq.SINV-${cleanRef}`);
-      } catch (_) {}
-      try {
-        await supabase.from('vouchers').delete().or(`reference.eq.${cleanRef},reference_no.eq.${cleanRef},reference.eq.PINV-${cleanRef},reference_no.eq.PINV-${cleanRef},reference.eq.INWARD-${cleanRef},reference_no.eq.INWARD-${cleanRef},reference.eq.SINV-${cleanRef},reference_no.eq.SINV-${cleanRef}`);
-      } catch (_) {}
-
-      // 4. Delete associated party_khata_logs (including reversal entries like UNPOST-${docRef})
-      try {
-        // Collect parties from the logs before deleting them
-        const { data: khtRows } = await supabase
-          .from('party_khata_logs')
-          .select('party_id')
-          .or(`reference.eq.${cleanRef},reference.eq.PINV-${cleanRef},reference.eq.UNPOST-${cleanRef},reference.eq.DEL-${cleanRef},reference.eq.INWARD-${cleanRef},reference.eq.SINV-${cleanRef},reference.eq.SLS-${cleanRef},notes.ilike.%${cleanRef}%`);
-
-        (khtRows || []).forEach((r: any) => {
-          if (r.party_id) affectedPartyIds.add(String(r.party_id));
-        });
-
-        await supabase
-          .from('party_khata_logs')
-          .delete()
-          .or(`reference.eq.${cleanRef},reference.eq.PINV-${cleanRef},reference.eq.UNPOST-${cleanRef},reference.eq.DEL-${cleanRef},reference.eq.INWARD-${cleanRef},reference.eq.SINV-${cleanRef},reference.eq.SLS-${cleanRef},notes.ilike.%${cleanRef}%`);
-      } catch (khtErr) {
-        console.warn(`[FinanceService] Notice deleting party_khata_logs for ${cleanRef}:`, khtErr);
+      // 3. Safety broad delete on journal_entries, general_ledger, financial_vouchers matching any token
+      for (const tok of tokens) {
+        try {
+          await supabase.from('journal_entries').delete().ilike('description', `%${tok}%`);
+        } catch (_) {}
+        try {
+          await supabase.from('general_ledger').delete().or(`reference.eq.${tok},reference.ilike.%${tok}%,description.ilike.%${tok}%,narration.ilike.%${tok}%`);
+        } catch (_) {}
+        try {
+          await supabase.from('financial_vouchers').delete().or(`reference.eq.${tok},reference_no.eq.${tok},reference.ilike.%${tok}%,reference_no.ilike.%${tok}%`);
+        } catch (_) {}
+        try {
+          await supabase.from('vouchers').delete().or(`reference.eq.${tok},reference_no.eq.${tok},reference.ilike.%${tok}%,reference_no.ilike.%${tok}%`);
+        } catch (_) {}
       }
 
-      // 5. Recalculate balances for all affected parties
+      // 4. Strict Hard Delete of party_khata_logs (NO reversal entries, complete purge of all associated logs)
+      for (const tok of tokens) {
+        try {
+          const { data: khtRows } = await supabase
+            .from('party_khata_logs')
+            .select('party_id')
+            .or(`reference.eq.${tok},reference.ilike.%${tok}%,notes.ilike.%${tok}%`);
+
+          (khtRows || []).forEach((r: any) => {
+            if (r.party_id) affectedPartyIds.add(String(r.party_id));
+          });
+
+          await supabase
+            .from('party_khata_logs')
+            .delete()
+            .or(`reference.eq.${tok},reference.ilike.%${tok}%,notes.ilike.%${tok}%`);
+        } catch (khtErr) {
+          console.warn(`[FinanceService] Notice deleting party_khata_logs for ${tok}:`, khtErr);
+        }
+      }
+
+      // 5. Recalculate balances for all affected parties (Strict Zero-State if all invoices unposted/deleted)
       for (const pId of affectedPartyIds) {
         await this.recalculatePartyBalance(pId);
       }
@@ -1787,27 +1819,29 @@ export class FinanceService {
         if (filters?.search) q.append('search', filters.search);
         const data = await safeFetchJson<any>(`/api/finance/ledgers${q.toString() ? '?' + q.toString() : ''}`, { credentials: 'include' });
         if (data) {
-          const list: any[] = Array.isArray(data) ? data : (Array.isArray(data?.entries) ? data.entries : []);
-          const entries: LedgerEntry[] = list.map((r: any) => ({
-            id: r.id,
-            voucherId: r.voucherId || r.voucher_id,
-            voucherNo: r.voucherNo || r.voucher_no,
-            accountId: r.accountId || r.account_id,
-            accountCode: r.accountCode || r.account_code,
-            accountName: r.accountName || r.account_name,
-            partyId: r.partyId || r.party_id,
-            partyName: r.partyName || r.party_name,
-            date: r.date,
-            debit: Number(r.debit || 0),
-            credit: Number(r.credit || 0),
-            runningBalance: Number(r.runningBalance || r.balance || 0),
-            balance: Number(r.runningBalance || r.balance || 0),
-            documentRef: r.documentRef || r.document_ref || '',
-            narration: r.narration || ''
-          }));
-          const totalDebit = entries.reduce((s, e) => s + (e.debit || 0), 0);
-          const totalCredit = entries.reduce((s, e) => s + (e.credit || 0), 0);
-          return { entries, totalDebit, totalCredit };
+          const list: any[] = Array.isArray(data) ? data : (Array.isArray(data?.entries) ? data.entries : (Array.isArray(data?.data) ? data.data : []));
+          if (list.length > 0) {
+            const entries: LedgerEntry[] = list.map((r: any) => ({
+              id: String(r.id),
+              voucherId: String(r.voucherId || r.voucher_id || ''),
+              voucherNo: String(r.voucherNo || r.voucher_no || ''),
+              accountId: String(r.accountId || r.account_id || ''),
+              accountCode: String(r.accountCode || r.account_code || ''),
+              accountName: String(r.accountName || r.account_name || ''),
+              partyId: r.partyId || r.party_id || undefined,
+              partyName: r.partyName || r.party_name || undefined,
+              date: typeof r.date === 'string' ? r.date.slice(0, 10) : new Date().toISOString().slice(0, 10),
+              debit: Number(r.debit || 0),
+              credit: Number(r.credit || 0),
+              runningBalance: Number(r.runningBalance || r.balance || 0),
+              balance: Number(r.runningBalance || r.balance || 0),
+              documentRef: String(r.documentRef || r.document_ref || ''),
+              narration: String(r.narration || '')
+            }));
+            const totalDebit = Number(data.totalDebit ?? entries.reduce((s, e) => s + (e.debit || 0), 0));
+            const totalCredit = Number(data.totalCredit ?? entries.reduce((s, e) => s + (e.credit || 0), 0));
+            return { entries, totalDebit, totalCredit };
+          }
         }
       } catch (_) {}
     }
@@ -1820,34 +1854,184 @@ export class FinanceService {
         p_end_date: filters?.endDate || null,
         p_search: filters?.search || null
       });
-      if (!error && data) {
+      if (!error && data && Array.isArray(data.entries) && data.entries.length > 0) {
         return {
-          entries: (data.entries || []).map((r: any) => ({
-            id: r.id,
-            voucherId: r.voucherId,
-            voucherNo: r.voucherNo,
-            accountId: r.accountId,
-            accountCode: r.accountCode,
-            accountName: r.accountName,
-            partyId: r.partyId,
-            partyName: r.partyName,
-            date: r.date,
+          entries: data.entries.map((r: any) => ({
+            id: String(r.id),
+            voucherId: String(r.voucherId || r.voucher_id || ''),
+            voucherNo: String(r.voucherNo || r.voucher_no || ''),
+            accountId: String(r.accountId || r.account_id || ''),
+            accountCode: String(r.accountCode || r.account_code || ''),
+            accountName: String(r.accountName || r.account_name || ''),
+            partyId: r.partyId || r.party_id || undefined,
+            partyName: r.partyName || r.party_name || undefined,
+            date: typeof r.date === 'string' ? r.date.slice(0, 10) : new Date().toISOString().slice(0, 10),
             debit: Number(r.debit || 0),
             credit: Number(r.credit || 0),
-            runningBalance: Number(r.runningBalance || 0),
-            balance: Number(r.runningBalance || 0),
-            documentRef: r.documentRef || '',
-            narration: r.narration || ''
+            runningBalance: Number(r.runningBalance || r.balance || 0),
+            balance: Number(r.runningBalance || r.balance || 0),
+            documentRef: String(r.documentRef || r.document_ref || ''),
+            narration: String(r.narration || '')
           })),
           totalDebit: Number(data.totalDebit || 0),
           totalCredit: Number(data.totalCredit || 0)
         };
       }
-      if (error) console.warn('Supabase get_general_ledger_entries warning:', error.message);
-    } catch (err) {
-      console.warn('Supabase get_general_ledger_entries exception:', err);
+    } catch (_) {}
+
+    // Direct Supabase Fallback: Join journal_entries + financial_vouchers + chart_of_accounts + parties
+    try {
+      const [jeRes, veRes, fvRes, vRes, coaRes, caRes, ptyRes] = await Promise.all([
+        supabase.from('journal_entries').select('*').order('created_at', { ascending: true }),
+        supabase.from('voucher_entries').select('*'),
+        supabase.from('financial_vouchers').select('id, voucher_no, date, reference, reference_no, narration, status'),
+        supabase.from('vouchers').select('id, voucher_no, date, reference, reference_no, narration, status'),
+        supabase.from('chart_of_accounts').select('id, code, name'),
+        supabase.from('coa_accounts').select('id, code, name'),
+        supabase.from('parties').select('id, name, code')
+      ]);
+
+      const voucherMap = new Map<string, any>();
+      (fvRes.data || []).forEach((v: any) => {
+        voucherMap.set(String(v.id), v);
+        if (v.voucher_no) voucherMap.set(String(v.voucher_no), v);
+      });
+      (vRes.data || []).forEach((v: any) => {
+        if (!voucherMap.has(String(v.id))) voucherMap.set(String(v.id), v);
+        if (v.voucher_no && !voucherMap.has(String(v.voucher_no))) voucherMap.set(String(v.voucher_no), v);
+      });
+
+      const coaMap = new Map<string, { code: string; name: string }>();
+      (coaRes.data || []).forEach((c: any) => {
+        if (c.id) coaMap.set(String(c.id), { code: c.code, name: c.name });
+        if (c.code) coaMap.set(String(c.code), { code: c.code, name: c.name });
+      });
+      (caRes.data || []).forEach((c: any) => {
+        if (c.id && !coaMap.has(String(c.id))) coaMap.set(String(c.id), { code: c.code, name: c.name });
+        if (c.code && !coaMap.has(String(c.code))) coaMap.set(String(c.code), { code: c.code, name: c.name });
+      });
+
+      const partyMap = new Map<string, string>();
+      (ptyRes.data || []).forEach((p: any) => {
+        partyMap.set(String(p.id), p.name);
+      });
+
+      const rawItems: any[] = [];
+      const seenIds = new Set<string>();
+
+      (jeRes.data || []).forEach((je: any) => {
+        const v = voucherMap.get(String(je.voucher_id));
+        if (v && v.status && v.status !== 'POSTED') return; // Only posted postings
+        const coa = coaMap.get(String(je.account_id)) || { code: '', name: '' };
+        const pName = je.party_id ? partyMap.get(String(je.party_id)) || '' : '';
+        const dateStr = v?.date ? String(v.date).slice(0, 10) : (je.created_at ? String(je.created_at).slice(0, 10) : new Date().toISOString().slice(0, 10));
+
+        seenIds.add(String(je.id));
+        rawItems.push({
+          id: String(je.id),
+          voucherId: String(je.voucher_id),
+          voucherNo: String(v?.voucher_no || je.voucher_id),
+          accountId: String(je.account_id || ''),
+          accountCode: coa.code || '',
+          accountName: coa.name || '',
+          partyId: je.party_id ? String(je.party_id) : undefined,
+          partyName: pName,
+          date: dateStr,
+          debit: Number(je.debit || 0),
+          credit: Number(je.credit || 0),
+          documentRef: String(v?.reference || v?.reference_no || ''),
+          narration: String(je.description || v?.narration || '')
+        });
+      });
+
+      // Include any standalone voucher_entries not mirrored in journal_entries
+      (veRes.data || []).forEach((ve: any) => {
+        const v = voucherMap.get(String(ve.voucher_id));
+        if (v && v.status && v.status !== 'POSTED') return;
+        if (seenIds.has(String(ve.id))) return;
+
+        const coa = coaMap.get(String(ve.account_id)) || coaMap.get(String(ve.account_code)) || { code: ve.account_code || '', name: ve.account_name || '' };
+        const pName = ve.party_id ? partyMap.get(String(ve.party_id)) || ve.party_name || '' : (ve.party_name || '');
+        const dateStr = ve.date ? String(ve.date).slice(0, 10) : (v?.date ? String(v.date).slice(0, 10) : new Date().toISOString().slice(0, 10));
+
+        rawItems.push({
+          id: String(ve.id),
+          voucherId: String(ve.voucher_id),
+          voucherNo: String(ve.voucher_no || v?.voucher_no || ve.voucher_id),
+          accountId: String(ve.account_id || ''),
+          accountCode: coa.code || ve.account_code || '',
+          accountName: coa.name || ve.account_name || '',
+          partyId: ve.party_id ? String(ve.party_id) : undefined,
+          partyName: pName,
+          date: dateStr,
+          debit: Number(ve.debit || 0),
+          credit: Number(ve.credit || 0),
+          documentRef: String(v?.reference || v?.reference_no || ''),
+          narration: String(ve.particulars || ve.memo || ve.narration || v?.narration || '')
+        });
+      });
+
+      // Sort chronologically
+      rawItems.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+
+      // Compute running balance per account
+      const runningMap = new Map<string, number>();
+      const calculatedItems: LedgerEntry[] = rawItems.map(item => {
+        const accKey = item.accountCode || item.accountId || 'UNKNOWN';
+        const prevBal = runningMap.get(accKey) || 0;
+        const newBal = prevBal + item.debit - item.credit;
+        runningMap.set(accKey, newBal);
+        return {
+          ...item,
+          runningBalance: Number(newBal.toFixed(2)),
+          balance: Number(newBal.toFixed(2))
+        };
+      });
+
+      // Apply Filters
+      let filtered = calculatedItems;
+      if (filters?.accountId && filters.accountId !== 'ALL') {
+        const targetAcc = filters.accountId.toLowerCase();
+        filtered = filtered.filter(i =>
+          i.accountId.toLowerCase() === targetAcc ||
+          i.accountCode.toLowerCase() === targetAcc ||
+          i.accountCode.toLowerCase().replace(/[^a-z0-9]/g, '') === targetAcc.replace(/[^a-z0-9]/g, '')
+        );
+      }
+      if (filters?.partyId && filters.partyId !== 'ALL') {
+        const targetParty = filters.partyId.toLowerCase();
+        filtered = filtered.filter(i => i.partyId && i.partyId.toLowerCase() === targetParty);
+      }
+      if (filters?.startDate) {
+        filtered = filtered.filter(i => i.date >= filters.startDate!);
+      }
+      if (filters?.endDate) {
+        filtered = filtered.filter(i => i.date <= filters.endDate!);
+      }
+      if (filters?.search && filters.search.trim()) {
+        const s = filters.search.toLowerCase().trim();
+        filtered = filtered.filter(i =>
+          i.voucherNo.toLowerCase().includes(s) ||
+          i.accountCode.toLowerCase().includes(s) ||
+          i.accountName.toLowerCase().includes(s) ||
+          i.narration.toLowerCase().includes(s) ||
+          i.documentRef.toLowerCase().includes(s) ||
+          (i.partyName && i.partyName.toLowerCase().includes(s))
+        );
+      }
+
+      const totalDebit = Number(filtered.reduce((sum, e) => sum + (e.debit || 0), 0).toFixed(2));
+      const totalCredit = Number(filtered.reduce((sum, e) => sum + (e.credit || 0), 0).toFixed(2));
+
+      return {
+        entries: filtered,
+        totalDebit,
+        totalCredit
+      };
+    } catch (fallbackErr) {
+      console.warn('[FinanceService] Fallback GL exception:', fallbackErr);
+      return { entries: [], totalDebit: 0, totalCredit: 0 };
     }
-    return { entries: [], totalDebit: 0, totalCredit: 0 };
   }
 
   public static async getGeneralLedgerEntriesPaginated(options?: {

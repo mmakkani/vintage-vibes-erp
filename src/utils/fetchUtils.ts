@@ -147,17 +147,20 @@ export async function executeClientFallback<T = any>(
         const s = u.searchParams.get('startDate') || undefined;
         const e = u.searchParams.get('endDate') || undefined;
         const q = u.searchParams.get('search') || undefined;
-        if (accId || ptyId || s || e || q) {
-          const glRes = await FinanceService.getGeneralLedgerEntries({
-            accountId: accId,
-            partyId: ptyId,
-            startDate: s,
-            endDate: e,
-            search: q
-          });
-          return glRes.entries as any;
-        }
-        return (await FinanceService.getLedgers()) as any;
+        const glRes = await FinanceService.getGeneralLedgerEntries({
+          accountId: accId,
+          partyId: ptyId,
+          startDate: s,
+          endDate: e,
+          search: q
+        });
+        return {
+          success: true,
+          entries: glRes.entries,
+          data: glRes.entries,
+          totalDebit: glRes.totalDebit,
+          totalCredit: glRes.totalCredit
+        } as any;
       }
       if (url.includes('/finance/banks') || url.includes('/bank-accounts')) {
         return (await FinanceService.getBankAccounts()) as any;
@@ -363,6 +366,27 @@ export async function executeClientFallback<T = any>(
           total_amount: bodyData.grandTotal || 0
         });
         return { success: true, invoice: b2b } as any;
+      }
+
+      if (url.includes('/api/purchase/invoices/') && url.endsWith('/unpost')) {
+        const parts = url.split('/');
+        const id = parts[parts.length - 2];
+        const res = await PurchaseService.unpostInvoice(id);
+        return res as any;
+      }
+
+      if (url.includes('/api/sales/invoices/') && url.endsWith('/unpost')) {
+        const parts = url.split('/');
+        const id = parts[parts.length - 2];
+        const res = await SalesService.unpostInvoice(id);
+        return res as any;
+      }
+
+      if (url.includes('/api/sales/custom-b2b/') && url.endsWith('/unpost')) {
+        const parts = url.split('/');
+        const id = parts[parts.length - 2];
+        const res = await SalesService.unpostCustomB2BInvoice(id);
+        return res as any;
       }
 
       // HR Employees Mutations
