@@ -749,7 +749,16 @@ setupRouter.post(['/shops/:id/unpost', '/shop-master/:id/unpost'], (req, res) =>
 setupRouter.get('/product-categories', async (_req, res) => {
   try {
     const list = await withDb(async (client) => {
-      const { rows } = await client.query('SELECT * FROM public.product_categories ORDER BY created_at ASC');
+      const { rows } = await client.query(`
+        SELECT 
+          c.*, 
+          p.name AS parent_name, 
+          p.slug AS parent_slug,
+          p.department_code AS parent_department_code
+        FROM public.product_categories c
+        LEFT JOIN public.product_categories p ON c.parent_id = p.id
+        ORDER BY c.level ASC, c.display_order ASC, c.created_at ASC
+      `);
       return rows;
     });
     return res.json(list);
@@ -765,18 +774,25 @@ setupRouter.get('/product-categories', async (_req, res) => {
 
 setupRouter.post('/product-categories', async (req, res) => {
   try {
-    const { name, slug, is_active } = req.body;
+    const { name, slug, is_active, parent_id, department_code, level, display_order } = req.body;
     if (!name || typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'Category name is required' });
     }
     const cleanName = name.trim();
     const cleanSlug = (slug || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `cat-${Date.now()}`;
     const active = is_active !== false;
+    const parentId = parent_id || null;
+    const deptCode = department_code ? department_code.trim().toUpperCase() : null;
+    const lvl = Number(level) || (parentId ? 2 : 1);
+    const dispOrder = Number(display_order) || 0;
 
     const row = await withDb(async (client) => {
       const { rows } = await client.query(
-        'INSERT INTO public.product_categories (name, slug, is_active, created_at) VALUES ($1, $2, $3, NOW()) RETURNING *',
-        [cleanName, cleanSlug, active]
+        `INSERT INTO public.product_categories 
+         (name, slug, is_active, parent_id, department_code, level, display_order, created_at) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) 
+         RETURNING *`,
+        [cleanName, cleanSlug, active, parentId, deptCode, lvl, dispOrder]
       );
       return rows[0];
     });
@@ -789,20 +805,28 @@ setupRouter.post('/product-categories', async (req, res) => {
 setupRouter.put('/product-categories/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, slug, is_active } = req.body;
+    const { name, slug, is_active, parent_id, department_code, level, display_order } = req.body;
     const cleanName = name ? name.trim() : null;
     const cleanSlug = slug ? slug.trim() : null;
     const active = is_active !== undefined ? is_active : null;
+    const parentId = parent_id !== undefined ? (parent_id || null) : undefined;
+    const deptCode = department_code !== undefined ? (department_code ? department_code.trim().toUpperCase() : null) : undefined;
+    const lvl = level !== undefined ? Number(level) : undefined;
+    const dispOrder = display_order !== undefined ? Number(display_order) : undefined;
 
     const row = await withDb(async (client) => {
       const { rows } = await client.query(
         `UPDATE public.product_categories 
          SET name = COALESCE($1, name), 
              slug = COALESCE($2, slug), 
-             is_active = COALESCE($3, is_active) 
-         WHERE id = $4 
+             is_active = COALESCE($3, is_active),
+             parent_id = CASE WHEN $4::text IS NOT NULL THEN $4::uuid ELSE parent_id END,
+             department_code = CASE WHEN $5::text IS NOT NULL THEN $5::varchar ELSE department_code END,
+             level = COALESCE($6, level),
+             display_order = COALESCE($7, display_order)
+         WHERE id = $8 
          RETURNING *`,
-        [cleanName, cleanSlug, active, id]
+        [cleanName, cleanSlug, active, parentId, deptCode, lvl, dispOrder, id]
       );
       return rows[0];
     });
@@ -821,6 +845,29 @@ setupRouter.delete('/product-categories/:id', async (req, res) => {
     return res.json({ success: true, id });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Failed to delete product category' });
+  }
+});
+
+// Atomic Department SKU Generator
+setupRouter.post('/generate-sku', async (req, res) => {
+  try {
+    const { department_code } = req.body;
+    const dept = (department_code || 'GEN').toUpperCase().trim().slice(0, 5);
+    const result = await withDb(async (client) => {
+      const { rows } = await client.query(`
+        INSERT INTO public.sku_sequences (department_code, current_seq, updated_at)
+        VALUES ($1, 1, NOW())
+        ON CONFLICT (department_code) DO UPDATE
+        SET current_seq = public.sku_sequences.current_seq + 1, updated_at = NOW()
+        RETURNING current_seq;
+      `, [dept]);
+      const seq = rows[0]?.current_seq || 1;
+      const sku = `VIN-${dept}-${String(seq).padStart(4, '0')}`;
+      return { sku, seq, department_code: dept };
+    });
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to generate SKU' });
   }
 });
 

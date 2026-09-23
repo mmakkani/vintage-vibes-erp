@@ -76,7 +76,12 @@ export interface PieceBreakdownItem {
   isTagged?: boolean;
   soldInvoiceId?: string;
   createdAt: string;
-  status?: 'IN_STOCK' | 'SOLD' | 'DAMAGED' | 'RESERVED' | 'CLAIMED_PENDING';
+  status?: 'IN_STOCK' | 'SOLD' | 'DAMAGED' | 'RESERVED' | 'CLAIMED_PENDING' | 'WIP_LAUNDRY';
+  sku?: string;
+  parentCategoryName?: string;
+  readyForEcommerce?: boolean;
+  ecommerceDescription?: string;
+  seoTags?: string[];
   grade?: string;
   retailPriceAed?: number;
   soldPriceAed?: number;

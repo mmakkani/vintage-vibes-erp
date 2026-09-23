@@ -99,28 +99,8 @@ export class SetupService {
   }
 
   // --- Product Categories (public.product_categories) ---
+  // --- Product Categories (public.product_categories) ---
   public static async getProductCategories(): Promise<ProductCategory[]> {
-    try {
-      const { data, error } = await supabase
-        .from('product_categories')
-        .select('*')
-        .order('created_at', { ascending: true });
-
-      if (!error && Array.isArray(data) && data.length > 0) {
-        return data.map((r: any) => ({
-          id: r.id,
-          name: r.name,
-          slug: r.slug,
-          is_active: r.is_active !== false,
-          isActive: r.is_active !== false,
-          created_at: r.created_at,
-          createdAt: r.created_at
-        }));
-      }
-    } catch (e) {
-      console.warn('Supabase product_categories query notice:', e);
-    }
-
     try {
       const res = await safeFetchJson<any>('/api/setup/product-categories');
       if (Array.isArray(res) && res.length > 0) {
@@ -130,21 +110,71 @@ export class SetupService {
           slug: r.slug,
           is_active: r.is_active !== false,
           isActive: r.is_active !== false,
+          parent_id: r.parent_id || null,
+          parentId: r.parent_id || null,
+          parent_name: r.parent_name || null,
+          parentName: r.parent_name || null,
+          department_code: r.department_code || null,
+          departmentCode: r.department_code || null,
+          level: Number(r.level) || 1,
+          display_order: Number(r.display_order) || 0,
+          displayOrder: Number(r.display_order) || 0,
           created_at: r.created_at,
           createdAt: r.created_at
         }));
       }
     } catch (_) {}
 
+    try {
+      const { data, error } = await supabase
+        .from('product_categories')
+        .select('*')
+        .order('level', { ascending: true })
+        .order('display_order', { ascending: true });
+
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return data.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+          is_active: r.is_active !== false,
+          isActive: r.is_active !== false,
+          parent_id: r.parent_id || null,
+          parentId: r.parent_id || null,
+          department_code: r.department_code || null,
+          departmentCode: r.department_code || null,
+          level: Number(r.level) || 1,
+          display_order: Number(r.display_order) || 0,
+          displayOrder: Number(r.display_order) || 0,
+          created_at: r.created_at,
+          createdAt: r.created_at
+        }));
+      }
+    } catch (e) {
+      console.warn('Supabase product_categories query notice:', e);
+    }
+
     return [];
   }
 
-  public static async addProductCategory(item: { name: string; slug?: string; is_active?: boolean }): Promise<ProductCategory> {
+  public static async addProductCategory(item: {
+    name: string;
+    slug?: string;
+    is_active?: boolean;
+    parent_id?: string | null;
+    department_code?: string | null;
+    level?: number;
+    display_order?: number;
+  }): Promise<ProductCategory> {
     const slug = (item.slug || item.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `cat-${Date.now()}`;
     const payload = {
       name: item.name.trim(),
       slug,
-      is_active: item.is_active !== false
+      is_active: item.is_active !== false,
+      parent_id: item.parent_id || null,
+      department_code: item.department_code ? item.department_code.trim().toUpperCase() : null,
+      level: item.level || (item.parent_id ? 2 : 1),
+      display_order: item.display_order || 0
     };
 
     try {
@@ -160,6 +190,13 @@ export class SetupService {
           slug: res.slug,
           is_active: res.is_active !== false,
           isActive: res.is_active !== false,
+          parent_id: res.parent_id || null,
+          parentId: res.parent_id || null,
+          department_code: res.department_code || null,
+          departmentCode: res.department_code || null,
+          level: Number(res.level) || 1,
+          display_order: Number(res.display_order) || 0,
+          displayOrder: Number(res.display_order) || 0,
           created_at: res.created_at,
           createdAt: res.created_at
         };
@@ -182,6 +219,13 @@ export class SetupService {
       slug: data.slug,
       is_active: data.is_active !== false,
       isActive: data.is_active !== false,
+      parent_id: data.parent_id || null,
+      parentId: data.parent_id || null,
+      department_code: data.department_code || null,
+      departmentCode: data.department_code || null,
+      level: Number(data.level) || 1,
+      display_order: Number(data.display_order) || 0,
+      displayOrder: Number(data.display_order) || 0,
       created_at: data.created_at,
       createdAt: data.created_at
     };
@@ -193,6 +237,13 @@ export class SetupService {
     if (updates.slug !== undefined) payload.slug = updates.slug.trim();
     if (updates.is_active !== undefined) payload.is_active = updates.is_active;
     if (updates.isActive !== undefined) payload.is_active = updates.isActive;
+    if (updates.parent_id !== undefined) payload.parent_id = updates.parent_id || null;
+    if (updates.parentId !== undefined) payload.parent_id = updates.parentId || null;
+    if (updates.department_code !== undefined) payload.department_code = updates.department_code ? updates.department_code.trim().toUpperCase() : null;
+    if (updates.departmentCode !== undefined) payload.department_code = updates.departmentCode ? updates.departmentCode.trim().toUpperCase() : null;
+    if (updates.level !== undefined) payload.level = updates.level;
+    if (updates.display_order !== undefined) payload.display_order = updates.display_order;
+    if (updates.displayOrder !== undefined) payload.display_order = updates.displayOrder;
 
     try {
       await safeFetchJson<any>(`/api/setup/product-categories/${id}`, {
@@ -223,6 +274,21 @@ export class SetupService {
     }
   }
 
+  public static async generateSku(departmentCode: string = 'GEN'): Promise<string> {
+    const dept = (departmentCode || 'GEN').toUpperCase().trim().slice(0, 5);
+    try {
+      const res = await safeFetchJson<{ sku: string; seq: number }>('/api/setup/generate-sku', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ department_code: dept })
+      });
+      if (res?.sku) return res.sku;
+    } catch (_) {}
+
+    const fallbackSeq = String(Math.floor(1000 + Math.random() * 9000));
+    return `VIN-${dept}-${fallbackSeq}`;
+  }
+
   // --- Categories (Garment / Storefront unified) ---
   public static async getCategories(): Promise<CategoryMaster[]> {
     // 1. Prioritize reading public.product_categories as the dynamic single source of truth
@@ -236,10 +302,18 @@ export class SetupService {
           slug: r.slug,
           description: `Storefront Category: ${r.name}`,
           qualityTier: 'CREAM',
-          sortOrder: idx + 1,
+          sortOrder: r.display_order || idx + 1,
           status: r.is_active ? 'POSTED' : 'UNPOSTED',
           isActive: r.is_active !== false,
           is_active: r.is_active !== false,
+          parent_id: r.parent_id || null,
+          parentId: r.parent_id || null,
+          parent_name: r.parent_name || null,
+          parentName: r.parent_name || null,
+          department_code: r.department_code || null,
+          departmentCode: r.department_code || null,
+          level: r.level || 1,
+          display_order: r.display_order || 0,
           created_at: r.created_at,
           createdAt: r.created_at
         }));
@@ -274,8 +348,18 @@ export class SetupService {
     // Also mirror to product_categories so it reflects across storefront & terminal
     const catName = (item.name || '').trim();
     const catSlug = (item.slug || catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `cat-${Date.now()}`;
+    const parentId = (item as any).parent_id || (item as any).parentId || null;
+    const deptCode = (item as any).department_code || (item as any).departmentCode || null;
+
     if (catName) {
-      SetupService.addProductCategory({ name: catName, slug: catSlug, is_active: item.isActive !== false }).catch(() => {});
+      SetupService.addProductCategory({
+        name: catName,
+        slug: catSlug,
+        is_active: item.isActive !== false,
+        parent_id: parentId,
+        department_code: deptCode,
+        level: parentId ? 2 : 1
+      }).catch(() => {});
     }
 
     const id = item.id || `cat-${Date.now()}`;
@@ -307,8 +391,10 @@ export class SetupService {
         sortOrder: payload.sort_order,
         status: payload.status as any,
         isActive: payload.is_active,
-        is_active: payload.is_active
-      };
+        is_active: payload.is_active,
+        parent_id: parentId,
+        department_code: deptCode
+      } as any;
     }
 
     return {
@@ -321,18 +407,21 @@ export class SetupService {
       sortOrder: data.sort_order,
       status: data.status,
       isActive: data.is_active,
-      is_active: data.is_active
-    };
+      is_active: data.is_active,
+      parent_id: parentId,
+      department_code: deptCode
+    } as any;
   }
 
   public static async updateCategory(id: string, updates: Partial<CategoryMaster>): Promise<void> {
-    if (updates.name || updates.slug || updates.isActive !== undefined || updates.is_active !== undefined) {
-      SetupService.updateProductCategory(id, {
-        name: updates.name,
-        slug: updates.slug,
-        is_active: updates.is_active !== undefined ? updates.is_active : updates.isActive
-      }).catch(() => {});
-    }
+    SetupService.updateProductCategory(id, {
+      name: updates.name,
+      slug: updates.slug,
+      is_active: updates.is_active !== undefined ? updates.is_active : updates.isActive,
+      parent_id: (updates as any).parent_id || (updates as any).parentId,
+      department_code: (updates as any).department_code || (updates as any).departmentCode,
+      level: ((updates as any).parent_id || (updates as any).parentId) ? 2 : 1
+    }).catch(() => {});
 
     const payload: any = {};
     if (updates.name !== undefined) payload.name = updates.name;

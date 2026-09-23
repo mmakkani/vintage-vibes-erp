@@ -45,8 +45,12 @@ import {
   Unlock,
   Maximize2,
   Crown,
-  Flame
+  Flame,
+  Globe,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
+import { SetupService } from '../../../services/setupService.ts';
 
 interface BaleSortingTerminalProps {
   isOpen: boolean;
@@ -385,6 +389,87 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   } | null>(null);
   const [showGlobalInsightsPanel, setShowGlobalInsightsPanel] = useState<boolean>(false);
 
+  // --- END-TO-END PIPELINE STATES ---
+  // 1. Hierarchical Category Selection
+  const [selectedParentDept, setSelectedParentDept] = useState<string>('vintage');
+  // 2. Creatable Item Master Selection
+  const [internalItemMasters, setInternalItemMasters] = useState<ItemMaster[]>(items || []);
+  const [isItemMasterDropdownOpen, setIsItemMasterDropdownOpen] = useState<boolean>(false);
+  // 3. AI SEO & Archival Description
+  const [ecommerceDescription, setEcommerceDescription] = useState<string>('');
+  const [seoTags, setSeoTags] = useState<string[]>([]);
+  const [showSeoDrawer, setShowSeoDrawer] = useState<boolean>(false);
+  // 4. Auto-Generated SKU State
+  const [generatedSku, setGeneratedSku] = useState<string>('VIN-VIN-0001');
+
+  useEffect(() => {
+    if (items && items.length > 0) {
+      setInternalItemMasters(items);
+    } else {
+      SetupService.getItems().then(res => {
+        if (Array.isArray(res) && res.length > 0) setInternalItemMasters(res);
+      }).catch(() => {});
+    }
+  }, [items]);
+
+  const itemMasterDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (itemMasterDropdownRef.current && !itemMasterDropdownRef.current.contains(e.target as Node)) {
+        setIsItemMasterDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  const filteredItemMasters = useMemo(() => {
+    if (!brandTitle.trim()) return internalItemMasters.slice(0, 8);
+    const q = brandTitle.toLowerCase();
+    return internalItemMasters.filter(im =>
+      im.name.toLowerCase().includes(q) || (im.code && im.code.toLowerCase().includes(q))
+    ).slice(0, 8);
+  }, [internalItemMasters, brandTitle]);
+
+  const activeDeptObj = useMemo(() => {
+    const list = Array.isArray(categoriesList) ? categoriesList : [];
+    return list.find((c: any) => c.slug === selectedParentDept || (c as any).department_code?.toLowerCase() === selectedParentDept.toLowerCase());
+  }, [categoriesList, selectedParentDept]);
+
+  const activeDeptCode = useMemo(() => {
+    if (activeDeptObj && (activeDeptObj as any).department_code) return (activeDeptObj as any).department_code;
+    const mapping: Record<string, string> = {
+      men: 'MEN',
+      ladies: 'LAD',
+      children: 'KID',
+      accessories: 'ACC',
+      vintage: 'VIN',
+      antique: 'ANT'
+    };
+    return mapping[selectedParentDept] || 'GEN';
+  }, [activeDeptObj, selectedParentDept]);
+
+  useEffect(() => {
+    SetupService.generateSku(activeDeptCode)
+      .then(sku => setGeneratedSku(sku))
+      .catch(() => setGeneratedSku(`VIN-${activeDeptCode}-0001`));
+  }, [activeDeptCode]);
+
+  const subcategoriesForDept = useMemo(() => {
+    if (!Array.isArray(categoriesList) || categoriesList.length === 0) return availableCategories;
+    const filtered = categoriesList.filter((c: any) => {
+      if (!c || c.is_active === false || (c as any).isActive === false) return false;
+      if ((c as any).level === 1 || ['men', 'ladies', 'children', 'accessories', 'vintage', 'antique'].includes(c.slug)) {
+        return false;
+      }
+      if (activeDeptObj && (c as any).parent_id === activeDeptObj.id) return true;
+      if ((c as any).parent_slug === selectedParentDept) return true;
+      return true;
+    }).map((c: any) => c.name || c.code || String(c));
+    return filtered.length > 0 ? filtered : availableCategories;
+  }, [categoriesList, activeDeptObj, selectedParentDept, availableCategories]);
+
   // Update selected category if availableCategories loads
   useEffect(() => {
     if (availableCategories.length > 0 && !availableCategories.includes(selectedCategory)) {
@@ -556,6 +641,14 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setAiSuggestedPrice(autoPrice);
     setSellingPriceOverride(String(autoPrice));
 
+    // 7b. AI E-Commerce Copy & SEO Keywords
+    if (tagData.ecommerce_description) {
+      setEcommerceDescription(tagData.ecommerce_description);
+    }
+    if (Array.isArray(tagData.seo_tags) && tagData.seo_tags.length > 0) {
+      setSeoTags(tagData.seo_tags);
+    }
+
     // Global Geo-Arbitrage Insights
     if ((tagData as any).global_insights) {
       setGlobalInsights((tagData as any).global_insights);
@@ -676,11 +769,42 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const isOverridden = aiSuggestedPrice > 0 && effectiveSellingPrice < aiSuggestedPrice;
     const finalGrailStatus = Boolean(isGrail || ['Antique', 'Boutique', 'Grails'].includes(marketSegment) || era.toLowerCase().includes('antique'));
 
+    // Smart Quality Routing Engine: Super Cream & Grade A go live to Storefront; Grade B & Rework held in Laundry WIP
+    const isPristine = ['Super Cream', 'Grade A+', 'Grade A', 'CREAM', 'GRADE_A'].some(g =>
+      selectedGrade.toLowerCase().includes(g.toLowerCase())
+    ) && !selectedGrade.toLowerCase().includes('rework') && !selectedGrade.toLowerCase().includes('grade b');
+    const readyForEcommerce = isPristine;
+    const pieceStatus = isPristine ? 'IN_STOCK' : 'WIP_LAUNDRY';
+
+    // Auto-populate Item Master in background if new
+    if (brandTitle.trim()) {
+      const existsInMasters = internalItemMasters.some(im => im.name.toLowerCase() === brandTitle.trim().toLowerCase());
+      if (!existsInMasters) {
+        SetupService.addItem({
+          code: `ITM-${Date.now().toString().slice(-4)}`,
+          name: brandTitle.trim(),
+          category: selectedCategory,
+          basePrice: effectiveSellingPrice || 50,
+          targetUom: 'PCS',
+          weightKg: weightKg,
+          minStockThreshold: 1
+        }).then(newMaster => {
+          setInternalItemMasters(prev => [...prev, newMaster]);
+        }).catch(() => {});
+      }
+    }
+
     // Payload for public.bale_sorted_pieces
     const newPieceDb = {
       id: pieceId,
       bale_id: String(activeBale.id),
       piece_code: barcode,
+      sku: generatedSku,
+      parent_category_name: activeDeptObj?.name || 'Vintage',
+      ready_for_ecommerce: readyForEcommerce,
+      ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
+      seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
+      status: pieceStatus,
       category: selectedCategory,
       size: sizeScanned,
       brand_title: brandTitle,
@@ -730,8 +854,50 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       globalInsights: globalInsights || undefined,
       isSold: false,
       isTagged: true,
+      ready_for_ecommerce: readyForEcommerce,
+      ecommerce_description: ecommerceDescription || styleNotes,
+      seo_tags: seoTags,
+      status: pieceStatus,
       createdAt: new Date().toISOString()
-    };
+    } as any;
+
+    // Direct Instant Sync to public.inventory_pieces for live Storefront
+    supabase
+      .from('inventory_pieces')
+      .upsert([{
+        id: pieceId,
+        gate_pass_id: String(activeBale.id),
+        barcode: barcode,
+        sku: generatedSku,
+        item_name: selectedCategory,
+        brand_name: brandTitle.split(' ')[0] || "Vintage",
+        brand_tier: finalGrailStatus ? 'Grail' : 'Vintage Curated',
+        label_grade: selectedGrade,
+        shop_location: shopLocation,
+        weight_kg: weightKg,
+        weight_grams: numericGramWeight,
+        cost_price: autoPieceCostAed,
+        estimated_price: effectiveSellingPrice,
+        retail_price_aed: effectiveSellingPrice,
+        size_scanned: sizeScanned,
+        country_of_origin: countryOfOrigin,
+        style: styleNotes || brandTitle,
+        front_image_url: frontImageUrl || '',
+        back_image_url: backImageUrl || '',
+        tag_image_url: tagImageUrl || '',
+        is_sold: false,
+        status: pieceStatus,
+        market_segment: marketSegment || 'Regular Thrift',
+        is_grail: finalGrailStatus,
+        ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
+        is_price_overridden: isOverridden,
+        global_insights: globalInsights || null,
+        ready_for_ecommerce: readyForEcommerce,
+        ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
+        seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
+        parent_category_name: activeDeptObj?.name || 'Vintage'
+      }], { onConflict: 'id' })
+      .catch(err => console.warn('Instant inventory sync notice:', err));
 
     // 1. Optimistically prepend the piece to the table
     const currentPieces = [{ ...newPiecePayload, ...newPieceDb }, ...pieces];
@@ -785,7 +951,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     // Auto-prepare thermal barcode sticker
     const stickerPayload: StickerData = {
       itemCode: newPiecePayload.barcode,
-      description: `${newPiecePayload.itemName} (${newPiecePayload.sizeScanned})`,
+      description: `${generatedSku} • ${newPiecePayload.itemName} (${newPiecePayload.sizeScanned})`,
       category: newPiecePayload.itemName,
       size: newPiecePayload.sizeScanned,
       brand: newPiecePayload.brandName,
@@ -801,7 +967,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     if (autoPrintThermalOnAdd) {
       try {
         openThermalLabelPrintWindow({
-          itemCode: stickerPayload.itemCode,
+          itemCode: `${stickerPayload.itemCode} [${generatedSku}]`,
           description: stickerPayload.description,
           category: stickerPayload.category,
           size: stickerPayload.size,
@@ -818,9 +984,14 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }
 
     setFeedbackToast({
-      text: `✓ Added ${newPiecePayload.barcode} (${numericGramWeight}g) • AED ${autoPieceCostAed} cost`,
+      text: readyForEcommerce
+        ? `✓ Added ${generatedSku} (${numericGramWeight}g) • 🌐 Routed to Storefront!`
+        : `✓ Added ${generatedSku} (${numericGramWeight}g) • 🧺 Routed to WIP Laundry`,
       type: 'success'
     });
+
+    // Advance sequence for next piece
+    SetupService.generateSku(activeDeptCode).then(s => setGeneratedSku(s)).catch(() => {});
 
     // Reset fields with smart defaults and refocus weight immediately
     setActiveGrailAlert(null);
@@ -828,6 +999,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setSellingPriceOverride('');
     setBrandTitle('');
     setStyleNotes('');
+    setEcommerceDescription('');
+    setSeoTags([]);
     setFrontImageUrl(undefined);
     setBackImageUrl(undefined);
     setTagImageUrl(undefined);
@@ -1999,204 +2172,382 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 const isGrailLocked = Boolean(isGrail || ['Antique', 'Boutique', 'Grails'].includes(marketSegment) || era.toLowerCase().includes('antique') || activeGrailAlert?.isGrail);
                 const currentSellingPrice = Number(sellingPriceOverride || suggestedSellingPrice || 0);
                 const isBelowCost = autoPieceCostAed > 0 && currentSellingPrice > 0 && currentSellingPrice < autoPieceCostAed;
+                const isPristine = ['Super Cream', 'Grade A+', 'Grade A', 'CREAM', 'GRADE_A'].some(g =>
+                  selectedGrade.toLowerCase().includes(g.toLowerCase())
+                ) && !selectedGrade.toLowerCase().includes('rework') && !selectedGrade.toLowerCase().includes('grade b');
+
+                const DEPARTMENTS = [
+                  { id: 'men', name: 'Men', code: 'MEN', icon: '👔' },
+                  { id: 'ladies', name: 'Ladies', code: 'LAD', icon: '👗' },
+                  { id: 'children', name: 'Kids', code: 'KID', icon: '🧸' },
+                  { id: 'accessories', name: 'Accessories', code: 'ACC', icon: '🧢' },
+                  { id: 'vintage', name: 'Vintage', code: 'VIN', icon: '🕰️' },
+                  { id: 'antique', name: 'Antique', code: 'ANT', icon: '🏛️' }
+                ];
 
                 return (
-                  <form onSubmit={handleAddPieceAndNext} className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-12 gap-2 sm:gap-2.5 items-end">
-                    {/* 1. Weight in Grams (Auto-focused) */}
-                    <div className="col-span-1 lg:col-span-2 space-y-1">
-                      <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide">
-                        Weight (Grams) *
-                      </label>
-                      <div className="relative">
+                  <div className="space-y-2">
+                    {/* PIPELINE CONTROL BAR: HIERARCHY, ATOMIC SKU & SMART ROUTING GATE */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 p-2 bg-slate-900/90 border border-slate-800 rounded-xl">
+                      {/* Department Filter Pills */}
+                      <div className="flex items-center gap-1 overflow-x-auto py-0.5 max-w-full">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 mr-1 shrink-0">Dept:</span>
+                        {DEPARTMENTS.map(dept => {
+                          const isSelected = selectedParentDept === dept.id;
+                          return (
+                            <button
+                              key={dept.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedParentDept(dept.id);
+                                SetupService.generateSku(dept.code).then(s => setGeneratedSku(s)).catch(() => {});
+                              }}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0 ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white shadow shadow-indigo-600/30 border border-indigo-400'
+                                  : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 border border-slate-700'
+                              }`}
+                            >
+                              <span>{dept.icon}</span>
+                              <span>{dept.name}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Status Badges: SKU + Smart Routing + AI Copy Drawer */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Dynamic SKU Badge */}
+                        <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950 border border-indigo-500/50 text-indigo-300 font-mono text-xs font-black shadow-inner" title="Upcoming atomic SKU for this piece">
+                          <Barcode className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>{generatedSku}</span>
+                        </div>
+
+                        {/* Smart Quality Routing Gate */}
+                        {isPristine ? (
+                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 text-[10px] font-bold shadow-xs" title="Super Cream & Grade A pieces route directly to the Live E-Commerce Storefront">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            <span>🟢 Storefront Live</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-950/80 border border-amber-500/60 text-amber-300 text-[10px] font-bold shadow-xs" title="Grade B and Rework pieces are held in Laundry WIP and hidden from Storefront">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                            <span>🧺 Laundry WIP</span>
+                          </div>
+                        )}
+
+                        {/* AI Copy & SEO Drawer Toggle */}
+                        <button
+                          type="button"
+                          onClick={() => setShowSeoDrawer(prev => !prev)}
+                          className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                            showSeoDrawer || ecommerceDescription
+                              ? 'bg-amber-500/20 text-amber-300 border-amber-400/60'
+                              : 'bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700'
+                          }`}
+                          title="Toggle AI Archival Description & SEO tags drawer"
+                        >
+                          <Sparkles className="w-3 h-3 text-amber-400" />
+                          <span>AI Copy</span>
+                          {ecommerceDescription && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                          {showSeoDrawer ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* FORM INPUTS */}
+                    <form onSubmit={handleAddPieceAndNext} className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-12 gap-2 sm:gap-2.5 items-end">
+                      {/* 1. Weight in Grams (Auto-focused) */}
+                      <div className="col-span-1 lg:col-span-2 space-y-1">
+                        <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide">
+                          Weight (Grams) *
+                        </label>
+                        <div className="relative">
+                          <input
+                            id="weight-input-field"
+                            ref={gramInputRef}
+                            type="number"
+                            step="1"
+                            min="1"
+                            placeholder="[]"
+                            value={gramWeight}
+                            onChange={e => setGramWeight(e.target.value)}
+                            onFocus={e => e.target.select()}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleAddPieceAndNext();
+                              }
+                            }}
+                            disabled={hudStats.isCompleted}
+                            className="w-full bg-slate-900 border-2 border-amber-500/70 focus:border-amber-400 rounded-lg px-3 py-2 text-sm font-black font-mono text-amber-300 focus:outline-hidden text-right pr-8 shadow-inner disabled:opacity-50"
+                            required
+                          />
+                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-400">
+                            g
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 2. Auto Calculated Cost (AED) */}
+                      <div className="col-span-1 lg:col-span-1 space-y-1">
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide">
+                          Cost (AED)
+                        </label>
+                        <div className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-sm font-mono font-bold text-slate-300">
+                          AED {autoPieceCostAed.toFixed(2)}
+                        </div>
+                      </div>
+
+                      {/* 3. Estimated Selling Price with Anti-Theft Grail Lock & Below-Cost Warning */}
+                      <div className="col-span-1 lg:col-span-1 space-y-1">
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
+                          <span>Selling (AED)</span>
+                          {isGrailLocked ? (
+                            <span className="text-[9px] text-amber-400 font-bold flex items-center gap-0.5">
+                              <Lock className="w-2.5 h-2.5" /> LOCKED
+                            </span>
+                          ) : isBelowCost ? (
+                            <span className="text-[9px] text-rose-400 font-bold flex items-center gap-0.5 animate-pulse">
+                              <AlertTriangle className="w-2.5 h-2.5" /> LOSS
+                            </span>
+                          ) : null}
+                        </label>
                         <input
-                          id="weight-input-field"
-                          ref={gramInputRef}
                           type="number"
-                          step="1"
-                          min="1"
-                          placeholder="[]"
-                          value={gramWeight}
-                          onChange={e => setGramWeight(e.target.value)}
+                          step="5"
+                          placeholder={String(suggestedSellingPrice)}
+                          value={sellingPriceOverride || String(suggestedSellingPrice)}
+                          onChange={e => setSellingPriceOverride(e.target.value)}
                           onFocus={e => e.target.select()}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleAddPieceAndNext();
-                            }
+                          disabled={hudStats.isCompleted || isGrailLocked}
+                          title={isGrailLocked ? "Anti-Theft Grail Lock: Selling price is locked by AI appraisal to prevent unauthorized markdown." : isBelowCost ? `⚠️ Warning: Price AED ${currentSellingPrice} is LOWER than piece cost AED ${autoPieceCostAed.toFixed(2)}!` : "Estimated retail selling price"}
+                          className={`w-full bg-slate-900 border rounded-lg px-2 py-2 text-sm font-mono font-bold focus:outline-hidden disabled:opacity-80 transition-all ${
+                            isGrailLocked
+                              ? 'border-amber-500/70 text-amber-300 bg-amber-950/30 cursor-not-allowed'
+                              : isBelowCost
+                              ? 'border-rose-500 text-rose-300 bg-rose-950/40 ring-2 ring-rose-500/50'
+                              : 'border-slate-700 text-emerald-400 focus:border-indigo-400'
+                          }`}
+                        />
+                        {isBelowCost && !isGrailLocked && (
+                          <div className="text-[8px] text-rose-400 font-bold flex items-center gap-0.5 mt-0.5 animate-pulse">
+                            <span>⚠️ BELOW COST (AED {autoPieceCostAed.toFixed(2)})</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 4. Segment & Era Selector */}
+                      <div className="col-span-1 lg:col-span-2 space-y-1">
+                        <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
+                          <span>Segment & Era</span>
+                          <span className="text-[9px] text-slate-400">AI Sync</span>
+                        </label>
+                        <select
+                          value={`${marketSegment}|${era}`}
+                          onChange={e => {
+                            const [newSeg, newEra] = e.target.value.split('|');
+                            setMarketSegment(newSeg as any);
+                            setEra(newEra);
+                            const isHigh = ['Antique', 'Boutique', 'Grails'].includes(newSeg) || newEra.toLowerCase().includes('antique');
+                            setIsGrail(isHigh);
+                            const autoPrice = getDefaultSellingPrice(selectedCategory, newEra, brandTitle);
+                            setSellingPriceOverride(String(autoPrice));
                           }}
                           disabled={hudStats.isCompleted}
-                          className="w-full bg-slate-900 border-2 border-amber-500/70 focus:border-amber-400 rounded-lg px-3 py-2 text-sm font-black font-mono text-amber-300 focus:outline-hidden text-right pr-8 shadow-inner disabled:opacity-50"
-                          required
-                        />
-                        <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-400">
-                          g
-                        </span>
+                          className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-lg px-2 py-2 text-xs text-amber-200 focus:outline-hidden cursor-pointer disabled:opacity-50 font-medium"
+                        >
+                          <option value="Antique|Antique Heritage (1920s-1960s)">🏛️ Antique (1920s-60s)</option>
+                          <option value="Grails|1970s-1980s Vintage">🔥 Grails (70s-80s Band/Tour)</option>
+                          <option value="Grails|1990s Vintage">🔥 Grails (90s Vintage)</option>
+                          <option value="Boutique|1990s Vintage">✨ Boutique / Designer</option>
+                          <option value="Old Vintage|1970s-1980s Vintage">🕰️ Old Vintage (70s-80s)</option>
+                          <option value="Old Vintage|1990s Vintage">🕰️ Old Vintage (90s)</option>
+                          <option value="Old Vintage|Y2K (Early 2000s)">🕰️ Y2K (Early 2000s)</option>
+                          <option value="Regular Thrift|Modern Non-Brand">📦 Regular Thrift (Basics)</option>
+                        </select>
                       </div>
-                    </div>
 
-                    {/* 2. Auto Calculated Cost (AED) */}
-                    <div className="col-span-1 lg:col-span-1 space-y-1">
-                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide">
-                        Cost (AED)
-                      </label>
-                      <div className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-sm font-mono font-bold text-slate-300">
-                        AED {autoPieceCostAed.toFixed(2)}
+                      {/* 5. Brand / Title (Creatable Auto-Complete Combobox) */}
+                      <div className="col-span-1 lg:col-span-2 space-y-1 relative" ref={itemMasterDropdownRef}>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
+                          <span>Brand / Title</span>
+                          <span className="text-[9px] text-indigo-400 font-mono">Auto-Master</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="[ENTER BRAND / TITLE]"
+                            value={brandTitle}
+                            onChange={e => {
+                              setBrandTitle(e.target.value);
+                              setIsItemMasterDropdownOpen(true);
+                            }}
+                            onFocus={() => setIsItemMasterDropdownOpen(true)}
+                            disabled={hudStats.isCompleted}
+                            className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-400 rounded-lg px-3 py-2 text-xs text-white focus:outline-hidden disabled:opacity-50"
+                          />
+                          {brandTitle && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setBrandTitle('');
+                                setIsItemMasterDropdownOpen(false);
+                              }}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Creatable Item Master Dropdown */}
+                        {isItemMasterDropdownOpen && (filteredItemMasters.length > 0 || brandTitle.trim().length > 0) && (
+                          <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto bg-slate-900 border border-slate-700 rounded-lg shadow-2xl divide-y divide-slate-800">
+                            {filteredItemMasters.map(im => (
+                              <div
+                                key={im.id || im.code}
+                                onMouseDown={e => {
+                                  e.preventDefault();
+                                  setBrandTitle(im.name);
+                                  if (im.category && availableCategories.includes(im.category)) {
+                                    setSelectedCategory(im.category);
+                                  }
+                                  setIsItemMasterDropdownOpen(false);
+                                }}
+                                className="px-3 py-1.5 hover:bg-indigo-600/30 text-xs text-slate-200 cursor-pointer flex items-center justify-between transition-colors"
+                              >
+                                <span className="font-semibold text-white truncate mr-2">{im.name}</span>
+                                <span className="text-[10px] text-slate-400 shrink-0 font-mono">{im.category || im.code}</span>
+                              </div>
+                            ))}
+                            {brandTitle.trim() && !internalItemMasters.some(im => im.name.toLowerCase() === brandTitle.trim().toLowerCase()) && (
+                              <div
+                                onMouseDown={e => {
+                                  e.preventDefault();
+                                  setIsItemMasterDropdownOpen(false);
+                                }}
+                                className="px-3 py-1.5 bg-indigo-950/70 hover:bg-indigo-900 text-xs text-indigo-300 font-bold cursor-pointer flex items-center gap-1.5 transition-colors"
+                              >
+                                <Plus className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                                <span className="truncate">Auto-Save "{brandTitle.trim()}" to Item Master</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    </div>
 
-                    {/* 3. Estimated Selling Price with Anti-Theft Grail Lock & Below-Cost Warning */}
-                    <div className="col-span-1 lg:col-span-1 space-y-1">
-                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
-                        <span>Selling (AED)</span>
-                        {isGrailLocked ? (
-                          <span className="text-[9px] text-amber-400 font-bold flex items-center gap-0.5">
-                            <Lock className="w-2.5 h-2.5" /> LOCKED
+                      {/* 6. Category Dropdown (Filtered by Department) */}
+                      <div className="col-span-1 lg:col-span-2 space-y-1">
+                        <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
+                          <span>Category</span>
+                          <span className="text-[9px] text-slate-400 font-mono">{activeDeptObj?.name || 'Dept'}</span>
+                        </label>
+                        <select
+                          value={selectedCategory}
+                          onChange={e => {
+                            const newCat = e.target.value;
+                            setSelectedCategory(newCat);
+                            const autoPrice = getDefaultSellingPrice(newCat, era, brandTitle);
+                            setSellingPriceOverride(String(autoPrice));
+                          }}
+                          disabled={hudStats.isCompleted}
+                          className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-400 rounded-lg px-2.5 py-2 text-xs text-slate-200 focus:outline-hidden cursor-pointer disabled:opacity-50 font-medium"
+                        >
+                          {subcategoriesForDept.map(cat => {
+                            const catStr = typeof cat === 'object' && cat !== null ? ((cat as any).name || (cat as any).code || '') : String(cat || '');
+                            return (
+                              <option key={catStr} value={catStr}>{catStr}</option>
+                            );
+                          })}
+                        </select>
+                      </div>
+
+                      {/* 7. Size Selector Dropdown */}
+                      <div className="col-span-1 lg:col-span-1 space-y-1">
+                        <label className="block text-[11px] font-bold text-indigo-300 uppercase tracking-wide flex items-center justify-between">
+                          <span>Size</span>
+                          <span className="font-mono text-[9px] text-amber-400 font-bold bg-slate-800 px-1 py-0.2 rounded">
+                            {sizeScanned || 'L'}
                           </span>
-                        ) : isBelowCost ? (
-                          <span className="text-[9px] text-rose-400 font-bold flex items-center gap-0.5 animate-pulse">
-                            <AlertTriangle className="w-2.5 h-2.5" /> LOSS
+                        </label>
+                        <select
+                          value={sizeScanned}
+                          onChange={e => setSizeScanned(e.target.value)}
+                          disabled={hudStats.isCompleted}
+                          className="w-full bg-slate-900 border-2 border-indigo-500/70 focus:border-indigo-400 rounded-lg px-2 py-2 text-xs text-indigo-200 font-black focus:outline-hidden cursor-pointer disabled:opacity-50"
+                        >
+                          {availableSizes.map(s => (
+                            <option key={s.id || s.code} value={s.code}>
+                              {s.code}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* 8. Quality Grade Dropdown */}
+                      <div className="col-span-2 sm:col-span-1 lg:col-span-1 space-y-1">
+                        <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
+                          <span className="flex items-center gap-1">
+                            <Sparkles className="w-3 h-3 text-amber-400" />
+                            <span>Quality Grade</span>
                           </span>
-                        ) : null}
-                      </label>
-                      <input
-                        type="number"
-                        step="5"
-                        placeholder={String(suggestedSellingPrice)}
-                        value={sellingPriceOverride || String(suggestedSellingPrice)}
-                        onChange={e => setSellingPriceOverride(e.target.value)}
-                        onFocus={e => e.target.select()}
-                        disabled={hudStats.isCompleted || isGrailLocked}
-                        title={isGrailLocked ? "Anti-Theft Grail Lock: Selling price is locked by AI appraisal to prevent unauthorized markdown." : isBelowCost ? `⚠️ Warning: Price AED ${currentSellingPrice} is LOWER than piece cost AED ${autoPieceCostAed.toFixed(2)}!` : "Estimated retail selling price"}
-                        className={`w-full bg-slate-900 border rounded-lg px-2 py-2 text-sm font-mono font-bold focus:outline-hidden disabled:opacity-80 transition-all ${
-                          isGrailLocked
-                            ? 'border-amber-500/70 text-amber-300 bg-amber-950/30 cursor-not-allowed'
-                            : isBelowCost
-                            ? 'border-rose-500 text-rose-300 bg-rose-950/40 ring-2 ring-rose-500/50'
-                            : 'border-slate-700 text-emerald-400 focus:border-indigo-400'
-                        }`}
-                      />
-                      {isBelowCost && !isGrailLocked && (
-                        <div className="text-[8px] text-rose-400 font-bold flex items-center gap-0.5 mt-0.5 animate-pulse">
-                          <span>⚠️ BELOW COST (AED {autoPieceCostAed.toFixed(2)})</span>
+                        </label>
+                        <select
+                          value={selectedGrade}
+                          onChange={e => setSelectedGrade(e.target.value)}
+                          disabled={hudStats.isCompleted}
+                          className="w-full bg-slate-900 border-2 border-amber-500/70 focus:border-amber-400 rounded-lg px-2 py-2 text-xs text-amber-200 font-bold focus:outline-hidden cursor-pointer disabled:opacity-50"
+                        >
+                          {availableQualityGrades.map(q => (
+                            <option key={q.id || q.code} value={q.name}>
+                              {q.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* 8b. Expandable AI Archival Copywriting & SEO Drawer */}
+                      {showSeoDrawer && (
+                        <div className="col-span-2 sm:col-span-2 md:col-span-3 lg:col-span-12 mt-1 p-3 bg-slate-900/95 border border-amber-500/40 rounded-xl space-y-2 animate-in fade-in duration-150">
+                          <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+                            <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                              <span>E-Commerce AI Curated Copywriting & SEO Tags</span>
+                            </span>
+                            <span className="text-[10px] text-slate-400">Syncs directly to live Storefront piece record</span>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase">Product Description (Luxury Storefront Copy)</label>
+                              <textarea
+                                rows={2}
+                                value={ecommerceDescription}
+                                onChange={e => setEcommerceDescription(e.target.value)}
+                                placeholder={`Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`}
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-hidden focus:border-amber-400 resize-none font-sans"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase">SEO Search Tags (Comma separated)</label>
+                              <input
+                                type="text"
+                                value={seoTags.join(', ')}
+                                onChange={e => setSeoTags(e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                                placeholder="vintage, single stitch, made in usa, 90s tee"
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-hidden focus:border-amber-400 font-mono"
+                              />
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {seoTags.map((t, i) => (
+                                  <span key={i} className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono">
+                                    #{t}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       )}
-                    </div>
-
-                    {/* 4. Segment & Era Selector */}
-                    <div className="col-span-1 lg:col-span-2 space-y-1">
-                      <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
-                        <span>Segment & Era</span>
-                        <span className="text-[9px] text-slate-400">AI Sync</span>
-                      </label>
-                      <select
-                        value={`${marketSegment}|${era}`}
-                        onChange={e => {
-                          const [newSeg, newEra] = e.target.value.split('|');
-                          setMarketSegment(newSeg as any);
-                          setEra(newEra);
-                          const isHigh = ['Antique', 'Boutique', 'Grails'].includes(newSeg) || newEra.toLowerCase().includes('antique');
-                          setIsGrail(isHigh);
-                          const autoPrice = getDefaultSellingPrice(selectedCategory, newEra, brandTitle);
-                          setSellingPriceOverride(String(autoPrice));
-                        }}
-                        disabled={hudStats.isCompleted}
-                        className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-lg px-2 py-2 text-xs text-amber-200 focus:outline-hidden cursor-pointer disabled:opacity-50 font-medium"
-                      >
-                        <option value="Antique|Antique Heritage (1920s-1960s)">🏛️ Antique (1920s-60s)</option>
-                        <option value="Grails|1970s-1980s Vintage">🔥 Grails (70s-80s Band/Tour)</option>
-                        <option value="Grails|1990s Vintage">🔥 Grails (90s Vintage)</option>
-                        <option value="Boutique|1990s Vintage">✨ Boutique / Designer</option>
-                        <option value="Old Vintage|1970s-1980s Vintage">🕰️ Old Vintage (70s-80s)</option>
-                        <option value="Old Vintage|1990s Vintage">🕰️ Old Vintage (90s)</option>
-                        <option value="Old Vintage|Y2K (Early 2000s)">🕰️ Y2K (Early 2000s)</option>
-                        <option value="Regular Thrift|Modern Non-Brand">📦 Regular Thrift (Basics)</option>
-                      </select>
-                    </div>
-
-                {/* 5. Brand / Title */}
-                <div className="col-span-1 lg:col-span-2 space-y-1">
-                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide">
-                    Brand / Title
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="[ENTER BRAND / TITLE]"
-                    value={brandTitle}
-                    onChange={e => setBrandTitle(e.target.value)}
-                    disabled={hudStats.isCompleted}
-                    className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-400 rounded-lg px-3 py-2 text-xs text-white focus:outline-hidden disabled:opacity-50"
-                  />
-                </div>
-
-                {/* 6. Category Dropdown */}
-                <div className="col-span-1 lg:col-span-2 space-y-1">
-                  <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
-                    <span>Category</span>
-                    <span className="text-[9px] text-slate-400">Setup Sync</span>
-                  </label>
-                  <select
-                    value={selectedCategory}
-                    onChange={e => {
-                      const newCat = e.target.value;
-                      setSelectedCategory(newCat);
-                      const autoPrice = getDefaultSellingPrice(newCat, era, brandTitle);
-                      setSellingPriceOverride(String(autoPrice));
-                    }}
-                    disabled={hudStats.isCompleted}
-                    className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-400 rounded-lg px-2.5 py-2 text-xs text-slate-200 focus:outline-hidden cursor-pointer disabled:opacity-50 font-medium"
-                  >
-                    {availableCategories.map(cat => {
-                      const catStr = typeof cat === 'object' && cat !== null ? ((cat as any).name || (cat as any).code || '') : String(cat || '');
-                      return (
-                        <option key={catStr} value={catStr}>{catStr}</option>
-                      );
-                    })}
-                  </select>
-                </div>
-
-                {/* 6. Size Selector Dropdown */}
-                <div className="col-span-1 lg:col-span-1 space-y-1">
-                  <label className="block text-[11px] font-bold text-indigo-300 uppercase tracking-wide flex items-center justify-between">
-                    <span>Size</span>
-                    <span className="font-mono text-[9px] text-amber-400 font-bold bg-slate-800 px-1 py-0.2 rounded">
-                      {sizeScanned || 'L'}
-                    </span>
-                  </label>
-                  <select
-                    value={sizeScanned}
-                    onChange={e => setSizeScanned(e.target.value)}
-                    disabled={hudStats.isCompleted}
-                    className="w-full bg-slate-900 border-2 border-indigo-500/70 focus:border-indigo-400 rounded-lg px-2 py-2 text-xs text-indigo-200 font-black focus:outline-hidden cursor-pointer disabled:opacity-50"
-                  >
-                    {availableSizes.map(s => (
-                      <option key={s.id || s.code} value={s.code}>
-                        {s.code}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* 7. Quality Grade Dropdown */}
-                <div className="col-span-2 sm:col-span-1 lg:col-span-1 space-y-1">
-                  <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
-                    <span className="flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-amber-400" />
-                      <span>Quality Grade</span>
-                    </span>
-                  </label>
-                  <select
-                    value={selectedGrade}
-                    onChange={e => setSelectedGrade(e.target.value)}
-                    disabled={hudStats.isCompleted}
-                    className="w-full bg-slate-900 border-2 border-amber-500/70 focus:border-amber-400 rounded-lg px-2 py-2 text-xs text-amber-200 font-bold focus:outline-hidden cursor-pointer disabled:opacity-50"
-                  >
-                    {availableQualityGrades.map(q => (
-                      <option key={q.id || q.code} value={q.name}>
-                        {q.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
 
                 {/* 8. Quick Pills (Quality & Sizing) & Submit Button */}
                 <div className="col-span-2 sm:col-span-2 md:col-span-3 lg:col-span-12 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-800/80 mt-1">
@@ -2269,17 +2620,20 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   </button>
                 </div>
               </form>
-            );
-          })()}
+            </div>
+          );
+        })()}
 
-              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
-                <span className="font-mono">
-                  Next Piece Code: <strong className="text-indigo-400">{nextPieceBarcode}</strong>
-                </span>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  Keyboard Shortcut: Press <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-300 font-bold">Enter</kbd> to add and auto-focus next
-                </span>
-              </div>
+            <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-400 pt-1 gap-2">
+              <span className="font-mono flex items-center gap-2">
+                <span>Next Barcode: <strong className="text-indigo-400">{nextPieceBarcode}</strong></span>
+                <span className="text-slate-600">•</span>
+                <span>Next SKU: <strong className="text-amber-400 font-bold">{generatedSku}</strong></span>
+              </span>
+              <span className="text-[10px] text-slate-500 font-mono">
+                Keyboard Shortcut: Press <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-300 font-bold">Enter</kbd> to add and auto-focus next
+              </span>
+            </div>
             </div>
           )}
         </div>

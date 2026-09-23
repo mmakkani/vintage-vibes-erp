@@ -180,7 +180,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
           return;
         } else if (Array.isArray(payload)) {
           // Fallback array handling
-          const filtered = payload.filter(p => !p.isSold && p.status !== 'SOLD');
+          const filtered = payload.filter(p => !p.isSold && p.status !== 'SOLD' && p.status !== 'WIP_LAUNDRY' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
           setTotalItems(filtered.length);
           const computedTotalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
           setTotalPages(computedTotalPages);
@@ -195,7 +195,9 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
         .from('inventory_pieces')
         .select('*', { count: 'exact' })
         .eq('is_sold', false)
-        .neq('status', 'SOLD');
+        .neq('status', 'SOLD')
+        .neq('status', 'WIP_LAUNDRY')
+        .or('ready_for_ecommerce.is.null,ready_for_ecommerce.eq.true');
 
       if (selectedSize && selectedSize !== 'ALL') {
         supaQuery = supaQuery.eq('size_scanned', selectedSize);
@@ -215,13 +217,18 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
         const mapped = supaData.map((r: any) => ({
           id: r.id || r.barcode,
           barcode: r.barcode,
+          sku: r.sku || r.barcode,
           itemId: r.item_id || 'ITM-01',
           itemName: r.item_name || 'Vintage Garment',
+          parentCategoryName: r.parent_category_name || null,
           brandId: r.brand_id,
           brandName: r.brand_name || 'Vintage Archive',
           sizeScanned: r.size_scanned || 'L',
           countryOfOrigin: r.country_of_origin || 'USA',
           style: r.style || 'Single-Stitch Vintage',
+          ecommerceDescription: r.ecommerce_description || r.style || '',
+          seoTags: Array.isArray(r.seo_tags) ? r.seo_tags : [],
+          readyForEcommerce: r.ready_for_ecommerce !== false,
           frontImageUrl: r.front_image_url || r.tag_image_url || '/studio_left_rack.png',
           backImageUrl: r.back_image_url || r.front_image_url || '/studio_backdrop_noboy.png',
           tagImageUrl: r.tag_image_url || '/studio_left_rack.png',

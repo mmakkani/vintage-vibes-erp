@@ -189,6 +189,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   // Category Master Modal State
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<CategoryMaster | null>(null);
+  const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState<string>('ALL');
   const [categoryForm, setCategoryForm] = useState<{
     code: string;
     name: string;
@@ -197,7 +198,9 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     qualityTier: 'CREAM' | 'GRADE_A' | 'NON_BRAND' | 'GRADE_B' | 'MIXED';
     sortOrder: number;
     isActive: boolean;
-  }>({ code: '', name: '', slug: '', description: '', qualityTier: 'CREAM', sortOrder: 1, isActive: true });
+    parentId?: string | null;
+    departmentCode?: string;
+  }>({ code: '', name: '', slug: '', description: '', qualityTier: 'CREAM', sortOrder: 1, isActive: true, parentId: null, departmentCode: '' });
 
   // Size Master Modal State
   const [showSizeModal, setShowSizeModal] = useState(false);
@@ -843,7 +846,9 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       description: '',
       qualityTier: 'CREAM',
       sortOrder: nextIdx,
-      isActive: true
+      isActive: true,
+      parentId: null,
+      departmentCode: ''
     });
     setShowCategoryModal(true);
   };
@@ -857,7 +862,9 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       description: cat.description || '',
       qualityTier: cat.qualityTier || 'CREAM',
       sortOrder: cat.sortOrder || 1,
-      isActive: cat.isActive !== false && cat.is_active !== false
+      isActive: cat.isActive !== false && cat.is_active !== false,
+      parentId: (cat as any).parent_id || (cat as any).parentId || null,
+      departmentCode: (cat as any).department_code || (cat as any).departmentCode || ''
     });
     setShowCategoryModal(true);
   };
@@ -876,7 +883,10 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       slug: cleanSlug,
       status: (categoryForm.isActive ? 'POSTED' : 'UNPOSTED') as any,
       isActive: categoryForm.isActive,
-      is_active: categoryForm.isActive
+      is_active: categoryForm.isActive,
+      parent_id: categoryForm.parentId || null,
+      department_code: categoryForm.departmentCode ? categoryForm.departmentCode.trim().toUpperCase() : null,
+      level: categoryForm.parentId ? 2 : 1
     };
 
     try {
@@ -2315,11 +2325,38 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
             </div>
           </div>
 
+          {/* Quick Department Filter Bar */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mr-1">Department:</span>
+            {[
+              { id: 'ALL', label: 'All Departments' },
+              { id: 'men', label: '👔 Men' },
+              { id: 'ladies', label: '👗 Ladies' },
+              { id: 'children', label: '🧸 Children' },
+              { id: 'accessories', label: '🕶️ Accessories' },
+              { id: 'vintage', label: '🏛️ Vintage' },
+              { id: 'antique', label: '⏳ Antique' }
+            ].map(d => (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => setSelectedDepartmentFilter(d.id)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  selectedDepartmentFilter === d.id
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200'
+                }`}
+              >
+                {d.label}
+              </button>
+            ))}
+          </div>
+
           {/* Quick Quality Filter Bar */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mr-1">Filter by Quality:</span>
             {[
-              { id: 'ALL', label: `All Categories (${categories.length})` },
+              { id: 'ALL', label: `All Quality (${categories.length})` },
               { id: 'CREAM', label: `🌟 Super Cream (${categories.filter(c => c.qualityTier === 'CREAM' || c.name.toLowerCase().includes('cream')).length})` },
               { id: 'NON_BRAND', label: `🏷️ Non-Brand / Basics (${categories.filter(c => c.qualityTier === 'NON_BRAND' || c.name.toLowerCase().includes('non-brand')).length})` },
               { id: 'GRADE_A', label: `⭐ Grade A Branded (${categories.filter(c => c.qualityTier === 'GRADE_A' || c.name.toLowerCase().includes('branded')).length})` },
@@ -2346,6 +2383,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                 <tr>
                   <th className="px-3 py-2.5">Code</th>
                   <th className="px-3 py-2.5">Category Name</th>
+                  <th className="px-3 py-2.5">Parent / Department</th>
                   <th className="px-3 py-2.5">Storefront Slug</th>
                   <th className="px-3 py-2.5">Quality / Grading Tier</th>
                   <th className="px-3 py-2.5">Description</th>
@@ -2359,6 +2397,11 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   .filter(c => {
                     const matchesSearch = !categorySearch || c.name.toLowerCase().includes(categorySearch.toLowerCase()) || c.code.toLowerCase().includes(categorySearch.toLowerCase()) || (c.slug && c.slug.toLowerCase().includes(categorySearch.toLowerCase()));
                     if (!matchesSearch) return false;
+                    if (selectedDepartmentFilter !== 'ALL') {
+                      const isTopMatch = c.slug === selectedDepartmentFilter || (c as any).department_code?.toLowerCase() === selectedDepartmentFilter.toLowerCase();
+                      const isChildMatch = (c as any).parent_slug === selectedDepartmentFilter || (c as any).parent_name?.toLowerCase().includes(selectedDepartmentFilter.toLowerCase());
+                      if (!isTopMatch && !isChildMatch) return false;
+                    }
                     if (categoryQualityFilter === 'ALL') return true;
                     if (categoryQualityFilter === 'CREAM') return c.qualityTier === 'CREAM' || c.name.toLowerCase().includes('cream');
                     if (categoryQualityFilter === 'NON_BRAND') return c.qualityTier === 'NON_BRAND' || c.name.toLowerCase().includes('non-brand');
@@ -2367,8 +2410,8 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                     return true;
                   }).length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="text-center py-10 text-slate-400 text-xs">
-                      No categories found matching your search or quality filter. Click "Add Category" to create one.
+                    <td colSpan={9} className="text-center py-10 text-slate-400 text-xs">
+                      No categories found matching your search or filters. Click "Add Category" to create one.
                     </td>
                   </tr>
                 ) : (
@@ -2376,6 +2419,11 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                     .filter(c => {
                       const matchesSearch = !categorySearch || c.name.toLowerCase().includes(categorySearch.toLowerCase()) || c.code.toLowerCase().includes(categorySearch.toLowerCase()) || (c.slug && c.slug.toLowerCase().includes(categorySearch.toLowerCase()));
                       if (!matchesSearch) return false;
+                      if (selectedDepartmentFilter !== 'ALL') {
+                        const isTopMatch = c.slug === selectedDepartmentFilter || (c as any).department_code?.toLowerCase() === selectedDepartmentFilter.toLowerCase();
+                        const isChildMatch = (c as any).parent_slug === selectedDepartmentFilter || (c as any).parent_name?.toLowerCase().includes(selectedDepartmentFilter.toLowerCase());
+                        if (!isTopMatch && !isChildMatch) return false;
+                      }
                       if (categoryQualityFilter === 'ALL') return true;
                       if (categoryQualityFilter === 'CREAM') return c.qualityTier === 'CREAM' || c.name.toLowerCase().includes('cream');
                       if (categoryQualityFilter === 'NON_BRAND') return c.qualityTier === 'NON_BRAND' || c.name.toLowerCase().includes('non-brand');
@@ -2394,6 +2442,17 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                         <tr key={cat.id} className="hover:bg-amber-50/40 transition-colors">
                           <td className="px-3 py-2 font-mono font-bold text-amber-900">{cat.code}</td>
                           <td className="px-3 py-2 font-semibold text-slate-900">{cat.name}</td>
+                          <td className="px-3 py-2">
+                            {((cat as any).level === 1 || !(cat as any).parent_id) ? (
+                              <span className="px-2 py-0.5 rounded font-mono font-bold text-[10px] bg-amber-100 text-amber-900 border border-amber-300">
+                                👑 Top Dept ({(cat as any).department_code || 'TOP'})
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 border border-slate-200">
+                                ↳ {(cat as any).parent_name || 'Subcategory'}
+                              </span>
+                            )}
+                          </td>
                           <td className="px-3 py-2 font-mono text-[11px] text-amber-800">
                             <span className="bg-amber-100/60 px-1.5 py-0.5 rounded border border-amber-200">
                               {cat.slug || cat.code || '—'}
@@ -3677,6 +3736,41 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                     placeholder="e.g. Vintage Denim & Jeans"
                     required
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Parent Department
+                  </label>
+                  <select
+                    value={categoryForm.parentId || ''}
+                    onChange={e => setCategoryForm({ ...categoryForm, parentId: e.target.value || null })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 bg-white focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="">👑 Top-Level Department</option>
+                    {categories
+                      .filter(c => (c as any).level === 1 || !(c as any).parent_id)
+                      .map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({(p as any).department_code || p.slug})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Dept Code (SKU Prefix)
+                  </label>
+                  <input
+                    type="text"
+                    value={categoryForm.departmentCode || ''}
+                    onChange={e => setCategoryForm({ ...categoryForm, departmentCode: e.target.value.toUpperCase().slice(0, 5) })}
+                    placeholder="e.g. MEN, LAD"
+                    maxLength={5}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold uppercase text-slate-900 focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
               </div>

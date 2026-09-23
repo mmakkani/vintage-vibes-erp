@@ -113,7 +113,11 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         suggestedQualityGrade: res.suggestedQualityGrade,
         grailNotes: res.grailNotes,
         collectorTipsUrdu: res.collectorTipsUrdu,
-        source: res.source
+        source: res.source,
+        ecommerce_description: res.ecommerce_description,
+        seo_tags: res.seo_tags,
+        marketSegment: res.marketSegment,
+        global_insights: res.global_insights
       };
       setAppraisal(extracted);
       if (res.isGrail || res.rarityTier === 'ANTIQUE') {

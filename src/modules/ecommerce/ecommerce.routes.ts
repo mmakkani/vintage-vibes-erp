@@ -23,6 +23,7 @@ export const clearProductsCache = () => {
 ecommerceRouter.get('/products', async (req: Request, res: Response) => {
   try {
     const category = (req.query.category as string) || '';
+    const department = (req.query.department as string) || '';
     const search = (req.query.search as string) || '';
     const segment = (req.query.segment as string) || '';
     const size = (req.query.size as string) || '';
@@ -35,7 +36,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
     const isPaginated = page !== null || req.query.paginated === 'true';
 
     // Check fast in-memory cache (<0.2ms response time)
-    const cacheKey = `${category || 'ALL'}|${search || ''}|${segment || 'ALL'}|${size || ''}|${minPrice || ''}|${maxPrice || ''}|${era || ''}|${sort || ''}|${page || ''}|${pageSize || ''}`;
+    const cacheKey = `${category || 'ALL'}|${department || ''}|${search || ''}|${segment || 'ALL'}|${size || ''}|${minPrice || ''}|${maxPrice || ''}|${era || ''}|${sort || ''}|${page || ''}|${pageSize || ''}`;
     const cached = productsCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < PRODUCTS_CACHE_TTL_MS) {
       res.setHeader('X-Cache', 'HIT');
@@ -50,7 +51,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         WHERE is_active = true AND expires_at <= NOW()
       `).catch(() => {});
 
-      // Query active in-stock pieces with any active cart lock
+      // Query active in-stock pieces with any active cart lock (strictly excluding WIP_LAUNDRY and non-ecommerce pieces)
       let query = `
         SELECT 
           p.*,
@@ -61,13 +62,19 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         FROM inventory_pieces p
         LEFT JOIN cart_reservations r 
           ON p.barcode = r.barcode AND r.is_active = true AND r.expires_at > NOW()
-        WHERE p.is_sold = false AND (p.status IS NULL OR p.status != 'SOLD')
+        WHERE p.is_sold = false 
+          AND (p.status IS NULL OR p.status NOT IN ('SOLD', 'WIP_LAUNDRY'))
+          AND (p.ready_for_ecommerce IS NULL OR p.ready_for_ecommerce = true)
       `;
 
       const params: any[] = [];
       if (category && category !== 'ALL') {
         params.push(`%${category}%`);
         query += ` AND (p.item_name ILIKE $${params.length} OR p.style ILIKE $${params.length})`;
+      }
+      if (department && department !== 'ALL') {
+        params.push(`%${department}%`);
+        query += ` AND (p.parent_category_name ILIKE $${params.length} OR p.item_name ILIKE $${params.length})`;
       }
       if (search) {
         params.push(`%${search}%`);
@@ -137,13 +144,18 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         const mapped = rows.map(r => ({
           id: r.id || r.barcode,
           barcode: r.barcode,
+          sku: r.sku || r.barcode,
           itemId: r.item_id || 'ITM-01',
           itemName: r.item_name || 'Vintage Garment',
+          parentCategoryName: r.parent_category_name || null,
           brandId: r.brand_id,
           brandName: r.brand_name || 'Vintage Archive',
           sizeScanned: r.size_scanned || 'L',
           countryOfOrigin: r.country_of_origin || 'USA',
           style: r.style || 'Single-Stitch Vintage',
+          ecommerceDescription: r.ecommerce_description || r.style || '',
+          seoTags: Array.isArray(r.seo_tags) ? r.seo_tags : [],
+          readyForEcommerce: r.ready_for_ecommerce !== false,
           frontImageUrl: r.front_image_url || r.tag_image_url || '/studio_left_rack.png',
           backImageUrl: r.back_image_url || r.front_image_url || '/studio_backdrop_noboy.png',
           tagImageUrl: r.tag_image_url || '/studio_left_rack.png',
@@ -193,7 +205,9 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
       .from('inventory_pieces')
       .select('*')
       .eq('is_sold', false)
-      .neq('status', 'SOLD');
+      .neq('status', 'SOLD')
+      .neq('status', 'WIP_LAUNDRY')
+      .or('ready_for_ecommerce.is.null,ready_for_ecommerce.eq.true');
 
     if (segment && segment !== 'ALL') {
       if (segment === 'Antique') {
@@ -214,6 +228,11 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
     if (supaData && supaData.length > 0) {
       const fallbackFormatted = supaData.map(r => ({
         ...r,
+        sku: r.sku || r.barcode,
+        parentCategoryName: r.parent_category_name || null,
+        readyForEcommerce: r.ready_for_ecommerce !== false,
+        ecommerceDescription: r.ecommerce_description || r.style || '',
+        seoTags: Array.isArray(r.seo_tags) ? r.seo_tags : [],
         marketSegment: r.market_segment || 'Regular Thrift',
         isGrail: Boolean(r.is_grail),
         globalInsights: r.global_insights,

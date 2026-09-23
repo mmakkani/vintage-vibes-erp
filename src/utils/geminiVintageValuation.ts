@@ -39,6 +39,8 @@ export interface VintageValuationResult {
   collectorTipsUrdu: string;
   tagImageUrl?: string;
   source: 'GEMINI_AI_VISION' | 'HEURISTIC_VINTAGE_ENGINE';
+  ecommerce_description?: string;
+  seo_tags?: string[];
   error?: string;
 }
 
@@ -151,6 +153,9 @@ EVALUATION RULES:
 7. Anti-Theft Grail Lock:
    - isGrail: true for Antique, Grails, Boutique, or items with market value >= AED 350.
    - rarityTier: "ANTIQUE" | "GRAIL" | "HIGH_VALUE" | "RARE_COLLECTIBLE" | "CREAM" | "GRADE_A" | "STANDARD" | "NON_BRAND".
+8. E-Commerce Archival Copywriting & SEO Keywords:
+   - ecommerce_description: Generate a 2-3 sentence, highly engaging luxury archival description. Highlight era provenance, fabric patina/wash, stitch lineage, fit/drape, and styling recommendation.
+   - seo_tags: Return an array of 5-8 high-intent search keywords (e.g., ["vintage single stitch tee", "90s streetwear", "faded black wash", "rare archival thrift dubai"]).
 
 Return ONLY a pure JSON object matching this schema without markdown codeblocks:
 {
@@ -179,7 +184,9 @@ Return ONLY a pure JSON object matching this schema without markdown codeblocks:
   "suggestedQualityGrade": "Super Cream (Mint / Luxury Vintage)",
   "confidence": 0.95,
   "grailNotes": "Appraisal notes",
-  "collectorTipsUrdu": "Staff guidance in Urdu"
+  "collectorTipsUrdu": "Staff guidance in Urdu",
+  "ecommerce_description": "Authentic 1990s archival piece featuring single-stitch hems and vintage natural fade. Boxy heritage fit ideal for streetwear or elevated casual layering.",
+  "seo_tags": ["vintage tee", "single stitch 90s", "archival streetwear", "faded wash", "dubai vintage thrift"]
 }`;
 
 /**
@@ -343,7 +350,11 @@ async function callGeminiVisionAppraisal(apiKey: string, imageBase64: string, pr
         grailNotes: parsed.grailNotes || (isNonBrand ? 'Everyday non-brand commercial garment.' : 'Verified vintage appraisal by Gemini Vision.'),
         collectorTipsUrdu: parsed.collectorTipsUrdu || (isGrail ? 'Yeh high-value vintage piece hai. Aam sasti shirts kay sath na bechein!' : (isNonBrand ? 'Aam rozmarra basic piece hai. Fast sale ke liye tag lagayein.' : 'Authentic vintage piece.')),
         tagImageUrl: imageBase64,
-        source: 'GEMINI_AI_VISION'
+        source: 'GEMINI_AI_VISION',
+        ecommerce_description: parsed.ecommerce_description || `Authentic ${eraVal} ${parsed.category || 'vintage garment'} curated by Vintage Vibes. Features authentic ${parsed.stitchType || 'archival'} construction with distinct character.`,
+        seo_tags: Array.isArray(parsed.seo_tags) && parsed.seo_tags.length > 0 
+          ? parsed.seo_tags 
+          : [`${eraVal} vintage`, `${parsed.brand || 'vintage'} ${parsed.category || ''}`.trim(), 'vintage vibes dubai', 'archival fashion', segment.toLowerCase()]
       };
     } catch (err: any) {
       lastError = err;
@@ -758,6 +769,24 @@ export function getHeuristicVintageAppraisal(hintText?: string, imageBase64?: st
   };
 }
 
+function ensureSeoAndCopy(res: VintageValuationResult): VintageValuationResult {
+  if (!res.ecommerce_description) {
+    const eraText = res.era || 'Vintage';
+    const brandText = res.brand || 'Vintage Archive';
+    res.ecommerce_description = `Authentic ${eraText} ${res.category || 'garment'} by ${brandText}. Hand-curated in Dubai with distinct ${res.stitchType || 'vintage'} finishing and collectible archival character.`;
+  }
+  if (!Array.isArray(res.seo_tags) || res.seo_tags.length === 0) {
+    res.seo_tags = [
+      `${res.era || 'vintage'} style`,
+      `${res.brand || 'vintage'} ${res.category || ''}`.trim(),
+      'vintage clothes dubai',
+      'archival streetwear',
+      String(res.marketSegment || 'vintage').toLowerCase()
+    ];
+  }
+  return res;
+}
+
 /**
  * Main entry point: Performs Vintage Appraisal using Gemini Vision or intelligent fallback
  */
@@ -779,7 +808,7 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
     try {
       const preferredModel = (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_model') || '').trim() : '') || 'gemini-3.7-flash';
       const result = await callGeminiVisionAppraisal(apiKey, imageBase64, preferredModel);
-      return result;
+      return ensureSeoAndCopy(result);
     } catch (apiErr: any) {
       console.warn('[Gemini Vision Appraisal failed, attempting backend route or heuristic]:', apiErr?.message);
     }
@@ -799,11 +828,11 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
     if (res.ok) {
       const data = await res.json();
       if (data && (data.brand || data.garmentTitle)) {
-        return {
+        return ensureSeoAndCopy({
           ...data,
           tagImageUrl: imageBase64,
           source: data.source || 'GEMINI_AI_VISION'
-        };
+        });
       }
     }
   } catch (backendErr: any) {
@@ -811,5 +840,5 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
   }
 
   // 4. Intelligent Heuristic Fallback Engine
-  return getHeuristicVintageAppraisal(textPrompt, imageBase64);
+  return ensureSeoAndCopy(getHeuristicVintageAppraisal(textPrompt, imageBase64));
 }

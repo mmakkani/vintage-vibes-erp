@@ -49,6 +49,10 @@ export interface ExtractedTagData {
   grailNotes?: string;
   collectorTipsUrdu?: string;
   source?: 'GEMINI_AI_VISION' | 'HEURISTIC_VINTAGE_ENGINE';
+  ecommerce_description?: string;
+  seo_tags?: string[];
+  marketSegment?: string;
+  global_insights?: any;
 }
 
 interface CameraTagScannerModalProps {
@@ -384,7 +388,11 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
           suggestedQualityGrade: valuation.suggestedQualityGrade,
           grailNotes: valuation.grailNotes,
           collectorTipsUrdu: valuation.collectorTipsUrdu,
-          source: valuation.source
+          source: valuation.source,
+          ecommerce_description: valuation.ecommerce_description,
+          seo_tags: valuation.seo_tags,
+          marketSegment: valuation.marketSegment,
+          global_insights: valuation.global_insights
         });
       } else {
         throw new Error(valuation.error || 'Could not identify vintage apparel details.');

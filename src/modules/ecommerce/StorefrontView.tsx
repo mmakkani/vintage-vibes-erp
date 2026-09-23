@@ -379,7 +379,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
-          const available = data.filter(p => !p.isSold && p.status !== 'SOLD');
+          const available = data.filter(p => !p.isSold && p.status !== 'SOLD' && p.status !== 'WIP_LAUNDRY' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
           setPieces(available);
           return;
         }
@@ -391,6 +391,8 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         .select('*')
         .eq('is_sold', false)
         .neq('status', 'SOLD')
+        .neq('status', 'WIP_LAUNDRY')
+        .or('ready_for_ecommerce.is.null,ready_for_ecommerce.eq.true')
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -398,13 +400,18 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         const available = supaData.map((r: any) => ({
           id: r.id || r.barcode,
           barcode: r.barcode,
+          sku: r.sku || r.barcode,
           itemId: r.item_id || 'ITM-01',
           itemName: r.item_name || 'Vintage Garment',
+          parentCategoryName: r.parent_category_name || null,
           brandId: r.brand_id,
           brandName: r.brand_name || 'Vintage Archive',
           sizeScanned: r.size_scanned || 'L',
           countryOfOrigin: r.country_of_origin || 'USA',
           style: r.style || 'Single-Stitch Vintage',
+          ecommerceDescription: r.ecommerce_description || r.style || '',
+          seoTags: Array.isArray(r.seo_tags) ? r.seo_tags : [],
+          readyForEcommerce: r.ready_for_ecommerce !== false,
           frontImageUrl: r.front_image_url || r.tag_image_url || '/studio_left_rack.png',
           backImageUrl: r.back_image_url || r.front_image_url || '/studio_backdrop_noboy.png',
           tagImageUrl: r.tag_image_url || '/studio_left_rack.png',
@@ -425,7 +432,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           isPriceOverridden: Boolean(r.is_price_overridden),
           isCartLocked: false,
           createdAt: r.created_at
-        })).filter((p: any) => !p.isSold && p.status !== 'SOLD');
+        })).filter((p: any) => !p.isSold && p.status !== 'SOLD' && p.status !== 'WIP_LAUNDRY' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
         setPieces(available as PieceBreakdownItem[]);
         return;
       }

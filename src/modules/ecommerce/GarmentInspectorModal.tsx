@@ -274,11 +274,15 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
           <div className="lg:col-span-5 flex flex-col justify-between gap-4">
             {/* Upper Specs Section */}
             <div className="space-y-4">
-              {/* Fresh From Sorting Badge */}
-              <div className="flex items-center gap-2">
+              {/* Fresh From Sorting Badge & SKU */}
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="px-2.5 py-1 rounded-md bg-amber-500/20 border border-amber-400/60 text-amber-950 font-black text-[10px] uppercase tracking-wider flex items-center gap-1 shadow-2xs">
                   <Zap className="w-3.5 h-3.5 text-amber-600 fill-amber-500" />
                   <span>⚡ Fresh from sorting terminal</span>
+                </span>
+
+                <span className="px-2 py-0.5 rounded bg-slate-900 text-amber-300 font-mono font-bold text-[10px] border border-amber-500/40">
+                  {piece.sku || piece.barcode}
                 </span>
 
                 <span className="px-2 py-0.5 rounded bg-white text-slate-700 font-bold text-[10px] border border-amber-300">
@@ -302,6 +306,28 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
                   <span className="text-xs text-slate-500 font-medium">(VAT & Delivery calculated at checkout)</span>
                 </div>
               </div>
+
+              {/* AI Archival Copywriting & Curated SEO Notes */}
+              {(piece.ecommerceDescription || (piece as any).ecommerce_description) && (
+                <div className="p-3 bg-amber-50/90 border border-amber-300/80 rounded-xl space-y-1.5 shadow-2xs">
+                  <div className="text-[10px] font-bold text-amber-900 uppercase tracking-wide flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-amber-600" />
+                    <span>Archival Vintage Notes</span>
+                  </div>
+                  <p className="text-xs text-slate-800 italic leading-relaxed">
+                    {piece.ecommerceDescription || (piece as any).ecommerce_description}
+                  </p>
+                  {Array.isArray(piece.seoTags || (piece as any).seo_tags) && (piece.seoTags || (piece as any).seo_tags).length > 0 && (
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {(piece.seoTags || (piece as any).seo_tags).map((tag: string, i: number) => (
+                        <span key={i} className="text-[9px] px-1.5 py-0.5 rounded bg-amber-200/70 text-amber-950 font-medium font-mono">
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Exact Measurements Card */}
               <div className="bg-white/95 rounded-2xl border-2 border-amber-300 p-4 space-y-3 shadow-md">

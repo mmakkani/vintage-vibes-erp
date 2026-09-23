@@ -209,6 +209,15 @@ export interface ProductCategory {
   slug: string;
   is_active: boolean;
   isActive?: boolean;
+  parent_id?: string | null;
+  parentId?: string | null;
+  parent_name?: string | null;
+  parentName?: string | null;
+  department_code?: string | null;
+  departmentCode?: string | null;
+  level?: number;
+  display_order?: number;
+  displayOrder?: number;
   created_at?: string;
   createdAt?: string;
 }
