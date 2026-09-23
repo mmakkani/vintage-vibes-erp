@@ -24,6 +24,8 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
   try {
     const category = (req.query.category as string) || '';
     const department = (req.query.department as string) || '';
+    const subCategory = (req.query.subCategory as string) || '';
+    const collectionId = (req.query.collectionId as string) || '';
     const search = (req.query.search as string) || '';
     const segment = (req.query.segment as string) || '';
     const size = (req.query.size as string) || '';
@@ -36,7 +38,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
     const isPaginated = page !== null || req.query.paginated === 'true';
 
     // Check fast in-memory cache (<0.2ms response time)
-    const cacheKey = `${category || 'ALL'}|${department || ''}|${search || ''}|${segment || 'ALL'}|${size || ''}|${minPrice || ''}|${maxPrice || ''}|${era || ''}|${sort || ''}|${page || ''}|${pageSize || ''}`;
+    const cacheKey = `${category || 'ALL'}|${department || ''}|${subCategory || ''}|${collectionId || ''}|${search || ''}|${segment || 'ALL'}|${size || ''}|${minPrice || ''}|${maxPrice || ''}|${era || ''}|${sort || ''}|${page || ''}|${pageSize || ''}`;
     const cached = productsCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < PRODUCTS_CACHE_TTL_MS) {
       res.setHeader('X-Cache', 'HIT');
@@ -76,6 +78,14 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         params.push(`%${department}%`);
         query += ` AND (p.parent_category_name ILIKE $${params.length} OR p.item_name ILIKE $${params.length})`;
       }
+      if (subCategory && subCategory !== 'ALL') {
+        params.push(`%${subCategory}%`);
+        query += ` AND (p.sub_category ILIKE $${params.length} OR p.item_name ILIKE $${params.length})`;
+      }
+      if (collectionId && collectionId !== 'ALL') {
+        params.push(collectionId);
+        query += ` AND p.collection_id = $${params.length}`;
+      }
       if (search) {
         params.push(`%${search}%`);
         query += ` AND (p.item_name ILIKE $${params.length} OR p.brand_name ILIKE $${params.length} OR p.barcode ILIKE $${params.length} OR p.style ILIKE $${params.length})`;
@@ -100,10 +110,15 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         if (segment === 'Antique') {
           params.push('Antique');
           query += ` AND (p.market_segment = $${params.length} OR p.style ILIKE '%antique%')`;
-        } else if (segment === 'Grails' || segment === 'Grails & Boutique') {
-          query += ` AND (p.is_grail = true OR p.market_segment IN ('Grails', 'Boutique'))`;
-        } else if (segment === 'Regular Thrift' || segment === 'Everyday Thrift') {
-          query += ` AND (p.market_segment = 'Regular Thrift' OR p.market_segment IS NULL)`;
+        } else if (segment === 'Vintage') {
+          params.push('Vintage');
+          query += ` AND (p.market_segment = $${params.length} OR p.market_segment IN ('Grails', 'Boutique', 'Old Vintage'))`;
+        } else if (segment === 'Brand') {
+          params.push('Brand');
+          query += ` AND (p.market_segment = $${params.length} OR p.market_segment IN ('Boutique', 'Grails'))`;
+        } else if (segment === 'Non-Brand') {
+          params.push('Non-Brand');
+          query += ` AND (p.market_segment = $${params.length} OR p.market_segment = 'Regular Thrift' OR p.market_segment IS NULL)`;
         } else {
           params.push(`%${segment}%`);
           query += ` AND (p.market_segment ILIKE $${params.length})`;
@@ -148,6 +163,9 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
           itemId: r.item_id || 'ITM-01',
           itemName: r.item_name || 'Vintage Garment',
           parentCategoryName: r.parent_category_name || null,
+          subCategory: r.sub_category || null,
+          collectionId: r.collection_id || null,
+          collectionName: r.collection_name || null,
           brandId: r.brand_id,
           brandName: r.brand_name || 'Vintage Archive',
           sizeScanned: r.size_scanned || 'L',
@@ -169,7 +187,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
           retailPriceAed: Number(r.retail_price_aed || r.estimated_price || 295),
           isSold: Boolean(r.is_sold),
           status: r.status || 'IN_STOCK',
-          marketSegment: r.market_segment || 'Regular Thrift',
+          marketSegment: r.market_segment || 'Vintage',
           isGrail: Boolean(r.is_grail),
           globalInsights: r.global_insights || null,
           aiSuggestedPrice: r.ai_suggested_price !== undefined && r.ai_suggested_price !== null ? Number(r.ai_suggested_price) : null,
@@ -209,13 +227,22 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
       .neq('status', 'WIP_LAUNDRY')
       .or('ready_for_ecommerce.is.null,ready_for_ecommerce.eq.true');
 
+    if (collectionId && collectionId !== 'ALL') {
+      supaQuery = supaQuery.eq('collection_id', collectionId);
+    }
+    if (subCategory && subCategory !== 'ALL') {
+      supaQuery = supaQuery.ilike('sub_category', `%${subCategory}%`);
+    }
+
     if (segment && segment !== 'ALL') {
       if (segment === 'Antique') {
         supaQuery = supaQuery.eq('market_segment', 'Antique');
-      } else if (segment === 'Grails' || segment === 'Grails & Boutique') {
-        supaQuery = supaQuery.or('is_grail.eq.true,market_segment.eq.Grails,market_segment.eq.Boutique');
-      } else if (segment === 'Regular Thrift' || segment === 'Everyday Thrift') {
-        supaQuery = supaQuery.eq('market_segment', 'Regular Thrift');
+      } else if (segment === 'Vintage') {
+        supaQuery = supaQuery.or('market_segment.eq.Vintage,market_segment.eq.Grails,market_segment.eq.Boutique');
+      } else if (segment === 'Brand') {
+        supaQuery = supaQuery.eq('market_segment', 'Brand');
+      } else if (segment === 'Non-Brand') {
+        supaQuery = supaQuery.or('market_segment.eq.Non-Brand,market_segment.eq.Regular Thrift,market_segment.is.null');
       } else {
         supaQuery = supaQuery.ilike('market_segment', `%${segment}%`);
       }
@@ -230,10 +257,13 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         ...r,
         sku: r.sku || r.barcode,
         parentCategoryName: r.parent_category_name || null,
+        subCategory: r.sub_category || null,
+        collectionId: r.collection_id || null,
+        collectionName: r.collection_name || null,
         readyForEcommerce: r.ready_for_ecommerce !== false,
         ecommerceDescription: r.ecommerce_description || r.style || '',
         seoTags: Array.isArray(r.seo_tags) ? r.seo_tags : [],
-        marketSegment: r.market_segment || 'Regular Thrift',
+        marketSegment: r.market_segment || 'Vintage',
         isGrail: Boolean(r.is_grail),
         globalInsights: r.global_insights,
         retailPriceAed: Number(r.retail_price_aed || r.estimated_price || 0)
@@ -248,6 +278,43 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('Error in /api/ecommerce/products:', err);
     return res.status(500).json({ error: err?.message || 'Database error fetching products' });
+  }
+});
+
+// -------------------------------------------------------------
+// GET /api/ecommerce/collections - Active Seasonal Collections
+// -------------------------------------------------------------
+ecommerceRouter.get('/collections', async (_req: Request, res: Response) => {
+  try {
+    const collections = await withDb(async (client) => {
+      const res = await client.query(`
+        SELECT c.*, 
+               COUNT(p.id) FILTER (WHERE p.is_sold = false AND (p.status IS NULL OR p.status NOT IN ('SOLD', 'WIP_LAUNDRY'))) as piece_count
+        FROM collections c
+        LEFT JOIN inventory_pieces p ON c.id = p.collection_id
+        WHERE c.is_active = true
+        GROUP BY c.id
+        ORDER BY c.created_at ASC
+      `);
+      return res.rows;
+    });
+
+    if (collections && collections.length > 0) {
+      return res.json(collections);
+    }
+
+    // Fallback via Supabase
+    const { data, error } = await supabase
+      .from('collections')
+      .select('*')
+      .eq('is_active', true)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+    return res.json(data || []);
+  } catch (err: any) {
+    console.error('Error fetching ecommerce collections:', err);
+    return res.status(500).json({ error: err?.message || 'Database error' });
   }
 });
 

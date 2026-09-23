@@ -2,8 +2,9 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { supabase } from '../../../supabaseClient.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { InwardGatePass, PieceBreakdownItem, PurchaseInvoice } from '../purchase.types.ts';
-import { ItemMaster, BrandMaster, LabelGrade, ShopMaster, CategoryMaster, SizeMaster } from '../../setup/setup.types.ts';
+import { ItemMaster, BrandMaster, LabelGrade, ShopMaster, CategoryMaster, SizeMaster, ProductCategory, CollectionMaster } from '../../setup/setup.types.ts';
 import { PurchaseEngine } from '../purchase.engine.ts';
+import { SearchableSelect, SearchableOption } from '../../../components/SearchableSelect.tsx';
 import { StickerData } from '../../../components/ThermalBarcodeSticker.tsx';
 import { openThermalLabelPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
@@ -107,40 +108,31 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   onBaleCreated,
   onPrintSticker
 }) => {
-  // Dynamic categories, sizes, and quality grades fetched from Setup
+  // Dynamic categories, sizes, quality grades, and collections fetched from Setup
   const [categoriesList, setCategoriesList] = useState<CategoryMaster[]>(categories);
+  const [productCategoriesList, setProductCategoriesList] = useState<ProductCategory[]>([]);
+  const [collectionsList, setCollectionsList] = useState<CollectionMaster[]>([]);
   const [sizesList, setSizesList] = useState<SizeMaster[]>(sizes);
   const [labelsList, setLabelsList] = useState<LabelGrade[]>(labels);
 
   useEffect(() => {
-    const loadDynamicCategories = async () => {
+    const loadDynamicTaxonomy = async () => {
       try {
-        const r = await fetch('/api/setup/product-categories');
-        if (r.ok) {
-          const data = await r.json();
-          if (Array.isArray(data) && data.length > 0) {
-            setCategoriesList(data);
-            return;
-          }
+        const [prodCatRes, colRes] = await Promise.all([
+          fetch('/api/setup/product-categories').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/setup/collections').then(r => r.ok ? r.json() : []).catch(() => [])
+        ]);
+        if (Array.isArray(prodCatRes) && prodCatRes.length > 0) {
+          setProductCategoriesList(prodCatRes);
+          setCategoriesList(prodCatRes as any);
         }
-      } catch (_) {}
-
-      try {
-        const r2 = await fetch('/api/setup/categories');
-        if (r2.ok) {
-          const data2 = await r2.json();
-          if (Array.isArray(data2) && data2.length > 0) {
-            setCategoriesList(data2);
-          }
+        if (Array.isArray(colRes) && colRes.length > 0) {
+          setCollectionsList(colRes);
         }
       } catch (_) {}
     };
 
-    if (categories && categories.length > 0) {
-      setCategoriesList(categories);
-    } else {
-      loadDynamicCategories();
-    }
+    loadDynamicTaxonomy();
 
     if (sizes && sizes.length > 0) {
       setSizesList(sizes);
@@ -376,7 +368,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const [countryOfOrigin, setCountryOfOrigin] = useState<string>('Made in USA');
   const [styleNotes, setStyleNotes] = useState<string>('');
   const [era, setEra] = useState<string>('1990s Vintage');
-  const [marketSegment, setMarketSegment] = useState<'Old Vintage' | 'Boutique' | 'Antique' | 'Grails' | 'Regular Thrift'>('Old Vintage');
+  const [marketSegment, setMarketSegment] = useState<'Antique' | 'Vintage' | 'Brand' | 'Non-Brand'>('Vintage');
   const [isGrail, setIsGrail] = useState<boolean>(false);
   const [aiSuggestedPrice, setAiSuggestedPrice] = useState<number>(0);
   const [globalInsights, setGlobalInsights] = useState<{
@@ -389,9 +381,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   } | null>(null);
   const [showGlobalInsightsPanel, setShowGlobalInsightsPanel] = useState<boolean>(false);
 
-  // --- END-TO-END PIPELINE STATES ---
-  // 1. Hierarchical Category Selection
-  const [selectedParentDept, setSelectedParentDept] = useState<string>('vintage');
+  // --- 4-TIER CASCADING TAXONOMY & AUTO-SKU STATES ---
+  const [selectedDeptId, setSelectedDeptId] = useState<string>('');
+  const [selectedMainCategoryId, setSelectedMainCategoryId] = useState<string>('');
+  const [selectedSubCategoryId, setSelectedSubCategoryId] = useState<string>('');
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string>('');
+
   // 2. Creatable Item Master Selection
   const [internalItemMasters, setInternalItemMasters] = useState<ItemMaster[]>(items || []);
   const [isItemMasterDropdownOpen, setIsItemMasterDropdownOpen] = useState<boolean>(false);
@@ -400,7 +395,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const [seoTags, setSeoTags] = useState<string[]>([]);
   const [showSeoDrawer, setShowSeoDrawer] = useState<boolean>(false);
   // 4. Auto-Generated SKU State
-  const [generatedSku, setGeneratedSku] = useState<string>('VIN-VIN-0001');
+  const [generatedSku, setGeneratedSku] = useState<string>('VIN-MEN-0001');
 
   useEffect(() => {
     if (items && items.length > 0) {
@@ -432,23 +427,60 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     ).slice(0, 8);
   }, [internalItemMasters, brandTitle]);
 
-  const activeDeptObj = useMemo(() => {
-    const list = Array.isArray(categoriesList) ? categoriesList : [];
-    return list.find((c: any) => c.slug === selectedParentDept || (c as any).department_code?.toLowerCase() === selectedParentDept.toLowerCase());
-  }, [categoriesList, selectedParentDept]);
+  // Auto-initialize 4-Tier selections once productCategoriesList loads
+  useEffect(() => {
+    if (productCategoriesList.length > 0) {
+      const depts = productCategoriesList.filter(c => c.taxonomy_level === 'DEPARTMENT' || (!c.parent_id && Number(c.level) === 1));
+      if (depts.length > 0 && (!selectedDeptId || !depts.some(d => d.id === selectedDeptId))) {
+        const firstDept = depts[0];
+        setSelectedDeptId(firstDept.id);
+
+        const mainCats = productCategoriesList.filter(c => (c.taxonomy_level === 'CATEGORY' || Number(c.level) === 2) && (c.parent_id === firstDept.id || (c as any).parent_slug === firstDept.slug));
+        if (mainCats.length > 0) {
+          const firstCat = mainCats[0];
+          setSelectedMainCategoryId(firstCat.id);
+          setSelectedCategory(firstCat.name);
+
+          const subCats = productCategoriesList.filter(c => (c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3) && c.parent_id === firstCat.id);
+          if (subCats.length > 0) {
+            setSelectedSubCategoryId(subCats[0].id);
+          }
+        }
+      }
+    }
+  }, [productCategoriesList]);
+
+  // Auto-initialize Collection once collectionsList loads
+  useEffect(() => {
+    if (collectionsList.length > 0 && (!selectedCollectionId || !collectionsList.some(col => col.id === selectedCollectionId))) {
+      setSelectedCollectionId(collectionsList[0].id);
+    }
+  }, [collectionsList]);
+
+  const selectedDeptObj = useMemo(() => {
+    return productCategoriesList.find(c => c.id === selectedDeptId) || null;
+  }, [productCategoriesList, selectedDeptId]);
+
+  const selectedMainCatObj = useMemo(() => {
+    return productCategoriesList.find(c => c.id === selectedMainCategoryId) || null;
+  }, [productCategoriesList, selectedMainCategoryId]);
+
+  const selectedSubCatObj = useMemo(() => {
+    return productCategoriesList.find(c => c.id === selectedSubCategoryId) || null;
+  }, [productCategoriesList, selectedSubCategoryId]);
+
+  const selectedCollectionObj = useMemo(() => {
+    return collectionsList.find(c => c.id === selectedCollectionId) || null;
+  }, [collectionsList, selectedCollectionId]);
 
   const activeDeptCode = useMemo(() => {
-    if (activeDeptObj && (activeDeptObj as any).department_code) return (activeDeptObj as any).department_code;
-    const mapping: Record<string, string> = {
-      men: 'MEN',
-      ladies: 'LAD',
-      children: 'KID',
-      accessories: 'ACC',
-      vintage: 'VIN',
-      antique: 'ANT'
-    };
-    return mapping[selectedParentDept] || 'GEN';
-  }, [activeDeptObj, selectedParentDept]);
+    if (selectedDeptObj && (selectedDeptObj as any).department_code) return (selectedDeptObj as any).department_code;
+    if (selectedDeptObj && selectedDeptObj.slug) {
+      const mapping: Record<string, string> = { men: 'MEN', ladies: 'LAD', children: 'KID', accessories: 'ACC' };
+      return mapping[selectedDeptObj.slug.toLowerCase()] || selectedDeptObj.slug.toUpperCase().slice(0, 3);
+    }
+    return 'MEN';
+  }, [selectedDeptObj]);
 
   useEffect(() => {
     SetupService.generateSku(activeDeptCode)
@@ -456,26 +488,126 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       .catch(() => setGeneratedSku(`VIN-${activeDeptCode}-0001`));
   }, [activeDeptCode]);
 
-  const subcategoriesForDept = useMemo(() => {
-    if (!Array.isArray(categoriesList) || categoriesList.length === 0) return availableCategories;
-    const filtered = categoriesList.filter((c: any) => {
-      if (!c || c.is_active === false || (c as any).isActive === false) return false;
-      if ((c as any).level === 1 || ['men', 'ladies', 'children', 'accessories', 'vintage', 'antique'].includes(c.slug)) {
-        return false;
-      }
-      if (activeDeptObj && (c as any).parent_id === activeDeptObj.id) return true;
-      if ((c as any).parent_slug === selectedParentDept) return true;
-      return true;
-    }).map((c: any) => c.name || c.code || String(c));
-    return filtered.length > 0 ? filtered : availableCategories;
-  }, [categoriesList, activeDeptObj, selectedParentDept, availableCategories]);
-
-  // Update selected category if availableCategories loads
-  useEffect(() => {
-    if (availableCategories.length > 0 && !availableCategories.includes(selectedCategory)) {
-      setSelectedCategory(availableCategories[0]);
+  // Searchable Options for Cascading Comboboxes
+  const deptOptions: SearchableOption[] = useMemo(() => {
+    const depts = productCategoriesList.filter(c => c.taxonomy_level === 'DEPARTMENT' || (!c.parent_id && Number(c.level) === 1));
+    if (depts.length === 0) {
+      return [
+        { value: 'men', label: '👔 Men', badge: 'MEN' },
+        { value: 'ladies', label: '👗 Ladies', badge: 'LAD' },
+        { value: 'children', label: '🧸 Children', badge: 'KID' },
+        { value: 'accessories', label: '🕶️ Accessories', badge: 'ACC' }
+      ];
     }
-  }, [availableCategories]);
+    return depts.map(d => ({
+      value: d.id,
+      label: d.name,
+      badge: (d as any).department_code || d.slug.toUpperCase().slice(0, 5),
+      sublabel: `Tier 1 Department (${d.slug})`
+    }));
+  }, [productCategoriesList]);
+
+  const mainCatOptions: SearchableOption[] = useMemo(() => {
+    const cats = productCategoriesList.filter(c => {
+      if (c.taxonomy_level === 'DEPARTMENT' || (!c.parent_id && Number(c.level) === 1)) return false;
+      if (c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3) return false;
+      if (!selectedDeptId) return true;
+      return c.parent_id === selectedDeptId || (c as any).parent_slug === selectedDeptId;
+    });
+    return cats.map(c => ({
+      value: c.id,
+      label: c.name,
+      badge: c.slug,
+      sublabel: 'Tier 2 Main Category'
+    }));
+  }, [productCategoriesList, selectedDeptId]);
+
+  const subCatOptions: SearchableOption[] = useMemo(() => {
+    const subs = productCategoriesList.filter(c => {
+      if (c.taxonomy_level !== 'SUBCATEGORY' && Number(c.level) !== 3) return false;
+      if (!selectedMainCategoryId) return true;
+      return c.parent_id === selectedMainCategoryId || (c as any).parent_slug === selectedMainCategoryId;
+    });
+    return subs.map(s => ({
+      value: s.id,
+      label: s.name,
+      badge: s.slug,
+      sublabel: 'Tier 3 Sub-Category'
+    }));
+  }, [productCategoriesList, selectedMainCategoryId]);
+
+  const collectionOptions: SearchableOption[] = useMemo(() => {
+    if (collectionsList.length === 0) {
+      return [
+        { value: 'summer-26', label: '⚡ Summer Edition 2026', badge: 'SUMMER-26', sublabel: 'Summer 2026' },
+        { value: 'winter-26', label: '❄️ Winter Maazi Drop 2026', badge: 'WINTER-26', sublabel: 'Winter 2026' },
+        { value: 'core-vault', label: '🏛️ Core Archive Vault', badge: 'CORE-VAULT', sublabel: 'All Season' }
+      ];
+    }
+    return collectionsList.map(col => ({
+      value: col.id,
+      label: col.name,
+      badge: col.code,
+      sublabel: `${col.season || 'Season'} • ${col.year || 2026}`
+    }));
+  }, [collectionsList]);
+
+  const marketSegmentOptions: SearchableOption[] = [
+    { value: 'Antique', label: '🏛️ Antique', badge: 'ARCHIVE', sublabel: 'Heritage Archival Pre-1970s' },
+    { value: 'Vintage', label: '🕰️ Vintage', badge: 'VINTAGE', sublabel: 'Collector, Retro & 90s Classics' },
+    { value: 'Brand', label: '⭐ Brand', badge: 'BRAND', sublabel: 'Designer & Premium Labels' },
+    { value: 'Non-Brand', label: '🏷️ Non-Brand', badge: 'BASICS', sublabel: 'Everyday Basics & Streetwear' }
+  ];
+
+  // Cascading Selection Handlers
+  const handleDepartmentChange = (deptId: string) => {
+    setSelectedDeptId(deptId);
+    const mainCats = productCategoriesList.filter(c => (c.taxonomy_level === 'CATEGORY' || Number(c.level) === 2) && (c.parent_id === deptId || (c as any).parent_slug === deptId));
+    if (mainCats.length > 0) {
+      const firstCat = mainCats[0];
+      setSelectedMainCategoryId(firstCat.id);
+      setSelectedCategory(firstCat.name);
+      const subCats = productCategoriesList.filter(c => (c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3) && c.parent_id === firstCat.id);
+      setSelectedSubCategoryId(subCats.length > 0 ? subCats[0].id : '');
+    } else {
+      setSelectedMainCategoryId('');
+      setSelectedSubCategoryId('');
+    }
+  };
+
+  const handleMainCategoryChange = (catId: string) => {
+    setSelectedMainCategoryId(catId);
+    const catObj = productCategoriesList.find(c => c.id === catId);
+    if (catObj) {
+      setSelectedCategory(catObj.name);
+      const autoPrice = getDefaultSellingPrice(catObj.name, era, brandTitle);
+      setSellingPriceOverride(String(autoPrice));
+    }
+    const subCats = productCategoriesList.filter(c => (c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3) && c.parent_id === catId);
+    setSelectedSubCategoryId(subCats.length > 0 ? subCats[0].id : '');
+  };
+
+  const handleSubCategoryChange = (subId: string) => {
+    setSelectedSubCategoryId(subId);
+  };
+
+  const handleCollectionChange = (colId: string) => {
+    setSelectedCollectionId(colId);
+  };
+
+  const handleMarketSegmentChange = (seg: string) => {
+    const validSeg = (['Antique', 'Vintage', 'Brand', 'Non-Brand'].includes(seg) ? seg : 'Vintage') as 'Antique' | 'Vintage' | 'Brand' | 'Non-Brand';
+    setMarketSegment(validSeg);
+    setIsGrail(validSeg === 'Antique' || validSeg === 'Vintage');
+    let newEra = era;
+    if (validSeg === 'Antique') newEra = 'Antique Heritage (1920s-1960s)';
+    else if (validSeg === 'Vintage') newEra = '1990s Vintage';
+    else if (validSeg === 'Brand') newEra = 'Modern Branded';
+    else if (validSeg === 'Non-Brand') newEra = 'Modern Non-Brand';
+    setEra(newEra);
+    const autoPrice = getDefaultSellingPrice(selectedCategory, newEra, brandTitle);
+    setSellingPriceOverride(String(autoPrice));
+  };
 
   // New Bale Quick-Register Modal inside terminal
   const [showQuickRegisterBale, setShowQuickRegisterBale] = useState(false);
@@ -794,18 +926,26 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       }
     }
 
+    const subCategoryName = selectedSubCatObj?.name || '';
+    const collectionId = selectedCollectionObj?.id || null;
+    const collectionName = selectedCollectionObj?.name || null;
+    const parentDeptName = selectedDeptObj?.name || activeDeptObj?.name || 'Vintage';
+
     // Payload for public.bale_sorted_pieces
     const newPieceDb = {
       id: pieceId,
       bale_id: String(activeBale.id),
       piece_code: barcode,
       sku: generatedSku,
-      parent_category_name: activeDeptObj?.name || 'Vintage',
+      parent_category_name: parentDeptName,
+      category: selectedCategory,
+      sub_category: subCategoryName,
+      collection_id: collectionId,
+      collection_name: collectionName,
       ready_for_ecommerce: readyForEcommerce,
       ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
       seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
       status: pieceStatus,
-      category: selectedCategory,
       size: sizeScanned,
       brand_title: brandTitle,
       weight_grams: numericGramWeight,
@@ -816,7 +956,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       back_image: backImageUrl || null,
       tag_image: tagImageUrl || null,
       era: era || '1990s Vintage',
-      market_segment: marketSegment || 'Regular Thrift',
+      market_segment: marketSegment || 'Vintage',
       is_grail: finalGrailStatus,
       ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
       is_price_overridden: isOverridden,
@@ -847,7 +987,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       backImageUrl,
       tagImageUrl,
       era: era || '1990s Vintage',
-      marketSegment: marketSegment || 'Regular Thrift',
+      marketSegment: marketSegment || 'Vintage',
       isGrail: finalGrailStatus,
       aiSuggestedPrice: aiSuggestedPrice || effectiveSellingPrice,
       isPriceOverridden: isOverridden,
@@ -858,6 +998,10 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       ecommerce_description: ecommerceDescription || styleNotes,
       seo_tags: seoTags,
       status: pieceStatus,
+      parent_category_name: parentDeptName,
+      sub_category: subCategoryName,
+      collection_id: collectionId,
+      collection_name: collectionName,
       createdAt: new Date().toISOString()
     } as any;
 
@@ -887,7 +1031,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         tag_image_url: tagImageUrl || '',
         is_sold: false,
         status: pieceStatus,
-        market_segment: marketSegment || 'Regular Thrift',
+        market_segment: marketSegment || 'Vintage',
         is_grail: finalGrailStatus,
         ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
         is_price_overridden: isOverridden,
@@ -895,7 +1039,10 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         ready_for_ecommerce: readyForEcommerce,
         ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
         seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
-        parent_category_name: activeDeptObj?.name || 'Vintage'
+        parent_category_name: parentDeptName,
+        sub_category: subCategoryName,
+        collection_id: collectionId,
+        collection_name: collectionName
       }], { onConflict: 'id' })
       .catch(err => console.warn('Instant inventory sync notice:', err));
 
@@ -2176,82 +2323,149 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   selectedGrade.toLowerCase().includes(g.toLowerCase())
                 ) && !selectedGrade.toLowerCase().includes('rework') && !selectedGrade.toLowerCase().includes('grade b');
 
-                const DEPARTMENTS = [
-                  { id: 'men', name: 'Men', code: 'MEN', icon: '👔' },
-                  { id: 'ladies', name: 'Ladies', code: 'LAD', icon: '👗' },
-                  { id: 'children', name: 'Kids', code: 'KID', icon: '🧸' },
-                  { id: 'accessories', name: 'Accessories', code: 'ACC', icon: '🧢' },
-                  { id: 'vintage', name: 'Vintage', code: 'VIN', icon: '🕰️' },
-                  { id: 'antique', name: 'Antique', code: 'ANT', icon: '🏛️' }
-                ];
-
                 return (
-                  <div className="space-y-2">
-                    {/* PIPELINE CONTROL BAR: HIERARCHY, ATOMIC SKU & SMART ROUTING GATE */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 p-2 bg-slate-900/90 border border-slate-800 rounded-xl">
-                      {/* Department Filter Pills */}
-                      <div className="flex items-center gap-1 overflow-x-auto py-0.5 max-w-full">
-                        <span className="text-[10px] uppercase font-bold text-slate-400 mr-1 shrink-0">Dept:</span>
-                        {DEPARTMENTS.map(dept => {
-                          const isSelected = selectedParentDept === dept.id;
-                          return (
-                            <button
-                              key={dept.id}
-                              type="button"
-                              onClick={() => {
-                                setSelectedParentDept(dept.id);
-                                SetupService.generateSku(dept.code).then(s => setGeneratedSku(s)).catch(() => {});
-                              }}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0 ${
-                                isSelected
-                                  ? 'bg-indigo-600 text-white shadow shadow-indigo-600/30 border border-indigo-400'
-                                  : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 border border-slate-700'
-                              }`}
-                            >
-                              <span>{dept.icon}</span>
-                              <span>{dept.name}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {/* Status Badges: SKU + Smart Routing + AI Copy Drawer */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        {/* Dynamic SKU Badge */}
-                        <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950 border border-indigo-500/50 text-indigo-300 font-mono text-xs font-black shadow-inner" title="Upcoming atomic SKU for this piece">
-                          <Barcode className="w-3.5 h-3.5 text-indigo-400" />
-                          <span>{generatedSku}</span>
+                  <div className="space-y-2.5">
+                    {/* 4-TIER CASCADING TAXONOMY & CLASSIFICATION BAR */}
+                    <div className="p-3 bg-slate-900/90 border border-indigo-900/50 rounded-xl space-y-2.5 shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] uppercase tracking-wider font-extrabold text-indigo-400 flex items-center gap-1.5">
+                            <Layers className="w-3.5 h-3.5" />
+                            4-Tier Cascading Taxonomy & Classification
+                          </span>
+                          {selectedDeptObj && (
+                            <span className="text-[10px] font-mono font-bold bg-indigo-950 text-indigo-300 border border-indigo-700/50 px-2 py-0.5 rounded-full">
+                              {selectedDeptObj.name} ➔ {selectedMainCatObj?.name || 'Category'} {selectedSubCatObj ? `➔ ${selectedSubCatObj.name}` : ''}
+                            </span>
+                          )}
                         </div>
 
-                        {/* Smart Quality Routing Gate */}
-                        {isPristine ? (
-                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 text-[10px] font-bold shadow-xs" title="Super Cream & Grade A pieces route directly to the Live E-Commerce Storefront">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                            <span>🟢 Storefront Live</span>
+                        {/* Status Badges: SKU + Smart Routing + AI Copy Drawer */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {/* Dynamic SKU Badge */}
+                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950 border border-indigo-500/50 text-indigo-300 font-mono text-xs font-black shadow-inner" title="Upcoming atomic SKU for this piece">
+                            <Barcode className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>{generatedSku}</span>
                           </div>
-                        ) : (
-                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-950/80 border border-amber-500/60 text-amber-300 text-[10px] font-bold shadow-xs" title="Grade B and Rework pieces are held in Laundry WIP and hidden from Storefront">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                            <span>🧺 Laundry WIP</span>
-                          </div>
-                        )}
 
-                        {/* AI Copy & SEO Drawer Toggle */}
-                        <button
-                          type="button"
-                          onClick={() => setShowSeoDrawer(prev => !prev)}
-                          className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
-                            showSeoDrawer || ecommerceDescription
-                              ? 'bg-amber-500/20 text-amber-300 border-amber-400/60'
-                              : 'bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700'
-                          }`}
-                          title="Toggle AI Archival Description & SEO tags drawer"
-                        >
-                          <Sparkles className="w-3 h-3 text-amber-400" />
-                          <span>AI Copy</span>
-                          {ecommerceDescription && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />}
-                          {showSeoDrawer ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                        </button>
+                          {/* Smart Quality Routing Gate */}
+                          {isPristine ? (
+                            <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 text-[10px] font-bold shadow-xs" title="Super Cream & Grade A pieces route directly to the Live E-Commerce Storefront">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              <span>🟢 Storefront Live</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-950/80 border border-amber-500/60 text-amber-300 text-[10px] font-bold shadow-xs" title="Grade B and Rework pieces are held in Laundry WIP and hidden from Storefront">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                              <span>🧺 Laundry WIP</span>
+                            </div>
+                          )}
+
+                          {/* AI Copy & SEO Drawer Toggle */}
+                          <button
+                            type="button"
+                            onClick={() => setShowSeoDrawer(prev => !prev)}
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                              showSeoDrawer || ecommerceDescription
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-400/60'
+                                : 'bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700'
+                            }`}
+                            title="Toggle AI Archival Description & SEO tags drawer"
+                          >
+                            <Sparkles className="w-3 h-3 text-amber-400" />
+                            <span>AI Copy</span>
+                            {ecommerceDescription && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                            {showSeoDrawer ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 5 Searchable Cascading Comboboxes */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5">
+                        {/* 1. Department (Tier 1) */}
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
+                            <span>1. Department</span>
+                            <span className="text-[9px] text-indigo-400 font-mono">Tier 1</span>
+                          </label>
+                          <SearchableSelect
+                            options={deptOptions}
+                            value={selectedDeptId}
+                            onChange={handleDepartmentChange}
+                            placeholder="Select Department..."
+                            searchPlaceholder="Search departments (Men, Ladies, etc.)..."
+                            disabled={hudStats.isCompleted}
+                            className="w-full text-xs"
+                          />
+                        </div>
+
+                        {/* 2. Main Category (Tier 2) */}
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
+                            <span>2. Main Category</span>
+                            <span className="text-[9px] text-indigo-400 font-mono">Tier 2</span>
+                          </label>
+                          <SearchableSelect
+                            options={mainCatOptions}
+                            value={selectedMainCategoryId}
+                            onChange={handleMainCategoryChange}
+                            placeholder="Select Category..."
+                            searchPlaceholder="Search category..."
+                            disabled={hudStats.isCompleted}
+                            className="w-full text-xs"
+                          />
+                        </div>
+
+                        {/* 3. Sub-Category (Tier 3) */}
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
+                            <span>3. Sub-Category</span>
+                            <span className="text-[9px] text-indigo-400 font-mono">Tier 3</span>
+                          </label>
+                          <SearchableSelect
+                            options={subCatOptions}
+                            value={selectedSubCategoryId}
+                            onChange={handleSubCategoryChange}
+                            placeholder="Select Sub-Category..."
+                            searchPlaceholder="Search sub-category..."
+                            disabled={hudStats.isCompleted}
+                            className="w-full text-xs"
+                          />
+                        </div>
+
+                        {/* 4. Collection / Season (Tier 4) */}
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
+                            <span>4. Collection / Season</span>
+                            <span className="text-[9px] text-amber-400 font-mono">Tier 4</span>
+                          </label>
+                          <SearchableSelect
+                            options={collectionOptions}
+                            value={selectedCollectionId}
+                            onChange={handleCollectionChange}
+                            placeholder="Select Collection..."
+                            searchPlaceholder="Search collections or drops..."
+                            disabled={hudStats.isCompleted}
+                            className="w-full text-xs"
+                          />
+                        </div>
+
+                        {/* 5. Market Segment Classification */}
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
+                            <span>Market Segment</span>
+                            <span className="text-[9px] text-amber-400 font-mono">Archive Tier</span>
+                          </label>
+                          <SearchableSelect
+                            options={marketSegmentOptions}
+                            value={marketSegment}
+                            onChange={handleMarketSegmentChange}
+                            placeholder="Select Segment..."
+                            searchPlaceholder="Antique, Vintage, Brand, Non-Brand..."
+                            disabled={hudStats.isCompleted}
+                            className="w-full text-xs"
+                          />
+                        </div>
                       </div>
                     </div>
 
@@ -2300,7 +2514,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       </div>
 
                       {/* 3. Estimated Selling Price with Anti-Theft Grail Lock & Below-Cost Warning */}
-                      <div className="col-span-1 lg:col-span-1 space-y-1">
+                      <div className="col-span-1 lg:col-span-2 space-y-1">
                         <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
                           <span>Selling (AED)</span>
                           {isGrailLocked ? (
@@ -2337,39 +2551,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                         )}
                       </div>
 
-                      {/* 4. Segment & Era Selector */}
-                      <div className="col-span-1 lg:col-span-2 space-y-1">
-                        <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
-                          <span>Segment & Era</span>
-                          <span className="text-[9px] text-slate-400">AI Sync</span>
-                        </label>
-                        <select
-                          value={`${marketSegment}|${era}`}
-                          onChange={e => {
-                            const [newSeg, newEra] = e.target.value.split('|');
-                            setMarketSegment(newSeg as any);
-                            setEra(newEra);
-                            const isHigh = ['Antique', 'Boutique', 'Grails'].includes(newSeg) || newEra.toLowerCase().includes('antique');
-                            setIsGrail(isHigh);
-                            const autoPrice = getDefaultSellingPrice(selectedCategory, newEra, brandTitle);
-                            setSellingPriceOverride(String(autoPrice));
-                          }}
-                          disabled={hudStats.isCompleted}
-                          className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-lg px-2 py-2 text-xs text-amber-200 focus:outline-hidden cursor-pointer disabled:opacity-50 font-medium"
-                        >
-                          <option value="Antique|Antique Heritage (1920s-1960s)">🏛️ Antique (1920s-60s)</option>
-                          <option value="Grails|1970s-1980s Vintage">🔥 Grails (70s-80s Band/Tour)</option>
-                          <option value="Grails|1990s Vintage">🔥 Grails (90s Vintage)</option>
-                          <option value="Boutique|1990s Vintage">✨ Boutique / Designer</option>
-                          <option value="Old Vintage|1970s-1980s Vintage">🕰️ Old Vintage (70s-80s)</option>
-                          <option value="Old Vintage|1990s Vintage">🕰️ Old Vintage (90s)</option>
-                          <option value="Old Vintage|Y2K (Early 2000s)">🕰️ Y2K (Early 2000s)</option>
-                          <option value="Regular Thrift|Modern Non-Brand">📦 Regular Thrift (Basics)</option>
-                        </select>
-                      </div>
-
-                      {/* 5. Brand / Title (Creatable Auto-Complete Combobox) */}
-                      <div className="col-span-1 lg:col-span-2 space-y-1 relative" ref={itemMasterDropdownRef}>
+                      {/* 4. Brand / Title (Creatable Auto-Complete Combobox) */}
+                      <div className="col-span-1 lg:col-span-3 space-y-1 relative" ref={itemMasterDropdownRef}>
                         <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
                           <span>Brand / Title</span>
                           <span className="text-[9px] text-indigo-400 font-mono">Auto-Master</span>
@@ -2437,34 +2620,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                         )}
                       </div>
 
-                      {/* 6. Category Dropdown (Filtered by Department) */}
+                      {/* 5. Size Selector Dropdown */}
                       <div className="col-span-1 lg:col-span-2 space-y-1">
-                        <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
-                          <span>Category</span>
-                          <span className="text-[9px] text-slate-400 font-mono">{activeDeptObj?.name || 'Dept'}</span>
-                        </label>
-                        <select
-                          value={selectedCategory}
-                          onChange={e => {
-                            const newCat = e.target.value;
-                            setSelectedCategory(newCat);
-                            const autoPrice = getDefaultSellingPrice(newCat, era, brandTitle);
-                            setSellingPriceOverride(String(autoPrice));
-                          }}
-                          disabled={hudStats.isCompleted}
-                          className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-400 rounded-lg px-2.5 py-2 text-xs text-slate-200 focus:outline-hidden cursor-pointer disabled:opacity-50 font-medium"
-                        >
-                          {subcategoriesForDept.map(cat => {
-                            const catStr = typeof cat === 'object' && cat !== null ? ((cat as any).name || (cat as any).code || '') : String(cat || '');
-                            return (
-                              <option key={catStr} value={catStr}>{catStr}</option>
-                            );
-                          })}
-                        </select>
-                      </div>
-
-                      {/* 7. Size Selector Dropdown */}
-                      <div className="col-span-1 lg:col-span-1 space-y-1">
                         <label className="block text-[11px] font-bold text-indigo-300 uppercase tracking-wide flex items-center justify-between">
                           <span>Size</span>
                           <span className="font-mono text-[9px] text-amber-400 font-bold bg-slate-800 px-1 py-0.2 rounded">
@@ -2485,8 +2642,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                         </select>
                       </div>
 
-                      {/* 8. Quality Grade Dropdown */}
-                      <div className="col-span-2 sm:col-span-1 lg:col-span-1 space-y-1">
+                      {/* 6. Quality Grade Dropdown */}
+                      <div className="col-span-2 sm:col-span-1 lg:col-span-2 space-y-1">
                         <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
                           <span className="flex items-center gap-1">
                             <Sparkles className="w-3 h-3 text-amber-400" />

@@ -7,6 +7,8 @@ import {
   LabelGrade,
   ShopMaster,
   CategoryMaster,
+  ProductCategory,
+  CollectionMaster,
   SizeMaster,
   LiveStreamMulticastConfig,
   LiveBoothStreamConfig,
@@ -52,7 +54,10 @@ import {
   RefreshCw,
   Maximize2,
   Wrench,
-  Video
+  Video,
+  FolderTree,
+  Calendar,
+  ChevronRight
 } from 'lucide-react';
 import { BulkDataImportModal } from '../../../components/BulkDataImportModal.tsx';
 import { QRCodeCanvas } from 'qrcode.react';
@@ -186,7 +191,40 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   const [categoryQualityFilter, setCategoryQualityFilter] = useState<'ALL' | 'CREAM' | 'NON_BRAND' | 'GRADE_A' | 'GRADE_B'>('ALL');
   const [sizeSearch, setSizeSearch] = useState('');
 
-  // Category Master Modal State
+  // 4-Tier Cascading Taxonomy & Collections Master States
+  const [productCategories, setProductCategories] = useState<ProductCategory[]>([]);
+  const [collections, setCollections] = useState<CollectionMaster[]>([]);
+  const [taxonomyTab, setTaxonomyTab] = useState<'departments' | 'categories' | 'subcategories' | 'collections'>('departments');
+
+  // Search & Filter states for the 4 taxonomy tabs
+  const [deptSearch, setDeptSearch] = useState('');
+  const [mainCatSearch, setMainCatSearch] = useState('');
+  const [mainCatDeptFilter, setMainCatDeptFilter] = useState('ALL');
+  const [subCatSearch, setSubCatSearch] = useState('');
+  const [subCatMainFilter, setSubCatMainFilter] = useState('ALL');
+  const [colSearch, setColSearch] = useState('');
+
+  // 1. Department Modal State
+  const [showDeptModal, setShowDeptModal] = useState(false);
+  const [editingDept, setEditingDept] = useState<ProductCategory | null>(null);
+  const [deptForm, setDeptForm] = useState({ name: '', code: '', slug: '', sortOrder: 1, isActive: true });
+
+  // 2. Main Category Modal State
+  const [showMainCatModal, setShowMainCatModal] = useState(false);
+  const [editingMainCat, setEditingMainCat] = useState<ProductCategory | null>(null);
+  const [mainCatForm, setMainCatForm] = useState({ name: '', slug: '', parentId: '', sortOrder: 1, isActive: true });
+
+  // 3. Sub-Category Modal State
+  const [showSubCatModal, setShowSubCatModal] = useState(false);
+  const [editingSubCat, setEditingSubCat] = useState<ProductCategory | null>(null);
+  const [subCatForm, setSubCatForm] = useState({ name: '', slug: '', parentId: '', sortOrder: 1, isActive: true });
+
+  // 4. Collection Modal State
+  const [showColModal, setShowColModal] = useState(false);
+  const [editingCol, setEditingCol] = useState<CollectionMaster | null>(null);
+  const [colForm, setColForm] = useState({ name: '', code: '', season: 'All Season', year: 2026, sortOrder: 1, isActive: true });
+
+  // Legacy Category Master Modal State (Backwards compatibility)
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<CategoryMaster | null>(null);
   const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState<string>('ALL');
@@ -299,7 +337,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
 
   const loadData = async () => {
     try {
-      const [profRes, currRes, itemRes, brandRes, labelRes, shopRes, catRes, sizeRes, balesRes, liveRes, boothsRes] = await Promise.all([
+      const [profRes, currRes, itemRes, brandRes, labelRes, shopRes, catRes, prodCatRes, colRes, sizeRes, balesRes, liveRes, boothsRes] = await Promise.all([
         CompanyProfileService.getCompanyProfile().catch(e => { console.warn(e); return null; }),
         SetupService.getCurrencies().catch(e => { console.warn(e); return []; }),
         SetupService.getItems().catch(e => { console.warn(e); return []; }),
@@ -307,6 +345,8 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         SetupService.getLabelGrades().catch(e => { console.warn(e); return []; }),
         SetupService.getShops().catch(e => { console.warn(e); return []; }),
         SetupService.getCategories().catch(e => { console.warn(e); return []; }),
+        SetupService.getProductCategories().catch(e => { console.warn(e); return []; }),
+        SetupService.getCollections().catch(e => { console.warn(e); return []; }),
         SetupService.getSizes().catch(e => { console.warn(e); return []; }),
         PurchaseService.getGatePasses().catch(e => { console.warn(e); return []; }),
         fetch('/api/setup/live-multicast').then(r => (r.ok ? r.json() : null)).catch(() => null),
@@ -325,6 +365,8 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       if (Array.isArray(labelRes)) setLabels(labelRes);
       if (Array.isArray(shopRes)) setShops(shopRes);
       if (Array.isArray(catRes)) setCategories(catRes);
+      if (Array.isArray(prodCatRes)) setProductCategories(prodCatRes);
+      if (Array.isArray(colRes)) setCollections(colRes);
       if (Array.isArray(sizeRes)) setSizes(sizeRes);
       if (Array.isArray(balesRes)) {
         setBales(balesRes);
@@ -927,6 +969,336 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       onRefreshAll();
     } catch (err: any) {
       showMsg(err?.message || 'Error updating category', 'error');
+    }
+  };
+
+  // --- 1. Department (Tier 1) Handlers ---
+  const handleOpenAddDepartment = () => {
+    setEditingDept(null);
+    const count = productCategories.filter(c => c.taxonomy_level === 'DEPARTMENT' || (!c.parent_id && Number(c.level) === 1)).length;
+    setDeptForm({
+      name: '',
+      code: '',
+      slug: '',
+      sortOrder: (count + 1) * 10,
+      isActive: true
+    });
+    setShowDeptModal(true);
+  };
+
+  const handleOpenEditDepartment = (dept: ProductCategory) => {
+    setEditingDept(dept);
+    setDeptForm({
+      name: dept.name,
+      code: (dept as any).department_code || dept.slug.toUpperCase().slice(0, 5),
+      slug: dept.slug,
+      sortOrder: (dept as any).display_order || (dept as any).displayOrder || 1,
+      isActive: dept.is_active !== false && dept.isActive !== false
+    });
+    setShowDeptModal(true);
+  };
+
+  const handleSaveDepartment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deptForm.name.trim()) return showMsg('Please enter a Department Name', 'error');
+    const cleanName = deptForm.name.trim();
+    const cleanCode = deptForm.code.trim().toUpperCase() || cleanName.slice(0, 3).toUpperCase();
+    const cleanSlug = deptForm.slug.trim() || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const payload = {
+      name: cleanName,
+      department_code: cleanCode,
+      slug: cleanSlug,
+      display_order: Number(deptForm.sortOrder) || 1,
+      is_active: deptForm.isActive,
+      taxonomy_level: 'DEPARTMENT' as const,
+      level: 1,
+      parent_id: null
+    };
+
+    try {
+      if (editingDept) {
+        await SetupService.updateProductCategory(editingDept.id, payload);
+        showMsg('Department updated successfully!');
+      } else {
+        await SetupService.addProductCategory(payload);
+        showMsg('Department created successfully!');
+      }
+      setShowDeptModal(false);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving department', 'error');
+    }
+  };
+
+  const handleDeleteDepartment = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this Department? Sub-categories linked to it will need to be re-assigned.')) return;
+    try {
+      await SetupService.deleteProductCategory(id);
+      showMsg('Department deleted successfully!');
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error deleting department', 'error');
+    }
+  };
+
+  const handleToggleDepartment = async (dept: ProductCategory) => {
+    const nextActive = !(dept.is_active !== false && dept.isActive !== false);
+    try {
+      await SetupService.updateProductCategory(dept.id, { is_active: nextActive });
+      showMsg(`Department ${nextActive ? 'activated' : 'deactivated'}!`);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error toggling department', 'error');
+    }
+  };
+
+  // --- 2. Main Category (Tier 2) Handlers ---
+  const handleOpenAddMainCategory = (defaultParentId?: string) => {
+    setEditingMainCat(null);
+    const depts = productCategories.filter(c => c.taxonomy_level === 'DEPARTMENT' || (!c.parent_id && Number(c.level) === 1));
+    const count = productCategories.filter(c => c.taxonomy_level === 'CATEGORY' || (c.parent_id && Number(c.level) === 2)).length;
+    setMainCatForm({
+      name: '',
+      slug: '',
+      parentId: defaultParentId || (depts[0]?.id || ''),
+      sortOrder: (count + 1) * 10,
+      isActive: true
+    });
+    setShowMainCatModal(true);
+  };
+
+  const handleOpenEditMainCategory = (cat: ProductCategory) => {
+    setEditingMainCat(cat);
+    setMainCatForm({
+      name: cat.name,
+      slug: cat.slug,
+      parentId: cat.parent_id || (cat as any).parentId || '',
+      sortOrder: (cat as any).display_order || (cat as any).displayOrder || 1,
+      isActive: cat.is_active !== false && cat.isActive !== false
+    });
+    setShowMainCatModal(true);
+  };
+
+  const handleSaveMainCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mainCatForm.name.trim()) return showMsg('Please enter Category Name', 'error');
+    if (!mainCatForm.parentId) return showMsg('Please select a Parent Department', 'error');
+    const cleanName = mainCatForm.name.trim();
+    const cleanSlug = mainCatForm.slug.trim() || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const payload = {
+      name: cleanName,
+      slug: cleanSlug,
+      parent_id: mainCatForm.parentId,
+      display_order: Number(mainCatForm.sortOrder) || 1,
+      is_active: mainCatForm.isActive,
+      taxonomy_level: 'CATEGORY' as const,
+      level: 2
+    };
+
+    try {
+      if (editingMainCat) {
+        await SetupService.updateProductCategory(editingMainCat.id, payload);
+        showMsg('Main Category updated successfully!');
+      } else {
+        await SetupService.addProductCategory(payload);
+        showMsg('Main Category created successfully!');
+      }
+      setShowMainCatModal(false);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving category', 'error');
+    }
+  };
+
+  const handleDeleteMainCategory = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this Category?')) return;
+    try {
+      await SetupService.deleteProductCategory(id);
+      showMsg('Main Category deleted successfully!');
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error deleting category', 'error');
+    }
+  };
+
+  const handleToggleMainCategory = async (cat: ProductCategory) => {
+    const nextActive = !(cat.is_active !== false && cat.isActive !== false);
+    try {
+      await SetupService.updateProductCategory(cat.id, { is_active: nextActive });
+      showMsg(`Category ${nextActive ? 'activated' : 'deactivated'}!`);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error toggling category', 'error');
+    }
+  };
+
+  // --- 3. Sub-Category (Tier 3) Handlers ---
+  const handleOpenAddSubCategory = (defaultParentId?: string) => {
+    setEditingSubCat(null);
+    const mainCats = productCategories.filter(c => c.taxonomy_level === 'CATEGORY' || (c.parent_id && Number(c.level) === 2));
+    const count = productCategories.filter(c => c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3).length;
+    setSubCatForm({
+      name: '',
+      slug: '',
+      parentId: defaultParentId || (mainCats[0]?.id || ''),
+      sortOrder: (count + 1) * 10,
+      isActive: true
+    });
+    setShowSubCatModal(true);
+  };
+
+  const handleOpenEditSubCategory = (sub: ProductCategory) => {
+    setEditingSubCat(sub);
+    setSubCatForm({
+      name: sub.name,
+      slug: sub.slug,
+      parentId: sub.parent_id || (sub as any).parentId || '',
+      sortOrder: (sub as any).display_order || (sub as any).displayOrder || 1,
+      isActive: sub.is_active !== false && sub.isActive !== false
+    });
+    setShowSubCatModal(true);
+  };
+
+  const handleSaveSubCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subCatForm.name.trim()) return showMsg('Please enter Sub-Category Name', 'error');
+    if (!subCatForm.parentId) return showMsg('Please select a Parent Main Category', 'error');
+    const cleanName = subCatForm.name.trim();
+    const cleanSlug = subCatForm.slug.trim() || `sub-${cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+    const payload = {
+      name: cleanName,
+      slug: cleanSlug,
+      parent_id: subCatForm.parentId,
+      display_order: Number(subCatForm.sortOrder) || 1,
+      is_active: subCatForm.isActive,
+      taxonomy_level: 'SUBCATEGORY' as const,
+      level: 3
+    };
+
+    try {
+      if (editingSubCat) {
+        await SetupService.updateProductCategory(editingSubCat.id, payload);
+        showMsg('Sub-Category updated successfully!');
+      } else {
+        await SetupService.addProductCategory(payload);
+        showMsg('Sub-Category created successfully!');
+      }
+      setShowSubCatModal(false);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving sub-category', 'error');
+    }
+  };
+
+  const handleDeleteSubCategory = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this Sub-Category?')) return;
+    try {
+      await SetupService.deleteProductCategory(id);
+      showMsg('Sub-Category deleted successfully!');
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error deleting sub-category', 'error');
+    }
+  };
+
+  const handleToggleSubCategory = async (sub: ProductCategory) => {
+    const nextActive = !(sub.is_active !== false && sub.isActive !== false);
+    try {
+      await SetupService.updateProductCategory(sub.id, { is_active: nextActive });
+      showMsg(`Sub-Category ${nextActive ? 'activated' : 'deactivated'}!`);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error toggling sub-category', 'error');
+    }
+  };
+
+  // --- 4. Collections & Seasons (Tier 4) Handlers ---
+  const handleOpenAddCollection = () => {
+    setEditingCol(null);
+    setColForm({
+      name: '',
+      code: '',
+      season: 'Summer',
+      year: 2026,
+      sortOrder: (collections.length + 1) * 10,
+      isActive: true
+    });
+    setShowColModal(true);
+  };
+
+  const handleOpenEditCollection = (col: CollectionMaster) => {
+    setEditingCol(col);
+    setColForm({
+      name: col.name,
+      code: col.code,
+      season: col.season || 'All Season',
+      year: col.year || 2026,
+      sortOrder: (col as any).display_order || (col as any).displayOrder || 1,
+      isActive: col.is_active !== false && col.isActive !== false
+    });
+    setShowColModal(true);
+  };
+
+  const handleSaveCollection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!colForm.name.trim()) return showMsg('Please enter Collection Name', 'error');
+    const cleanName = colForm.name.trim();
+    const cleanCode = colForm.code.trim().toUpperCase() || cleanName.toUpperCase().replace(/[^A-Z0-9]+/g, '-');
+    const payload = {
+      name: cleanName,
+      code: cleanCode,
+      season: colForm.season,
+      year: Number(colForm.year) || 2026,
+      display_order: Number(colForm.sortOrder) || 1,
+      is_active: colForm.isActive
+    };
+
+    try {
+      if (editingCol) {
+        await SetupService.updateCollection(editingCol.id, payload);
+        showMsg('Collection updated successfully!');
+      } else {
+        await SetupService.addCollection(payload);
+        showMsg('Collection created successfully!');
+      }
+      setShowColModal(false);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving collection', 'error');
+    }
+  };
+
+  const handleDeleteCollection = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this Collection?')) return;
+    try {
+      await SetupService.deleteCollection(id);
+      showMsg('Collection deleted successfully!');
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error deleting collection', 'error');
+    }
+  };
+
+  const handleToggleCollection = async (col: CollectionMaster) => {
+    const nextActive = !(col.is_active !== false && col.isActive !== false);
+    try {
+      await SetupService.updateCollection(col.id, { is_active: nextActive });
+      showMsg(`Collection ${nextActive ? 'activated' : 'deactivated'}!`);
+      loadData();
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error toggling collection', 'error');
     }
   };
 
@@ -2288,247 +2660,546 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         </div>
       )}
 
-      {/* 2B. GARMENT CATEGORIES MASTER */}
+      {/* 2B. 4-TIER CASCADING TAXONOMY & COLLECTIONS MASTER */}
       {subTab === 'categories' && (
         <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-4 sm:p-5 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-stone-200">
+          {/* Header */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-stone-200">
             <div>
               <h3 className="font-serif font-bold text-slate-900 text-sm uppercase tracking-wider flex items-center gap-2">
-                <Package className="w-4 h-4 text-amber-600" />
-                <span>Garment Categories Master</span>
+                <FolderTree className="w-4 h-4 text-amber-600" />
+                <span>4-Tier Cascading Taxonomy & Collections Master</span>
               </h3>
               <p className="text-xs text-slate-600 mt-0.5">
-                Manage garment categories used across Purchase Consignments, Commercial Invoices, Bale Sorting Terminal, and Finished Inventory.
+                Strict hierarchy: Department ➔ Main Category ➔ Sub-Category ➔ Collections & Seasons. Powers Sorting Terminal, SKU Generator, and E-Commerce Storefront.
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search categories..."
-                  value={categorySearch}
-                  onChange={e => setCategorySearch(e.target.value)}
-                  className="pl-8 pr-3 py-1.5 rounded-lg border border-stone-300 text-xs bg-stone-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 w-48 sm:w-60"
-                />
-              </div>
-
+            {/* Tab-specific Add Button */}
+            {taxonomyTab === 'departments' && (
               <button
                 type="button"
-                onClick={handleOpenAddCategory}
+                onClick={handleOpenAddDepartment}
                 className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs hover:shadow transition-all flex items-center gap-1.5 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Add Category</span>
+                <span>Add Department</span>
               </button>
+            )}
+            {taxonomyTab === 'categories' && (
+              <button
+                type="button"
+                onClick={() => handleOpenAddMainCategory(mainCatDeptFilter !== 'ALL' ? mainCatDeptFilter : undefined)}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs hover:shadow transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Main Category</span>
+              </button>
+            )}
+            {taxonomyTab === 'subcategories' && (
+              <button
+                type="button"
+                onClick={() => handleOpenAddSubCategory(subCatMainFilter !== 'ALL' ? subCatMainFilter : undefined)}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs hover:shadow transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Sub-Category</span>
+              </button>
+            )}
+            {taxonomyTab === 'collections' && (
+              <button
+                type="button"
+                onClick={handleOpenAddCollection}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs hover:shadow transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Collection</span>
+              </button>
+            )}
+          </div>
+
+          {/* 4 Distinct UI Tabs Navigation Strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-1.5 bg-stone-100 rounded-xl border border-stone-200">
+            {[
+              {
+                id: 'departments',
+                label: '1. Departments',
+                count: productCategories.filter(c => c.taxonomy_level === 'DEPARTMENT' || (!c.parent_id && Number(c.level) === 1)).length,
+                icon: <FolderTree className="w-3.5 h-3.5" />,
+                desc: 'Root Tiers (Men, Ladies, etc.)'
+              },
+              {
+                id: 'categories',
+                label: '2. Main Categories',
+                count: productCategories.filter(c => c.taxonomy_level === 'CATEGORY' || (c.parent_id && Number(c.level) === 2)).length,
+                icon: <Package className="w-3.5 h-3.5" />,
+                desc: 'T-Shirts, Pants, Outerwear'
+              },
+              {
+                id: 'subcategories',
+                label: '3. Sub-Categories',
+                count: productCategories.filter(c => c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3).length,
+                icon: <Tag className="w-3.5 h-3.5" />,
+                desc: 'Graphic Tees, Denim Jeans'
+              },
+              {
+                id: 'collections',
+                label: '4. Collections & Seasons',
+                count: collections.length,
+                icon: <Sparkles className="w-3.5 h-3.5" />,
+                desc: 'Summer 2026, Core Vault'
+              }
+            ].map(tab => {
+              const isActive = taxonomyTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setTaxonomyTab(tab.id as any)}
+                  className={`flex flex-col items-start p-2.5 rounded-lg text-left transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-white shadow-xs border border-amber-300 ring-2 ring-amber-400/40 text-slate-900'
+                      : 'text-stone-600 hover:bg-stone-200/70 border border-transparent'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <span className="font-bold text-xs flex items-center gap-1.5">
+                      {tab.icon}
+                      <span>{tab.label}</span>
+                    </span>
+                    <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                      isActive ? 'bg-amber-100 text-amber-900' : 'bg-stone-200 text-stone-700'
+                    }`}>
+                      {tab.count}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 mt-0.5 truncate">{tab.desc}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* TAB 1: DEPARTMENTS */}
+          {taxonomyTab === 'departments' && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search departments..."
+                    value={deptSearch}
+                    onChange={e => setDeptSearch(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 rounded-lg border border-stone-300 text-xs bg-stone-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 w-64"
+                  />
+                </div>
+                <span className="text-xs text-slate-500">Tier 1 root levels used to prefix SKUs (e.g. MEN, LAD, KID, ACC)</span>
+              </div>
+
+              <div className="overflow-x-auto rounded-lg border border-stone-200">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-stone-50 text-stone-700 font-bold text-[11px] uppercase tracking-wider border-b border-stone-200">
+                    <tr>
+                      <th className="px-3 py-2.5">Code (SKU Prefix)</th>
+                      <th className="px-3 py-2.5">Department Name</th>
+                      <th className="px-3 py-2.5">Slug</th>
+                      <th className="px-3 py-2.5">Main Categories Count</th>
+                      <th className="px-3 py-2.5 text-center">Sort Order</th>
+                      <th className="px-3 py-2.5 text-center">Status</th>
+                      <th className="px-3 py-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {productCategories
+                      .filter(c => c.taxonomy_level === 'DEPARTMENT' || (!c.parent_id && Number(c.level) === 1))
+                      .filter(c => !deptSearch || c.name.toLowerCase().includes(deptSearch.toLowerCase()) || ((c as any).department_code && (c as any).department_code.toLowerCase().includes(deptSearch.toLowerCase())))
+                      .map(dept => {
+                        const isDeptActive = dept.is_active !== false && dept.isActive !== false;
+                        const childCount = productCategories.filter(c => (c.taxonomy_level === 'CATEGORY' || Number(c.level) === 2) && (c.parent_id === dept.id || (c as any).parent_slug === dept.slug)).length;
+                        return (
+                          <tr key={dept.id} className="hover:bg-amber-50/40 transition-colors">
+                            <td className="px-3 py-2 font-mono font-bold text-amber-900">
+                              <span className="bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                                {(dept as any).department_code || dept.slug.toUpperCase().slice(0, 5)}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 font-bold text-slate-900">{dept.name}</td>
+                            <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{dept.slug}</td>
+                            <td className="px-3 py-2">
+                              <span className="font-mono text-xs text-slate-700 bg-stone-100 px-2 py-0.5 rounded border border-stone-200">
+                                {childCount} categories
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-center font-mono text-slate-600">{(dept as any).display_order || (dept as any).displayOrder || 1}</td>
+                            <td className="px-3 py-2 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                isDeptActive ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-stone-100 text-stone-700 border border-stone-300'
+                              }`}>
+                                {isDeptActive ? 'ACTIVE' : 'INACTIVE'}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-right space-x-1.5 whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleDepartment(dept)}
+                                className={`px-2 py-0.5 text-[10px] font-bold rounded border transition-colors cursor-pointer ${
+                                  isDeptActive
+                                    ? 'bg-stone-100 hover:bg-stone-200 text-stone-700 border-stone-300'
+                                    : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border-emerald-300'
+                                }`}
+                              >
+                                {isDeptActive ? 'Deactivate' : 'Activate'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditDepartment(dept)}
+                                className="px-2 py-0.5 text-[10px] font-bold rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors cursor-pointer"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteDepartment(dept.id)}
+                                className="px-2 py-0.5 text-[10px] font-bold rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 transition-colors cursor-pointer"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Quick Department Filter Bar */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mr-1">Department:</span>
-            {[
-              { id: 'ALL', label: 'All Departments' },
-              { id: 'men', label: '👔 Men' },
-              { id: 'ladies', label: '👗 Ladies' },
-              { id: 'children', label: '🧸 Children' },
-              { id: 'accessories', label: '🕶️ Accessories' },
-              { id: 'vintage', label: '🏛️ Vintage' },
-              { id: 'antique', label: '⏳ Antique' }
-            ].map(d => (
-              <button
-                key={d.id}
-                type="button"
-                onClick={() => setSelectedDepartmentFilter(d.id)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  selectedDepartmentFilter === d.id
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200'
-                }`}
-              >
-                {d.label}
-              </button>
-            ))}
-          </div>
+          {/* TAB 2: MAIN CATEGORIES */}
+          {taxonomyTab === 'categories' && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Search main categories..."
+                      value={mainCatSearch}
+                      onChange={e => setMainCatSearch(e.target.value)}
+                      className="pl-8 pr-3 py-1.5 rounded-lg border border-stone-300 text-xs bg-stone-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 w-52 sm:w-60"
+                    />
+                  </div>
 
-          {/* Quick Quality Filter Bar */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mr-1">Filter by Quality:</span>
-            {[
-              { id: 'ALL', label: `All Quality (${categories.length})` },
-              { id: 'CREAM', label: `🌟 Super Cream (${categories.filter(c => c.qualityTier === 'CREAM' || c.name.toLowerCase().includes('cream')).length})` },
-              { id: 'NON_BRAND', label: `🏷️ Non-Brand / Basics (${categories.filter(c => c.qualityTier === 'NON_BRAND' || c.name.toLowerCase().includes('non-brand')).length})` },
-              { id: 'GRADE_A', label: `⭐ Grade A Branded (${categories.filter(c => c.qualityTier === 'GRADE_A' || c.name.toLowerCase().includes('branded')).length})` },
-              { id: 'GRADE_B', label: `⚠️ Grade B / Flawed (${categories.filter(c => c.qualityTier === 'GRADE_B' || c.name.toLowerCase().includes('grade b')).length})` }
-            ].map(f => (
-              <button
-                key={f.id}
-                type="button"
-                onClick={() => setCategoryQualityFilter(f.id as any)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  categoryQualityFilter === f.id
-                    ? 'bg-amber-600 text-white shadow-xs'
-                    : 'bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
+                  {/* Filter by Department */}
+                  <select
+                    value={mainCatDeptFilter}
+                    onChange={e => setMainCatDeptFilter(e.target.value)}
+                    className="px-2.5 py-1.5 rounded-lg border border-stone-300 text-xs bg-white text-slate-800 font-bold focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="ALL">All Departments</option>
+                    {productCategories
+                      .filter(c => c.taxonomy_level === 'DEPARTMENT' || (!c.parent_id && Number(c.level) === 1))
+                      .map(d => (
+                        <option key={d.id} value={d.id}>📁 {d.name} ({(d as any).department_code || d.slug})</option>
+                      ))}
+                  </select>
+                </div>
 
-          <div className="overflow-x-auto rounded-lg border border-stone-200">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead className="bg-stone-50 text-stone-700 font-bold text-[11px] uppercase tracking-wider border-b border-stone-200">
-                <tr>
-                  <th className="px-3 py-2.5">Code</th>
-                  <th className="px-3 py-2.5">Category Name</th>
-                  <th className="px-3 py-2.5">Parent / Department</th>
-                  <th className="px-3 py-2.5">Storefront Slug</th>
-                  <th className="px-3 py-2.5">Quality / Grading Tier</th>
-                  <th className="px-3 py-2.5">Description</th>
-                  <th className="px-3 py-2.5 text-center">Sort Order</th>
-                  <th className="px-3 py-2.5 text-center">Status</th>
-                  <th className="px-3 py-2.5 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-stone-100">
-                {categories
-                  .filter(c => {
-                    const matchesSearch = !categorySearch || c.name.toLowerCase().includes(categorySearch.toLowerCase()) || c.code.toLowerCase().includes(categorySearch.toLowerCase()) || (c.slug && c.slug.toLowerCase().includes(categorySearch.toLowerCase()));
-                    if (!matchesSearch) return false;
-                    if (selectedDepartmentFilter !== 'ALL') {
-                      const isTopMatch = c.slug === selectedDepartmentFilter || (c as any).department_code?.toLowerCase() === selectedDepartmentFilter.toLowerCase();
-                      const isChildMatch = (c as any).parent_slug === selectedDepartmentFilter || (c as any).parent_name?.toLowerCase().includes(selectedDepartmentFilter.toLowerCase());
-                      if (!isTopMatch && !isChildMatch) return false;
-                    }
-                    if (categoryQualityFilter === 'ALL') return true;
-                    if (categoryQualityFilter === 'CREAM') return c.qualityTier === 'CREAM' || c.name.toLowerCase().includes('cream');
-                    if (categoryQualityFilter === 'NON_BRAND') return c.qualityTier === 'NON_BRAND' || c.name.toLowerCase().includes('non-brand');
-                    if (categoryQualityFilter === 'GRADE_A') return c.qualityTier === 'GRADE_A' || c.name.toLowerCase().includes('branded');
-                    if (categoryQualityFilter === 'GRADE_B') return c.qualityTier === 'GRADE_B' || c.name.toLowerCase().includes('grade b');
-                    return true;
-                  }).length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="text-center py-10 text-slate-400 text-xs">
-                      No categories found matching your search or filters. Click "Add Category" to create one.
-                    </td>
-                  </tr>
-                ) : (
-                  categories
-                    .filter(c => {
-                      const matchesSearch = !categorySearch || c.name.toLowerCase().includes(categorySearch.toLowerCase()) || c.code.toLowerCase().includes(categorySearch.toLowerCase()) || (c.slug && c.slug.toLowerCase().includes(categorySearch.toLowerCase()));
-                      if (!matchesSearch) return false;
-                      if (selectedDepartmentFilter !== 'ALL') {
-                        const isTopMatch = c.slug === selectedDepartmentFilter || (c as any).department_code?.toLowerCase() === selectedDepartmentFilter.toLowerCase();
-                        const isChildMatch = (c as any).parent_slug === selectedDepartmentFilter || (c as any).parent_name?.toLowerCase().includes(selectedDepartmentFilter.toLowerCase());
-                        if (!isTopMatch && !isChildMatch) return false;
-                      }
-                      if (categoryQualityFilter === 'ALL') return true;
-                      if (categoryQualityFilter === 'CREAM') return c.qualityTier === 'CREAM' || c.name.toLowerCase().includes('cream');
-                      if (categoryQualityFilter === 'NON_BRAND') return c.qualityTier === 'NON_BRAND' || c.name.toLowerCase().includes('non-brand');
-                      if (categoryQualityFilter === 'GRADE_A') return c.qualityTier === 'GRADE_A' || c.name.toLowerCase().includes('branded');
-                      if (categoryQualityFilter === 'GRADE_B') return c.qualityTier === 'GRADE_B' || c.name.toLowerCase().includes('grade b');
-                      return true;
-                    })
-                    .map(cat => {
-                      const isPosted = cat.status !== 'UNPOSTED' && cat.isActive !== false && cat.is_active !== false;
-                      const isCream = cat.qualityTier === 'CREAM' || cat.name.toLowerCase().includes('cream');
-                      const isNonBrand = cat.qualityTier === 'NON_BRAND' || cat.name.toLowerCase().includes('non-brand');
-                      const isGradeA = cat.qualityTier === 'GRADE_A' || cat.name.toLowerCase().includes('branded');
-                      const isGradeB = cat.qualityTier === 'GRADE_B' || cat.name.toLowerCase().includes('grade b') || cat.name.toLowerCase().includes('flawed');
+                <span className="text-xs text-slate-500">Tier 2 categories linked to parent departments</span>
+              </div>
 
-                      return (
-                        <tr key={cat.id} className="hover:bg-amber-50/40 transition-colors">
-                          <td className="px-3 py-2 font-mono font-bold text-amber-900">{cat.code}</td>
-                          <td className="px-3 py-2 font-semibold text-slate-900">{cat.name}</td>
-                          <td className="px-3 py-2">
-                            {((cat as any).level === 1 || !(cat as any).parent_id) ? (
-                              <span className="px-2 py-0.5 rounded font-mono font-bold text-[10px] bg-amber-100 text-amber-900 border border-amber-300">
-                                👑 Top Dept ({(cat as any).department_code || 'TOP'})
+              <div className="overflow-x-auto rounded-lg border border-stone-200">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-stone-50 text-stone-700 font-bold text-[11px] uppercase tracking-wider border-b border-stone-200">
+                    <tr>
+                      <th className="px-3 py-2.5">Category Name</th>
+                      <th className="px-3 py-2.5">Parent Department</th>
+                      <th className="px-3 py-2.5">Slug</th>
+                      <th className="px-3 py-2.5">Sub-Categories Count</th>
+                      <th className="px-3 py-2.5 text-center">Sort Order</th>
+                      <th className="px-3 py-2.5 text-center">Status</th>
+                      <th className="px-3 py-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {productCategories
+                      .filter(c => c.taxonomy_level === 'CATEGORY' || (c.parent_id && Number(c.level) === 2))
+                      .filter(c => {
+                        if (mainCatDeptFilter !== 'ALL' && c.parent_id !== mainCatDeptFilter) return false;
+                        if (mainCatSearch && !c.name.toLowerCase().includes(mainCatSearch.toLowerCase()) && !c.slug.toLowerCase().includes(mainCatSearch.toLowerCase())) return false;
+                        return true;
+                      })
+                      .map(cat => {
+                        const isCatActive = cat.is_active !== false && cat.isActive !== false;
+                        const parentDept = productCategories.find(p => p.id === cat.parent_id);
+                        const subCount = productCategories.filter(s => (s.taxonomy_level === 'SUBCATEGORY' || Number(s.level) === 3) && s.parent_id === cat.id).length;
+                        return (
+                          <tr key={cat.id} className="hover:bg-amber-50/40 transition-colors">
+                            <td className="px-3 py-2 font-bold text-slate-900">{cat.name}</td>
+                            <td className="px-3 py-2">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                📁 {parentDept?.name || (cat as any).parent_name || 'Department'}
                               </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 border border-slate-200">
-                                ↳ {(cat as any).parent_name || 'Subcategory'}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{cat.slug}</td>
+                            <td className="px-3 py-2">
+                              <span className="font-mono text-xs text-slate-700 bg-stone-100 px-2 py-0.5 rounded border border-stone-200">
+                                {subCount} sub-items
                               </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 font-mono text-[11px] text-amber-800">
-                            <span className="bg-amber-100/60 px-1.5 py-0.5 rounded border border-amber-200">
-                              {cat.slug || cat.code || '—'}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2">
-                            {isCream && (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 inline-flex items-center gap-1">
-                                <span>🌟 Super Cream</span>
+                            </td>
+                            <td className="px-3 py-2 text-center font-mono text-slate-600">{(cat as any).display_order || (cat as any).displayOrder || 1}</td>
+                            <td className="px-3 py-2 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                isCatActive ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-stone-100 text-stone-700 border border-stone-300'
+                              }`}>
+                                {isCatActive ? 'ACTIVE' : 'INACTIVE'}
                               </span>
-                            )}
-                            {isNonBrand && (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-800 border border-slate-300 inline-flex items-center gap-1">
-                                <span>🏷️ Non-Brand Basic</span>
+                            </td>
+                            <td className="px-3 py-2 text-right space-x-1.5 whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleMainCategory(cat)}
+                                className={`px-2 py-0.5 text-[10px] font-bold rounded border transition-colors cursor-pointer ${
+                                  isCatActive
+                                    ? 'bg-stone-100 hover:bg-stone-200 text-stone-700 border-stone-300'
+                                    : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border-emerald-300'
+                                }`}
+                              >
+                                {isCatActive ? 'Deactivate' : 'Activate'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditMainCategory(cat)}
+                                className="px-2 py-0.5 text-[10px] font-bold rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors cursor-pointer"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteMainCategory(cat.id)}
+                                className="px-2 py-0.5 text-[10px] font-bold rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 transition-colors cursor-pointer"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: SUB-CATEGORIES */}
+          {taxonomyTab === 'subcategories' && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Search sub-categories..."
+                      value={subCatSearch}
+                      onChange={e => setSubCatSearch(e.target.value)}
+                      className="pl-8 pr-3 py-1.5 rounded-lg border border-stone-300 text-xs bg-stone-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 w-52 sm:w-60"
+                    />
+                  </div>
+
+                  {/* Filter by Main Category */}
+                  <select
+                    value={subCatMainFilter}
+                    onChange={e => setSubCatMainFilter(e.target.value)}
+                    className="px-2.5 py-1.5 rounded-lg border border-stone-300 text-xs bg-white text-slate-800 font-bold focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="ALL">All Main Categories</option>
+                    {productCategories
+                      .filter(c => c.taxonomy_level === 'CATEGORY' || (c.parent_id && Number(c.level) === 2))
+                      .map(mc => (
+                        <option key={mc.id} value={mc.id}>📦 {mc.name}</option>
+                      ))}
+                  </select>
+                </div>
+
+                <span className="text-xs text-slate-500">Tier 3 detailed cuts/styles (e.g. Graphic Tees, Single Stitch, Denim Jeans)</span>
+              </div>
+
+              <div className="overflow-x-auto rounded-lg border border-stone-200">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-stone-50 text-stone-700 font-bold text-[11px] uppercase tracking-wider border-b border-stone-200">
+                    <tr>
+                      <th className="px-3 py-2.5">Sub-Category Name</th>
+                      <th className="px-3 py-2.5">Parent Main Category</th>
+                      <th className="px-3 py-2.5">Department</th>
+                      <th className="px-3 py-2.5">Slug</th>
+                      <th className="px-3 py-2.5 text-center">Sort Order</th>
+                      <th className="px-3 py-2.5 text-center">Status</th>
+                      <th className="px-3 py-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {productCategories
+                      .filter(c => c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3)
+                      .filter(c => {
+                        if (subCatMainFilter !== 'ALL' && c.parent_id !== subCatMainFilter) return false;
+                        if (subCatSearch && !c.name.toLowerCase().includes(subCatSearch.toLowerCase()) && !c.slug.toLowerCase().includes(subCatSearch.toLowerCase())) return false;
+                        return true;
+                      })
+                      .map(sub => {
+                        const isSubActive = sub.is_active !== false && sub.isActive !== false;
+                        const parentCat = productCategories.find(p => p.id === sub.parent_id);
+                        const grandParentDept = parentCat ? productCategories.find(p => p.id === parentCat.parent_id) : null;
+                        return (
+                          <tr key={sub.id} className="hover:bg-amber-50/40 transition-colors">
+                            <td className="px-3 py-2 font-bold text-slate-900">{sub.name}</td>
+                            <td className="px-3 py-2">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-900 border border-indigo-200">
+                                📦 {parentCat?.name || (sub as any).parent_name || 'Category'}
                               </span>
-                            )}
-                            {isGradeA && (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-100 text-blue-900 border border-blue-300 inline-flex items-center gap-1">
-                                <span>⭐ Grade A Branded</span>
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-200">
+                                📁 {grandParentDept?.name || 'Department'}
                               </span>
-                            )}
-                            {isGradeB && (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300 inline-flex items-center gap-1">
-                                <span>⚠️ Grade B Flaw</span>
+                            </td>
+                            <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{sub.slug}</td>
+                            <td className="px-3 py-2 text-center font-mono text-slate-600">{(sub as any).display_order || (sub as any).displayOrder || 1}</td>
+                            <td className="px-3 py-2 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                isSubActive ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-stone-100 text-stone-700 border border-stone-300'
+                              }`}>
+                                {isSubActive ? 'ACTIVE' : 'INACTIVE'}
                               </span>
-                            )}
-                            {!isCream && !isNonBrand && !isGradeA && !isGradeB && (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-stone-100 text-stone-700 border border-stone-200">
-                                {cat.qualityTier || 'Standard'}
+                            </td>
+                            <td className="px-3 py-2 text-right space-x-1.5 whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleSubCategory(sub)}
+                                className={`px-2 py-0.5 text-[10px] font-bold rounded border transition-colors cursor-pointer ${
+                                  isSubActive
+                                    ? 'bg-stone-100 hover:bg-stone-200 text-stone-700 border-stone-300'
+                                    : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border-emerald-300'
+                                }`}
+                              >
+                                {isSubActive ? 'Deactivate' : 'Activate'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditSubCategory(sub)}
+                                className="px-2 py-0.5 text-[10px] font-bold rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors cursor-pointer"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSubCategory(sub.id)}
+                                className="px-2 py-0.5 text-[10px] font-bold rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 transition-colors cursor-pointer"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: COLLECTIONS & SEASONS */}
+          {taxonomyTab === 'collections' && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search collections..."
+                    value={colSearch}
+                    onChange={e => setColSearch(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 rounded-lg border border-stone-300 text-xs bg-stone-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 w-64"
+                  />
+                </div>
+                <span className="text-xs text-slate-500">Tier 4 seasonal drops and event archives (e.g. Summer Edition, Winter Maazi Drop)</span>
+              </div>
+
+              <div className="overflow-x-auto rounded-lg border border-stone-200">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-stone-50 text-stone-700 font-bold text-[11px] uppercase tracking-wider border-b border-stone-200">
+                    <tr>
+                      <th className="px-3 py-2.5">Code</th>
+                      <th className="px-3 py-2.5">Collection Name</th>
+                      <th className="px-3 py-2.5">Season</th>
+                      <th className="px-3 py-2.5">Year</th>
+                      <th className="px-3 py-2.5 text-center">Sort Order</th>
+                      <th className="px-3 py-2.5 text-center">Status</th>
+                      <th className="px-3 py-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {collections
+                      .filter(c => !colSearch || c.name.toLowerCase().includes(colSearch.toLowerCase()) || c.code.toLowerCase().includes(colSearch.toLowerCase()))
+                      .map(col => {
+                        const isColActive = col.is_active !== false && col.isActive !== false;
+                        return (
+                          <tr key={col.id} className="hover:bg-amber-50/40 transition-colors">
+                            <td className="px-3 py-2 font-mono font-bold text-amber-900">
+                              <span className="bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                                {col.code}
                               </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-slate-600 max-w-sm truncate">{cat.description || '—'}</td>
-                          <td className="px-3 py-2 text-center font-mono text-slate-600">{cat.sortOrder || 1}</td>
-                          <td className="px-3 py-2 text-center">
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                              isPosted ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-stone-100 text-stone-700 border border-stone-300'
-                            }`}>
-                              {isPosted ? 'ACTIVE' : 'DRAFT'}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 text-right space-x-1.5 whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={() => handleTogglePostCategory(cat)}
-                              className={`px-2 py-0.5 text-[10px] font-bold rounded border transition-colors cursor-pointer ${
-                                isPosted
-                                  ? 'bg-stone-100 hover:bg-stone-200 text-stone-700 border-stone-300'
-                                  : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border-emerald-300'
-                              }`}
-                              title={isPosted ? 'Set as Draft' : 'Post as Active'}
-                            >
-                              {isPosted ? 'Unpost' : 'Post'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditCategory(cat)}
-                              className="px-2 py-0.5 text-[10px] font-bold rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors cursor-pointer"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteCategory(cat.id)}
-                              className="px-2 py-0.5 text-[10px] font-bold rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 transition-colors cursor-pointer"
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                )}
-              </tbody>
-            </table>
-          </div>
+                            </td>
+                            <td className="px-3 py-2 font-bold text-slate-900">{col.name}</td>
+                            <td className="px-3 py-2">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                {col.season || 'All Season'}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 font-mono text-slate-700">{col.year || 2026}</td>
+                            <td className="px-3 py-2 text-center font-mono text-slate-600">{(col as any).display_order || (col as any).displayOrder || 1}</td>
+                            <td className="px-3 py-2 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                isColActive ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-stone-100 text-stone-700 border border-stone-300'
+                              }`}>
+                                {isColActive ? 'ACTIVE' : 'INACTIVE'}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-right space-x-1.5 whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleCollection(col)}
+                                className={`px-2 py-0.5 text-[10px] font-bold rounded border transition-colors cursor-pointer ${
+                                  isColActive
+                                    ? 'bg-stone-100 hover:bg-stone-200 text-stone-700 border-stone-300'
+                                    : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border-emerald-300'
+                                }`}
+                              >
+                                {isColActive ? 'Deactivate' : 'Activate'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditCollection(col)}
+                                className="px-2 py-0.5 text-[10px] font-bold rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors cursor-pointer"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCollection(col.id)}
+                                className="px-2 py-0.5 text-[10px] font-bold rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 transition-colors cursor-pointer"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -3677,158 +4348,95 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
           </div>
         </div>
       )}
-      {/* 11. CATEGORY MASTER ADD / EDIT MODAL */}
-      {showCategoryModal && (
+      {/* 11A. DEPARTMENT (TIER 1) ADD / EDIT MODAL */}
+      {showDeptModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl border-2 border-amber-200 max-w-md w-full shadow-2xl p-6 relative">
             <div className="flex items-center justify-between pb-3 mb-4 border-b border-amber-100">
               <div className="flex items-center gap-2">
                 <div className="p-2 bg-amber-100 text-amber-800 rounded-lg">
-                  <Layers className="w-5 h-5" />
+                  <FolderTree className="w-5 h-5" />
                 </div>
                 <div>
                   <h4 className="font-bold text-slate-900 text-sm">
-                    {editingCategory ? 'Edit Apparel Category' : 'Add New Apparel Category'}
+                    {editingDept ? 'Edit Department (Tier 1)' : 'Add New Department (Tier 1)'}
                   </h4>
-                  <p className="text-[11px] text-slate-500">Categorize sorted garments & configure barcode classification</p>
+                  <p className="text-[11px] text-slate-500">Root tier used to prefix SKUs & group apparel</p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setShowCategoryModal(false)}
+                onClick={() => setShowDeptModal(false)}
                 className="text-slate-400 hover:text-slate-700 font-bold p-1 rounded-lg"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSaveCategory} className="space-y-3.5 text-xs">
+            <form onSubmit={handleSaveDepartment} className="space-y-3.5 text-xs">
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-1">
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Code / ID *
+                    SKU Prefix *
                   </label>
                   <input
                     type="text"
-                    value={categoryForm.code}
-                    onChange={e => setCategoryForm({ ...categoryForm, code: e.target.value })}
-                    placeholder="CAT-001"
+                    value={deptForm.code}
+                    onChange={e => setDeptForm({ ...deptForm, code: e.target.value.toUpperCase().slice(0, 5) })}
+                    placeholder="e.g. MEN"
+                    maxLength={5}
                     required
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 uppercase"
                   />
                 </div>
                 <div className="col-span-2">
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Category Name *
+                    Department Name *
                   </label>
                   <input
                     type="text"
-                    value={categoryForm.name}
+                    value={deptForm.name}
                     onChange={e => {
                       const name = e.target.value;
                       const autoSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-                      setCategoryForm({
-                        ...categoryForm,
+                      const autoCode = name.slice(0, 3).toUpperCase();
+                      setDeptForm({
+                        ...deptForm,
                         name,
-                        slug: (!editingCategory || !categoryForm.slug) ? autoSlug : categoryForm.slug
+                        code: !deptForm.code || editingDept ? deptForm.code : autoCode,
+                        slug: !deptForm.slug || editingDept ? deptForm.slug : autoSlug
                       });
                     }}
-                    placeholder="e.g. Vintage Denim & Jeans"
+                    placeholder="e.g. Men, Ladies, Children"
                     required
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Parent Department
-                  </label>
-                  <select
-                    value={categoryForm.parentId || ''}
-                    onChange={e => setCategoryForm({ ...categoryForm, parentId: e.target.value || null })}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 bg-white focus:ring-2 focus:ring-amber-500"
-                  >
-                    <option value="">👑 Top-Level Department</option>
-                    {categories
-                      .filter(c => (c as any).level === 1 || !(c as any).parent_id)
-                      .map(p => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} ({(p as any).department_code || p.slug})
-                        </option>
-                      ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Dept Code (SKU Prefix)
-                  </label>
-                  <input
-                    type="text"
-                    value={categoryForm.departmentCode || ''}
-                    onChange={e => setCategoryForm({ ...categoryForm, departmentCode: e.target.value.toUpperCase().slice(0, 5) })}
-                    placeholder="e.g. MEN, LAD"
-                    maxLength={5}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold uppercase text-slate-900 focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-              </div>
-
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                  URL Slug (E-Commerce / Sorting Key) *
+                  URL Slug *
                 </label>
                 <input
                   type="text"
-                  value={categoryForm.slug}
-                  onChange={e => setCategoryForm({ ...categoryForm, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-_]+/g, '-') })}
-                  placeholder="e.g. vintage-denim-jeans"
+                  value={deptForm.slug}
+                  onChange={e => setDeptForm({ ...deptForm, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-_]+/g, '-') })}
+                  placeholder="e.g. men"
                   required
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-amber-900 bg-amber-50/40 focus:ring-2 focus:ring-amber-500"
-                />
-                <p className="text-[10px] text-slate-500 mt-1">Used for filtering products on the storefront and sorting terminals.</p>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                  Quality Grade / Classification Tier *
-                </label>
-                <select
-                  value={categoryForm.qualityTier}
-                  onChange={e => setCategoryForm({ ...categoryForm, qualityTier: e.target.value as any })}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 bg-white focus:ring-2 focus:ring-amber-500"
-                >
-                  <option value="CREAM">🌟 Super Cream / Luxury Mint (Highest Margin & Clean Labels)</option>
-                  <option value="NON_BRAND">🏷️ Grade A - Non-Brand / High Street Everyday Basics</option>
-                  <option value="GRADE_A">⭐ Grade A - Branded Vintage (Heritage Classics)</option>
-                  <option value="GRADE_B">⚠️ Grade B - Minor Flaws / Outlet Clearance</option>
-                  <option value="MIXED">📦 Mixed Assorted Thrift</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                  Description / Specification Notes
-                </label>
-                <textarea
-                  value={categoryForm.description}
-                  onChange={e => setCategoryForm({ ...categoryForm, description: e.target.value })}
-                  placeholder="Optional details or grading standards for this category..."
-                  rows={2}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs text-slate-900 focus:ring-2 focus:ring-amber-500"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3 items-center">
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Sort Display Priority
+                    Display Priority
                   </label>
                   <input
                     type="number"
-                    value={categoryForm.sortOrder}
-                    onChange={e => setCategoryForm({ ...categoryForm, sortOrder: parseInt(e.target.value) || 1 })}
+                    value={deptForm.sortOrder}
+                    onChange={e => setDeptForm({ ...deptForm, sortOrder: parseInt(e.target.value) || 1 })}
                     min={1}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
                   />
@@ -3837,12 +4445,12 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
-                      checked={categoryForm.isActive}
-                      onChange={e => setCategoryForm({ ...categoryForm, isActive: e.target.checked })}
+                      checked={deptForm.isActive}
+                      onChange={e => setDeptForm({ ...deptForm, isActive: e.target.checked })}
                       className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500"
                     />
                     <span className="text-xs font-bold text-slate-800">
-                      Active (Visible in Storefront & Terminal)
+                      Active
                     </span>
                   </label>
                 </div>
@@ -3851,7 +4459,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
                 <button
                   type="button"
-                  onClick={() => setShowCategoryModal(false)}
+                  onClick={() => setShowDeptModal(false)}
                   className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
                 >
                   Cancel
@@ -3861,7 +4469,411 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  <span>{editingCategory ? 'Update Category' : 'Create Category'}</span>
+                  <span>{editingDept ? 'Update Department' : 'Create Department'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 11B. MAIN CATEGORY (TIER 2) ADD / EDIT MODAL */}
+      {showMainCatModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border-2 border-amber-200 max-w-md w-full shadow-2xl p-6 relative">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-amber-100">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-amber-100 text-amber-800 rounded-lg">
+                  <Package className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900 text-sm">
+                    {editingMainCat ? 'Edit Main Category (Tier 2)' : 'Add New Main Category (Tier 2)'}
+                  </h4>
+                  <p className="text-[11px] text-slate-500">Tier 2 category nested under a parent department</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMainCatModal(false)}
+                className="text-slate-400 hover:text-slate-700 font-bold p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveMainCategory} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  Parent Department *
+                </label>
+                <select
+                  value={mainCatForm.parentId}
+                  onChange={e => setMainCatForm({ ...mainCatForm, parentId: e.target.value })}
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 bg-white focus:ring-2 focus:ring-amber-500"
+                >
+                  <option value="">Select Parent Department</option>
+                  {productCategories
+                    .filter(c => c.taxonomy_level === 'DEPARTMENT' || (!c.parent_id && Number(c.level) === 1))
+                    .map(d => (
+                      <option key={d.id} value={d.id}>📁 {d.name} ({(d as any).department_code || d.slug})</option>
+                    ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  Category Name *
+                </label>
+                <input
+                  type="text"
+                  value={mainCatForm.name}
+                  onChange={e => {
+                    const name = e.target.value;
+                    const autoSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+                    setMainCatForm({
+                      ...mainCatForm,
+                      name,
+                      slug: !mainCatForm.slug || editingMainCat ? mainCatForm.slug : autoSlug
+                    });
+                  }}
+                  placeholder="e.g. T-Shirts, Hoodies, Pants & Denim"
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  URL Slug *
+                </label>
+                <input
+                  type="text"
+                  value={mainCatForm.slug}
+                  onChange={e => setMainCatForm({ ...mainCatForm, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-_]+/g, '-') })}
+                  placeholder="e.g. men-t-shirts"
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-amber-900 bg-amber-50/40 focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 items-center">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Display Priority
+                  </label>
+                  <input
+                    type="number"
+                    value={mainCatForm.sortOrder}
+                    onChange={e => setMainCatForm({ ...mainCatForm, sortOrder: parseInt(e.target.value) || 1 })}
+                    min={1}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <div className="pt-4">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={mainCatForm.isActive}
+                      onChange={e => setMainCatForm({ ...mainCatForm, isActive: e.target.checked })}
+                      className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500"
+                    />
+                    <span className="text-xs font-bold text-slate-800">
+                      Active
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowMainCatModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{editingMainCat ? 'Update Category' : 'Create Category'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 11C. SUB-CATEGORY (TIER 3) ADD / EDIT MODAL */}
+      {showSubCatModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border-2 border-amber-200 max-w-md w-full shadow-2xl p-6 relative">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-amber-100">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-amber-100 text-amber-800 rounded-lg">
+                  <Tag className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900 text-sm">
+                    {editingSubCat ? 'Edit Sub-Category (Tier 3)' : 'Add New Sub-Category (Tier 3)'}
+                  </h4>
+                  <p className="text-[11px] text-slate-500">Tier 3 detailed cuts/styles linked to a main category</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSubCatModal(false)}
+                className="text-slate-400 hover:text-slate-700 font-bold p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSubCategory} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  Parent Main Category *
+                </label>
+                <select
+                  value={subCatForm.parentId}
+                  onChange={e => setSubCatForm({ ...subCatForm, parentId: e.target.value })}
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 bg-white focus:ring-2 focus:ring-amber-500"
+                >
+                  <option value="">Select Parent Main Category</option>
+                  {productCategories
+                    .filter(c => c.taxonomy_level === 'CATEGORY' || (c.parent_id && Number(c.level) === 2))
+                    .map(mc => (
+                      <option key={mc.id} value={mc.id}>📦 {mc.name}</option>
+                    ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  Sub-Category Name *
+                </label>
+                <input
+                  type="text"
+                  value={subCatForm.name}
+                  onChange={e => {
+                    const name = e.target.value;
+                    const autoSlug = `sub-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}`;
+                    setSubCatForm({
+                      ...subCatForm,
+                      name,
+                      slug: !subCatForm.slug || editingSubCat ? subCatForm.slug : autoSlug
+                    });
+                  }}
+                  placeholder="e.g. Graphic Tees, Band Tees, Denim Jeans"
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  URL Slug *
+                </label>
+                <input
+                  type="text"
+                  value={subCatForm.slug}
+                  onChange={e => setSubCatForm({ ...subCatForm, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-_]+/g, '-') })}
+                  placeholder="e.g. sub-graphic-tees"
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-amber-900 bg-amber-50/40 focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 items-center">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Display Priority
+                  </label>
+                  <input
+                    type="number"
+                    value={subCatForm.sortOrder}
+                    onChange={e => setSubCatForm({ ...subCatForm, sortOrder: parseInt(e.target.value) || 1 })}
+                    min={1}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <div className="pt-4">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={subCatForm.isActive}
+                      onChange={e => setSubCatForm({ ...subCatForm, isActive: e.target.checked })}
+                      className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500"
+                    />
+                    <span className="text-xs font-bold text-slate-800">
+                      Active
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowSubCatModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{editingSubCat ? 'Update Sub-Category' : 'Create Sub-Category'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 11D. COLLECTION & SEASON (TIER 4) ADD / EDIT MODAL */}
+      {showColModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border-2 border-amber-200 max-w-md w-full shadow-2xl p-6 relative">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-amber-100">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-amber-100 text-amber-800 rounded-lg">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900 text-sm">
+                    {editingCol ? 'Edit Collection & Season (Tier 4)' : 'Add New Collection & Season (Tier 4)'}
+                  </h4>
+                  <p className="text-[11px] text-slate-500">Tier 4 seasonal releases and event collections</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowColModal(false)}
+                className="text-slate-400 hover:text-slate-700 font-bold p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCollection} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  Collection Name *
+                </label>
+                <input
+                  type="text"
+                  value={colForm.name}
+                  onChange={e => {
+                    const name = e.target.value;
+                    const autoCode = name.toUpperCase().replace(/[^A-Z0-9]+/g, '-');
+                    setColForm({
+                      ...colForm,
+                      name,
+                      code: !colForm.code || editingCol ? colForm.code : autoCode
+                    });
+                  }}
+                  placeholder="e.g. Summer Edition 2026, Core Archive Vault"
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Collection Code *
+                  </label>
+                  <input
+                    type="text"
+                    value={colForm.code}
+                    onChange={e => setColForm({ ...colForm, code: e.target.value.toUpperCase() })}
+                    placeholder="e.g. SUMMER-26"
+                    required
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 uppercase focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Season *
+                  </label>
+                  <select
+                    value={colForm.season}
+                    onChange={e => setColForm({ ...colForm, season: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 bg-white focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="Summer">Summer</option>
+                    <option value="Winter">Winter</option>
+                    <option value="Autumn">Autumn</option>
+                    <option value="Spring">Spring</option>
+                    <option value="All Season">All Season</option>
+                    <option value="Special Event">Special Event</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 items-center">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Year
+                  </label>
+                  <input
+                    type="number"
+                    value={colForm.year}
+                    onChange={e => setColForm({ ...colForm, year: parseInt(e.target.value) || 2026 })}
+                    min={2020}
+                    max={2035}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Sort Priority
+                  </label>
+                  <input
+                    type="number"
+                    value={colForm.sortOrder}
+                    onChange={e => setColForm({ ...colForm, sortOrder: parseInt(e.target.value) || 1 })}
+                    min={1}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={colForm.isActive}
+                    onChange={e => setColForm({ ...colForm, isActive: e.target.checked })}
+                    className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500"
+                  />
+                  <span className="text-xs font-bold text-slate-800">
+                    Active (Selectable in Sorting Terminal & Storefront)
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowColModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{editingCol ? 'Update Collection' : 'Create Collection'}</span>
                 </button>
               </div>
             </form>

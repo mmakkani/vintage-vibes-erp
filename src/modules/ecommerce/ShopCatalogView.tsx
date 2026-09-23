@@ -60,10 +60,11 @@ const PRICE_PRESETS = [
 ];
 
 const SEGMENT_OPTIONS = [
-  { id: 'ALL', label: 'All Collections', icon: '🌐', desc: 'Full unfiltered vault catalog' },
-  { id: 'Antique', label: 'Antique Heritage', icon: '🏛️', desc: 'Pre-1970s rare archives' },
-  { id: 'Grails', label: 'Vintage Grails & Boutique', icon: '👑', desc: '90s single-stitch & luxury' },
-  { id: 'Regular Thrift', label: 'Everyday Thrift Basics', icon: '🛍️', desc: 'Streetwear & daily vintage' }
+  { id: 'ALL', label: 'All Segments', icon: '🌐', desc: 'Full unfiltered vault catalog' },
+  { id: 'Antique', label: 'Antique', icon: '🏛️', desc: 'Pre-1970s rare heritage archives' },
+  { id: 'Vintage', label: 'Vintage', icon: '🕰️', desc: 'Collector, retro & 90s classics' },
+  { id: 'Brand', label: 'Brand', icon: '⭐', desc: 'Designer & premium labels' },
+  { id: 'Non-Brand', label: 'Non-Brand', icon: '🏷️', desc: 'Everyday basics & streetwear' }
 ];
 
 const SORT_OPTIONS = [
@@ -95,7 +96,40 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
   const [customMinPrice, setCustomMinPrice] = useState<string>('');
   const [customMaxPrice, setCustomMaxPrice] = useState<string>('');
   const [selectedSegment, setSelectedSegment] = useState<string>(initialSegment);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string>('ALL');
+  const [collectionsList, setCollectionsList] = useState<{ id: string; name: string; code?: string; season?: string; year?: number }[]>([]);
   const [sortBy, setSortBy] = useState<string>('newest');
+
+  // Fetch seasonal collections on mount
+  useEffect(() => {
+    fetch('/api/ecommerce/collections')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setCollectionsList(data);
+        } else {
+          supabase
+            .from('collections')
+            .select('*')
+            .eq('is_active', true)
+            .order('created_at', { ascending: true })
+            .then(({ data: supaCols }) => {
+              if (supaCols && supaCols.length > 0) setCollectionsList(supaCols);
+            });
+        }
+      })
+      .catch(() => {
+        supabase
+          .from('collections')
+          .select('*')
+          .eq('is_active', true)
+          .order('created_at', { ascending: true })
+          .then(({ data: supaCols }) => {
+            if (supaCols && supaCols.length > 0) setCollectionsList(supaCols);
+          })
+          .catch(() => {});
+      });
+  }, []);
 
   // Pagination States
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -168,6 +202,9 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
       if (selectedSegment && selectedSegment !== 'ALL') {
         params.set('segment', selectedSegment);
       }
+      if (selectedCollectionId && selectedCollectionId !== 'ALL') {
+        params.set('collectionId', selectedCollectionId);
+      }
 
       const res = await fetch(`/api/ecommerce/products?${params.toString()}`);
       if (res.ok) {
@@ -199,6 +236,15 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
         .neq('status', 'WIP_LAUNDRY')
         .or('ready_for_ecommerce.is.null,ready_for_ecommerce.eq.true');
 
+      if (selectedCollectionId && selectedCollectionId !== 'ALL') {
+        supaQuery = supaQuery.eq('collection_id', selectedCollectionId);
+      }
+      if (selectedSegment && selectedSegment !== 'ALL') {
+        if (selectedSegment === 'Antique') supaQuery = supaQuery.eq('market_segment', 'Antique');
+        else if (selectedSegment === 'Vintage') supaQuery = supaQuery.or('market_segment.eq.Vintage,market_segment.eq.Grails,market_segment.eq.Boutique');
+        else if (selectedSegment === 'Brand') supaQuery = supaQuery.eq('market_segment', 'Brand');
+        else if (selectedSegment === 'Non-Brand') supaQuery = supaQuery.or('market_segment.eq.Non-Brand,market_segment.eq.Regular Thrift,market_segment.is.null');
+      }
       if (selectedSize && selectedSize !== 'ALL') {
         supaQuery = supaQuery.eq('size_scanned', selectedSize);
       }
@@ -214,21 +260,19 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
       const { data: supaData, count: supaCount } = await supaQuery;
 
       if (Array.isArray(supaData)) {
-        const mapped = supaData.map((r: any) => ({
+        const mapped = supaData.map(r => ({
+          ...r,
           id: r.id || r.barcode,
           barcode: r.barcode,
           sku: r.sku || r.barcode,
-          itemId: r.item_id || 'ITM-01',
           itemName: r.item_name || 'Vintage Garment',
           parentCategoryName: r.parent_category_name || null,
-          brandId: r.brand_id,
           brandName: r.brand_name || 'Vintage Archive',
           sizeScanned: r.size_scanned || 'L',
           countryOfOrigin: r.country_of_origin || 'USA',
-          style: r.style || 'Single-Stitch Vintage',
+          style: r.style || 'Original Vintage Wash',
           ecommerceDescription: r.ecommerce_description || r.style || '',
           seoTags: Array.isArray(r.seo_tags) ? r.seo_tags : [],
-          readyForEcommerce: r.ready_for_ecommerce !== false,
           frontImageUrl: r.front_image_url || r.tag_image_url || '/studio_left_rack.png',
           backImageUrl: r.back_image_url || r.front_image_url || '/studio_backdrop_noboy.png',
           tagImageUrl: r.tag_image_url || '/studio_left_rack.png',
@@ -242,7 +286,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
           retailPriceAed: Number(r.retail_price_aed || r.estimated_price || 295),
           isSold: Boolean(r.is_sold),
           status: r.status || 'IN_STOCK',
-          marketSegment: r.market_segment || 'Regular Thrift',
+          marketSegment: r.market_segment || 'Vintage',
           isGrail: Boolean(r.is_grail),
           globalInsights: r.global_insights || null,
           aiSuggestedPrice: r.ai_suggested_price !== undefined ? Number(r.ai_suggested_price) : null,
@@ -282,6 +326,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
     customMinPrice,
     customMaxPrice,
     selectedSegment,
+    selectedCollectionId,
     sortBy
   ]);
 
@@ -302,6 +347,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
     setCustomMinPrice('');
     setCustomMaxPrice('');
     setSelectedSegment('ALL');
+    setSelectedCollectionId('ALL');
     setSortBy('newest');
     setCurrentPage(1);
   };
@@ -314,9 +360,10 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
       selectedSize !== 'ALL' ||
       selectedPricePreset !== 'ALL' ||
       selectedSegment !== 'ALL' ||
+      selectedCollectionId !== 'ALL' ||
       sortBy !== 'newest'
     );
-  }, [searchQuery, selectedCategory, selectedSize, selectedPricePreset, selectedSegment, sortBy]);
+  }, [searchQuery, selectedCategory, selectedSize, selectedPricePreset, selectedSegment, selectedCollectionId, sortBy]);
 
   // Handle page change with smooth scroll to catalog top
   const handlePageChange = (newPage: number) => {
@@ -475,7 +522,49 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
             </div>
           </div>
 
-          {/* B. MARKET SEGMENT / ERA */}
+          {/* B. COLLECTIONS & SEASONS */}
+          {collectionsList.length > 0 && (
+            <div className="space-y-2.5 pt-3 border-t border-amber-200">
+              <label className="text-[11px] font-mono font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                <span>Collections & Drops</span>
+              </label>
+              <div className="space-y-1 max-h-48 overflow-y-auto pr-1 no-scrollbar">
+                <button
+                  type="button"
+                  onClick={() => handleFilterChange(() => setSelectedCollectionId('ALL'))}
+                  className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                    selectedCollectionId === 'ALL'
+                      ? 'bg-amber-400 text-slate-950 font-black shadow-xs'
+                      : 'text-slate-700 hover:bg-amber-100/70'
+                  }`}
+                >
+                  <span>All Drops & Seasons</span>
+                  {selectedCollectionId === 'ALL' && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                </button>
+                {collectionsList.map(col => {
+                  const isSelected = selectedCollectionId === col.id;
+                  return (
+                    <button
+                      key={col.id}
+                      type="button"
+                      onClick={() => handleFilterChange(() => setSelectedCollectionId(col.id))}
+                      className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                        isSelected
+                          ? 'bg-amber-400 text-slate-950 font-black shadow-xs'
+                          : 'text-slate-700 hover:bg-amber-100/70'
+                      }`}
+                    >
+                      <span className="truncate">{col.name}</span>
+                      {isSelected && <Check className="w-3.5 h-3.5 stroke-[3] shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* C. MARKET SEGMENT / ERA */}
           <div className="space-y-2.5 pt-3 border-t border-amber-200">
             <label className="text-[11px] font-mono font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
               <Layers className="w-3.5 h-3.5 text-amber-700" />
@@ -681,6 +770,19 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                 </span>
               )}
 
+              {selectedCollectionId !== 'ALL' && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-200 text-amber-950 border border-amber-400 shadow-2xs">
+                  <span>Collection: {collectionsList.find(c => c.id === selectedCollectionId)?.name || selectedCollectionId}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleFilterChange(() => setSelectedCollectionId('ALL'))}
+                    className="hover:text-rose-700 cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+
               {selectedSize !== 'ALL' && (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-200 text-amber-950 border border-amber-400 shadow-2xs">
                   <span>Size: {selectedSize}</span>
@@ -852,6 +954,38 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                   ))}
                 </div>
               </div>
+
+              {/* Collections & Drops (Mobile) */}
+              {collectionsList.length > 0 && (
+                <div className="space-y-2 pt-3 border-t border-slate-200">
+                  <label className="text-[11px] font-mono font-black uppercase text-slate-700">Collections & Drops</label>
+                  <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+                    <button
+                      type="button"
+                      onClick={() => handleFilterChange(() => setSelectedCollectionId('ALL'))}
+                      className={`w-full text-left px-3 py-1.5 rounded-xl text-xs font-bold flex justify-between ${
+                        selectedCollectionId === 'ALL' ? 'bg-amber-400 text-slate-950' : 'text-slate-700'
+                      }`}
+                    >
+                      <span>All Drops & Seasons</span>
+                      {selectedCollectionId === 'ALL' && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                    </button>
+                    {collectionsList.map(col => (
+                      <button
+                        key={col.id}
+                        type="button"
+                        onClick={() => handleFilterChange(() => setSelectedCollectionId(col.id))}
+                        className={`w-full text-left px-3 py-1.5 rounded-xl text-xs font-bold flex justify-between ${
+                          selectedCollectionId === col.id ? 'bg-amber-400 text-slate-950' : 'text-slate-700'
+                        }`}
+                      >
+                        <span className="truncate">{col.name}</span>
+                        {selectedCollectionId === col.id && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Segment */}
               <div className="space-y-2 pt-3 border-t border-slate-200">

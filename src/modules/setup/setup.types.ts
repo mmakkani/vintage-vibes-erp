@@ -203,12 +203,16 @@ export interface CategoryMaster {
   created_at?: string;
 }
 
+export type TaxonomyLevel = 'DEPARTMENT' | 'CATEGORY' | 'SUBCATEGORY';
+
 export interface ProductCategory {
   id: string;
   name: string;
   slug: string;
   is_active: boolean;
   isActive?: boolean;
+  taxonomy_level?: TaxonomyLevel;
+  taxonomyLevel?: TaxonomyLevel;
   parent_id?: string | null;
   parentId?: string | null;
   parent_name?: string | null;
@@ -216,6 +220,20 @@ export interface ProductCategory {
   department_code?: string | null;
   departmentCode?: string | null;
   level?: number;
+  display_order?: number;
+  displayOrder?: number;
+  created_at?: string;
+  createdAt?: string;
+}
+
+export interface CollectionMaster {
+  id: string;
+  name: string;
+  code: string;
+  season?: string;
+  year?: number;
+  is_active?: boolean;
+  isActive?: boolean;
   display_order?: number;
   displayOrder?: number;
   created_at?: string;

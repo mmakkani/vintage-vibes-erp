@@ -10,7 +10,8 @@ import {
   ShopMaster,
   ItemMaster,
   LiveStreamMulticastConfig,
-  LiveBoothStreamConfig
+  LiveBoothStreamConfig,
+  CollectionMaster
 } from '../modules/setup/setup.types.ts';
 
 export class SetupService {
@@ -99,7 +100,6 @@ export class SetupService {
   }
 
   // --- Product Categories (public.product_categories) ---
-  // --- Product Categories (public.product_categories) ---
   public static async getProductCategories(): Promise<ProductCategory[]> {
     try {
       const res = await safeFetchJson<any>('/api/setup/product-categories');
@@ -110,6 +110,8 @@ export class SetupService {
           slug: r.slug,
           is_active: r.is_active !== false,
           isActive: r.is_active !== false,
+          taxonomy_level: r.taxonomy_level || (Number(r.level) === 1 ? 'DEPARTMENT' : Number(r.level) === 2 ? 'CATEGORY' : 'SUBCATEGORY'),
+          taxonomyLevel: r.taxonomy_level || (Number(r.level) === 1 ? 'DEPARTMENT' : Number(r.level) === 2 ? 'CATEGORY' : 'SUBCATEGORY'),
           parent_id: r.parent_id || null,
           parentId: r.parent_id || null,
           parent_name: r.parent_name || null,
@@ -139,6 +141,8 @@ export class SetupService {
           slug: r.slug,
           is_active: r.is_active !== false,
           isActive: r.is_active !== false,
+          taxonomy_level: r.taxonomy_level || (Number(r.level) === 1 ? 'DEPARTMENT' : Number(r.level) === 2 ? 'CATEGORY' : 'SUBCATEGORY'),
+          taxonomyLevel: r.taxonomy_level || (Number(r.level) === 1 ? 'DEPARTMENT' : Number(r.level) === 2 ? 'CATEGORY' : 'SUBCATEGORY'),
           parent_id: r.parent_id || null,
           parentId: r.parent_id || null,
           department_code: r.department_code || null,
@@ -165,16 +169,20 @@ export class SetupService {
     department_code?: string | null;
     level?: number;
     display_order?: number;
+    taxonomy_level?: 'DEPARTMENT' | 'CATEGORY' | 'SUBCATEGORY';
   }): Promise<ProductCategory> {
     const slug = (item.slug || item.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `cat-${Date.now()}`;
+    const lvl = item.level || (item.parent_id ? 2 : 1);
+    const taxLevel = item.taxonomy_level || (lvl === 1 ? 'DEPARTMENT' : lvl === 2 ? 'CATEGORY' : 'SUBCATEGORY');
     const payload = {
       name: item.name.trim(),
       slug,
       is_active: item.is_active !== false,
       parent_id: item.parent_id || null,
       department_code: item.department_code ? item.department_code.trim().toUpperCase() : null,
-      level: item.level || (item.parent_id ? 2 : 1),
-      display_order: item.display_order || 0
+      level: lvl,
+      display_order: item.display_order || 0,
+      taxonomy_level: taxLevel
     };
 
     try {
@@ -190,11 +198,13 @@ export class SetupService {
           slug: res.slug,
           is_active: res.is_active !== false,
           isActive: res.is_active !== false,
+          taxonomy_level: res.taxonomy_level || taxLevel,
+          taxonomyLevel: res.taxonomy_level || taxLevel,
           parent_id: res.parent_id || null,
           parentId: res.parent_id || null,
           department_code: res.department_code || null,
           departmentCode: res.department_code || null,
-          level: Number(res.level) || 1,
+          level: Number(res.level) || lvl,
           display_order: Number(res.display_order) || 0,
           displayOrder: Number(res.display_order) || 0,
           created_at: res.created_at,
@@ -219,11 +229,13 @@ export class SetupService {
       slug: data.slug,
       is_active: data.is_active !== false,
       isActive: data.is_active !== false,
+      taxonomy_level: data.taxonomy_level || taxLevel,
+      taxonomyLevel: data.taxonomy_level || taxLevel,
       parent_id: data.parent_id || null,
       parentId: data.parent_id || null,
       department_code: data.department_code || null,
       departmentCode: data.department_code || null,
-      level: Number(data.level) || 1,
+      level: Number(data.level) || lvl,
       display_order: Number(data.display_order) || 0,
       displayOrder: Number(data.display_order) || 0,
       created_at: data.created_at,
@@ -244,6 +256,8 @@ export class SetupService {
     if (updates.level !== undefined) payload.level = updates.level;
     if (updates.display_order !== undefined) payload.display_order = updates.display_order;
     if (updates.displayOrder !== undefined) payload.display_order = updates.displayOrder;
+    if (updates.taxonomy_level !== undefined) payload.taxonomy_level = updates.taxonomy_level;
+    if (updates.taxonomyLevel !== undefined) payload.taxonomy_level = updates.taxonomyLevel;
 
     try {
       await safeFetchJson<any>(`/api/setup/product-categories/${id}`, {
@@ -272,6 +286,147 @@ export class SetupService {
     if (error) {
       throw new Error(error.message || 'Failed to delete product category');
     }
+  }
+
+  // --- Collections & Seasons (public.collections) ---
+  public static async getCollections(): Promise<CollectionMaster[]> {
+    try {
+      const res = await safeFetchJson<any>('/api/setup/collections');
+      if (Array.isArray(res) && res.length > 0) {
+        return res.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          code: r.code,
+          season: r.season || 'All Season',
+          year: Number(r.year) || 2026,
+          is_active: r.is_active !== false,
+          isActive: r.is_active !== false,
+          display_order: Number(r.display_order) || 0,
+          displayOrder: Number(r.display_order) || 0,
+          created_at: r.created_at,
+          createdAt: r.created_at
+        }));
+      }
+    } catch (_) {}
+
+    try {
+      const { data, error } = await supabase
+        .from('collections')
+        .select('*')
+        .order('display_order', { ascending: true });
+
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return data.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          code: r.code,
+          season: r.season || 'All Season',
+          year: Number(r.year) || 2026,
+          is_active: r.is_active !== false,
+          isActive: r.is_active !== false,
+          display_order: Number(r.display_order) || 0,
+          displayOrder: Number(r.display_order) || 0,
+          created_at: r.created_at,
+          createdAt: r.created_at
+        }));
+      }
+    } catch (e) {
+      console.warn('Supabase collections query notice:', e);
+    }
+
+    return [];
+  }
+
+  public static async addCollection(item: {
+    name: string;
+    code?: string;
+    season?: string;
+    year?: number;
+    is_active?: boolean;
+    display_order?: number;
+  }): Promise<CollectionMaster> {
+    const payload = {
+      name: item.name.trim(),
+      code: item.code ? item.code.trim().toUpperCase() : item.name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-'),
+      season: item.season || 'All Season',
+      year: item.year || 2026,
+      is_active: item.is_active !== false,
+      display_order: item.display_order || 0
+    };
+
+    try {
+      const res = await safeFetchJson<any>('/api/setup/collections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res && res.id) {
+        return {
+          id: res.id,
+          name: res.name,
+          code: res.code,
+          season: res.season,
+          year: Number(res.year),
+          is_active: res.is_active !== false,
+          isActive: res.is_active !== false,
+          display_order: Number(res.display_order) || 0,
+          displayOrder: Number(res.display_order) || 0,
+          created_at: res.created_at,
+          createdAt: res.created_at
+        };
+      }
+    } catch (_) {}
+
+    const { data, error } = await supabase.from('collections').insert(payload).select().single();
+    if (error) throw new Error(error.message || 'Failed to add collection');
+
+    return {
+      id: data.id,
+      name: data.name,
+      code: data.code,
+      season: data.season,
+      year: Number(data.year),
+      is_active: data.is_active !== false,
+      isActive: data.is_active !== false,
+      display_order: Number(data.display_order) || 0,
+      displayOrder: Number(data.display_order) || 0,
+      created_at: data.created_at,
+      createdAt: data.created_at
+    };
+  }
+
+  public static async updateCollection(id: string, updates: Partial<CollectionMaster>): Promise<void> {
+    const payload: any = {};
+    if (updates.name !== undefined) payload.name = updates.name.trim();
+    if (updates.code !== undefined) payload.code = updates.code.trim().toUpperCase();
+    if (updates.season !== undefined) payload.season = updates.season;
+    if (updates.year !== undefined) payload.year = Number(updates.year);
+    if (updates.is_active !== undefined) payload.is_active = updates.is_active;
+    if (updates.isActive !== undefined) payload.is_active = updates.isActive;
+    if (updates.display_order !== undefined) payload.display_order = updates.display_order;
+    if (updates.displayOrder !== undefined) payload.display_order = updates.displayOrder;
+
+    try {
+      await safeFetchJson<any>(`/api/setup/collections/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      return;
+    } catch (_) {}
+
+    const { error } = await supabase.from('collections').update(payload).eq('id', id);
+    if (error) throw new Error(error.message || 'Failed to update collection');
+  }
+
+  public static async deleteCollection(id: string): Promise<void> {
+    try {
+      await safeFetchJson<any>(`/api/setup/collections/${id}`, { method: 'DELETE' });
+      return;
+    } catch (_) {}
+
+    const { error } = await supabase.from('collections').delete().eq('id', id);
+    if (error) throw new Error(error.message || 'Failed to delete collection');
   }
 
   public static async generateSku(departmentCode: string = 'GEN'): Promise<string> {

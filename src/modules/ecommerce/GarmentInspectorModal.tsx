@@ -290,6 +290,55 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
                 </span>
               </div>
 
+              {/* 4-Tier Cascading Taxonomy Path & Collection / Segment Badges */}
+              <div className="space-y-1.5">
+                {/* 4-Tier Cascading Breadcrumb */}
+                <div className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-amber-900 bg-amber-100/80 px-2.5 py-1.5 rounded-lg border border-amber-300/80 flex-wrap">
+                  <span className="text-slate-500 uppercase text-[9px] font-black tracking-wider">Hierarchy:</span>
+                  <span>{(piece as any).parentCategoryName || (piece as any).parent_category_name || 'Department'}</span>
+                  <span className="text-amber-500">➔</span>
+                  <span className="text-slate-900 font-extrabold">{piece.itemName}</span>
+                  {((piece as any).subCategory || (piece as any).sub_category) && (
+                    <>
+                      <span className="text-amber-500">➔</span>
+                      <span className="text-indigo-800 font-extrabold">{((piece as any).subCategory || (piece as any).sub_category)}</span>
+                    </>
+                  )}
+                </div>
+
+                {/* Collection & Segment Badges */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Collection Badge */}
+                  {((piece as any).collectionName || (piece as any).collection_name) && (
+                    <span className="px-2.5 py-1 rounded-md bg-amber-200/90 border border-amber-400 text-amber-950 font-black text-[10px] uppercase tracking-wider flex items-center gap-1 shadow-2xs">
+                      <Sparkles className="w-3 h-3 text-amber-800" />
+                      <span>{((piece as any).collectionName || (piece as any).collection_name)}</span>
+                    </span>
+                  )}
+
+                  {/* Market Segment Badge */}
+                  <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider flex items-center gap-1 border shadow-2xs ${
+                    (piece.marketSegment || (piece as any).market_segment) === 'Antique'
+                      ? 'bg-amber-900 text-amber-100 border-amber-700'
+                      : (piece.marketSegment || (piece as any).market_segment) === 'Brand'
+                      ? 'bg-purple-900 text-purple-100 border-purple-700'
+                      : (piece.marketSegment || (piece as any).market_segment) === 'Non-Brand'
+                      ? 'bg-slate-800 text-slate-100 border-slate-600'
+                      : 'bg-emerald-900 text-emerald-100 border-emerald-700'
+                  }`}>
+                    <span>
+                      {(piece.marketSegment || (piece as any).market_segment) === 'Antique'
+                        ? '🏛️ Antique'
+                        : (piece.marketSegment || (piece as any).market_segment) === 'Brand'
+                        ? '⭐ Brand'
+                        : (piece.marketSegment || (piece as any).market_segment) === 'Non-Brand'
+                        ? '🏷️ Non-Brand'
+                        : '🕰️ Vintage'}
+                    </span>
+                  </span>
+                </div>
+              </div>
+
               {/* Garment Title & Price */}
               <div>
                 <h3 className="text-xl sm:text-2xl font-black text-slate-950 font-serif leading-tight">

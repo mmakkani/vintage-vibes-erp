@@ -746,10 +746,11 @@ setupRouter.post(['/shops/:id/unpost', '/shop-master/:id/unpost'], (req, res) =>
 });
 
 // Dynamic Product Categories (public.product_categories)
-setupRouter.get('/product-categories', async (_req, res) => {
+setupRouter.get('/product-categories', async (req, res) => {
   try {
+    const { taxonomy_level, parent_id } = req.query;
     const list = await withDb(async (client) => {
-      const { rows } = await client.query(`
+      let query = `
         SELECT 
           c.*, 
           p.name AS parent_name, 
@@ -757,8 +758,19 @@ setupRouter.get('/product-categories', async (_req, res) => {
           p.department_code AS parent_department_code
         FROM public.product_categories c
         LEFT JOIN public.product_categories p ON c.parent_id = p.id
-        ORDER BY c.level ASC, c.display_order ASC, c.created_at ASC
-      `);
+        WHERE 1=1
+      `;
+      const params: any[] = [];
+      if (taxonomy_level) {
+        params.push(String(taxonomy_level).toUpperCase());
+        query += ` AND c.taxonomy_level = $${params.length}`;
+      }
+      if (parent_id) {
+        params.push(parent_id);
+        query += ` AND c.parent_id = $${params.length}`;
+      }
+      query += ` ORDER BY c.level ASC, c.display_order ASC, c.created_at ASC`;
+      const { rows } = await client.query(query, params);
       return rows;
     });
     return res.json(list);
@@ -774,7 +786,7 @@ setupRouter.get('/product-categories', async (_req, res) => {
 
 setupRouter.post('/product-categories', async (req, res) => {
   try {
-    const { name, slug, is_active, parent_id, department_code, level, display_order } = req.body;
+    const { name, slug, is_active, parent_id, department_code, level, display_order, taxonomy_level } = req.body;
     if (!name || typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'Category name is required' });
     }
@@ -785,14 +797,15 @@ setupRouter.post('/product-categories', async (req, res) => {
     const deptCode = department_code ? department_code.trim().toUpperCase() : null;
     const lvl = Number(level) || (parentId ? 2 : 1);
     const dispOrder = Number(display_order) || 0;
+    const taxLevel = taxonomy_level ? String(taxonomy_level).toUpperCase() : (lvl === 1 ? 'DEPARTMENT' : lvl === 2 ? 'CATEGORY' : 'SUBCATEGORY');
 
     const row = await withDb(async (client) => {
       const { rows } = await client.query(
         `INSERT INTO public.product_categories 
-         (name, slug, is_active, parent_id, department_code, level, display_order, created_at) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) 
+         (name, slug, is_active, parent_id, department_code, level, display_order, taxonomy_level, created_at) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW()) 
          RETURNING *`,
-        [cleanName, cleanSlug, active, parentId, deptCode, lvl, dispOrder]
+        [cleanName, cleanSlug, active, parentId, deptCode, lvl, dispOrder, taxLevel]
       );
       return rows[0];
     });
@@ -805,7 +818,7 @@ setupRouter.post('/product-categories', async (req, res) => {
 setupRouter.put('/product-categories/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, slug, is_active, parent_id, department_code, level, display_order } = req.body;
+    const { name, slug, is_active, parent_id, department_code, level, display_order, taxonomy_level } = req.body;
     const cleanName = name ? name.trim() : null;
     const cleanSlug = slug ? slug.trim() : null;
     const active = is_active !== undefined ? is_active : null;
@@ -813,6 +826,7 @@ setupRouter.put('/product-categories/:id', async (req, res) => {
     const deptCode = department_code !== undefined ? (department_code ? department_code.trim().toUpperCase() : null) : undefined;
     const lvl = level !== undefined ? Number(level) : undefined;
     const dispOrder = display_order !== undefined ? Number(display_order) : undefined;
+    const taxLevel = taxonomy_level ? String(taxonomy_level).toUpperCase() : undefined;
 
     const row = await withDb(async (client) => {
       const { rows } = await client.query(
@@ -823,10 +837,11 @@ setupRouter.put('/product-categories/:id', async (req, res) => {
              parent_id = CASE WHEN $4::text IS NOT NULL THEN $4::uuid ELSE parent_id END,
              department_code = CASE WHEN $5::text IS NOT NULL THEN $5::varchar ELSE department_code END,
              level = COALESCE($6, level),
-             display_order = COALESCE($7, display_order)
-         WHERE id = $8 
+             display_order = COALESCE($7, display_order),
+             taxonomy_level = COALESCE($8, taxonomy_level)
+         WHERE id = $9 
          RETURNING *`,
-        [cleanName, cleanSlug, active, parentId, deptCode, lvl, dispOrder, id]
+        [cleanName, cleanSlug, active, parentId, deptCode, lvl, dispOrder, taxLevel, id]
       );
       return rows[0];
     });
@@ -845,6 +860,82 @@ setupRouter.delete('/product-categories/:id', async (req, res) => {
     return res.json({ success: true, id });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Failed to delete product category' });
+  }
+});
+
+// Collections & Seasons (public.collections)
+setupRouter.get('/collections', async (_req, res) => {
+  try {
+    const list = await withDb(async (client) => {
+      const { rows } = await client.query('SELECT * FROM public.collections ORDER BY display_order ASC, name ASC');
+      return rows;
+    });
+    return res.json(list);
+  } catch (err: any) {
+    try {
+      const { data } = await supabase.from('collections').select('*').order('display_order', { ascending: true });
+      return res.json(data || []);
+    } catch (_) {
+      return res.json([]);
+    }
+  }
+});
+
+setupRouter.post('/collections', async (req, res) => {
+  try {
+    const { name, code, season, year, is_active, display_order } = req.body;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Collection name is required' });
+    }
+    const cleanName = name.trim();
+    const cleanCode = code ? code.trim().toUpperCase() : cleanName.toUpperCase().replace(/[^A-Z0-9]+/g, '-');
+    const row = await withDb(async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO public.collections (name, code, season, year, is_active, display_order, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
+        [cleanName, cleanCode, season || 'All Season', Number(year) || 2026, is_active !== false, Number(display_order) || 0]
+      );
+      return rows[0];
+    });
+    return res.json(row);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to create collection' });
+  }
+});
+
+setupRouter.put('/collections/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, code, season, year, is_active, display_order } = req.body;
+    const row = await withDb(async (client) => {
+      const { rows } = await client.query(
+        `UPDATE public.collections
+         SET name = COALESCE($1, name),
+             code = COALESCE($2, code),
+             season = COALESCE($3, season),
+             year = COALESCE($4, year),
+             is_active = COALESCE($5, is_active),
+             display_order = COALESCE($6, display_order)
+         WHERE id = $7 RETURNING *`,
+        [name ? name.trim() : null, code ? code.trim() : null, season, year !== undefined ? Number(year) : null, is_active, display_order !== undefined ? Number(display_order) : null, id]
+      );
+      return rows[0];
+    });
+    return res.json(row || { success: true, id });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to update collection' });
+  }
+});
+
+setupRouter.delete('/collections/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await withDb(async (client) => {
+      await client.query('DELETE FROM public.collections WHERE id = $1', [id]);
+    });
+    return res.json({ success: true, id });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to delete collection' });
   }
 });
 
