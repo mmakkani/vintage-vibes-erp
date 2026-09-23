@@ -69,6 +69,25 @@ Do not leave uncommitted changes without asking.
     - `public.pos_sales`
 - Reject any request to modify, add, or refactor logic, UI, or database schemas in this module unless the user explicitly provides the exact authorization override phrase: `"AUTHORIZE UNLOCK SALES"`.
 
+## Strict Code & Schema Freeze on Global Setup Module 🔒
+- Effective immediately, a strict **CODE & DATABASE SCHEMA FREEZE** is in effect for all files and tables related to Global Setup:
+  - **Code Freeze**: Treat all Global Setup files as **STRICTLY READ-ONLY** (e.g., `src/modules/setup/*`, `src/services/setupService.ts`, `api/setup/*`, and related routes/controllers).
+  - **Database Schema Freeze**: Absolutely **NO structural changes (DDL operations like ALTER TABLE, DROP TABLE, CREATE TABLE, or constraint alterations)** are allowed on:
+    - `public.product_categories`
+    - `public.company_profiles`
+    - `public.system_settings`
+- Reject any request to modify, add, or refactor logic, UI, or database schemas in this module unless the user explicitly provides the exact authorization override phrase: `"AUTHORIZE UNLOCK GLOBAL SETUP"`.
+
+## Strict Code & Schema Freeze on E-Commerce Module 🔒
+- Effective immediately, a strict **CODE & DATABASE SCHEMA FREEZE** is in effect for all files and tables related to the E-Commerce Storefront:
+  - **Code Freeze**: Treat all E-Commerce files as **STRICTLY READ-ONLY** (e.g., `src/modules/ecommerce/*`, `api/ecommerce/*`, `src/modules/ecommerce/ShopCatalogView.tsx`, `src/modules/ecommerce/StorefrontView.tsx`, and related routes/controllers).
+  - **Database Schema Freeze**: Absolutely **NO structural changes (DDL operations like ALTER TABLE, DROP TABLE, CREATE TABLE, or constraint alterations)** are allowed on:
+    - `public.cart_reservations`
+    - `public.ecommerce_orders`
+    - `public.ecommerce_order_items`
+    - `public.grail_bounties`
+- Reject any request to modify, add, or refactor logic, UI, or database schemas in this module unless the user explicitly provides the exact authorization override phrase: `"AUTHORIZE UNLOCK ECOMMERCE"`.
+
 ## DML vs DDL Operational Clarification ℹ️
 - **DML Operations**: Normal application runtime data flow (such as `SELECT`, `INSERT`, `UPDATE`, and soft/hard deletes initiated via the application UI and normal user operations) remains **fully operational**.
 - **DDL Operations**: Only the structural database schema definitions (`ALTER TABLE`, `DROP TABLE`, `CREATE TABLE`, schema migrations, constraint changes, or RPC structure replacements) are frozen under the schema freeze directives.

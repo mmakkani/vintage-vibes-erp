@@ -18,16 +18,24 @@ export const clearProductsCache = () => {
 };
 
 // -------------------------------------------------------------
-// 1. GET /api/ecommerce/products - Available In-Stock Pieces Array []
+// 1. GET /api/ecommerce/products - Available In-Stock Pieces (with Pagination Support)
 // -------------------------------------------------------------
 ecommerceRouter.get('/products', async (req: Request, res: Response) => {
   try {
     const category = (req.query.category as string) || '';
     const search = (req.query.search as string) || '';
     const segment = (req.query.segment as string) || '';
+    const size = (req.query.size as string) || '';
+    const minPrice = req.query.minPrice ? Number(req.query.minPrice) : null;
+    const maxPrice = req.query.maxPrice ? Number(req.query.maxPrice) : null;
+    const era = (req.query.era as string) || '';
+    const sort = (req.query.sort as string) || 'newest';
+    const page = req.query.page ? Math.max(1, parseInt(req.query.page as string, 10) || 1) : null;
+    const pageSize = req.query.pageSize ? Math.max(1, Math.min(100, parseInt(req.query.pageSize as string, 10) || 24)) : 24;
+    const isPaginated = page !== null || req.query.paginated === 'true';
 
     // Check fast in-memory cache (<0.2ms response time)
-    const cacheKey = `${category || 'ALL'}|${search || ''}|${segment || 'ALL'}`;
+    const cacheKey = `${category || 'ALL'}|${search || ''}|${segment || 'ALL'}|${size || ''}|${minPrice || ''}|${maxPrice || ''}|${era || ''}|${sort || ''}|${page || ''}|${pageSize || ''}`;
     const cached = productsCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < PRODUCTS_CACHE_TTL_MS) {
       res.setHeader('X-Cache', 'HIT');
@@ -46,6 +54,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
       let query = `
         SELECT 
           p.*,
+          COUNT(*) OVER() AS total_count,
           COALESCE(r.is_active AND r.expires_at > NOW(), false) AS is_cart_locked,
           r.expires_at AS cart_lock_expires_at,
           r.session_id AS cart_locked_by_session
@@ -62,7 +71,23 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
       }
       if (search) {
         params.push(`%${search}%`);
-        query += ` AND (p.item_name ILIKE $${params.length} OR p.brand_name ILIKE $${params.length} OR p.barcode ILIKE $${params.length})`;
+        query += ` AND (p.item_name ILIKE $${params.length} OR p.brand_name ILIKE $${params.length} OR p.barcode ILIKE $${params.length} OR p.style ILIKE $${params.length})`;
+      }
+      if (size && size !== 'ALL') {
+        params.push(size);
+        query += ` AND p.size_scanned = $${params.length}`;
+      }
+      if (minPrice !== null && !isNaN(minPrice)) {
+        params.push(minPrice);
+        query += ` AND COALESCE(p.retail_price_aed, p.estimated_price, 0) >= $${params.length}`;
+      }
+      if (maxPrice !== null && !isNaN(maxPrice)) {
+        params.push(maxPrice);
+        query += ` AND COALESCE(p.retail_price_aed, p.estimated_price, 0) <= $${params.length}`;
+      }
+      if (era && era !== 'ALL') {
+        params.push(`%${era}%`);
+        query += ` AND (p.style ILIKE $${params.length} OR p.item_name ILIKE $${params.length} OR p.brand_name ILIKE $${params.length})`;
       }
       if (segment && segment !== 'ALL') {
         if (segment === 'Antique') {
@@ -78,14 +103,38 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         }
       }
 
-      query += ` ORDER BY p.created_at DESC LIMIT 100`;
+      // Order by
+      if (sort === 'price_asc') {
+        query += ` ORDER BY COALESCE(p.retail_price_aed, p.estimated_price, 0) ASC, p.id DESC`;
+      } else if (sort === 'price_desc') {
+        query += ` ORDER BY COALESCE(p.retail_price_aed, p.estimated_price, 0) DESC, p.id DESC`;
+      } else if (sort === 'grails') {
+        query += ` ORDER BY p.is_grail DESC, p.created_at DESC, p.id DESC`;
+      } else {
+        query += ` ORDER BY p.created_at DESC, p.id DESC`;
+      }
+
+      let totalCount = 0;
+      if (isPaginated) {
+        const offset = ((page || 1) - 1) * pageSize;
+        params.push(pageSize);
+        const limitParam = `$${params.length}`;
+        params.push(offset);
+        const offsetParam = `$${params.length}`;
+        query += ` LIMIT ${limitParam} OFFSET ${offsetParam}`;
+      } else {
+        query += ` LIMIT 200`;
+      }
 
       const result = await client.query(query, params);
       const rows = result.rows || [];
+      if (rows.length > 0) {
+        totalCount = parseInt(rows[0].total_count, 10) || rows.length;
+      }
 
       // If database has records, format them cleanly
       if (rows.length > 0) {
-        return rows.map(r => ({
+        const mapped = rows.map(r => ({
           id: r.id || r.barcode,
           barcode: r.barcode,
           itemId: r.item_id || 'ITM-01',
@@ -118,12 +167,23 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
           cartLockedBySession: r.cart_locked_by_session,
           createdAt: r.created_at
         }));
+
+        if (isPaginated) {
+          return {
+            data: mapped,
+            total: totalCount,
+            page: page || 1,
+            pageSize,
+            totalPages: Math.max(1, Math.ceil(totalCount / pageSize))
+          };
+        }
+        return mapped;
       }
       return null;
     });
 
-    if (formatted && formatted.length > 0) {
-      productsCache.set(cacheKey, { data: formatted, timestamp: Date.now() });
+    if (formatted) {
+      productsCache.set(cacheKey, { data: formatted as any, timestamp: Date.now() });
       res.setHeader('X-Cache', 'MISS');
       return res.json(formatted);
     }

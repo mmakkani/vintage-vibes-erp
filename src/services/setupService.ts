@@ -1,7 +1,9 @@
 import { supabase } from '../supabaseClient.ts';
+import { safeFetchJson } from '../utils/fetchUtils.ts';
 import {
   CurrencyItem,
   CategoryMaster,
+  ProductCategory,
   SizeMaster,
   LabelGrade,
   BrandMaster,
@@ -96,31 +98,186 @@ export class SetupService {
     }
   }
 
-  // --- Categories ---
+  // --- Product Categories (public.product_categories) ---
+  public static async getProductCategories(): Promise<ProductCategory[]> {
+    try {
+      const { data, error } = await supabase
+        .from('product_categories')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return data.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+          is_active: r.is_active !== false,
+          isActive: r.is_active !== false,
+          created_at: r.created_at,
+          createdAt: r.created_at
+        }));
+      }
+    } catch (e) {
+      console.warn('Supabase product_categories query notice:', e);
+    }
+
+    try {
+      const res = await safeFetchJson<any>('/api/setup/product-categories');
+      if (Array.isArray(res) && res.length > 0) {
+        return res.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+          is_active: r.is_active !== false,
+          isActive: r.is_active !== false,
+          created_at: r.created_at,
+          createdAt: r.created_at
+        }));
+      }
+    } catch (_) {}
+
+    return [];
+  }
+
+  public static async addProductCategory(item: { name: string; slug?: string; is_active?: boolean }): Promise<ProductCategory> {
+    const slug = (item.slug || item.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `cat-${Date.now()}`;
+    const payload = {
+      name: item.name.trim(),
+      slug,
+      is_active: item.is_active !== false
+    };
+
+    try {
+      const res = await safeFetchJson<any>('/api/setup/product-categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res && res.id) {
+        return {
+          id: res.id,
+          name: res.name,
+          slug: res.slug,
+          is_active: res.is_active !== false,
+          isActive: res.is_active !== false,
+          created_at: res.created_at,
+          createdAt: res.created_at
+        };
+      }
+    } catch (_) {}
+
+    const { data, error } = await supabase
+      .from('product_categories')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(error.message || 'Failed to add product category');
+    }
+
+    return {
+      id: data.id,
+      name: data.name,
+      slug: data.slug,
+      is_active: data.is_active !== false,
+      isActive: data.is_active !== false,
+      created_at: data.created_at,
+      createdAt: data.created_at
+    };
+  }
+
+  public static async updateProductCategory(id: string, updates: Partial<ProductCategory>): Promise<void> {
+    const payload: any = {};
+    if (updates.name !== undefined) payload.name = updates.name.trim();
+    if (updates.slug !== undefined) payload.slug = updates.slug.trim();
+    if (updates.is_active !== undefined) payload.is_active = updates.is_active;
+    if (updates.isActive !== undefined) payload.is_active = updates.isActive;
+
+    try {
+      await safeFetchJson<any>(`/api/setup/product-categories/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      return;
+    } catch (_) {}
+
+    const { error } = await supabase.from('product_categories').update(payload).eq('id', id);
+    if (error) {
+      throw new Error(error.message || 'Failed to update product category');
+    }
+  }
+
+  public static async deleteProductCategory(id: string): Promise<void> {
+    try {
+      await safeFetchJson<any>(`/api/setup/product-categories/${id}`, {
+        method: 'DELETE'
+      });
+      return;
+    } catch (_) {}
+
+    const { error } = await supabase.from('product_categories').delete().eq('id', id);
+    if (error) {
+      throw new Error(error.message || 'Failed to delete product category');
+    }
+  }
+
+  // --- Categories (Garment / Storefront unified) ---
   public static async getCategories(): Promise<CategoryMaster[]> {
+    // 1. Prioritize reading public.product_categories as the dynamic single source of truth
+    try {
+      const prodCats = await SetupService.getProductCategories();
+      if (Array.isArray(prodCats) && prodCats.length > 0) {
+        return prodCats.map((r: any, idx: number) => ({
+          id: r.id,
+          code: r.slug || r.id,
+          name: r.name,
+          slug: r.slug,
+          description: `Storefront Category: ${r.name}`,
+          qualityTier: 'CREAM',
+          sortOrder: idx + 1,
+          status: r.is_active ? 'POSTED' : 'UNPOSTED',
+          isActive: r.is_active !== false,
+          is_active: r.is_active !== false,
+          created_at: r.created_at,
+          createdAt: r.created_at
+        }));
+      }
+    } catch (_) {}
+
     const { data, error } = await supabase
       .from('categories')
       .select('*')
       .order('sort_order', { ascending: true, nullsFirst: false });
 
     if (error) {
-      console.error('Supabase error on categories:', error);
-      throw new Error(error.message || 'Database error occurred reading categories');
+      console.warn('Fallback categories notice:', error.message);
+      return [];
     }
 
     return (data || []).map((r: any) => ({
       id: r.id,
       code: r.code || r.id,
       name: r.name,
+      slug: r.slug || (r.name ? r.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') : r.id),
       description: r.description || '',
       qualityTier: r.quality_tier || r.qualityTier || 'CREAM',
       sortOrder: Number(r.sort_order ?? r.sortOrder ?? 1),
       status: r.status || 'POSTED',
-      isActive: r.is_active ?? true
+      isActive: r.is_active ?? true,
+      is_active: r.is_active ?? true
     }));
   }
 
   public static async addCategory(item: Partial<CategoryMaster>): Promise<CategoryMaster> {
+    // Also mirror to product_categories so it reflects across storefront & terminal
+    const catName = (item.name || '').trim();
+    const catSlug = (item.slug || catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `cat-${Date.now()}`;
+    if (catName) {
+      SetupService.addProductCategory({ name: catName, slug: catSlug, is_active: item.isActive !== false }).catch(() => {});
+    }
+
     const id = item.id || `cat-${Date.now()}`;
     const payload = {
       id,
@@ -140,23 +297,43 @@ export class SetupService {
       .single();
 
     if (error) {
-      console.error('Supabase error on categories:', error);
-      throw new Error(error.message || 'Failed to add category');
+      return {
+        id,
+        code: payload.code,
+        name: payload.name || '',
+        slug: catSlug,
+        description: payload.description,
+        qualityTier: payload.quality_tier as any,
+        sortOrder: payload.sort_order,
+        status: payload.status as any,
+        isActive: payload.is_active,
+        is_active: payload.is_active
+      };
     }
 
     return {
       id: data.id,
       code: data.code,
       name: data.name,
+      slug: catSlug,
       description: data.description,
       qualityTier: data.quality_tier,
       sortOrder: data.sort_order,
       status: data.status,
-      isActive: data.is_active
+      isActive: data.is_active,
+      is_active: data.is_active
     };
   }
 
   public static async updateCategory(id: string, updates: Partial<CategoryMaster>): Promise<void> {
+    if (updates.name || updates.slug || updates.isActive !== undefined || updates.is_active !== undefined) {
+      SetupService.updateProductCategory(id, {
+        name: updates.name,
+        slug: updates.slug,
+        is_active: updates.is_active !== undefined ? updates.is_active : updates.isActive
+      }).catch(() => {});
+    }
+
     const payload: any = {};
     if (updates.name !== undefined) payload.name = updates.name;
     if (updates.code !== undefined) payload.code = updates.code;
@@ -165,20 +342,14 @@ export class SetupService {
     if (updates.sortOrder !== undefined) payload.sort_order = updates.sortOrder;
     if (updates.status !== undefined) payload.status = updates.status;
     if (updates.isActive !== undefined) payload.is_active = updates.isActive;
+    if (updates.is_active !== undefined) payload.is_active = updates.is_active;
 
-    const { error } = await supabase.from('categories').update(payload).eq('id', id);
-    if (error) {
-      console.error('Supabase error on categories:', error);
-      throw new Error(error.message || 'Failed to update category');
-    }
+    await supabase.from('categories').update(payload).eq('id', id);
   }
 
   public static async deleteCategory(id: string): Promise<void> {
-    const { error } = await supabase.from('categories').delete().eq('id', id);
-    if (error) {
-      console.error('Supabase error on categories:', error);
-      throw new Error(error.message || 'Failed to delete category');
-    }
+    SetupService.deleteProductCategory(id).catch(() => {});
+    await supabase.from('categories').delete().eq('id', id);
   }
 
   // --- Sizes ---

@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { PieceBreakdownItem } from '../purchase/purchase.types.ts';
 import { CompanyProfile } from '../setup/setup.types.ts';
 import { ProductCard } from './ProductCard.tsx';
+import { ShopCatalogView, DynamicCategory } from './ShopCatalogView.tsx';
 import { TagInspectModal } from './TagInspectModal.tsx';
 import { BankQrModal } from './BankQrModal.tsx';
 import { CheckoutModal } from './CheckoutModal.tsx';
@@ -67,6 +68,137 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const [selectedSegment, setSelectedSegment] = useState<string>('ALL');
   const [showNoticeBar, setShowNoticeBar] = useState<boolean>(true);
   const [isLiveStreamBroadcasting, setIsLiveStreamBroadcasting] = useState<boolean>(false);
+
+  // E-Commerce Storefront Mode: 'home' (the trailer with carousels) vs 'shop' (the dedicated catalog with sidebar filters)
+  const [storeMode, setStoreMode] = useState<'home' | 'shop'>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('mode') === 'shop' || params.get('tab') === 'shop' || params.get('page') === 'shop') {
+        return 'shop';
+      }
+    } catch {}
+    return 'home';
+  });
+
+  // Dynamic Product Categories from public.product_categories (Global Setup)
+  const [dynamicCategories, setDynamicCategories] = useState<DynamicCategory[]>([]);
+
+  const fetchDynamicCategories = async () => {
+    try {
+      const res = await fetch('/api/setup/product-categories');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setDynamicCategories(data.filter((c: any) => c.is_active !== false));
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Could not load dynamic categories:', err);
+    }
+    // Fallback categories if network offline or table empty
+    setDynamicCategories([
+      { id: '1', name: 'T Shirts', slug: 't-shirts', is_active: true },
+      { id: '2', name: 'Al Neyadi Caps', slug: 'caps', is_active: true },
+      { id: '3', name: 'Hoodies', slug: 'hoodies', is_active: true },
+      { id: '4', name: 'Sweaters / Sweatshirts', slug: 'sweaters', is_active: true },
+      { id: '5', name: 'Puffer', slug: 'puffer', is_active: true },
+      { id: '6', name: 'Fleece', slug: 'fleece', is_active: true },
+      { id: '7', name: 'Longsleeve', slug: 'longsleeve', is_active: true },
+      { id: '8', name: 'Jackets', slug: 'jackets', is_active: true },
+      { id: '9', name: 'Pants', slug: 'pants', is_active: true },
+      { id: '10', name: 'Shorts', slug: 'shorts', is_active: true }
+    ]);
+  };
+
+  useEffect(() => {
+    fetchDynamicCategories();
+    // CDC Realtime listener for dynamic category changes in Global Setup
+    const handleRealtime = (e: any) => {
+      if (e.detail?.table === 'product_categories') {
+        fetchDynamicCategories();
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleRealtime);
+    return () => window.removeEventListener('vv:realtime-record', handleRealtime);
+  }, []);
+
+  // Navigation handlers
+  const navigateToShop = (category?: string, segment?: string, search?: string) => {
+    luxuryAudio.playMechanicalClick();
+    if (category) setSelectedCategory(category);
+    if (segment) setSelectedSegment(segment);
+    if (search !== undefined) setSearchQuery(search);
+    setStoreMode('shop');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('mode', 'shop');
+      if (category && category !== 'ALL') {
+        url.searchParams.set('category', category);
+      } else {
+        url.searchParams.delete('category');
+      }
+      window.history.replaceState(null, '', url.toString());
+    } catch {}
+  };
+
+  const navigateToHome = () => {
+    luxuryAudio.playMechanicalClick();
+    setStoreMode('home');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('mode');
+      url.searchParams.delete('category');
+      window.history.replaceState(null, '', url.toString());
+    } catch {}
+  };
+
+  const scrollToVault = () => {
+    navigateToShop();
+  };
+
+  // Carousel refs & smooth scrolling helper
+  const newArrivalsScrollRef = useRef<HTMLDivElement>(null);
+  const grailsScrollRef = useRef<HTMLDivElement>(null);
+  const categoriesScrollRef = useRef<HTMLDivElement>(null);
+
+  const scrollContainer = (ref: React.RefObject<HTMLDivElement | null>, direction: 'left' | 'right') => {
+    luxuryAudio.playMechanicalClick();
+    if (ref.current) {
+      const scrollAmount = direction === 'left' ? -380 : 380;
+      ref.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
+  };
+
+  const getCategoryIcon = (categoryName: string) => {
+    const lower = (categoryName || '').toLowerCase();
+    if (lower.includes('tee') || lower.includes('t-shirt') || lower.includes('tshirt')) return '👕';
+    if (lower.includes('cap') || lower.includes('hat') || lower.includes('neyadi')) return '🧢';
+    if (lower.includes('hoodie')) return '🧥';
+    if (lower.includes('sweater') || lower.includes('sweatshirt') || lower.includes('knit')) return '🧶';
+    if (lower.includes('puffer') || lower.includes('down')) return '❄️';
+    if (lower.includes('fleece') || lower.includes('sherpa')) return '🐑';
+    if (lower.includes('longsleeve') || lower.includes('long sleeve')) return '👔';
+    if (lower.includes('jacket') || lower.includes('coat') || lower.includes('outerwear') || lower.includes('bomber')) return '🧥';
+    if (lower.includes('pant') || lower.includes('jean') || lower.includes('denim') || lower.includes('trouser')) return '👖';
+    if (lower.includes('short')) return '🩳';
+    return '🏷️';
+  };
+
+  // Curated piece lists for Homepage Carousels
+  const newArrivals = useMemo(() => pieces.slice(0, 12), [pieces]);
+  const vintageGrails = useMemo(() => {
+    const grails = pieces.filter(
+      p => p.isGrail ||
+           p.brandTier === 'Grail' ||
+           (p.marketSegment || '').toLowerCase().includes('grail') ||
+           (p.marketSegment || '').toLowerCase().includes('boutique') ||
+           (p.style || '').toLowerCase().includes('antique')
+    );
+    return grails.length >= 4 ? grails.slice(0, 12) : pieces.slice(0, 12);
+  }, [pieces]);
 
   // Poll live stream broadcast session status
   useEffect(() => {
@@ -363,122 +495,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     }
   }, [pieces]);
 
-  // Category filters matching the live website navigation
-  const categories = [
-    { id: 'ALL', label: 'All Items' },
-    { id: 't-shirts', label: 'T Shirts' },
-    { id: 'caps', label: 'Al Neyadi Caps' },
-    { id: 'hoodies', label: 'Hoodies' },
-    { id: 'sweaters', label: 'Sweaters / Sweatshirts' },
-    { id: 'puffer', label: 'Puffer' },
-    { id: 'fleece', label: 'Fleece' },
-    { id: 'longsleeve', label: 'Longsleeve' },
-    { id: 'jackets', label: 'Jackets' },
-    { id: 'pants', label: 'Pants' },
-    { id: 'shorts', label: 'Shorts' }
-  ];
 
-  // Dynamic piece counts across the 4 curated market segment suites
-  const segmentCounts = useMemo(() => {
-    let antique = 0;
-    let grails = 0;
-    let thrift = 0;
-
-    pieces.forEach(p => {
-      const seg = (p.marketSegment || (p as any).market_segment || '').toLowerCase();
-      const isGrail = p.isGrail || (p as any).is_grail;
-      const era = (p.era || (p as any).era || '').toLowerCase();
-      const style = (p.style || '').toLowerCase();
-
-      if (seg === 'antique' || era.includes('antique') || style.includes('antique')) {
-        antique++;
-      } else if (isGrail || seg === 'grails' || seg === 'boutique' || era.includes('grail') || era.includes('boutique')) {
-        grails++;
-      } else {
-        thrift++;
-      }
-    });
-
-    return { all: pieces.length, antique, grails, thrift };
-  }, [pieces]);
-
-  // Filtered pieces based on category, segment, and search query
-  const filteredPieces = useMemo(() => {
-    return pieces.filter(piece => {
-      const itemText = `${piece.itemName || ''} ${piece.brandName || ''} ${piece.style || ''} ${piece.itemId || ''}`.toLowerCase();
-
-      // Market Segment Suite filter
-      if (selectedSegment !== 'ALL') {
-        const seg = (piece.marketSegment || (piece as any).market_segment || '').toLowerCase();
-        const isGrail = piece.isGrail || (piece as any).is_grail;
-        const era = (piece.era || (piece as any).era || '').toLowerCase();
-        const style = (piece.style || '').toLowerCase();
-
-        if (selectedSegment === 'ANTIQUE') {
-          const isAntique = seg === 'antique' || era.includes('antique') || style.includes('antique');
-          if (!isAntique) return false;
-        } else if (selectedSegment === 'GRAILS') {
-          const isGrailOrBoutique = isGrail || seg === 'grails' || seg === 'boutique' || era.includes('grail') || era.includes('boutique');
-          if (!isGrailOrBoutique) return false;
-        } else if (selectedSegment === 'THRIFT') {
-          const isThrift = (seg === 'regular thrift' || seg === 'old vintage' || (!seg && !isGrail)) && !era.includes('antique') && !era.includes('grail');
-          if (!isThrift) return false;
-        }
-      }
-
-      // Category filter matching
-      if (selectedCategory !== 'ALL') {
-        switch (selectedCategory) {
-          case 't-shirts':
-            if (!itemText.includes('tee') && !itemText.includes('t-shirt') && !itemText.includes('tshirt')) return false;
-            break;
-          case 'caps':
-            if (!itemText.includes('cap') && !itemText.includes('hat') && !itemText.includes('neyadi')) return false;
-            break;
-          case 'hoodies':
-            if (!itemText.includes('hoodie')) return false;
-            break;
-          case 'sweaters':
-            if (!itemText.includes('sweater') && !itemText.includes('sweatshirt') && !itemText.includes('knit')) return false;
-            break;
-          case 'puffer':
-            if (!itemText.includes('puffer') && !itemText.includes('down') && !itemText.includes('nuptse')) return false;
-            break;
-          case 'fleece':
-            if (!itemText.includes('fleece') && !itemText.includes('sherpa')) return false;
-            break;
-          case 'longsleeve':
-            if (!itemText.includes('longsleeve') && !itemText.includes('long sleeve')) return false;
-            break;
-          case 'jackets':
-            if (!itemText.includes('jacket') && !itemText.includes('coat') && !itemText.includes('bomber') && !itemText.includes('outerwear')) return false;
-            break;
-          case 'pants':
-            if (!itemText.includes('pant') && !itemText.includes('jean') && !itemText.includes('denim') && !itemText.includes('trouser')) return false;
-            break;
-          case 'shorts':
-            if (!itemText.includes('short')) return false;
-            break;
-          default:
-            break;
-        }
-      }
-
-      // Search match
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const matchesSearch =
-          piece.brandName?.toLowerCase().includes(q) ||
-          piece.itemName?.toLowerCase().includes(q) ||
-          piece.barcode?.toLowerCase().includes(q) ||
-          piece.style?.toLowerCase().includes(q) ||
-          piece.countryOfOrigin?.toLowerCase().includes(q);
-        if (!matchesSearch) return false;
-      }
-
-      return true;
-    });
-  }, [pieces, selectedCategory, selectedSegment, searchQuery]);
 
   // Cart Management Handlers with 10-Minute Lock Reservation in SQL Database
   const handleAddToCart = async (piece: PieceBreakdownItem) => {
@@ -707,10 +724,6 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     }
   };
 
-  const scrollToVault = () => {
-    const el = document.getElementById('vault-inventory-section');
-    if (el) el.scrollIntoView({ behavior: 'smooth' });
-  };
 
   return (
     <div className="min-h-screen bg-[#FAF4E6] text-slate-900 flex flex-col selection:bg-amber-300 selection:text-amber-950 font-sans antialiased">
@@ -777,14 +790,18 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       </div>
 
       {/* 3. LUXURY BOUTIQUE TOP NAVIGATION HEADER */}
-      <header className="sticky top-0 z-40 bg-gradient-to-r from-[#FDF9EE]/95 via-[#F5ECCE]/95 to-[#FAF4E6]/95 backdrop-blur-xl border-b-2 border-amber-400/80 px-4 sm:px-8 py-3.5 flex items-center justify-between shadow-xl">
-        {/* Left: 3D Animated Gold Medal Logo + Brand Title */}
-        <div className="flex items-center gap-3 sm:gap-4">
-          <div className="relative shrink-0 flex items-center">
+      <header className="sticky top-0 z-40 bg-gradient-to-r from-[#FDF9EE]/95 via-[#F5ECCE]/95 to-[#FAF4E6]/95 backdrop-blur-xl border-b-2 border-amber-400/80 px-4 sm:px-8 py-3 flex items-center justify-between shadow-xl">
+        {/* Left: 3D Animated Gold Medal Logo + Brand Title (Clickable Home Link) */}
+        <div
+          onClick={navigateToHome}
+          className="flex items-center gap-3 sm:gap-4 cursor-pointer group"
+          title="Return to Vintage Vibes Storefront Homepage"
+        >
+          <div className="relative shrink-0 flex items-center group-hover:scale-105 transition-transform">
             <Vintage3DLogo
               size="lg"
               interactive={true}
-              className="w-14 h-14 sm:w-16 sm:h-16 drop-shadow-[0_8px_16px_rgba(0,0,0,0.25)]"
+              className="w-13 h-13 sm:w-15 sm:h-15 drop-shadow-[0_8px_16px_rgba(0,0,0,0.25)]"
             />
           </div>
 
@@ -803,15 +820,47 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           </div>
         </div>
 
+        {/* Center: Home & Shop All Navigation Tabs */}
+        <nav className="hidden lg:flex items-center gap-1.5 bg-amber-200/50 p-1 rounded-2xl border border-amber-300/80 shadow-2xs">
+          <button
+            type="button"
+            onClick={navigateToHome}
+            className={`px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+              storeMode === 'home'
+                ? 'bg-amber-400 text-slate-950 shadow-xs'
+                : 'text-slate-700 hover:text-slate-950 hover:bg-white/60'
+            }`}
+          >
+            🏠 Home
+          </button>
+          <button
+            type="button"
+            onClick={() => navigateToShop('ALL')}
+            className={`px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+              storeMode === 'shop'
+                ? 'bg-amber-400 text-slate-950 shadow-xs'
+                : 'text-slate-700 hover:text-slate-950 hover:bg-white/60'
+            }`}
+          >
+            <ShoppingBag className="w-3.5 h-3.5" />
+            <span>🛍️ Shop Catalog</span>
+          </button>
+        </nav>
+
         {/* Right: Search + Vault Cart Drawer CTA + Staff ERP Access CTA */}
-        <div className="flex items-center gap-2.5 sm:gap-3">
-          <div className="relative hidden md:block w-56 lg:w-72">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="relative hidden md:block w-48 xl:w-64">
             <Search className="w-4 h-4 text-amber-900/60 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Search Carhartt, Nike, Levi's..."
+              placeholder="Search Carhartt, Nike..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  navigateToShop('ALL', 'ALL', searchQuery);
+                }
+              }}
               className="w-full bg-white/95 border-2 border-amber-300 rounded-full pl-9 pr-4 py-1.5 text-xs font-semibold text-slate-900 placeholder:text-slate-500 focus:outline-hidden focus:border-amber-500 shadow-inner"
             />
           </div>
@@ -867,379 +916,511 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         </div>
       </header>
 
-      {/* 4. DYNAMIC HERO SLIDER (DIRECTLY FROM VINTAGEVIBESLLCSPC.COM) */}
-      <section className="relative w-full h-[65vh] sm:h-[75vh] min-h-[480px] max-h-[750px] overflow-hidden bg-slate-950">
-        {heroSlides.map((slide, idx) => (
-          <div
-            key={slide.id}
-            className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${
-              currentSlide === idx ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
-            }`}
-          >
-            <div
-              className="absolute inset-0 bg-cover bg-center transition-transform duration-7000 ease-out transform scale-105"
-              style={{ backgroundImage: `url('${slide.image}')` }}
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/55 to-black/70" />
+      {storeMode === 'shop' ? (
+        <ShopCatalogView
+          categories={dynamicCategories}
+          initialCategory={selectedCategory}
+          initialSearch={searchQuery}
+          initialSegment={selectedSegment}
+          cart={cart}
+          vanishingBarcodes={vanishingBarcodes}
+          onAddToCart={handleAddToCart}
+          onInstantBuy={p => {
+            luxuryAudio.playMechanicalClick();
+            setCheckoutPieces([p]);
+            setCheckoutModalOpen(true);
+            pixelTracking.trackInitiateCheckout([p], p.retailPriceAed || p.estimatedPrice || 295);
+          }}
+          onInspectTag={p => {
+            luxuryAudio.playMechanicalClick();
+            setInspectingPiece(p);
+            pixelTracking.trackViewContent(p);
+          }}
+          onInspectGarment={p => {
+            luxuryAudio.playMechanicalClick();
+            setVisualInspectorPiece(p);
+            pixelTracking.trackViewContent(p);
+          }}
+          onOpenFitGuide={silhouetteId => {
+            luxuryAudio.playMechanicalClick();
+            setFitGuideSilhouetteId(silhouetteId);
+            setFitGuideOpen(true);
+          }}
+          onBackToHome={navigateToHome}
+        />
+      ) : (
+        <>
+          {/* 4. DYNAMIC HERO SLIDER (DIRECTLY FROM VINTAGEVIBESLLCSPC.COM) */}
+          <section className="relative w-full h-[65vh] sm:h-[75vh] min-h-[480px] max-h-[750px] overflow-hidden bg-slate-950">
+            {heroSlides.map((slide, idx) => (
+              <div
+                key={slide.id}
+                className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${
+                  currentSlide === idx ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
+                }`}
+              >
+                <div
+                  className="absolute inset-0 bg-cover bg-center transition-transform duration-7000 ease-out transform scale-105"
+                  style={{ backgroundImage: `url('${slide.image}')` }}
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/55 to-black/70" />
 
-            <div className="relative z-20 h-full max-w-6xl mx-auto px-6 flex flex-col items-center justify-center text-center text-white space-y-5">
-              <span className="px-3.5 py-1 rounded-full bg-amber-400/20 border border-amber-400/60 text-amber-300 text-[11px] font-black uppercase tracking-widest backdrop-blur-xs">
-                Vintage Vibes General Trading LLC SPC
-              </span>
+                <div className="relative z-20 h-full max-w-6xl mx-auto px-6 flex flex-col items-center justify-center text-center text-white space-y-5">
+                  <span className="px-3.5 py-1 rounded-full bg-amber-400/20 border border-amber-400/60 text-amber-300 text-[11px] font-black uppercase tracking-widest backdrop-blur-xs">
+                    Vintage Vibes General Trading LLC SPC
+                  </span>
 
-              <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black font-serif tracking-wide leading-tight max-w-4xl text-white drop-shadow-md">
-                {slide.title}
-              </h1>
+                  <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black font-serif tracking-wide leading-tight max-w-4xl text-white drop-shadow-md">
+                    {slide.title}
+                  </h1>
 
-              <p className="text-sm sm:text-lg text-slate-200 max-w-2xl font-light leading-relaxed drop-shadow-xs">
-                {slide.subtitle}
-              </p>
+                  <p className="text-sm sm:text-lg text-slate-200 max-w-2xl font-light leading-relaxed drop-shadow-xs">
+                    {slide.subtitle}
+                  </p>
 
-              <div className="pt-3">
-                <button
-                  type="button"
-                  onClick={scrollToVault}
-                  className="px-8 py-3.5 bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-600 text-slate-950 font-black text-xs uppercase tracking-widest rounded-full shadow-2xl transition-all transform hover:-translate-y-1 hover:shadow-amber-500/40 flex items-center gap-2 cursor-pointer"
-                >
-                  <ShoppingBag className="w-4 h-4" />
-                  <span>SHOP NOW</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                  <div className="pt-3">
+                    <button
+                      type="button"
+                      onClick={() => navigateToShop('ALL')}
+                      className="px-8 py-3.5 bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-600 text-slate-950 font-black text-xs uppercase tracking-widest rounded-full shadow-2xl transition-all transform hover:-translate-y-1 hover:shadow-amber-500/40 flex items-center gap-2 cursor-pointer"
+                    >
+                      <ShoppingBag className="w-4 h-4" />
+                      <span>SHOP NOW</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="w-24 h-1 bg-amber-400 rounded-full mt-2" />
+                </div>
               </div>
+            ))}
 
-              <div className="w-24 h-1 bg-amber-400 rounded-full mt-2" />
-            </div>
-          </div>
-        ))}
-
-        {/* Navigation Arrows */}
-        <button
-          type="button"
-          onClick={() => {
-            luxuryAudio.playMechanicalClick();
-            setCurrentSlide(prev => (prev - 1 + heroSlides.length) % heroSlides.length);
-          }}
-          className="absolute left-4 top-1/2 -translate-y-1/2 z-30 w-11 h-11 rounded-full bg-black/40 hover:bg-amber-400 hover:text-slate-950 text-white border border-white/30 backdrop-blur-md flex items-center justify-center transition-all cursor-pointer"
-          aria-label="Previous Slide"
-        >
-          <ChevronLeft className="w-6 h-6" />
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            luxuryAudio.playMechanicalClick();
-            setCurrentSlide(prev => (prev + 1) % heroSlides.length);
-          }}
-          className="absolute right-4 top-1/2 -translate-y-1/2 z-30 w-11 h-11 rounded-full bg-black/40 hover:bg-amber-400 hover:text-slate-950 text-white border border-white/30 backdrop-blur-md flex items-center justify-center transition-all cursor-pointer"
-          aria-label="Next Slide"
-        >
-          <ChevronRight className="w-6 h-6" />
-        </button>
-
-        {/* Dots Container */}
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2.5">
-          {heroSlides.map((_, idx) => (
+            {/* Navigation Arrows */}
             <button
-              key={idx}
               type="button"
               onClick={() => {
                 luxuryAudio.playMechanicalClick();
-                setCurrentSlide(idx);
+                setCurrentSlide(prev => (prev - 1 + heroSlides.length) % heroSlides.length);
               }}
-              className={`transition-all duration-300 rounded-full cursor-pointer ${
-                currentSlide === idx
-                  ? 'w-8 h-2.5 bg-amber-400 border border-amber-300'
-                  : 'w-2.5 h-2.5 bg-white/40 hover:bg-white/70'
-              }`}
-              aria-label={`Go to slide ${idx + 1}`}
-            />
-          ))}
-        </div>
-      </section>
+              className="absolute left-4 top-1/2 -translate-y-1/2 z-30 w-11 h-11 rounded-full bg-black/40 hover:bg-amber-400 hover:text-slate-950 text-white border border-white/30 backdrop-blur-md flex items-center justify-center transition-all cursor-pointer"
+              aria-label="Previous Slide"
+            >
+              <ChevronLeft className="w-6 h-6" />
+            </button>
 
-      {/* 5. WINTER MAAZI COLLECTIONS & FOUNDER'S SON VOICE STORY */}
-      <WinterMaaziStoryHero
-        onExploreCollection={(category) => {
-          if (category) setSelectedCategory(category);
-          scrollToVault();
-        }}
-        videoUrl={companyProfile.virtual_host_video_url || companyProfile.virtualHostVideoUrl || '/mazi_video.mp4'}
-      />
-
-      {/* 6. SUCCESS TOAST BANNER */}
-      {successToast && (
-        <div className="fixed top-20 right-6 z-50 max-w-md bg-emerald-900 text-white border-2 border-emerald-400 rounded-2xl p-4 shadow-2xl animate-in slide-in-from-top-4 duration-300 flex items-start gap-3">
-          <CheckCircle2 className="w-5 h-5 text-emerald-300 shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <h5 className="font-black text-sm">{successToast.title}</h5>
-            <p className="text-xs text-emerald-100 mt-0.5">{successToast.subtitle}</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setSuccessToast(null)}
-            className="text-emerald-300 hover:text-white cursor-pointer"
-          >
-            &times;
-          </button>
-        </div>
-      )}
-
-      {/* 7. PROMOTIONAL POSTERS STRIP (DIRECTLY FROM LIVE WEBSITE) */}
-      <section className="bg-gradient-to-b from-[#F5ECCE] via-[#FAF4E6] to-[#FAF4E6] py-10 border-b-2 border-amber-300/80">
-        <div className="max-w-7xl mx-auto px-4 sm:px-8 space-y-6">
-          <div className="text-center max-w-2xl mx-auto space-y-1">
-            <span className="text-[11px] font-black uppercase tracking-widest text-amber-900 block">
-              Curated Vintage Drops
-            </span>
-            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 font-serif">
-              Explore Our Live Collections & Vault Banners
-            </h2>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Poster 1 */}
-            <div className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group">
-              <img
-                src="https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-2-1024x571.webp"
-                alt="Premium vintage collection UAE"
-                className="w-full h-auto object-cover transform group-hover:scale-105 transition-transform duration-700"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-6">
-                <button
-                  type="button"
-                  onClick={scrollToVault}
-                  className="btn-3d btn-3d-amber text-xs uppercase tracking-wider px-5 py-2.5 rounded-xl cursor-pointer"
-                >
-                  Show all new arrivals
-                </button>
-              </div>
-            </div>
-
-            {/* Poster 2 */}
-            <div className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group">
-              <img
-                src="https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-6-1-1024x571.jpg"
-                alt="Vintage streetwear drop"
-                className="w-full h-auto object-cover transform group-hover:scale-105 transition-transform duration-700"
-              />
-            </div>
-
-            {/* Poster 3 */}
-            <div className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group">
-              <img
-                src="https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-1-1-1024x571.png"
-                alt="Rare retro drops"
-                className="w-full h-auto object-cover transform group-hover:scale-105 transition-transform duration-700"
-              />
-            </div>
-
-            {/* Poster 4 */}
-            <div className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group">
-              <img
-                src="https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-4-2-1024x571.jpg"
-                alt="Vintage Sports Collection UAE"
-                className="w-full h-auto object-cover transform group-hover:scale-105 transition-transform duration-700"
-              />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 6.5 CURATED ARCHIVE COLLECTIONS SWITCHER */}
-      <section className="bg-slate-950 text-white border-y-2 border-amber-500/60 py-6 px-4 sm:px-8 shadow-2xl relative overflow-hidden">
-        <div className="absolute inset-0 opacity-10 pointer-events-none bg-[radial-gradient(#d4af37_1px,transparent_1px)] [background-size:16px_16px]"></div>
-        <div className="max-w-7xl mx-auto relative z-10">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                <span className="text-[10px] font-mono font-black uppercase tracking-widest text-amber-400">
-                  CURATED ARCHIVE SUITES &bull; AUTHENTICATED VAULT
-                </span>
-              </div>
-              <h2 className="font-serif font-black text-xl sm:text-2xl text-white tracking-wide flex items-center gap-2">
-                <span>Vault Archives & Curated Collections</span>
-              </h2>
-              <p className="text-xs text-slate-300 font-medium mt-0.5">
-                Explore distinct historical eras &mdash; from museum-grade antique archives to single-stitch vintage grails and everyday streetwear thrift.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2 text-xs font-mono text-amber-300/80 bg-slate-900/90 border border-amber-500/30 px-3 py-1.5 rounded-xl self-start md:self-auto">
-              <span>Verified 1-of-1 Inventory</span>
-              <span>&bull;</span>
-              <span className="text-white font-bold">{filteredPieces.length} Available</span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
-            {[
-              {
-                id: 'ALL',
-                icon: '🌐',
-                title: 'All Vault Archives',
-                subtitle: 'Complete unfiltered collection',
-                count: segmentCounts.all,
-                activeClass: 'from-amber-600/40 via-amber-900/30 to-slate-950 border-amber-400 ring-2 ring-amber-400/40',
-                badgeClass: 'bg-amber-400/20 text-amber-300 border-amber-400/40'
-              },
-              {
-                id: 'ANTIQUE',
-                icon: '🏛️',
-                title: 'Antique Heritage',
-                subtitle: 'Pre-1970s museum archives',
-                count: segmentCounts.antique,
-                activeClass: 'from-purple-900/50 via-purple-950/40 to-slate-950 border-purple-400 ring-2 ring-purple-400/40',
-                badgeClass: 'bg-purple-400/20 text-purple-300 border-purple-400/40'
-              },
-              {
-                id: 'GRAILS',
-                icon: '✨',
-                title: 'Grails & Boutique',
-                subtitle: '90s single-stitch & luxury',
-                count: segmentCounts.grails,
-                activeClass: 'from-amber-600/50 via-yellow-950/40 to-slate-950 border-amber-400 ring-2 ring-amber-400/40',
-                badgeClass: 'bg-amber-400/20 text-amber-300 border-amber-400/40'
-              },
-              {
-                id: 'THRIFT',
-                icon: '🛍️',
-                title: 'Everyday Thrift Basics',
-                subtitle: 'Daily vintage streetwear',
-                count: segmentCounts.thrift,
-                activeClass: 'from-emerald-900/50 via-emerald-950/40 to-slate-950 border-emerald-400 ring-2 ring-emerald-400/40',
-                badgeClass: 'bg-emerald-400/20 text-emerald-300 border-emerald-400/40'
-              }
-            ].map(tier => {
-              const isSelected = selectedSegment === tier.id;
-              return (
-                <button
-                  key={tier.id}
-                  type="button"
-                  onClick={() => {
-                    luxuryAudio.playMechanicalClick();
-                    setSelectedSegment(tier.id);
-                  }}
-                  className={`p-3 sm:p-3.5 rounded-2xl border text-left transition-all duration-300 cursor-pointer flex flex-col justify-between group bg-gradient-to-br ${
-                    isSelected
-                      ? tier.activeClass
-                      : 'from-slate-900/80 to-slate-950 border-slate-800 hover:border-amber-500/50 hover:bg-slate-900'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <span className="text-xl sm:text-2xl p-1.5 rounded-xl bg-slate-950/60 border border-white/10 group-hover:scale-110 transition-transform">
-                      {tier.icon}
-                    </span>
-                    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${tier.badgeClass}`}>
-                      {tier.count} Pcs
-                    </span>
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-xs sm:text-sm text-white group-hover:text-amber-300 transition-colors">
-                      {tier.title}
-                    </h3>
-                    <p className="text-[10px] sm:text-[11px] text-slate-400 font-medium truncate mt-0.5">
-                      {tier.subtitle}
-                    </p>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {/* 7. LIVE VAULT INVENTORY & CATEGORY FILTER STRIP */}
-      <div id="vault-inventory-section" className="bg-[#FAF4E6]/95 backdrop-blur-md border-b-2 border-amber-300 sticky top-[73px] z-30 px-4 sm:px-8 py-3.5 shadow-sm">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 overflow-x-auto no-scrollbar">
-          <div className="flex items-center gap-2 shrink-0">
-            {categories.map(cat => (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => {
-                  luxuryAudio.playMechanicalClick();
-                  setSelectedCategory(cat.id);
-                }}
-                className={`px-4 py-2 rounded-full text-xs font-black transition-all cursor-pointer whitespace-nowrap shadow-xs ${
-                  selectedCategory === cat.id
-                    ? 'btn-3d btn-3d-amber text-slate-950 scale-105'
-                    : 'bg-white hover:bg-amber-100 text-slate-800 border border-amber-300'
-                }`}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="text-xs font-mono font-bold text-amber-950 hidden lg:block shrink-0 bg-white/90 px-3 py-1.5 rounded-full border border-amber-300">
-            Vault Stock: <strong className="text-amber-700">{filteredPieces.length}</strong> rare pieces
-          </div>
-        </div>
-      </div>
-
-      {/* 8. MAIN GARMENT PRODUCT GRID */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-8">
-        {isLoading ? (
-          <div className="py-24 flex flex-col items-center justify-center text-slate-600">
-            <RefreshCw className="w-8 h-8 text-amber-600 animate-spin mb-3" />
-            <p className="font-extrabold text-slate-900 text-sm">Syncing Live Vault Inventory...</p>
-            <p className="text-xs text-slate-500 mt-1">Connecting to Dubai & Al Ain Bale Sorting Terminal</p>
-          </div>
-        ) : filteredPieces.length === 0 ? (
-          <div className="py-20 text-center text-slate-600 bg-white/80 rounded-2xl border-2 border-amber-300 p-8 shadow-md">
-            <ShoppingBag className="w-12 h-12 text-amber-800/40 mx-auto mb-3" />
-            <h3 className="font-extrabold text-lg text-slate-900 font-serif">No Pieces Found in this Category</h3>
-            <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto">
-              All pieces in this batch might have already been claimed or sold. Check other categories or visit the Sorting Terminal to register new bale breakdowns!
-            </p>
             <button
               type="button"
               onClick={() => {
-                setSelectedCategory('ALL');
-                setSearchQuery('');
+                luxuryAudio.playMechanicalClick();
+                setCurrentSlide(prev => (prev + 1) % heroSlides.length);
               }}
-              className="mt-4 px-4 py-2 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 text-xs font-black border border-amber-400 transition-colors cursor-pointer"
+              className="absolute right-4 top-1/2 -translate-y-1/2 z-30 w-11 h-11 rounded-full bg-black/40 hover:bg-amber-400 hover:text-slate-950 text-white border border-white/30 backdrop-blur-md flex items-center justify-center transition-all cursor-pointer"
+              aria-label="Next Slide"
             >
-              Reset Filters
+              <ChevronRight className="w-6 h-6" />
             </button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {filteredPieces.map(piece => (
-              <ProductCard
-                key={piece.id || piece.barcode}
-                piece={piece}
-                isVanishing={vanishingBarcodes.includes(piece.barcode)}
-                isInCart={cart.some(c => c.barcode === piece.barcode)}
-                onAddToCart={handleAddToCart}
-                onInspectTag={p => {
-                  luxuryAudio.playMechanicalClick();
-                  setInspectingPiece(p);
-                  pixelTracking.trackViewContent(p);
-                }}
-                onInspectGarment={p => {
-                  luxuryAudio.playMechanicalClick();
-                  setVisualInspectorPiece(p);
-                  pixelTracking.trackViewContent(p);
-                }}
-                onOpenFitGuide={silhouetteId => {
-                  luxuryAudio.playMechanicalClick();
-                  setFitGuideSilhouetteId(silhouetteId);
-                  setFitGuideOpen(true);
-                }}
-                onInstantBuy={p => {
-                  luxuryAudio.playMechanicalClick();
-                  setCheckoutPieces([p]);
-                  setCheckoutModalOpen(true);
-                  pixelTracking.trackInitiateCheckout([p], p.retailPriceAed || p.estimatedPrice || 295);
-                }}
-              />
-            ))}
-          </div>
-        )}
-      </main>
+
+            {/* Dots Container */}
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2.5">
+              {heroSlides.map((_, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => {
+                    luxuryAudio.playMechanicalClick();
+                    setCurrentSlide(idx);
+                  }}
+                  className={`transition-all duration-300 rounded-full cursor-pointer ${
+                    currentSlide === idx
+                      ? 'w-8 h-2.5 bg-amber-400 border border-amber-300'
+                      : 'w-2.5 h-2.5 bg-white/40 hover:bg-white/70'
+                  }`}
+                  aria-label={`Go to slide ${idx + 1}`}
+                />
+              ))}
+            </div>
+          </section>
+
+          {/* 5. WINTER MAAZI COLLECTIONS & FOUNDER'S SON VOICE STORY */}
+          <WinterMaaziStoryHero
+            onExploreCollection={(category) => {
+              navigateToShop(category || 'ALL');
+            }}
+            videoUrl={companyProfile.virtual_host_video_url || companyProfile.virtualHostVideoUrl || '/mazi_video.mp4'}
+          />
+
+          {/* 6. SUCCESS TOAST BANNER */}
+          {successToast && (
+            <div className="fixed top-20 right-6 z-50 max-w-md bg-emerald-900 text-white border-2 border-emerald-400 rounded-2xl p-4 shadow-2xl animate-in slide-in-from-top-4 duration-300 flex items-start gap-3">
+              <CheckCircle2 className="w-5 h-5 text-emerald-300 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h5 className="font-black text-sm">{successToast.title}</h5>
+                <p className="text-xs text-emerald-100 mt-0.5">{successToast.subtitle}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSuccessToast(null)}
+                className="text-emerald-300 hover:text-white cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+          )}
+
+          {/* 7. PROMOTIONAL POSTERS STRIP */}
+          <section className="bg-gradient-to-b from-[#F5ECCE] via-[#FAF4E6] to-[#FAF4E6] py-10 border-b-2 border-amber-300/80">
+            <div className="max-w-7xl mx-auto px-4 sm:px-8 space-y-6">
+              <div className="text-center max-w-2xl mx-auto space-y-1">
+                <span className="text-[11px] font-black uppercase tracking-widest text-amber-900 block">
+                  Curated Vintage Drops
+                </span>
+                <h2 className="text-2xl sm:text-3xl font-black text-slate-900 font-serif">
+                  Explore Our Live Collections &amp; Vault Banners
+                </h2>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group">
+                  <img
+                    src="https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-2-1024x571.webp"
+                    alt="Premium vintage collection UAE"
+                    className="w-full h-auto object-cover transform group-hover:scale-105 transition-transform duration-700"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-6">
+                    <button
+                      type="button"
+                      onClick={() => navigateToShop('ALL')}
+                      className="btn-3d btn-3d-amber text-xs uppercase tracking-wider px-5 py-2.5 rounded-xl cursor-pointer"
+                    >
+                      Show all new arrivals
+                    </button>
+                  </div>
+                </div>
+
+                <div className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group">
+                  <img
+                    src="https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-6-1-1024x571.jpg"
+                    alt="Vintage streetwear drop"
+                    className="w-full h-auto object-cover transform group-hover:scale-105 transition-transform duration-700"
+                  />
+                </div>
+
+                <div className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group">
+                  <img
+                    src="https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-1-1-1024x571.png"
+                    alt="Rare retro drops"
+                    className="w-full h-auto object-cover transform group-hover:scale-105 transition-transform duration-700"
+                  />
+                </div>
+
+                <div className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group">
+                  <img
+                    src="https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-4-2-1024x571.jpg"
+                    alt="Vintage Sports Collection UAE"
+                    className="w-full h-auto object-cover transform group-hover:scale-105 transition-transform duration-700"
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* 8. HORIZONTAL CAROUSEL 1: NEW ARRIVALS */}
+          <section className="py-12 px-4 sm:px-8 max-w-7xl mx-auto w-full">
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6 border-b-2 border-amber-300/80 pb-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                  <span className="text-[10px] font-mono font-black uppercase tracking-widest text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full">
+                    ⚡ FRESH OFF THE RACK &bull; LIVE VAULT DROPS
+                  </span>
+                </div>
+                <h2 className="font-serif font-black text-2xl sm:text-3xl text-slate-950 tracking-wide">
+                  New Arrivals &amp; Fresh Unpackings
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-600 font-medium mt-1">
+                  Hand-sorted daily from Al Ain &amp; Dubai warehouse bales. Every piece is an authenticated 1-of-1 original.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 self-end sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => scrollContainer(newArrivalsScrollRef, 'left')}
+                  className="w-10 h-10 rounded-full bg-white hover:bg-amber-100 border border-amber-300 shadow-xs flex items-center justify-center text-slate-800 hover:text-slate-950 transition-all cursor-pointer"
+                  aria-label="Previous New Arrivals"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => scrollContainer(newArrivalsScrollRef, 'right')}
+                  className="w-10 h-10 rounded-full bg-white hover:bg-amber-100 border border-amber-300 shadow-xs flex items-center justify-center text-slate-800 hover:text-slate-950 transition-all cursor-pointer"
+                  aria-label="Next New Arrivals"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigateToShop('ALL')}
+                  className="ml-2 text-xs font-black uppercase tracking-wider text-amber-900 hover:text-amber-700 underline flex items-center gap-1 cursor-pointer"
+                >
+                  <span>View All</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {isLoading ? (
+              <div className="py-16 flex flex-col items-center justify-center text-slate-500">
+                <RefreshCw className="w-7 h-7 text-amber-600 animate-spin mb-2" />
+                <p className="text-xs font-bold">Loading New Arrivals...</p>
+              </div>
+            ) : newArrivals.length === 0 ? (
+              <div className="py-12 text-center text-slate-500 text-xs">No items currently available.</div>
+            ) : (
+              <div
+                ref={newArrivalsScrollRef}
+                className="flex items-stretch gap-6 overflow-x-auto no-scrollbar scroll-smooth pb-4 pt-2 px-1 snap-x snap-mandatory"
+              >
+                {newArrivals.map(piece => (
+                  <div
+                    key={piece.id || piece.barcode}
+                    className="shrink-0 w-[280px] sm:w-[320px] snap-start"
+                  >
+                    <ProductCard
+                      piece={piece}
+                      isVanishing={vanishingBarcodes.includes(piece.barcode)}
+                      isInCart={cart.some(c => c.barcode === piece.barcode)}
+                      onAddToCart={handleAddToCart}
+                      onInspectTag={p => {
+                        luxuryAudio.playMechanicalClick();
+                        setInspectingPiece(p);
+                        pixelTracking.trackViewContent(p);
+                      }}
+                      onInspectGarment={p => {
+                        luxuryAudio.playMechanicalClick();
+                        setVisualInspectorPiece(p);
+                        pixelTracking.trackViewContent(p);
+                      }}
+                      onOpenFitGuide={silhouetteId => {
+                        luxuryAudio.playMechanicalClick();
+                        setFitGuideSilhouetteId(silhouetteId);
+                        setFitGuideOpen(true);
+                      }}
+                      onInstantBuy={p => {
+                        luxuryAudio.playMechanicalClick();
+                        setCheckoutPieces([p]);
+                        setCheckoutModalOpen(true);
+                        pixelTracking.trackInitiateCheckout([p], p.retailPriceAed || p.estimatedPrice || 295);
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* 9. HORIZONTAL CAROUSEL 2: VINTAGE GRAILS & RARE ARCHIVES */}
+          <section className="bg-slate-950 text-white py-14 px-4 sm:px-8 border-y-2 border-amber-500/60 shadow-2xl relative overflow-hidden">
+            <div className="absolute inset-0 opacity-10 pointer-events-none bg-[radial-gradient(#d4af37_1px,transparent_1px)] [background-size:16px_16px]" />
+            <div className="max-w-7xl mx-auto w-full relative z-10">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6 border-b border-amber-500/30 pb-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                    <span className="text-[10px] font-mono font-black uppercase tracking-widest text-amber-300 bg-amber-950/80 border border-amber-400/40 px-2 py-0.5 rounded-full">
+                      👑 COLLECTOR VAULT &bull; MUSEUM GRADE ARCHIVES
+                    </span>
+                  </div>
+                  <h2 className="font-serif font-black text-2xl sm:text-3xl text-white tracking-wide flex items-center gap-2">
+                    <span>Vintage Grails &amp; Rare Archives</span>
+                    <span className="text-amber-400 text-lg">✨</span>
+                  </h2>
+                  <p className="text-xs sm:text-sm text-slate-300 font-medium mt-1">
+                    Rare single-stitch 80s/90s icons, authenticated Carhartt workwear, and museum-grade collector grails.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => scrollContainer(grailsScrollRef, 'left')}
+                    className="w-10 h-10 rounded-full bg-slate-900 hover:bg-amber-400 hover:text-slate-950 border border-amber-500/40 text-white shadow-md flex items-center justify-center transition-all cursor-pointer"
+                    aria-label="Previous Vintage Grails"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => scrollContainer(grailsScrollRef, 'right')}
+                    className="w-10 h-10 rounded-full bg-slate-900 hover:bg-amber-400 hover:text-slate-950 border border-amber-500/40 text-white shadow-md flex items-center justify-center transition-all cursor-pointer"
+                    aria-label="Next Vintage Grails"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigateToShop('ALL', 'Grails')}
+                    className="ml-2 text-xs font-black uppercase tracking-wider text-amber-400 hover:text-amber-300 underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>Explore Grails</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Horizontal Slider Track */}
+              <div
+                ref={grailsScrollRef}
+                className="flex items-stretch gap-6 overflow-x-auto no-scrollbar scroll-smooth pb-4 pt-2 px-1 snap-x snap-mandatory"
+              >
+                {vintageGrails.map(piece => (
+                  <div
+                    key={piece.id || piece.barcode}
+                    className="shrink-0 w-[280px] sm:w-[320px] snap-start"
+                  >
+                    <ProductCard
+                      piece={piece}
+                      isVanishing={vanishingBarcodes.includes(piece.barcode)}
+                      isInCart={cart.some(c => c.barcode === piece.barcode)}
+                      onAddToCart={handleAddToCart}
+                      onInspectTag={p => {
+                        luxuryAudio.playMechanicalClick();
+                        setInspectingPiece(p);
+                        pixelTracking.trackViewContent(p);
+                      }}
+                      onInspectGarment={p => {
+                        luxuryAudio.playMechanicalClick();
+                        setVisualInspectorPiece(p);
+                        pixelTracking.trackViewContent(p);
+                      }}
+                      onOpenFitGuide={silhouetteId => {
+                        luxuryAudio.playMechanicalClick();
+                        setFitGuideSilhouetteId(silhouetteId);
+                        setFitGuideOpen(true);
+                      }}
+                      onInstantBuy={p => {
+                        luxuryAudio.playMechanicalClick();
+                        setCheckoutPieces([p]);
+                        setCheckoutModalOpen(true);
+                        pixelTracking.trackInitiateCheckout([p], p.retailPriceAed || p.estimatedPrice || 295);
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          {/* 10. HORIZONTAL CAROUSEL 3: SHOP BY CATEGORY */}
+          <section className="py-12 px-4 sm:px-8 max-w-7xl mx-auto w-full">
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6 border-b-2 border-amber-300/80 pb-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Tag className="w-3.5 h-3.5 text-amber-700" />
+                  <span className="text-[10px] font-mono font-black uppercase tracking-widest text-amber-900 bg-amber-200/80 border border-amber-400 px-2 py-0.5 rounded-full">
+                    🏷️ DYNAMIC GLOBAL SETUP TAXONOMY
+                  </span>
+                </div>
+                <h2 className="font-serif font-black text-2xl sm:text-3xl text-slate-950 tracking-wide">
+                  Shop by Category
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-600 font-medium mt-1">
+                  Browse precision categories dynamically configured in ERP Global Setup. Click any card to enter the full shop.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 self-end sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => scrollContainer(categoriesScrollRef, 'left')}
+                  className="w-10 h-10 rounded-full bg-white hover:bg-amber-100 border border-amber-300 shadow-xs flex items-center justify-center text-slate-800 hover:text-slate-950 transition-all cursor-pointer"
+                  aria-label="Previous Categories"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => scrollContainer(categoriesScrollRef, 'right')}
+                  className="w-10 h-10 rounded-full bg-white hover:bg-amber-100 border border-amber-300 shadow-xs flex items-center justify-center text-slate-800 hover:text-slate-950 transition-all cursor-pointer"
+                  aria-label="Next Categories"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigateToShop('ALL')}
+                  className="ml-2 text-xs font-black uppercase tracking-wider text-amber-900 hover:text-amber-700 underline flex items-center gap-1 cursor-pointer"
+                >
+                  <span>All Categories</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Horizontal Categories Cards Track */}
+            <div
+              ref={categoriesScrollRef}
+              className="flex items-stretch gap-4 overflow-x-auto no-scrollbar scroll-smooth pb-4 pt-2 px-1 snap-x snap-mandatory"
+            >
+              {dynamicCategories.map(cat => (
+                <button
+                  key={cat.id || cat.slug}
+                  type="button"
+                  onClick={() => navigateToShop(cat.slug || cat.name)}
+                  className="shrink-0 w-52 sm:w-60 snap-start p-5 rounded-2xl bg-gradient-to-br from-white via-[#FDF9EE] to-[#F5ECCE] border-2 border-amber-300 hover:border-amber-500 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 text-left flex flex-col justify-between group cursor-pointer"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-200 to-amber-400 border border-amber-400/80 flex items-center justify-center text-2xl shadow-xs group-hover:scale-110 transition-transform">
+                      {getCategoryIcon(cat.name || cat.slug)}
+                    </div>
+                    <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-950 border border-amber-300 group-hover:bg-amber-400 group-hover:text-slate-950 transition-colors">
+                      1-of-1 Vault
+                    </span>
+                  </div>
+                  <div>
+                    <h4 className="font-serif font-black text-slate-950 text-base group-hover:text-amber-800 transition-colors">
+                      {cat.name}
+                    </h4>
+                    <p className="text-[11px] text-slate-600 font-medium mt-1 flex items-center gap-1 group-hover:text-slate-900">
+                      <span>Explore Collection</span>
+                      <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
+                    </p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {/* 11. COMPLETE 1-OF-1 VAULT ARCHIVE CTA BANNER */}
+          <section className="bg-gradient-to-r from-amber-700 via-amber-800 to-amber-950 text-white py-14 px-6 shadow-2xl relative overflow-hidden border-y-2 border-amber-400">
+            <div className="absolute inset-0 opacity-15 pointer-events-none bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px]" />
+            <div className="max-w-4xl mx-auto text-center relative z-10 space-y-4">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 border border-white/40 text-amber-200 text-[11px] font-black uppercase tracking-widest backdrop-blur-xs">
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                Complete 1-of-1 Vault Catalog
+              </span>
+              <h3 className="text-2xl sm:text-4xl font-black font-serif text-white leading-tight">
+                Looking for Something Specific? Explore Our Full Shop Catalog
+              </h3>
+              <p className="text-xs sm:text-sm text-amber-100 max-w-2xl mx-auto leading-relaxed">
+                Filter by garment size (XS to XXL), price bracket, archive segment, and brand with clean server-side pagination.
+              </p>
+              <div className="pt-3">
+                <button
+                  type="button"
+                  onClick={() => navigateToShop('ALL')}
+                  className="px-8 py-4 bg-white hover:bg-amber-100 text-slate-950 font-black text-xs uppercase tracking-widest rounded-full shadow-2xl transition-all transform hover:-translate-y-1 flex items-center gap-2.5 mx-auto cursor-pointer"
+                >
+                  <ShoppingBag className="w-4 h-4 text-amber-900" />
+                  <span>Open Dedicated Shop Page ({pieces.length} Pieces)</span>
+                  <ArrowRight className="w-4 h-4 text-amber-900" />
+                </button>
+              </div>
+            </div>
+          </section>
+        </>
+      )}
 
       {/* 9. SIGNATURE BRAND STORY & OFFSET GOLD BOXES (FROM LIVE WEBSITE) */}
       <section className="bg-gradient-to-b from-[#FAF4E6] via-[#FDF9EE] to-[#F5ECCE] py-16 border-t-2 border-amber-300/80">

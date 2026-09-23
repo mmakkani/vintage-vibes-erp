@@ -192,10 +192,12 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   const [categoryForm, setCategoryForm] = useState<{
     code: string;
     name: string;
+    slug: string;
     description: string;
     qualityTier: 'CREAM' | 'GRADE_A' | 'NON_BRAND' | 'GRADE_B' | 'MIXED';
     sortOrder: number;
-  }>({ code: '', name: '', description: '', qualityTier: 'CREAM', sortOrder: 1 });
+    isActive: boolean;
+  }>({ code: '', name: '', slug: '', description: '', qualityTier: 'CREAM', sortOrder: 1, isActive: true });
 
   // Size Master Modal State
   const [showSizeModal, setShowSizeModal] = useState(false);
@@ -837,9 +839,11 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     setCategoryForm({
       code: `CAT-${String(nextIdx).padStart(3, '0')}`,
       name: '',
+      slug: '',
       description: '',
       qualityTier: 'CREAM',
-      sortOrder: nextIdx
+      sortOrder: nextIdx,
+      isActive: true
     });
     setShowCategoryModal(true);
   };
@@ -849,9 +853,11 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     setCategoryForm({
       code: cat.code,
       name: cat.name,
+      slug: cat.slug || cat.code || '',
       description: cat.description || '',
       qualityTier: cat.qualityTier || 'CREAM',
-      sortOrder: cat.sortOrder || 1
+      sortOrder: cat.sortOrder || 1,
+      isActive: cat.isActive !== false && cat.is_active !== false
     });
     setShowCategoryModal(true);
   };
@@ -862,12 +868,23 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       showMsg('Please provide a Category Name', 'error');
       return;
     }
+    const cleanName = categoryForm.name.trim();
+    const cleanSlug = (categoryForm.slug || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `cat-${Date.now()}`;
+    const payload = {
+      ...categoryForm,
+      name: cleanName,
+      slug: cleanSlug,
+      status: (categoryForm.isActive ? 'POSTED' : 'UNPOSTED') as any,
+      isActive: categoryForm.isActive,
+      is_active: categoryForm.isActive
+    };
+
     try {
       if (editingCategory) {
-        await SetupService.updateCategory(editingCategory.id, categoryForm);
+        await SetupService.updateCategory(editingCategory.id, payload);
         showMsg('Category updated successfully!');
       } else {
-        await SetupService.addCategory(categoryForm);
+        await SetupService.addCategory(payload);
         showMsg('Category created successfully!');
       }
       setShowCategoryModal(false);
@@ -2329,6 +2346,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                 <tr>
                   <th className="px-3 py-2.5">Code</th>
                   <th className="px-3 py-2.5">Category Name</th>
+                  <th className="px-3 py-2.5">Storefront Slug</th>
                   <th className="px-3 py-2.5">Quality / Grading Tier</th>
                   <th className="px-3 py-2.5">Description</th>
                   <th className="px-3 py-2.5 text-center">Sort Order</th>
@@ -2339,7 +2357,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               <tbody className="divide-y divide-stone-100">
                 {categories
                   .filter(c => {
-                    const matchesSearch = !categorySearch || c.name.toLowerCase().includes(categorySearch.toLowerCase()) || c.code.toLowerCase().includes(categorySearch.toLowerCase());
+                    const matchesSearch = !categorySearch || c.name.toLowerCase().includes(categorySearch.toLowerCase()) || c.code.toLowerCase().includes(categorySearch.toLowerCase()) || (c.slug && c.slug.toLowerCase().includes(categorySearch.toLowerCase()));
                     if (!matchesSearch) return false;
                     if (categoryQualityFilter === 'ALL') return true;
                     if (categoryQualityFilter === 'CREAM') return c.qualityTier === 'CREAM' || c.name.toLowerCase().includes('cream');
@@ -2349,14 +2367,14 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                     return true;
                   }).length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-10 text-slate-400 text-xs">
+                    <td colSpan={8} className="text-center py-10 text-slate-400 text-xs">
                       No categories found matching your search or quality filter. Click "Add Category" to create one.
                     </td>
                   </tr>
                 ) : (
                   categories
                     .filter(c => {
-                      const matchesSearch = !categorySearch || c.name.toLowerCase().includes(categorySearch.toLowerCase()) || c.code.toLowerCase().includes(categorySearch.toLowerCase());
+                      const matchesSearch = !categorySearch || c.name.toLowerCase().includes(categorySearch.toLowerCase()) || c.code.toLowerCase().includes(categorySearch.toLowerCase()) || (c.slug && c.slug.toLowerCase().includes(categorySearch.toLowerCase()));
                       if (!matchesSearch) return false;
                       if (categoryQualityFilter === 'ALL') return true;
                       if (categoryQualityFilter === 'CREAM') return c.qualityTier === 'CREAM' || c.name.toLowerCase().includes('cream');
@@ -2366,7 +2384,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                       return true;
                     })
                     .map(cat => {
-                      const isPosted = cat.status !== 'UNPOSTED';
+                      const isPosted = cat.status !== 'UNPOSTED' && cat.isActive !== false && cat.is_active !== false;
                       const isCream = cat.qualityTier === 'CREAM' || cat.name.toLowerCase().includes('cream');
                       const isNonBrand = cat.qualityTier === 'NON_BRAND' || cat.name.toLowerCase().includes('non-brand');
                       const isGradeA = cat.qualityTier === 'GRADE_A' || cat.name.toLowerCase().includes('branded');
@@ -2376,6 +2394,11 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                         <tr key={cat.id} className="hover:bg-amber-50/40 transition-colors">
                           <td className="px-3 py-2 font-mono font-bold text-amber-900">{cat.code}</td>
                           <td className="px-3 py-2 font-semibold text-slate-900">{cat.name}</td>
+                          <td className="px-3 py-2 font-mono text-[11px] text-amber-800">
+                            <span className="bg-amber-100/60 px-1.5 py-0.5 rounded border border-amber-200">
+                              {cat.slug || cat.code || '—'}
+                            </span>
+                          </td>
                           <td className="px-3 py-2">
                             {isCream && (
                               <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 inline-flex items-center gap-1">
@@ -3624,7 +3647,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-1">
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Code *
+                    Code / ID *
                   </label>
                   <input
                     type="text"
@@ -3642,12 +3665,35 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   <input
                     type="text"
                     value={categoryForm.name}
-                    onChange={e => setCategoryForm({ ...categoryForm, name: e.target.value })}
-                    placeholder="e.g. Denim Jackets (Cream Grade)"
+                    onChange={e => {
+                      const name = e.target.value;
+                      const autoSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+                      setCategoryForm({
+                        ...categoryForm,
+                        name,
+                        slug: (!editingCategory || !categoryForm.slug) ? autoSlug : categoryForm.slug
+                      });
+                    }}
+                    placeholder="e.g. Vintage Denim & Jeans"
                     required
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  URL Slug (E-Commerce / Sorting Key) *
+                </label>
+                <input
+                  type="text"
+                  value={categoryForm.slug}
+                  onChange={e => setCategoryForm({ ...categoryForm, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-_]+/g, '-') })}
+                  placeholder="e.g. vintage-denim-jeans"
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-amber-900 bg-amber-50/40 focus:ring-2 focus:ring-amber-500"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">Used for filtering products on the storefront and sorting terminals.</p>
               </div>
 
               <div>
@@ -3680,17 +3726,32 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                 />
               </div>
 
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                  Sort Display Priority
-                </label>
-                <input
-                  type="number"
-                  value={categoryForm.sortOrder}
-                  onChange={e => setCategoryForm({ ...categoryForm, sortOrder: parseInt(e.target.value) || 1 })}
-                  min={1}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
-                />
+              <div className="grid grid-cols-2 gap-3 items-center">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Sort Display Priority
+                  </label>
+                  <input
+                    type="number"
+                    value={categoryForm.sortOrder}
+                    onChange={e => setCategoryForm({ ...categoryForm, sortOrder: parseInt(e.target.value) || 1 })}
+                    min={1}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <div className="pt-4">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={categoryForm.isActive}
+                      onChange={e => setCategoryForm({ ...categoryForm, isActive: e.target.checked })}
+                      className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500"
+                    />
+                    <span className="text-xs font-bold text-slate-800">
+                      Active (Visible in Storefront & Terminal)
+                    </span>
+                  </label>
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">

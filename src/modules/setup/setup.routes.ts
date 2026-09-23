@@ -745,6 +745,85 @@ setupRouter.post(['/shops/:id/unpost', '/shop-master/:id/unpost'], (req, res) =>
   return res.json(updated);
 });
 
+// Dynamic Product Categories (public.product_categories)
+setupRouter.get('/product-categories', async (_req, res) => {
+  try {
+    const list = await withDb(async (client) => {
+      const { rows } = await client.query('SELECT * FROM public.product_categories ORDER BY created_at ASC');
+      return rows;
+    });
+    return res.json(list);
+  } catch (err: any) {
+    try {
+      const list = await SetupService.getProductCategories();
+      return res.json(list);
+    } catch (_) {
+      return res.json([]);
+    }
+  }
+});
+
+setupRouter.post('/product-categories', async (req, res) => {
+  try {
+    const { name, slug, is_active } = req.body;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Category name is required' });
+    }
+    const cleanName = name.trim();
+    const cleanSlug = (slug || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `cat-${Date.now()}`;
+    const active = is_active !== false;
+
+    const row = await withDb(async (client) => {
+      const { rows } = await client.query(
+        'INSERT INTO public.product_categories (name, slug, is_active, created_at) VALUES ($1, $2, $3, NOW()) RETURNING *',
+        [cleanName, cleanSlug, active]
+      );
+      return rows[0];
+    });
+    return res.json(row);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to create product category' });
+  }
+});
+
+setupRouter.put('/product-categories/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, slug, is_active } = req.body;
+    const cleanName = name ? name.trim() : null;
+    const cleanSlug = slug ? slug.trim() : null;
+    const active = is_active !== undefined ? is_active : null;
+
+    const row = await withDb(async (client) => {
+      const { rows } = await client.query(
+        `UPDATE public.product_categories 
+         SET name = COALESCE($1, name), 
+             slug = COALESCE($2, slug), 
+             is_active = COALESCE($3, is_active) 
+         WHERE id = $4 
+         RETURNING *`,
+        [cleanName, cleanSlug, active, id]
+      );
+      return rows[0];
+    });
+    return res.json(row || { success: true, id });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to update product category' });
+  }
+});
+
+setupRouter.delete('/product-categories/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await withDb(async (client) => {
+      await client.query('DELETE FROM public.product_categories WHERE id = $1', [id]);
+    });
+    return res.json({ success: true, id });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to delete product category' });
+  }
+});
+
 // Garment Categories
 setupRouter.get(['/categories', '/category-master'], async (req, res) => {
   try {

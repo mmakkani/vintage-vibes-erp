@@ -191,12 +191,26 @@ export interface CategoryMaster {
   id: string;
   code: string;
   name: string;
+  slug?: string;
   description?: string;
   qualityTier?: 'CREAM' | 'GRADE_A' | 'NON_BRAND' | 'GRADE_B' | 'MIXED';
   defaultTargetUom?: WeightUOM;
   sortOrder?: number;
   status?: 'POSTED' | 'UNPOSTED' | 'DRAFT';
   isActive?: boolean;
+  is_active?: boolean;
+  createdAt?: string;
+  created_at?: string;
+}
+
+export interface ProductCategory {
+  id: string;
+  name: string;
+  slug: string;
+  is_active: boolean;
+  isActive?: boolean;
+  created_at?: string;
+  createdAt?: string;
 }
 
 export interface SizeMaster {

@@ -109,15 +109,33 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const [labelsList, setLabelsList] = useState<LabelGrade[]>(labels);
 
   useEffect(() => {
+    const loadDynamicCategories = async () => {
+      try {
+        const r = await fetch('/api/setup/product-categories');
+        if (r.ok) {
+          const data = await r.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setCategoriesList(data);
+            return;
+          }
+        }
+      } catch (_) {}
+
+      try {
+        const r2 = await fetch('/api/setup/categories');
+        if (r2.ok) {
+          const data2 = await r2.json();
+          if (Array.isArray(data2) && data2.length > 0) {
+            setCategoriesList(data2);
+          }
+        }
+      } catch (_) {}
+    };
+
     if (categories && categories.length > 0) {
       setCategoriesList(categories);
     } else {
-      fetch('/api/setup/categories')
-        .then(r => r.json())
-        .then(data => {
-          if (Array.isArray(data) && data.length > 0) setCategoriesList(data);
-        })
-        .catch(() => {});
+      loadDynamicCategories();
     }
 
     if (sizes && sizes.length > 0) {
@@ -141,12 +159,23 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         })
         .catch(() => {});
     }
+
+    // Realtime category sync on database update
+    const handleCategoryRealtime = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.record) return;
+      if (detail.table === 'product_categories' || detail.table === 'categories') {
+        loadDynamicCategories();
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleCategoryRealtime);
+    return () => window.removeEventListener('vv:realtime-record', handleCategoryRealtime);
   }, [categories, sizes, labels]);
 
   const availableCategories = useMemo(() => {
     if (Array.isArray(categoriesList) && categoriesList.length > 0) {
       const active = categoriesList
-        .filter(c => typeof c === 'object' && c !== null ? c.status !== 'UNPOSTED' : true)
+        .filter(c => typeof c === 'object' && c !== null ? (c.is_active !== false && (c as any).isActive !== false && c.status !== 'UNPOSTED') : true)
         .map(c => typeof c === 'object' && c !== null ? (c.name || c.code || '') : String(c || ''))
         .filter(Boolean);
       if (active.length > 0) return active;

@@ -9792,6 +9792,51 @@ RULES FOR YOUR RESPONSE:
         }
       }
 
+      if (pathname.includes('/setup/product-categories')) {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+        try {
+          if (method === 'GET') {
+            const { rows } = await client.query('SELECT * FROM public.product_categories ORDER BY created_at ASC;');
+            return res.status(200).json(rows);
+          } else if (method === 'POST') {
+            const { name, slug, is_active } = body || {};
+            if (!name || typeof name !== 'string' || !name.trim()) {
+              return res.status(400).json({ error: 'Name is required' });
+            }
+            const cleanSlug = (slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `cat-${Date.now()}`;
+            const { rows } = await client.query(
+              'INSERT INTO public.product_categories (name, slug, is_active, created_at) VALUES ($1, $2, $3, NOW()) RETURNING *;',
+              [name.trim(), cleanSlug, is_active !== false]
+            );
+            return res.status(200).json(rows[0]);
+          } else if (method === 'PUT') {
+            const segments = pathname.split('/').filter(Boolean);
+            const catId = segments[segments.length - 1];
+            const { name, slug, is_active } = body || {};
+            const { rows } = await client.query(
+              `UPDATE public.product_categories 
+               SET name = COALESCE($1, name), 
+                   slug = COALESCE($2, slug), 
+                   is_active = COALESCE($3, is_active) 
+               WHERE id = $4 
+               RETURNING *;`,
+              [name ? name.trim() : null, slug ? slug.trim() : null, is_active !== undefined ? is_active : null, catId]
+            );
+            return res.status(200).json(rows[0] || { success: true, id: catId });
+          } else if (method === 'DELETE') {
+            const segments = pathname.split('/').filter(Boolean);
+            const catId = segments[segments.length - 1];
+            await client.query('DELETE FROM public.product_categories WHERE id = $1;', [catId]);
+            return res.status(200).json({ success: true, id: catId });
+          }
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
     return res.status(200).json({
       success: true,
       message: 'Vintage Vibe ERP Serverless Gateway',
