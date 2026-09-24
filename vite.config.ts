@@ -131,7 +131,7 @@ export default defineConfig(() => {
           manualChunks(id) {
             if (id.includes('node_modules')) {
               if (id.includes('lucide-react')) return 'vendor-lucide';
-              if (id.includes('@supabase') || id.includes('pg')) return 'vendor-db';
+              if (id.includes('@supabase')) return 'vendor-db';
               if (id.includes('motion')) return 'vendor-motion';
               if (id.includes('qrcode') || id.includes('jsbarcode') || id.includes('jszip')) return 'vendor-barcode';
               if (id.includes('@google/genai')) return 'vendor-ai';

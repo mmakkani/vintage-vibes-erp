@@ -797,25 +797,18 @@ export class PurchaseService {
 
     let invoiceNo = explicitInvoiceNo || cleanInvId;
 
-    if (typeof window !== 'undefined') {
-      // Browser environment: Exactly ONE network call to the backend atomic transaction API
-      const resp = await fetch(`/api/purchase/invoices/${encodeURIComponent(cleanInvId)}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: cleanInvId, invoiceNo: explicitInvoiceNo })
-      });
+    // Call backend atomic transaction API
+    const resp = await fetch(`/api/purchase/invoices/${encodeURIComponent(cleanInvId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: cleanInvId, invoiceNo: explicitInvoiceNo })
+    });
 
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || data.success === false) {
-        throw new Error(data?.error || data?.message || 'Failed to delete invoice');
-      }
-      if (data.invoiceNo) invoiceNo = data.invoiceNo;
-    } else {
-      // Backend / Node environment: Call atomic cascade backend engine directly
-      const { atomicDeletePurchaseInvoice } = await import('../modules/purchase/purchaseCascadeBackend.ts');
-      const res = await atomicDeletePurchaseInvoice(cleanInvId, explicitInvoiceNo);
-      if (res.invoiceNo) invoiceNo = res.invoiceNo;
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || data.success === false) {
+      throw new Error(data?.error || data?.message || 'Failed to delete invoice');
     }
+    if (data.invoiceNo) invoiceNo = data.invoiceNo;
 
     // Purge local caches
     try {
@@ -846,25 +839,18 @@ export class PurchaseService {
 
     let invoiceNo = cleanInvId;
 
-    if (typeof window !== 'undefined') {
-      // Browser environment: Exactly ONE network call to the backend atomic transaction API
-      const resp = await fetch(`/api/purchase/invoices/${encodeURIComponent(cleanInvId)}/unpost`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: cleanInvId })
-      });
+    // Call backend atomic transaction API
+    const resp = await fetch(`/api/purchase/invoices/${encodeURIComponent(cleanInvId)}/unpost`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: cleanInvId })
+    });
 
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || data.success === false) {
-        throw new Error(data?.error || data?.message || 'Failed to unpost invoice');
-      }
-      if (data.invoiceNo) invoiceNo = data.invoiceNo;
-    } else {
-      // Backend / Node environment: Call atomic cascade backend engine directly
-      const { atomicUnpostPurchaseInvoice } = await import('../modules/purchase/purchaseCascadeBackend.ts');
-      const res = await atomicUnpostPurchaseInvoice(cleanInvId);
-      if (res.invoiceNo) invoiceNo = res.invoiceNo;
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || data.success === false) {
+      throw new Error(data?.error || data?.message || 'Failed to unpost invoice');
     }
+    if (data.invoiceNo) invoiceNo = data.invoiceNo;
 
     PurchaseService.invalidateInvoicesCache();
     if (typeof window !== 'undefined') {
