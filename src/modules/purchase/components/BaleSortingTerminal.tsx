@@ -676,17 +676,25 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         remainingGrams: 0,
         piecesCount: 0,
         progressPercent: 0,
-        isCompleted: false
+        isCompleted: false,
+        sortedKg: 0,
+        totalKg: 0
       };
     }
-    const totalKg = Number(activeBale.totalBaleWeight) || 0;
+    const totalKg = Number(activeBale.totalBaleWeight ?? (activeBale as any).weight_kg ?? (activeBale as any).total_weight ?? 0) || 0;
     const totalGrams = Math.round(totalKg * 1000);
-    const sortedGrams = pieces.reduce((sum, p) => sum + (Number(p.weight_grams ?? p.weightGrams) || 0), 0);
+    const sortedGrams = pieces.reduce((sum, p) => {
+      const g = Number(p.weight_grams ?? p.weightGrams ?? 0);
+      if (g > 0) return sum + g;
+      const kg = Number(p.weightKg ?? p.weight_kg ?? 0);
+      if (kg > 0) return sum + Math.round(kg * 1000);
+      return sum;
+    }, 0);
     const remainingGrams = Math.max(0, totalGrams - sortedGrams);
-    const piecesCount = pieces.length;
-    const progressPercent = totalGrams > 0 ? Math.min(100, Math.round((sortedGrams / totalGrams) * 100)) : 0;
-    const isCompleted = isTerminalFinalized || activeBale.status === 'COMPLETED' || activeBale.status === 'POSTED';
-    const sortedKg = Number((sortedGrams / 1000).toFixed(2));
+    const piecesCount = pieces.length > 0 ? pieces.length : Number(activeBale.pieceCount ?? (activeBale as any).total_pieces ?? 0);
+    const progressPercent = totalGrams > 0 ? Math.min(100, Math.max(0, Math.round((sortedGrams / totalGrams) * 100))) : 0;
+    const isCompleted = isTerminalFinalized || activeBale.status === 'COMPLETED' || activeBale.status === 'POSTED' || activeBale.sortingStatus === 'FULLY_SORTED';
+    const sortedKg = Number((sortedGrams / 1000).toFixed(3));
 
     return {
       totalGrams,
@@ -1510,11 +1518,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
       const { data: existingSession } = await supabase
         .from('bale_sessions')
-        .select('id')
+        .select('bale_id')
         .eq('bale_id', activeBale.id)
         .maybeSingle();
 
-      if (existingSession?.id) {
+      if (existingSession?.bale_id) {
         await supabase
           .from('bale_sessions')
           .update({
@@ -1525,7 +1533,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             status: 'COMPLETED',
             updated_at: sessionPayload.updated_at
           })
-          .eq('id', existingSession.id);
+          .eq('bale_id', activeBale.id);
       } else {
         await supabase
           .from('bale_sessions')
@@ -1536,6 +1544,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       await PurchaseService.finalizeBaleSession(activeBale.id);
 
       setIsTerminalFinalized(true);
+      activeBale.status = 'COMPLETED' as any;
+      activeBale.sortingStatus = 'FULLY_SORTED' as any;
       setIsSubmitting(false);
       if (onPostBale) {
         onPostBale(activeBale.id);
@@ -1916,7 +1926,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   {hudStats.totalGrams.toLocaleString()}g
                 </span>
                 <span className="text-[10px] sm:text-[11px] text-slate-400">
-                  ({(hudStats.sortedGrams / 1000).toFixed(2)}kg / {(hudStats.totalGrams / 1000).toFixed(2)}kg)
+                  ({hudStats.sortedKg.toFixed(2)}kg / {hudStats.totalKg.toFixed(2)}kg)
                 </span>
               </div>
               <div className="flex items-center gap-2 sm:gap-3">
@@ -1944,7 +1954,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                     ? 'bg-gradient-to-r from-indigo-500 via-emerald-500 to-teal-400' 
                     : 'bg-gradient-to-r from-amber-500 via-indigo-500 to-emerald-500'
                 }`}
-                style={{ width: `${Math.min(100, hudStats.progressPercent)}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, hudStats.progressPercent))}%` }}
               />
             </div>
           </div>

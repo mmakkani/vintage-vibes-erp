@@ -43,10 +43,15 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
   onRefresh
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'UNOPENED' | 'IN_PROGRESS' | 'FULLY_SORTED'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'UNOPENED' | 'IN_PROGRESS' | 'COMPLETED'>('ALL');
 
   // Server-Side Pagination State
   const [balesList, setBalesList] = useState<InwardGatePass[]>(bales);
+
+  useEffect(() => {
+    setBalesList(bales);
+    setTotalBales(bales.length);
+  }, [bales]);
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
   const [totalBales, setTotalBales] = useState<number>(bales.length);
@@ -162,12 +167,12 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
 
       if (!matchesSearch) return false;
 
-      const depletion = PurchaseEngine.calculateBaleDepletion(bale.totalBaleWeight, bale.pieces || []);
-      const currentStatus = depletion.sortingStatus;
+      const totalPieces = Number(bale.pieceCount ?? (bale as any).total_pieces ?? (bale as any).pieces_count ?? bale.pieces?.length ?? 0);
+      const isCompleted = bale.status === 'COMPLETED' || bale.status === 'POSTED' || bale.sortingStatus === 'FULLY_SORTED' || (bale.sortingStatus as any) === 'COMPLETED';
 
-      if (statusFilter === 'UNOPENED') return currentStatus === 'UNOPENED';
-      if (statusFilter === 'IN_PROGRESS') return currentStatus === 'PARTIALLY_SORTED';
-      if (statusFilter === 'FULLY_SORTED') return currentStatus === 'FULLY_SORTED';
+      if (statusFilter === 'COMPLETED') return isCompleted;
+      if (statusFilter === 'IN_PROGRESS') return !isCompleted && totalPieces > 0;
+      if (statusFilter === 'UNOPENED') return !isCompleted && totalPieces === 0;
 
       return true;
     });
@@ -476,7 +481,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto overflow-x-auto w-full sm:w-auto">
-          {(['ALL', 'UNOPENED', 'IN_PROGRESS', 'FULLY_SORTED'] as const).map(tab => (
+          {(['ALL', 'UNOPENED', 'IN_PROGRESS', 'COMPLETED'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => {
@@ -484,7 +489,6 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                 setPage(1);
               }}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-
                 statusFilter === tab
                   ? 'bg-slate-900 text-white'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -496,7 +500,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                 ? 'Unopened (0%)'
                 : tab === 'IN_PROGRESS'
                 ? 'In Progress'
-                : 'Fully Sorted (100%)'}
+                : 'Completed (100%)'}
             </button>
           ))}
         </div>
@@ -541,6 +545,10 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                   const remainingKg = Number(depletion.remainingWeightKg || 0);
                   const percentUnsorted = baleTotalWeight > 0 ? Math.round((remainingKg / baleTotalWeight) * 100) : 0;
 
+                  const isCompleted = bale.status === 'COMPLETED' || bale.status === 'POSTED' || bale.sortingStatus === 'FULLY_SORTED' || (bale.sortingStatus as any) === 'COMPLETED';
+                  const totalPieces = Number(bale.pieceCount ?? (bale as any).total_pieces ?? (bale as any).pieces_count ?? bale.pieces?.length ?? 0);
+                  const isInProgress = !isCompleted && totalPieces > 0;
+
                   return (
                     <tr
                       key={bale.id}
@@ -582,7 +590,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                         AED {Number(costPerGram || 0).toFixed(4)}/g
                       </td>
                       <td className="px-4 py-3 font-mono">
-                        <strong className="text-emerald-700 font-semibold">{depletion.pieceCount || 0} pcs</strong>
+                        <strong className="text-emerald-700 font-semibold">{totalPieces} pcs</strong>
                         <div className="text-[10px] text-slate-500 font-normal">
                           {brokenDownKg.toFixed(3)} KG sorted
                         </div>
@@ -597,29 +605,29 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                         <div className="flex items-center justify-between text-[10px] mb-1 font-semibold">
                           <span
                             className={
-                              depletion.sortingStatus === 'FULLY_SORTED'
-                                ? 'text-emerald-600'
-                                : (depletion.pieceCount || 0) > 0
-                                ? 'text-amber-600'
+                              isCompleted
+                                ? 'text-emerald-600 font-bold'
+                                : isInProgress
+                                ? 'text-amber-600 font-bold'
                                 : 'text-slate-400'
                             }
                           >
-                            {depletion.sortingStatus === 'FULLY_SORTED'
-                              ? 'Fully Sorted'
-                              : (depletion.pieceCount || 0) > 0
+                            {isCompleted
+                              ? 'Completed'
+                              : isInProgress
                               ? 'In Progress'
                               : 'Unopened'}
                           </span>
-                          <span className="font-mono text-slate-600">{depletion.percentCompleted || 0}%</span>
+                          <span className="font-mono text-slate-600">{isCompleted ? 100 : (depletion.percentCompleted || 0)}%</span>
                         </div>
                         <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
                           <div
                             className={`h-full rounded-full transition-all ${
-                              depletion.sortingStatus === 'FULLY_SORTED'
+                              isCompleted
                                 ? 'bg-emerald-500'
                                 : 'bg-indigo-600'
                             }`}
-                            style={{ width: `${Math.min(100, depletion.percentCompleted || 0)}%` }}
+                            style={{ width: `${isCompleted ? 100 : Math.min(100, depletion.percentCompleted || 0)}%` }}
                           />
                         </div>
                       </td>
@@ -637,7 +645,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                                 costPerGram: Number(costPerGram) || 0,
                                 purchaseInvoiceNo: bale.purchaseInvoiceNo,
                                 supplierName: bale.supplierName,
-                                status: depletion.sortingStatus === 'FULLY_SORTED' ? 'Fully Sorted' : (depletion.pieceCount > 0 ? 'In Progress' : 'Unopened / In Stock'),
+                                status: isCompleted ? 'Fully Sorted' : (isInProgress ? 'In Progress' : 'Unopened / In Stock'),
                                 timestamp: bale.date || new Date().toLocaleDateString()
                               })
                             }
@@ -653,7 +661,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                             <Scale className="w-3.5 h-3.5" />
                             Open Terminal
                           </button>
-                          {(depletion.pieceCount || 0) === 0 ? (
+                          {(!isCompleted && totalPieces === 0) ? (
                             <button
                               type="button"
                               disabled={deletingBaleId === String(bale.id)}
@@ -672,7 +680,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                               type="button"
                               disabled
                               className="p-1.5 text-slate-400 bg-slate-100 border border-slate-200 rounded cursor-not-allowed opacity-60"
-                              title={`Deletion Locked: Bale contains ${depletion.pieceCount || 0} sorted pieces (${(brokenDownKg || 0).toFixed(2)} KG). Delete all sorted pieces first.`}
+                              title={`Deletion Locked: Bale ${isCompleted ? 'is completed & locked' : `contains ${totalPieces} sorted pieces (${(brokenDownKg || 0).toFixed(2)} KG)`}.`}
                             >
                               <Lock className="w-3.5 h-3.5 text-slate-400" />
                             </button>

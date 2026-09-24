@@ -282,20 +282,20 @@ MANDATORY RULES:
  * Fallback: 2.x & 1.5 series ('gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash')
  */
 export const GEMINI_CASCADE_MODELS: string[] = [
-  'gemini-3.7-flash',
-  'gemini-3-flash',
-  'gemini-3.8-flash',
   'gemini-3.6-flash',
-  'gemini-3.6',
-  'gemini-2.0-flash',
-  'gemini-2.5-flash',
-  'gemini-1.5-flash',
-  'gemini-2.5-pro',
-  'gemini-1.5-pro'
+  'gemini-3.0-flash',
+  'gemini-2.5-flash'
+];
+
+export const GEMINI_VALUATION_CASCADE_MODELS: string[] = [
+  'gemini-3.6-flash',
+  'gemini-3.0-flash',
+  'gemini-2.5-flash'
 ];
 
 /**
  * Validates a Google Gemini API Key by pinging the model with automatic cascade fallback
+ * and exponential backoff retry for HTTP 503.
  */
 export async function validateGeminiApiKey(
   apiKey: string,
@@ -314,46 +314,68 @@ export async function validateGeminiApiKey(
   let lastError = '';
 
   for (const model of modelsToTry) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${cleanKey}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: 'Respond with OK' }] }]
-        })
-      });
+    let attempt503 = 0;
+    const max503Retries = 3;
 
-      if (res.ok) {
-        return { valid: true, model };
+    while (attempt503 <= max503Retries) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${cleanKey}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: 'Respond with OK' }] }]
+          })
+        });
+
+        // 503 Service Unavailable handling with exponential backoff (1s, 2s, 4s)
+        if (res.status === 503) {
+          if (attempt503 < max503Retries) {
+            const delayMs = Math.pow(2, attempt503) * 1000;
+            console.warn(`[Gemini Validation] Model '${model}' returned 503. Retrying in ${delayMs}ms (attempt ${attempt503 + 1}/${max503Retries})...`);
+            await new Promise(r => setTimeout(r, delayMs));
+            attempt503++;
+            continue;
+          } else {
+            console.warn(`[Gemini Validation] Model '${model}' 503 retries exhausted. Cascading...`);
+            lastError = `Model ${model} returned 503 after 3 retries`;
+            break;
+          }
+        }
+
+        if (res.ok) {
+          return { valid: true, model };
+        }
+
+        const data = await res.json().catch(() => ({}));
+        const msg = data?.error?.message || '';
+
+        if (msg.includes('API key not valid') || msg.includes('API_KEY_INVALID') || data?.error?.status === 'INVALID_ARGUMENT') {
+          return { valid: false, error: 'API Key is not valid. Please check your key from Google AI Studio (aistudio.google.com).' };
+        }
+
+        // If 404 (model identifier not found / route mismatch / deprecated), immediately catch and fallback
+        if (
+          res.status === 404 ||
+          msg.toLowerCase().includes('not found') ||
+          msg.toLowerCase().includes('is not supported') ||
+          msg.toLowerCase().includes('no longer available') ||
+          msg.toLowerCase().includes('deprecated') ||
+          data?.error?.status === 'NOT_FOUND'
+        ) {
+          console.warn(`[Gemini Validation] Model '${model}' returned 404 (${msg}). Cascading to next fallback model...`);
+          lastError = msg || `Model ${model} returned 404`;
+          break; // Immediate fallback on 404
+        }
+
+        if (msg) {
+          lastError = msg;
+        }
+        break;
+      } catch (e: any) {
+        lastError = e?.message || 'Network error';
+        break;
       }
-
-      const data = await res.json().catch(() => ({}));
-      const msg = data?.error?.message || '';
-
-      if (msg.includes('API key not valid') || msg.includes('API_KEY_INVALID') || data?.error?.status === 'INVALID_ARGUMENT') {
-        return { valid: false, error: 'API Key is not valid. Please check your key from Google AI Studio (aistudio.google.com).' };
-      }
-
-      // If 404 (model identifier not found / route mismatch / deprecated), immediately catch and fallback
-      if (
-        res.status === 404 ||
-        msg.toLowerCase().includes('not found') ||
-        msg.toLowerCase().includes('is not supported') ||
-        msg.toLowerCase().includes('no longer available') ||
-        msg.toLowerCase().includes('deprecated') ||
-        data?.error?.status === 'NOT_FOUND'
-      ) {
-        console.warn(`[Gemini Validation] Model '${model}' returned 404 (${msg}). Cascading to next fallback model...`);
-        lastError = msg || `Model ${model} returned 404`;
-        continue;
-      }
-
-      if (msg) {
-        lastError = msg;
-      }
-    } catch (e: any) {
-      lastError = e?.message || 'Network error';
     }
   }
 
@@ -362,6 +384,7 @@ export async function validateGeminiApiKey(
 
 /**
  * Executes direct Gemini Vision API call from browser with automatic cascade fallback
+ * and exponential backoff retry for HTTP 503.
  */
 async function callGeminiVisionApi(
   apiKey: string,
@@ -376,63 +399,84 @@ async function callGeminiVisionApi(
   let lastError: any = null;
 
   for (const model of modelsToTry) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: 'user',
-              parts: parts
+    let attempt503 = 0;
+    const max503Retries = 3;
+
+    while (attempt503 <= max503Retries) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: 'user',
+                parts: parts
+              }
+            ],
+            generationConfig: {
+              temperature: 0.1,
+              response_mime_type: 'application/json'
             }
-          ],
-          generationConfig: {
-            temperature: 0.1,
-            response_mime_type: 'application/json'
+          })
+        });
+
+        // 503 Service Unavailable handling with exponential backoff (1s, 2s, 4s)
+        if (response.status === 503) {
+          if (attempt503 < max503Retries) {
+            const delayMs = Math.pow(2, attempt503) * 1000;
+            console.warn(`[Gemini Vision] Model '${model}' returned 503. Retrying in ${delayMs}ms (attempt ${attempt503 + 1}/${max503Retries})...`);
+            await new Promise(r => setTimeout(r, delayMs));
+            attempt503++;
+            continue;
+          } else {
+            console.warn(`[Gemini Vision] Model '${model}' 503 retries exhausted. Cascading...`);
+            lastError = new Error(`Gemini ${model} 503: Service Unavailable after 3 retries`);
+            break;
           }
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errMsg = errorData?.error?.message || response.statusText;
-
-        // Catch 404 (model identifier not found / route mismatch / not supported) and cascade immediately to fallback
-        if (
-          response.status === 404 ||
-          errMsg.toLowerCase().includes('not found') ||
-          errMsg.toLowerCase().includes('is not supported') ||
-          errMsg.toLowerCase().includes('no longer available') ||
-          errMsg.toLowerCase().includes('deprecated') ||
-          errorData?.error?.status === 'NOT_FOUND'
-        ) {
-          console.warn(`[Gemini Vision] Model '${model}' returned 404 / NOT_FOUND (${errMsg}). Cascading to next fallback model...`);
-          lastError = new Error(`Gemini ${model} 404: ${errMsg}`);
-          continue;
         }
 
-        lastError = new Error(`Gemini ${model} error: ${errMsg}`);
-        continue;
-      }
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          const errMsg = errorData?.error?.message || response.statusText;
 
-      const resData = await response.json();
-      const textContent = resData?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!textContent) {
-        throw new Error(`No text generated by Gemini model ${model}.`);
-      }
+          // Catch 404 (model identifier not found / route mismatch / not supported) and cascade immediately to fallback
+          if (
+            response.status === 404 ||
+            errMsg.toLowerCase().includes('not found') ||
+            errMsg.toLowerCase().includes('is not supported') ||
+            errMsg.toLowerCase().includes('no longer available') ||
+            errMsg.toLowerCase().includes('deprecated') ||
+            errorData?.error?.status === 'NOT_FOUND'
+          ) {
+            console.warn(`[Gemini Vision] Model '${model}' returned 404 / NOT_FOUND (${errMsg}). Cascading immediately to next fallback model...`);
+            lastError = new Error(`Gemini ${model} 404: ${errMsg}`);
+            break; // Immediate fallback on 404
+          }
 
-      const cleanJson = textContent.replace(/```json/gi, '').replace(/```/g, '').trim();
-      return {
-        data: JSON.parse(cleanJson),
-        modelUsed: model
-      };
-    } catch (e: any) {
-      lastError = e;
-      console.warn(`[Gemini Vision] Attempt with '${model}' failed:`, e?.message || e);
+          lastError = new Error(`Gemini ${model} error: ${errMsg}`);
+          break;
+        }
+
+        const resData = await response.json();
+        const textContent = resData?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!textContent) {
+          throw new Error(`No text generated by Gemini model ${model}.`);
+        }
+
+        const cleanJson = textContent.replace(/```json/gi, '').replace(/```/g, '').trim();
+        return {
+          data: JSON.parse(cleanJson),
+          modelUsed: model
+        };
+      } catch (e: any) {
+        lastError = e;
+        console.warn(`[Gemini Vision] Attempt with '${model}' failed:`, e?.message || e);
+        break;
+      }
     }
   }
 

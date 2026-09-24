@@ -1149,7 +1149,15 @@ export class PurchaseService {
       query = query.or(`gate_pass_no.ilike.%${search}%,bale_code.ilike.%${search}%,supplier_name.ilike.%${search}%,bale_category.ilike.%${search}%,purchase_invoice_no.ilike.%${search}%`);
     }
     if (status && status !== 'ALL') {
-      query = query.eq('status', status);
+      if (status === 'COMPLETED' || status === 'FULLY_SORTED') {
+        query = query.in('status', ['COMPLETED', 'POSTED', 'FULLY_SORTED']);
+      } else if (status === 'IN_PROGRESS' || status === 'PARTIAL') {
+        query = query.in('status', ['IN_PROGRESS', 'PARTIAL', 'PARTIALLY_SORTED']);
+      } else if (status === 'UNOPENED') {
+        query = query.in('status', ['UNOPENED', 'RECEIVED', 'CLEARED']);
+      } else {
+        query = query.eq('status', status);
+      }
     }
 
     query = applyPagination(query, page, pageSize, {
@@ -1681,20 +1689,26 @@ export class PurchaseService {
       sessionPayload.total_pieces = totalPieces;
     }
 
+    // Explicitly delete unmapped fields to prevent schema cache / PGRST204 errors
+    delete sessionPayload.broken_down_weight;
+    delete sessionPayload.piece_count;
+    delete sessionPayload.pieces;
+    delete sessionPayload.id;
+
     try {
       const { data: existingSession } = await supabase
         .from('bale_sessions')
-        .select('id')
+        .select('bale_id')
         .eq('bale_id', cleanId)
         .maybeSingle();
 
-      if (existingSession?.id) {
+      if (existingSession?.bale_id) {
         const updateData = { ...sessionPayload };
         delete updateData.bale_id;
         await supabase
           .from('bale_sessions')
           .update(updateData)
-          .eq('id', existingSession.id);
+          .eq('bale_id', cleanId);
       } else {
         await supabase
           .from('bale_sessions')
@@ -2476,28 +2490,33 @@ export class PurchaseService {
       try {
         const { data: existingSession } = await supabase
           .from('bale_sessions')
-          .select('id')
+          .select('bale_id')
           .eq('bale_id', cleanId)
           .maybeSingle();
 
-        const sessionPayload = {
+        const sessionPayload: Record<string, any> = {
           bale_id: cleanId,
           total_grams: sessionStats.total_grams,
           sorted_grams: sessionStats.sorted_grams,
           remaining_grams: sessionStats.remaining_grams,
           total_pieces: sessionStats.total_pieces ?? sessionStats.piece_count ?? 0,
-          broken_down_weight: sessionStats.broken_down_weight,
           status: 'PARTIAL',
           updated_at: new Date().toISOString()
         };
 
-        if (existingSession?.id) {
+        // Explicitly delete unmapped fields to prevent schema cache / PGRST204 errors
+        delete sessionPayload.broken_down_weight;
+        delete sessionPayload.piece_count;
+        delete sessionPayload.pieces;
+        delete sessionPayload.id;
+
+        if (existingSession?.bale_id) {
           const updateData = { ...sessionPayload };
           delete updateData.bale_id;
           await supabase
             .from('bale_sessions')
             .update(updateData)
-            .eq('id', existingSession.id);
+            .eq('bale_id', cleanId);
         } else {
           await supabase
             .from('bale_sessions')

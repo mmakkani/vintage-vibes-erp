@@ -196,20 +196,14 @@ Return ONLY a pure JSON object matching this schema without markdown codeblocks:
  * Fallback: 2.x & 1.5 series ('gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash')
  */
 export const GEMINI_VALUATION_CASCADE_MODELS: string[] = [
-  'gemini-3.7-flash',
-  'gemini-3-flash',
-  'gemini-3.8-flash',
   'gemini-3.6-flash',
-  'gemini-3.6',
-  'gemini-2.0-flash',
-  'gemini-2.5-flash',
-  'gemini-1.5-flash',
-  'gemini-2.5-pro',
-  'gemini-1.5-pro'
+  'gemini-3.0-flash',
+  'gemini-2.5-flash'
 ];
 
 /**
- * Direct Gemini 3.x / 2.x Flash Vision browser execution with automatic cascade fallback
+ * Direct Gemini 2.5 / 2.0 Flash Vision browser execution with automatic cascade fallback
+ * and exponential backoff retry for HTTP 503 Service Unavailable.
  */
 async function callGeminiVisionAppraisal(apiKey: string, imageBase64: string, preferredModel?: string): Promise<VintageValuationResult> {
   const models = Array.from(new Set([
@@ -234,45 +228,64 @@ async function callGeminiVisionAppraisal(apiKey: string, imageBase64: string, pr
   let lastError: any = null;
 
   for (const model of models) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts }],
-          generationConfig: {
-            temperature: 0.15,
-            response_mime_type: 'application/json'
+    let attempt503 = 0;
+    const max503Retries = 3;
+
+    while (attempt503 <= max503Retries) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts }],
+            generationConfig: {
+              temperature: 0.15,
+              response_mime_type: 'application/json'
+            }
+          })
+        });
+
+        // Handle 503 Service Unavailable with exponential backoff (1s, 2s, 4s)
+        if (response.status === 503) {
+          if (attempt503 < max503Retries) {
+            const delayMs = Math.pow(2, attempt503) * 1000;
+            console.warn(`[Gemini Vintage Valuation] Model '${model}' returned 503 Service Unavailable. Retrying in ${delayMs}ms (attempt ${attempt503 + 1}/${max503Retries})...`);
+            await new Promise(res => setTimeout(res, delayMs));
+            attempt503++;
+            continue;
+          } else {
+            console.warn(`[Gemini Vintage Valuation] Model '${model}' 503 retries exhausted. Cascading to next fallback model...`);
+            lastError = new Error(`Gemini ${model} 503: Service Unavailable after 3 retries`);
+            break; // Break while loop to cascade to next model
           }
-        })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        const errMsg = errData?.error?.message || response.statusText;
-
-        // Catch 404 (model identifier not found / route mismatch) and cascade immediately to fallback
-        if (
-          response.status === 404 ||
-          errMsg.toLowerCase().includes('not found') ||
-          errMsg.toLowerCase().includes('is not supported') ||
-          errMsg.toLowerCase().includes('no longer available') ||
-          errMsg.toLowerCase().includes('deprecated') ||
-          errData?.error?.status === 'NOT_FOUND'
-        ) {
-          console.warn(`[Gemini Vintage Valuation] Model '${model}' returned 404 (${errMsg}). Cascading to next fallback model...`);
-          lastError = new Error(`Gemini ${model} 404: ${errMsg}`);
-          continue;
         }
 
-        lastError = new Error(errMsg);
-        continue;
-      }
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = errData?.error?.message || response.statusText;
 
-      const resData = await response.json();
-      const rawText = resData?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!rawText) throw new Error('No appraisal response received from Gemini model.');
+          // Catch 404 (model identifier not found / route mismatch / deprecated) and cascade immediately to fallback
+          if (
+            response.status === 404 ||
+            errMsg.toLowerCase().includes('not found') ||
+            errMsg.toLowerCase().includes('is not supported') ||
+            errMsg.toLowerCase().includes('no longer available') ||
+            errMsg.toLowerCase().includes('deprecated') ||
+            errData?.error?.status === 'NOT_FOUND'
+          ) {
+            console.warn(`[Gemini Vintage Valuation] Model '${model}' returned 404 (${errMsg}). Cascading immediately to next fallback model...`);
+            lastError = new Error(`Gemini ${model} 404: ${errMsg}`);
+            break; // Immediate fallback on 404
+          }
+
+          lastError = new Error(errMsg);
+          break;
+        }
+
+        const resData = await response.json();
+        const rawText = resData?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!rawText) throw new Error('No appraisal response received from Gemini model.');
 
       const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleanJson);
@@ -359,8 +372,10 @@ async function callGeminiVisionAppraisal(apiKey: string, imageBase64: string, pr
       };
     } catch (err: any) {
       lastError = err;
+      break;
     }
   }
+}
 
   throw lastError || new Error('Gemini Vision Appraisal failed.');
 }
