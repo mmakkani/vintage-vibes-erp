@@ -1000,30 +1000,30 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             })
       );
 
-      // Payload for public.bale_sorted_pieces (sanitized: VARCHAR(128) max)
+      // Payload for public.bale_sorted_pieces (sanitized: strict column bounds)
       const sortedPieceDb = {
         id: pieceId,
         bale_id: String(activeBale.id),
-        piece_code: barcode,
-        sku: pieceSku,
-        parent_category_name: sanitizeString(parentDeptName, 128),
-        category: sanitizeString(selectedCategory, 128),
-        sub_category: sanitizeNullableString(subCategoryName, 128),
+        piece_code: sanitizeString(barcode, 64),
+        sku: sanitizeString(pieceSku, 50),
+        parent_category_name: sanitizeNullableString(parentDeptName, 64),
+        category: sanitizeString(selectedCategory, 64),
+        sub_category: sanitizeNullableString(subCategoryName, 64),
         collection_id: collectionId,
-        collection_name: sanitizeNullableString(collectionName, 128),
+        collection_name: sanitizeNullableString(collectionName, 64),
         ready_for_ecommerce: readyForEcommerce,
         ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
         seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
-        size: sanitizeString(sizeScanned, 64),
-        brand_title: sanitizeString(brandTitle, 128),
+        size: sanitizeString(sizeScanned, 32),
+        brand_title: sanitizeString(brandTitle, 64),
         weight_grams: pieceWeightGrams,
         cost_price: calculatedPieceCost,
         selling_price: effectiveSellingPrice,
-        quality_grade: sanitizeString(selectedGrade, 128),
+        quality_grade: sanitizeString(selectedGrade, 32),
         front_image: frontImageUrl || null,
         back_image: backImageUrl || null,
         tag_image: tagImageUrl || null,
-        era: sanitizeString(era || '1990s Vintage', 64),
+        era: sanitizeString(era || '1990s Vintage', 32),
         market_segment: sanitizeString(marketSegment || 'Vintage', 64),
         is_grail: finalGrailStatus,
         ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
@@ -1031,30 +1031,30 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         global_insights: globalInsights || null
       };
 
-      // Payload for public.inventory_pieces (sanitized: VARCHAR(128) max)
+      // Payload for public.inventory_pieces (sanitized: strict column bounds)
       const inventoryPieceDb = {
         id: pieceId,
         gate_pass_id: String(activeBale.id),
-        barcode: barcode,
-        sku: pieceSku,
+        barcode: sanitizeString(barcode, 64),
+        sku: sanitizeString(pieceSku, 50),
         item_name: sanitizeString(selectedCategory, 128),
-        brand_name: sanitizeString(brandTitle.split(' ')[0] || "Vintage", 128),
-        brand_tier: finalGrailStatus ? 'Grail' : 'Vintage Curated',
-        label_grade: sanitizeString(selectedGrade, 128),
-        shop_location: sanitizeString(shopLocation, 128),
+        brand_name: sanitizeString(brandTitle.split(' ')[0] || "Vintage", 64),
+        brand_tier: sanitizeString(finalGrailStatus ? 'Grail' : 'Vintage Curated', 32),
+        label_grade: sanitizeString(selectedGrade, 32),
+        shop_location: sanitizeString(shopLocation, 64),
         weight_kg: weightKg,
         weight_grams: pieceWeightGrams,
         cost_price: calculatedPieceCost,
         estimated_price: effectiveSellingPrice,
         retail_price_aed: effectiveSellingPrice,
-        size_scanned: sanitizeString(sizeScanned, 64),
-        country_of_origin: sanitizeNullableString(countryOfOrigin, 128),
-        style: sanitizeNullableString(styleNotes || brandTitle, 128),
+        size_scanned: sanitizeString(sizeScanned, 32),
+        country_of_origin: sanitizeNullableString(countryOfOrigin, 64),
+        style: sanitizeNullableString(styleNotes || brandTitle, 64),
         front_image_url: frontImageUrl || '',
         back_image_url: backImageUrl || '',
         tag_image_url: tagImageUrl || '',
         is_sold: false,
-        status: pieceStatus,
+        status: sanitizeString(pieceStatus, 32),
         market_segment: sanitizeString(marketSegment || 'Vintage', 64),
         is_grail: finalGrailStatus,
         ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
@@ -1063,10 +1063,10 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         ready_for_ecommerce: readyForEcommerce,
         ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
         seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
-        parent_category_name: sanitizeString(parentDeptName, 128),
-        sub_category: sanitizeNullableString(subCategoryName, 128),
+        parent_category_name: sanitizeNullableString(parentDeptName, 64),
+        sub_category: sanitizeNullableString(subCategoryName, 64),
         collection_id: collectionId,
-        collection_name: sanitizeNullableString(collectionName, 128)
+        collection_name: sanitizeNullableString(collectionName, 64)
       };
 
       const breakdownItem: PieceBreakdownItem = {
@@ -1546,6 +1546,30 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       setIsTerminalFinalized(true);
       activeBale.status = 'COMPLETED' as any;
       activeBale.sortingStatus = 'FULLY_SORTED' as any;
+      activeBale.pieceCount = hudStats.piecesCount;
+      activeBale.brokenDownWeight = Number((hudStats.sortedGrams / 1000).toFixed(3));
+      activeBale.remainingWeight = 0;
+
+      // Force reactive cache invalidation & broadcast realtime event to update BaleMasterRegistry immediately
+      PurchaseService.invalidateAllPurchaseCaches();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('vv:realtime-record', {
+            detail: {
+              table: 'inward_gate_passes',
+              record: {
+                id: activeBale.id,
+                gate_pass_no: activeBale.gatePassNo,
+                bale_code: activeBale.baleCode,
+                status: 'COMPLETED',
+                piece_count: hudStats.piecesCount,
+                broken_down_weight: Number((hudStats.sortedGrams / 1000).toFixed(3))
+              }
+            }
+          })
+        );
+      }
+
       setIsSubmitting(false);
       if (onPostBale) {
         onPostBale(activeBale.id);

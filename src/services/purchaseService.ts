@@ -1091,13 +1091,53 @@ export class PurchaseService {
       return [];
     }
 
-    const mappedPasses = (data || []).map((row: any) => {
+    const rawData = data || [];
+    const baleIds = rawData.map((r: any) => String(r.id));
+    let sessionMap = new Map<string, any>();
+    if (baleIds.length > 0) {
+      try {
+        const { data: sessions } = await supabase
+          .from('bale_sessions')
+          .select('bale_id, status, total_pieces, sorted_grams, remaining_grams')
+          .in('bale_id', baleIds);
+        if (Array.isArray(sessions)) {
+          sessions.forEach((s: any) => sessionMap.set(String(s.bale_id), s));
+        }
+      } catch (_) {}
+    }
+
+    const mappedPasses = rawData.map((row: any) => {
       const grossKg = Number(row.total_bale_weight ?? row.weight_kg ?? 0);
-      const brokenDownKg = Number(row.broken_down_weight ?? 0);
+      const sess = sessionMap.get(String(row.id));
+      const rawStatus = String(row.status || '').toUpperCase();
+      const isSessionCompleted = sess?.status === 'COMPLETED';
+
+      const effectiveStatus = (rawStatus === 'COMPLETED' || rawStatus === 'POSTED' || isSessionCompleted)
+        ? (rawStatus === 'POSTED' ? 'POSTED' : 'COMPLETED')
+        : (row.status || (sess?.total_pieces > 0 ? 'PARTIAL' : 'UNOPENED'));
+
+      const piecesList = Array.isArray(row.pieces) ? row.pieces : [];
+      const pieceCount = Number(
+        row.piece_count ?? row.pieces_count ?? sess?.total_pieces ?? piecesList.length ?? 0
+      );
+      const brokenDownKg = Number(
+        row.broken_down_weight ?? (sess?.sorted_grams ? Number((sess.sorted_grams / 1000).toFixed(3)) : (effectiveStatus === 'COMPLETED' ? grossKg : 0))
+      );
       const totalCost = Number(row.total_bale_cost ?? row.cost_price ?? 0);
       const costPerGram = Number(row.cost_per_gram ?? (grossKg > 0 ? (totalCost / (grossKg * 1000)) : 0));
-      const piecesList = Array.isArray(row.pieces) ? row.pieces : [];
-      const pieceCount = Number(row.piece_count ?? row.pieces_count ?? piecesList.length ?? 0);
+
+      if (isSessionCompleted && rawStatus !== 'COMPLETED' && rawStatus !== 'POSTED') {
+        supabase
+          .from('inward_gate_passes')
+          .update({
+            status: 'COMPLETED',
+            piece_count: pieceCount,
+            broken_down_weight: brokenDownKg > 0 ? brokenDownKg : grossKg
+          })
+          .eq('id', row.id)
+          .then(() => {})
+          .catch(() => {});
+      }
 
       return {
         id: String(row.id),
@@ -1109,13 +1149,13 @@ export class PurchaseService {
         purchaseInvoiceNo: row.purchase_invoice_no || row.purchaseInvoiceNo || '',
         supplierName: row.supplier_name || row.supplierName || 'Trade Supplier',
         date: (row.created_at || new Date().toISOString()).slice(0, 10),
-        status: (row.status || 'UNOPENED') as any,
-        sortingStatus: (row.status || 'UNOPENED') as any,
+        status: effectiveStatus as any,
+        sortingStatus: (effectiveStatus === 'COMPLETED' || effectiveStatus === 'POSTED') ? 'FULLY_SORTED' : (effectiveStatus === 'PARTIAL' || effectiveStatus === 'IN_PROGRESS' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any,
         totalBaleCost: totalCost,
         totalBaleWeight: grossKg,
         costPerGram,
         brokenDownWeight: brokenDownKg,
-        remainingWeight: Math.max(0, grossKg - brokenDownKg),
+        remainingWeight: Math.max(0, Number((grossKg - brokenDownKg).toFixed(3))),
         pieceCount,
         pieces: piecesList,
         createdAt: row.created_at
@@ -1173,13 +1213,53 @@ export class PurchaseService {
       return buildPaginatedResponse([], 0, page, pageSize);
     }
 
-    const mappedPasses = (data || []).map((row: any) => {
+    const rawData = data || [];
+    const baleIds = rawData.map((r: any) => String(r.id));
+    let sessionMap = new Map<string, any>();
+    if (baleIds.length > 0) {
+      try {
+        const { data: sessions } = await supabase
+          .from('bale_sessions')
+          .select('bale_id, status, total_pieces, sorted_grams, remaining_grams')
+          .in('bale_id', baleIds);
+        if (Array.isArray(sessions)) {
+          sessions.forEach((s: any) => sessionMap.set(String(s.bale_id), s));
+        }
+      } catch (_) {}
+    }
+
+    const mappedPasses = rawData.map((row: any) => {
       const grossKg = Number(row.total_bale_weight ?? row.weight_kg ?? 0);
-      const brokenDownKg = Number(row.broken_down_weight ?? 0);
+      const sess = sessionMap.get(String(row.id));
+      const rawStatus = String(row.status || '').toUpperCase();
+      const isSessionCompleted = sess?.status === 'COMPLETED';
+
+      const effectiveStatus = (rawStatus === 'COMPLETED' || rawStatus === 'POSTED' || isSessionCompleted)
+        ? (rawStatus === 'POSTED' ? 'POSTED' : 'COMPLETED')
+        : (row.status || (sess?.total_pieces > 0 ? 'PARTIAL' : 'UNOPENED'));
+
+      const piecesList = Array.isArray(row.pieces) ? row.pieces : [];
+      const pieceCount = Number(
+        row.piece_count ?? row.pieces_count ?? sess?.total_pieces ?? piecesList.length ?? 0
+      );
+      const brokenDownKg = Number(
+        row.broken_down_weight ?? (sess?.sorted_grams ? Number((sess.sorted_grams / 1000).toFixed(3)) : (effectiveStatus === 'COMPLETED' ? grossKg : 0))
+      );
       const totalCost = Number(row.total_bale_cost ?? row.cost_price ?? 0);
       const costPerGram = Number(row.cost_per_gram ?? (grossKg > 0 ? (totalCost / (grossKg * 1000)) : 0));
-      const piecesList = Array.isArray(row.pieces) ? row.pieces : [];
-      const pieceCount = Number(row.piece_count ?? row.pieces_count ?? piecesList.length ?? 0);
+
+      if (isSessionCompleted && rawStatus !== 'COMPLETED' && rawStatus !== 'POSTED') {
+        supabase
+          .from('inward_gate_passes')
+          .update({
+            status: 'COMPLETED',
+            piece_count: pieceCount,
+            broken_down_weight: brokenDownKg > 0 ? brokenDownKg : grossKg
+          })
+          .eq('id', row.id)
+          .then(() => {})
+          .catch(() => {});
+      }
 
       return {
         id: String(row.id),
@@ -1191,13 +1271,13 @@ export class PurchaseService {
         purchaseInvoiceNo: row.purchase_invoice_no || row.purchaseInvoiceNo || '',
         supplierName: row.supplier_name || row.supplierName || 'Trade Supplier',
         date: (row.created_at || new Date().toISOString()).slice(0, 10),
-        status: (row.status || 'UNOPENED') as any,
-        sortingStatus: (row.status || 'UNOPENED') as any,
+        status: effectiveStatus as any,
+        sortingStatus: (effectiveStatus === 'COMPLETED' || effectiveStatus === 'POSTED') ? 'FULLY_SORTED' : (effectiveStatus === 'PARTIAL' || effectiveStatus === 'IN_PROGRESS' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any,
         totalBaleCost: totalCost,
         totalBaleWeight: grossKg,
         costPerGram,
         brokenDownWeight: brokenDownKg,
-        remainingWeight: Math.max(0, grossKg - brokenDownKg),
+        remainingWeight: Math.max(0, Number((grossKg - brokenDownKg).toFixed(3))),
         pieceCount,
         pieces: piecesList,
         createdAt: row.created_at
@@ -1962,25 +2042,65 @@ export class PurchaseService {
   }
 
   public static async finalizeBaleSession(baleId: string): Promise<void> {
-    // 1. Update bale_sessions
-    await supabase
-      .from('bale_sessions')
-      .update({ status: 'COMPLETED', updated_at: new Date().toISOString() })
-      .eq('bale_id', baleId);
+    const cleanBaleId = String(baleId || '').trim();
+    if (!cleanBaleId) throw new Error('Bale ID is required to finalize session');
 
-    // 2. Update inward_gate_passes
-    await supabase
-      .from('inward_gate_passes')
-      .update({ status: 'COMPLETED' })
-      .eq('id', baleId);
+    // 1. Fetch raw bale details (for landed WIP cost & reference)
+    let baleRef = cleanBaleId;
+    let rawBaleCost = 0;
+    let rawBaleWeightKg = 0;
+    try {
+      const { data: baleRow } = await supabase
+        .from('inward_gate_passes')
+        .select('id, gate_pass_no, bale_code, supplier_name, total_bale_cost, cost_price, total_bale_weight, weight_kg')
+        .eq('id', cleanBaleId)
+        .maybeSingle();
+      if (baleRow) {
+        baleRef = baleRow.bale_code || baleRow.gate_pass_no || baleRow.id || cleanBaleId;
+        rawBaleCost = Number(baleRow.total_bale_cost ?? baleRow.cost_price ?? 0);
+        rawBaleWeightKg = Number(baleRow.total_bale_weight ?? baleRow.weight_kg ?? 0);
+      }
+    } catch (_) {}
 
-    // 3. Move/sync all pieces from bale_sorted_pieces into inventory_pieces
-    const { data: sortedPieces } = await supabase
+    // 2. Fetch and strictly deduplicate all pieces from bale_sorted_pieces
+    const { data: rawSortedPieces } = await supabase
       .from('bale_sorted_pieces')
       .select('*')
-      .eq('bale_id', baleId);
+      .eq('bale_id', cleanBaleId);
 
-    if (sortedPieces && sortedPieces.length > 0) {
+    const uniquePiecesMap = new Map<string, any>();
+    (rawSortedPieces || []).forEach((p: any) => {
+      const key = String(p.piece_code || p.id).trim();
+      if (!uniquePiecesMap.has(key)) {
+        uniquePiecesMap.set(key, p);
+      }
+    });
+    const sortedPieces = Array.from(uniquePiecesMap.values());
+
+    const totalPiecesCount = sortedPieces.length;
+    const totalGramsSorted = sortedPieces.reduce((sum: number, p: any) => sum + (Number(p.weight_grams) || 0), 0);
+    const brokenDownWeightKg = Number((totalGramsSorted / 1000).toFixed(3));
+    const finalWeightKg = brokenDownWeightKg > 0 ? brokenDownWeightKg : rawBaleWeightKg;
+
+    // 3. Move/sync all pieces from bale_sorted_pieces into inventory_pieces
+    if (sortedPieces.length > 0) {
+      const pieceCostSum = Number(sortedPieces.reduce((sum: number, p: any) => sum + (Number(p.cost_price) || 0), 0).toFixed(2));
+
+      // Strict Double-Entry Capitalization:
+      // The total cost transferred out of WIP (Credit 1150-01) MUST exactly equal the total cost
+      // transferred into Finished Goods (Debit 1160-01).
+      // Resolve math duplication: if raw bale landed cost is known (> 0), that is the exact WIP balance to clear.
+      // Otherwise, use pieceCostSum.
+      const capitalizationAmount = Number((rawBaleCost > 0 ? rawBaleCost : pieceCostSum).toFixed(2));
+
+      // Normalize piece cost_price so sum(cost_price) matches capitalizationAmount
+      if (capitalizationAmount > 0 && pieceCostSum > 0 && Math.abs(pieceCostSum - capitalizationAmount) > 0.01) {
+        const ratio = capitalizationAmount / pieceCostSum;
+        sortedPieces.forEach((p: any) => {
+          p.cost_price = Number(((Number(p.cost_price) || 0) * ratio).toFixed(2));
+        });
+      }
+
       const inventoryRows = sortedPieces.map((p: any) => {
         const pGrade = String(p.quality_grade || '').toLowerCase().trim();
         const isPristine = (
@@ -1997,32 +2117,34 @@ export class PurchaseService {
 
         return {
           id: p.id,
-          gate_pass_id: baleId,
-          barcode: p.piece_code || p.id,
-          sku: p.sku || p.piece_code || p.id,
+          gate_pass_id: cleanBaleId,
+          barcode: sanitizeString(p.piece_code || p.id, 64),
+          sku: sanitizeString(p.sku || p.piece_code || p.id, 50),
           item_name: sanitizeString(p.category || 'Vintage Garment', 128),
-          brand_name: sanitizeString(p.brand_title || 'Vintage', 128),
-          brand_tier: Boolean(p.is_grail) ? 'Grail' : 'Vintage Curated',
-          label_grade: sanitizeString(p.quality_grade || 'CREAM', 64),
-          shop_location: 'Central Warehouse (Al Quoz)',
+          brand_name: sanitizeString(p.brand_title || 'Vintage', 64),
+          brand_tier: sanitizeString(Boolean(p.is_grail) ? 'Grail' : 'Vintage Curated', 32),
+          label_grade: sanitizeString(p.quality_grade || 'CREAM', 32),
+          shop_location: sanitizeString('Central Warehouse (Al Quoz)', 64),
           weight_kg: Number(p.weight_grams ? (Number(p.weight_grams) / 1000) : 0),
           weight_grams: Number(p.weight_grams || 0),
           cost_price: Number(p.cost_price || 0),
           estimated_price: Number(p.selling_price || 0),
           retail_price_aed: Number(p.selling_price || 0),
-          size_scanned: sanitizeString(p.size || 'L', 64),
+          size_scanned: sanitizeString(p.size || 'L', 32),
+          country_of_origin: sanitizeNullableString(p.country_of_origin || 'Unknown', 64),
+          style: sanitizeNullableString(p.style || p.brand_title, 64),
           front_image_url: p.front_image || '',
           back_image_url: p.back_image || '',
           tag_image_url: p.tag_image || '',
           is_sold: false,
-          status: isPristine ? 'IN_STOCK' : 'WIP_LAUNDRY',
+          status: sanitizeString(isPristine ? 'IN_STOCK' : 'WIP_LAUNDRY', 32),
           ready_for_ecommerce: isReady,
           ecommerce_description: p.ecommerce_description || null,
           seo_tags: p.seo_tags || null,
-          parent_category_name: sanitizeNullableString(p.parent_category_name, 128),
-          sub_category: sanitizeNullableString(p.sub_category, 128),
+          parent_category_name: sanitizeNullableString(p.parent_category_name, 64),
+          sub_category: sanitizeNullableString(p.sub_category, 64),
           collection_id: p.collection_id || null,
-          collection_name: sanitizeNullableString(p.collection_name, 128),
+          collection_name: sanitizeNullableString(p.collection_name, 64),
           market_segment: sanitizeString(p.market_segment || 'Regular Thrift', 64),
           is_grail: Boolean(p.is_grail),
           ai_suggested_price: p.ai_suggested_price !== undefined && p.ai_suggested_price !== null ? Number(p.ai_suggested_price) : null,
@@ -2036,42 +2158,51 @@ export class PurchaseService {
         .upsert(inventoryRows, { onConflict: 'id' });
       if (upsertErr) {
         console.error('[PurchaseService] Error upserting inventory_pieces:', upsertErr);
+        throw new Error(`Failed to save inventory pieces: ${upsertErr.message}`);
       }
 
-      // 4. GAAP/IFRS WIP to Finished Goods Auto-Voucher Capitalization
-      // Transfer Landed Cost from 1150-01 (WIP) to 1160-01 (Finished Goods)
-      const totalPiecesCost = Number(sortedPieces.reduce((sum: number, p: any) => sum + (Number(p.cost_price) || 0), 0).toFixed(2));
-      if (totalPiecesCost > 0) {
-        let baleRef = String(baleId);
-        try {
-          const { data: baleRow } = await supabase
-            .from('inward_gate_passes')
-            .select('id, gate_pass_no, bale_code, supplier_name')
-            .eq('id', baleId)
-            .maybeSingle();
-          if (baleRow) {
-            baleRef = baleRow.bale_code || baleRow.gate_pass_no || baleRow.id || baleId;
-          }
-        } catch (_) {}
+      // 4. Update inward_gate_passes and bale_sessions with complete counts
+      await supabase
+        .from('inward_gate_passes')
+        .update({
+          status: 'COMPLETED',
+          piece_count: totalPiecesCount,
+          broken_down_weight: finalWeightKg
+        })
+        .eq('id', cleanBaleId);
 
+      await supabase
+        .from('bale_sessions')
+        .update({
+          status: 'COMPLETED',
+          total_pieces: totalPiecesCount,
+          sorted_grams: totalGramsSorted,
+          remaining_grams: 0,
+          updated_at: new Date().toISOString()
+        })
+        .eq('bale_id', cleanBaleId);
+
+      // 5. GAAP/IFRS WIP to Finished Goods Auto-Voucher Capitalization
+      // Transfer Landed Cost from 1150-01 (WIP) to 1160-01 (Finished Goods)
+      if (capitalizationAmount > 0) {
         const todayDate = new Date().toISOString().slice(0, 10);
         const jvNo = await SequenceService.getNextNumber('JV-FIN', todayDate);
         const voucherPayload = {
           voucherNo: jvNo,
           date: todayDate,
           type: 'JOURNAL',
-          reference: String(baleId),
-          documentRef: String(baleId),
+          reference: cleanBaleId,
+          documentRef: cleanBaleId,
           narration: `Auto-Transfer: WIP (1150-01) to Finished Goods (1160-01) on finalizing Bale ${baleRef}`,
-          totalDebit: totalPiecesCost,
-          totalCredit: totalPiecesCost,
+          totalDebit: capitalizationAmount,
+          totalCredit: capitalizationAmount,
           isAuto: true,
           createdBy: 'System (Bale Finalizer)',
           lines: [
             {
               accountCode: '1160-01',
               accountName: 'Finished Goods Inventory',
-              debit: totalPiecesCost,
+              debit: capitalizationAmount,
               credit: 0,
               memo: `Finished Goods capitalization from finalized Bale ${baleRef}`
             },
@@ -2079,7 +2210,7 @@ export class PurchaseService {
               accountCode: '1150-01',
               accountName: 'Work in Progress (WIP) Inventory',
               debit: 0,
-              credit: totalPiecesCost,
+              credit: capitalizationAmount,
               memo: `Relieve WIP for finalized Bale ${baleRef}`
             }
           ]
@@ -2093,6 +2224,17 @@ export class PurchaseService {
           console.error('[PurchaseService] Error creating WIP to Finished Goods auto-voucher:', vchErr);
         }
       }
+    } else {
+      // Even if no pieces, ensure inward_gate_passes and bale_sessions reflect COMPLETED
+      await supabase
+        .from('inward_gate_passes')
+        .update({ status: 'COMPLETED' })
+        .eq('id', cleanBaleId);
+
+      await supabase
+        .from('bale_sessions')
+        .update({ status: 'COMPLETED', updated_at: new Date().toISOString() })
+        .eq('bale_id', cleanBaleId);
     }
 
     PurchaseService.invalidateGatePassesCache();
@@ -2476,10 +2618,10 @@ export class PurchaseService {
 
     const sanitizedBatch = piecesList.map(p => sanitizeBaleSortedPiecePayload(p));
 
-    // 1. Atomic bulk insert into bale_sorted_pieces (single API request)
+    // 1. Atomic bulk upsert into bale_sorted_pieces (single API request, idempotent on id)
     const { data: insertedData, error: insertErr } = await supabase
       .from('bale_sorted_pieces')
-      .insert(sanitizedBatch);
+      .upsert(sanitizedBatch, { onConflict: 'id' });
 
     if (insertErr) {
       return { data: null, error: insertErr };
@@ -2571,11 +2713,17 @@ export function sanitizeBaleSortedPiecePayload(payload: Record<string, any>): Re
     if (key === 'status' || key === 'is_sold' || key === 'isSold') continue;
     if (BALE_SORTED_PIECES_COLUMNS.has(key) && value !== undefined) {
       if (key === 'category' || key === 'brand_title') {
-        sanitized[key] = sanitizeString(value, 128);
-      } else if (key === 'parent_category_name' || key === 'sub_category' || key === 'collection_name') {
-        sanitized[key] = sanitizeNullableString(value, 128);
-      } else if (key === 'size' || key === 'quality_grade' || key === 'era' || key === 'market_segment') {
         sanitized[key] = sanitizeString(value, 64);
+      } else if (key === 'parent_category_name' || key === 'sub_category' || key === 'collection_name') {
+        sanitized[key] = sanitizeNullableString(value, 64);
+      } else if (key === 'size' || key === 'quality_grade' || key === 'era') {
+        sanitized[key] = sanitizeString(value, 32);
+      } else if (key === 'market_segment') {
+        sanitized[key] = sanitizeString(value, 64);
+      } else if (key === 'piece_code') {
+        sanitized[key] = sanitizeString(value, 64);
+      } else if (key === 'sku') {
+        sanitized[key] = sanitizeString(value, 50);
       } else {
         sanitized[key] = value;
       }

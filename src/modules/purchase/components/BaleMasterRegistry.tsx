@@ -171,8 +171,8 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
       const isCompleted = bale.status === 'COMPLETED' || bale.status === 'POSTED' || bale.sortingStatus === 'FULLY_SORTED' || (bale.sortingStatus as any) === 'COMPLETED';
 
       if (statusFilter === 'COMPLETED') return isCompleted;
-      if (statusFilter === 'IN_PROGRESS') return !isCompleted && totalPieces > 0;
-      if (statusFilter === 'UNOPENED') return !isCompleted && totalPieces === 0;
+      if (statusFilter === 'IN_PROGRESS') return !isCompleted && (totalPieces > 0 || bale.status === 'IN_PROGRESS' || bale.status === 'PARTIAL');
+      if (statusFilter === 'UNOPENED') return !isCompleted && totalPieces === 0 && bale.status !== 'IN_PROGRESS' && bale.status !== 'PARTIAL';
 
       return true;
     });
@@ -541,13 +541,19 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                   );
                   const costPerGram = bale.costPerGram || PurchaseEngine.calculateCostPerGram(baleTotalCost, baleTotalWeight);
 
-                  const brokenDownKg = Number(depletion.brokenDownWeightKg || 0);
-                  const remainingKg = Number(depletion.remainingWeightKg || 0);
-                  const percentUnsorted = baleTotalWeight > 0 ? Math.round((remainingKg / baleTotalWeight) * 100) : 0;
-
                   const isCompleted = bale.status === 'COMPLETED' || bale.status === 'POSTED' || bale.sortingStatus === 'FULLY_SORTED' || (bale.sortingStatus as any) === 'COMPLETED';
                   const totalPieces = Number(bale.pieceCount ?? (bale as any).total_pieces ?? (bale as any).pieces_count ?? bale.pieces?.length ?? 0);
-                  const isInProgress = !isCompleted && totalPieces > 0;
+                  const isInProgress = !isCompleted && (totalPieces > 0 || bale.status === 'IN_PROGRESS' || bale.status === 'PARTIAL');
+
+                  const brokenDownKg = isCompleted
+                    ? baleTotalWeight
+                    : Number(bale.brokenDownWeight || depletion.brokenDownWeightKg || 0);
+                  const remainingKg = isCompleted
+                    ? 0
+                    : Math.max(0, Number((baleTotalWeight - brokenDownKg).toFixed(3)));
+                  const percentUnsorted = isCompleted
+                    ? 0
+                    : (baleTotalWeight > 0 ? Math.round((remainingKg / baleTotalWeight) * 100) : 0);
 
                   return (
                     <tr
