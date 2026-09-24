@@ -8,6 +8,25 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const isValidUuid = (val: any): boolean => typeof val === 'string' && UUID_REGEX.test(val.trim());
 
 /**
+ * Enterprise UUID generator guaranteeing fresh unique RFC4122 v4 UUIDs for every row.
+ * Strictly uses crypto.randomUUID() when available in browser or Node environments,
+ * with RFC4122 v4 compliant fallback to prevent Primary Key collisions.
+ */
+export const generateLedgerUuid = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  if (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+};
+
+/**
  * Strict numeric parser and decimal rounding for enterprise ledgers.
  * Prevents floating-point drift, NaN injection, and string leakage.
  */
@@ -646,7 +665,7 @@ export class FinanceService {
   }
 
   public static async addVoucher(v: any): Promise<Voucher> {
-    const id = String(v.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `vch-${Date.now()}`));
+    const id = String(v.id || generateLedgerUuid());
     const date = v.date || new Date().toISOString().slice(0, 10);
     const type = String(v.type || 'JOURNAL');
     const typeUpper = type.toUpperCase();
@@ -713,8 +732,8 @@ export class FinanceService {
     if (Array.isArray(lines) && lines.length > 0) {
       const coaList = await this.getCoaAccounts();
 
-      const voucherEntriesRows = lines.map((l: any, idx: number) => {
-        const lineId = String(l.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ve-${id}-${idx + 1}`));
+      const voucherEntriesRows = lines.map((l: any) => {
+        const lineId = String(l.id && isValidUuid(l.id) ? l.id : generateLedgerUuid());
         const debit = toSafeLedgerAmount(l.debitAmount ?? l.debit ?? 0);
         const credit = toSafeLedgerAmount(l.creditAmount ?? l.credit ?? 0);
         const foreignDebit = toSafeLedgerAmount(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
@@ -753,9 +772,9 @@ export class FinanceService {
         };
       });
 
-      const generalLedgerRows = voucherEntriesRows.map((veRow: any, idx: number) => {
+      const generalLedgerRows = voucherEntriesRows.map((veRow: any) => {
         return {
-          id: String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `gl-${id}-${idx + 1}`),
+          id: generateLedgerUuid(),
           voucher_id: String(id),
           voucher_no: voucherNo,
           account_id: veRow.account_id,
@@ -796,6 +815,8 @@ export class FinanceService {
 
         const ledgersRows = generalLedgerRows.map((glRow: any) => ({
           ...glRow,
+          id: generateLedgerUuid(), // FRESH UNIQUE UUID for EVERY SINGLE ROW in ledgers
+          voucher_id: String(id),
           account_id: coaMap.get(glRow.account_code) || glRow.account_id
         }));
         await supabase.from('ledgers').insert(ledgersRows);
@@ -914,8 +935,8 @@ export class FinanceService {
       } catch {}
     } else if (status === 'POSTED' && existing) {
       // When posted, ensure ledger entries exist for all lines
-      const glRows = (existing.lines || existing.entries || []).map((l: any, i: number) => ({
-        id: `gl-${existing.id}-${i}-${Date.now()}`,
+      const glRows = (existing.lines || existing.entries || []).map((l: any) => ({
+        id: generateLedgerUuid(),
         voucher_id: existing.id,
         voucher_no: existing.voucherNo,
         entry_date: existing.date,
@@ -933,7 +954,11 @@ export class FinanceService {
             const { data: coaAccs } = await supabase.from('coa_accounts').select('id, code');
             if (Array.isArray(coaAccs)) coaMap = new Map(coaAccs.map((a: any) => [a.code, String(a.id)]));
           } catch (_) {}
-          const mappedLedgers = glRows.map((r: any) => ({ ...r, account_id: coaMap.get(r.account_code) || r.account_id }));
+          const mappedLedgers = glRows.map((r: any) => ({
+            ...r,
+            id: generateLedgerUuid(),
+            account_id: coaMap.get(r.account_code) || r.account_id
+          }));
           await supabase.from('ledgers').insert(mappedLedgers);
         } catch {}
       }
@@ -1053,8 +1078,8 @@ export class FinanceService {
       // 2. Insert updated line items
       const coaList = await this.getCoaAccounts();
 
-      const voucherEntriesRows = lines.map((l: any, idx: number) => {
-        const lineId = String(l.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ve-${cleanId}-${idx + 1}`));
+      const voucherEntriesRows = lines.map((l: any) => {
+        const lineId = String(l.id && isValidUuid(l.id) ? l.id : generateLedgerUuid());
         const debit = toSafeLedgerAmount(l.debitAmount ?? l.debit ?? 0);
         const credit = toSafeLedgerAmount(l.creditAmount ?? l.credit ?? 0);
         const foreignDebit = toSafeLedgerAmount(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
@@ -1091,9 +1116,9 @@ export class FinanceService {
         };
       });
 
-      const generalLedgerRows = voucherEntriesRows.map((veRow: any, idx: number) => {
+      const generalLedgerRows = voucherEntriesRows.map((veRow: any) => {
         return {
-          id: String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `gl-${cleanId}-${idx + 1}`),
+          id: generateLedgerUuid(),
           voucher_id: cleanId,
           voucher_no: voucherNo,
           account_id: veRow.account_id,
@@ -1129,6 +1154,8 @@ export class FinanceService {
         } catch (_) {}
         const mappedLedgers = generalLedgerRows.map((glRow: any) => ({
           ...glRow,
+          id: generateLedgerUuid(), // FRESH UNIQUE UUID for EVERY SINGLE ROW in ledgers
+          voucher_id: cleanId,
           account_id: coaMap.get(glRow.account_code) || glRow.account_id
         }));
         await supabase.from('ledgers').insert(mappedLedgers);
