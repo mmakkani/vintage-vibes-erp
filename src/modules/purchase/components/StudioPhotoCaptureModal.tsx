@@ -20,12 +20,10 @@ import {
   ShieldCheck,
   DollarSign,
   Tag,
-  Loader2,
-  Scissors
+  Loader2
 } from 'lucide-react';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { compressImage } from '../../../utils/imageCompressor.ts';
-import { removeGarmentBackground } from '../../../utils/aiBackgroundRemoval.ts';
 import { classifyGarmentPhotosWithGemini } from '../../../utils/geminiBulkClassifier.ts';
 import { analyzeVintageGarment, getDefaultSellingPrice } from '../../../utils/geminiVintageValuation.ts';
 import { ExtractedTagData } from './CameraTagScannerModal.tsx';
@@ -54,10 +52,39 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const isMobile = typeof navigator !== 'undefined' && /mobi|android|iphone|ipad|ipod/i.test(navigator.userAgent.toLowerCase());
   const isIOS = typeof navigator !== 'undefined' && /iphone|ipad|ipod/i.test(navigator.userAgent.toLowerCase());
 
+  interface SlottedPhotos {
+    front?: string;
+    back?: string;
+    tag?: string;
+  }
+
   const [currentSlot, setCurrentSlot] = useState<PhotoSlot>(activeSlot);
-  const [frontImg, setFrontImg] = useState<string | undefined>(initialFront);
-  const [backImg, setBackImg] = useState<string | undefined>(initialBack);
-  const [tagImg, setTagImg] = useState<string | undefined>(initialTag);
+  const [photos, setPhotos] = useState<SlottedPhotos>({
+    front: initialFront,
+    back: initialBack,
+    tag: initialTag
+  });
+  const photosRef = useRef<SlottedPhotos>({
+    front: initialFront,
+    back: initialBack,
+    tag: initialTag
+  });
+
+  const frontImg = photos.front;
+  const backImg = photos.back;
+  const tagImg = photos.tag;
+
+  const updatePhotos = useCallback((newPhotos: Partial<SlottedPhotos> | ((prev: SlottedPhotos) => SlottedPhotos)) => {
+    setPhotos(prev => {
+      const next = typeof newPhotos === 'function' ? newPhotos(prev) : { ...prev, ...newPhotos };
+      photosRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const setFrontImg = useCallback((val?: string) => updatePhotos(p => ({ ...p, front: val })), [updatePhotos]);
+  const setBackImg = useCallback((val?: string) => updatePhotos(p => ({ ...p, back: val })), [updatePhotos]);
+  const setTagImg = useCallback((val?: string) => updatePhotos(p => ({ ...p, tag: val })), [updatePhotos]);
 
   const [cameraActive, setCameraActive] = useState(false);
   // Default to 'user' on desktop PC to avoid OverconstrainedError, 'environment' on phones
@@ -73,10 +100,6 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewLightbox, setPreviewLightbox] = useState<string | null>(null);
 
-  // AI Garment Background Removal State (Transparent Cutout)
-  const [aiBgRemovalEnabled, setAiBgRemovalEnabled] = useState(true);
-  const [bgRemovalStep, setBgRemovalStep] = useState<string>('');
-
   // AI Bulk 3-Photo Auto-Classification State
   const [isBulkClassifying, setIsBulkClassifying] = useState(false);
   const [bulkClassificationStep, setBulkClassificationStep] = useState<string>('');
@@ -87,8 +110,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const [appraisalError, setAppraisalError] = useState<string | null>(null);
   const [appraisalStep, setAppraisalStep] = useState<string>('');
 
-  const handleRunAppraisal = async (overrideImg?: string) => {
-    const targetImage = overrideImg || tagImg || frontImg || backImg;
+  const handleRunAppraisal = async (overrideImg?: string, currentPhotos?: SlottedPhotos) => {
+    const activePhotos = currentPhotos || photosRef.current;
+    const targetImage = overrideImg || activePhotos.tag || activePhotos.front || activePhotos.back;
     if (!targetImage) {
       setAppraisalError('Please capture or upload at least one photo (tag or front look) to run AI appraisal.');
       return;
@@ -130,10 +154,11 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         global_insights: res.global_insights
       };
       setAppraisal(extracted);
+      const latestPhotos = currentPhotos || photosRef.current;
       onSavePhotos({
-        front: frontImg,
-        back: backImg,
-        tag: tagImg || overrideImg
+        front: latestPhotos.front,
+        back: latestPhotos.back,
+        tag: latestPhotos.tag || overrideImg
       }, extracted);
       if (res.isGrail || res.rarityTier === 'ANTIQUE') {
         luxuryAudio.playCashRegisterSound();
@@ -323,9 +348,13 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   useEffect(() => {
     if (isOpen) {
       setCurrentSlot(activeSlot);
-      setFrontImg(initialFront);
-      setBackImg(initialBack);
-      setTagImg(initialTag);
+      const initialMap = {
+        front: initialFront,
+        back: initialBack,
+        tag: initialTag
+      };
+      photosRef.current = initialMap;
+      setPhotos(initialMap);
       startCamera();
     } else {
       stopCamera();
@@ -475,71 +504,37 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // Helper to process photo for a slot: applies AI Background Removal (transparent cutout) for garments
+  // Helper to process photo for a slot: fast studio compression (max 1080px, JPEG/WEBP) without WASM
   const processPhotoForSlot = async (
     rawSource: string | File | Blob,
-    slot: PhotoSlot
+    _slot?: PhotoSlot
   ): Promise<string> => {
-    if (aiBgRemovalEnabled && (slot === 'front' || slot === 'back')) {
-      try {
-        setBgRemovalStep('✂️ AI isolating garment & removing background...');
-        const transparentPng = await removeGarmentBackground(rawSource, {
-          onProgress: msg => setBgRemovalStep(msg)
-        });
-        return transparentPng;
-      } catch (cutoutErr) {
-        console.warn('[StudioPhotoCaptureModal] AI Background cutout fallback:', cutoutErr);
-        return await compressImage(rawSource, 1280, 0.90);
-      } finally {
-        setBgRemovalStep('');
-      }
-    }
-
-    // Standard compression for tag or when AI cutout is toggled off
-    return await compressImage(rawSource, 1280, 0.88);
-  };
-
-  // On-demand AI Background Cutout for currently selected slot photo
-  const handleCutoutCurrentSlot = async () => {
-    const currentImg = currentSlot === 'front' ? frontImg : currentSlot === 'back' ? backImg : tagImg;
-    if (!currentImg) return;
-    setIsProcessing(true);
-    setBgRemovalStep('✂️ AI isolating garment & removing background...');
-    try {
-      const transparentPng = await removeGarmentBackground(currentImg, {
-        onProgress: msg => setBgRemovalStep(msg)
-      });
-      applyPhotoToCurrentSlot(transparentPng);
-      try {
-        luxuryAudio.playMechanicalClick();
-      } catch {}
-    } catch (err: any) {
-      console.warn('Cutout error:', err);
-      alert('Background removal notice: ' + (err?.message || 'Failed to remove background'));
-    } finally {
-      setIsProcessing(false);
-      setBgRemovalStep('');
-    }
+    return await compressImage(rawSource, 1080, 0.85);
   };
 
   // Apply photo to active slot and auto-advance to the next unfilled slot
   const applyPhotoToCurrentSlot = (dataUrl: string) => {
+    updatePhotos(prev => {
+      const next = { ...prev, [currentSlot]: dataUrl };
+      return next;
+    });
+
+    const activePhotos = { ...photosRef.current, [currentSlot]: dataUrl };
+    photosRef.current = activePhotos;
+
     if (currentSlot === 'front') {
-      setFrontImg(dataUrl);
-      if (!backImg) {
+      if (!activePhotos.back) {
         setTimeout(() => setCurrentSlot('back'), 300);
-      } else if (!tagImg) {
+      } else if (!activePhotos.tag) {
         setTimeout(() => setCurrentSlot('tag'), 300);
       }
     } else if (currentSlot === 'back') {
-      setBackImg(dataUrl);
-      if (!tagImg) {
+      if (!activePhotos.tag) {
         setTimeout(() => setCurrentSlot('tag'), 300);
       }
     } else {
-      setTagImg(dataUrl);
       // Auto-trigger appraisal when garment tag is captured
-      handleRunAppraisal(dataUrl);
+      handleRunAppraisal(dataUrl, activePhotos);
     }
   };
 
@@ -584,19 +579,19 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // AI Bulk 3-Photo Upload, Auto-Classification & AI Background Removal
+  // AI Bulk 3-Photo Upload & Auto-Classification
   const handleBulkUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
 
     const files = Array.from(fileList).slice(0, 3);
     setIsBulkClassifying(true);
-    setBulkClassificationStep('📁 Compressing & optimizing raw photo quality...');
+    setBulkClassificationStep('📁 Compressing & optimizing raw photo quality (max 1080px)...');
 
     try {
       const base64Images: string[] = [];
       for (const file of files) {
-        const b64 = await compressImage(file, 1280, 0.88);
+        const b64 = await compressImage(file, 1080, 0.85);
         base64Images.push(b64);
       }
 
@@ -609,35 +604,34 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       setBulkClassificationStep('🤖 Gemini Vision AI classifying Front, Back & Tag...');
       const classification = await classifyGarmentPhotosWithGemini(base64Images);
 
-      let front = base64Images[classification.front_index] || base64Images[0];
-      let back = base64Images[classification.back_index] || base64Images[1 % base64Images.length];
-      const tag = base64Images[classification.tag_index] || base64Images[2 % base64Images.length];
+      // Ensure distinct slots for all images without dropping or collisions
+      const assigned = new Set<number>();
+      let fIdx = classification.front_index;
+      if (fIdx >= 0 && fIdx < base64Images.length) assigned.add(fIdx);
+      else { fIdx = 0; assigned.add(0); }
 
-      if (aiBgRemovalEnabled) {
-        setBulkClassificationStep('✂️ AI auto-framing & removing background from Front & Back looks...');
-        try {
-          if (front) front = await removeGarmentBackground(front);
-        } catch (e) {
-          console.warn('[BulkUpload] Front cutout notice:', e);
-        }
-        try {
-          if (back) back = await removeGarmentBackground(back);
-        } catch (e) {
-          console.warn('[BulkUpload] Back cutout notice:', e);
-        }
+      let bIdx = classification.back_index;
+      if (bIdx < 0 || bIdx >= base64Images.length || assigned.has(bIdx)) {
+        bIdx = [0, 1, 2].find(i => !assigned.has(i) && i < base64Images.length) ?? (1 % base64Images.length);
+      }
+      assigned.add(bIdx);
+
+      let tIdx = classification.tag_index;
+      if (tIdx < 0 || tIdx >= base64Images.length || assigned.has(tIdx)) {
+        tIdx = [0, 1, 2].find(i => !assigned.has(i) && i < base64Images.length) ?? (2 % base64Images.length);
       }
 
-      setFrontImg(front);
-      setBackImg(back);
-      setTagImg(tag);
+      const front = base64Images[fIdx] || base64Images[0];
+      const back = base64Images[bIdx] || base64Images[1 % base64Images.length];
+      const tag = base64Images[tIdx] || base64Images[2 % base64Images.length];
+
+      const newPhotos: SlottedPhotos = { front, back, tag };
+      photosRef.current = newPhotos;
+      setPhotos(newPhotos);
       setCurrentSlot('front');
 
       // Auto-propagate slotted photos to parent
-      onSavePhotos({
-        front,
-        back,
-        tag
-      }, appraisal || undefined);
+      onSavePhotos(newPhotos, appraisal || undefined);
 
       try {
         luxuryAudio.playCashRegisterSound();
@@ -645,9 +639,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
       // Automatically trigger AI appraisal using the classified tag photo or front look
       if (tag) {
-        handleRunAppraisal(tag);
+        handleRunAppraisal(tag, newPhotos);
       } else if (front) {
-        handleRunAppraisal(front);
+        handleRunAppraisal(front, newPhotos);
       }
     } catch (err: any) {
       console.error('[BulkUpload] Auto-classification notice:', err);
@@ -661,9 +655,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const handleSaveAndClose = () => {
     luxuryAudio.playCashChime();
     onSavePhotos({
-      front: frontImg,
-      back: backImg,
-      tag: tagImg
+      front: photosRef.current.front,
+      back: photosRef.current.back,
+      tag: photosRef.current.tag
     }, appraisal || undefined);
     stopCamera();
     onClose();
@@ -704,23 +698,6 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setAiBgRemovalEnabled(prev => !prev)}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border cursor-pointer ${
-                aiBgRemovalEnabled
-                  ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-600/30'
-                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
-              }`}
-              title="Automatically remove garment background into transparent PNG"
-            >
-              <Scissors className={`w-3.5 h-3.5 ${aiBgRemovalEnabled ? 'text-emerald-400' : 'text-slate-400'}`} />
-              <span className="hidden sm:inline">AI Cutout:</span>
-              <span className={aiBgRemovalEnabled ? 'text-emerald-300 font-mono' : 'text-slate-400 font-mono'}>
-                {aiBgRemovalEnabled ? 'ON' : 'OFF'}
-              </span>
-            </button>
-
             <button
               type="button"
               onClick={() => {
@@ -839,16 +816,6 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                   >
                     <Eye className="w-3.5 h-3.5 text-indigo-400" />
                     <span>View</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCutoutCurrentSlot}
-                    disabled={isProcessing}
-                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs flex items-center gap-1 cursor-pointer font-bold shadow disabled:opacity-50"
-                    title="Isolate garment and remove background with AI"
-                  >
-                    <Scissors className="w-3.5 h-3.5 text-emerald-200" />
-                    <span>AI Cutout</span>
                   </button>
                   <button
                     type="button"
@@ -1037,16 +1004,16 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           </div>
 
           {/* Processing Indicator */}
-          {(isProcessing || isBulkClassifying || Boolean(bgRemovalStep)) && (
+          {(isProcessing || isBulkClassifying) && (
             <div className="absolute inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50">
               <div className="bg-slate-900 border border-slate-700 px-5 py-3 rounded-xl text-white text-xs flex items-center gap-3 shadow-2xl">
                 <Loader2 className="w-5 h-5 text-amber-400 animate-spin shrink-0" />
                 <div className="text-left">
                   <div className="font-bold text-white">
-                    {bgRemovalStep ? 'AI Garment Background Removal' : isBulkClassifying ? 'AI Bulk Image Classification' : 'Optimizing High-Res Studio Photo...'}
+                    {isBulkClassifying ? 'AI Bulk Image Classification' : 'Optimizing High-Res Studio Photo...'}
                   </div>
                   <div className="text-[11px] text-slate-400 font-mono">
-                    {bgRemovalStep || bulkClassificationStep || 'Preserving raw high-definition garment quality...'}
+                    {bulkClassificationStep || 'Preserving raw high-definition garment quality (max 1080px)...'}
                   </div>
                 </div>
               </div>

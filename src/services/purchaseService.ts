@@ -2035,7 +2035,7 @@ export class PurchaseService {
     await supabase
       .from('bale_sessions')
       .update({ status: 'IN_PROGRESS', updated_at: new Date().toISOString() })
-      .or(`bale_id.eq.${cleanBaleId},id.eq.${cleanBaleId}`);
+      .eq('bale_id', cleanBaleId);
 
     // 2. Update inward_gate_passes back to IN_PROGRESS
     await supabase

@@ -151,17 +151,18 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             />
           )}
 
-          {/* Visual Garment Frame */}
+          {/* Visual Garment Frame (Forced Light Context for Dark Mode Protection) */}
           <div
             onClick={handleCardClick}
-            className="relative aspect-[3/4] w-full overflow-hidden bg-slate-900/10 flex items-center justify-center cursor-pointer border-b border-amber-200"
+            className="relative aspect-[3/4] w-full overflow-hidden bg-white dark:bg-white text-black dark:text-black flex items-center justify-center cursor-pointer border-b border-amber-200 isolate"
+            style={{ colorScheme: 'light' }}
             title="Click for High-Resolution Multi-Angle Inspector"
           >
             {defaultFrontImage ? (
               <img
                 src={defaultFrontImage}
                 alt={`${piece.brandName} - Front`}
-                className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105 mix-blend-multiply"
+                className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105 mix-blend-multiply bg-white"
                 loading="lazy"
               />
             ) : (
@@ -400,16 +401,17 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             </button>
           </div>
 
-          {/* High-Res Back Garment Image Preview */}
+          {/* High-Res Back Garment Image Preview (Forced Light Context for Dark Mode Protection) */}
           <div
             onClick={handleCardClick}
-            className="relative aspect-video w-full rounded-xl overflow-hidden border border-amber-400/50 bg-black/50 cursor-pointer shadow-inner my-2 flex items-center justify-center"
+            className="relative aspect-video w-full rounded-xl overflow-hidden border border-amber-400/50 bg-white dark:bg-white text-black dark:text-black cursor-pointer shadow-inner my-2 flex items-center justify-center isolate"
+            style={{ colorScheme: 'light' }}
           >
             {defaultBackImage ? (
               <img
                 src={defaultBackImage}
                 alt={`${piece.brandName} - Back Look`}
-                className="w-full h-full object-cover mix-blend-multiply"
+                className="w-full h-full object-cover mix-blend-multiply bg-white"
               />
             ) : (
               <div className="flex flex-col items-center justify-center text-center p-3">

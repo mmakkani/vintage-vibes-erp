@@ -104,12 +104,13 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     } catch (_) {}
   }, []);
 
-  // Set of in-flight form action locks to prevent duplicate submissions
   const lockSetRef = useRef<Set<string>>(new Set());
   const sseRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSyncingRef = useRef(false);
   const lastSyncedAtRef = useRef<number>(Date.now());
+  const lastHiddenTimeRef = useRef<number>(Date.now());
+  const wakeTimerRef = useRef<NodeJS.Timeout | null>(null);
   const hasDisconnectedRef = useRef<boolean>(false);
   const realtimeChannelRef = useRef<any>(null);
   const channelRef = realtimeChannelRef;
@@ -191,6 +192,31 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   useEffect(() => {
     cleanupChannelRef.current = cleanupChannel;
   }, [cleanupChannel]);
+
+  // Mobile Visibility Auto-Recovery: Catch up on any CDC events missed while mobile browser slept
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[SyncContext] Tab restored to visible. Triggering auto-recovery refetch...');
+        queryClient.refetchQueries().catch(() => {});
+        triggerGlobalSyncRef.current?.();
+        refreshPresenceRef.current?.();
+        if (onGlobalRefreshRef.current) {
+          Promise.resolve(onGlobalRefreshRef.current()).catch(() => {});
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
+    window.addEventListener('online', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
+      window.removeEventListener('online', handleVisibilityChange);
+    };
+  }, []);
 
   // Lock manager to prevent double submissions across forms
   const acquireLock = useCallback((lockKey: string): boolean => {
@@ -360,7 +386,19 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       // Smart Cache Injection (DO NOT OVER-FETCH)
       if (eventType === 'INSERT' || eventType === 'UPDATE') {
         if (newRecord) {
-          queryClient.injectRecord(table, newRecord);
+          // CRITICAL: If an inventory piece status is RESERVED, SOLD, or is_sold,
+          // treat as a DELETE event for any cached queries representing Available Stock
+          const isUnavailable =
+            table === 'inventory_pieces' &&
+            (newRecord.status === 'RESERVED' || newRecord.status === 'SOLD' || Boolean(newRecord.is_sold));
+
+          if (isUnavailable) {
+            const pieceId = newRecord.id || newRecord.barcode;
+            queryClient.removeAvailablePiece(String(pieceId), newRecord);
+          } else {
+            queryClient.injectRecord(table, newRecord);
+          }
+
           if (newRecord.status) {
             queryClient.handleStatusChange(table, newRecord);
           }
@@ -461,6 +499,8 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
             detail: {
               table,
               eventType,
+              new: newRecord,
+              old: oldRecord,
               record: newRecord || oldRecord,
               oldRecord,
               documentRef: String(docRef),
@@ -574,11 +614,35 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     }, 12000);
 
     const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        lastHiddenTimeRef.current = Date.now();
+        return;
+      }
       if (document.visibilityState === 'visible') {
-        refreshPresenceRef.current?.();
-        if (Date.now() - lastSyncedAtRef.current >= 5 * 60 * 1000) {
-          triggerGlobalSyncRef.current?.();
+        const sleepDuration = Date.now() - lastHiddenTimeRef.current;
+        // Only refetch if the cache is actually marked as stale (device was asleep for more than 30 seconds)
+        if (sleepDuration < 30000) {
+          refreshPresenceRef.current?.();
+          return;
         }
+
+        if (wakeTimerRef.current) {
+          clearTimeout(wakeTimerRef.current);
+          wakeTimerRef.current = null;
+        }
+
+        // Debounced with Randomized Jitter (0 - 2000ms delay) to prevent Supabase thundering herd DDoS on mobile wake
+        const jitterMs = Math.floor(Math.random() * 2000);
+        wakeTimerRef.current = setTimeout(() => {
+          if (unmounted) return;
+          console.log(`[GlobalRealtimeManager] Device woke after ${Math.round(sleepDuration / 1000)}s sleep. Executing debounced jittered refetch (${jitterMs}ms)...`);
+          refreshPresenceRef.current?.();
+          queryClient.refetchQueries().catch(() => {});
+          triggerGlobalSyncRef.current?.();
+          if (onGlobalRefreshRef.current) {
+            Promise.resolve(onGlobalRefreshRef.current()).catch(() => {});
+          }
+        }, jitterMs);
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -610,6 +674,10 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
+      }
+      if (wakeTimerRef.current) {
+        clearTimeout(wakeTimerRef.current);
+        wakeTimerRef.current = null;
       }
       clearInterval(fallbackInterval);
       clearInterval(presenceInterval);

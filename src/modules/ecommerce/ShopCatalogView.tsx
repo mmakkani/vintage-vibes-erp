@@ -25,6 +25,7 @@ import { Pagination } from '../../components/Pagination.tsx';
 import { luxuryAudio } from '../../utils/luxuryAudio.ts';
 import { pixelTracking } from '../../utils/pixelTracking.ts';
 import { supabase } from '../../supabaseClient.ts';
+import { isPieceEvicted } from '../../services/queryClient.ts';
 
 export interface DynamicCategory {
   id: string;
@@ -211,13 +212,14 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
         const payload = await res.json();
         // Check if response is paginated object
         if (payload && Array.isArray(payload.data)) {
-          setPieces(payload.data);
-          setTotalItems(payload.total || payload.data.length);
-          setTotalPages(payload.totalPages || Math.ceil((payload.total || payload.data.length) / pageSize) || 1);
+          const sanitized = payload.data.filter((p: any) => !isPieceEvicted(p.barcode) && !isPieceEvicted(p.id));
+          setPieces(sanitized);
+          setTotalItems(payload.total || sanitized.length);
+          setTotalPages(payload.totalPages || Math.ceil((payload.total || sanitized.length) / pageSize) || 1);
           return;
         } else if (Array.isArray(payload)) {
           // Fallback array handling
-          const filtered = payload.filter(p => !p.isSold && p.status === 'IN_STOCK' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
+          const filtered = payload.filter(p => !p.isSold && p.status === 'IN_STOCK' && !isPieceEvicted(p.barcode) && !isPieceEvicted(p.id) && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
           setTotalItems(filtered.length);
           const computedTotalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
           setTotalPages(computedTotalPages);
@@ -293,8 +295,9 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
           isCartLocked: false,
           createdAt: r.created_at
         }));
-        setPieces(mapped as PieceBreakdownItem[]);
-        const countVal = supaCount || mapped.length;
+        const sanitizedMapped = mapped.filter((p: any) => !isPieceEvicted(p.barcode) && !isPieceEvicted(p.id));
+        setPieces(sanitizedMapped as PieceBreakdownItem[]);
+        const countVal = supaCount || sanitizedMapped.length;
         setTotalItems(countVal);
         setTotalPages(Math.max(1, Math.ceil(countVal / pageSize)));
       } else {
@@ -331,9 +334,12 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
 
   // Realtime CDC listener for inventory_pieces
   useEffect(() => {
+    let lastHidden = Date.now();
+    let wakeTimer: NodeJS.Timeout | null = null;
+
     const handleRealtime = (e: any) => {
       if (e.detail?.table === 'inventory_pieces') {
-        const record = e.detail?.new;
+        const record = e.detail?.new || e.detail?.record;
         if (record) {
           const barcode = String(record.barcode || '').toLowerCase();
           const id = String(record.id || '').toLowerCase();
@@ -352,8 +358,32 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
         }
       }
     };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        lastHidden = Date.now();
+        return;
+      }
+      if (document.visibilityState === 'visible') {
+        const elapsed = Date.now() - lastHidden;
+        if (elapsed < 30000) return; // Ignore brief switching under 30s
+        if (wakeTimer) clearTimeout(wakeTimer);
+        // Randomized jitter 0-2000ms to prevent Supabase thundering herd
+        wakeTimer = setTimeout(() => {
+          fetchProducts();
+        }, Math.floor(Math.random() * 2000));
+      }
+    };
+
     window.addEventListener('vv:realtime-record', handleRealtime);
-    return () => window.removeEventListener('vv:realtime-record', handleRealtime);
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
+    return () => {
+      if (wakeTimer) clearTimeout(wakeTimer);
+      window.removeEventListener('vv:realtime-record', handleRealtime);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
+    };
   }, []);
 
   // Reset page to 1 whenever filters change

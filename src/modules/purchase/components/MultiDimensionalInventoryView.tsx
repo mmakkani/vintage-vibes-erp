@@ -159,7 +159,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
 
       if (brandFilter !== 'ALL' && piece.brandName !== brandFilter) return false;
 
-      if (statusFilter === 'IN_STOCK' && (piece.isSold || piece.status === 'WIP_LAUNDRY')) return false;
+      if (statusFilter === 'IN_STOCK' && (piece.isSold || piece.status === 'WIP_LAUNDRY' || piece.status === 'RESERVED' || piece.status === 'SOLD')) return false;
       if (statusFilter === 'SOLD' && !piece.isSold) return false;
       if (statusFilter === 'WIP_LAUNDRY' && piece.status !== 'WIP_LAUNDRY') return false;
 
@@ -177,7 +177,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   // Inventory KPIs
   const kpis = useMemo(() => {
     const totalCount = effectivePieces.length;
-    const inStockCount = effectivePieces.filter(p => !p.isSold && p.status !== 'WIP_LAUNDRY').length;
+    const inStockCount = effectivePieces.filter(p => !p.isSold && p.status !== 'WIP_LAUNDRY' && p.status !== 'RESERVED' && p.status !== 'SOLD').length;
     const laundryCount = effectivePieces.filter(p => p.status === 'WIP_LAUNDRY').length;
     const soldCount = effectivePieces.filter(p => p.isSold).length;
     const totalGrams = effectivePieces.reduce((sum, p) => sum + (p.weightGrams || Math.round((p.weightKg || 0) * 1000)), 0);

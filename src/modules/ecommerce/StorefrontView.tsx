@@ -47,6 +47,7 @@ import { luxuryAudio } from '../../utils/luxuryAudio.ts';
 import { SalesService } from '../../services/salesService.ts';
 import { supabase } from '../../supabaseClient.ts';
 import { pixelTracking } from '../../utils/pixelTracking.ts';
+import { isPieceEvicted } from '../../services/queryClient.ts';
 
 interface StorefrontViewProps {
   companyProfile: CompanyProfile;
@@ -119,7 +120,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         fetchDynamicCategories();
       }
       if (e.detail?.table === 'inventory_pieces') {
-        const record = e.detail?.new;
+        const record = e.detail?.new || e.detail?.record;
         if (record) {
           const barcode = String(record.barcode || '').toLowerCase();
           const id = String(record.id || '').toLowerCase();
@@ -138,8 +139,36 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         }
       }
     };
+
+    let lastHidden = Date.now();
+    let wakeTimer: NodeJS.Timeout | null = null;
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        lastHidden = Date.now();
+        return;
+      }
+      if (document.visibilityState === 'visible') {
+        const elapsed = Date.now() - lastHidden;
+        if (elapsed < 30000) return; // Ignore brief switching under 30s
+        if (wakeTimer) clearTimeout(wakeTimer);
+        // Randomized jitter 0-2000ms to prevent Supabase thundering herd
+        wakeTimer = setTimeout(() => {
+          fetchAvailableStock();
+          fetchDynamicCategories();
+        }, Math.floor(Math.random() * 2000));
+      }
+    };
+
     window.addEventListener('vv:realtime-record', handleRealtime);
-    return () => window.removeEventListener('vv:realtime-record', handleRealtime);
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
+    return () => {
+      if (wakeTimer) clearTimeout(wakeTimer);
+      window.removeEventListener('vv:realtime-record', handleRealtime);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
+    };
   }, []);
 
   // Navigation handlers
@@ -398,7 +427,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
-          const available = data.filter(p => !p.isSold && p.status === 'IN_STOCK' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
+          const available = data.filter(p => !p.isSold && p.status === 'IN_STOCK' && !isPieceEvicted(p.barcode) && !isPieceEvicted(p.id) && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
           setPieces(available);
           return;
         }
@@ -450,7 +479,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           isPriceOverridden: Boolean(r.is_price_overridden),
           isCartLocked: false,
           createdAt: r.created_at
-        })).filter((p: any) => !p.isSold && p.status === 'IN_STOCK' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
+        })).filter((p: any) => !p.isSold && p.status === 'IN_STOCK' && !isPieceEvicted(p.barcode) && !isPieceEvicted(p.id) && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
         setPieces(available as PieceBreakdownItem[]);
         return;
       }

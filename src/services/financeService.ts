@@ -7,6 +7,16 @@ import { SequenceService } from './sequenceService.ts';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isValidUuid = (val: any): boolean => typeof val === 'string' && UUID_REGEX.test(val.trim());
 
+/**
+ * Strict numeric parser and decimal rounding for enterprise ledgers.
+ * Prevents floating-point drift, NaN injection, and string leakage.
+ */
+export const toSafeLedgerAmount = (val: unknown, decimals: number = 4): number => {
+  const num = Number(val);
+  if (isNaN(num) || !isFinite(num)) return 0;
+  return Number(num.toFixed(decimals));
+};
+
 export class FinanceService {
   private static cachedCoaAccounts: COAAccount[] | null = null;
   private static coaAccountsPromise: Promise<COAAccount[]> | null = null;
@@ -705,10 +715,10 @@ export class FinanceService {
 
       const voucherEntriesRows = lines.map((l: any, idx: number) => {
         const lineId = String(l.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ve-${id}-${idx + 1}`));
-        const debit = Number(l.debitAmount ?? l.debit ?? 0);
-        const credit = Number(l.creditAmount ?? l.credit ?? 0);
-        const foreignDebit = Number(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
-        const foreignCredit = Number(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
+        const debit = toSafeLedgerAmount(l.debitAmount ?? l.debit ?? 0);
+        const credit = toSafeLedgerAmount(l.creditAmount ?? l.credit ?? 0);
+        const foreignDebit = toSafeLedgerAmount(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
+        const foreignCredit = toSafeLedgerAmount(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
         const memo = l.memo || l.narration || narration;
 
         const targetAccId = String(l.accountId || l.account_id || '');
@@ -733,7 +743,7 @@ export class FinanceService {
           debit,
           credit,
           currency,
-          exchange_rate: exchangeRate,
+          exchange_rate: toSafeLedgerAmount(exchangeRate, 6),
           foreign_debit: foreignDebit,
           foreign_credit: foreignCredit,
           particulars: memo,
@@ -755,14 +765,14 @@ export class FinanceService {
           party_name: veRow.party_name,
           date,
           entry_date: date,
-          debit: veRow.debit,
-          credit: veRow.credit,
+          debit: toSafeLedgerAmount(veRow.debit),
+          credit: toSafeLedgerAmount(veRow.credit),
           currency,
-          exchange_rate: exchangeRate,
-          foreign_debit: foreignDebit,
-          foreign_credit: foreignCredit,
-          balance: veRow.debit - veRow.credit,
-          running_balance: veRow.debit - veRow.credit,
+          exchange_rate: toSafeLedgerAmount(exchangeRate, 6),
+          foreign_debit: toSafeLedgerAmount(veRow.foreign_debit),
+          foreign_credit: toSafeLedgerAmount(veRow.foreign_credit),
+          balance: toSafeLedgerAmount(veRow.debit - veRow.credit),
+          running_balance: toSafeLedgerAmount(veRow.debit - veRow.credit),
           narration: veRow.narration,
           description: veRow.narration
         };
@@ -1045,10 +1055,10 @@ export class FinanceService {
 
       const voucherEntriesRows = lines.map((l: any, idx: number) => {
         const lineId = String(l.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ve-${cleanId}-${idx + 1}`));
-        const debit = Number(l.debitAmount ?? l.debit ?? 0);
-        const credit = Number(l.creditAmount ?? l.credit ?? 0);
-        const foreignDebit = Number(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
-        const foreignCredit = Number(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
+        const debit = toSafeLedgerAmount(l.debitAmount ?? l.debit ?? 0);
+        const credit = toSafeLedgerAmount(l.creditAmount ?? l.credit ?? 0);
+        const foreignDebit = toSafeLedgerAmount(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
+        const foreignCredit = toSafeLedgerAmount(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
         const memo = l.memo || l.narration || narration;
 
         const targetAccId = String(l.accountId || l.account_id || '');
@@ -1071,7 +1081,7 @@ export class FinanceService {
           debit,
           credit,
           currency,
-          exchange_rate: exchangeRate,
+          exchange_rate: toSafeLedgerAmount(exchangeRate, 6),
           foreign_debit: foreignDebit,
           foreign_credit: foreignCredit,
           particulars: memo,
@@ -1093,14 +1103,14 @@ export class FinanceService {
           party_name: veRow.party_name,
           date,
           entry_date: date,
-          debit: veRow.debit,
-          credit: veRow.credit,
+          debit: toSafeLedgerAmount(veRow.debit),
+          credit: toSafeLedgerAmount(veRow.credit),
           currency,
-          exchange_rate: exchangeRate,
-          foreign_debit: veRow.foreign_debit,
-          foreign_credit: veRow.foreign_credit,
-          balance: veRow.debit - veRow.credit,
-          running_balance: veRow.debit - veRow.credit,
+          exchange_rate: toSafeLedgerAmount(exchangeRate, 6),
+          foreign_debit: toSafeLedgerAmount(veRow.foreign_debit),
+          foreign_credit: toSafeLedgerAmount(veRow.foreign_credit),
+          balance: toSafeLedgerAmount(veRow.debit - veRow.credit),
+          running_balance: toSafeLedgerAmount(veRow.debit - veRow.credit),
           narration: veRow.narration,
           description: veRow.narration
         };

@@ -50,11 +50,43 @@ function keyMatches(targetKeyStr: string, filterKey: QueryKey, exact = false): b
   return targetKeyStr.includes(filterKeyStr.replace(/[\[\]]/g, ''));
 }
 
+// Eviction registry: Tracks recently RESERVED or SOLD pieces to prevent in-flight REST queries from re-injecting them (5-minute TTL)
+const evictedPiecesRegistry = new Map<string, number>();
+
+export function recordEvictedPiece(identifier?: string | null): void {
+  if (!identifier) return;
+  const key = String(identifier).trim().toLowerCase();
+  if (key) {
+    evictedPiecesRegistry.set(key, Date.now());
+  }
+}
+
+export function isPieceEvicted(identifier?: string | null): boolean {
+  if (!identifier) return false;
+  const key = String(identifier).trim().toLowerCase();
+  const timestamp = evictedPiecesRegistry.get(key);
+  if (!timestamp) return false;
+  // 5-minute TTL
+  if (Date.now() - timestamp > 5 * 60 * 1000) {
+    evictedPiecesRegistry.delete(key);
+    return false;
+  }
+  return true;
+}
+
 export class QueryClient {
   private cache = new Map<string, QueryCacheEntry>();
   private listeners = new Map<string, Set<(data: any) => void>>();
   private refetchHandlers = new Map<string, () => Promise<any>>();
   private globalSubscribers = new Set<(event: { type: string; key: string; data?: any }) => void>();
+
+  public recordEvictedPiece(identifier?: string | null): void {
+    recordEvictedPiece(identifier);
+  }
+
+  public isPieceEvicted(identifier?: string | null): boolean {
+    return isPieceEvicted(identifier);
+  }
 
   /**
    * Directly get cached data from RAM with 0ms latency.
@@ -73,7 +105,52 @@ export class QueryClient {
     const existing = this.cache.get(key);
     const prevData = existing ? (existing.data as T) : undefined;
 
-    const nextData = typeof updater === 'function' ? (updater as (old: T | undefined) => T)(prevData) : updater;
+    let nextData = typeof updater === 'function' ? (updater as (old: T | undefined) => T)(prevData) : updater;
+
+    // Idempotency Protection: If this query represents available stock, sanitize out any evicted (RESERVED/SOLD) pieces
+    const isAvailableStockCache =
+      keyMatches(key, 'inventory_pieces') ||
+      keyMatches(key, 'inventory') ||
+      keyMatches(key, 'products') ||
+      keyMatches(key, 'ecommerce') ||
+      keyMatches(key, 'storefront') ||
+      keyMatches(key, 'pieces') ||
+      keyMatches(key, 'stock');
+
+    if (isAvailableStockCache && nextData) {
+      if (Array.isArray(nextData)) {
+        nextData = (nextData as any[]).filter(item => {
+          if (!item) return false;
+          const itemId = String(item.id || item.code || item.uuid || '').trim().toLowerCase();
+          const itemBarcode = String(item.barcode || '').trim().toLowerCase();
+          return !isPieceEvicted(itemId) && !isPieceEvicted(itemBarcode);
+        }) as any;
+      } else if (
+        typeof nextData === 'object' &&
+        Array.isArray((nextData as any).data) &&
+        typeof (nextData as any).total === 'number'
+      ) {
+        const paginated = nextData as any;
+        const initialCount = paginated.data.length;
+        const filtered = paginated.data.filter((item: any) => {
+          if (!item) return false;
+          const itemId = String(item.id || item.code || item.uuid || '').trim().toLowerCase();
+          const itemBarcode = String(item.barcode || '').trim().toLowerCase();
+          return !isPieceEvicted(itemId) && !isPieceEvicted(itemBarcode);
+        });
+        if (filtered.length !== initialCount) {
+          const newTotal = Math.max(0, paginated.total - (initialCount - filtered.length));
+          const pageSize = paginated.pageSize || 10;
+          const newTotalPages = Math.max(1, Math.ceil(newTotal / pageSize));
+          nextData = {
+            ...paginated,
+            data: filtered,
+            total: newTotal,
+            totalPages: newTotalPages
+          } as any;
+        }
+      }
+    }
 
     this.cache.set(key, {
       data: nextData,
@@ -199,7 +276,25 @@ export class QueryClient {
    */
   public injectRecord(table: string, record: any): void {
     if (!record || typeof record !== 'object') return;
-    const recordId = record.id || record.device_id || record.code || record.uuid;
+    const recordId = record.id || record.device_id || record.code || record.uuid || record.barcode;
+
+    // CRITICAL: Treat RESERVED or SOLD inventory pieces as DELETE for Available Stock caches
+    if (
+      table === 'inventory_pieces' &&
+      (record.status === 'RESERVED' || record.status === 'SOLD' || Boolean(record.is_sold))
+    ) {
+      this.removeAvailablePiece(String(recordId), record);
+      return;
+    }
+
+    // If piece was recently marked RESERVED or SOLD, prevent in-flight REST queries from re-injecting it
+    if (table === 'inventory_pieces') {
+      const pId = String(record?.id || recordId || '').trim().toLowerCase();
+      const pBarcode = String(record?.barcode || '').trim().toLowerCase();
+      if (isPieceEvicted(pId) || isPieceEvicted(pBarcode)) {
+        return;
+      }
+    }
 
     for (const [keyStr, entry] of this.cache.entries()) {
       if (!entry || !entry.data) continue;
@@ -358,6 +453,95 @@ export class QueryClient {
     // Remove single entity cache
     const singleKey = [table, cleanId];
     this.removeQueries({ queryKey: singleKey, exact: true });
+  }
+
+  /**
+   * Treats an inventory piece as a DELETE event for any cached queries that represent "Available Stock"
+   * (e.g., E-Commerce storefront product list, Inventory "In Stock Only" view).
+   * Filters the item OUT of cached arrays and updates queryClient.setQueryData instantly.
+   */
+  public removeAvailablePiece(identifier: string, record?: any): void {
+    if (!identifier) return;
+    const cleanId = String(identifier).trim().toLowerCase();
+    const barcode = String(record?.barcode || '').trim().toLowerCase();
+    const id = String(record?.id || '').trim().toLowerCase();
+
+    // Idempotency: Register in Eviction Registry with 5-minute TTL to defend against slow in-flight REST queries
+    if (cleanId) recordEvictedPiece(cleanId);
+    if (barcode) recordEvictedPiece(barcode);
+    if (id) recordEvictedPiece(id);
+
+    for (const [keyStr, entry] of this.cache.entries()) {
+      if (!entry || !entry.data) continue;
+
+      // Filter all caches representing available stock (e-commerce products, storefront, inventory pieces)
+      const isAvailableStockCache =
+        keyMatches(keyStr, 'inventory_pieces') ||
+        keyMatches(keyStr, 'inventory') ||
+        keyMatches(keyStr, 'products') ||
+        keyMatches(keyStr, 'ecommerce') ||
+        keyMatches(keyStr, 'storefront') ||
+        keyMatches(keyStr, 'pieces') ||
+        keyMatches(keyStr, 'stock');
+
+      if (!isAvailableStockCache) continue;
+
+      let parsedKey: any = keyStr;
+      try {
+        parsedKey = JSON.parse(keyStr);
+      } catch (_) {}
+
+      // Case 1: Plain Array Cache
+      if (Array.isArray(entry.data)) {
+        const arr = entry.data as any[];
+        const filtered = arr.filter((item: any) => {
+          if (!item) return false;
+          const itemId = String(item.id || item.code || item.uuid || '').trim().toLowerCase();
+          const itemBarcode = String(item.barcode || '').trim().toLowerCase();
+          if (cleanId && (itemId === cleanId || itemBarcode === cleanId)) return false;
+          if (barcode && itemBarcode === barcode) return false;
+          if (id && itemId === id) return false;
+          return true;
+        });
+
+        if (filtered.length !== arr.length) {
+          this.setQueryData(parsedKey, filtered);
+        }
+        continue;
+      }
+
+      // Case 2: Paginated Structure
+      if (
+        entry.data &&
+        Array.isArray(entry.data.data) &&
+        typeof entry.data.total === 'number'
+      ) {
+        const paginated = entry.data as PaginatedCacheStructure;
+        const initialCount = paginated.data.length;
+        const filteredRows = paginated.data.filter((item: any) => {
+          if (!item) return false;
+          const itemId = String(item.id || item.code || item.uuid || '').trim().toLowerCase();
+          const itemBarcode = String(item.barcode || '').trim().toLowerCase();
+          if (cleanId && (itemId === cleanId || itemBarcode === cleanId)) return false;
+          if (barcode && itemBarcode === barcode) return false;
+          if (id && itemId === id) return false;
+          return true;
+        });
+
+        if (filteredRows.length !== initialCount) {
+          const newTotal = Math.max(0, paginated.total - (initialCount - filteredRows.length));
+          const pageSize = paginated.pageSize || 10;
+          const newTotalPages = Math.max(1, Math.ceil(newTotal / pageSize));
+
+          this.setQueryData(parsedKey, {
+            ...paginated,
+            data: filteredRows,
+            total: newTotal,
+            totalPages: newTotalPages
+          });
+        }
+      }
+    }
   }
 
   /**
