@@ -419,6 +419,7 @@ export class PurchaseService {
   }
 
   private static _postingInvoiceIds: Set<string> = new Set<string>();
+  private static _convertingInvoiceIds: Set<string> = new Set<string>();
 
   public static async postPurchaseInvoice(invoiceId: string): Promise<any> {
     const cleanId = String(invoiceId || '').trim();
@@ -1195,16 +1196,26 @@ export class PurchaseService {
   }
 
   public static async convertToInwardGatePass(invoiceId: string): Promise<InwardGatePass[]> {
-    // 1. Fetch invoice and its line items
-    const { data: invRows, error: invError } = await supabase
-      .from('purchase_invoices')
-      .select('*')
-      .eq('id', invoiceId)
-      .limit(1);
+    const cleanId = String(invoiceId || '').trim();
+    if (!cleanId) throw new Error('Invoice ID is required to convert into Inward Gate Pass');
 
-    if (invError || !invRows || invRows.length === 0) {
-      throw new Error(`Invoice with ID ${invoiceId} not found`);
+    if (PurchaseService._convertingInvoiceIds.has(cleanId)) {
+      console.warn(`[PurchaseService] Inward conversion already in flight for ID ${cleanId}. Rejecting duplicate request.`);
+      throw new Error(`Inward Gate Pass conversion is already in progress for invoice ${cleanId}. Please wait.`);
     }
+    PurchaseService._convertingInvoiceIds.add(cleanId);
+
+    try {
+      // 1. Fetch invoice and its line items
+      const { data: invRows, error: invError } = await supabase
+        .from('purchase_invoices')
+        .select('*')
+        .eq('id', cleanId)
+        .limit(1);
+
+      if (invError || !invRows || invRows.length === 0) {
+        throw new Error(`Invoice with ID ${cleanId} not found`);
+      }
 
     const invoice = invRows[0];
     const invoiceNo = invoice.invoice_no || `PUR-${Date.now().toString().slice(-6)}`;
@@ -1400,8 +1411,9 @@ export class PurchaseService {
         }
 
         // Post full Journal Entry: Dr 1150-01 (Sorting WIP Inventory) / Cr Supplier Liability Account
+        const inwUniqueSuffix = `${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
         createdInwardVoucher = await FinanceService.addVoucher({
-          voucherNo: `JV-INW-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
+          voucherNo: `JV-INW-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${inwUniqueSuffix}`,
           date: new Date().toISOString().slice(0, 10),
           type: 'JOURNAL',
           reference: `INWARD-${invoiceNo}`,
@@ -1466,8 +1478,9 @@ export class PurchaseService {
         if (existingInwTransfer && existingInwTransfer.length > 0) {
           console.log(`Inward transfer voucher already exists for ${invoiceNo}: ${existingInwTransfer[0].voucher_no}. Skipping duplicate voucher creation.`);
         } else {
+          const inwTrfUniqueSuffix = `${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
           createdInwardVoucher = await FinanceService.addVoucher({
-            voucherNo: `JV-INW-TRF-${cleanInvNo}-${Date.now().toString().slice(-4)}`,
+            voucherNo: `JV-INW-TRF-${cleanInvNo}-${inwTrfUniqueSuffix}`,
             date: new Date().toISOString().slice(0, 10),
             type: 'JOURNAL',
             reference: `INWARD-${invoiceNo}`,
@@ -1521,6 +1534,9 @@ export class PurchaseService {
     }
 
     return createdPasses;
+    } finally {
+      PurchaseService._convertingInvoiceIds.delete(cleanId);
+    }
   }
 
   public static async addInwardGatePass(igp: Partial<InwardGatePass> & { pieces_count?: number; piece_count?: number; [key: string]: any }): Promise<InwardGatePass> {

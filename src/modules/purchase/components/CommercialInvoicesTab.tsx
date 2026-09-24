@@ -217,6 +217,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   const [invoicesList, setInvoicesList] = useState<PurchaseInvoice[]>(invoices);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isConvertingId, setIsConvertingId] = useState<string | null>(null);
+  const isConvertingRef = React.useRef<Set<string>>(new Set());
   const [deletingInvoiceId, setDeletingInvoiceId] = useState<string | null>(null);
   const [unpostingInvoiceId, setUnpostingInvoiceId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -507,7 +508,8 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   };
 
   const handleConvertToInward = async (invId: string) => {
-    if (isConvertingId) return;
+    if (isConvertingRef.current.has(invId) || isConvertingId) return;
+    isConvertingRef.current.add(invId);
     setIsConvertingId(invId);
     try {
       const createdBales = await PurchaseService.convertToInwardGatePass(invId);
@@ -522,6 +524,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       console.warn('Error converting to inward:', e);
       alert(`Failed to create inward gate pass: ${e.message || 'Unknown error'}`);
     } finally {
+      isConvertingRef.current.delete(invId);
       setIsConvertingId(null);
     }
   };

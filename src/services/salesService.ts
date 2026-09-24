@@ -1,7 +1,7 @@
 import { supabase } from '../supabaseClient.ts';
 import { SalesInvoice } from '../modules/sales/sales.types.ts';
 import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
-import { FinanceService } from './financeService.ts';
+import { FinanceService, generateLedgerUuid } from './financeService.ts';
 import { SequenceService } from './sequenceService.ts';
 
 export class SalesService {
@@ -772,7 +772,7 @@ export class SalesService {
 
     // Auto-record in ledgers if accounts receivable exists
     try {
-      const ledgerId = String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : ('led-' + Date.now()));
+      const ledgerId = generateLedgerUuid();
       await supabase.from('ledgers').insert({
         id: ledgerId,
         voucher_id: 'VCH-' + invoiceNum,

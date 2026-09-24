@@ -813,10 +813,11 @@ export class FinanceService {
           }
         } catch (_) {}
 
+        const voucherId = String(id);
         const ledgersRows = generalLedgerRows.map((glRow: any) => ({
           ...glRow,
-          id: generateLedgerUuid(), // FRESH UNIQUE UUID for EVERY SINGLE ROW in ledgers
-          voucher_id: String(id),
+          id: generateLedgerUuid(), // MUST BE UNIQUE PER ROW
+          voucher_id: String(voucherId),
           account_id: coaMap.get(glRow.account_code) || glRow.account_id
         }));
         await supabase.from('ledgers').insert(ledgersRows);
@@ -954,9 +955,11 @@ export class FinanceService {
             const { data: coaAccs } = await supabase.from('coa_accounts').select('id, code');
             if (Array.isArray(coaAccs)) coaMap = new Map(coaAccs.map((a: any) => [a.code, String(a.id)]));
           } catch (_) {}
+          const voucherId = String(cleanId);
           const mappedLedgers = glRows.map((r: any) => ({
             ...r,
-            id: generateLedgerUuid(),
+            id: generateLedgerUuid(), // MUST BE UNIQUE PER ROW
+            voucher_id: String(voucherId),
             account_id: coaMap.get(r.account_code) || r.account_id
           }));
           await supabase.from('ledgers').insert(mappedLedgers);
@@ -1152,10 +1155,11 @@ export class FinanceService {
           const { data: coaAccs } = await supabase.from('coa_accounts').select('id, code');
           if (Array.isArray(coaAccs)) coaMap = new Map(coaAccs.map((a: any) => [a.code, String(a.id)]));
         } catch (_) {}
+        const voucherId = String(cleanId);
         const mappedLedgers = generalLedgerRows.map((glRow: any) => ({
           ...glRow,
-          id: generateLedgerUuid(), // FRESH UNIQUE UUID for EVERY SINGLE ROW in ledgers
-          voucher_id: cleanId,
+          id: generateLedgerUuid(), // MUST BE UNIQUE PER ROW
+          voucher_id: String(voucherId),
           account_id: coaMap.get(glRow.account_code) || glRow.account_id
         }));
         await supabase.from('ledgers').insert(mappedLedgers);
