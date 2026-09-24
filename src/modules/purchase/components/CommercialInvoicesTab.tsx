@@ -68,8 +68,10 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
 
   React.useEffect(() => {
     if (!lastDelta) return;
+    // Strictly handle purchase_invoices mutations; explicitly ignore other entities like inward_gate_passes
+    if (lastDelta.entity && lastDelta.entity !== 'purchase_invoices') return;
+
     if (
-      lastDelta.module === 'purchase' ||
       lastDelta.entity === 'purchase_invoices' ||
       lastDelta.payload?.invoice ||
       lastDelta.payload?.purchase_invoices
@@ -77,8 +79,11 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       const raw =
         lastDelta.payload?.invoice ||
         lastDelta.payload?.purchase_invoices ||
-        lastDelta.payload?.record ||
-        lastDelta.payload;
+        lastDelta.payload?.record;
+
+      if (!raw || (!raw.invoice_no && !raw.invoiceNo)) {
+        return;
+      }
 
       const invId = String(lastDelta.documentRef || raw?.id || raw?.invoice_id || '');
       const invNo = String(raw?.invoice_no || raw?.invoiceNo || invId);
@@ -492,11 +497,11 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
     try {
       const createdBales = await PurchaseService.convertToInwardGatePass(invId);
       // Immediately reflect convertedToInward in local state so UI updates without waiting
-      setInvoicesList(prev => prev.map(item => item.id === invId ? { ...item, convertedToInward: true, status: 'POSTED' } : item));
+      setInvoicesList(prev => prev.map(item => String(item.id) === String(invId) ? { ...item, convertedToInward: true, status: 'POSTED' } : item));
       triggerRowGlow(invId);
       notifyMutation('finance', 'vouchers', 'INWARD_POSTED', invId);
-      notifyMutation('purchase', 'inward_gate_passes', 'CREATED', invId);
-      alert(`✅ Inward Gate Pass Created!\n\n${createdBales.length} bale(s) generated and ready for sorting in Terminal.\nConsignment value successfully booked to COA & Supplier Khata.`);
+      notifyMutation('purchase', 'inward_gate_passes', 'CREATED', invId, { bales: createdBales, invoiceId: invId });
+      setToastMessage(`✓ Inward Gate Pass Created: ${createdBales.length} bale(s) generated & ready for sorting in Terminal!`);
       onRefresh();
     } catch (e: any) {
       console.warn('Error converting to inward:', e);

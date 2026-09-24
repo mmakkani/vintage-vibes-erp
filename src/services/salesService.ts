@@ -7,6 +7,112 @@ import { SequenceService } from './sequenceService.ts';
 export class SalesService {
   public static readonly SALES_INVOICE_GRID_COLUMNS = 'id, invoice_no, client_id, customer_name, customer_phone, subtotal, tax_amount, total_amount, status, payment_method, invoice_date, created_at, items';
 
+  /**
+   * CRITICAL GLOBAL INVENTORY RESERVATION (Prevent Double-Selling)
+   * The moment an item is added to a cart/draft across any channel:
+   * UPDATE inventory_pieces SET status = 'RESERVED' WHERE id = [piece_id] AND status = 'IN_STOCK'
+   * If the update returns 0 rows, it throws: "Item already reserved by another user."
+   */
+  public static async reservePiece(identifier: string | { id?: string; barcode?: string }): Promise<any> {
+    const isObj = typeof identifier === 'object' && identifier !== null;
+    const pieceId = isObj ? identifier.id : identifier;
+    const barcode = isObj ? identifier.barcode : identifier;
+
+    const isUuid = (val?: string) => Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim()));
+
+    let data: any[] | null = null;
+    let error: any = null;
+
+    if (pieceId && isUuid(pieceId)) {
+      const res = await supabase
+        .from('inventory_pieces')
+        .update({ status: 'RESERVED', updated_at: new Date().toISOString() })
+        .eq('id', pieceId.trim())
+        .eq('status', 'IN_STOCK')
+        .select();
+      data = res.data;
+      error = res.error;
+    }
+
+    if ((!data || data.length === 0) && barcode) {
+      const res = await supabase
+        .from('inventory_pieces')
+        .update({ status: 'RESERVED', updated_at: new Date().toISOString() })
+        .eq('barcode', barcode.trim())
+        .eq('status', 'IN_STOCK')
+        .select();
+      data = res.data;
+      error = res.error;
+    }
+
+    if (error) {
+      console.error('[SalesService] reservePiece DB error:', error);
+      throw new Error('Item already reserved by another user.');
+    }
+
+    if (!data || data.length === 0) {
+      throw new Error('Item already reserved by another user.');
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('vv:realtime-record', {
+          detail: { table: 'inventory_pieces', eventType: 'UPDATE', new: data[0] }
+        }));
+        window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+          detail: { module: 'inventory', entity: 'inventory_pieces', action: 'UPDATE', documentRef: data[0].barcode || barcode }
+        }));
+      } catch (_) {}
+    }
+
+    return data[0];
+  }
+
+  /**
+   * Release reservation on "Remove" or "Timer Expiry"
+   * UPDATE inventory_pieces SET status = 'IN_STOCK' WHERE id = [piece_id]
+   */
+  public static async releasePiece(identifier: string | { id?: string; barcode?: string }): Promise<any> {
+    const isObj = typeof identifier === 'object' && identifier !== null;
+    const pieceId = isObj ? identifier.id : identifier;
+    const barcode = isObj ? identifier.barcode : identifier;
+
+    const isUuid = (val?: string) => Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim()));
+
+    let data: any[] | null = null;
+
+    if (pieceId && isUuid(pieceId)) {
+      const res = await supabase
+        .from('inventory_pieces')
+        .update({ status: 'IN_STOCK', updated_at: new Date().toISOString() })
+        .eq('id', pieceId.trim())
+        .select();
+      data = res.data;
+    }
+
+    if ((!data || data.length === 0) && barcode) {
+      const res = await supabase
+        .from('inventory_pieces')
+        .update({ status: 'IN_STOCK', updated_at: new Date().toISOString() })
+        .eq('barcode', barcode.trim())
+        .select();
+      data = res.data;
+    }
+
+    if (typeof window !== 'undefined' && data && data.length > 0) {
+      try {
+        window.dispatchEvent(new CustomEvent('vv:realtime-record', {
+          detail: { table: 'inventory_pieces', eventType: 'UPDATE', new: data[0] }
+        }));
+        window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+          detail: { module: 'inventory', entity: 'inventory_pieces', action: 'UPDATE', documentRef: data[0].barcode || barcode }
+        }));
+      } catch (_) {}
+    }
+
+    return data && data.length > 0 ? data[0] : null;
+  }
+
   public static async getSalesInvoicesPaginated(options?: {
     page?: number;
     pageSize?: number;

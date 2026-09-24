@@ -113,10 +113,29 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
   useEffect(() => {
     fetchDynamicCategories();
-    // CDC Realtime listener for dynamic category changes in Global Setup
+    // CDC Realtime listener for dynamic category changes & global inventory reservations
     const handleRealtime = (e: any) => {
       if (e.detail?.table === 'product_categories') {
         fetchDynamicCategories();
+      }
+      if (e.detail?.table === 'inventory_pieces') {
+        const record = e.detail?.new;
+        if (record) {
+          const barcode = String(record.barcode || '').toLowerCase();
+          const id = String(record.id || '').toLowerCase();
+          const status = record.status;
+          const isSold = Boolean(record.is_sold);
+
+          if (status !== 'IN_STOCK' || isSold) {
+            // Instantly vanish from public shop grid
+            setPieces(prev => prev.filter(p =>
+              p.barcode.toLowerCase() !== barcode &&
+              String(p.id).toLowerCase() !== id
+            ));
+          } else if (status === 'IN_STOCK' && !isSold) {
+            fetchAvailableStock();
+          }
+        }
       }
     };
     window.addEventListener('vv:realtime-record', handleRealtime);
@@ -379,7 +398,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
-          const available = data.filter(p => !p.isSold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE') && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
+          const available = data.filter(p => !p.isSold && p.status === 'IN_STOCK' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
           setPieces(available);
           return;
         }
@@ -390,7 +409,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         .from('inventory_pieces')
         .select('*')
         .eq('is_sold', false)
-        .in('status', ['IN_STOCK', 'AVAILABLE'])
+        .eq('status', 'IN_STOCK')
         .or('ready_for_ecommerce.is.null,ready_for_ecommerce.eq.true')
         .order('created_at', { ascending: false })
         .limit(100);
@@ -431,7 +450,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           isPriceOverridden: Boolean(r.is_price_overridden),
           isCartLocked: false,
           createdAt: r.created_at
-        })).filter((p: any) => !p.isSold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE') && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
+        })).filter((p: any) => !p.isSold && p.status === 'IN_STOCK' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
         setPieces(available as PieceBreakdownItem[]);
         return;
       }
@@ -507,29 +526,36 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const handleAddToCart = async (piece: PieceBreakdownItem) => {
     luxuryAudio.playChime();
 
-    // 1. Check & reserve 1-of-1 piece in SQL database cart_reservations
+    // 1. Critical Global Pessimistic Reservation in Supabase:
+    // UPDATE inventory_pieces SET status = 'RESERVED' WHERE id = [piece_id] AND status = 'IN_STOCK'
     try {
-      const res = await fetch('/api/ecommerce/cart/reserve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          barcode: piece.barcode,
-          sessionId,
-          pieceTitle: piece.itemName || piece.brandName,
-          priceAed: piece.estimatedPrice || piece.retailPriceAed || 295
-        })
+      await SalesService.reservePiece({ id: piece.id, barcode: piece.barcode });
+    } catch (reserveErr: any) {
+      luxuryAudio.playMechanicalClick();
+      setSuccessToast({
+        title: '⚠️ Piece Unavailable',
+        subtitle: reserveErr?.message || 'Item already reserved by another user.'
       });
+      setTimeout(() => setSuccessToast(null), 5000);
+      // Immediately vanish from public pieces grid since it is unavailable
+      setPieces(prev => prev.filter(p => p.barcode !== piece.barcode && p.id !== piece.id));
+      return;
+    }
 
-      if (res.status === 423) {
-        const errData = await res.json();
-        setSuccessToast({
-          title: '⚠️ Piece Currently Held!',
-          subtitle: errData.error || 'This 1-of-1 piece is currently held in another cart.'
-        });
-        setTimeout(() => setSuccessToast(null), 5000);
-        return;
-      }
-    } catch (_) {}
+    // 2. Also register 10-minute cart reservation in SQL backend for session tracking
+    fetch('/api/ecommerce/cart/reserve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        barcode: piece.barcode,
+        sessionId,
+        pieceTitle: piece.itemName || piece.brandName,
+        priceAed: piece.estimatedPrice || piece.retailPriceAed || 295
+      })
+    }).catch(() => {});
+
+    // Instantly remove piece from local available stock grid
+    setPieces(prev => prev.filter(p => p.barcode !== piece.barcode && p.id !== piece.id));
 
     setCart(prev => {
       if (prev.some(p => p.barcode === piece.barcode)) {
@@ -548,13 +574,20 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
     setSuccessToast({
       title: `Added ${piece.brandName} (${piece.barcode}) to Cart!`,
-      subtitle: '1-of-1 Vault reservation locked in SQL database for 10 minutes.'
+      subtitle: '1-of-1 Vault reservation locked for 10 minutes.'
     });
     setTimeout(() => setSuccessToast(null), 4000);
   };
 
-  const handleRemoveFromCart = (barcode: string) => {
-    // Release SQL reservation
+  const handleRemoveFromCart = async (barcode: string) => {
+    // 1. Revert reservation in Supabase: UPDATE inventory_pieces SET status = 'IN_STOCK' WHERE id = [piece_id]
+    try {
+      await SalesService.releasePiece(barcode);
+    } catch (err) {
+      console.warn('Error releasing reservation:', err);
+    }
+
+    // 2. Release SQL reservation endpoint
     fetch('/api/ecommerce/cart/release', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -568,6 +601,35 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       } catch (_) {}
       return updated;
     });
+
+    // Refresh stock so released piece returns to view
+    fetchAvailableStock();
+  };
+
+  const handleCartTimerExpired = async () => {
+    if (cart.length === 0) return;
+    const piecesToRelease = [...cart];
+    setCart([]);
+    try {
+      localStorage.removeItem('vv_cart_items');
+    } catch (_) {}
+    setIsCartOpen(false);
+
+    for (const item of piecesToRelease) {
+      await SalesService.releasePiece({ id: item.id, barcode: item.barcode }).catch(() => {});
+      fetch('/api/ecommerce/cart/release', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ barcode: item.barcode, sessionId })
+      }).catch(() => {});
+    }
+
+    setSuccessToast({
+      title: '⏳ Vault Reservation Expired',
+      subtitle: 'Your 10-minute hold has expired. Items have been released back to stock.'
+    });
+    setTimeout(() => setSuccessToast(null), 5000);
+    fetchAvailableStock();
   };
 
   const handleCheckoutFromCart = () => {
@@ -1848,6 +1910,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         onRemoveItem={handleRemoveFromCart}
         onCheckout={handleCheckoutFromCart}
         companyProfile={companyProfile}
+        onTimerExpire={handleCartTimerExpired}
       />
 
       {/* 15. MODALS */}

@@ -73,7 +73,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         LEFT JOIN cart_reservations r 
           ON p.barcode = r.barcode AND r.is_active = true AND r.expires_at > NOW()
         WHERE p.is_sold = false 
-          AND p.status IN ('IN_STOCK', 'AVAILABLE')
+          AND p.status = 'IN_STOCK'
           AND (p.ready_for_ecommerce IS NULL OR p.ready_for_ecommerce = true)
       `;
 
@@ -367,15 +367,25 @@ ecommerceRouter.post('/cart/reserve', async (req: Request, res: Response) => {
         VALUES ($1, $2, $3, $4, $5, NOW(), NOW() + INTERVAL '10 minutes', true)
       `, [id, barcode, sessionId, pieceTitle || 'Vintage Piece', Number(priceAed || 0)]);
 
-      // Atomically update inventory_pieces to RESERVED
-      await client.query(`
+      // Atomically update inventory_pieces to RESERVED (must currently be IN_STOCK)
+      const updateRes = await client.query(`
         UPDATE inventory_pieces
         SET status = 'RESERVED',
             is_sold = false,
             reserved_until = EXTRACT(EPOCH FROM (NOW() + INTERVAL '10 minutes')) * 1000,
             updated_at = NOW()
-        WHERE barcode = $1 AND (is_sold = false OR is_sold IS NULL)
+        WHERE barcode = $1 AND status = 'IN_STOCK' AND (is_sold = false OR is_sold IS NULL)
       `, [barcode]);
+
+      if (!updateRes.rowCount || updateRes.rowCount === 0) {
+        return {
+          status: 423,
+          body: {
+            success: false,
+            error: "Item already reserved by another user."
+          }
+        };
+      }
 
       const expiryTime = new Date(Date.now() + 10 * 60 * 1000).toISOString();
       return {

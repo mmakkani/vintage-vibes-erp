@@ -343,6 +343,16 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         const price = Number(piece.suggestedPriceAed) || 45;
         const cogs = Number(piece.calculatedCostPrice) || 18;
 
+        // Global Pessimistic Reservation in Supabase:
+        // UPDATE inventory_pieces SET status = 'RESERVED' WHERE id = [piece_id] AND status = 'IN_STOCK'
+        try {
+          await SalesService.reservePiece({ id: piece.id, barcode: piece.barcode });
+        } catch (reserveErr: any) {
+          setScanError('Item already reserved by another user.');
+          setScanLoading(false);
+          return;
+        }
+
         const newItem: SalesInvoiceItem = {
           id: `piece-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
           barcode: piece.barcode,
@@ -409,8 +419,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     showMsg(`Added ${newItemsList.length} Raw Bales to Invoice.`);
   };
 
-  const handleRemoveItem = (id: string) => {
+  const handleRemoveItem = async (id: string) => {
+    const itemToRemove = items.find(i => i.id === id);
     setItems(prev => prev.filter(i => i.id !== id));
+    if (itemToRemove && !itemToRemove.isRawBale && itemToRemove.barcode) {
+      await SalesService.releasePiece(itemToRemove.barcode).catch(() => {});
+    }
   };
 
   const handleUpdateBalePricingMode = (id: string, mode: 'PER_KG' | 'FLAT') => {

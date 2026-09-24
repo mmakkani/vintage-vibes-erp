@@ -156,10 +156,10 @@ export class SalesController {
         return { success: false, error: `Garment Piece "${piece.barcode}" (${piece.brandName} ${piece.itemName}) has already been SOLD!` };
       }
       if (piece.status === 'RESERVED') {
-        return { success: false, error: `Garment Piece "${piece.barcode}" (${piece.brandName} ${piece.itemName}) is currently RESERVED in another draft or cart!` };
+        return { success: false, error: 'Item already reserved by another user.' };
       }
       if (piece.status !== 'IN_STOCK') {
-        return { success: false, error: `Garment Piece "${piece.barcode}" is not available for sale (status: ${piece.status}).` };
+        return { success: false, error: 'Item already reserved by another user.' };
       }
       const grams = piece.weightGrams || Math.round((piece.weightKg || 0.45) * 1000);
       const cogs = piece.calculatedCostPrice || piece.costPrice || (piece.costPerGram ? Number((grams * piece.costPerGram).toFixed(2)) : 18.5);

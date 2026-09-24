@@ -230,6 +230,34 @@ purchaseRouter.post(['/gate-passes/bale-inward', '/bales/inward', '/bales', '/ga
 purchaseRouter.delete(['/gate-passes/:id', '/bales/:id'], async (req, res) => {
   const { id } = req.params;
   try {
+    const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+    if (dbUrl && !dbUrl.includes('placeholder')) {
+      const { Client } = await import('pg');
+      const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+      await client.connect();
+      try {
+        const checkQ = await client.query(
+          `SELECT 
+             (SELECT COUNT(*) FROM bale_sorted_pieces WHERE bale_id = $1) as sorted_cnt,
+             (SELECT COUNT(*) FROM inventory_pieces WHERE gate_pass_id = $1) as inv_cnt,
+             (SELECT sorted_grams FROM bale_sessions WHERE bale_id = $1 LIMIT 1) as sorted_grams;`,
+          [id]
+        );
+        const sortedCnt = Number(checkQ.rows[0]?.sorted_cnt || 0);
+        const invCnt = Number(checkQ.rows[0]?.inv_cnt || 0);
+        const sortedGrams = Number(checkQ.rows[0]?.sorted_grams || 0);
+        if (sortedCnt > 0 || invCnt > 0 || sortedGrams > 0) {
+          await client.end();
+          return res.status(400).json({
+            success: false,
+            error: `Cannot delete bale: This bale contains ${sortedCnt || invCnt} sorted pieces (${sortedGrams}g). Unsafe bale deletion is locked.`
+          });
+        }
+      } finally {
+        try { await client.end(); } catch (_) {}
+      }
+    }
+
     await PurchaseService.deleteInwardGatePass(id);
     return res.json({ success: true, message: 'Bale / Gate pass deleted successfully', id });
   } catch (err: any) {

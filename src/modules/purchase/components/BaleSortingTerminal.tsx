@@ -1279,10 +1279,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       // 1. Invoke PurchaseService.unlockBaleSession to revert status and delete JV-FIN auto-voucher (reversing balance to WIP 1150-01)
       await PurchaseService.unlockBaleSession(activeBale.id, activeBale.baleCode || activeBale.gatePassNo);
 
-      // 2. Reset local state
+      // 2. Reset local state & propagate IN_PROGRESS
       setIsTerminalFinalized(false);
-      activeBale.status = newStatus as any;
-      activeBale.sortingStatus = (newStatus === 'PARTIAL' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any;
+      activeBale.status = 'IN_PROGRESS' as any;
+      activeBale.sortingStatus = 'PARTIALLY_SORTED' as any;
+      setInternalBales(prev => prev.map(b => (b.id === activeBale.id || b.gatePassNo === activeBale.gatePassNo) ? { ...b, status: 'IN_PROGRESS' as any, sortingStatus: 'PARTIALLY_SORTED' as any } : b));
 
       if (onSavePartial) {
         onSavePartial(activeBale.id);
@@ -1496,9 +1497,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }
   };
   // Delete active bale if unbroken and unsorted
-  const activeSortedKg = Number(activeBale?.brokenDownWeight ?? (activeBale as any)?.broken_down_weight ?? 0);
+  const activeSortedKg = Number(activeBale?.brokenDownWeight ?? (activeBale as any)?.broken_down_weight ?? (hudStats.sortedGrams / 1000) ?? 0);
   const activeSortedCount = Number(activeBale?.pieceCount ?? (activeBale as any)?.piece_count ?? (pieces?.length || 0));
-  const isActiveDeletable = Boolean(activeBale) && activeSortedKg === 0 && activeSortedCount === 0;
+  const isActiveDeletable = Boolean(activeBale) && activeSortedKg === 0 && activeSortedCount === 0 && hudStats.sortedGrams === 0;
 
   const handleDeleteActiveBale = async (e?: React.MouseEvent) => {
     if (e) {
@@ -1506,6 +1507,10 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       e.stopPropagation();
     }
     if (!activeBale) return;
+    if (!isActiveDeletable) {
+      alert(`⚠️ Cannot delete bale: This bale contains ${activeSortedCount} sorted pieces (${hudStats.sortedGrams}g). Unsafe bale deletion is locked. Delete all pieces first.`);
+      return;
+    }
     const baleTitle = activeBale.baleCode || activeBale.gatePassNo || activeBale.id;
     if (!window.confirm(`Are you sure you want to delete Bale "${baleTitle}"?\n\nThis will remove the Inward Pass and unlock the associated Commercial Invoice for unposting.`)) {
       return;

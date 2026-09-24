@@ -22,6 +22,7 @@ interface CartDrawerProps {
   onRemoveItem: (barcode: string) => void;
   onCheckout: () => void;
   companyProfile: CompanyProfile;
+  onTimerExpire?: () => void;
 }
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
@@ -30,23 +31,31 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   cartItems,
   onRemoveItem,
   onCheckout,
-  companyProfile
+  companyProfile,
+  onTimerExpire
 }) => {
   // 10-minute (600 seconds) Vault Reserve Timer
   const [timeLeftSeconds, setTimeLeftSeconds] = useState(600);
 
   useEffect(() => {
-    if (!isOpen || cartItems.length === 0) return;
+    if (!isOpen || cartItems.length === 0) {
+      setTimeLeftSeconds(600);
+      return;
+    }
 
     const timer = setInterval(() => {
       setTimeLeftSeconds(prev => {
-        if (prev <= 1) return 600; // auto-refresh hold
+        if (prev <= 1) {
+          clearInterval(timer);
+          onTimerExpire?.();
+          return 0;
+        }
         return prev - 1;
       });
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isOpen, cartItems.length]);
+  }, [isOpen, cartItems.length, onTimerExpire]);
 
   if (!isOpen) return null;
 

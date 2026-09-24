@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
 import { Party } from '../../parties/parties.types.ts';
 import { SalesInvoice } from '../sales.types.ts';
+import { SalesService } from '../../../services/salesService.ts';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { useFormAutoSave } from '../../../hooks/useFormAutoSave.ts';
 import { AutoSaveDraftBanner, AutoSaveIndicator } from '../../../components/AutoSaveNotice.tsx';
@@ -141,9 +142,18 @@ export const LiveSellingTerminal: React.FC<LiveSellingTerminalProps> = ({
   };
 
   // Add piece to live basket
-  const addToBasket = (piece: PieceBreakdownItem) => {
+  const addToBasket = async (piece: PieceBreakdownItem) => {
     if (basket.some(b => b.barcode.toLowerCase() === piece.barcode.toLowerCase())) {
       showMsg(`Item ${piece.barcode} is already in the live basket!`, 'error');
+      return;
+    }
+
+    // Global Pessimistic Reservation in Supabase:
+    // UPDATE inventory_pieces SET status = 'RESERVED' WHERE id = [piece_id] AND status = 'IN_STOCK'
+    try {
+      await SalesService.reservePiece({ id: piece.id, barcode: piece.barcode });
+    } catch (err: any) {
+      showMsg('Item already reserved by another user.', 'error');
       return;
     }
 
@@ -185,8 +195,9 @@ export const LiveSellingTerminal: React.FC<LiveSellingTerminalProps> = ({
     setBarcodeInput('');
   };
 
-  const removeFromBasket = (barcode: string) => {
+  const removeFromBasket = async (barcode: string) => {
     setBasket(prev => prev.filter(b => b.barcode !== barcode));
+    await SalesService.releasePiece(barcode).catch(() => {});
   };
 
   const updateItemDiscount = (barcode: string, discountAmount: number) => {

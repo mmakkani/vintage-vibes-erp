@@ -20,7 +20,8 @@ import {
   AlertCircle,
   Printer,
   Trash2,
-  Loader2
+  Loader2,
+  Lock
 } from 'lucide-react';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { Pagination } from '../../../components/Pagination.tsx';
@@ -652,19 +653,30 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                             <Scale className="w-3.5 h-3.5" />
                             Open Terminal
                           </button>
-                          <button
-                            type="button"
-                            disabled={deletingBaleId === String(bale.id)}
-                            onClick={(e) => handleDeleteBale(bale, e)}
-                            className="p-1.5 hover:bg-rose-50 text-rose-600 rounded cursor-pointer transition-colors border border-rose-200 disabled:opacity-50"
-                            title="Delete Bale & Remove from SQL"
-                          >
-                            {deletingBaleId === String(bale.id) ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-600" />
-                            ) : (
-                              <Trash2 className="w-3.5 h-3.5" />
-                            )}
-                          </button>
+                          {(depletion.pieceCount || 0) === 0 && (brokenDownKg || 0) === 0 ? (
+                            <button
+                              type="button"
+                              disabled={deletingBaleId === String(bale.id)}
+                              onClick={(e) => handleDeleteBale(bale, e)}
+                              className="p-1.5 hover:bg-rose-50 text-rose-600 rounded cursor-pointer transition-colors border border-rose-200 disabled:opacity-50"
+                              title="Delete Bale & Remove from SQL"
+                            >
+                              {deletingBaleId === String(bale.id) ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-600" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled
+                              className="p-1.5 text-slate-400 bg-slate-100 border border-slate-200 rounded cursor-not-allowed opacity-60"
+                              title={`Deletion Locked: Bale contains ${depletion.pieceCount || 0} sorted pieces (${(brokenDownKg || 0).toFixed(2)} KG). Delete all sorted pieces first.`}
+                            >
+                              <Lock className="w-3.5 h-3.5 text-slate-400" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

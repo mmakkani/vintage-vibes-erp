@@ -211,6 +211,29 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   useEffect(() => {
     barcodeInputRef.current?.focus();
     loadInventoryAndParties();
+
+    const handleRealtime = (e: any) => {
+      if (e.detail?.table === 'inventory_pieces') {
+        const record = e.detail?.new;
+        if (record) {
+          const barcode = String(record.barcode || '').toLowerCase();
+          const id = String(record.id || '').toLowerCase();
+          const status = record.status;
+          const isSold = Boolean(record.is_sold);
+
+          if (status !== 'IN_STOCK' || isSold) {
+            setAllPieces(prev => prev.filter(p =>
+              p.barcode.toLowerCase() !== barcode &&
+              String(p.id).toLowerCase() !== id
+            ));
+          } else if (status === 'IN_STOCK' && !isSold) {
+            loadInventoryAndParties();
+          }
+        }
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleRealtime);
+    return () => window.removeEventListener('vv:realtime-record', handleRealtime);
   }, []);
 
   const loadInventoryAndParties = async () => {
@@ -317,8 +340,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     return Number((tendered - grandTotal).toFixed(2));
   }, [cashTendered, grandTotal]);
 
-  // Add piece to cart handler
-  const handleScanPiece = (rawCode: string) => {
+  // Add piece to cart handler with pessimistic reservation
+  const handleScanPiece = async (rawCode: string) => {
     const code = rawCode.trim();
     if (!code) return;
 
@@ -338,7 +361,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     const piece = allPieces.find(p => p.barcode.toLowerCase() === code.toLowerCase());
     if (!piece) {
       setScanFeedback({
-        text: `❌ Barcode "${code}" not found in inventory. Check tag or inward bale.`,
+        text: `❌ Barcode "${code}" not found in available stock. Check tag or inward bale.`,
         type: 'error'
       });
       setBarcodeInput('');
@@ -354,23 +377,32 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       return;
     }
 
-    if (piece.status === 'RESERVED') {
+    if (piece.status !== 'IN_STOCK') {
       setScanFeedback({
-        text: `⚠️ SKU "${code}" (${piece.brandName} ${piece.itemName}) is currently RESERVED in an active draft or cart.`,
+        text: `⚠️ Item already reserved by another user.`,
         type: 'error'
       });
       setBarcodeInput('');
       return;
     }
 
-    if (piece.status !== 'IN_STOCK') {
+    // CRITICAL DB UPDATE: The moment an item is added to a cart/draft, execute Supabase update:
+    // UPDATE inventory_pieces SET status = 'RESERVED' WHERE id = [piece_id] AND status = 'IN_STOCK'
+    try {
+      await SalesService.reservePiece({ id: piece.id, barcode: piece.barcode });
+    } catch (err: any) {
+      luxuryAudio.playMechanicalClick();
       setScanFeedback({
-        text: `⚠️ SKU "${code}" (${piece.brandName} ${piece.itemName}) is not available for sale (status: ${piece.status}).`,
+        text: `⚠️ Item already reserved by another user.`,
         type: 'error'
       });
       setBarcodeInput('');
+      setAllPieces(prev => prev.filter(p => p.barcode !== piece.barcode && p.id !== piece.id));
       return;
     }
+
+    // Instantly remove from available stock grid
+    setAllPieces(prev => prev.filter(p => p.barcode !== piece.barcode && p.id !== piece.id));
 
     // Piece Cost & Price Calculation
     const grams = piece.weightGrams || Math.round((piece.weightKg || 0.45) * 1000);
@@ -400,9 +432,19 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     }, 50);
   };
 
-  const handleRemoveItem = (index: number) => {
+  const handleRemoveItem = async (index: number) => {
     luxuryAudio.playMechanicalClick();
+    const itemToRemove = cart[index];
     setCart(prev => prev.filter((_, i) => i !== index));
+
+    if (itemToRemove?.piece) {
+      try {
+        await SalesService.releasePiece({ id: itemToRemove.piece.id, barcode: itemToRemove.piece.barcode });
+      } catch (e) {
+        console.warn('Failed to release POS reservation:', e);
+      }
+      loadInventoryAndParties();
+    }
   };
 
   // Hold / Park active cart
@@ -447,13 +489,21 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   };
 
   // Clear current basket
-  const handleClearBasket = () => {
+  const handleClearBasket = async () => {
     if (cart.length === 0) return;
     if (!confirm('Clear all scanned garments from counter basket?')) return;
     luxuryAudio.playMechanicalClick();
+    const itemsToRelease = [...cart];
     setCart([]);
     setSelectedCustomer(null);
     setDiscountTotal(0);
+
+    for (const it of itemsToRelease) {
+      if (it?.piece) {
+        await SalesService.releasePiece({ id: it.piece.id, barcode: it.piece.barcode }).catch(() => {});
+      }
+    }
+    loadInventoryAndParties();
   };
 
   // Trigger NFC / Smart POS Machine Simulation or API call

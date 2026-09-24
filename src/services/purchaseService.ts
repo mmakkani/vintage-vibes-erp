@@ -891,6 +891,22 @@ export class PurchaseService {
     PurchaseService.invalidateGatePassesCache();
     PurchaseService.invalidatePiecesCache();
 
+    // Strict Child Piece Lock: A Bale MUST NOT be deletable if it has any sorted pieces
+    const [bspCheck, invCheck, sessCheck] = await Promise.all([
+      supabase.from('bale_sorted_pieces').select('id', { count: 'exact', head: true }).eq('bale_id', cleanId),
+      supabase.from('inventory_pieces').select('id', { count: 'exact', head: true }).eq('gate_pass_id', cleanId),
+      supabase.from('bale_sessions').select('sorted_grams, total_pieces').eq('bale_id', cleanId).maybeSingle()
+    ]);
+
+    const bspCount = Number(bspCheck.count || 0);
+    const invCount = Number(invCheck.count || 0);
+    const sessGrams = Number(sessCheck.data?.sorted_grams || 0);
+    const sessPieces = Number(sessCheck.data?.total_pieces || 0);
+
+    if (bspCount > 0 || invCount > 0 || sessGrams > 0 || sessPieces > 0) {
+      throw new Error(`Cannot delete bale: This bale contains ${bspCount || invCount || sessPieces} sorted pieces (${sessGrams}g). Unsafe bale deletion is locked. Delete all pieces first.`);
+    }
+
     // 1. Try serverless / backend API endpoint first if running in browser
     try {
       if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
@@ -904,9 +920,16 @@ export class PurchaseService {
             PurchaseService.invalidatePiecesCache();
             return;
           }
+        } else {
+          const errData = await resp.json().catch(() => ({}));
+          throw new Error(errData.error || 'Failed to delete gate pass on server');
         }
       }
-    } catch (_) {}
+    } catch (apiErr: any) {
+      if (apiErr?.message?.includes('Cannot delete bale') || apiErr?.message?.includes('locked')) {
+        throw apiErr;
+      }
+    }
 
     try {
       const { data: row } = await supabase
@@ -2012,15 +2035,23 @@ export class PurchaseService {
     await supabase
       .from('bale_sessions')
       .update({ status: 'IN_PROGRESS', updated_at: new Date().toISOString() })
-      .eq('bale_id', cleanBaleId);
+      .or(`bale_id.eq.${cleanBaleId},id.eq.${cleanBaleId}`);
 
-    // 2. Update inward_gate_passes back to PARTIAL
+    // 2. Update inward_gate_passes back to IN_PROGRESS
     await supabase
       .from('inward_gate_passes')
-      .update({ status: 'PARTIAL' })
-      .eq('id', cleanBaleId);
+      .update({ status: 'IN_PROGRESS' })
+      .or(`id.eq.${cleanBaleId},gate_pass_no.eq.${cleanBaleId}`);
 
-    // 3. Find and DELETE the JV-FIN voucher, reversing balance back to WIP (1150-01)
+    // 3. Purge pieces from active inventory_pieces so they are not sold while sorting is re-opened
+    try {
+      await supabase
+        .from('inventory_pieces')
+        .delete()
+        .eq('gate_pass_id', cleanBaleId);
+    } catch (_) {}
+
+    // 4. Find and DELETE the JV-FIN voucher, reversing balance back to WIP (1150-01)
     try {
       await FinanceService.cascadeDeleteVouchersForDocument(cleanBaleId, {
         invoiceId: cleanBaleId,
@@ -2033,15 +2064,33 @@ export class PurchaseService {
         });
       }
 
-      // Explicitly remove any JV-FIN vouchers referencing this bale
-      const { data: jvMatches } = await supabase
-        .from('financial_vouchers')
-        .select('id, voucher_no')
-        .or(`reference.eq.${cleanBaleId},reference.ilike.%${cleanBaleId}%,narration.ilike.%${cleanBaleId}%`);
+      // Explicitly find and remove any JV-FIN vouchers referencing this bale
+      const tokensToClean = [cleanBaleId];
+      if (explicitBaleCode && explicitBaleCode !== cleanBaleId) {
+        tokensToClean.push(explicitBaleCode);
+      }
 
-      if (Array.isArray(jvMatches) && jvMatches.length > 0) {
-        for (const jv of jvMatches) {
-          await FinanceService.deleteVoucher(jv.id, true);
+      for (const tok of tokensToClean) {
+        const { data: jvMatches } = await supabase
+          .from('financial_vouchers')
+          .select('id, voucher_no')
+          .or(`reference.eq.${tok},reference_no.eq.${tok}`);
+
+        if (Array.isArray(jvMatches) && jvMatches.length > 0) {
+          for (const jv of jvMatches) {
+            await FinanceService.deleteVoucher(jv.id, true);
+          }
+        }
+
+        const { data: jvByNarr } = await supabase
+          .from('financial_vouchers')
+          .select('id, voucher_no')
+          .ilike('narration', `%${tok}%`);
+
+        if (Array.isArray(jvByNarr) && jvByNarr.length > 0) {
+          for (const jv of jvByNarr) {
+            await FinanceService.deleteVoucher(jv.id, true);
+          }
         }
       }
 

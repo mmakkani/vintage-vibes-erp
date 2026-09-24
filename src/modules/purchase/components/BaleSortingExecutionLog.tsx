@@ -26,7 +26,8 @@ import {
   RefreshCw,
   Sliders,
   FileText,
-  Trash2
+  Trash2,
+  Lock
 } from 'lucide-react';
 
 interface BaleSortingExecutionLogProps {
@@ -381,15 +382,15 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                 filteredBales.map(bale => {
                   const grossKg = Number(bale.totalBaleWeight) || 0;
                   const grossGrams = Math.round(grossKg * 1000);
-                  const sortedKg = Number(bale.brokenDownWeight ?? (bale as any).broken_down_weight ?? 0);
-                  const sortedGrams = Math.round(sortedKg * 1000);
+                  const sortedKg = Number(bale.brokenDownWeight ?? (bale as any).broken_down_weight ?? ((bale as any).grams_sorted ? (bale as any).grams_sorted / 1000 : 0));
+                  const sortedGrams = Math.round(Number((bale as any).sorted_grams ?? (bale as any).grams_sorted ?? (sortedKg * 1000)));
                   const remainingGrams = Math.max(0, grossGrams - sortedGrams);
-                  const piecesCount = Number(bale.pieceCount ?? (bale as any).piece_count ?? bale.pieces?.length ?? 0);
+                  const piecesCount = Number(bale.pieceCount ?? (bale as any).piece_count ?? (bale as any).pieces_count ?? bale.pieces?.length ?? 0);
                   const percent = grossGrams > 0 ? Math.min(100, Math.round((sortedGrams / grossGrams) * 100)) : 0;
 
-                  const isComplete = percent === 100 || bale.sortingStatus === 'FULLY_SORTED';
+                  const isComplete = percent === 100 || bale.sortingStatus === 'FULLY_SORTED' || bale.status === 'COMPLETED' || bale.status === 'POSTED';
                   const isInProgress = !isComplete && (piecesCount > 0 || sortedGrams > 0);
-                  const isDeletable = sortedKg === 0 && piecesCount === 0;
+                  const isDeletable = piecesCount === 0 && sortedGrams === 0 && sortedKg === 0;
 
                   return (
                     <tr
@@ -556,10 +557,10 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                             <button
                               type="button"
                               disabled
-                              title="Cannot delete: Pieces have already been sorted. Delete individual pieces first."
-                              className="p-1.5 text-slate-300 bg-slate-100 border border-slate-200 rounded-lg cursor-not-allowed opacity-60"
+                              title={`Deletion Locked: Bale contains ${piecesCount} sorted pieces (${sortedGrams}g). Delete all sorted pieces first.`}
+                              className="p-1.5 text-slate-400 bg-slate-100 border border-slate-200 rounded-lg cursor-not-allowed opacity-60 shadow-2xs"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Lock className="w-3.5 h-3.5 text-slate-400" />
                             </button>
                           )}
                         </div>

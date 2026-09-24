@@ -217,7 +217,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
           return;
         } else if (Array.isArray(payload)) {
           // Fallback array handling
-          const filtered = payload.filter(p => !p.isSold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE') && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
+          const filtered = payload.filter(p => !p.isSold && p.status === 'IN_STOCK' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
           setTotalItems(filtered.length);
           const computedTotalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
           setTotalPages(computedTotalPages);
@@ -227,12 +227,12 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
         }
       }
 
-      // Secondary fallback: Supabase Direct
+      // Secondary fallback: Supabase Direct (strictly IN_STOCK)
       let supaQuery = supabase
         .from('inventory_pieces')
         .select('*', { count: 'exact' })
         .eq('is_sold', false)
-        .in('status', ['IN_STOCK', 'AVAILABLE'])
+        .eq('status', 'IN_STOCK')
         .or('ready_for_ecommerce.is.null,ready_for_ecommerce.eq.true');
 
       if (selectedCollectionId && selectedCollectionId !== 'ALL') {
@@ -328,6 +328,33 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
     selectedCollectionId,
     sortBy
   ]);
+
+  // Realtime CDC listener for inventory_pieces
+  useEffect(() => {
+    const handleRealtime = (e: any) => {
+      if (e.detail?.table === 'inventory_pieces') {
+        const record = e.detail?.new;
+        if (record) {
+          const barcode = String(record.barcode || '').toLowerCase();
+          const id = String(record.id || '').toLowerCase();
+          const status = record.status;
+          const isSold = Boolean(record.is_sold);
+
+          if (status !== 'IN_STOCK' || isSold) {
+            setPieces(prev => prev.filter(p =>
+              p.barcode.toLowerCase() !== barcode &&
+              String(p.id).toLowerCase() !== id
+            ));
+            setTotalItems(prev => Math.max(0, prev - 1));
+          } else if (status === 'IN_STOCK' && !isSold) {
+            fetchProducts();
+          }
+        }
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleRealtime);
+    return () => window.removeEventListener('vv:realtime-record', handleRealtime);
+  }, []);
 
   // Reset page to 1 whenever filters change
   const handleFilterChange = (setter: () => void) => {
