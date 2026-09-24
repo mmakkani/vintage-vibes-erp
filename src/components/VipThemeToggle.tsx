@@ -41,13 +41,13 @@ export const VipThemeToggle: React.FC<VipThemeToggleProps> = ({
   };
 
   return (
-    <div className={`flex items-center gap-2 ${className}`}>
-      {/* Sound FX Toggle (Mute / Unmute) */}
+    <div className={`flex items-center gap-1.5 sm:gap-2 ${className}`}>
+      {/* Sound FX Toggle (Mute / Unmute) - Hidden on mobile screens to save space */}
       <button
         type="button"
         onClick={toggleAudio}
         title={isMuted ? 'Unmute Mechanical Sound Effects' : 'Mute Sound Effects'}
-        className="w-8 h-8 rounded-lg border border-amber-400/70 bg-amber-100/80 hover:bg-amber-200 text-amber-950 flex items-center justify-center shadow-xs transition-all cursor-pointer"
+        className="hidden sm:flex w-8 h-8 rounded-lg border border-amber-400/70 bg-amber-100/80 hover:bg-amber-200 text-amber-950 items-center justify-center shadow-xs transition-all cursor-pointer"
       >
         {isMuted ? (
           <VolumeX className="w-4 h-4 text-slate-500" />
@@ -60,24 +60,24 @@ export const VipThemeToggle: React.FC<VipThemeToggleProps> = ({
       <button
         type="button"
         onClick={toggleTheme}
-        className="relative flex items-center p-1 w-16 h-8 rounded-full border-2 border-amber-400/80 bg-gradient-to-r from-amber-200 via-amber-300 to-amber-400 shadow-sm cursor-pointer transition-all duration-300"
+        className="relative flex items-center p-0.5 sm:p-1 w-14 sm:w-16 h-7 sm:h-8 rounded-full border-2 border-amber-400/80 bg-gradient-to-r from-amber-200 via-amber-300 to-amber-400 shadow-sm cursor-pointer transition-all duration-300"
         title={`Switch to ${isObsidian ? 'Champagne Royal Day' : 'Maybach Obsidian 24K Gold Night'} Theme`}
       >
         {/* Track Icons */}
-        <div className="w-full flex justify-between px-1.5 text-amber-900 pointer-events-none text-xs">
-          <Sun className="w-3.5 h-3.5 text-amber-800" />
-          <Moon className="w-3.5 h-3.5 text-slate-800" />
+        <div className="w-full flex justify-between px-1 sm:px-1.5 text-amber-900 pointer-events-none text-xs">
+          <Sun className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-amber-800" />
+          <Moon className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-slate-800" />
         </div>
 
         {/* Sliding 3D Gold / Obsidian Dial Knob */}
         <div
-          className={`absolute top-0.5 w-6 h-6 rounded-full shadow-md transition-all duration-300 ease-out flex items-center justify-center ${
+          className={`absolute top-0.5 w-5 sm:w-6 h-5 sm:h-6 rounded-full shadow-md transition-all duration-300 ease-out flex items-center justify-center ${
             isObsidian
-              ? 'translate-x-8 bg-gradient-to-tr from-slate-950 via-slate-900 to-slate-800 border border-amber-400 text-amber-300'
+              ? 'translate-x-7 sm:translate-x-8 bg-gradient-to-tr from-slate-950 via-slate-900 to-slate-800 border border-amber-400 text-amber-300'
               : 'translate-x-0.5 bg-gradient-to-tr from-amber-100 via-yellow-200 to-amber-300 border border-amber-500 text-amber-950'
           }`}
         >
-          {isObsidian ? <Moon className="w-3 h-3 text-amber-300" /> : <Sun className="w-3 h-3 text-amber-700" />}
+          {isObsidian ? <Moon className="w-2.5 sm:w-3 h-2.5 sm:h-3 text-amber-300" /> : <Sun className="w-2.5 sm:w-3 h-2.5 sm:h-3 text-amber-700" />}
         </div>
       </button>
     </div>

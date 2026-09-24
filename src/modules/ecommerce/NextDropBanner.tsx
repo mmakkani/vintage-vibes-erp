@@ -41,7 +41,7 @@ export const NextDropBanner: React.FC<NextDropBannerProps> = ({ onExploreDrop })
   }, []);
 
   return (
-    <div className="sticky top-0 z-50 bg-gradient-to-r from-slate-950 via-amber-950 to-slate-950 text-amber-100 border-b border-amber-500/40 shadow-2xl py-2 px-3 sm:px-6">
+    <div className="relative z-30 w-full bg-gradient-to-r from-slate-950 via-amber-950 to-slate-950 text-amber-100 border-b border-amber-500/40 shadow-md py-2 px-3 sm:px-6">
       <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-4 text-xs">
         {/* Left / Center Banner Announcement */}
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center sm:justify-start">

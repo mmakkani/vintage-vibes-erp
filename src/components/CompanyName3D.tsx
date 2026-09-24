@@ -13,11 +13,11 @@ export const CompanyName3D: React.FC<CompanyName3DProps> = ({
   size = 'md'
 }) => {
   const sizeClasses = {
-    xs: 'text-sm sm:text-base tracking-wider',
-    sm: 'text-base sm:text-lg md:text-xl tracking-wide',
-    md: 'text-lg sm:text-xl md:text-2xl tracking-normal',
-    lg: 'text-xl sm:text-2xl md:text-3xl tracking-normal',
-    xl: 'text-2xl sm:text-3xl md:text-4xl tracking-tight'
+    xs: 'text-xs sm:text-sm md:text-base tracking-wider',
+    sm: 'text-sm sm:text-base md:text-xl tracking-wide',
+    md: 'text-base sm:text-xl md:text-2xl tracking-normal',
+    lg: 'text-lg sm:text-2xl md:text-3xl tracking-normal',
+    xl: 'text-xl sm:text-3xl md:text-4xl tracking-tight'
   }[size];
 
   // Split corporate brand name into 2 structured lines to prevent awkward 3-line word wrapping
@@ -99,7 +99,7 @@ export const CompanyName3D: React.FC<CompanyName3DProps> = ({
       {secondaryName && (
         <div
           id="3d-company-name-secondary"
-          className="font-extrabold uppercase flex items-center gap-x-1.5 whitespace-nowrap text-[10px] sm:text-xs tracking-[0.1em] text-amber-900/90 mt-0.5"
+          className="hidden md:flex font-extrabold uppercase items-center gap-x-1.5 whitespace-nowrap text-[10px] sm:text-xs tracking-[0.1em] text-amber-900/90 mt-0.5"
           style={{
             fontFamily: "'Cinzel', 'Playfair Display', Georgia, serif",
             lineHeight: 1.1

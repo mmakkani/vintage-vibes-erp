@@ -179,18 +179,18 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
                 <span className="text-[10px] text-slate-400 font-mono">Winter Maazi Drop</span>
               </div>
-              <h2 className="text-xl sm:text-2xl font-black font-serif text-white tracking-wide">
+              <h2 className="text-base sm:text-xl md:text-2xl font-black font-serif text-white tracking-wide">
                 Interactive Young Host Video Showcase
               </h2>
             </div>
           </div>
 
           {/* Top Quick Controls */}
-          <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap justify-center sm:justify-end w-full sm:w-auto">
             <button
               type="button"
               onClick={togglePlay}
-              className={`px-5 py-2 rounded-full font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-xl transition-all transform active:scale-95 cursor-pointer ${
+              className={`px-3.5 sm:px-5 py-1.5 sm:py-2 rounded-full font-black text-[11px] sm:text-xs uppercase tracking-wider flex items-center gap-1.5 sm:gap-2 shadow-xl transition-all transform active:scale-95 cursor-pointer ${
                 isVideoPlaying
                   ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-amber-400/30 font-black'
                   : 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white shadow-emerald-500/40 animate-pulse'
@@ -198,12 +198,12 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
             >
               {isVideoPlaying ? (
                 <>
-                  <Pause className="w-4 h-4 fill-current" />
+                  <Pause className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" />
                   <span>Pause Video</span>
                 </>
               ) : (
                 <>
-                  <Play className="w-4 h-4 fill-current" />
+                  <Play className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" />
                   <span>Play Video</span>
                 </>
               )}
@@ -212,7 +212,7 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
             <button
               type="button"
               onClick={toggleMute}
-              className={`px-4 py-2 rounded-full font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-xl transition-all cursor-pointer transform active:scale-95 ${
+              className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-full font-black text-[11px] sm:text-xs uppercase tracking-wider flex items-center gap-1.5 sm:gap-2 shadow-xl transition-all cursor-pointer transform active:scale-95 ${
                 isMuted
                   ? 'bg-rose-500 hover:bg-rose-600 text-white shadow-rose-500/40 animate-pulse ring-2 ring-rose-400'
                   : 'bg-black/80 hover:bg-black text-emerald-400 border border-emerald-400/60 shadow-md'
@@ -221,12 +221,12 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
             >
               {isMuted ? (
                 <>
-                  <VolumeX className="w-4 h-4" />
+                  <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   <span>Unmute Voice</span>
                 </>
               ) : (
                 <>
-                  <Volume2 className="w-4 h-4 animate-pulse" />
+                  <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-pulse" />
                   <span>Sound On</span>
                 </>
               )}
@@ -235,19 +235,19 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
             <button
               type="button"
               onClick={replayVideo}
-              className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-amber-300 hover:text-white transition-colors cursor-pointer border border-white/10 shadow-md"
+              className="p-1.5 sm:p-2 rounded-full bg-white/10 hover:bg-white/20 text-amber-300 hover:text-white transition-colors cursor-pointer border border-white/10 shadow-md"
               title="Replay Video From Start"
             >
-              <RotateCcw className="w-4 h-4" />
+              <RotateCcw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
 
             <button
               type="button"
               onClick={toggleFullscreen}
-              className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-amber-300 hover:text-white transition-colors cursor-pointer border border-white/10 shadow-md"
+              className="p-1.5 sm:p-2 rounded-full bg-white/10 hover:bg-white/20 text-amber-300 hover:text-white transition-colors cursor-pointer border border-white/10 shadow-md"
               title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
             >
-              {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+              {isFullscreen ? <Minimize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Maximize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
             </button>
           </div>
         </div>
@@ -259,7 +259,7 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
           onMouseMove={handleUserActivity}
           onMouseEnter={handleUserActivity}
         >
-          <div className="relative w-full aspect-[16/9] min-h-[460px] sm:min-h-[580px] md:min-h-[680px] lg:min-h-[740px] bg-black flex items-center justify-center overflow-hidden">
+          <div className="relative w-full aspect-[16/9] min-h-[220px] sm:min-h-[460px] md:min-h-[580px] lg:min-h-[740px] bg-black flex items-center justify-center overflow-hidden">
             {/* The Main Host Video Element - Full Width, 100% Uncropped with object-contain */}
             <video
               ref={videoRef}
@@ -280,21 +280,21 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
                 onClick={togglePlay}
                 className="absolute inset-0 flex items-center justify-center bg-black/45 backdrop-blur-[2px] cursor-pointer transition-all z-20"
               >
-                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-amber-500 via-amber-400 to-amber-300 text-slate-950 flex items-center justify-center shadow-[0_0_50px_rgba(245,158,11,0.85)] transform hover:scale-110 active:scale-95 transition-all">
-                  <Play className="w-10 h-10 sm:w-12 sm:h-12 fill-current ml-1.5" />
+                <div className="w-16 h-16 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-amber-500 via-amber-400 to-amber-300 text-slate-950 flex items-center justify-center shadow-[0_0_50px_rgba(245,158,11,0.85)] transform hover:scale-110 active:scale-95 transition-all">
+                  <Play className="w-8 h-8 sm:w-12 sm:h-12 fill-current ml-1" />
                 </div>
               </div>
             )}
 
             {/* Top Overlay Badge Bar */}
-            <div className="absolute top-4 inset-x-4 sm:inset-x-6 z-20 flex items-center justify-between pointer-events-none">
+            <div className="absolute top-2.5 sm:top-4 inset-x-2.5 sm:inset-x-6 z-20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pointer-events-none">
               {/* Live Host Presenting Beacon */}
-              <div className="bg-black/90 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-amber-400/80 shadow-2xl flex items-center gap-2 pointer-events-auto">
-                <span className="relative flex h-2.5 w-2.5">
+              <div className="bg-black/90 backdrop-blur-md px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-full border border-amber-400/80 shadow-2xl flex items-center gap-1.5 sm:gap-2 pointer-events-auto">
+                <span className="relative flex h-2 sm:h-2.5 w-2 sm:w-2.5">
                   <span className="animate-live-dot-pulse absolute inline-flex h-full w-full rounded-full bg-rose-500" />
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500" />
+                  <span className="relative inline-flex rounded-full h-2 sm:h-2.5 w-2 sm:w-2.5 bg-rose-500" />
                 </span>
-                <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-amber-300">
+                <span className="text-[9px] sm:text-xs font-black uppercase tracking-wider text-amber-300">
                   HOST PRESENTING LIVE
                 </span>
                 <span className="hidden sm:inline text-[10px] text-slate-400 font-mono">
@@ -303,12 +303,12 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
               </div>
 
               {/* Top Right Quick Floating Audio & Fullscreen Buttons */}
-              <div className="flex items-center gap-2 pointer-events-auto">
+              <div className="flex items-center gap-1.5 sm:gap-2 pointer-events-auto self-end sm:self-auto">
                 {/* Unmute Floating Banner */}
                 <button
                   type="button"
                   onClick={toggleMute}
-                  className={`px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-full font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-2xl transition-all cursor-pointer transform active:scale-95 ${
+                  className={`px-2.5 py-1 sm:px-4 sm:py-2 rounded-full font-black text-[10px] sm:text-xs uppercase tracking-wider flex items-center gap-1.5 sm:gap-2 shadow-2xl transition-all cursor-pointer transform active:scale-95 ${
                     isMuted
                       ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 animate-pulse shadow-amber-400/60 ring-2 ring-amber-300'
                       : 'bg-black/85 hover:bg-black text-emerald-400 border border-emerald-400/80'
@@ -317,12 +317,12 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
                 >
                   {isMuted ? (
                     <>
-                      <VolumeX className="w-4 h-4 text-slate-950" />
+                      <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-950" />
                       <span>Tap To Unmute Voice</span>
                     </>
                   ) : (
                     <>
-                      <Volume2 className="w-4 h-4 text-emerald-400 animate-pulse" />
+                      <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400 animate-pulse" />
                       <span>Sound On</span>
                     </>
                   )}
@@ -332,10 +332,10 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
                 <button
                   type="button"
                   onClick={toggleFullscreen}
-                  className="p-2 sm:p-2.5 rounded-full bg-black/85 hover:bg-amber-400 hover:text-slate-950 text-white border border-amber-400/70 shadow-2xl transition-all cursor-pointer"
+                  className="p-1.5 sm:p-2.5 rounded-full bg-black/85 hover:bg-amber-400 hover:text-slate-950 text-white border border-amber-400/70 shadow-2xl transition-all cursor-pointer"
                   title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
                 >
-                  {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                  {isFullscreen ? <Minimize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Maximize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
                 </button>
               </div>
             </div>
@@ -402,21 +402,21 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
           </div>
 
           {/* 2. SYNCHRONIZED SUBTITLE BAR & PORTFOLIO CTA */}
-          <div className="bg-gradient-to-r from-black via-[#18140E] to-black p-4 sm:p-5 border-t-4 border-amber-400 flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex items-start gap-3.5 max-w-4xl">
-              <div className="w-10 h-10 rounded-full bg-amber-400/20 border-2 border-amber-400 flex items-center justify-center text-amber-400 shrink-0 mt-0.5 shadow-md">
-                <Radio className={`w-5 h-5 ${isVideoPlaying ? 'text-amber-300 animate-pulse' : 'text-slate-400'}`} />
+          <div className="bg-gradient-to-r from-black via-[#18140E] to-black p-3.5 sm:p-5 border-t-4 border-amber-400 flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4">
+            <div className="flex items-start gap-2.5 sm:gap-3.5 max-w-4xl">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-amber-400/20 border-2 border-amber-400 flex items-center justify-center text-amber-400 shrink-0 mt-0.5 shadow-md">
+                <Radio className={`w-4 h-4 sm:w-5 sm:h-5 ${isVideoPlaying ? 'text-amber-300 animate-pulse' : 'text-slate-400'}`} />
               </div>
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2">
                   <span className="text-[10px] sm:text-[11px] uppercase font-black text-amber-400 tracking-widest block">
                     YOUNG HOST VIDEO SHOWCASE
                   </span>
-                  <span className="text-[10px] text-slate-400 font-mono">
+                  <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
                     • Handpicked 1-of-1 Vault Pieces
                   </span>
                 </div>
-                <p className="text-xs sm:text-sm text-slate-100 italic leading-relaxed mt-0.5">
+                <p className="text-[11px] sm:text-sm text-slate-100 italic leading-relaxed mt-0.5">
                   "Hello and welcome to Vintage Vibes UAE! It is the dream of my father to bring you the finest authentic vintage fashion from around the world. Every single piece is authentic and 1-of-1!"
                 </p>
               </div>
@@ -426,7 +426,7 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
             <button
               type="button"
               onClick={() => onExploreCollection()}
-              className="w-full md:w-auto px-6 py-3 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-400 hover:from-amber-300 hover:to-amber-500 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-wider shrink-0 flex items-center justify-center gap-2 shadow-[0_4px_25px_rgba(245,158,11,0.5)] cursor-pointer transform active:scale-95 transition-all hover:scale-105"
+              className="w-full md:w-auto px-5 sm:px-6 py-2.5 sm:py-3 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-400 hover:from-amber-300 hover:to-amber-500 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-wider shrink-0 flex items-center justify-center gap-2 shadow-[0_4px_25px_rgba(245,158,11,0.5)] cursor-pointer transform active:scale-95 transition-all hover:scale-105"
             >
               <span>EXPLORE COLLECTION</span>
               <ArrowRight className="w-4 h-4 stroke-[3]" />

@@ -796,29 +796,29 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       </div>
 
       {/* 3. LUXURY BOUTIQUE TOP NAVIGATION HEADER */}
-      <header className="sticky top-0 z-40 bg-gradient-to-r from-[#FDF9EE]/95 via-[#F5ECCE]/95 to-[#FAF4E6]/95 backdrop-blur-xl border-b-2 border-amber-400/80 px-4 sm:px-8 py-3 flex items-center justify-between shadow-xl">
+      <header className="sticky top-0 z-40 bg-gradient-to-r from-[#FDF9EE]/95 via-[#F5ECCE]/95 to-[#FAF4E6]/95 backdrop-blur-xl border-b-2 border-amber-400/80 px-3 sm:px-8 py-2 sm:py-3 flex items-center justify-between shadow-xl">
         {/* Left: 3D Animated Gold Medal Logo + Brand Title (Clickable Home Link) */}
         <div
           onClick={navigateToHome}
-          className="flex items-center gap-3 sm:gap-4 cursor-pointer group"
+          className="flex items-center gap-2 sm:gap-4 cursor-pointer group min-w-0"
           title="Return to Vintage Vibes Storefront Homepage"
         >
           <div className="relative shrink-0 flex items-center group-hover:scale-105 transition-transform">
             <Vintage3DLogo
               size="lg"
               interactive={true}
-              className="w-13 h-13 sm:w-15 sm:h-15 drop-shadow-[0_8px_16px_rgba(0,0,0,0.25)]"
+              className="w-10 h-10 sm:w-14 sm:h-14 drop-shadow-[0_8px_16px_rgba(0,0,0,0.25)]"
             />
           </div>
 
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
               <CompanyName3D name={companyProfile.company_display_name || companyProfile.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C'} size="lg" />
-              <span className="inline-block px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-gradient-to-r from-amber-200 to-amber-300 border border-amber-400 rounded-md text-amber-950 shadow-2xs">
+              <span className="hidden sm:inline-block px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-gradient-to-r from-amber-200 to-amber-300 border border-amber-400 rounded-md text-amber-950 shadow-2xs">
                 {(companyProfile.city || 'AL AIN, ABU DHABI').toUpperCase()} • {(companyProfile.country || 'UNITED ARAB EMIRATES').toUpperCase()}
               </span>
             </div>
-            <p className="text-[11px] text-slate-700 font-semibold tracking-wide flex items-center gap-1.5 mt-0.5">
+            <p className="hidden md:flex text-[11px] text-slate-700 font-semibold tracking-wide items-center gap-1.5 mt-0.5">
               <span>{companyProfile.address_line_1 || companyProfile.addressLine1 || 'Al Jimi, Al Ain'}</span>
               <span>•</span>
               <span className="text-amber-900 font-bold">{companyProfile.corporate_phone || companyProfile.phone || '+971 55 418 6086'}</span>
@@ -976,7 +976,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                     Vintage Vibes General Trading LLC SPC
                   </span>
 
-                  <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black font-serif tracking-wide leading-tight max-w-4xl text-white drop-shadow-md">
+                  <h1 className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-black font-serif tracking-wide leading-tight max-w-4xl text-white drop-shadow-md">
                     {slide.title}
                   </h1>
 
@@ -1406,7 +1406,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 <Sparkles className="w-3.5 h-3.5 text-amber-300" />
                 Complete 1-of-1 Vault Catalog
               </span>
-              <h3 className="text-2xl sm:text-4xl font-black font-serif text-white leading-tight">
+              <h3 className="text-xl sm:text-3xl md:text-4xl font-black font-serif text-white leading-tight">
                 Looking for Something Specific? Explore Our Full Shop Catalog
               </h3>
               <p className="text-xs sm:text-sm text-amber-100 max-w-2xl mx-auto leading-relaxed">
@@ -1437,7 +1437,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               <span className="text-xs font-black uppercase tracking-widest text-amber-700 block">
                 A Local Store You Can Trust
               </span>
-              <h2 className="text-2xl sm:text-4xl font-black text-slate-950 font-serif leading-tight">
+              <h2 className="text-xl sm:text-3xl md:text-4xl font-black text-slate-950 font-serif leading-tight">
                 About Vintage Vibes LLC SPC
               </h2>
               <p className="text-sm sm:text-base text-slate-700 leading-relaxed">
@@ -1476,7 +1476,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               <span className="text-xs font-black uppercase tracking-widest text-amber-700 block">
                 Streetwear Essentials
               </span>
-              <h2 className="text-2xl sm:text-4xl font-black text-slate-950 font-serif leading-tight">
+              <h2 className="text-xl sm:text-3xl md:text-4xl font-black text-slate-950 font-serif leading-tight">
                 Shop Authentic Brands
               </h2>
               <p className="text-sm sm:text-base text-slate-700 leading-relaxed">
@@ -1517,7 +1517,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           <span className="text-amber-400 text-xs font-black uppercase tracking-widest block">
             UAE Heritage & Street Culture
           </span>
-          <h2 className="text-2xl sm:text-4xl font-black font-serif text-amber-200">
+          <h2 className="text-xl sm:text-3xl md:text-4xl font-black font-serif text-amber-200">
             Where Fashion Meets Sport & Street Culture
           </h2>
           <p className="text-sm sm:text-base text-slate-300 leading-relaxed font-light">
@@ -1530,7 +1530,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       <section className="bg-[#FAF4E6] py-16 px-4 sm:px-8 border-b-2 border-amber-300/80">
         <div className="max-w-5xl mx-auto space-y-10">
           <div className="text-center space-y-2">
-            <h2 className="text-3xl sm:text-4xl font-black text-slate-950 font-serif">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-black text-slate-950 font-serif">
               Frequently Asked Questions
             </h2>
             <p className="text-sm text-slate-600">

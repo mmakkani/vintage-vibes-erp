@@ -572,3 +572,17 @@ body.theme-obsidian #global-stock-alert-panel {
   }
 }
 
+/* ==========================================================================
+   Smooth Horizontal Scrolling & Hide Scrollbar Utilities
+   ========================================================================== */
+.hide-scrollbar,
+.scrollbar-none {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+
+.hide-scrollbar::-webkit-scrollbar,
+.scrollbar-none::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+

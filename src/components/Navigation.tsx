@@ -55,8 +55,8 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, onSelectTab, 
   return (
     <nav id="modular-erp-navbar" className="w-full bg-[#FCF8EE] border-b border-amber-300/80 sticky top-0 z-40 shadow-xs">
       <div className="w-full px-3 sm:px-6 lg:px-8">
-        <div className="flex items-center space-x-1.5 overflow-x-auto py-1.5 scrollbar-none">
-          <div className="hidden lg:flex items-center px-2.5 py-1 text-[10px] font-black text-amber-900 uppercase tracking-widest bg-amber-100/80 border border-amber-300/80 rounded mr-1">
+        <div className="flex items-center space-x-1.5 overflow-x-auto whitespace-nowrap hide-scrollbar py-1.5 scrollbar-none">
+          <div className="hidden lg:flex items-center px-2.5 py-1 text-[10px] font-black text-amber-900 uppercase tracking-widest bg-amber-100/80 border border-amber-300/80 rounded mr-1 shrink-0">
             Modules
           </div>
           {visibleTabs.map(tab => {
@@ -69,7 +69,7 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, onSelectTab, 
                 whileHover={{ scale: 1.02, y: -1 }}
                 whileTap={{ scale: 0.98, y: 1 }}
                 transition={{ duration: 0.15 }}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all border ${
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 transition-all border ${
                   isActive
                     ? 'bg-gradient-to-b from-amber-400 via-amber-500 to-amber-600 text-amber-950 border-amber-300 border-b-[3px] border-b-amber-800 shadow-sm'
                     : 'bg-slate-50 hover:bg-slate-100 text-slate-700 hover:text-slate-900 border-slate-200 border-b-[2px] border-b-slate-300'
