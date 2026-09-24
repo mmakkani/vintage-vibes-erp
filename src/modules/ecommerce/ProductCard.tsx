@@ -409,7 +409,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               <img
                 src={defaultBackImage}
                 alt={`${piece.brandName} - Back Look`}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover mix-blend-multiply"
               />
             ) : (
               <div className="flex flex-col items-center justify-center text-center p-3">

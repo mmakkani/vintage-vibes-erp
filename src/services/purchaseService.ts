@@ -1957,7 +1957,7 @@ export class PurchaseService {
           back_image_url: p.back_image || '',
           tag_image_url: p.tag_image || '',
           is_sold: false,
-          status: isPristine ? 'IN_STOCK' : 'AVAILABLE',
+          status: isPristine ? 'IN_STOCK' : 'WIP_LAUNDRY',
           ready_for_ecommerce: isReady,
           ecommerce_description: p.ecommerce_description || null,
           seo_tags: p.seo_tags || null,
@@ -2272,6 +2272,33 @@ export class PurchaseService {
       console.error('Supabase error on inventory_pieces:', error);
       throw new Error(error.message || 'Failed to update inventory piece');
     }
+  }
+
+  public static async restockInventoryPiece(id: string): Promise<void> {
+    const { error: invErr } = await supabase
+      .from('inventory_pieces')
+      .update({
+        status: 'IN_STOCK',
+        ready_for_ecommerce: true
+      })
+      .eq('id', id);
+
+    if (invErr) {
+      console.error('[PurchaseService] Error restocking inventory_piece:', invErr);
+      throw new Error(invErr.message || 'Failed to restock inventory piece');
+    }
+
+    try {
+      await supabase
+        .from('bale_sorted_pieces')
+        .update({
+          quality_grade: 'Grade A',
+          ready_for_ecommerce: true
+        })
+        .eq('id', id);
+    } catch (_) {}
+
+    PurchaseService.invalidatePiecesCache();
   }
 
   public static async deleteInventoryPiece(id: string): Promise<void> {

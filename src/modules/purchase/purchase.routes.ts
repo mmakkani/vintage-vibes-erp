@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { PurchaseController } from './purchase.controller.ts';
 import { PurchaseService } from '../../services/purchaseService.ts';
 import { atomicUnpostPurchaseInvoice, atomicDeletePurchaseInvoice } from './purchaseCascadeBackend.ts';
+import { classifyGarmentPhotosWithGemini } from '../../utils/geminiBulkClassifier.ts';
 
 export const purchaseRouter = Router();
 
@@ -391,6 +392,18 @@ purchaseRouter.post('/scan-invoice-ocr', async (req, res) => {
     return res.json({ success: true, data: result, confidence: result.confidence || 95 });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message || 'Invoice OCR Processing failed' });
+  }
+});
+
+purchaseRouter.post('/classify-garment-photos', async (req, res) => {
+  try {
+    const { images, base64Images } = req.body;
+    const apiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
+    const targetImages = images || base64Images || [];
+    const result = await classifyGarmentPhotosWithGemini(targetImages, apiKey);
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || 'Bulk classification failed' });
   }
 });
 

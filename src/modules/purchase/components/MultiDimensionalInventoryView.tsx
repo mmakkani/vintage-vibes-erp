@@ -22,8 +22,10 @@ import {
   Sparkles,
   ExternalLink,
   Trash2,
-  X
+  X,
+  Loader2
 } from 'lucide-react';
+import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 
 interface MultiDimensionalInventoryViewProps {
   pieces: PieceBreakdownItem[];
@@ -32,6 +34,7 @@ interface MultiDimensionalInventoryViewProps {
   onSelectBale?: (baleId: string) => void;
   onRefresh?: () => void;
   onPieceDeleted?: (pieceId: string) => void;
+  onPieceUpdated?: (pieceId: string, updates: Partial<PieceBreakdownItem>) => void;
 }
 
 type ViewDimension = 'ITEM' | 'BRAND' | 'CATEGORY' | 'BALE_AUDIT';
@@ -42,16 +45,58 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   onPrintSticker,
   onSelectBale,
   onRefresh,
-  onPieceDeleted
+  onPieceDeleted,
+  onPieceUpdated
 }) => {
   const [activeDimension, setActiveDimension] = useState<ViewDimension>('ITEM');
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'IN_STOCK' | 'SOLD'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'IN_STOCK' | 'SOLD' | 'WIP_LAUNDRY'>('ALL');
   const [brandFilter, setBrandFilter] = useState('ALL');
   const [previewLightboxImage, setPreviewLightboxImage] = useState<string | null>(null);
   const [isPurging, setIsPurging] = useState(false);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
+
+  // Pessimistic Delta Cache Injection for instant UI updates on Restock
+  const [deltaUpdates, setDeltaUpdates] = useState<Record<string, Partial<PieceBreakdownItem>>>({});
+  const [restockingId, setRestockingId] = useState<string | null>(null);
+
+  const handleRestockPiece = async (piece: PieceBreakdownItem) => {
+    try {
+      setRestockingId(piece.id);
+      luxuryAudio.playMechanicalClick();
+
+      // 1. Pessimistic Delta Cache Injection: immediately mark as IN_STOCK
+      const delta: Partial<PieceBreakdownItem> = {
+        status: 'IN_STOCK',
+        ready_for_ecommerce: true
+      };
+      setDeltaUpdates(prev => ({ ...prev, [piece.id]: delta }));
+
+      // 2. Database update: UPDATE inventory_pieces SET status = 'IN_STOCK', ready_for_ecommerce = true WHERE id = piece.id
+      await PurchaseService.restockInventoryPiece(piece.id);
+
+      luxuryAudio.playCashRegisterSound();
+
+      // 3. Notify parent components
+      if (onPieceUpdated) {
+        onPieceUpdated(piece.id, delta);
+      }
+      if (onRefresh) {
+        onRefresh();
+      }
+    } catch (err: any) {
+      // Revert delta cache on failure
+      setDeltaUpdates(prev => {
+        const next = { ...prev };
+        delete next[piece.id];
+        return next;
+      });
+      alert(`Failed to restock piece: ${err?.message || 'Database error'}`);
+    } finally {
+      setRestockingId(null);
+    }
+  };
 
   useEffect(() => {
     setCurrentPage(1);
@@ -82,18 +127,26 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
     return map;
   }, [bales]);
 
+  // Effective pieces with pessimistic delta cache injection for real-time reactivity
+  const effectivePieces = useMemo(() => {
+    return pieces.map(p => {
+      const delta = deltaUpdates[p.id];
+      return delta ? { ...p, ...delta } : p;
+    });
+  }, [pieces, deltaUpdates]);
+
   // Distinct Brands
   const distinctBrands = useMemo(() => {
     const set = new Set<string>();
-    pieces.forEach(p => {
+    effectivePieces.forEach(p => {
       if (p.brandName) set.add(p.brandName);
     });
     return Array.from(set).sort();
-  }, [pieces]);
+  }, [effectivePieces]);
 
   // Filtered pieces
   const filteredPieces = useMemo(() => {
-    return pieces.filter(piece => {
+    return effectivePieces.filter(piece => {
       const matchesSearch =
         (piece.barcode || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (piece.itemName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -106,12 +159,13 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
 
       if (brandFilter !== 'ALL' && piece.brandName !== brandFilter) return false;
 
-      if (statusFilter === 'IN_STOCK' && piece.isSold) return false;
+      if (statusFilter === 'IN_STOCK' && (piece.isSold || piece.status === 'WIP_LAUNDRY')) return false;
       if (statusFilter === 'SOLD' && !piece.isSold) return false;
+      if (statusFilter === 'WIP_LAUNDRY' && piece.status !== 'WIP_LAUNDRY') return false;
 
       return true;
     });
-  }, [pieces, searchTerm, statusFilter, brandFilter]);
+  }, [effectivePieces, searchTerm, statusFilter, brandFilter]);
 
   const totalItems = filteredPieces.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -122,19 +176,21 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
 
   // Inventory KPIs
   const kpis = useMemo(() => {
-    const totalCount = pieces.length;
-    const inStockCount = pieces.filter(p => !p.isSold).length;
-    const soldCount = pieces.filter(p => p.isSold).length;
-    const totalGrams = pieces.reduce((sum, p) => sum + (p.weightGrams || Math.round((p.weightKg || 0) * 1000)), 0);
+    const totalCount = effectivePieces.length;
+    const inStockCount = effectivePieces.filter(p => !p.isSold && p.status !== 'WIP_LAUNDRY').length;
+    const laundryCount = effectivePieces.filter(p => p.status === 'WIP_LAUNDRY').length;
+    const soldCount = effectivePieces.filter(p => p.isSold).length;
+    const totalGrams = effectivePieces.reduce((sum, p) => sum + (p.weightGrams || Math.round((p.weightKg || 0) * 1000)), 0);
     const totalWeightKg = totalGrams / 1000;
-    const totalCostAed = pieces.reduce((sum, p) => sum + (p.calculatedCostPrice || p.costPrice || 0), 0);
-    const totalValuationAed = pieces.reduce((sum, p) => sum + (p.estimatedPrice || p.retailPriceAed || 0), 0);
+    const totalCostAed = effectivePieces.reduce((sum, p) => sum + (p.calculatedCostPrice || p.costPrice || 0), 0);
+    const totalValuationAed = effectivePieces.reduce((sum, p) => sum + (p.estimatedPrice || p.retailPriceAed || 0), 0);
     const avgCostPerGram = totalGrams > 0 ? totalCostAed / totalGrams : 0;
     const projectedProfitAed = totalValuationAed - totalCostAed;
 
     return {
       totalCount,
       inStockCount,
+      laundryCount,
       soldCount,
       totalWeightKg,
       totalGrams,
@@ -143,7 +199,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
       avgCostPerGram,
       projectedProfitAed
     };
-  }, [pieces]);
+  }, [effectivePieces]);
 
   // Grouped by Brand
   const brandGroups = useMemo(() => {
@@ -406,18 +462,28 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
           </div>
 
           <div className="flex items-center gap-2">
-            {(['ALL', 'IN_STOCK', 'SOLD'] as const).map(st => (
+            {(['ALL', 'IN_STOCK', 'WIP_LAUNDRY', 'SOLD'] as const).map(st => (
               <button
                 key={st}
                 type="button"
                 onClick={() => setStatusFilter(st)}
-                className={`px-2.5 py-1 rounded text-xs font-semibold cursor-pointer ${
+                className={`px-2.5 py-1 rounded text-xs font-semibold cursor-pointer transition-all ${
                   statusFilter === st
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    ? st === 'WIP_LAUNDRY'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'bg-slate-900 text-white'
+                    : st === 'WIP_LAUNDRY'
+                      ? 'bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
-                {st === 'ALL' ? 'All Pieces' : st === 'IN_STOCK' ? 'In Stock Only' : 'Sold History'}
+                {st === 'ALL'
+                  ? 'All Pieces'
+                  : st === 'IN_STOCK'
+                  ? 'In Stock Only'
+                  : st === 'WIP_LAUNDRY'
+                  ? '🧺 Laundry / WIP'
+                  : 'Sold History'}
               </button>
             ))}
           </div>
@@ -578,20 +644,44 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              piece.isSold
-                                ? 'bg-rose-50 text-rose-700'
-                                : piece.status === 'CLAIMED_PENDING'
-                                ? 'bg-amber-50 text-amber-700'
-                                : 'bg-emerald-50 text-emerald-700'
-                            }`}
-                          >
-                            {piece.isSold ? 'SOLD' : piece.status === 'CLAIMED_PENDING' ? 'LIVE HOLD' : 'IN STOCK'}
-                          </span>
+                          {piece.isSold ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700">
+                              SOLD
+                            </span>
+                          ) : piece.status === 'WIP_LAUNDRY' ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300 flex items-center gap-1 w-fit shadow-xs font-mono">
+                              <span>🧺</span>
+                              <span>IN LAUNDRY</span>
+                            </span>
+                          ) : piece.status === 'CLAIMED_PENDING' ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700">
+                              LIVE HOLD
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700">
+                              IN STOCK
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <div className="flex items-center justify-end gap-1">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {/* Restock Action Button for WIP Laundry items */}
+                            {piece.status === 'WIP_LAUNDRY' && !piece.isSold && (
+                              <button
+                                type="button"
+                                disabled={restockingId === piece.id}
+                                onClick={() => handleRestockPiece(piece)}
+                                className="px-2 py-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold text-[10px] rounded-md flex items-center gap-1 shadow-sm transition active:scale-95 cursor-pointer disabled:opacity-50"
+                                title="Restock piece from Laundry WIP to active In-Stock & Storefront"
+                              >
+                                {restockingId === piece.id ? (
+                                  <Loader2 className="w-3 h-3 animate-spin text-slate-950" />
+                                ) : (
+                                  <Sparkles className="w-3 h-3 text-slate-950" />
+                                )}
+                                <span>Restock</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() =>

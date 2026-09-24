@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { compressImage } from '../../../utils/imageCompressor.ts';
-import { autoCropGarment, cleanGarmentBackground } from '../../../utils/garmentCropper.ts';
+import { classifyGarmentPhotosWithGemini } from '../../../utils/geminiBulkClassifier.ts';
 import { analyzeVintageGarment, getDefaultSellingPrice } from '../../../utils/geminiVintageValuation.ts';
 import { ExtractedTagData } from './CameraTagScannerModal.tsx';
 
@@ -70,6 +70,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewLightbox, setPreviewLightbox] = useState<string | null>(null);
+
+  // AI Bulk 3-Photo Auto-Classification State
+  const [isBulkClassifying, setIsBulkClassifying] = useState(false);
+  const [bulkClassificationStep, setBulkClassificationStep] = useState<string>('');
 
   // AI Appraisal State (Antique Heritage, Vintage Grails, Y2K, and Non-Brand Pricing Engine)
   const [appraisal, setAppraisal] = useState<ExtractedTagData | null>(null);
@@ -139,6 +143,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const streamRef = useRef<MediaStream | null>(null);
   const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const bulkUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   // Stop camera tracks cleanly
   const stopCamera = useCallback(() => {
@@ -450,31 +455,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
     setIsProcessing(true);
     try {
-      // 1. Isolate the garment / t-shirt from holding hands and background
-      let processedUrl = rawDataUrl;
-      try {
-        const isolated = await autoCropGarment(rawDataUrl, { cleanBackground: true, cleanTolerance: 30 });
-        if (isolated && isolated.didCrop) {
-          processedUrl = isolated.croppedImageUrl;
-        }
-      } catch (e) {
-        console.warn('Garment auto-crop skipped:', e);
-      }
-
-      // 2. True Background Removal: flood-fill & isolate external backgrounds to studio white (#FFFFFF)
-      if (currentSlot !== 'tag') {
-        try {
-          const cleaned = await cleanGarmentBackground(processedUrl, 30);
-          if (cleaned) {
-            processedUrl = cleaned;
-          }
-        } catch (bgErr) {
-          console.warn('Background cleaning notice:', bgErr);
-        }
-      }
-
-      // 3. Compress and save
-      const compressed = await compressImage(processedUrl, 1280, 0.85);
+      // Pure non-destructive studio photo save: preserves true garment colors, textures, and borders
+      const compressed = await compressImage(rawDataUrl, 1280, 0.88);
       applyPhotoToCurrentSlot(compressed);
     } catch (e) {
       applyPhotoToCurrentSlot(rawDataUrl);
@@ -504,31 +486,14 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // File input handler with automatic studio compression, garment isolation, and background removal
+  // File input handler with direct non-destructive studio compression (Preserves pure raw pixels)
   const handleNativeFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setIsProcessing(true);
       try {
-        const compressed = await compressImage(file, 1280, 0.85);
-        // Smart garment isolation on uploaded photos
-        let finalPhoto = compressed;
-        try {
-          const isolated = await autoCropGarment(compressed, { cleanBackground: true, cleanTolerance: 30 });
-          if (isolated && isolated.didCrop) {
-            finalPhoto = isolated.croppedImageUrl;
-          }
-        } catch (_) {}
-
-        // True background removal for garment front & back photos
-        if (currentSlot !== 'tag') {
-          try {
-            const cleaned = await cleanGarmentBackground(finalPhoto, 30);
-            if (cleaned) finalPhoto = cleaned;
-          } catch (_) {}
-        }
-
-        applyPhotoToCurrentSlot(finalPhoto);
+        const compressed = await compressImage(file, 1280, 0.88);
+        applyPhotoToCurrentSlot(compressed);
         try {
           luxuryAudio.playMechanicalClick();
         } catch {}
@@ -541,7 +506,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // Drag and drop handler for desktop users with background removal
+  // Drag and drop handler preserving raw pristine garment photos
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
@@ -549,23 +514,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     if (file && file.type.startsWith('image/')) {
       setIsProcessing(true);
       try {
-        const compressed = await compressImage(file, 1280, 0.85);
-        let finalPhoto = compressed;
-        try {
-          const isolated = await autoCropGarment(compressed, { cleanBackground: true, cleanTolerance: 30 });
-          if (isolated && isolated.didCrop) {
-            finalPhoto = isolated.croppedImageUrl;
-          }
-        } catch (_) {}
-
-        if (currentSlot !== 'tag') {
-          try {
-            const cleaned = await cleanGarmentBackground(finalPhoto, 30);
-            if (cleaned) finalPhoto = cleaned;
-          } catch (_) {}
-        }
-
-        applyPhotoToCurrentSlot(finalPhoto);
+        const compressed = await compressImage(file, 1280, 0.88);
+        applyPhotoToCurrentSlot(compressed);
         try {
           luxuryAudio.playMechanicalClick();
         } catch {}
@@ -574,6 +524,57 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       } finally {
         setIsProcessing(false);
       }
+    }
+  };
+
+  // AI Bulk 3-Photo Upload & Auto-Classification (Front, Back, Tag)
+  const handleBulkUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+
+    const files = Array.from(fileList).slice(0, 3);
+    setIsBulkClassifying(true);
+    setBulkClassificationStep('📁 Compressing & optimizing raw photo quality...');
+
+    try {
+      const base64Images: string[] = [];
+      for (const file of files) {
+        const b64 = await compressImage(file, 1280, 0.88);
+        base64Images.push(b64);
+      }
+
+      if (base64Images.length === 1) {
+        applyPhotoToCurrentSlot(base64Images[0]);
+        return;
+      }
+
+      setBulkClassificationStep('🤖 Gemini Vision AI classifying Front, Back & Tag...');
+      const classification = await classifyGarmentPhotosWithGemini(base64Images);
+
+      const front = base64Images[classification.front_index] || base64Images[0];
+      const back = base64Images[classification.back_index] || base64Images[1 % base64Images.length];
+      const tag = base64Images[classification.tag_index] || base64Images[2 % base64Images.length];
+
+      setFrontImg(front);
+      setBackImg(back);
+      setTagImg(tag);
+
+      try {
+        luxuryAudio.playCashRegisterSound();
+      } catch {}
+
+      // Automatically trigger AI appraisal using the classified tag photo or front look
+      if (tag) {
+        handleRunAppraisal(tag);
+      } else if (front) {
+        handleRunAppraisal(front);
+      }
+    } catch (err: any) {
+      console.error('[BulkUpload] Auto-classification notice:', err);
+    } finally {
+      setIsBulkClassifying(false);
+      setBulkClassificationStep('');
+      if (e.target) e.target.value = '';
     }
   };
 
@@ -741,6 +742,22 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
                 {/* Primary Action Buttons */}
                 <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+                  {/* AI Bulk 3-Photo Upload Button */}
+                  <button
+                    type="button"
+                    disabled={isBulkClassifying}
+                    onClick={() => bulkUploadInputRef.current?.click()}
+                    className="px-4 py-2.5 bg-gradient-to-r from-amber-600 via-amber-500 to-indigo-600 hover:from-amber-500 hover:to-indigo-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-amber-600/30 transition active:scale-95 cursor-pointer disabled:opacity-50"
+                    title="Upload 3 photos together: Gemini Vision AI will automatically detect Front, Back, and Tag!"
+                  >
+                    {isBulkClassifying ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    ) : (
+                      <FolderOpen className="w-4 h-4 text-amber-200" />
+                    )}
+                    <span>{isBulkClassifying ? 'AI Classifying...' : '📁 Bulk Upload (Select 3 Photos)'}</span>
+                  </button>
+
                   {/* On Mobile: Direct Phone Camera trigger */}
                   {isMobile ? (
                     <button
@@ -755,10 +772,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                     <button
                       type="button"
                       onClick={() => galleryInputRef.current?.click()}
-                      className="px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-indigo-600/30 transition active:scale-95 cursor-pointer"
+                      className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs flex items-center gap-2 border border-slate-700 transition active:scale-95 cursor-pointer"
                     >
-                      <FolderOpen className="w-4 h-4 text-emerald-400" />
-                      <span>Select Photo from PC</span>
+                      <FolderOpen className="w-4 h-4 text-indigo-400" />
+                      <span>Single Photo from PC</span>
                     </button>
                   )}
 
@@ -808,7 +825,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             <div className="absolute top-2 right-2 flex items-center gap-1.5 z-30">
               <div className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold backdrop-blur-md">
                 <Sparkles className="w-3 h-3 text-emerald-300" />
-                <span>Studio BG Clean</span>
+                <span>High-Definition 4K</span>
               </div>
               {/* Multi-device camera switch selector */}
               {availableDevices.length > 1 && (
@@ -864,11 +881,18 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           </div>
 
           {/* Processing Indicator */}
-          {isProcessing && (
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50">
-              <div className="bg-slate-900 border border-slate-700 px-4 py-2.5 rounded-xl text-white text-xs flex items-center gap-2 shadow-2xl">
-                <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                <span>Optimizing High-Res Studio Photo...</span>
+          {(isProcessing || isBulkClassifying) && (
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50">
+              <div className="bg-slate-900 border border-slate-700 px-5 py-3 rounded-xl text-white text-xs flex items-center gap-3 shadow-2xl">
+                <Loader2 className="w-5 h-5 text-amber-400 animate-spin shrink-0" />
+                <div className="text-left">
+                  <div className="font-bold text-white">
+                    {isBulkClassifying ? 'AI Bulk Image Classification' : 'Optimizing High-Res Studio Photo...'}
+                  </div>
+                  <div className="text-[11px] text-slate-400 font-mono">
+                    {bulkClassificationStep || 'Preserving raw high-definition garment quality...'}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -918,6 +942,33 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 <div className="w-11 h-11 sm:w-13 sm:h-13 rounded-full border-2 border-white/80 flex items-center justify-center">
                   <Camera className="w-6 h-6 text-white group-hover:scale-110 transition-transform" />
                 </div>
+              </button>
+            </div>
+
+            {/* AI Bulk Upload Button */}
+            <div>
+              <input
+                ref={bulkUploadInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleBulkUpload}
+              />
+              <button
+                type="button"
+                disabled={isBulkClassifying}
+                onClick={() => bulkUploadInputRef.current?.click()}
+                className="flex items-center gap-1.5 bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-500 hover:to-indigo-500 text-white font-bold px-3 py-2 rounded-xl text-xs shadow-md shadow-amber-600/20 transition active:scale-95 cursor-pointer disabled:opacity-50"
+                title="Select 3 garment photos together: Gemini Vision AI will automatically detect Front, Back & Tag!"
+              >
+                {isBulkClassifying ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                ) : (
+                  <Sparkles className="w-4 h-4 text-amber-200" />
+                )}
+                <span className="hidden sm:inline">📁 Bulk Upload (Select 3 Photos)</span>
+                <span className="sm:hidden">Bulk (3)</span>
               </button>
             </div>
 

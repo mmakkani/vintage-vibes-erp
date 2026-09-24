@@ -242,6 +242,21 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
     onRefreshAll();
   };
 
+  // Handle piece updated (e.g. Restocked from Laundry WIP to active In Stock)
+  const handlePieceUpdated = (pieceId: string, updates: Partial<PieceBreakdownItem>) => {
+    setInventoryPieces(prev => prev.map(p => p.id === pieceId ? { ...p, ...updates } : p));
+    setBales(prev => prev.map(b => {
+      if (b.pieces?.some(p => p.id === pieceId)) {
+        return {
+          ...b,
+          pieces: b.pieces.map(p => p.id === pieceId ? { ...p, ...updates } : p)
+        };
+      }
+      return b;
+    }));
+    PurchaseService.invalidatePiecesCache();
+  };
+
   // Handle bale deleted: immediately purge from React state without requiring page reload (Ghost Deletion Fix)
   const handleDeleteBale = (deletedBaleId: string) => {
     setBales(prev => prev.filter(b => b.id !== deletedBaleId && b.gatePassNo !== deletedBaleId && b.baleCode !== deletedBaleId));
@@ -421,6 +436,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
             }}
             onRefresh={fetchPurchaseData}
             onPieceDeleted={handlePieceDeleted}
+            onPieceUpdated={handlePieceUpdated}
           />
         </ModuleMaintenanceGuard>
       )}
