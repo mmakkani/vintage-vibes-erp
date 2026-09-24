@@ -130,28 +130,11 @@ export default defineConfig(() => {
           assetFileNames: 'assets/[name]-[hash].[ext]',
           manualChunks(id) {
             if (id.includes('node_modules')) {
-              if (id.includes('lucide-react')) return 'vendor-lucide';
               if (id.includes('@supabase')) return 'vendor-db';
               if (id.includes('motion')) return 'vendor-motion';
               if (id.includes('qrcode') || id.includes('jsbarcode') || id.includes('jszip')) return 'vendor-barcode';
               if (id.includes('@google/genai')) return 'vendor-ai';
               return 'vendor-core';
-            }
-            // AI Vision & OCR: bundle all Gemini OCR, valuation, camera & cropper assets reliably together
-            if (
-              id.includes('geminiOcrService') ||
-              id.includes('geminiVintageValuation') ||
-              id.includes('documentCropper') ||
-              id.includes('AIOcrScannerModal')
-            ) {
-              return 'ai-vision-ocr';
-            }
-            // Shared security & audio utilities to prevent orphaned micro-chunks
-            if (
-              id.includes('securityMasterPin') ||
-              id.includes('soundEffects')
-            ) {
-              return 'shared-security-audio';
             }
           },
         },
