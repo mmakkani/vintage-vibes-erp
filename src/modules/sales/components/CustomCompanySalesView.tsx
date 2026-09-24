@@ -1671,7 +1671,14 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                   Bulk Quick Bales Selector ({availableBales.length} Available in Warehouse)
                 </h3>
               </div>
-              <button onClick={() => setShowBulkModal(false)} className="text-slate-400 hover:text-slate-700 text-base font-bold cursor-pointer">✕</button>
+              <button
+                type="button"
+                onClick={() => setShowBulkModal(false)}
+                className="p-2 -mr-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-amber-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
             <div className="p-3 border-b border-amber-100 flex items-center justify-between gap-3 bg-amber-50/40">
@@ -1817,7 +1824,14 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                   <Printer className="w-3.5 h-3.5" />
                   <span>Print Document</span>
                 </button>
-                <button onClick={() => setPrintModalType(null)} className="text-slate-400 hover:text-slate-700 text-base font-bold cursor-pointer">✕</button>
+                <button
+                  type="button"
+                  onClick={() => setPrintModalType(null)}
+                  className="p-2 -mr-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-amber-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+                  title="Close Document"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
             </div>
 
@@ -2033,6 +2047,30 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Modal Bottom Bar (Screen only) */}
+            <div className="p-3.5 bg-[#FAF4E6] border-t border-amber-200 flex items-center justify-between rounded-b-xl print:hidden flex-wrap gap-2">
+              <span className="text-xs text-slate-600 font-mono">
+                {invoiceNo || 'DRAFT-INVOICE'} • {printModalType === 'TAX_INVOICE' ? 'Tax Invoice' : 'Packing List'}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Document</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintModalType(null)}
+                  className="px-4 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold border border-slate-300 cursor-pointer transition-colors"
+                >
+                  Close Document
+                </button>
+              </div>
             </div>
           </div>
         </div>

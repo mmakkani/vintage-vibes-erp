@@ -3,6 +3,7 @@ import { Party, PartyKhataLog, VisitingCard } from '../parties.types.ts';
 import {
   Users,
   Plus,
+  ArrowLeft,
   ArrowDownLeft,
   ArrowUpRight,
   ArrowRight,
@@ -1683,21 +1684,32 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
           {selectedParty ? (
             <div className="bg-white rounded border border-slate-200 shadow-sm overflow-hidden space-y-3">
               <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-mono font-bold text-blue-900 bg-blue-50 px-1.5 py-0.5 rounded text-[10px] border border-blue-200">
-                      {selectedParty.code}
-                    </span>
-                    <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider">{selectedParty.name}</h3>
-                    {!selectedParty.isActive && (
-                      <span className="text-[9px] bg-red-100 text-red-700 font-bold px-1.5 py-0.2 rounded border border-red-200">
-                        INACTIVE
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedParty(null)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 font-bold text-[11px] uppercase tracking-wider border border-slate-300 shadow-2xs transition-colors cursor-pointer min-h-[36px]"
+                    title="Return to Parties List"
+                  >
+                    <ArrowLeft className="w-4 h-4 text-slate-600" />
+                    <span>Back to List</span>
+                  </button>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono font-bold text-blue-900 bg-blue-50 px-1.5 py-0.5 rounded text-[10px] border border-blue-200">
+                        {selectedParty.code}
                       </span>
-                    )}
+                      <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider">{selectedParty.name}</h3>
+                      {!selectedParty.isActive && (
+                        <span className="text-[9px] bg-red-100 text-red-700 font-bold px-1.5 py-0.2 rounded border border-red-200">
+                          INACTIVE
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {selectedParty.address || 'Dubai Garment District'} • Contact: {selectedParty.contactPerson || 'General Manager'}
+                    </p>
                   </div>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    {selectedParty.address || 'Dubai Garment District'} • Contact: {selectedParty.contactPerson || 'General Manager'}
-                  </p>
                 </div>
 
                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -1778,6 +1790,16 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       <span>Delete</span>
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedParty(null)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] uppercase tracking-wider border border-slate-300 shadow-2xs transition-colors cursor-pointer"
+                    title="Close Khata Statement"
+                  >
+                    <X className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Close</span>
+                  </button>
                 </div>
               </div>
 
@@ -2180,9 +2202,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
               <button
                 type="button"
                 onClick={() => setShowNewPartyModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                className="p-2 -mr-1 -mt-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+                title="Close"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -2815,8 +2838,20 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       {showTransactionModal && selectedParty && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded max-w-md w-full p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
-            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-1">Record Settlement / Khata Entry</h3>
-            <p className="text-[11px] text-slate-500 mb-3">Party: {selectedParty.name}</p>
+            <div className="flex items-start justify-between mb-3 border-b border-slate-200 pb-2.5">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-0.5">Record Settlement / Khata Entry</h3>
+                <p className="text-[11px] text-slate-500">Party: {selectedParty.name}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTransactionModal(false)}
+                className="p-2 -mr-1 -mt-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
             <form onSubmit={handleRecordTransaction} className="space-y-2.5 text-xs">
               <div>
@@ -2910,10 +2945,12 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 <p className="text-xs text-slate-500 font-mono mt-0.5">Code: {viewPartyData.code} • ID: {viewPartyData.id}</p>
               </div>
               <button
+                type="button"
                 onClick={() => setShowViewPartyModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                className="p-2 -mr-1 -mt-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+                title="Close"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -3157,9 +3194,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
               <button
                 type="button"
                 onClick={() => setShowEditPartyModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                className="p-2 -mr-1 -mt-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+                title="Close"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -3673,7 +3711,18 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
 
         return (
           <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white rounded-lg max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+            <div className="bg-white rounded-lg max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 max-h-[90vh] overflow-y-auto relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeletePartyModal(false);
+                  setDeleteError(null);
+                }}
+                className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
               {hasAnyEntries ? (
                 /* BLOCK DELETION: PARTY HAS FINANCIAL ENTRIES */
                 <div>
@@ -3824,9 +3873,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
               <button
                 type="button"
                 onClick={() => setShowNewCardModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+                className="p-2 -mr-1 -mt-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+                title="Close"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -4045,9 +4095,10 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
               <button
                 type="button"
                 onClick={() => setShowEditCardModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+                className="p-2 -mr-1 -mt-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+                title="Close"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 

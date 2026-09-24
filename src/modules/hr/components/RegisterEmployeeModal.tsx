@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { User, Shield, CreditCard, Building2, DollarSign, Upload, Scan, Sparkles, FileText, CheckCircle2, Globe, Loader2 } from 'lucide-react';
+import { User, Shield, CreditCard, Building2, DollarSign, Upload, Scan, Sparkles, FileText, CheckCircle2, Globe, Loader2, X } from 'lucide-react';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import { AIOcrScannerModal } from './AIOcrScannerModal.tsx';
 import { NumericInput } from '../../../components/NumericInput.tsx';
@@ -232,7 +232,15 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
               </p>
             </div>
           </div>
-          <button onClick={onClose} disabled={isSubmitting} className="text-slate-400 hover:text-slate-700 font-bold p-1 disabled:opacity-50">✕</button>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="p-2 -mr-1 -mt-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors disabled:opacity-50"
+            title="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* AI OCR Scanner Quick Action Bar */}

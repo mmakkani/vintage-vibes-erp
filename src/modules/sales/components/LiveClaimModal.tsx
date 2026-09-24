@@ -225,10 +225,12 @@ export const LiveClaimModal: React.FC<LiveClaimModalProps> = ({
             </p>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 text-sm font-semibold p-1 cursor-pointer"
+            className="p-2 -mr-2 -mt-1 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-200 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+            title="Close"
           >
-            ✕
+            <X className="w-5 h-5" />
           </button>
         </div>
 

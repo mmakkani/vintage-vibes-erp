@@ -48,7 +48,8 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-600"
+              className="p-2 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-600 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+              title="Close"
             >
               <X className="w-5 h-5" />
             </button>
@@ -195,6 +196,31 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
               </div>
               <span>Authorized Managing Director</span>
             </div>
+          </div>
+        </div>
+
+        {/* Modal Bottom Bar (Screen only) */}
+        <div className="flex items-center justify-between pt-4 mt-4 border-t border-amber-200 print:hidden flex-wrap gap-2">
+          <span className="text-xs text-slate-500 font-mono">
+            Voucher: <strong className="text-slate-800">{voucher.voucherNo}</strong>
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Print / Save PDF</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs uppercase tracking-wider shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+            >
+              <X className="w-4 h-4" />
+              <span>Close Voucher</span>
+            </button>
           </div>
         </div>
       </div>

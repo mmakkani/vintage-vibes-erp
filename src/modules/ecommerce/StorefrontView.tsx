@@ -1919,8 +1919,10 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-200">
           <div className="relative w-full max-w-lg bg-gradient-to-b from-[#FFFFFF] to-[#FAF5EA] border-2 border-amber-400 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-5 text-slate-900 font-sans">
             <button
+              type="button"
               onClick={() => setBountyModalOpen(false)}
-              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 rounded-full hover:bg-amber-100 transition cursor-pointer"
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 rounded-full hover:bg-amber-100 min-w-[36px] min-h-[36px] flex items-center justify-center transition cursor-pointer"
+              title="Close"
             >
               <X className="w-5 h-5" />
             </button>
@@ -2053,11 +2055,18 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 />
               </div>
 
-              <div className="pt-2">
+              <div className="pt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBountyModalOpen(false)}
+                  className="py-3 px-4 rounded-xl border border-amber-300 bg-white hover:bg-amber-50 text-slate-700 font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
                 <button
                   type="submit"
                   disabled={bountySubmitting}
-                  className="w-full btn-3d btn-3d-amber py-3 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                  className="flex-1 btn-3d btn-3d-amber py-3 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
                 >
                   <span>{bountySubmitting ? 'Recording in Database...' : '🎯 Submit Grail Bounty Request'}</span>
                 </button>

@@ -114,10 +114,11 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-amber-100/80 hover:bg-rose-100 text-slate-600 hover:text-rose-700 border border-amber-300/60 flex items-center justify-center transition-colors cursor-pointer"
+            className="w-9 h-9 min-w-[36px] min-h-[36px] rounded-lg bg-amber-100/80 hover:bg-rose-100 text-slate-600 hover:text-rose-700 border border-amber-300/60 flex items-center justify-center transition-colors cursor-pointer"
             aria-label="Close Inspector"
+            title="Close Inspector"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
@@ -485,6 +486,18 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
               >
                 <ShoppingBag className="w-4 h-4" />
                 <span>Instant Checkout Online</span>
+              </button>
+
+              {/* Close Inspector Escape Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  luxuryAudio.playMechanicalClick();
+                  onClose();
+                }}
+                className="w-full py-2.5 px-4 rounded-xl border border-amber-300/80 bg-white hover:bg-amber-50 text-slate-700 font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer text-center"
+              >
+                Close Inspector
               </button>
 
               <div className="flex items-center justify-center gap-2 text-[10px] text-slate-500 pt-1">

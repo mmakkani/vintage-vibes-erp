@@ -106,9 +106,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 luxuryAudio.playMechanicalClick();
                 onClose();
               }}
-              className="w-8 h-8 rounded-lg bg-amber-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 border border-amber-300 flex items-center justify-center transition-colors cursor-pointer"
+              className="w-9 h-9 min-w-[36px] min-h-[36px] rounded-lg bg-amber-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 border border-amber-300 flex items-center justify-center transition-colors cursor-pointer"
+              title="Close Cart"
             >
-              <X className="w-4 h-4" />
+              <X className="w-5 h-5" />
             </button>
           </div>
 
@@ -260,18 +261,31 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </div>
               </div>
 
-              {/* Checkout Trigger */}
-              <button
-                type="button"
-                onClick={() => {
-                  luxuryAudio.playMechanicalClick();
-                  onCheckout();
-                }}
-                className="w-full py-3 btn-3d btn-3d-amber text-xs uppercase tracking-wider rounded-xl font-black flex items-center justify-center gap-2 shadow-lg cursor-pointer transition-transform active:scale-98"
-              >
-                <span>Proceed to Vault Checkout</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              {/* Checkout Trigger with Escape Hatch */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    luxuryAudio.playMechanicalClick();
+                    onClose();
+                  }}
+                  className="px-3.5 py-3 rounded-xl border border-amber-300 bg-white hover:bg-amber-50 text-slate-700 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                  title="Close Cart and Continue Shopping"
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    luxuryAudio.playMechanicalClick();
+                    onCheckout();
+                  }}
+                  className="flex-1 py-3 btn-3d btn-3d-amber text-xs uppercase tracking-wider rounded-xl font-black flex items-center justify-center gap-2 shadow-lg cursor-pointer transition-transform active:scale-98"
+                >
+                  <span>Proceed to Vault Checkout</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
 
               <div className="flex items-center justify-center gap-4 text-[10px] text-slate-600 font-medium pt-1">
                 <span className="flex items-center gap-1">

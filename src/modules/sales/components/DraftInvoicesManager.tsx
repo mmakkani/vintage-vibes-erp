@@ -14,6 +14,7 @@ import {
   Search,
   Layers,
   ArrowRight,
+  ArrowLeft,
   Package,
   Printer,
   Sparkles,
@@ -600,23 +601,34 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
             <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden space-y-6 p-6">
               {/* Draft Header */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-                <div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-lg font-bold font-mono text-slate-900">
-                      {selectedInvoice.invoiceNo}
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                      DRAFT SALE &bull; CONCURRENT HOLD
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
-                    <span>
-                      Buyer: <strong className="text-slate-800">{selectedInvoice.customerName || selectedInvoice.buyerHandle}</strong>
-                    </span>
-                    &bull;
-                    <span>Channel: <strong>{(selectedInvoice as any).channel === 'ECOMMERCE' ? '🌐 E-Commerce Storefront' : (selectedInvoice.socialPlatform || '🔴 Live Stream')}</strong></span>
-                    &bull;
-                    <span>Destination: <strong>{selectedInvoice.shippingAddress || selectedInvoice.city || 'Dubai, UAE'}</strong></span>
+                <div className="flex items-start sm:items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedInvoiceId('')}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold text-xs border border-slate-300 shadow-2xs transition-colors cursor-pointer min-h-[36px] shrink-0"
+                    title="Deselect draft and return to queue"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Back to Queue</span>
+                  </button>
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-lg font-bold font-mono text-slate-900">
+                        {selectedInvoice.invoiceNo}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                        DRAFT SALE &bull; CONCURRENT HOLD
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
+                      <span>
+                        Buyer: <strong className="text-slate-800">{selectedInvoice.customerName || selectedInvoice.buyerHandle}</strong>
+                      </span>
+                      &bull;
+                      <span>Channel: <strong>{(selectedInvoice as any).channel === 'ECOMMERCE' ? '🌐 E-Commerce Storefront' : (selectedInvoice.socialPlatform || '🔴 Live Stream')}</strong></span>
+                      &bull;
+                      <span>Destination: <strong>{selectedInvoice.shippingAddress || selectedInvoice.city || 'Dubai, UAE'}</strong></span>
+                    </div>
                   </div>
                 </div>
 
@@ -648,6 +660,15 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     Cancel Hold
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedInvoiceId('')}
+                    className="px-3 py-1.5 border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer min-h-[36px]"
+                    title="Close Draft Inspector"
+                  >
+                    <X className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Close</span>
                   </button>
                 </div>
               </div>

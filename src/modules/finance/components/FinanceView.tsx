@@ -43,7 +43,9 @@ import {
   Edit3,
   Trash2,
   Lock,
-  Loader2
+  Loader2,
+  ArrowLeft,
+  X
 } from 'lucide-react';
 import { AccessDeniedNotice } from '../../../components/AccessDeniedNotice.tsx';
 import { ModuleMaintenanceGuard } from '../../../components/ModuleMaintenanceGuard.tsx';
@@ -2294,14 +2296,33 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         <div className="space-y-4">
           {/* Universal Search and Filter Card */}
           <div className="bg-white p-4 rounded-xl border border-amber-200/90 shadow-xs space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-amber-100">
+            <div className="flex items-center justify-between pb-2 border-b border-amber-100 flex-wrap gap-2">
               <span className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2">
                 <BookOpen className="w-4 h-4 text-amber-600" />
                 <span>General Ledger Search & Account Selection</span>
               </span>
-              <span className="text-[11px] text-slate-500">
-                Filter by any Customer, Supplier, Agent, or COA Account
-              </span>
+              <div className="flex items-center gap-2">
+                {glSelectedTarget !== 'ALL' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGlSelectedTarget('ALL');
+                      setLedgerPage(1);
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    <span>Clear Filter (Show All)</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSubTab('coa')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold text-xs border border-slate-300 shadow-2xs transition-colors cursor-pointer min-h-[36px]"
+                >
+                  <ArrowLeft className="w-4 h-4 text-slate-600" />
+                  <span>← Back to COA</span>
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -3129,9 +3150,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               <button
                 type="button"
                 onClick={() => setShowAddAccountModal(false)}
-                className="text-slate-400 hover:text-slate-700 font-bold"
+                className="p-2 -mr-1 -mt-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-amber-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+                title="Close"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -3354,9 +3376,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   setEditingVoucherId(null);
                   setEditingVoucherNo('');
                 }}
-                className="text-slate-400 hover:text-slate-700 font-bold"
+                className="p-2 -mr-1 -mt-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-amber-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+                title="Close"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 

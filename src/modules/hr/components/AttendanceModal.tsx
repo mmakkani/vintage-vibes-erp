@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { AttendanceRecord, Employee } from '../hr.types.ts';
 import { StatusBadge } from '../../../components/StatusBadge.tsx';
 import { NumericInput } from '../../../components/NumericInput.tsx';
-import { Calendar, Lock, UserPlus, CheckCircle, XCircle, Printer } from 'lucide-react';
+import { Calendar, Lock, UserPlus, CheckCircle, XCircle, Printer, X } from 'lucide-react';
 import { printAttendanceSheetA4 } from '../../../utils/printHrA4.ts';
 import { Pagination } from '../../../components/Pagination.tsx';
 
@@ -202,10 +202,10 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-sm font-bold transition-colors cursor-pointer"
+              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer min-w-[36px] min-h-[36px]"
               title="Close Window"
             >
-              ✕
+              <X className="w-5 h-5" />
             </button>
           </div>
         </div>

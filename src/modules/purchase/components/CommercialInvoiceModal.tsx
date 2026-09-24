@@ -644,6 +644,31 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
           </div>
         </div>
 
+        {/* Modal Bottom Actions Bar (Screen only) */}
+        <div className="flex items-center justify-between pt-5 mt-5 border-t border-amber-200 print:hidden flex-wrap gap-3">
+          <div className="text-xs text-slate-500">
+            Document No: <strong className="font-mono text-slate-800">{docNo}</strong>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Print / Export PDF</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs uppercase tracking-wider shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+            >
+              <X className="w-4 h-4" />
+              <span>Close Invoice</span>
+            </button>
+          </div>
+        </div>
+
         {/* Print Styles for A4 Paper Export */}
         <style>{`
           @media print {

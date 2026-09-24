@@ -21,7 +21,8 @@ import {
   Trash2,
   AlertCircle,
   RotateCcw,
-  Loader2
+  Loader2,
+  X
 } from 'lucide-react';
 import { openBatchBaleThermalTagsPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { openCommercialInvoiceA4PrintWindow, numberToWords } from '../../../utils/printInvoiceA4.ts';
@@ -1076,8 +1077,16 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       {/* Locked Sorting Protection Modal */}
       {lockedModalInfo && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-rose-200 space-y-4 animate-in fade-in zoom-in-95">
-            <div className="flex items-start gap-3">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-rose-200 space-y-4 animate-in fade-in zoom-in-95 relative">
+            <button
+              type="button"
+              onClick={() => setLockedModalInfo(null)}
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
+              title="Close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="flex items-start gap-3 pr-8">
               <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
                 <AlertCircle className="w-6 h-6" />
               </div>

@@ -40,7 +40,8 @@ import {
   Radio,
   FileText,
   Copy,
-  Check
+  Check,
+  X
 } from 'lucide-react';
 
 interface HardwareGadgetsHubProps {
@@ -1456,9 +1457,10 @@ export const HardwareGadgetsHub: React.FC<HardwareGadgetsHubProps> = ({ onNotify
                 <button
                   type="button"
                   onClick={() => setSelectedGadgetForModal(null)}
-                  className="text-stone-400 hover:text-white p-1 rounded-lg cursor-pointer"
+                  className="text-stone-400 hover:text-white p-2 rounded-lg hover:bg-stone-800 transition-colors cursor-pointer min-w-[36px] min-h-[36px] flex items-center justify-center"
+                  title="Close"
                 >
-                  ✕
+                  <X className="w-5 h-5" />
                 </button>
               </div>
 

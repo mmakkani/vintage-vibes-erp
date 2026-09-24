@@ -81,10 +81,12 @@ export const ThermalShippingLabelModal: React.FC<ThermalShippingLabelModalProps>
               <span>Print Thermal Slip</span>
             </button>
             <button
+              type="button"
               onClick={onClose}
-              className="text-slate-400 hover:text-white p-1 transition-colors"
+              className="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer min-w-[36px] min-h-[36px] flex items-center justify-center"
+              title="Close Waybill"
             >
-              <X className="w-4 h-4" />
+              <X className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -190,6 +192,30 @@ export const ThermalShippingLabelModal: React.FC<ThermalShippingLabelModalProps>
             <div className="text-[8px] text-slate-500 text-center uppercase tracking-wider pt-1">
               Vintage Vibes Live Stream Logistics • Retain Waybill for Customer Signature
             </div>
+          </div>
+        </div>
+
+        {/* Modal Bottom Bar - Hidden when printing */}
+        <div className="print:hidden bg-slate-50 px-6 py-3 border-t border-slate-200 flex items-center justify-between">
+          <span className="text-xs text-slate-500 font-mono">
+            Waybill: <strong className="text-slate-800">{waybillNo}</strong>
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Print Slip</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+            >
+              Close Waybill
+            </button>
           </div>
         </div>
       </div>
