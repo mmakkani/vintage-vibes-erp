@@ -912,7 +912,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const activeBaleId = activeBale.baleCode || activeBale.gatePassNo || activeBale.id || 'BAL-01';
     const barcode = `${activeBaleId}-P${String(pieces.length + 1).padStart(4, '0')}`;
     const weightKg = Number((numericGramWeight / 1000).toFixed(3));
-    const pieceId = String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : (`pc-${Date.now()}-${nextIdx}`));
+    const pieceId = String(
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = (Math.random() * 16) | 0;
+            const v = c === 'x' ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+          })
+    );
 
     const effectiveSellingPrice = Number(sellingPriceOverride || suggestedSellingPrice) || 0;
     const isOverridden = aiSuggestedPrice > 0 && effectiveSellingPrice < aiSuggestedPrice;
@@ -948,7 +956,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const collectionName = selectedCollectionObj?.name || null;
     const parentDeptName = selectedDeptObj?.name || activeDeptObj?.name || 'Vintage';
 
-    // Payload for public.bale_sorted_pieces
+    // Payload for public.bale_sorted_pieces (sanitized: status & is_sold belong to inventory_pieces only)
     const newPieceDb = {
       id: pieceId,
       bale_id: String(activeBale.id),
@@ -962,7 +970,6 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       ready_for_ecommerce: readyForEcommerce,
       ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
       seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
-      status: pieceStatus,
       size: sizeScanned,
       brand_title: brandTitle,
       weight_grams: numericGramWeight,
@@ -1074,11 +1081,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const currentPieces = [{ ...newPiecePayload, ...newPieceDb }, ...pieces];
     setPieces(currentPieces);
 
-    // 2. Insert into Supabase public.bale_sorted_pieces
+    // 2. Insert into Supabase public.bale_sorted_pieces (strictly sanitized to match DB schema)
     try {
+      const sanitizedPieceDb = PurchaseService.sanitizeSortedPiece(newPieceDb);
       const { error: insertErr } = await supabase
         .from('bale_sorted_pieces')
-        .insert([newPieceDb]);
+        .insert([sanitizedPieceDb]);
 
       if (insertErr) {
         console.error('Failed to insert sorted piece into bale_sorted_pieces:', insertErr);

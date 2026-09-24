@@ -2063,4 +2063,61 @@ export class PurchaseService {
 
     return [];
   }
+
+  public static sanitizeSortedPiece(payload: Record<string, any>): Record<string, any> {
+    return sanitizeBaleSortedPiecePayload(payload);
+  }
+
+  public static async saveSortedPiece(payload: Record<string, any>): Promise<{ data: any; error: any }> {
+    const sanitized = sanitizeBaleSortedPiecePayload(payload);
+    return await supabase
+      .from('bale_sorted_pieces')
+      .insert([sanitized]);
+  }
 }
+
+export const BALE_SORTED_PIECES_COLUMNS = new Set([
+  'id',
+  'bale_id',
+  'piece_code',
+  'weight_grams',
+  'cost_price',
+  'selling_price',
+  'brand_title',
+  'category',
+  'size',
+  'quality_grade',
+  'front_image',
+  'back_image',
+  'tag_image',
+  'created_at',
+  'era',
+  'ai_suggested_price',
+  'is_price_overridden',
+  'market_segment',
+  'is_grail',
+  'global_insights',
+  'sku',
+  'parent_category_id',
+  'parent_category_name',
+  'ready_for_ecommerce',
+  'ecommerce_description',
+  'seo_tags',
+  'item_master_id',
+  'collection_id',
+  'collection_name',
+  'sub_category'
+]);
+
+export function sanitizeBaleSortedPiecePayload(payload: Record<string, any>): Record<string, any> {
+  const sanitized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(payload || {})) {
+    // Explicitly reject status and is_sold which do not exist in bale_sorted_pieces
+    if (key === 'status' || key === 'is_sold' || key === 'isSold') continue;
+    if (BALE_SORTED_PIECES_COLUMNS.has(key) && value !== undefined) {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
