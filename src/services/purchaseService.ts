@@ -748,6 +748,9 @@ export class PurchaseService {
         try {
           await supabase.from('financial_vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
+        try {
+          await supabase.from('vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
       }
 
       // 4. Delete party_khata_logs for this invoice
@@ -1027,6 +1030,7 @@ export class PurchaseService {
                 await supabase.from('journal_entries').delete().eq('voucher_id', iv.id);
                 await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
                 await supabase.from('financial_vouchers').delete().eq('id', iv.id);
+                await supabase.from('vouchers').delete().eq('id', iv.id);
               }
             }
           }
@@ -1508,8 +1512,9 @@ export class PurchaseService {
           });
         }
       }
-    } catch (coaErr) {
-      console.warn('Notice on COA voucher posting:', coaErr);
+    } catch (coaErr: any) {
+      console.error('Error on COA voucher posting during inward conversion:', coaErr);
+      throw new Error(`Failed to post inward COA voucher: ${coaErr?.message || coaErr}`);
     }
 
     // 5. Update purchase_invoices converted_to_inward and status

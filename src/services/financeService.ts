@@ -719,12 +719,56 @@ export class FinanceService {
       is_auto: isAuto
     };
 
-    // 1. Write parent data to financial_vouchers
+    const voucherPayload = {
+      id,
+      voucher_no: voucherNo,
+      date,
+      type,
+      reference,
+      narration,
+      total_debit: totalDebit,
+      total_credit: totalCredit,
+      status,
+      created_by: createdBy
+    };
+
+    // 1. Insert Parent (Voucher) strictly into vouchers table first (Foreign Key target for ledgers)
+    let savedVoucherId = id;
+    const { data: voucherData, error: voucherError } = await supabase
+      .from('vouchers')
+      .insert([voucherPayload])
+      .select('id')
+      .single();
+
+    if (voucherError) {
+      if (voucherError.code === '23505' || voucherError.message?.includes('duplicate key') || voucherError.message?.includes('already exists')) {
+        const { data: existingVoucher } = await supabase
+          .from('vouchers')
+          .select('id')
+          .eq('voucher_no', voucherNo)
+          .maybeSingle();
+        if (existingVoucher?.id) {
+          savedVoucherId = String(existingVoucher.id);
+        } else {
+          console.error("Voucher Insert Failed:", voucherError);
+          throw new Error(`Failed to create voucher: ${voucherError.message}`);
+        }
+      } else {
+        console.error("Voucher Insert Failed:", voucherError);
+        throw new Error(`Failed to create voucher: ${voucherError.message}`);
+      }
+    } else if (voucherData?.id) {
+      savedVoucherId = String(voucherData.id);
+    }
+
+    // Mirror parent record into 'financial_vouchers' for unified query compatibility
     try {
-      const { error: fvError } = await supabase.from('financial_vouchers').insert([payload]);
-      if (fvError) console.warn('financial_vouchers insert warning:', fvError.message);
-    } catch (err) {
-      console.warn('financial_vouchers exception:', err);
+      await supabase.from('financial_vouchers').insert([{
+        ...payload,
+        id: savedVoucherId
+      }]);
+    } catch (fvErr) {
+      console.warn('financial_vouchers dual-sync notice:', fvErr);
     }
 
     // 2. Write balanced lines to voucher_entries and ledgers
@@ -752,7 +796,7 @@ export class FinanceService {
 
         return {
           id: lineId,
-          voucher_id: String(id),
+          voucher_id: savedVoucherId,
           voucher_no: voucherNo,
           account_id: preferredAccId,
           account_code: resolvedCode,
@@ -775,7 +819,7 @@ export class FinanceService {
       const generalLedgerRows = voucherEntriesRows.map((veRow: any) => {
         return {
           id: generateLedgerUuid(),
-          voucher_id: String(id),
+          voucher_id: savedVoucherId,
           voucher_no: voucherNo,
           account_id: veRow.account_id,
           account_code: veRow.account_code,
@@ -804,25 +848,35 @@ export class FinanceService {
         console.warn('voucher_entries exception:', err);
       }
 
+      let coaMap: Map<string, string> = new Map();
       try {
-        let coaMap: Map<string, string> = new Map();
-        try {
-          const { data: coaAccs } = await supabase.from('coa_accounts').select('id, code');
-          if (Array.isArray(coaAccs)) {
-            coaMap = new Map(coaAccs.map((a: any) => [a.code, String(a.id)]));
-          }
-        } catch (_) {}
+        const { data: coaAccs } = await supabase.from('coa_accounts').select('id, code');
+        if (Array.isArray(coaAccs)) {
+          coaMap = new Map(coaAccs.map((a: any) => [a.code, String(a.id)]));
+        }
+      } catch (_) {}
 
-        const voucherId = String(id);
-        const ledgersRows = generalLedgerRows.map((glRow: any) => ({
-          ...glRow,
-          id: generateLedgerUuid(), // MUST BE UNIQUE PER ROW
-          voucher_id: String(voucherId),
-          account_id: coaMap.get(glRow.account_code) || glRow.account_id
-        }));
-        await supabase.from('ledgers').insert(ledgersRows);
-      } catch (err) {
-        console.warn('ledgers insert warning:', err);
+      const ledgersRows = generalLedgerRows.map((glRow: any) => ({
+        ...glRow,
+        id: generateLedgerUuid(), // MUST BE UNIQUE PER ROW
+        voucher_id: savedVoucherId,
+        account_id: coaMap.get(glRow.account_code) || glRow.account_id
+      }));
+
+      // 2. ONLY NOW, Insert Children (Ledgers)
+      // Ensure ledgersRows use savedVoucherId (which was just successfully committed to vouchers table)
+      const { error: ledgerError } = await supabase
+        .from('ledgers')
+        .insert(ledgersRows);
+
+      if (ledgerError) {
+        console.error("Ledger Insert Failed:", ledgerError);
+        // Rollback parent voucher to maintain strict transactional integrity
+        try {
+          await supabase.from('vouchers').delete().eq('id', savedVoucherId);
+          await supabase.from('financial_vouchers').delete().eq('id', savedVoucherId);
+        } catch (_) {}
+        throw new Error(`Failed to create ledger entries: ${ledgerError.message}`);
       }
 
       try {
@@ -870,7 +924,7 @@ export class FinanceService {
             }
 
             return {
-              voucher_id: String(id),
+              voucher_id: savedVoucherId,
               account_id: accountUuid,
               party_id: cleanPartyId,
               debit: veRow.debit,
@@ -897,7 +951,7 @@ export class FinanceService {
     } catch (_) {}
 
     return {
-      id,
+      id: savedVoucherId,
       voucherNo,
       date,
       type: type as any,
@@ -924,6 +978,9 @@ export class FinanceService {
 
     try {
       await supabase.from('financial_vouchers').update({ status }).or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
+    } catch {}
+    try {
+      await supabase.from('vouchers').update({ status }).or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
 
     if (status === 'DRAFT' || status === 'UNPOSTED') {
@@ -1063,6 +1120,20 @@ export class FinanceService {
       await supabase.from('financial_vouchers').update(updatePayload).eq('id', cleanId);
     } catch (e) {
       console.warn('financial_vouchers update error:', e);
+    }
+    try {
+      await supabase.from('vouchers').update({
+        voucher_no: voucherNo,
+        date,
+        type,
+        reference,
+        narration,
+        total_debit: totalDebit,
+        total_credit: totalCredit,
+        status
+      }).eq('id', cleanId);
+    } catch (e) {
+      console.warn('vouchers update error:', e);
     }
 
     const lines = v.lines || v.entries || [];
@@ -1228,6 +1299,9 @@ export class FinanceService {
     } catch {}
     try {
       await supabase.from('financial_vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
+    } catch {}
+    try {
+      await supabase.from('vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
 
     try {
@@ -1431,6 +1505,9 @@ export class FinanceService {
         try {
           await supabase.from('financial_vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
+        try {
+          await supabase.from('vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
       }
 
       // 3. Safety broad delete on journal_entries, ledgers, financial_vouchers matching any token
@@ -1440,6 +1517,9 @@ export class FinanceService {
         } catch (_) {}
         try {
           await supabase.from('financial_vouchers').delete().or(`reference.eq.${tok},reference_no.eq.${tok},reference.ilike.%${tok}%,reference_no.ilike.%${tok}%`);
+        } catch (_) {}
+        try {
+          await supabase.from('vouchers').delete().or(`reference.eq.${tok},reference.ilike.%${tok}%`);
         } catch (_) {}
       }
 
