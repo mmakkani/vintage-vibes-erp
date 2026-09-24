@@ -132,42 +132,51 @@ CRITICAL REQUIREMENTS:
         const text = candidate?.content?.parts?.[0]?.text;
 
         if (text) {
-          const cleanedText = text.replace(/```json\s*|```/g, '').trim();
-          const parsed = JSON.parse(cleanedText);
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
 
-          let f = Number(parsed.front_index);
-          let b = Number(parsed.back_index);
-          let t = Number(parsed.tag_index);
+            let f = Number(parsed.front_index ?? parsed.frontIndex ?? parsed.front ?? parsed.front_img_index);
+            let b = Number(parsed.back_index ?? parsed.backIndex ?? parsed.back ?? parsed.back_img_index);
+            let t = Number(parsed.tag_index ?? parsed.tagIndex ?? parsed.tag ?? parsed.tag_img_index ?? parsed.label_index);
 
-          // Validate indices
-          if (!isNaN(f) && !isNaN(b) && !isNaN(t)) {
-            // Ensure bounds [0, imagesToClassify.length - 1]
-            f = Math.max(0, Math.min(imagesToClassify.length - 1, f));
-            b = Math.max(0, Math.min(imagesToClassify.length - 1, b));
-            t = Math.max(0, Math.min(imagesToClassify.length - 1, t));
-
-            // If collision occurred, repair indices
-            if (f === b || f === t || b === t) {
-              const available = [0, 1, 2].slice(0, imagesToClassify.length);
-              const used = new Set<number>();
-              if (available.includes(f)) used.add(f);
-              if (used.has(b) || !available.includes(b)) {
-                b = available.find(x => !used.has(x)) ?? b;
-              }
-              used.add(b);
-              if (used.has(t) || !available.includes(t)) {
-                t = available.find(x => !used.has(x)) ?? t;
-              }
+            // Normalize 1-based indexing if LLM generated 1, 2, 3
+            if (Math.min(f, b, t) === 1 && Math.max(f, b, t) === imagesToClassify.length) {
+              f -= 1;
+              b -= 1;
+              t -= 1;
             }
 
-            return {
-              front_index: f,
-              back_index: b,
-              tag_index: t,
-              confidence: Number(parsed.confidence) || 0.95,
-              reasoning: parsed.reasoning || 'Gemini Vision AI classified Front, Back & Tag successfully.',
-              source: 'GEMINI_AI_VISION'
-            };
+            // Validate indices
+            if (!isNaN(f) && !isNaN(b) && !isNaN(t)) {
+              // Ensure bounds [0, imagesToClassify.length - 1]
+              f = Math.max(0, Math.min(imagesToClassify.length - 1, f));
+              b = Math.max(0, Math.min(imagesToClassify.length - 1, b));
+              t = Math.max(0, Math.min(imagesToClassify.length - 1, t));
+
+              // If collision occurred, repair indices
+              if (f === b || f === t || b === t) {
+                const available = [0, 1, 2].slice(0, imagesToClassify.length);
+                const used = new Set<number>();
+                if (available.includes(f)) used.add(f);
+                if (used.has(b) || !available.includes(b)) {
+                  b = available.find(x => !used.has(x)) ?? b;
+                }
+                used.add(b);
+                if (used.has(t) || !available.includes(t)) {
+                  t = available.find(x => !used.has(x)) ?? t;
+                }
+              }
+
+              return {
+                front_index: f,
+                back_index: b,
+                tag_index: t,
+                confidence: Number(parsed.confidence) || 0.95,
+                reasoning: parsed.reasoning || 'Gemini Vision AI classified Front, Back & Tag successfully.',
+                source: 'GEMINI_AI_VISION'
+              };
+            }
           }
         }
       } catch (err: any) {
@@ -176,7 +185,37 @@ CRITICAL REQUIREMENTS:
     }
   }
 
-  // 3. Fallback to default sequential order [0: Front, 1: Back, 2: Tag]
+  // 3. Fallback to server endpoint POST /api/purchase/classify-garment-photos (when running in browser without direct API key)
+  if (typeof fetch !== 'undefined') {
+    try {
+      const serverRes = await fetch('/api/purchase/classify-garment-photos', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { 'x-gemini-api-key': apiKey } : {})
+        },
+        body: JSON.stringify({ images: base64Images })
+      });
+
+      if (serverRes.ok) {
+        const serverData = await serverRes.json();
+        if (serverData && serverData.success && serverData.front_index !== undefined) {
+          return {
+            front_index: Number(serverData.front_index),
+            back_index: Number(serverData.back_index),
+            tag_index: Number(serverData.tag_index),
+            confidence: Number(serverData.confidence) || 0.95,
+            reasoning: serverData.reasoning || 'Gemini Vision AI classified via backend',
+            source: 'GEMINI_AI_VISION'
+          };
+        }
+      }
+    } catch (srvErr: any) {
+      console.warn('[GeminiBulkClassifier] Server proxy classification notice:', srvErr?.message);
+    }
+  }
+
+  // 4. Fallback to default sequential order [0: Front, 1: Back, 2: Tag]
   return {
     front_index: 0,
     back_index: 1,

@@ -74,19 +74,6 @@ export class SequenceService {
             if (seq > maxSeq) maxSeq = seq;
           }
         }
-
-        // Also check vouchers fallback table
-        const { data: vData } = await supabase
-          .from('vouchers')
-          .select('voucher_no')
-          .like('voucher_no', `${prefixWithDate}-%`);
-
-        if (Array.isArray(vData)) {
-          for (const row of vData) {
-            const seq = SequenceService.extractSequence(row.voucher_no, prefixWithDate);
-            if (seq > maxSeq) maxSeq = seq;
-          }
-        }
       }
     } catch (err) {
       console.warn(`[SequenceService] Error fetching max sequence for ${prefixWithDate}:`, err);

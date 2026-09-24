@@ -398,7 +398,19 @@ purchaseRouter.post('/scan-invoice-ocr', async (req, res) => {
 purchaseRouter.post('/classify-garment-photos', async (req, res) => {
   try {
     const { images, base64Images } = req.body;
-    const apiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
+    let apiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
+    if (!apiKey) {
+      apiKey = (process.env.GEMINI_API_KEY || '').trim();
+    }
+    if (!apiKey) {
+      try {
+        const { pgPool } = await import('../../db/pgPool.ts');
+        const dbRes = await pgPool.query(`SELECT api_key FROM gemini_api_config WHERE id = 'default' LIMIT 1`);
+        if (dbRes.rows?.[0]?.api_key) {
+          apiKey = dbRes.rows[0].api_key;
+        }
+      } catch (_) {}
+    }
     const targetImages = images || base64Images || [];
     const result = await classifyGarmentPhotosWithGemini(targetImages, apiKey);
     return res.json({ success: true, ...result });

@@ -124,6 +124,11 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         global_insights: res.global_insights
       };
       setAppraisal(extracted);
+      onSavePhotos({
+        front: frontImg,
+        back: backImg,
+        tag: tagImg || overrideImg
+      }, extracted);
       if (res.isGrail || res.rarityTier === 'ANTIQUE') {
         luxuryAudio.playCashRegisterSound();
       } else {
@@ -558,6 +563,14 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       setFrontImg(front);
       setBackImg(back);
       setTagImg(tag);
+      setCurrentSlot('front');
+
+      // Auto-propagate slotted photos to parent
+      onSavePhotos({
+        front,
+        back,
+        tag
+      }, appraisal || undefined);
 
       try {
         luxuryAudio.playCashRegisterSound();
@@ -592,6 +605,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   if (!isOpen) return null;
 
   const capturedCount = [frontImg, backImg, tagImg].filter(Boolean).length;
+  const currentSlotImage = currentSlot === 'front' ? frontImg : currentSlot === 'back' ? backImg : tagImg;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-4 animate-in fade-in duration-200">
@@ -715,8 +729,54 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             }`}
           />
 
-          {/* STANDBY / NON-BLOCKING ASSISTANT SCREEN (Displayed when live stream is inactive) */}
-          {!cameraActive && (
+          {/* STANDBY SCREEN / SLOTTED PHOTO PREVIEW */}
+          {!cameraActive && currentSlotImage ? (
+            <div className="relative z-20 w-full h-full flex flex-col items-center justify-center p-3 animate-in fade-in duration-150">
+              <div className="relative max-w-sm max-h-[220px] sm:max-h-[290px] rounded-2xl overflow-hidden border-2 border-indigo-500/50 shadow-2xl group flex items-center justify-center bg-slate-950">
+                <img
+                  src={currentSlotImage}
+                  alt={currentSlot}
+                  className="max-h-[220px] sm:max-h-[290px] w-auto object-contain cursor-pointer"
+                  onClick={() => setPreviewLightbox(currentSlotImage)}
+                />
+                <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-bold text-white flex items-center gap-1.5 border border-white/20">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="uppercase tracking-wide font-mono">
+                    {currentSlot === 'front' ? '1. Front Look Attached' : currentSlot === 'back' ? '2. Back Look Attached' : '3. Tag / Label Attached'}
+                  </span>
+                </div>
+                <div className="absolute bottom-2 inset-x-2 flex items-center justify-center gap-2 bg-slate-950/85 backdrop-blur-md p-1.5 rounded-xl border border-slate-700/60 opacity-95 transition">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewLightbox(currentSlotImage)}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs flex items-center gap-1 cursor-pointer font-medium"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>View</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => startCamera()}
+                    className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs flex items-center gap-1 cursor-pointer font-bold shadow"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>Retake</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (currentSlot === 'front') setFrontImg(undefined);
+                      else if (currentSlot === 'back') setBackImg(undefined);
+                      else setTagImg(undefined);
+                    }}
+                    className="px-2.5 py-1 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/40 rounded-lg text-xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>Clear</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : !cameraActive ? (
             <div className="relative z-20 p-4 sm:p-6 text-center text-slate-300 w-full max-w-lg mx-auto space-y-4">
               {/* Central Capture Card */}
               <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-2xl backdrop-blur-md space-y-3.5">
@@ -804,7 +864,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 )}
               </div>
             </div>
-          )}
+          ) : null}
 
           {/* Garment Silhouette / Guide Outline Overlay (Active when camera is live) */}
           {cameraActive && showSilhouette && (

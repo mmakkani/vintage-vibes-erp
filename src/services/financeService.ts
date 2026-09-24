@@ -66,35 +66,6 @@ export class FinanceService {
     });
 
     let { data, count, error } = await query;
-    if (error || !data || data.length === 0) {
-      // Fallback to 'vouchers' table if financial_vouchers has error or is empty
-      let fallbackQuery = supabase
-        .from('vouchers')
-        .select('*', { count: 'exact' });
-
-      if (search) {
-        fallbackQuery = fallbackQuery.or(`voucher_no.ilike.%${search}%,reference.ilike.%${search}%,reference_no.ilike.%${search}%,narration.ilike.%${search}%`);
-      }
-      if (type && type !== 'ALL') {
-        fallbackQuery = fallbackQuery.or(`type.eq.${type},voucher_type.eq.${type}`);
-      }
-      if (status && status !== 'ALL') {
-        fallbackQuery = fallbackQuery.eq('status', status);
-      }
-
-      fallbackQuery = applyPagination(fallbackQuery, page, pageSize, {
-        orderBy: 'created_at',
-        ascending: false,
-        secondaryOrderBy: 'id',
-        secondaryAscending: false
-      });
-
-      const fallbackRes = await fallbackQuery;
-      if (!fallbackRes.error && fallbackRes.data) {
-        data = fallbackRes.data;
-        count = fallbackRes.count;
-      }
-    }
 
     // Fetch entries/lines for the current page vouchers
     const voucherIds = (data || []).map((r: any) => String(r.id)).filter(Boolean);
@@ -603,18 +574,6 @@ export class FinanceService {
       }
     } catch {}
 
-    if (rows.length === 0) {
-      const { data, error } = await supabase
-        .from('vouchers')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Supabase error on vouchers:', error);
-      } else if (data) {
-        rows = data;
-      }
-    }
 
     // Fetch entries/lines for rich voucher viewing and printing
     let allEntries: any[] = [];
@@ -739,15 +698,7 @@ export class FinanceService {
       console.warn('financial_vouchers exception:', err);
     }
 
-    // Mirror to vouchers
-    try {
-      const { error: vError } = await supabase.from('vouchers').insert([payload]);
-      if (vError) console.warn('vouchers table insert warning:', vError.message);
-    } catch (err) {
-      console.warn('vouchers exception:', err);
-    }
-
-    // 2. Write balanced lines to voucher_entries and general_ledger
+    // 2. Write balanced lines to voucher_entries and ledgers
     const lines = v.lines || v.entries || [];
     if (Array.isArray(lines) && lines.length > 0) {
       const coaList = await this.getCoaAccounts();
@@ -808,8 +759,8 @@ export class FinanceService {
           credit: veRow.credit,
           currency,
           exchange_rate: exchangeRate,
-          foreign_debit: veRow.foreign_debit,
-          foreign_credit: veRow.foreign_credit,
+          foreign_debit: foreignDebit,
+          foreign_credit: foreignCredit,
           balance: veRow.debit - veRow.credit,
           running_balance: veRow.debit - veRow.credit,
           narration: veRow.narration,
@@ -822,13 +773,6 @@ export class FinanceService {
         if (veError) console.warn('voucher_entries insert warning:', veError.message);
       } catch (err) {
         console.warn('voucher_entries exception:', err);
-      }
-
-      try {
-        const { error: glError } = await supabase.from('general_ledger').insert(generalLedgerRows);
-        if (glError) console.warn('general_ledger insert warning:', glError.message);
-      } catch (err) {
-        console.warn('general_ledger exception:', err);
       }
 
       try {
@@ -949,20 +893,17 @@ export class FinanceService {
     try {
       await supabase.from('financial_vouchers').update({ status }).or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
-    try {
-      await supabase.from('vouchers').update({ status }).or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
-    } catch {}
 
     if (status === 'DRAFT' || status === 'UNPOSTED') {
-      // When unposted, remove GL entries so live ledger and trial balance exclude this voucher
+      // When unposted, remove ledger entries so live ledger and trial balance exclude this voucher
       try {
-        await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        await supabase.from('journal_entries').delete().eq('voucher_id', cleanId);
       } catch {}
       try {
         await supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
       } catch {}
     } else if (status === 'POSTED' && existing) {
-      // When posted, ensure GL entries exist for all lines
+      // When posted, ensure ledger entries exist for all lines
       const glRows = (existing.lines || existing.entries || []).map((l: any, i: number) => ({
         id: `gl-${existing.id}-${i}-${Date.now()}`,
         voucher_id: existing.id,
@@ -976,7 +917,6 @@ export class FinanceService {
         status: 'POSTED'
       }));
       if (glRows.length > 0) {
-        try { await supabase.from('general_ledger').insert(glRows); } catch {}
         try {
           let coaMap: Map<string, string> = new Map();
           try {
@@ -1087,20 +1027,14 @@ export class FinanceService {
       console.warn('financial_vouchers update error:', e);
     }
 
-    try {
-      await supabase.from('vouchers').update(updatePayload).eq('id', cleanId);
-    } catch (e) {
-      console.warn('vouchers update error:', e);
-    }
-
     const lines = v.lines || v.entries || [];
     if (Array.isArray(lines) && lines.length > 0) {
       // 1. Delete previous line items
       try {
-        await supabase.from('voucher_entries').delete().eq('voucher_id', cleanId);
+        await supabase.from('journal_entries').delete().eq('voucher_id', cleanId);
       } catch {}
       try {
-        await supabase.from('general_ledger').delete().eq('voucher_id', cleanId);
+        await supabase.from('voucher_entries').delete().eq('voucher_id', cleanId);
       } catch {}
       try {
         await supabase.from('ledgers').delete().eq('voucher_id', cleanId);
@@ -1178,11 +1112,6 @@ export class FinanceService {
         console.warn('voucher_entries update insert warning:', err);
       }
       try {
-        await supabase.from('general_ledger').insert(generalLedgerRows);
-      } catch (err) {
-        console.warn('general_ledger update insert warning:', err);
-      }
-      try {
         let coaMap: Map<string, string> = new Map();
         try {
           const { data: coaAccs } = await supabase.from('coa_accounts').select('id, code');
@@ -1248,19 +1177,16 @@ export class FinanceService {
     } catch (_) {}
 
     try {
-      await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
-    } catch {}
+      await supabase.from('journal_entries').delete().eq('voucher_id', cleanId);
+    } catch (_) {}
     try {
-      await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+      await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
     try {
       await supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
     try {
       await supabase.from('financial_vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
-    } catch {}
-    try {
-      await supabase.from('vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
 
     try {
@@ -1376,7 +1302,7 @@ export class FinanceService {
       const isRefUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cleanRef);
       const [piLookup, siLookup] = await Promise.all([
         supabase.from('purchase_invoices').select('id, invoice_no, supplier_id').or(isRefUuid ? `id.eq.${cleanRef},invoice_no.eq.${cleanRef}` : `invoice_no.eq.${cleanRef}`).maybeSingle(),
-        supabase.from('sales_invoices').select('id, invoice_no, customer_id').or(isRefUuid ? `id.eq.${cleanRef},invoice_no.eq.${cleanRef}` : `invoice_no.eq.${cleanRef}`).maybeSingle()
+        supabase.from('sales_invoices').select('id, invoice_no, client_id').or(isRefUuid ? `id.eq.${cleanRef},invoice_no.eq.${cleanRef}` : `invoice_no.eq.${cleanRef}`).maybeSingle()
       ]);
 
       if (piLookup.data) {
@@ -1387,14 +1313,14 @@ export class FinanceService {
       if (siLookup.data) {
         if (siLookup.data.id) tokens.add(String(siLookup.data.id));
         if (siLookup.data.invoice_no) tokens.add(String(siLookup.data.invoice_no));
-        if (siLookup.data.customer_id) affectedPartyIds.add(String(siLookup.data.customer_id));
+        const clientId = (siLookup.data as any).client_id || (siLookup.data as any).customer_id;
+        if (clientId) affectedPartyIds.add(String(clientId));
       }
 
-      // 1. Fetch matching vouchers from financial_vouchers and vouchers
-      const [fvRes, vRes] = await Promise.all([
-        supabase.from('financial_vouchers').select('id, voucher_no, reference, reference_no, narration, party_id'),
-        supabase.from('vouchers').select('id, voucher_no, reference, reference_no, narration, party_id')
-      ]);
+      // 1. Fetch matching vouchers from financial_vouchers
+      const fvRes = await supabase
+        .from('financial_vouchers')
+        .select('id, voucher_no, reference, reference_no, narration, party_id');
 
       const matched: { id: string; voucherNo: string }[] = [];
 
@@ -1431,7 +1357,6 @@ export class FinanceService {
       };
 
       (fvRes.data || []).forEach(checkAndAdd);
-      (vRes.data || []).forEach(checkAndAdd);
 
       // 2. Cascade delete journal entries FIRST for all matched vouchers (prevents FK violation and orphaned rows)
       for (const m of matched) {
@@ -1460,32 +1385,20 @@ export class FinanceService {
           await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
         try {
-          await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
-        } catch (_) {}
-        try {
           await supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
         try {
           await supabase.from('financial_vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
-        try {
-          await supabase.from('vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
-        } catch (_) {}
       }
 
-      // 3. Safety broad delete on journal_entries, general_ledger, financial_vouchers matching any token
+      // 3. Safety broad delete on journal_entries, ledgers, financial_vouchers matching any token
       for (const tok of tokens) {
         try {
           await supabase.from('journal_entries').delete().ilike('description', `%${tok}%`);
         } catch (_) {}
         try {
-          await supabase.from('general_ledger').delete().or(`reference.eq.${tok},reference.ilike.%${tok}%,description.ilike.%${tok}%,narration.ilike.%${tok}%`);
-        } catch (_) {}
-        try {
           await supabase.from('financial_vouchers').delete().or(`reference.eq.${tok},reference_no.eq.${tok},reference.ilike.%${tok}%,reference_no.ilike.%${tok}%`);
-        } catch (_) {}
-        try {
-          await supabase.from('vouchers').delete().or(`reference.eq.${tok},reference_no.eq.${tok},reference.ilike.%${tok}%,reference_no.ilike.%${tok}%`);
         } catch (_) {}
       }
 
@@ -1875,11 +1788,10 @@ export class FinanceService {
 
     // Direct Supabase Fallback: Join journal_entries + financial_vouchers + chart_of_accounts + parties
     try {
-      const [jeRes, veRes, fvRes, vRes, coaRes, caRes, ptyRes] = await Promise.all([
+      const [jeRes, veRes, fvRes, coaRes, caRes, ptyRes] = await Promise.all([
         supabase.from('journal_entries').select('*').order('created_at', { ascending: true }),
         supabase.from('voucher_entries').select('*'),
         supabase.from('financial_vouchers').select('id, voucher_no, date, reference, reference_no, narration, status'),
-        supabase.from('vouchers').select('id, voucher_no, date, reference, reference_no, narration, status'),
         supabase.from('chart_of_accounts').select('id, code, name'),
         supabase.from('coa_accounts').select('id, code, name'),
         supabase.from('parties').select('id, name, code')
@@ -1889,10 +1801,6 @@ export class FinanceService {
       (fvRes.data || []).forEach((v: any) => {
         voucherMap.set(String(v.id), v);
         if (v.voucher_no) voucherMap.set(String(v.voucher_no), v);
-      });
-      (vRes.data || []).forEach((v: any) => {
-        if (!voucherMap.has(String(v.id))) voucherMap.set(String(v.id), v);
-        if (v.voucher_no && !voucherMap.has(String(v.voucher_no))) voucherMap.set(String(v.voucher_no), v);
       });
 
       const coaMap = new Map<string, { code: string; name: string }>();
@@ -2071,23 +1979,27 @@ export class FinanceService {
   public static async getLedgers(accountId?: string): Promise<LedgerEntry[]> {
     let rows: any[] = [];
     try {
-      let q = supabase.from('general_ledger').select('*').order('date', { ascending: false });
-      if (accountId) q = q.eq('account_id', String(accountId));
-      const { data, error } = await q;
+      let query = supabase.from('ledgers').select('*').order('date', { ascending: false });
+      if (accountId) query = query.eq('account_id', String(accountId));
+      const { data, error } = await query;
       if (!error && data && data.length > 0) {
         rows = data;
       }
     } catch {}
 
     if (rows.length === 0) {
-      let query = supabase.from('ledgers').select('*').order('date', { ascending: false });
-      if (accountId) query = query.eq('account_id', String(accountId));
-      const { data, error } = await query;
-      if (error) {
-        console.error('Supabase error on ledgers:', error);
-      } else if (data) {
-        rows = data;
-      }
+      try {
+        let q = supabase.from('journal_entries').select('*').order('created_at', { ascending: false });
+        if (accountId) q = q.eq('account_id', String(accountId));
+        const { data, error } = await q;
+        if (!error && data) {
+          rows = data.map((je: any) => ({
+            ...je,
+            entry_date: je.created_at,
+            narration: je.description
+          }));
+        }
+      } catch (_) {}
     }
 
     return rows.map((row: any) => ({

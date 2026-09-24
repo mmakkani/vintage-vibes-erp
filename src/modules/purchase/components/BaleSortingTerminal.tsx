@@ -683,7 +683,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const remainingGrams = Math.max(0, totalGrams - sortedGrams);
     const piecesCount = pieces.length;
     const progressPercent = totalGrams > 0 ? Math.min(100, Math.round((sortedGrams / totalGrams) * 100)) : 0;
-    const isCompleted = isTerminalFinalized || progressPercent >= 100 || activeBale.status === 'COMPLETED' || activeBale.sortingStatus === 'FULLY_SORTED';
+    const isCompleted = isTerminalFinalized || activeBale.status === 'COMPLETED' || activeBale.status === 'POSTED';
 
     return {
       totalGrams,
@@ -700,9 +700,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const active: InwardGatePass[] = [];
     const completed: InwardGatePass[] = [];
     (effectiveBales || []).forEach(b => {
-      const isDone = b.status === 'COMPLETED' ||
-                     b.sortingStatus === 'FULLY_SORTED' ||
-                     (b.brokenDownWeight > 0 && (b.remainingWeight !== undefined && b.remainingWeight <= 0));
+      const isDone = b.status === 'COMPLETED' || b.status === 'POSTED';
       if (isDone) completed.push(b);
       else active.push(b);
     });
@@ -851,9 +849,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
     if (matched) {
       // Check if bale is already completed and finalized
-      const isCompleted = matched.status === 'COMPLETED' || 
-                          matched.sortingStatus === 'FULLY_SORTED' ||
-                          (matched.brokenDownWeight > 0 && (matched.remainingWeight !== undefined && matched.remainingWeight <= 0));
+      const isCompleted = matched.status === 'COMPLETED' || matched.status === 'POSTED';
 
       if (isCompleted) {
         luxuryAudio.playCancelBeep();
@@ -890,7 +886,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }
 
     // Check if bale is already completed/finalized
-    if (hudStats.isCompleted || activeBale.status === 'COMPLETED' || activeBale.sortingStatus === 'FULLY_SORTED') {
+    if (hudStats.isCompleted || activeBale.status === 'COMPLETED' || activeBale.status === 'POSTED') {
       luxuryAudio.playCancelBeep();
       setFeedbackToast({
         text: `🔒 Cannot add pieces: Bale ${activeBale.baleCode || activeBale.gatePassNo} is 100% COMPLETED and locked into inventory!`,
@@ -1355,8 +1351,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       e.preventDefault();
       e.stopPropagation();
     }
-    if (!activeBale) return;
-    if (isTerminalFinalized || hudStats.isCompleted || activeBale.status === 'COMPLETED') {
+    if (isTerminalFinalized || activeBale.status === 'COMPLETED' || activeBale.status === 'POSTED') {
       alert("This bale is already finalized and posted!");
       return;
     }
@@ -3074,12 +3069,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             <button
               type="button"
               onClick={(e) => handleFinalizeAndPost(e)}
-              disabled={isTerminalFinalized || hudStats.isCompleted || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED'}
+              disabled={isTerminalFinalized || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED'}
               className="flex-1 sm:flex-none px-3 sm:px-5 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-emerald-600/25 border border-emerald-400/40 flex items-center justify-center gap-2 transition-all transform active:scale-95 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-              title={isTerminalFinalized || hudStats.isCompleted ? "Bale is already finalized and posted" : "Finalize and lock this bale"}
+              title={isTerminalFinalized || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED' ? "Bale is already finalized and posted" : "Finalize and lock this bale"}
             >
               <ShieldCheck className="w-4 h-4 text-slate-950" />
-              <span>{isTerminalFinalized || hudStats.isCompleted || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED' ? '✓ Finalized' : 'Finalize & Post'}</span>
+              <span>{isTerminalFinalized || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED' ? '✓ Finalized' : 'Finalize & Post'}</span>
             </button>
           </div>
         </div>

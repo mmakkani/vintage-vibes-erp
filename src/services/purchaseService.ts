@@ -706,36 +706,7 @@ export class PurchaseService {
         }
       }
 
-      // 2. Also check table 'vouchers'
-      try {
-        const { data: vList } = await supabase
-          .from('vouchers')
-          .select('id, voucher_no, reference, reference_no, narration');
-        if (vList && vList.length > 0) {
-          for (const v of vList) {
-            const vRef = String(v.reference || v.reference_no || '').toUpperCase();
-            const vNo = String(v.voucher_no || '').toUpperCase();
-            const vNarr = String(v.narration || '').toUpperCase();
-            const target = invoiceNo.toUpperCase();
-            const targetClean = cleanInvNo.toUpperCase();
-
-            if (
-              vRef.includes(target) ||
-              vNarr.includes(target) ||
-              (targetClean && vNo.includes(targetClean)) ||
-              vRef === `PINV-${target}` ||
-              vRef === `INWARD-${target}` ||
-              vRef === `PUR-${target}`
-            ) {
-              if (!matchedVouchers.some(m => m.id === String(v.id))) {
-                matchedVouchers.push({ id: String(v.id), voucher_no: String(v.voucher_no) });
-              }
-            }
-          }
-        }
-      } catch (_) {}
-
-      // 3. Cascade delete journal entries FIRST, then voucher entries and general ledger lines for each matched voucher
+      // 2. Cascade delete journal entries FIRST, then voucher entries and ledgers for each matched voucher
       for (const mv of matchedVouchers) {
         const cleanId = mv.id;
         const vNo = mv.voucher_no;
@@ -749,16 +720,10 @@ export class PurchaseService {
           await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
         try {
-          await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
-        } catch (_) {}
-        try {
           await supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
         try {
           await supabase.from('financial_vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
-        } catch (_) {}
-        try {
-          await supabase.from('vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
       }
 
@@ -1015,9 +980,7 @@ export class PurchaseService {
               for (const iv of inwVchs) {
                 await supabase.from('journal_entries').delete().eq('voucher_id', iv.id);
                 await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
-                await supabase.from('general_ledger').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
                 await supabase.from('financial_vouchers').delete().eq('id', iv.id);
-                await supabase.from('vouchers').delete().eq('id', iv.id);
               }
             }
           }
