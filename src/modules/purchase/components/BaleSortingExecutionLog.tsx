@@ -39,6 +39,7 @@ interface BaleSortingExecutionLogProps {
   shops: ShopMaster[];
   onOpenSortingTerminal: (baleId?: string) => void;
   onRefresh: () => void;
+  onDeleteBale?: (deletedBaleId: string) => void;
 }
 
 export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = ({
@@ -50,14 +51,19 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
   labels,
   shops,
   onOpenSortingTerminal,
-  onRefresh
+  onRefresh,
+  onDeleteBale
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'IN_PROGRESS' | 'COMPLETED' | 'UNOPENED'>('ALL');
   const [isDeletingBaleId, setIsDeletingBaleId] = useState<string | null>(null);
   const [inspectingBale, setInspectingBale] = useState<InwardGatePass | null>(null);
 
-  const handleDeleteBale = async (bale: InwardGatePass) => {
+  const handleDeleteBale = async (bale: InwardGatePass, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     const baleTitle = bale.baleCode || bale.gatePassNo || bale.id;
     if (!window.confirm(`Are you sure you want to delete Bale "${baleTitle}"?\n\nThis will remove the Inward Pass and unlock the associated Commercial Invoice for unposting.`)) {
       return;
@@ -66,8 +72,11 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
       setIsDeletingBaleId(bale.id);
       luxuryAudio.playMechanicalClick();
       await PurchaseService.deleteInwardGatePass(bale.id);
+      if (onDeleteBale) {
+        onDeleteBale(bale.id);
+      }
       alert(`Bale "${baleTitle}" deleted successfully. Associated Commercial Invoice is now unlocked.`);
-      onRefresh();
+      if (onRefresh) onRefresh();
     } catch (err: any) {
       alert(`Failed to delete bale: ${err?.message || 'Error'}`);
     } finally {
@@ -536,7 +545,7 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                           {isDeletable ? (
                             <button
                               type="button"
-                              onClick={() => handleDeleteBale(bale)}
+                              onClick={(e) => handleDeleteBale(bale, e)}
                               disabled={isDeletingBaleId === bale.id}
                               title="Delete Inward Pass / Bale"
                               className="p-1.5 text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 rounded-lg transition-colors cursor-pointer shadow-2xs disabled:opacity-50"

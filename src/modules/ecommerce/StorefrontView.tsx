@@ -379,7 +379,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
-          const available = data.filter(p => !p.isSold && p.status === 'IN_STOCK' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
+          const available = data.filter(p => !p.isSold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE') && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
           setPieces(available);
           return;
         }
@@ -390,7 +390,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         .from('inventory_pieces')
         .select('*')
         .eq('is_sold', false)
-        .eq('status', 'IN_STOCK')
+        .in('status', ['IN_STOCK', 'AVAILABLE'])
         .or('ready_for_ecommerce.is.null,ready_for_ecommerce.eq.true')
         .order('created_at', { ascending: false })
         .limit(100);
@@ -431,7 +431,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           isPriceOverridden: Boolean(r.is_price_overridden),
           isCartLocked: false,
           createdAt: r.created_at
-        })).filter((p: any) => !p.isSold && p.status === 'IN_STOCK' && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
+        })).filter((p: any) => !p.isSold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE') && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
         setPieces(available as PieceBreakdownItem[]);
         return;
       }

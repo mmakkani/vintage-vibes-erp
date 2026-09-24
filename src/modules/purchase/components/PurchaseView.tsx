@@ -242,16 +242,34 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
     onRefreshAll();
   };
 
+  // Handle bale deleted: immediately purge from React state without requiring page reload (Ghost Deletion Fix)
+  const handleDeleteBale = (deletedBaleId: string) => {
+    setBales(prev => prev.filter(b => b.id !== deletedBaleId && b.gatePassNo !== deletedBaleId && b.baleCode !== deletedBaleId));
+    setInventoryPieces(prev => prev.filter(p => p.gatePassId !== deletedBaleId));
+    PurchaseService.invalidateGatePassesCache();
+    PurchaseService.invalidatePiecesCache();
+  };
+
   // Handle save partial / reopen
-  const handleSavePartial = async (baleId: string) => {
+  const handleSavePartial = async (baleId: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     try {
       const b = bales.find(x => x.id === baleId);
-      const newStatus = (b && ((b.pieceCount || 0) > 0 || (b.pieces && b.pieces.length > 0))) ? 'PARTIAL' : 'UNOPENED';
-      await PurchaseService.updateInwardGatePass(baleId, { status: newStatus as any });
+      const pieceCount = (b && ((b.pieceCount || 0) > 0 ? b.pieceCount : (b.pieces && b.pieces.length > 0 ? b.pieces.length : 0))) || 0;
+      const newStatus = pieceCount > 0 ? 'PARTIAL' : 'UNOPENED';
+      await PurchaseService.savePartialSession(baleId, {
+        piece_count: pieceCount,
+        total_pieces: pieceCount,
+        status: newStatus
+      });
       setBales(prev => {
         const next = prev.map(item => item.id === baleId ? { ...item, status: newStatus as any, sortingStatus: (newStatus === 'PARTIAL' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any } : item);
         return next;
       });
+      PurchaseService.invalidateGatePassesCache();
       fetchPurchaseData();
       onRefreshAll();
     } catch (e: any) {
@@ -377,6 +395,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
             shops={shops}
             onOpenSortingTerminal={handleOpenSortingTerminal}
             onRefresh={fetchPurchaseData}
+            onDeleteBale={handleDeleteBale}
           />
         </ModuleMaintenanceGuard>
       )}
@@ -468,6 +487,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         onPieceAdded={handlePieceAdded}
         onPieceDeleted={handlePieceDeleted}
         onSavePartial={handleSavePartial}
+        onDeleteBale={handleDeleteBale}
         onPostBale={handlePostBale}
         onSelectBale={id => setActiveSortingBaleId(id)}
         onBaleCreated={newBale => {

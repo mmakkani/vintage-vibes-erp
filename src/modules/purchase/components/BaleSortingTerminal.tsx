@@ -69,6 +69,7 @@ interface BaleSortingTerminalProps {
   onPieceAdded: (piece: PieceBreakdownItem, updatedBale: InwardGatePass) => void;
   onPieceDeleted: (pieceId: string, updatedBale: InwardGatePass) => void;
   onSavePartial: (baleId: string) => void;
+  onDeleteBale?: (baleId: string) => void;
   onPostBale?: (baleId: string) => void;
   onSelectBale: (baleId: string) => void;
   onBaleCreated?: (bale: InwardGatePass) => void;
@@ -104,6 +105,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   onPieceAdded,
   onPieceDeleted,
   onSavePartial,
+  onDeleteBale,
   onPostBale,
   onSelectBale,
   onBaleCreated,
@@ -927,9 +929,14 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const finalGrailStatus = Boolean(isGrail || ['Antique', 'Boutique', 'Grails'].includes(marketSegment) || era.toLowerCase().includes('antique'));
 
     // Smart Quality Routing Engine: Super Cream & Grade A go live to Storefront; Grade B & Rework held in Laundry WIP
-    const isPristine = ['Super Cream', 'Grade A+', 'Grade A', 'CREAM', 'GRADE_A'].some(g =>
-      selectedGrade.toLowerCase().includes(g.toLowerCase())
-    ) && !selectedGrade.toLowerCase().includes('rework') && !selectedGrade.toLowerCase().includes('grade b');
+    const gradeLower = String(selectedGrade || '').toLowerCase().trim();
+    const isPristine = (
+      gradeLower.includes('super cream') ||
+      gradeLower.includes('cream') ||
+      gradeLower.includes('grade a') ||
+      gradeLower.includes('grade-a') ||
+      gradeLower.includes('grade_a')
+    ) && !gradeLower.includes('rework') && !gradeLower.includes('grade b') && !gradeLower.includes('grade c');
     const readyForEcommerce = isPristine;
     const pieceStatus = isPristine ? 'IN_STOCK' : 'WIP_LAUNDRY';
 
@@ -1204,7 +1211,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   };
 
   // Delete piece handler (sync with public.bale_sorted_pieces)
-  const handleDeletePiece = async (pieceId: string) => {
+  const handleDeletePiece = async (pieceId: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (!activeBale) return;
     luxuryAudio.playMechanicalClick();
     if (!confirm('Are you sure you want to remove this piece from the session?')) return;
@@ -1255,7 +1266,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   };
 
   // Re-open / Unlock Bale for Sorting
-  const handleReopenBale = async () => {
+  const handleReopenBale = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (!activeBale) return;
     luxuryAudio.playMechanicalClick();
     if (!confirm(`Are you sure you want to re-open and unlock Bale ${activeBale.baleCode || activeBale.gatePassNo}? This will unlock the terminal and allow you to scan and add remaining garments.`)) {
@@ -1296,37 +1311,27 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }
   };
 
-  // Save as in-progress (upsert into public.bale_sessions)
-  const handleSaveInProgress = async () => {
+  // Save as in-progress (strictly updates existing session & gate pass, never generates duplicates)
+  const handleSaveInProgress = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (!activeBale) return;
     luxuryAudio.playMechanicalClick();
     setIsSubmitting(true);
 
     const newStatus = hudStats.piecesCount > 0 ? 'PARTIAL' : 'UNOPENED';
     try {
-      const sessionPayload = {
-        bale_id: activeBale.id,
+      await PurchaseService.savePartialSession(activeBale.id, {
         total_grams: hudStats.totalGrams,
         sorted_grams: hudStats.sortedGrams,
         remaining_grams: hudStats.remainingGrams,
         total_pieces: hudStats.piecesCount,
-        status: 'IN_PROGRESS',
-        updated_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('bale_sessions')
-        .upsert(sessionPayload, { onConflict: 'bale_id' });
-
-      if (error) {
-        console.error('Error saving session to bale_sessions:', error);
-      }
-
-      // Ensure inward_gate_passes table reflects in-progress status
-      await supabase
-        .from('inward_gate_passes')
-        .update({ status: newStatus })
-        .eq('id', activeBale.id);
+        piece_count: hudStats.piecesCount,
+        broken_down_weight: hudStats.sortedKg,
+        status: newStatus
+      });
 
       // Explicitly unlock local terminal state
       setIsTerminalFinalized(false);
@@ -1336,14 +1341,20 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       console.warn('Session save error:', err);
     }
 
-    onSavePartial(activeBale.id);
+    if (onSavePartial) {
+      onSavePartial(activeBale.id);
+    }
     setIsSubmitting(false);
     setFeedbackToast({ text: `Bale ${activeBale.baleCode || activeBale.gatePassNo} saved as In-Progress.`, type: 'success' });
     setTimeout(onClose, 400);
   };
 
   // Finalize & Post Bale (upsert COMPLETED into public.bale_sessions, inward_gate_passes and inventory_pieces)
-  const handleFinalizeAndPost = async () => {
+  const handleFinalizeAndPost = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (!activeBale) return;
     if (isTerminalFinalized || hudStats.isCompleted || activeBale.status === 'COMPLETED') {
       alert("This bale is already finalized and posted!");
@@ -1494,7 +1505,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const activeSortedCount = Number(activeBale?.pieceCount ?? (activeBale as any)?.piece_count ?? (pieces?.length || 0));
   const isActiveDeletable = Boolean(activeBale) && activeSortedKg === 0 && activeSortedCount === 0;
 
-  const handleDeleteActiveBale = async () => {
+  const handleDeleteActiveBale = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (!activeBale) return;
     const baleTitle = activeBale.baleCode || activeBale.gatePassNo || activeBale.id;
     if (!window.confirm(`Are you sure you want to delete Bale "${baleTitle}"?\n\nThis will remove the Inward Pass and unlock the associated Commercial Invoice for unposting.`)) {
@@ -1503,11 +1518,14 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     try {
       setIsSubmitting(true);
       luxuryAudio.playMechanicalClick();
-      await PurchaseService.deleteInwardGatePass(activeBale.id);
+      const deletedId = activeBale.id;
+      await PurchaseService.deleteInwardGatePass(deletedId);
       setFeedbackToast({ text: `Bale "${baleTitle}" deleted successfully.`, type: 'success' });
-      setInternalBales(prev => prev.filter(b => b.id !== activeBale.id));
+      setInternalBales(prev => prev.filter(b => b.id !== deletedId));
       setSelectedBaleId('');
-      if (onSavePartial) onSavePartial(activeBale.id);
+      if (onDeleteBale) {
+        onDeleteBale(deletedId);
+      }
       setTimeout(onClose, 500);
     } catch (err: any) {
       alert(`Failed to delete bale: ${err?.message || 'Error'}`);
@@ -1545,7 +1563,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               isActiveDeletable ? (
                 <button
                   type="button"
-                  onClick={handleDeleteActiveBale}
+                  onClick={(e) => handleDeleteActiveBale(e)}
                   disabled={isSubmitting}
                   title="Delete Inward Pass / Bale"
                   className="px-2.5 py-1.5 bg-rose-600/20 text-rose-300 hover:bg-rose-600 hover:text-white border border-rose-500/40 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
@@ -1567,7 +1585,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             )}
             <button
               type="button"
-              onClick={onClose}
+              onClick={(e) => {
+                if (e) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+                onClose();
+              }}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
             >
               <X className="w-4 h-4" />
@@ -1761,7 +1785,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 <button
                   type="button"
                   id="btn-reopen-bale"
-                  onClick={handleReopenBale}
+                  onClick={(e) => handleReopenBale(e)}
                   className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 shadow-md transition-all cursor-pointer transform active:scale-95 whitespace-nowrap"
                   title="Unlock and reopen this bale for sorting"
                 >
@@ -2991,7 +3015,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           <td className="py-2.5 px-3 text-center">
                             <button
                               type="button"
-                              onClick={() => handleDeletePiece(piece.id)}
+                              onClick={(e) => handleDeletePiece(piece.id, e)}
                               className="p-1.5 hover:bg-rose-950/60 text-slate-500 hover:text-rose-400 rounded transition-colors cursor-pointer"
                               title="Delete piece from session"
                             >
@@ -3029,7 +3053,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               <button
                 type="button"
                 id="btn-bottom-reopen-bale"
-                onClick={handleReopenBale}
+                onClick={(e) => handleReopenBale(e)}
                 className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer transform active:scale-95 whitespace-nowrap"
                 title="Unlock and reopen this bale for continuous garment sorting"
               >
@@ -3040,7 +3064,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
             <button
               type="button"
-              onClick={handleSaveInProgress}
+              onClick={(e) => handleSaveInProgress(e)}
               className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl border border-slate-700 transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
             >
               <Save className="w-4 h-4 text-indigo-400" />
@@ -3049,7 +3073,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
             <button
               type="button"
-              onClick={handleFinalizeAndPost}
+              onClick={(e) => handleFinalizeAndPost(e)}
               disabled={isTerminalFinalized || hudStats.isCompleted || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED'}
               className="flex-1 sm:flex-none px-3 sm:px-5 py-2 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-emerald-600/25 border border-emerald-400/40 flex items-center justify-center gap-2 transition-all transform active:scale-95 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
               title={isTerminalFinalized || hudStats.isCompleted ? "Bale is already finalized and posted" : "Finalize and lock this bale"}

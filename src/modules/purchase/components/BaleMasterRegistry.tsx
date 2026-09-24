@@ -191,7 +191,11 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
     openBatchBaleThermalTagsPrintWindow(tags);
   };
 
-  const handleDeleteBale = async (bale: InwardGatePass) => {
+  const handleDeleteBale = async (bale: InwardGatePass, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     const baleTitle = bale.baleCode || bale.gatePassNo;
     if (!window.confirm(`Are you sure you want to permanently delete Bale "${baleTitle}"? All sorted garment pieces, sessions, and associated inward vouchers will be purged from SQL.`)) {
       return;
@@ -651,7 +655,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                           <button
                             type="button"
                             disabled={deletingBaleId === String(bale.id)}
-                            onClick={() => handleDeleteBale(bale)}
+                            onClick={(e) => handleDeleteBale(bale, e)}
                             className="p-1.5 hover:bg-rose-50 text-rose-600 rounded cursor-pointer transition-colors border border-rose-200 disabled:opacity-50"
                             title="Delete Bale & Remove from SQL"
                           >

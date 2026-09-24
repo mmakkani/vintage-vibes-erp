@@ -922,6 +922,10 @@ export class PurchaseService {
     let invoiceNo: string | undefined;
     let invoiceId: string | undefined;
 
+    // Immediately invalidate gate passes and pieces caches to eliminate ghost records in UI
+    PurchaseService.invalidateGatePassesCache();
+    PurchaseService.invalidatePiecesCache();
+
     // 1. Try serverless / backend API endpoint first if running in browser
     try {
       if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
@@ -930,7 +934,11 @@ export class PurchaseService {
         });
         if (resp.ok) {
           const json = await resp.json().catch(() => ({}));
-          if (json.success) return;
+          if (json.success) {
+            PurchaseService.invalidateGatePassesCache();
+            PurchaseService.invalidatePiecesCache();
+            return;
+          }
         }
       }
     } catch (_) {}
@@ -1026,6 +1034,9 @@ export class PurchaseService {
       FinanceService.clearCoaCache();
       await supabase.rpc('sync_coa_current_balances');
     } catch (_) {}
+
+    PurchaseService.invalidateGatePassesCache();
+    PurchaseService.invalidatePiecesCache();
   }
 
   // --- Inward Gate Passes (Bales / Consignments) ---
@@ -1610,6 +1621,69 @@ export class PurchaseService {
     PurchaseService.invalidateGatePassesCache();
   }
 
+  public static async savePartialSession(
+    baleId: string,
+    updates?: {
+      total_grams?: number;
+      sorted_grams?: number;
+      remaining_grams?: number;
+      total_pieces?: number;
+      piece_count?: number;
+      broken_down_weight?: number;
+      status?: string;
+    }
+  ): Promise<void> {
+    const cleanId = String(baleId || '').trim();
+    if (!cleanId) throw new Error('Bale ID is required to save partial session');
+
+    const totalPieces = Number(updates?.total_pieces ?? updates?.piece_count ?? 0);
+    const newStatus = updates?.status || (totalPieces > 0 ? 'PARTIAL' : 'UNOPENED');
+
+    // 1. Strictly UPDATE or UPSERT existing session in bale_sessions by bale_id (never insert new bale)
+    const sessionPayload: Record<string, any> = {
+      bale_id: cleanId,
+      status: 'IN_PROGRESS',
+      updated_at: new Date().toISOString()
+    };
+    if (updates?.total_grams !== undefined) sessionPayload.total_grams = Number(updates.total_grams);
+    if (updates?.sorted_grams !== undefined) sessionPayload.sorted_grams = Number(updates.sorted_grams);
+    if (updates?.remaining_grams !== undefined) sessionPayload.remaining_grams = Number(updates.remaining_grams);
+    if (updates?.total_pieces !== undefined || updates?.piece_count !== undefined) {
+      sessionPayload.total_pieces = totalPieces;
+    }
+
+    try {
+      await supabase
+        .from('bale_sessions')
+        .upsert(sessionPayload, { onConflict: 'bale_id' });
+    } catch (sessErr) {
+      console.warn('[PurchaseService] Error upserting bale_session:', sessErr);
+    }
+
+    // 2. Strictly UPDATE inward_gate_passes by existing primary key ID (never INSERT, never generate new bale code)
+    const igpPayload: Record<string, any> = {
+      status: newStatus
+    };
+    if (updates?.broken_down_weight !== undefined) {
+      igpPayload.broken_down_weight = Number(updates.broken_down_weight);
+    }
+    if (updates?.piece_count !== undefined || updates?.total_pieces !== undefined) {
+      igpPayload.piece_count = totalPieces;
+    }
+
+    const { error: igpErr } = await supabase
+      .from('inward_gate_passes')
+      .update(igpPayload)
+      .eq('id', cleanId);
+
+    if (igpErr) {
+      console.error('[PurchaseService] Error updating inward_gate_passes for partial save:', igpErr);
+      throw new Error(igpErr.message || 'Failed to update inward gate pass');
+    }
+
+    PurchaseService.invalidateGatePassesCache();
+  }
+
   // --- Individual Garment Pieces ---
   public static async getPieces(limit = 1000): Promise<PieceBreakdownItem[]> {
     return this.getInventoryPieces(limit);
@@ -1849,32 +1923,55 @@ export class PurchaseService {
       .eq('bale_id', baleId);
 
     if (sortedPieces && sortedPieces.length > 0) {
-      const inventoryRows = sortedPieces.map((p: any) => ({
-        id: p.id,
-        gate_pass_id: baleId,
-        barcode: p.piece_code || p.id,
-        item_name: p.category || 'Vintage Garment',
-        brand_name: p.brand_title || '',
-        brand_tier: 'Grail',
-        label_grade: p.quality_grade || 'CREAM',
-        shop_location: 'Central Warehouse (Al Quoz)',
-        weight_kg: Number(p.weight_grams ? (Number(p.weight_grams) / 1000) : 0),
-        weight_grams: Number(p.weight_grams || 0),
-        cost_price: Number(p.cost_price || 0),
-        estimated_price: Number(p.selling_price || 0),
-        retail_price_aed: Number(p.selling_price || 0),
-        size_scanned: p.size || 'L',
-        front_image_url: p.front_image || '',
-        back_image_url: p.back_image || '',
-        tag_image_url: p.tag_image || '',
-        is_sold: false,
-        status: 'AVAILABLE',
-        market_segment: p.market_segment || 'Regular Thrift',
-        is_grail: Boolean(p.is_grail),
-        ai_suggested_price: p.ai_suggested_price !== undefined && p.ai_suggested_price !== null ? Number(p.ai_suggested_price) : null,
-        is_price_overridden: Boolean(p.is_price_overridden),
-        global_insights: p.global_insights || null
-      }));
+      const inventoryRows = sortedPieces.map((p: any) => {
+        const pGrade = String(p.quality_grade || '').toLowerCase().trim();
+        const isPristine = (
+          pGrade.includes('super cream') ||
+          pGrade.includes('cream') ||
+          pGrade.includes('grade a') ||
+          pGrade.includes('grade-a') ||
+          pGrade.includes('grade_a')
+        ) && !pGrade.includes('rework') && !pGrade.includes('grade b') && !pGrade.includes('grade c');
+
+        const isReady = p.ready_for_ecommerce !== undefined && p.ready_for_ecommerce !== null 
+          ? Boolean(p.ready_for_ecommerce) 
+          : isPristine;
+
+        return {
+          id: p.id,
+          gate_pass_id: baleId,
+          barcode: p.piece_code || p.id,
+          sku: p.sku || p.piece_code || p.id,
+          item_name: p.category || 'Vintage Garment',
+          brand_name: p.brand_title || '',
+          brand_tier: Boolean(p.is_grail) ? 'Grail' : 'Vintage Curated',
+          label_grade: p.quality_grade || 'CREAM',
+          shop_location: 'Central Warehouse (Al Quoz)',
+          weight_kg: Number(p.weight_grams ? (Number(p.weight_grams) / 1000) : 0),
+          weight_grams: Number(p.weight_grams || 0),
+          cost_price: Number(p.cost_price || 0),
+          estimated_price: Number(p.selling_price || 0),
+          retail_price_aed: Number(p.selling_price || 0),
+          size_scanned: p.size || 'L',
+          front_image_url: p.front_image || '',
+          back_image_url: p.back_image || '',
+          tag_image_url: p.tag_image || '',
+          is_sold: false,
+          status: isPristine ? 'IN_STOCK' : 'AVAILABLE',
+          ready_for_ecommerce: isReady,
+          ecommerce_description: p.ecommerce_description || null,
+          seo_tags: p.seo_tags || null,
+          parent_category_name: p.parent_category_name || null,
+          sub_category: p.sub_category || null,
+          collection_id: p.collection_id || null,
+          collection_name: p.collection_name || null,
+          market_segment: p.market_segment || 'Regular Thrift',
+          is_grail: Boolean(p.is_grail),
+          ai_suggested_price: p.ai_suggested_price !== undefined && p.ai_suggested_price !== null ? Number(p.ai_suggested_price) : null,
+          is_price_overridden: Boolean(p.is_price_overridden),
+          global_insights: p.global_insights || null
+        };
+      });
 
       const { error: upsertErr } = await supabase
         .from('inventory_pieces')

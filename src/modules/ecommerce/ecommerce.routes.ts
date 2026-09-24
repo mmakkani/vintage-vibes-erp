@@ -73,7 +73,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         LEFT JOIN cart_reservations r 
           ON p.barcode = r.barcode AND r.is_active = true AND r.expires_at > NOW()
         WHERE p.is_sold = false 
-          AND p.status = 'IN_STOCK'
+          AND p.status IN ('IN_STOCK', 'AVAILABLE')
           AND (p.ready_for_ecommerce IS NULL OR p.ready_for_ecommerce = true)
       `;
 
@@ -231,7 +231,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
       .from('inventory_pieces')
       .select('*')
       .eq('is_sold', false)
-      .eq('status', 'IN_STOCK')
+      .in('status', ['IN_STOCK', 'AVAILABLE'])
       .or('ready_for_ecommerce.is.null,ready_for_ecommerce.eq.true');
 
     if (collectionId && collectionId !== 'ALL') {
