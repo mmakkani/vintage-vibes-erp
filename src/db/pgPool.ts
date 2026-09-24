@@ -58,6 +58,10 @@ export const getPgClient = (): pg.Pool => {
       max: 5
     });
 
+    pool.on('error', (err: any) => {
+      console.warn('[pgPool] Idle client notice:', err?.message || err);
+    });
+
     // Intercept client.end() so legacy callers in route handlers do not drain the shared global pool
     const origEnd = pool.end.bind(pool);
     pool.end = (async () => {}) as any;
@@ -78,6 +82,9 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
         max: 5,
         ssl: { rejectUnauthorized: false },
         connectionTimeoutMillis: 5000
+      });
+      fallbackPool.on('error', (err: any) => {
+        console.warn('[pgPool] Idle fallback client notice:', err?.message || err);
       });
       fallbackPool.end = (async () => {}) as any;
       pool = fallbackPool;
@@ -148,6 +155,9 @@ export async function withDb<T>(fn: (client: pg.PoolClient) => Promise<T>): Prom
         max: 5,
         ssl: { rejectUnauthorized: false },
         connectionTimeoutMillis: 5000
+      });
+      fallbackPool.on('error', (err: any) => {
+        console.warn('[pgPool] Idle fallback client notice:', err?.message || err);
       });
       fallbackPool.end = (async () => {}) as any;
       pool = fallbackPool;

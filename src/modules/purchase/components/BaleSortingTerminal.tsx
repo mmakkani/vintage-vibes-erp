@@ -13,6 +13,7 @@ import { StudioPhotoCaptureModal } from './StudioPhotoCaptureModal.tsx';
 import { BaleProfitHorizonGauge } from './BaleProfitHorizonGauge.tsx';
 import { compressImage } from '../../../utils/imageCompressor.ts';
 import { getDefaultSellingPrice } from '../../../utils/geminiVintageValuation.ts';
+import { sanitizeString, sanitizeNullableString } from '../../../utils/sanitizeString.ts';
 import {
   Scale,
   Sparkles,
@@ -361,6 +362,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const [autoPrintThermalOnAdd, setAutoPrintThermalOnAdd] = useState(true);
 
   // New Piece High-Speed Input Row Fields (Clean Defaults - No Dummy Values)
+  const [bundleQuantity, setBundleQuantity] = useState<number>(1);
   const [gramWeight, setGramWeight] = useState<string>('');
   const [sellingPriceOverride, setSellingPriceOverride] = useState<string>('');
   const [brandTitle, setBrandTitle] = useState<string>('');
@@ -684,6 +686,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const piecesCount = pieces.length;
     const progressPercent = totalGrams > 0 ? Math.min(100, Math.round((sortedGrams / totalGrams) * 100)) : 0;
     const isCompleted = isTerminalFinalized || activeBale.status === 'COMPLETED' || activeBale.status === 'POSTED';
+    const sortedKg = Number((sortedGrams / 1000).toFixed(2));
 
     return {
       totalGrams,
@@ -691,7 +694,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       remainingGrams,
       piecesCount,
       progressPercent,
-      isCompleted
+      isCompleted,
+      sortedKg,
+      totalKg
     };
   }, [activeBale, pieces, isTerminalFinalized]);
 
@@ -877,9 +882,20 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }
   };
 
-  // STEP 2: HIGH-SPEED ADD PIECE & NEXT (FAST-KEY ENGINE)
+  // STEP 2: HIGH-SPEED ADD PIECE & NEXT (FAST-KEY ATOMIC ENGINE)
   const handleAddPieceAndNext = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+
+    // Check internet connection
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setFeedbackToast({
+        text: 'Network disconnected. Please check your connection before saving.',
+        type: 'error'
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
     if (!activeBale) {
       setFeedbackToast({ text: 'Please select a bale first', type: 'error' });
       return;
@@ -906,20 +922,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setIsSubmitting(true);
     luxuryAudio.playMechanicalClick();
 
-    const nextIdx = pieces.length + 1;
+    const qty = Math.max(1, Math.floor(Number(bundleQuantity) || 1));
     const activeBaleId = activeBale.baleCode || activeBale.gatePassNo || activeBale.id || 'BAL-01';
-    const barcode = `${activeBaleId}-P${String(pieces.length + 1).padStart(4, '0')}`;
-    const weightKg = Number((numericGramWeight / 1000).toFixed(3));
-    const pieceId = String(
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-            const r = (Math.random() * 16) | 0;
-            const v = c === 'x' ? r : (r & 0x3) | 0x8;
-            return v.toString(16);
-          })
-    );
-
     const effectiveSellingPrice = Number(sellingPriceOverride || suggestedSellingPrice) || 0;
     const isOverridden = aiSuggestedPrice > 0 && effectiveSellingPrice < aiSuggestedPrice;
     const finalGrailStatus = Boolean(isGrail || ['Antique', 'Boutique', 'Grails'].includes(marketSegment) || era.toLowerCase().includes('antique'));
@@ -942,11 +946,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       if (!existsInMasters) {
         SetupService.addItem({
           code: `ITM-${Date.now().toString().slice(-4)}`,
-          name: brandTitle.trim(),
-          category: selectedCategory,
+          name: sanitizeString(brandTitle.trim(), 128),
+          category: sanitizeString(selectedCategory, 128),
           basePrice: effectiveSellingPrice || 50,
           targetUom: 'PCS',
-          weightKg: weightKg,
+          weightKg: Number((numericGramWeight / 1000 / qty).toFixed(3)),
           minStockThreshold: 1
         }).then(newMaster => {
           setInternalItemMasters(prev => [...prev, newMaster]);
@@ -959,150 +963,223 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const collectionName = selectedCollectionObj?.name || null;
     const parentDeptName = selectedDeptObj?.name || activeDeptObj?.name || 'Vintage';
 
-    // Payload for public.bale_sorted_pieces (sanitized: status & is_sold belong to inventory_pieces only)
-    const newPieceDb = {
-      id: pieceId,
-      bale_id: String(activeBale.id),
-      piece_code: barcode,
-      sku: generatedSku,
-      parent_category_name: parentDeptName,
-      category: selectedCategory,
-      sub_category: subCategoryName,
-      collection_id: collectionId,
-      collection_name: collectionName,
-      ready_for_ecommerce: readyForEcommerce,
-      ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
-      seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
-      size: sizeScanned,
-      brand_title: brandTitle,
-      weight_grams: numericGramWeight,
-      cost_price: autoPieceCostAed,
-      selling_price: effectiveSellingPrice,
-      quality_grade: selectedGrade,
-      front_image: frontImageUrl || null,
-      back_image: backImageUrl || null,
-      tag_image: tagImageUrl || null,
-      era: era || '1990s Vintage',
-      market_segment: marketSegment || 'Vintage',
-      is_grail: finalGrailStatus,
-      ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
-      is_price_overridden: isOverridden,
-      global_insights: globalInsights || null
-    };
+    // Distribute weights across bundle items
+    const baseGramsPerPiece = Math.floor(numericGramWeight / qty);
+    let remainingGramsToDistribute = numericGramWeight;
 
-    const newPiecePayload: PieceBreakdownItem = {
-      id: pieceId,
-      gatePassId: String(activeBale.id),
-      baleCode: activeBale.baleCode || activeBale.gatePassNo,
-      barcode,
-      itemName: selectedCategory,
-      brandName: brandTitle.split(' ')[0] || "Levi's",
-      brandTier: finalGrailStatus ? 'Grail' : 'Vintage Curated',
-      labelGrade: selectedGrade,
-      shopLocation,
-      weightGrams: numericGramWeight,
-      weightKg,
-      costPerGram,
-      calculatedCostPrice: autoPieceCostAed,
-      costPrice: autoPieceCostAed,
-      estimatedPrice: effectiveSellingPrice,
-      retailPriceAed: effectiveSellingPrice,
-      sizeScanned,
-      countryOfOrigin,
-      style: styleNotes || brandTitle,
-      frontImageUrl,
-      backImageUrl,
-      tagImageUrl,
-      era: era || '1990s Vintage',
-      marketSegment: marketSegment || 'Vintage',
-      isGrail: finalGrailStatus,
-      aiSuggestedPrice: aiSuggestedPrice || effectiveSellingPrice,
-      isPriceOverridden: isOverridden,
-      globalInsights: globalInsights || undefined,
-      isSold: false,
-      isTagged: true,
-      ready_for_ecommerce: readyForEcommerce,
-      ecommerce_description: ecommerceDescription || styleNotes,
-      seo_tags: seoTags,
-      status: pieceStatus,
-      parent_category_name: parentDeptName,
-      sub_category: subCategoryName,
-      collection_id: collectionId,
-      collection_name: collectionName,
-      createdAt: new Date().toISOString()
-    } as any;
+    const inventoryPiecesToUpsert: any[] = [];
+    const baleSortedPiecesToInsert: any[] = [];
+    const newPieceBreakdownItems: PieceBreakdownItem[] = [];
+    const stickerPayloads: StickerData[] = [];
+    const nowIso = new Date().toISOString();
 
-    // Direct Instant Sync to public.inventory_pieces for live Storefront
-    try {
-      const { error: upsertErr } = await supabase
-        .from('inventory_pieces')
-        .upsert([{
-          id: pieceId,
-          gate_pass_id: String(activeBale.id),
-          barcode: barcode,
-          sku: generatedSku,
-          item_name: selectedCategory,
-          brand_name: brandTitle.split(' ')[0] || "Vintage",
-          brand_tier: finalGrailStatus ? 'Grail' : 'Vintage Curated',
-          label_grade: selectedGrade,
-          shop_location: shopLocation,
-          weight_kg: weightKg,
-          weight_grams: numericGramWeight,
-          cost_price: autoPieceCostAed,
-          estimated_price: effectiveSellingPrice,
-          retail_price_aed: effectiveSellingPrice,
-          size_scanned: sizeScanned,
-          country_of_origin: countryOfOrigin,
-          style: styleNotes || brandTitle,
-          front_image_url: frontImageUrl || '',
-          back_image_url: backImageUrl || '',
-          tag_image_url: tagImageUrl || '',
-          is_sold: false,
-          status: pieceStatus,
-          market_segment: marketSegment || 'Vintage',
-          is_grail: finalGrailStatus,
-          ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
-          is_price_overridden: isOverridden,
-          global_insights: globalInsights || null,
-          ready_for_ecommerce: readyForEcommerce,
-          ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
-          seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
-          parent_category_name: parentDeptName,
-          sub_category: subCategoryName,
-          collection_id: collectionId,
-          collection_name: collectionName
-        }], { onConflict: 'id' });
+    for (let i = 0; i < qty; i++) {
+      const pieceIdx = pieces.length + 1 + i;
+      const barcode = `${activeBaleId}-P${String(pieceIdx).padStart(4, '0')}`;
+      const pieceSku = qty === 1 ? generatedSku : `${generatedSku}-${String(i + 1).padStart(2, '0')}`;
+      const pieceWeightGrams = (i === qty - 1) ? remainingGramsToDistribute : baseGramsPerPiece;
+      remainingGramsToDistribute -= pieceWeightGrams;
+      const weightKg = Number((pieceWeightGrams / 1000).toFixed(3));
+      const calculatedPieceCost = Number((pieceWeightGrams * costPerGram).toFixed(2));
 
-      if (upsertErr) {
-        console.warn('Instant inventory sync error:', upsertErr);
-      }
-    } catch (err) {
-      console.warn('Instant inventory sync notice:', err);
+      const pieceId = String(
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+              const r = (Math.random() * 16) | 0;
+              const v = c === 'x' ? r : (r & 0x3) | 0x8;
+              return v.toString(16);
+            })
+      );
+
+      // Payload for public.bale_sorted_pieces (sanitized: VARCHAR(128) max)
+      const sortedPieceDb = {
+        id: pieceId,
+        bale_id: String(activeBale.id),
+        piece_code: barcode,
+        sku: pieceSku,
+        parent_category_name: sanitizeString(parentDeptName, 128),
+        category: sanitizeString(selectedCategory, 128),
+        sub_category: sanitizeNullableString(subCategoryName, 128),
+        collection_id: collectionId,
+        collection_name: sanitizeNullableString(collectionName, 128),
+        ready_for_ecommerce: readyForEcommerce,
+        ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
+        seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
+        size: sanitizeString(sizeScanned, 64),
+        brand_title: sanitizeString(brandTitle, 128),
+        weight_grams: pieceWeightGrams,
+        cost_price: calculatedPieceCost,
+        selling_price: effectiveSellingPrice,
+        quality_grade: sanitizeString(selectedGrade, 128),
+        front_image: frontImageUrl || null,
+        back_image: backImageUrl || null,
+        tag_image: tagImageUrl || null,
+        era: sanitizeString(era || '1990s Vintage', 64),
+        market_segment: sanitizeString(marketSegment || 'Vintage', 64),
+        is_grail: finalGrailStatus,
+        ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
+        is_price_overridden: isOverridden,
+        global_insights: globalInsights || null
+      };
+
+      // Payload for public.inventory_pieces (sanitized: VARCHAR(128) max)
+      const inventoryPieceDb = {
+        id: pieceId,
+        gate_pass_id: String(activeBale.id),
+        barcode: barcode,
+        sku: pieceSku,
+        item_name: sanitizeString(selectedCategory, 128),
+        brand_name: sanitizeString(brandTitle.split(' ')[0] || "Vintage", 128),
+        brand_tier: finalGrailStatus ? 'Grail' : 'Vintage Curated',
+        label_grade: sanitizeString(selectedGrade, 128),
+        shop_location: sanitizeString(shopLocation, 128),
+        weight_kg: weightKg,
+        weight_grams: pieceWeightGrams,
+        cost_price: calculatedPieceCost,
+        estimated_price: effectiveSellingPrice,
+        retail_price_aed: effectiveSellingPrice,
+        size_scanned: sanitizeString(sizeScanned, 64),
+        country_of_origin: sanitizeNullableString(countryOfOrigin, 128),
+        style: sanitizeNullableString(styleNotes || brandTitle, 128),
+        front_image_url: frontImageUrl || '',
+        back_image_url: backImageUrl || '',
+        tag_image_url: tagImageUrl || '',
+        is_sold: false,
+        status: pieceStatus,
+        market_segment: sanitizeString(marketSegment || 'Vintage', 64),
+        is_grail: finalGrailStatus,
+        ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
+        is_price_overridden: isOverridden,
+        global_insights: globalInsights || null,
+        ready_for_ecommerce: readyForEcommerce,
+        ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
+        seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
+        parent_category_name: sanitizeString(parentDeptName, 128),
+        sub_category: sanitizeNullableString(subCategoryName, 128),
+        collection_id: collectionId,
+        collection_name: sanitizeNullableString(collectionName, 128)
+      };
+
+      const breakdownItem: PieceBreakdownItem = {
+        id: pieceId,
+        gatePassId: String(activeBale.id),
+        baleCode: activeBale.baleCode || activeBale.gatePassNo,
+        barcode,
+        itemName: selectedCategory,
+        brandName: brandTitle.split(' ')[0] || "Levi's",
+        brandTier: finalGrailStatus ? 'Grail' : 'Vintage Curated',
+        labelGrade: selectedGrade,
+        shopLocation,
+        weightGrams: pieceWeightGrams,
+        weightKg,
+        costPerGram,
+        calculatedCostPrice: calculatedPieceCost,
+        costPrice: calculatedPieceCost,
+        estimatedPrice: effectiveSellingPrice,
+        retailPriceAed: effectiveSellingPrice,
+        sizeScanned,
+        countryOfOrigin,
+        style: styleNotes || brandTitle,
+        frontImageUrl,
+        backImageUrl,
+        tagImageUrl,
+        era: era || '1990s Vintage',
+        marketSegment: marketSegment || 'Vintage',
+        isGrail: finalGrailStatus,
+        aiSuggestedPrice: aiSuggestedPrice || effectiveSellingPrice,
+        isPriceOverridden: isOverridden,
+        globalInsights: globalInsights || undefined,
+        isSold: false,
+        isTagged: true,
+        ready_for_ecommerce: readyForEcommerce,
+        ecommerce_description: ecommerceDescription || styleNotes,
+        seo_tags: seoTags,
+        status: pieceStatus,
+        parent_category_name: parentDeptName,
+        sub_category: subCategoryName,
+        collection_id: collectionId,
+        collection_name: collectionName,
+        createdAt: nowIso
+      } as any;
+
+      inventoryPiecesToUpsert.push(inventoryPieceDb);
+      baleSortedPiecesToInsert.push(sortedPieceDb);
+      newPieceBreakdownItems.push({ ...breakdownItem, ...sortedPieceDb });
+
+      stickerPayloads.push({
+        itemCode: barcode,
+        description: `${pieceSku} • ${selectedCategory} (${sizeScanned})`,
+        category: selectedCategory,
+        size: sizeScanned,
+        brand: brandTitle || selectedCategory,
+        grade: selectedGrade,
+        retailPriceAed: effectiveSellingPrice,
+        weightKg,
+        batchNo: activeBale.baleCode || activeBale.gatePassNo,
+        date: nowIso.slice(0, 10),
+        origin: countryOfOrigin,
+        shopLocation
+      });
     }
 
-    // 1. Optimistically prepend the piece to the table
-    const currentPieces = [{ ...newPiecePayload, ...newPieceDb }, ...pieces];
+    // 1. Optimistically prepend pieces to table (live real-time progress update)
+    const currentPieces = [...newPieceBreakdownItems, ...pieces];
     setPieces(currentPieces);
 
-    // 2. Insert into Supabase public.bale_sorted_pieces (strictly sanitized to match DB schema)
+    // 2. Atomic Batch Processing: single bulk upsert & single bulk insert
     try {
-      const sanitizedPieceDb = PurchaseService.sanitizeSortedPiece(newPieceDb);
-      const { error: insertErr } = await supabase
-        .from('bale_sorted_pieces')
-        .insert([sanitizedPieceDb]);
+      const { error: invErr } = await supabase
+        .from('inventory_pieces')
+        .upsert(inventoryPiecesToUpsert, { onConflict: 'id' });
+
+      if (invErr) {
+        console.warn('Instant inventory batch sync warning:', invErr);
+      }
+
+      const totalSortedGrams = currentPieces.reduce((sum, p) => sum + (Number(p.weight_grams ?? p.weightGrams) || 0), 0);
+      const remainingGramsCount = Math.max(0, Math.round(Number(activeBale.totalBaleWeight || 0) * 1000) - totalSortedGrams);
+      const sessionStats = {
+        total_grams: Math.round(Number(activeBale.totalBaleWeight || 0) * 1000),
+        sorted_grams: totalSortedGrams,
+        remaining_grams: remainingGramsCount,
+        total_pieces: currentPieces.length,
+        piece_count: currentPieces.length,
+        broken_down_weight: Number((totalSortedGrams / 1000).toFixed(2))
+      };
+
+      const { error: insertErr } = await PurchaseService.saveSortedPiecesBatch(
+        String(activeBale.id),
+        baleSortedPiecesToInsert,
+        sessionStats
+      );
 
       if (insertErr) {
-        console.error('Failed to insert sorted piece into bale_sorted_pieces:', insertErr);
-        // Revert optimistic update
-        setPieces(prev => prev.filter(p => p.id !== pieceId));
-        alert(`Failed to save piece into database: ${insertErr.message || JSON.stringify(insertErr)}`);
+        console.error('Failed to insert sorted pieces batch:', insertErr);
+        const insertedIds = new Set(newPieceBreakdownItems.map(p => p.id));
+        setPieces(prev => prev.filter(p => !insertedIds.has(p.id)));
+        setFeedbackToast({
+          text: `Failed to save pieces into database: ${insertErr.message || JSON.stringify(insertErr)}`,
+          type: 'error'
+        });
         setIsSubmitting(false);
         return;
       }
     } catch (err: any) {
-      console.error('Exception inserting piece into bale_sorted_pieces:', err);
-      setPieces(prev => prev.filter(p => p.id !== pieceId));
-      alert(`Error saving piece: ${err?.message || 'Database error'}`);
+      console.error('Exception inserting pieces batch:', err);
+      const insertedIds = new Set(newPieceBreakdownItems.map(p => p.id));
+      setPieces(prev => prev.filter(p => !insertedIds.has(p.id)));
+      const isOffline = (typeof navigator !== 'undefined' && !navigator.onLine) ||
+        String(err?.message || '').toLowerCase().includes('disconnected') ||
+        String(err?.message || '').toLowerCase().includes('network') ||
+        String(err?.message || '').toLowerCase().includes('failed to fetch');
+
+      setFeedbackToast({
+        text: isOffline
+          ? "Network disconnected. Please check your connection before saving."
+          : `Error saving piece: ${err?.message || 'Database error'}`,
+        type: 'error'
+      });
       setIsSubmitting(false);
       return;
     }
@@ -1118,55 +1195,37 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       sortingStatus: depletion.sortingStatus
     };
 
-    // Attempt server sync in background
-    try {
-      fetch(`/api/purchase/gate-passes/${activeBale.id}/pieces`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newPiecePayload)
-      }).catch(err => console.warn('Background sync saved to local offline state:', err));
-    } catch {}
-
     // Invoke callback to persist in state and cache
-    onPieceAdded(newPiecePayload, updatedGatePass);
+    newPieceBreakdownItems.forEach(item => {
+      onPieceAdded(item, updatedGatePass);
+    });
 
     // Auto-prepare thermal barcode sticker
-    const stickerPayload: StickerData = {
-      itemCode: newPiecePayload.barcode,
-      description: `${generatedSku} • ${newPiecePayload.itemName} (${newPiecePayload.sizeScanned})`,
-      category: newPiecePayload.itemName,
-      size: newPiecePayload.sizeScanned,
-      brand: newPiecePayload.brandName,
-      grade: newPiecePayload.labelGrade,
-      retailPriceAed: Number(newPiecePayload.estimatedPrice || effectiveSellingPrice) || 0,
-      weightKg: newPiecePayload.weightKg,
-      batchNo: activeBale.baleCode || activeBale.gatePassNo,
-      date: new Date().toISOString().slice(0, 10),
-      origin: newPiecePayload.countryOfOrigin,
-      shopLocation: newPiecePayload.shopLocation
-    };
-
     if (autoPrintThermalOnAdd) {
-      try {
-        openThermalLabelPrintWindow({
-          itemCode: `${stickerPayload.itemCode} [${generatedSku}]`,
-          description: stickerPayload.description,
-          category: stickerPayload.category,
-          size: stickerPayload.size,
-          brand: stickerPayload.brand,
-          grade: stickerPayload.grade,
-          retailPriceAed: stickerPayload.retailPriceAed,
-          weightKg: stickerPayload.weightKg,
-          batchNo: stickerPayload.batchNo,
-          date: stickerPayload.date
-        });
-      } catch {}
+      stickerPayloads.forEach(stickerPayload => {
+        try {
+          openThermalLabelPrintWindow({
+            itemCode: `${stickerPayload.itemCode} [${stickerPayload.description.split(' • ')[0]}]`,
+            description: stickerPayload.description,
+            category: stickerPayload.category,
+            size: stickerPayload.size,
+            brand: stickerPayload.brand,
+            grade: stickerPayload.grade,
+            retailPriceAed: stickerPayload.retailPriceAed,
+            weightKg: stickerPayload.weightKg,
+            batchNo: stickerPayload.batchNo,
+            date: stickerPayload.date
+          });
+        } catch {}
+      });
     } else {
-      onPrintSticker(stickerPayload);
+      stickerPayloads.forEach(sticker => onPrintSticker(sticker));
     }
 
     setFeedbackToast({
-      text: readyForEcommerce
+      text: qty > 1
+        ? `✓ Added Bundle of ${qty} pieces (${numericGramWeight}g)!`
+        : readyForEcommerce
         ? `✓ Added ${generatedSku} (${numericGramWeight}g) • 🌐 Routed to Storefront!`
         : `✓ Added ${generatedSku} (${numericGramWeight}g) • 🧺 Routed to WIP Laundry`,
       type: 'success'
@@ -1176,6 +1235,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     SetupService.generateSku(activeDeptCode).then(s => setGeneratedSku(s)).catch(() => {});
 
     // Reset fields with smart defaults and refocus weight immediately
+    setBundleQuantity(1);
     setActiveGrailAlert(null);
     setGramWeight('');
     setSellingPriceOverride('');
@@ -1187,7 +1247,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setBackImageUrl(undefined);
     setTagImageUrl(undefined);
     setEra('1990s Vintage');
-    setMarketSegment('Old Vintage');
+    setMarketSegment('Vintage');
     setIsGrail(false);
     setAiSuggestedPrice(0);
     setGlobalInsights(null);
@@ -1213,6 +1273,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       e.stopPropagation();
     }
     if (!activeBale) return;
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setFeedbackToast({
+        text: 'Network disconnected. Please check your connection before saving.',
+        type: 'error'
+      });
+      return;
+    }
+
     luxuryAudio.playMechanicalClick();
     if (!confirm('Are you sure you want to remove this piece from the session?')) return;
 
@@ -1234,8 +1303,23 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         alert(`Failed to delete piece: ${error.message}`);
         return;
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      if (removedItem) {
+        setPieces(prev => [...prev, removedItem]);
+      }
+      const isOffline = (typeof navigator !== 'undefined' && !navigator.onLine) ||
+        String(err?.message || '').toLowerCase().includes('disconnected') ||
+        String(err?.message || '').toLowerCase().includes('network') ||
+        String(err?.message || '').toLowerCase().includes('failed to fetch');
+
+      setFeedbackToast({
+        text: isOffline
+          ? 'Network disconnected. Please check your connection before saving.'
+          : `Failed to delete piece: ${err?.message || 'Error'}`,
+        type: 'error'
+      });
+      return;
     }
 
     const remaining = pieces.filter(p => p.id !== pieceId);
@@ -1315,6 +1399,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       e.stopPropagation();
     }
     if (!activeBale) return;
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setFeedbackToast({
+        text: 'Network disconnected. Please check your connection before saving.',
+        type: 'error'
+      });
+      return;
+    }
+
     luxuryAudio.playMechanicalClick();
     setIsSubmitting(true);
 
@@ -1334,16 +1427,28 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       setIsTerminalFinalized(false);
       activeBale.status = newStatus as any;
       activeBale.sortingStatus = (newStatus === 'PARTIAL' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any;
-    } catch (err) {
-      console.warn('Session save error:', err);
-    }
 
-    if (onSavePartial) {
-      onSavePartial(activeBale.id);
+      if (onSavePartial) {
+        onSavePartial(activeBale.id);
+      }
+      setIsSubmitting(false);
+      setFeedbackToast({ text: `Bale ${activeBale.baleCode || activeBale.gatePassNo} saved as In-Progress.`, type: 'success' });
+      setTimeout(onClose, 400);
+    } catch (err: any) {
+      console.warn('Session save error:', err);
+      setIsSubmitting(false);
+      const isOffline = (typeof navigator !== 'undefined' && !navigator.onLine) ||
+        String(err?.message || '').toLowerCase().includes('disconnected') ||
+        String(err?.message || '').toLowerCase().includes('network') ||
+        String(err?.message || '').toLowerCase().includes('failed to fetch');
+
+      setFeedbackToast({
+        text: isOffline
+          ? 'Network disconnected. Please check your connection before saving.'
+          : `Session save notice: ${err?.message || 'Error'}`,
+        type: 'error'
+      });
     }
-    setIsSubmitting(false);
-    setFeedbackToast({ text: `Bale ${activeBale.baleCode || activeBale.gatePassNo} saved as In-Progress.`, type: 'success' });
-    setTimeout(onClose, 400);
   };
 
   // Finalize & Post Bale (upsert COMPLETED into public.bale_sessions, inward_gate_passes and inventory_pieces)
@@ -1354,6 +1459,14 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }
     if (isTerminalFinalized || activeBale.status === 'COMPLETED' || activeBale.status === 'POSTED') {
       alert("This bale is already finalized and posted!");
+      return;
+    }
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setFeedbackToast({
+        text: 'Network disconnected. Please check your connection before saving.',
+        type: 'error'
+      });
       return;
     }
 
@@ -1401,17 +1514,29 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
       // Call service to update inward_gate_passes & copy pieces into inventory_pieces
       await PurchaseService.finalizeBaleSession(activeBale.id);
-    } catch (err) {
-      console.warn('Finalize session error:', err);
-    }
 
-    setIsTerminalFinalized(true);
-    setIsSubmitting(false);
-    if (onPostBale) {
-      onPostBale(activeBale.id);
+      setIsTerminalFinalized(true);
+      setIsSubmitting(false);
+      if (onPostBale) {
+        onPostBale(activeBale.id);
+      }
+      setFeedbackToast({ text: `Bale ${activeBale.baleCode || activeBale.gatePassNo} finalized & locked!`, type: 'success' });
+      setTimeout(onClose, 400);
+    } catch (err: any) {
+      console.warn('Finalize session error:', err);
+      setIsSubmitting(false);
+      const isOffline = (typeof navigator !== 'undefined' && !navigator.onLine) ||
+        String(err?.message || '').toLowerCase().includes('disconnected') ||
+        String(err?.message || '').toLowerCase().includes('network') ||
+        String(err?.message || '').toLowerCase().includes('failed to fetch');
+
+      setFeedbackToast({
+        text: isOffline
+          ? 'Network disconnected. Please check your connection before saving.'
+          : `Finalize session notice: ${err?.message || 'Error'}`,
+        type: 'error'
+      });
     }
-    setFeedbackToast({ text: `Bale ${activeBale.baleCode || activeBale.gatePassNo} finalized & locked!`, type: 'success' });
-    setTimeout(onClose, 400);
   };
 
   // Register a new raw bale right from the terminal
@@ -1748,6 +1873,54 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               <span>Cost/Gram: <strong className="text-amber-400">AED {costPerGram.toFixed(4)}/g</strong></span>
               <span>&bull;</span>
               <span>Bale Landed: <strong className="text-slate-200">AED {Number(activeBale.totalBaleCost || 0).toFixed(2)}</strong></span>
+            </div>
+          </div>
+        )}
+
+        {/* REAL-TIME LIVE PROGRESS BAR & WEIGHT MAPPING */}
+        {activeBale && (
+          <div className="px-3.5 sm:px-5 py-2.5 bg-slate-900/95 border-b border-slate-800">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5 font-mono text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400 font-semibold uppercase tracking-wider text-[10px] sm:text-[11px]">Bale Depletion:</span>
+                <span className="text-emerald-400 font-bold text-xs sm:text-sm">
+                  {hudStats.sortedGrams.toLocaleString()}g
+                </span>
+                <span className="text-slate-500">/</span>
+                <span className="text-slate-300 font-medium text-xs sm:text-sm">
+                  {hudStats.totalGrams.toLocaleString()}g
+                </span>
+                <span className="text-[10px] sm:text-[11px] text-slate-400">
+                  ({(hudStats.sortedGrams / 1000).toFixed(2)}kg / {(hudStats.totalGrams / 1000).toFixed(2)}kg)
+                </span>
+              </div>
+              <div className="flex items-center gap-2 sm:gap-3">
+                <span className="text-slate-400 text-[10px] sm:text-[11px]">
+                  Remaining: <strong className="text-amber-400 font-mono">{hudStats.remainingGrams.toLocaleString()}g</strong>
+                </span>
+                <span className="text-slate-400 text-[10px] sm:text-[11px]">
+                  Pieces: <strong className="text-indigo-400 font-mono">{hudStats.piecesCount} pcs</strong>
+                </span>
+                <span className={`px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-bold ${
+                  hudStats.progressPercent >= 100 
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' 
+                    : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                }`}>
+                  {hudStats.progressPercent}% Sorted
+                </span>
+              </div>
+            </div>
+            <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800 p-0.5">
+              <div 
+                className={`h-full rounded-full transition-all duration-300 ${
+                  hudStats.progressPercent >= 100 
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-400' 
+                    : hudStats.progressPercent >= 75 
+                    ? 'bg-gradient-to-r from-indigo-500 via-emerald-500 to-teal-400' 
+                    : 'bg-gradient-to-r from-amber-500 via-indigo-500 to-emerald-500'
+                }`}
+                style={{ width: `${Math.min(100, hudStats.progressPercent)}%` }}
+              />
             </div>
           </div>
         )}
@@ -2541,6 +2714,24 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                         </div>
                       </div>
 
+                      {/* 1b. Bundle / Sack Quantity (Batch Input) */}
+                      <div className="col-span-1 lg:col-span-1 space-y-1">
+                        <label className="block text-[11px] font-bold text-indigo-300 uppercase tracking-wide truncate" title="Bundle / Sack Piece Count">
+                          Bundle Qty
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="100"
+                          step="1"
+                          value={bundleQuantity}
+                          onChange={e => setBundleQuantity(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                          disabled={hudStats.isCompleted}
+                          className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-400 rounded-lg px-2 py-2 text-sm font-black font-mono text-indigo-300 text-center disabled:opacity-50"
+                          title="Piece count for bundle/sack bulk sorting"
+                        />
+                      </div>
+
                       {/* 2. Auto Calculated Cost (AED) */}
                       <div className="col-span-1 lg:col-span-1 space-y-1">
                         <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide">
@@ -2590,7 +2781,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       </div>
 
                       {/* 4. Brand / Title (Creatable Auto-Complete Combobox) */}
-                      <div className="col-span-1 lg:col-span-3 space-y-1 relative" ref={itemMasterDropdownRef}>
+                      <div className="col-span-1 lg:col-span-2 space-y-1 relative" ref={itemMasterDropdownRef}>
                         <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
                           <span>Brand / Title</span>
                           <span className="text-[9px] text-indigo-400 font-mono">Auto-Master</span>
@@ -2811,7 +3002,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                     className="w-full sm:w-auto py-2.5 sm:py-2 px-5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-lg shadow-md shadow-emerald-500/20 border border-emerald-400/40 flex items-center justify-center gap-1.5 transition-all transform active:scale-95 cursor-pointer disabled:opacity-40 sm:ml-auto"
                   >
                     <Plus className="w-4 h-4 text-slate-950" />
-                    <span>+ Add Piece & Next (↵)</span>
+                    <span>{bundleQuantity > 1 ? `+ Add Bundle (${bundleQuantity} Pcs) (↵)` : '+ Add Piece & Next (↵)'}</span>
                   </button>
                 </div>
               </form>
@@ -2843,8 +3034,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               </span>
             </h3>
 
-            <span className="text-xs text-slate-400">
-              Total Breakdown: <strong className="text-white font-mono">{(hudStats.sortedGrams / 1000).toFixed(2)} KG</strong> of <strong className="text-white font-mono">{(hudStats.totalGrams / 1000).toFixed(2)} KG</strong>
+            <span className="text-xs text-slate-400 font-mono">
+              Progress: <strong className="text-emerald-400">{hudStats.sortedGrams.toLocaleString()}g</strong> / <strong className="text-slate-200">{hudStats.totalGrams.toLocaleString()}g</strong> ({hudStats.progressPercent}%) • Remaining: <strong className="text-amber-400">{hudStats.remainingGrams.toLocaleString()}g</strong>
             </span>
           </div>
 

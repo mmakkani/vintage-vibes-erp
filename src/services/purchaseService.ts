@@ -4,6 +4,9 @@ import { FinanceService } from './financeService.ts';
 import { PartiesService } from './partiesService.ts';
 import { SequenceService } from './sequenceService.ts';
 import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
+import { sanitizeString, sanitizeNullableString } from '../utils/sanitizeString.ts';
+
+export { sanitizeString, sanitizeNullableString };
 
 export class PurchaseService {
   private static _invoicesCache: { data: PurchaseInvoice[]; timestamp: number } | null = null;
@@ -1928,17 +1931,17 @@ export class PurchaseService {
           gate_pass_id: baleId,
           barcode: p.piece_code || p.id,
           sku: p.sku || p.piece_code || p.id,
-          item_name: p.category || 'Vintage Garment',
-          brand_name: p.brand_title || '',
+          item_name: sanitizeString(p.category || 'Vintage Garment', 128),
+          brand_name: sanitizeString(p.brand_title || 'Vintage', 128),
           brand_tier: Boolean(p.is_grail) ? 'Grail' : 'Vintage Curated',
-          label_grade: p.quality_grade || 'CREAM',
+          label_grade: sanitizeString(p.quality_grade || 'CREAM', 64),
           shop_location: 'Central Warehouse (Al Quoz)',
           weight_kg: Number(p.weight_grams ? (Number(p.weight_grams) / 1000) : 0),
           weight_grams: Number(p.weight_grams || 0),
           cost_price: Number(p.cost_price || 0),
           estimated_price: Number(p.selling_price || 0),
           retail_price_aed: Number(p.selling_price || 0),
-          size_scanned: p.size || 'L',
+          size_scanned: sanitizeString(p.size || 'L', 64),
           front_image_url: p.front_image || '',
           back_image_url: p.back_image || '',
           tag_image_url: p.tag_image || '',
@@ -1947,11 +1950,11 @@ export class PurchaseService {
           ready_for_ecommerce: isReady,
           ecommerce_description: p.ecommerce_description || null,
           seo_tags: p.seo_tags || null,
-          parent_category_name: p.parent_category_name || null,
-          sub_category: p.sub_category || null,
+          parent_category_name: sanitizeNullableString(p.parent_category_name, 128),
+          sub_category: sanitizeNullableString(p.sub_category, 128),
           collection_id: p.collection_id || null,
-          collection_name: p.collection_name || null,
-          market_segment: p.market_segment || 'Regular Thrift',
+          collection_name: sanitizeNullableString(p.collection_name, 128),
+          market_segment: sanitizeString(p.market_segment || 'Regular Thrift', 64),
           is_grail: Boolean(p.is_grail),
           ai_suggested_price: p.ai_suggested_price !== undefined && p.ai_suggested_price !== null ? Number(p.ai_suggested_price) : null,
           is_price_overridden: Boolean(p.is_price_overridden),
@@ -2384,6 +2387,58 @@ export class PurchaseService {
       .from('bale_sorted_pieces')
       .insert([sanitized]);
   }
+
+  public static async saveSortedPiecesBatch(
+    baleId: string,
+    piecesList: Record<string, any>[],
+    sessionStats?: {
+      total_grams?: number;
+      sorted_grams?: number;
+      remaining_grams?: number;
+      total_pieces?: number;
+      piece_count?: number;
+      broken_down_weight?: number;
+    }
+  ): Promise<{ data: any; error: any }> {
+    const cleanId = String(baleId).trim();
+    if (!cleanId || !piecesList || piecesList.length === 0) {
+      return { data: [], error: null };
+    }
+
+    const sanitizedBatch = piecesList.map(p => sanitizeBaleSortedPiecePayload(p));
+
+    // 1. Atomic bulk insert into bale_sorted_pieces (single API request)
+    const { data: insertedData, error: insertErr } = await supabase
+      .from('bale_sorted_pieces')
+      .insert(sanitizedBatch);
+
+    if (insertErr) {
+      return { data: null, error: insertErr };
+    }
+
+    // 2. Atomic update to bale_sessions to prevent duplicate session logs
+    if (sessionStats) {
+      try {
+        await supabase
+          .from('bale_sessions')
+          .upsert({
+            bale_id: cleanId,
+            total_grams: sessionStats.total_grams,
+            sorted_grams: sessionStats.sorted_grams,
+            remaining_grams: sessionStats.remaining_grams,
+            total_pieces: sessionStats.total_pieces ?? sessionStats.piece_count,
+            piece_count: sessionStats.piece_count ?? sessionStats.total_pieces,
+            broken_down_weight: sessionStats.broken_down_weight,
+            status: 'PARTIAL',
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'bale_id' });
+      } catch (sessErr) {
+        console.warn('[PurchaseService] Session upsert notice:', sessErr);
+      }
+    }
+
+    return { data: insertedData, error: null };
+  }
 }
 
 export const BALE_SORTED_PIECES_COLUMNS = new Set([
@@ -2425,7 +2480,15 @@ export function sanitizeBaleSortedPiecePayload(payload: Record<string, any>): Re
     // Explicitly reject status and is_sold which do not exist in bale_sorted_pieces
     if (key === 'status' || key === 'is_sold' || key === 'isSold') continue;
     if (BALE_SORTED_PIECES_COLUMNS.has(key) && value !== undefined) {
-      sanitized[key] = value;
+      if (key === 'category' || key === 'brand_title') {
+        sanitized[key] = sanitizeString(value, 128);
+      } else if (key === 'parent_category_name' || key === 'sub_category' || key === 'collection_name') {
+        sanitized[key] = sanitizeNullableString(value, 128);
+      } else if (key === 'size' || key === 'quality_grade' || key === 'era' || key === 'market_segment') {
+        sanitized[key] = sanitizeString(value, 64);
+      } else {
+        sanitized[key] = value;
+      }
     }
   }
   return sanitized;
