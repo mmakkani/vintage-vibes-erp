@@ -245,7 +245,7 @@ export function printEmployeeProfileA4(emp: Employee): Window | null {
   const idBack = emp.idBackImageUrl || (emp as any).id_back_image_url || '';
   const passDoc = emp.passportImageUrl || (emp as any).passport_image_url || '';
   const resDoc = emp.residencyImageUrl || (emp as any).residency_image_url || (emp as any).visa_image_url || '';
-  const avatar = emp.photoUrl || (emp as any).photo_url || idFront || '';
+  const avatar = emp.photoUrl || (emp as any).photo_url || (emp as any).profile_picture || (emp as any).avatar_url || idFront || '';
 
   const renderDocCard = (label: string, docNo: string, expDate: string | undefined, imgUrl: string) => `
     <div class="doc-card page-break-avoid" style="border: 1px solid #cbd5e1; border-radius: 4px; padding: 8px; background: #ffffff; display: flex; flex-direction: column;">

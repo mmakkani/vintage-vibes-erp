@@ -14,6 +14,7 @@ import { HrService } from '../../../services/hrService.ts';
 import { PayrollService } from '../../../services/payrollService.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import { printEmployeeProfileA4, printAttendanceSheetA4, printPayrollRegisterA4 } from '../../../utils/printHrA4.ts';
+import { cropFaceFromImage } from '../../../utils/geminiOcrService.ts';
 import { Pagination } from '../../../components/Pagination.tsx';
 import {
   Briefcase,
@@ -1237,7 +1238,12 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const safeIdBackImageUrl = typeof empForm.idBackImageUrl === 'string' ? empForm.idBackImageUrl : '';
       const safePassportImageUrl = typeof empForm.passportImageUrl === 'string' ? empForm.passportImageUrl : '';
       const safeResidencyImageUrl = typeof empForm.residencyImageUrl === 'string' ? empForm.residencyImageUrl : '';
-      const safePhotoUrl = typeof empForm.photoUrl === 'string' ? empForm.photoUrl : '';
+      const safePhotoUrl = 
+        typeof empForm.photoUrl === 'string' && empForm.photoUrl.trim()
+          ? empForm.photoUrl.trim()
+          : (typeof (empForm as any).profile_picture === 'string' && (empForm as any).profile_picture.trim()
+            ? (empForm as any).profile_picture.trim()
+            : (typeof (empForm as any).avatar_url === 'string' ? (empForm as any).avatar_url.trim() : ''));
 
       // 2. Ensure full_name is NEVER null and numbers are properly converted
       const resolvedFullName =
@@ -1274,6 +1280,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         passportImageUrl: safePassportImageUrl,
         residencyImageUrl: safeResidencyImageUrl,
         photoUrl: safePhotoUrl,
+        photo_url: safePhotoUrl,
+        profile_picture: safePhotoUrl,
+        avatar_url: safePhotoUrl,
         basic_salary,
         housing_allowance,
         transport_allowance,
@@ -1407,7 +1416,21 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     setShowAIOcrModal(true);
   };
 
-  const handleApplyOcrData = (data: any) => {
+  const handleApplyOcrData = async (data: any) => {
+    let facePhoto = data.photoUrl || data.profile_picture || data.avatar_url || '';
+    const frontImg = data.idFrontImageUrl || empForm.idFrontImageUrl;
+
+    if (!facePhoto && data.face_box && frontImg) {
+      try {
+        const cropped = await cropFaceFromImage(frontImg, data.face_box);
+        if (cropped) {
+          facePhoto = cropped;
+        }
+      } catch (cropErr) {
+        console.warn('[HRView] Face crop notice non-fatal:', cropErr);
+      }
+    }
+
     setEmpForm(prev => ({
       ...prev,
       name: data.name || prev.name,
@@ -1432,7 +1455,10 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       idFrontImageUrl: data.idFrontImageUrl || prev.idFrontImageUrl,
       idBackImageUrl: data.idBackImageUrl || prev.idBackImageUrl,
       passportImageUrl: data.passportImageUrl || prev.passportImageUrl,
-      residencyImageUrl: data.residencyImageUrl || prev.residencyImageUrl
+      residencyImageUrl: data.residencyImageUrl || prev.residencyImageUrl,
+      photoUrl: facePhoto || prev.photoUrl,
+      profile_picture: facePhoto || (prev as any).profile_picture || prev.photoUrl,
+      avatar_url: facePhoto || (prev as any).avatar_url || prev.photoUrl
     }));
     loadData();
     showMsg(`AI OCR verified and populated legal identity records for ${data.name || 'employee'}! Scan log registered.`);
@@ -2331,8 +2357,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       </td>
                       <td className="px-3 py-2 font-sans font-semibold text-slate-800">
                         <div className="flex items-center gap-2">
-                          {(emp.idFrontImageUrl || emp.id_front_image_url || emp.photoUrl || emp.photo_url) ? (
-                            <img src={emp.idFrontImageUrl || emp.id_front_image_url || emp.photoUrl || emp.photo_url} alt="" className="w-8 h-8 rounded-full object-cover border border-slate-300 shrink-0" />
+                          {(emp.photoUrl || emp.photo_url || (emp as any).profile_picture || (emp as any).avatar_url || emp.idFrontImageUrl || emp.id_front_image_url) ? (
+                            <img src={emp.photoUrl || emp.photo_url || (emp as any).profile_picture || (emp as any).avatar_url || emp.idFrontImageUrl || emp.id_front_image_url} alt="" className="w-8 h-8 rounded-full object-cover border border-slate-300 shrink-0" />
                           ) : (
                             <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center font-bold text-[11px] shrink-0">
                               {((emp.name || emp.fullName || emp.full_name || 'Staff Member').trim().charAt(0) || 'S').toUpperCase()}

@@ -43,6 +43,8 @@ export interface Employee {
 
   // Photo preview / Avatar
   photoUrl?: string;
+  profile_picture?: string;
+  avatar_url?: string;
 
   // Casing & Naming Aliases for universal compatibility
   code?: string;

@@ -1,6 +1,7 @@
 import { Employee, AttendanceRecord, PayrollRecord } from './hr.types.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { GoogleGenAI } from '@google/genai';
+import { normalizeFaceBox, FaceBoundingBox } from '../../utils/geminiOcrService.ts';
 
 export interface AIOCRScanPayload {
   documentType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA' | 'AUTO_DETECT';
@@ -38,6 +39,10 @@ export interface AIOCRScanResult {
   idBackImageUrl?: string;
   passportImageUrl?: string;
   residencyImageUrl?: string;
+  photoUrl?: string;
+  profile_picture?: string;
+  avatar_url?: string;
+  face_box?: FaceBoundingBox | null;
   notes?: string;
   error?: string;
 }
@@ -193,6 +198,14 @@ MANDATORY RULES:
      * Expiry Date in YYYY-MM-DD format
      * Nationality (e.g. United Arab Emirates, Pakistan, India, Egypt, etc.)
      * Gender: 'MALE' or 'FEMALE'
+     * Portrait Face Detection: Locate the person's face photo / portrait on the Emirates ID (Front). Return its bounding box coordinates:
+       "face_box": {
+         "x_percent": <left position as percentage 0 to 100>,
+         "y_percent": <top position as percentage 0 to 100>,
+         "width_percent": <width as percentage 0 to 100>,
+         "height_percent": <height as percentage 0 to 100>
+       }
+       If no face portrait is visible on the card or no front card is provided, set "face_box": null.
    - For Passport:
      * Passport Number
      * Full Name (Given name + Surname)
@@ -235,6 +248,12 @@ MANDATORY RULES:
   "residencySponsor": "VINTAGE VIBES GENERAL TRADING LLC",
   "residencyIssueDate": "YYYY-MM-DD",
   "residencyExpiryDate": "YYYY-MM-DD",
+  "face_box": {
+    "x_percent": 5.0,
+    "y_percent": 22.0,
+    "width_percent": 24.0,
+    "height_percent": 44.0
+  },
   "confidence": 0.98
 }`;
 
@@ -309,6 +328,7 @@ MANDATORY RULES:
           idBackImageUrl: payload.secondaryImageBase64 || (rawImages.length > 1 ? rawImages[1] : ''),
           passportImageUrl: documentType === 'PASSPORT' ? (payload.imageBase64 || rawImages[0]) : '',
           residencyImageUrl: documentType === 'RESIDENCY_VISA' ? (payload.imageBase64 || rawImages[0]) : '',
+          face_box: normalizeFaceBox(parsed.face_box),
           notes: `Batch cross-referenced ${rawImages.length} document image${rawImages.length > 1 ? 's' : ''} via Gemini Vision AI`,
           modelUsed: successfulModel
         };

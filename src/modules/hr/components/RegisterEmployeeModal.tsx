@@ -3,6 +3,7 @@ import { User, Shield, CreditCard, Building2, DollarSign, Upload, Scan, Sparkles
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import { AIOcrScannerModal } from './AIOcrScannerModal.tsx';
 import { NumericInput } from '../../../components/NumericInput.tsx';
+import { cropFaceFromImage } from '../../../utils/geminiOcrService.ts';
 
 interface RegisterEmployeeModalProps {
   isOpen: boolean;
@@ -47,7 +48,9 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
     residencyIssueDate: '',
     residencyExpiryDate: '',
     residencyImageUrl: '',
-    photoUrl: ''
+    photoUrl: '',
+    profile_picture: '',
+    avatar_url: ''
   };
 
   const [form, setForm] = useState(editingEmployee || defaultEmpForm);
@@ -58,6 +61,7 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
   const backIdRef = useRef<HTMLInputElement>(null);
   const passportDocRef = useRef<HTMLInputElement>(null);
   const residencyDocRef = useRef<HTMLInputElement>(null);
+  const profilePhotoRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
@@ -68,6 +72,15 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
       reader.onloadend = async () => {
         if (typeof reader.result === 'string') {
           const raw = reader.result;
+          if (fieldName === 'photoUrl') {
+            setForm((prev: any) => ({
+              ...prev,
+              photoUrl: raw,
+              profile_picture: raw,
+              avatar_url: raw
+            }));
+            return;
+          }
           try {
             const docType = (fieldName === 'passportImageUrl')
               ? 'PASSPORT'
@@ -85,7 +98,22 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
     }
   };
 
-  const handleApplyOcrData = (data: any) => {
+  const handleApplyOcrData = async (data: any) => {
+    let facePhoto = data.photoUrl || data.profile_picture || data.avatar_url || '';
+    const frontImg = data.idFrontImageUrl || form.idFrontImageUrl;
+
+    // Fallback: If not yet cropped but bounding box and front ID image exist, auto-crop now
+    if (!facePhoto && data.face_box && frontImg) {
+      try {
+        const cropped = await cropFaceFromImage(frontImg, data.face_box);
+        if (cropped) {
+          facePhoto = cropped;
+        }
+      } catch (cropErr) {
+        console.warn('[RegisterEmployeeModal] Face auto-crop non-fatal notice:', cropErr);
+      }
+    }
+
     setForm((prev: any) => ({
       ...prev,
       name: data.name || prev.name,
@@ -110,7 +138,10 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
       idFrontImageUrl: data.idFrontImageUrl || prev.idFrontImageUrl,
       idBackImageUrl: data.idBackImageUrl || prev.idBackImageUrl,
       passportImageUrl: data.passportImageUrl || prev.passportImageUrl,
-      residencyImageUrl: data.residencyImageUrl || prev.residencyImageUrl
+      residencyImageUrl: data.residencyImageUrl || prev.residencyImageUrl,
+      photoUrl: facePhoto || prev.photoUrl,
+      profile_picture: facePhoto || prev.profile_picture || prev.photoUrl,
+      avatar_url: facePhoto || prev.avatar_url || prev.photoUrl
     }));
   };
 
@@ -125,7 +156,12 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
       const safeIdBackImageUrl = typeof form.idBackImageUrl === 'string' ? form.idBackImageUrl : '';
       const safePassportImageUrl = typeof form.passportImageUrl === 'string' ? form.passportImageUrl : '';
       const safeResidencyImageUrl = typeof form.residencyImageUrl === 'string' ? form.residencyImageUrl : '';
-      const safePhotoUrl = typeof form.photoUrl === 'string' ? form.photoUrl : '';
+      const safePhotoUrl = 
+        typeof form.photoUrl === 'string' && form.photoUrl.trim()
+          ? form.photoUrl.trim()
+          : (typeof (form as any).profile_picture === 'string' && (form as any).profile_picture.trim()
+            ? (form as any).profile_picture.trim()
+            : (typeof (form as any).avatar_url === 'string' ? (form as any).avatar_url.trim() : ''));
 
       // 2. Ensure full_name is NEVER null and numbers are properly converted
       const resolvedFullName = 
@@ -162,6 +198,9 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
         passportImageUrl: safePassportImageUrl,
         residencyImageUrl: safeResidencyImageUrl,
         photoUrl: safePhotoUrl,
+        photo_url: safePhotoUrl,
+        profile_picture: safePhotoUrl,
+        avatar_url: safePhotoUrl,
         basic_salary,
         housing_allowance,
         transport_allowance,
@@ -277,6 +316,71 @@ export const RegisterEmployeeModal: React.FC<RegisterEmployeeModalProps> = ({
             <div className="text-[11px] font-bold text-slate-800 uppercase flex items-center gap-1.5 border-b border-slate-200 pb-1.5">
               <User className="w-3.5 h-3.5 text-blue-600" />
               <span>1. Personal Profile & Employment Information</span>
+            </div>
+
+            {/* Official Profile Photo Display & AI Crop Indicator */}
+            <div className="bg-white p-3 rounded-lg border border-slate-200 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+              <div className="flex items-center gap-3">
+                <div className="relative w-15 h-17 rounded-lg overflow-hidden border-2 border-slate-300 bg-slate-100 flex items-center justify-center shrink-0 shadow-xs">
+                  {form.photoUrl ? (
+                    <img src={form.photoUrl} alt="Employee Avatar" className="w-full h-full object-cover" />
+                  ) : (
+                    <User className="w-7 h-7 text-slate-400" />
+                  )}
+                  {form.photoUrl && (
+                    <div className="absolute top-1 right-1 bg-emerald-600 text-white rounded-full p-0.5 shadow-xs" title="Auto-extracted portrait">
+                      <Sparkles className="w-2.5 h-2.5" />
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <div className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                    <span>Official Profile Photo</span>
+                    {form.photoUrl ? (
+                      <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded border border-emerald-300 flex items-center gap-1">
+                        <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                        AI Cropped Portrait
+                      </span>
+                    ) : (
+                      <span className="text-[9px] bg-slate-100 text-slate-500 font-medium px-1.5 py-0.2 rounded">
+                        Auto-crops from Emirates ID Front
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {form.photoUrl 
+                      ? 'Portrait auto-cropped from Emirates ID Front. Used on Dossier Print & Staff ID.' 
+                      : 'Will be automatically detected and extracted when Emirates ID is scanned via AI OCR.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  ref={profilePhotoRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={e => handlePhotoUpload(e, 'photoUrl')}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => profilePhotoRef.current?.click()}
+                  className="px-2.5 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center gap-1 border border-slate-300"
+                >
+                  <Upload className="w-3 h-3" />
+                  <span>{form.photoUrl ? 'Change Photo' : 'Upload Manually'}</span>
+                </button>
+                {form.photoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setForm((prev: any) => ({ ...prev, photoUrl: '', profile_picture: '', avatar_url: '' }))}
+                    className="px-2 py-1.5 rounded text-rose-600 hover:bg-rose-50 font-bold text-[10px]"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

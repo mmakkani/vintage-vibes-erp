@@ -14,6 +14,13 @@ export interface AIOCRScanPayload {
   model?: string;
 }
 
+export interface FaceBoundingBox {
+  x_percent: number;
+  y_percent: number;
+  width_percent: number;
+  height_percent: number;
+}
+
 export interface AIOCRScanResult {
   success: boolean;
   documentType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA';
@@ -41,6 +48,10 @@ export interface AIOCRScanResult {
   idBackImageUrl?: string;
   passportImageUrl?: string;
   residencyImageUrl?: string;
+  photoUrl?: string;
+  profile_picture?: string;
+  avatar_url?: string;
+  face_box?: FaceBoundingBox | null;
   notes?: string;
   modelUsed?: string;
   error?: string;
@@ -53,6 +64,143 @@ function cleanBase64(b64: string): string {
 function detectMime(b64: string): string {
   const match = b64.match(/^data:(image\/[a-zA-Z0-9.+]+);base64,/);
   return match ? match[1] : 'image/jpeg';
+}
+
+/**
+ * Normalizes bounding box coordinates from Gemini Vision (accepts 0-1, 0-100, or 0-1000 scales)
+ */
+export function normalizeFaceBox(box: any): FaceBoundingBox | null {
+  if (!box || typeof box !== 'object') return null;
+
+  let x = box.x_percent ?? box.xPercent ?? box.x ?? box.left ?? box.xmin;
+  let y = box.y_percent ?? box.yPercent ?? box.y ?? box.top ?? box.ymin;
+  let w = box.width_percent ?? box.widthPercent ?? box.width ?? box.w;
+  let h = box.height_percent ?? box.heightPercent ?? box.height ?? box.h;
+
+  if (Array.isArray(box.box_2d) && box.box_2d.length === 4) {
+    const [ymin, xmin, ymax, xmax] = box.box_2d;
+    y = ymin;
+    x = xmin;
+    w = xmax - xmin;
+    h = ymax - ymin;
+  }
+
+  if (x === undefined || y === undefined || w === undefined || h === undefined) {
+    return null;
+  }
+
+  x = Number(x);
+  y = Number(y);
+  w = Number(w);
+  h = Number(h);
+
+  if (isNaN(x) || isNaN(y) || isNaN(w) || isNaN(h) || w <= 0 || h <= 0) {
+    return null;
+  }
+
+  // 1000-scale coordinate handling
+  if (x > 100 || y > 100 || w > 100 || h > 100) {
+    x = x / 10;
+    y = y / 10;
+    w = w / 10;
+    h = h / 10;
+  } else if (x <= 1 && y <= 1 && w <= 1 && h <= 1 && (x > 0 || y > 0 || w > 0 || h > 0)) {
+    // 0.0 - 1.0 unit scale handling
+    x = x * 100;
+    y = y * 100;
+    w = w * 100;
+    h = h * 100;
+  }
+
+  // Safety clamps
+  x = Math.max(0, Math.min(95, x));
+  y = Math.max(0, Math.min(95, y));
+  w = Math.max(2, Math.min(100 - x, w));
+  h = Math.max(2, Math.min(100 - y, h));
+
+  return {
+    x_percent: Number(x.toFixed(2)),
+    y_percent: Number(y.toFixed(2)),
+    width_percent: Number(w.toFixed(2)),
+    height_percent: Number(h.toFixed(2))
+  };
+}
+
+/**
+ * Auto-crops the person's portrait/face from the Emirates ID front card image
+ * using the Gemini-detected face_box coordinates onto a HTML5 canvas.
+ */
+export async function cropFaceFromImage(
+  imageBase64: string,
+  faceBox: FaceBoundingBox
+): Promise<string | null> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return null;
+  }
+  if (!imageBase64 || !faceBox) return null;
+
+  try {
+    const norm = normalizeFaceBox(faceBox);
+    if (!norm) return null;
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = (e) => reject(new Error('Failed to load image for face cropping: ' + e));
+      img.src = imageBase64;
+    });
+
+    const origW = img.naturalWidth || img.width;
+    const origH = img.naturalHeight || img.height;
+    if (!origW || !origH) return null;
+
+    // Slight padding around face for natural ID portrait framing (headroom and shoulders)
+    const padX = norm.width_percent * 0.10;
+    const padY = norm.height_percent * 0.12;
+
+    const leftPct = Math.max(0, norm.x_percent - padX);
+    const topPct = Math.max(0, norm.y_percent - padY);
+    const widthPct = Math.min(100 - leftPct, norm.width_percent + padX * 2);
+    const heightPct = Math.min(100 - topPct, norm.height_percent + padY * 2);
+
+    const sourceX = Math.round((leftPct / 100) * origW);
+    const sourceY = Math.round((topPct / 100) * origH);
+    const sourceW = Math.round((widthPct / 100) * origW);
+    const sourceH = Math.round((heightPct / 100) * origH);
+
+    if (sourceW <= 0 || sourceH <= 0) return null;
+
+    // Standard high-resolution passport portrait canvas
+    const outCanvas = document.createElement('canvas');
+    const outWidth = 400;
+    const outHeight = Math.round(outWidth * (sourceH / sourceW));
+    outCanvas.width = outWidth;
+    outCanvas.height = outHeight;
+
+    const ctx = outCanvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    ctx.drawImage(
+      img,
+      sourceX,
+      sourceY,
+      sourceW,
+      sourceH,
+      0,
+      0,
+      outWidth,
+      outHeight
+    );
+
+    return outCanvas.toDataURL('image/jpeg', 0.94);
+  } catch (err) {
+    console.warn('[Face Auto-Crop Notice]:', err);
+    return null;
+  }
 }
 
 const OCR_PROMPT = `I am providing multiple images of a person's legal documents (e.g., Passport, Emirates ID, Visa). Cross-reference all provided images to extract a single, comprehensive JSON profile. Fill in missing gaps from one document using the others.
@@ -69,6 +217,14 @@ MANDATORY RULES:
      * Expiry Date in YYYY-MM-DD format
      * Nationality (e.g. United Arab Emirates, Pakistan, India, Egypt, etc.)
      * Gender: 'MALE' or 'FEMALE'
+     * Portrait Face Detection: Locate the person's face photo / portrait on the Emirates ID (Front). Return its bounding box coordinates:
+       "face_box": {
+         "x_percent": <left position as percentage 0 to 100>,
+         "y_percent": <top position as percentage 0 to 100>,
+         "width_percent": <width as percentage 0 to 100>,
+         "height_percent": <height as percentage 0 to 100>
+       }
+       If no face portrait is visible on the card or no front card is provided, set "face_box": null.
    - For Passport:
      * Passport Number
      * Full Name (Given name + Surname)
@@ -111,6 +267,12 @@ MANDATORY RULES:
   "residencySponsor": "EMPLOYER NAME",
   "residencyIssueDate": "YYYY-MM-DD",
   "residencyExpiryDate": "YYYY-MM-DD",
+  "face_box": {
+    "x_percent": 5.0,
+    "y_percent": 22.0,
+    "width_percent": 24.0,
+    "height_percent": 44.0
+  },
   "confidence": 0.98
 }`;
 
@@ -321,6 +483,21 @@ export async function executeDocumentOcr(payload: AIOCRScanPayload): Promise<AIO
     const selectedModel = payload.model || (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_model') || '').trim() : '') || 'gemini-3.7-flash';
     const { data: parsed, modelUsed } = await callGeminiVisionApi(apiKey, parts, selectedModel);
 
+    const normFaceBox = normalizeFaceBox(parsed.face_box);
+    const frontImg = payload.imageBase64 || (rawImages.length > 0 ? rawImages[0] : undefined);
+    let croppedFacePhoto: string | undefined = undefined;
+
+    if (normFaceBox && frontImg && typeof window !== 'undefined' && typeof document !== 'undefined') {
+      try {
+        const cropped = await cropFaceFromImage(frontImg, normFaceBox);
+        if (cropped) {
+          croppedFacePhoto = cropped;
+        }
+      } catch (cropErr) {
+        console.warn('[Gemini OCR Auto-Crop Non-Fatal]:', cropErr);
+      }
+    }
+
     return {
       success: true,
       documentType: parsed.documentType || (documentType !== 'AUTO_DETECT' ? documentType : 'EMIRATES_ID'),
@@ -348,6 +525,10 @@ export async function executeDocumentOcr(payload: AIOCRScanPayload): Promise<AIO
       idBackImageUrl: payload.secondaryImageBase64 || (rawImages.length > 1 ? rawImages[1] : undefined),
       passportImageUrl: (documentType === 'PASSPORT' || parsed.documentType === 'PASSPORT') ? (payload.imageBase64 || rawImages[0]) : undefined,
       residencyImageUrl: (documentType === 'RESIDENCY_VISA' || parsed.documentType === 'RESIDENCY_VISA') ? (payload.imageBase64 || rawImages[0]) : undefined,
+      photoUrl: croppedFacePhoto,
+      profile_picture: croppedFacePhoto,
+      avatar_url: croppedFacePhoto,
+      face_box: normFaceBox,
       notes: `Batch cross-referenced ${rawImages.length} document image${rawImages.length > 1 ? 's' : ''} via Google Gemini Vision AI (${modelUsed})`,
       modelUsed
     };

@@ -7,7 +7,7 @@ import {
 import { AIOCRScanResult } from '../hr.controller.ts';
 import { HrService } from '../../../services/hrService.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
-import { executeDocumentOcr, validateGeminiApiKey } from '../../../utils/geminiOcrService.ts';
+import { executeDocumentOcr, validateGeminiApiKey, cropFaceFromImage, FaceBoundingBox } from '../../../utils/geminiOcrService.ts';
 import { LiveAIOcrCamera } from './LiveAIOcrCamera.tsx';
 import { DocumentCropModal } from './DocumentCropModal.tsx';
 
@@ -38,6 +38,10 @@ interface AIOcrScannerModalProps {
     idBackImageUrl?: string;
     passportImageUrl?: string;
     residencyImageUrl?: string;
+    photoUrl?: string;
+    profile_picture?: string;
+    avatar_url?: string;
+    face_box?: FaceBoundingBox | null;
   }) => void;
 }
 
@@ -355,6 +359,20 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
       if (passportImage) data.passportImageUrl = passportImage;
       if (residencyImage) data.residencyImageUrl = residencyImage;
 
+      // Auto-crop face portrait from Emirates ID Front if face_box is detected and not yet cropped
+      if (data.face_box && !data.photoUrl && frontImage) {
+        try {
+          const croppedFace = await cropFaceFromImage(frontImage, data.face_box);
+          if (croppedFace) {
+            data.photoUrl = croppedFace;
+            data.profile_picture = croppedFace;
+            data.avatar_url = croppedFace;
+          }
+        } catch (cropErr) {
+          console.warn('[AIOcrScannerModal] Face auto-crop non-fatal notice:', cropErr);
+        }
+      }
+
       setScanResult(data);
       setShowVerificationOverlay(true);
     } catch (err: any) {
@@ -403,7 +421,11 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
       idFrontImageUrl: scanResult.idFrontImageUrl || frontImage,
       idBackImageUrl: scanResult.idBackImageUrl || backImage,
       passportImageUrl: scanResult.passportImageUrl || passportImage,
-      residencyImageUrl: scanResult.residencyImageUrl || residencyImage
+      residencyImageUrl: scanResult.residencyImageUrl || residencyImage,
+      photoUrl: scanResult.photoUrl,
+      profile_picture: scanResult.profile_picture || scanResult.photoUrl,
+      avatar_url: scanResult.avatar_url || scanResult.photoUrl,
+      face_box: scanResult.face_box
     });
     onClose();
   };
@@ -1190,6 +1212,33 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
                       <div className="bg-slate-900/80 text-white text-[9px] px-1.5 py-0.5 rounded font-mono flex items-center justify-between">
                         <span>ID: {scanResult.emiratesId || '784-...'}</span>
                         <span>Card: {scanResult.idCardNo || 'EID-...'}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Auto-Cropped Profile Photo from Emirates ID */}
+                  {scanResult.photoUrl && (
+                    <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-300 rounded-lg p-2.5 flex items-center gap-3 shadow-xs">
+                      <div className="relative shrink-0">
+                        <img
+                          src={scanResult.photoUrl}
+                          alt="AI Extracted Face"
+                          className="w-13 h-15 rounded-md object-cover border-2 border-emerald-500 shadow-xs"
+                        />
+                        <div className="absolute -bottom-1 -right-1 bg-emerald-600 text-white rounded-full p-0.5 shadow-xs">
+                          <Sparkles className="w-2.5 h-2.5" />
+                        </div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11px] font-bold text-emerald-950 flex items-center gap-1.5">
+                          <span>Auto-Cropped Profile Photo</span>
+                          <span className="text-[9px] bg-emerald-200 text-emerald-900 font-bold px-1.5 py-0.2 rounded-full">
+                            AI Face
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-emerald-800 leading-snug mt-0.5">
+                          Detected & extracted from Emirates ID front. Populates employee master & A4 dossier photo.
+                        </p>
                       </div>
                     </div>
                   )}
