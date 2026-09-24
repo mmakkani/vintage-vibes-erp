@@ -551,3 +551,24 @@ body.theme-obsidian #global-stock-alert-panel {
   animation: row-glow 2s ease-out forwards;
 }
 
+/* ==========================================================================
+   Mobile Responsive Data Tables Enforcement
+   Prevents layout breaks on mobile/tablet viewports
+   ========================================================================== */
+.table-responsive-container,
+.responsive-table-wrapper {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch;
+  display: block;
+}
+
+@media (max-width: 768px) {
+  .overflow-x-auto,
+  .table-responsive-container {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+}
+

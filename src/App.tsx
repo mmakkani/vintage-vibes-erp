@@ -638,19 +638,6 @@ export default function App() {
           companyProfile={companyProfile}
           currencies={currencies}
           currentUser={currentUser}
-          allUsers={allUsers.length > 0 ? allUsers : [currentUser]}
-          onSwitchUser={user => {
-            setCurrentUser(user);
-            try {
-              localStorage.setItem('vintage_erp_logged_user', JSON.stringify(user));
-            } catch {}
-            if (!isTabAccessible(activeTab, user)) {
-              const allowed = getAccessibleTabs(user);
-              if (allowed.length > 0) {
-                setActiveTab(allowed[0]);
-              }
-            }
-          }}
           onOpenWhatsAppModal={() => setIsWhatsAppModalOpen(true)}
           onNavigateTab={tab => setActiveTab(tab)}
           onLogout={handleLogout}

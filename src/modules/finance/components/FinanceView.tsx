@@ -1948,7 +1948,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="w-full overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                   <tr>
@@ -2077,7 +2077,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 </button>
               </div>
 
-              <div className="overflow-x-auto">
+              <div className="w-full overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                     <tr>
@@ -2387,7 +2387,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="w-full overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                   <tr>
@@ -2494,7 +2494,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               </p>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="w-full overflow-x-auto">
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-amber-100/70 border-y border-amber-300 font-bold uppercase text-[10px] text-amber-950 tracking-wider">

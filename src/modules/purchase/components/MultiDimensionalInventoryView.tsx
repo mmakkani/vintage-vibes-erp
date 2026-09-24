@@ -440,7 +440,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
       {/* DIMENSION 1: ITEM-WISE TABLE */}
       {activeDimension === 'ITEM' && (
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="w-full overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
                 <tr>
@@ -705,7 +705,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
       {/* DIMENSION 3: CATEGORY-WISE VIEW */}
       {activeDimension === 'CATEGORY' && (
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="w-full overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
                 <tr>

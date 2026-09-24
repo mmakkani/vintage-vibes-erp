@@ -148,7 +148,7 @@ export const DocumentVault: React.FC<DocumentVaultProps> = ({ onRefresh }) => {
           <div className="text-[10px] text-slate-500">Zero-Knowledge Storage • SHA-256 Hashes</div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="w-full overflow-x-auto">
           <table className="w-full text-left text-[11px] border-collapse">
             <thead className="bg-slate-50/80 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
               <tr>

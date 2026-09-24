@@ -16,8 +16,8 @@ interface HeaderProps {
   companyProfile: CompanyProfile;
   currencies: CurrencyItem[];
   currentUser: User;
-  allUsers: User[];
-  onSwitchUser: (user: User) => void;
+  allUsers?: User[];
+  onSwitchUser?: (user: User) => void;
   onOpenWhatsAppModal: () => void;
   onNavigateTab?: (tab: ActiveTab, entityId?: string) => void;
   onLogout?: () => void;
@@ -323,46 +323,55 @@ export const Header: React.FC<HeaderProps> = ({
                     className="fixed inset-0 z-40"
                     onClick={() => setShowUserDropdown(false)}
                   />
-                  <div className="absolute right-0 mt-2 w-64 bg-[#FAF4E6] text-slate-900 rounded-xl shadow-2xl border border-amber-400 py-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-                  <div className="px-3 py-1.5 border-b border-amber-200 text-[10px] font-bold text-amber-900 uppercase tracking-widest flex items-center justify-between bg-amber-100/50">
-                    <span>Switch Operator Account</span>
-                    <span className="text-[9px] text-amber-700">RBAC Supabase</span>
-                  </div>
-                  {allUsers.map(user => (
-                    <button
-                      key={user.id}
-                      id={`switch-user-${user.id}`}
-                      onClick={() => {
-                        onSwitchUser(user);
-                        setShowUserDropdown(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-amber-100 transition-colors cursor-pointer ${
-                        currentUser.id === user.id ? 'bg-amber-200/80 font-bold text-amber-950 border-l-2 border-amber-600' : 'text-slate-800'
-                      }`}
-                    >
-                      <div>
-                        <div className="font-bold text-slate-900">{user.name || user.username}</div>
-                        <div className="text-[10px] text-slate-600">@{user.username || user.email}</div>
+                  <div className="absolute right-0 mt-2 w-72 bg-[#FAF4E6] text-slate-900 rounded-xl shadow-2xl border border-amber-400 py-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                    <div className="px-3 py-1.5 border-b border-amber-200 text-[10px] font-bold text-amber-900 uppercase tracking-widest flex items-center justify-between bg-amber-100/50">
+                      <span>CURRENT OPERATOR PROFILE</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-mono font-bold border border-emerald-300">ACTIVE</span>
+                    </div>
+
+                    {/* Single Current User Profile Card */}
+                    <div className="p-3 text-xs bg-amber-50/80">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-extrabold text-slate-900 text-sm truncate">
+                            {currentUser.name || currentUser.username || 'Operator'}
+                          </div>
+                          <div className="text-[11px] font-mono text-slate-600 mt-0.5 truncate">
+                            @{currentUser.username || currentUser.email || 'operator'}
+                          </div>
+                          {currentUser.email && currentUser.email !== currentUser.username && (
+                            <div className="text-[10.5px] text-slate-500 mt-0.5 truncate">
+                              {currentUser.email}
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-white text-amber-950 font-mono font-black uppercase border border-amber-300 shadow-xs shrink-0">
+                          {currentUser.role || 'OPERATOR'}
+                        </span>
                       </div>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-white text-amber-900 font-mono font-bold uppercase border border-amber-300">
-                        {user.role}
-                      </span>
-                    </button>
-                  ))}
-                  <div className="border-t border-amber-200 mt-1 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowUserDropdown(false);
-                        window.dispatchEvent(new CustomEvent('open_ios_install_guide'));
-                      }}
-                      className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-amber-100 text-amber-950 font-bold transition-colors cursor-pointer"
-                    >
-                      <Smartphone className="w-3.5 h-3.5 text-amber-700" />
-                      <span>Install App / iOS Guide</span>
-                    </button>
+
+                      {currentUser.assignedShopId && (
+                        <div className="text-[11px] text-amber-900 mt-2.5 pt-2 border-t border-amber-200/60 flex items-center gap-1.5 font-medium">
+                          <Building2 className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                          <span className="truncate">{currentUser.assignedShopId}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="border-t border-amber-200 mt-1 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowUserDropdown(false);
+                          window.dispatchEvent(new CustomEvent('open_ios_install_guide'));
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-amber-100 text-amber-950 font-bold transition-colors cursor-pointer"
+                      >
+                        <Smartphone className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                        <span>Install App / iOS Guide</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
               </>
             )}
             </div>

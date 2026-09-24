@@ -315,7 +315,7 @@ export const BudgetingView: React.FC<BudgetingViewProps> = ({ accounts, onRefres
             </button>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="w-full overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100/70 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">

@@ -124,26 +124,28 @@ export const PartyProfilePrintDossier: React.FC<PartyProfilePrintDossierProps> =
             <Building2 className="w-3.5 h-3.5 text-blue-700" />
             1. Executive & Contact Information
           </h4>
-          <table className="w-full border-collapse border border-slate-300 text-[10px]">
-            <tbody>
-              <tr className="border-b border-slate-200">
-                <td className="w-1/4 p-1.5 font-bold text-slate-600 bg-slate-100">Primary Contact Person</td>
-                <td className="w-1/4 p-1.5 text-slate-900 font-semibold">{party.contactPerson || (party as any).contact_person || 'Not Specified'}</td>
-                <td className="w-1/4 p-1.5 font-bold text-slate-600 bg-slate-100">Contact Designation</td>
-                <td className="w-1/4 p-1.5 text-slate-900 font-semibold">{designation || 'Executive'}</td>
-              </tr>
-              <tr className="border-b border-slate-200">
-                <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Official Telephone / Mobile</td>
-                <td className="p-1.5 text-slate-900 font-mono">{party.phone || '-'}</td>
-                <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Corporate Email Address</td>
-                <td className="p-1.5 text-slate-900">{party.email || '-'}</td>
-              </tr>
-              <tr>
-                <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Registered Office / Address</td>
-                <td colSpan={3} className="p-1.5 text-slate-900">{party.address || 'Dubai, United Arab Emirates'}</td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="w-full overflow-x-auto">
+            <table className="w-full border-collapse border border-slate-300 text-[10px]">
+              <tbody>
+                <tr className="border-b border-slate-200">
+                  <td className="w-1/4 p-1.5 font-bold text-slate-600 bg-slate-100">Primary Contact Person</td>
+                  <td className="w-1/4 p-1.5 text-slate-900 font-semibold">{party.contactPerson || (party as any).contact_person || 'Not Specified'}</td>
+                  <td className="w-1/4 p-1.5 font-bold text-slate-600 bg-slate-100">Contact Designation</td>
+                  <td className="w-1/4 p-1.5 text-slate-900 font-semibold">{designation || 'Executive'}</td>
+                </tr>
+                <tr className="border-b border-slate-200">
+                  <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Official Telephone / Mobile</td>
+                  <td className="p-1.5 text-slate-900 font-mono">{party.phone || '-'}</td>
+                  <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Corporate Email Address</td>
+                  <td className="p-1.5 text-slate-900">{party.email || '-'}</td>
+                </tr>
+                <tr>
+                  <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Registered Office / Address</td>
+                  <td colSpan={3} className="p-1.5 text-slate-900">{party.address || 'Dubai, United Arab Emirates'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Legal & Regulatory Table */}
@@ -152,26 +154,28 @@ export const PartyProfilePrintDossier: React.FC<PartyProfilePrintDossierProps> =
             <FileText className="w-3.5 h-3.5 text-blue-700" />
             2. Legal, Tax & Regulatory Credentials
           </h4>
-          <table className="w-full border-collapse border border-slate-300 text-[10px]">
-            <tbody>
-              <tr className="border-b border-slate-200">
-                <td className="w-1/4 p-1.5 font-bold text-slate-600 bg-slate-100">Federal Tax No (UAE TRN)</td>
-                <td className="w-1/4 p-1.5 text-slate-900 font-mono font-bold bg-amber-50/50">
-                  {party.trnNo || (party as any).trn_no || 'Non-Tax Registered'}
-                </td>
-                <td className="w-1/4 p-1.5 font-bold text-slate-600 bg-slate-100">Trade License Number</td>
-                <td className="w-1/4 p-1.5 text-slate-900 font-mono font-bold">{tradeLicense || '-'}</td>
-              </tr>
-              <tr>
-                <td className="p-1.5 font-bold text-slate-600 bg-slate-100">License Expiry Date</td>
-                <td className="p-1.5 text-slate-900 font-mono">{licenseExpiry || '-'}</td>
-                <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Auto-Linked COA Account</td>
-                <td className="p-1.5 text-slate-900 font-mono font-bold text-blue-900 bg-blue-50/40">
-                  {coaAccountCode}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="w-full overflow-x-auto">
+            <table className="w-full border-collapse border border-slate-300 text-[10px]">
+              <tbody>
+                <tr className="border-b border-slate-200">
+                  <td className="w-1/4 p-1.5 font-bold text-slate-600 bg-slate-100">Federal Tax No (UAE TRN)</td>
+                  <td className="w-1/4 p-1.5 text-slate-900 font-mono font-bold bg-amber-50/50">
+                    {party.trnNo || (party as any).trn_no || 'Non-Tax Registered'}
+                  </td>
+                  <td className="w-1/4 p-1.5 font-bold text-slate-600 bg-slate-100">Trade License Number</td>
+                  <td className="w-1/4 p-1.5 text-slate-900 font-mono font-bold">{tradeLicense || '-'}</td>
+                </tr>
+                <tr>
+                  <td className="p-1.5 font-bold text-slate-600 bg-slate-100">License Expiry Date</td>
+                  <td className="p-1.5 text-slate-900 font-mono">{licenseExpiry || '-'}</td>
+                  <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Auto-Linked COA Account</td>
+                  <td className="p-1.5 text-slate-900 font-mono font-bold text-blue-900 bg-blue-50/40">
+                    {coaAccountCode}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Banking & Commercial Settlement Table */}
@@ -180,28 +184,30 @@ export const PartyProfilePrintDossier: React.FC<PartyProfilePrintDossierProps> =
             <Landmark className="w-3.5 h-3.5 text-blue-700" />
             3. Banking & Settlement Accounts
           </h4>
-          <table className="w-full border-collapse border border-slate-300 text-[10px]">
-            <tbody>
-              <tr className="border-b border-slate-200">
-                <td className="w-1/4 p-1.5 font-bold text-slate-600 bg-slate-100">Bank Name</td>
-                <td className="w-1/4 p-1.5 text-slate-900 font-semibold">{bankName || 'Not Provided'}</td>
-                <td className="w-1/4 p-1.5 font-bold text-slate-600 bg-slate-100">SWIFT / BIC Code</td>
-                <td className="w-1/4 p-1.5 text-slate-900 font-mono">{swiftCode || '-'}</td>
-              </tr>
-              <tr className="border-b border-slate-200">
-                <td className="p-1.5 font-bold text-slate-600 bg-slate-100">International Bank Acct (IBAN)</td>
-                <td colSpan={3} className="p-1.5 text-slate-900 font-mono font-bold tracking-wide">
-                  {iban || 'Not Provided'}
-                </td>
-              </tr>
-              <tr>
-                <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Commercial Payment Terms</td>
-                <td className="p-1.5 text-slate-900">{paymentTerms || 'Cash on Delivery (COD)'}</td>
-                <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Opening Balance</td>
-                <td className="p-1.5 text-slate-900 font-mono">AED {openBal.toFixed(2)}</td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="w-full overflow-x-auto">
+            <table className="w-full border-collapse border border-slate-300 text-[10px]">
+              <tbody>
+                <tr className="border-b border-slate-200">
+                  <td className="w-1/4 p-1.5 font-bold text-slate-600 bg-slate-100">Bank Name</td>
+                  <td className="w-1/4 p-1.5 text-slate-900 font-semibold">{bankName || 'Not Provided'}</td>
+                  <td className="w-1/4 p-1.5 font-bold text-slate-600 bg-slate-100">SWIFT / BIC Code</td>
+                  <td className="w-1/4 p-1.5 text-slate-900 font-mono">{swiftCode || '-'}</td>
+                </tr>
+                <tr className="border-b border-slate-200">
+                  <td className="p-1.5 font-bold text-slate-600 bg-slate-100">International Bank Acct (IBAN)</td>
+                  <td colSpan={3} className="p-1.5 text-slate-900 font-mono font-bold tracking-wide">
+                    {iban || 'Not Provided'}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Commercial Payment Terms</td>
+                  <td className="p-1.5 text-slate-900">{paymentTerms || 'Cash on Delivery (COD)'}</td>
+                  <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Opening Balance</td>
+                  <td className="p-1.5 text-slate-900 font-mono">AED {openBal.toFixed(2)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 

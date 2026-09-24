@@ -14,12 +14,13 @@ export default defineConfig(() => {
         includeAssets: ['vintage_logo.svg', 'apple-touch-icon.png', 'logo192.png', 'logo512.png', 'pwa-192x192.png', 'pwa-512x512.png', 'manifest.json'],
         manifest: {
           id: '/',
-          name: 'Vintage Vibes',
+          name: 'Vintage Vibes - Enterprise Apparel & Storefront',
           short_name: 'Vintage Vibes',
           description: 'Enterprise Apparel ERP and Luxury Storefront for garment processing and sales workflows.',
-          theme_color: '#0f172a',
-          background_color: '#FAF4E6',
+          theme_color: '#07080c',
+          background_color: '#07080c',
           display: 'standalone',
+          orientation: 'any',
           start_url: '/',
           scope: '/',
           icons: [

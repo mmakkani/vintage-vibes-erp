@@ -1836,7 +1836,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 )}
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="w-full overflow-x-auto">
                 <table className="w-full text-left text-[11px] border-collapse">
                   <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                     <tr>
@@ -2086,7 +2086,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 </button>
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="w-full overflow-x-auto">
                 <table className="w-full text-left text-[11px] border-collapse">
                   <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                     <tr>
@@ -2283,7 +2283,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
             );
           })()}
 
-          <div className="overflow-x-auto">
+          <div className="w-full overflow-x-auto">
             <table className="w-full text-left text-[11px] border-collapse">
               <thead className="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                 <tr>
@@ -2726,7 +2726,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 </p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="w-full overflow-x-auto">
                 <table className="w-full text-left text-[11px] border-collapse">
                   <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                     <tr>
@@ -4051,7 +4051,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
 
             {/* Employee Full Register Table */}
             <div className="overflow-y-auto p-4 flex-1">
-              <div className="border border-slate-200 rounded-lg overflow-hidden shadow-2xs">
+              <div className="w-full overflow-x-auto border border-slate-200 rounded-lg shadow-2xs">
                 <table className="w-full text-left text-[11px] border-collapse">
                   <thead className="bg-slate-100 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                     <tr>

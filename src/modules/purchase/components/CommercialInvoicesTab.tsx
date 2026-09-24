@@ -771,7 +771,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
 
       {/* Invoices Table */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="w-full overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
               <tr>

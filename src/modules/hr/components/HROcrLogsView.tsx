@@ -289,7 +289,7 @@ export const HROcrLogsView: React.FC<HROcrLogsViewProps> = ({
 
       {/* Logs Table */}
       <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="w-full overflow-x-auto">
           <table className="w-full text-left text-[11px] border-collapse">
             <thead className="bg-slate-50 text-slate-600 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
               <tr>

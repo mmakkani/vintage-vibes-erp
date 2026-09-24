@@ -24,6 +24,13 @@
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <script>
+      // Early PWA Install Prompt Capture for Android & Desktop Chromium
+      window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        window.__deferredPWAInstallPrompt = e;
+        window.dispatchEvent(new CustomEvent('pwa_prompt_ready', { detail: e }));
+      });
+
       // Outdated deployment chunk & MIME mismatch auto-recovery
       (function() {
         function triggerHardRefresh() {

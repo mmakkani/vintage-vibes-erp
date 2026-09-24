@@ -300,8 +300,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1.5">
                 Username / Email *
               </label>
-              <div className="relative">
-                <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <div className="relative flex items-center">
+                <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
                   id="login-input-username"
@@ -309,7 +309,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   onChange={e => setUsername(e.target.value)}
                   placeholder="Enter username or email"
                   required
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-amber-200 text-xs font-medium text-slate-900 bg-[#fdfcf9] focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all font-mono"
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-amber-200 text-xs font-medium text-slate-900 bg-[#fdfcf9] focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all font-mono"
                 />
               </div>
             </div>
@@ -318,8 +318,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1.5">
                 Operator Password *
               </label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <div className="relative flex items-center">
+                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type={showPassword ? 'text' : 'password'}
                   id="login-input-password"
@@ -327,12 +327,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
                   required
-                  className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-amber-200 text-xs font-medium text-slate-900 bg-[#fdfcf9] focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all font-mono"
+                  className="w-full pl-9 pr-11 py-2.5 rounded-xl border border-amber-200 text-xs font-medium text-slate-900 bg-[#fdfcf9] focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all font-mono"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 cursor-pointer flex items-center justify-center focus:outline-hidden"
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>

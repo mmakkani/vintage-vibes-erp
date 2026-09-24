@@ -439,7 +439,7 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
         </div>
 
         {/* Parcels Table */}
-        <div className="overflow-x-auto">
+        <div className="w-full overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-700">
             <thead className="bg-slate-100 text-slate-700 font-bold uppercase tracking-wider text-[10px] border-b border-slate-200">
               <tr>
