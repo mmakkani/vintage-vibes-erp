@@ -1793,38 +1793,40 @@ export class PurchaseService {
 
     try {
       const [invRes, sortedRes] = await Promise.all([
-        supabase
-          .from('inventory_pieces')
-          .select(PurchaseService.INVENTORY_PIECES_COLUMNS)
-          .order('created_at', { ascending: false })
-          .limit(limit)
-          .then(res => {
+        (async () => {
+          try {
+            const res = await supabase
+              .from('inventory_pieces')
+              .select(PurchaseService.INVENTORY_PIECES_COLUMNS)
+              .order('created_at', { ascending: false })
+              .limit(limit);
             if (res.error) {
               console.error('[PurchaseService] Error fetching inventory_pieces:', res.error);
               return { data: [], error: res.error };
             }
             return res;
-          })
-          .catch(err => {
+          } catch (err) {
             console.error('[PurchaseService] Exception fetching inventory_pieces:', err);
             return { data: [], error: err };
-          }),
-        supabase
-          .from('bale_sorted_pieces')
-          .select(PurchaseService.BALE_SORTED_PIECES_COLUMNS)
-          .order('created_at', { ascending: false })
-          .limit(limit)
-          .then(res => {
+          }
+        })(),
+        (async () => {
+          try {
+            const res = await supabase
+              .from('bale_sorted_pieces')
+              .select(PurchaseService.BALE_SORTED_PIECES_COLUMNS)
+              .order('created_at', { ascending: false })
+              .limit(limit);
             if (res.error) {
               console.error('[PurchaseService] Error fetching bale_sorted_pieces:', res.error);
               return { data: [], error: res.error };
             }
             return res;
-          })
-          .catch(err => {
+          } catch (err) {
             console.error('[PurchaseService] Exception fetching bale_sorted_pieces:', err);
             return { data: [], error: err };
-          })
+          }
+        })()
       ]);
 
       const mappedPieces: PieceBreakdownItem[] = [];
@@ -2041,9 +2043,12 @@ export class PurchaseService {
         global_insights: p.global_insights || null
       }));
 
-      await supabase
+      const { error: upsertErr } = await supabase
         .from('inventory_pieces')
         .upsert(inventoryRows, { onConflict: 'id' });
+      if (upsertErr) {
+        console.error('[PurchaseService] Error upserting inventory_pieces:', upsertErr);
+      }
     }
   }
 

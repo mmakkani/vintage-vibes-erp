@@ -559,9 +559,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-slate-950 border border-slate-800 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[96vh]">
+      <div className="bg-slate-950 border border-slate-800 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* TOP HEADER */}
-        <div className="p-3 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+        <div className="p-3 bg-slate-900 border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-2 bg-indigo-600/20 text-indigo-400 rounded-xl border border-indigo-500/30">
               <Camera className="w-5 h-5 animate-pulse" />
@@ -592,14 +592,14 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
               stopCamera();
               onClose();
             }}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* SLOT TABS SELECTOR */}
-        <div className="grid grid-cols-3 bg-slate-900/60 p-2 gap-2 border-b border-slate-800">
+        <div className="grid grid-cols-3 bg-slate-900/60 p-2 gap-2 border-b border-slate-800 shrink-0">
           {/* Front Tab */}
           <button
             type="button"
@@ -646,18 +646,20 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           </button>
         </div>
 
-        {/* CAMERA VIEWFINDER & STUDIO VIEWPORT */}
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setIsDragOver(true);
-          }}
-          onDragLeave={() => setIsDragOver(false)}
-          onDrop={handleDrop}
-          className={`relative bg-black flex-1 min-h-[300px] max-h-[460px] overflow-hidden flex items-center justify-center select-none ${
-            isDragOver ? 'ring-4 ring-indigo-500 bg-indigo-950/40' : ''
-          }`}
-        >
+        {/* SCROLLABLE INNER BODY FOR MOBILE/DESKTOP RESPONSIVENESS */}
+        <div className="overflow-y-auto flex-1 flex flex-col min-h-0 divide-y divide-slate-800/60 no-scrollbar">
+          {/* CAMERA VIEWFINDER & STUDIO VIEWPORT */}
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragOver(true);
+            }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleDrop}
+            className={`relative bg-black shrink-0 min-h-[220px] sm:min-h-[280px] max-h-[340px] sm:max-h-[420px] overflow-hidden flex items-center justify-center select-none ${
+              isDragOver ? 'ring-4 ring-indigo-500 bg-indigo-950/40' : ''
+            }`}
+          >
           {/* Hidden Canvas for Frame Capture */}
           <canvas ref={canvasRef} className="hidden" />
 
@@ -999,6 +1001,36 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 </div>
               </div>
 
+              {/* Brand & Size Extracted Badges & Inputs */}
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
+                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1.5 rounded-lg border border-slate-700/60">
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider shrink-0">Brand:</span>
+                  <input
+                    type="text"
+                    value={appraisal.brand || ''}
+                    placeholder="Brand name"
+                    onChange={e => {
+                      const val = e.target.value;
+                      setAppraisal(prev => prev ? { ...prev, brand: val, garmentTitle: val ? `${val} ${prev.category || 'Apparel'}` : prev.garmentTitle } : null);
+                    }}
+                    className="w-full bg-transparent text-xs font-bold text-amber-200 focus:outline-hidden"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1.5 rounded-lg border border-slate-700/60">
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider shrink-0">Size:</span>
+                  <input
+                    type="text"
+                    value={appraisal.size || ''}
+                    placeholder="e.g. L, XL, 32x32"
+                    onChange={e => {
+                      const val = e.target.value;
+                      setAppraisal(prev => prev ? { ...prev, size: val } : null);
+                    }}
+                    className="w-full bg-transparent text-xs font-mono font-bold text-emerald-300 focus:outline-hidden"
+                  />
+                </div>
+              </div>
+
               {appraisal.collectorTipsUrdu && (
                 <p className="text-[11px] text-amber-200/90 font-sans italic bg-black/40 p-1.5 rounded border border-amber-500/20">
                   {appraisal.collectorTipsUrdu}
@@ -1006,124 +1038,125 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
               )}
             </div>
           )}
+        </div>
+      </div>
 
-          {/* Bottom Thumbnails Review Bar */}
-          <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 overflow-x-auto py-0.5">
-              {/* Slot 1: Front Thumbnail */}
-              <div
-                onClick={() => setCurrentSlot('front')}
-                className={`relative w-12 h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
-                  currentSlot === 'front'
-                    ? 'border-indigo-400 ring-2 ring-indigo-500/50'
-                    : frontImg
-                    ? 'border-emerald-500'
-                    : 'border-slate-800 bg-slate-900 text-slate-500'
-                }`}
-              >
-                {frontImg ? (
-                  <>
-                    <img src={frontImg} alt="Front" className="w-full h-full object-cover" />
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setFrontImg(undefined);
-                      }}
-                      className="absolute top-0 right-0 bg-black/80 hover:bg-rose-600 text-white w-4 h-4 rounded-bl flex items-center justify-center text-[9px]"
-                      title="Clear Front Photo"
-                    >
-                      ✕
-                    </button>
-                    <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-white text-[8px] text-center font-bold font-mono">
-                      FRONT
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-[10px] font-bold">Front</span>
-                )}
-              </div>
+      {/* STICKY BOTTOM ACTION BAR (Thumbnails Review & Attach to Piece) */}
+      <div className="sticky bottom-0 bg-slate-950/95 backdrop-blur-md p-2.5 sm:p-3 border-t border-slate-800 z-10 flex items-center justify-between gap-3 shadow-2xl shrink-0">
+        <div className="flex items-center gap-2 sm:gap-2.5 overflow-x-auto py-0.5 no-scrollbar">
+          {/* Slot 1: Front Thumbnail */}
+          <div
+            onClick={() => setCurrentSlot('front')}
+            className={`relative w-12 h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
+              currentSlot === 'front'
+                ? 'border-indigo-400 ring-2 ring-indigo-500/50'
+                : frontImg
+                ? 'border-emerald-500'
+                : 'border-slate-800 bg-slate-900 text-slate-500'
+            }`}
+          >
+            {frontImg ? (
+              <>
+                <img src={frontImg} alt="Front" className="w-full h-full object-cover" />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFrontImg(undefined);
+                  }}
+                  className="absolute top-0 right-0 bg-black/80 hover:bg-rose-600 text-white w-4 h-4 rounded-bl flex items-center justify-center text-[9px]"
+                  title="Clear Front Photo"
+                >
+                  ✕
+                </button>
+                <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-white text-[8px] text-center font-bold font-mono">
+                  FRONT
+                </span>
+              </>
+            ) : (
+              <span className="text-[10px] font-bold">Front</span>
+            )}
+          </div>
 
-              {/* Slot 2: Back Thumbnail */}
-              <div
-                onClick={() => setCurrentSlot('back')}
-                className={`relative w-12 h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
-                  currentSlot === 'back'
-                    ? 'border-indigo-400 ring-2 ring-indigo-500/50'
-                    : backImg
-                    ? 'border-emerald-500'
-                    : 'border-slate-800 bg-slate-900 text-slate-500'
-                }`}
-              >
-                {backImg ? (
-                  <>
-                    <img src={backImg} alt="Back" className="w-full h-full object-cover" />
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setBackImg(undefined);
-                      }}
-                      className="absolute top-0 right-0 bg-black/80 hover:bg-rose-600 text-white w-4 h-4 rounded-bl flex items-center justify-center text-[9px]"
-                      title="Clear Back Photo"
-                    >
-                      ✕
-                    </button>
-                    <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-white text-[8px] text-center font-bold font-mono">
-                      BACK
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-[10px] font-bold">Back</span>
-                )}
-              </div>
+          {/* Slot 2: Back Thumbnail */}
+          <div
+            onClick={() => setCurrentSlot('back')}
+            className={`relative w-12 h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
+              currentSlot === 'back'
+                ? 'border-indigo-400 ring-2 ring-indigo-500/50'
+                : backImg
+                ? 'border-emerald-500'
+                : 'border-slate-800 bg-slate-900 text-slate-500'
+            }`}
+          >
+            {backImg ? (
+              <>
+                <img src={backImg} alt="Back" className="w-full h-full object-cover" />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setBackImg(undefined);
+                  }}
+                  className="absolute top-0 right-0 bg-black/80 hover:bg-rose-600 text-white w-4 h-4 rounded-bl flex items-center justify-center text-[9px]"
+                  title="Clear Back Photo"
+                >
+                  ✕
+                </button>
+                <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-white text-[8px] text-center font-bold font-mono">
+                  BACK
+                </span>
+              </>
+            ) : (
+              <span className="text-[10px] font-bold">Back</span>
+            )}
+          </div>
 
-              {/* Slot 3: Tag Thumbnail */}
-              <div
-                onClick={() => setCurrentSlot('tag')}
-                className={`relative w-12 h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
-                  currentSlot === 'tag'
-                    ? 'border-amber-400 ring-2 ring-amber-500/50'
-                    : tagImg
-                    ? 'border-emerald-500'
-                    : 'border-slate-800 bg-slate-900 text-slate-500'
-                }`}
-              >
-                {tagImg ? (
-                  <>
-                    <img src={tagImg} alt="Tag" className="w-full h-full object-cover" />
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setTagImg(undefined);
-                      }}
-                      className="absolute top-0 right-0 bg-black/80 hover:bg-rose-600 text-white w-4 h-4 rounded-bl flex items-center justify-center text-[9px]"
-                      title="Clear Tag Photo"
-                    >
-                      ✕
-                    </button>
-                    <span className="absolute bottom-0 inset-x-0 bg-amber-600/90 text-white text-[8px] text-center font-bold font-mono">
-                      TAG
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-[10px] font-bold">Tag</span>
-                )}
-              </div>
-            </div>
-
-            {/* Confirm & Save Button */}
-            <button
-              type="button"
-              onClick={handleSaveAndClose}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 transition shrink-0 active:scale-95 cursor-pointer"
-            >
-              <Check className="w-4 h-4" />
-              <span>Attach to Piece</span>
-            </button>
+          {/* Slot 3: Tag Thumbnail */}
+          <div
+            onClick={() => setCurrentSlot('tag')}
+            className={`relative w-12 h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
+              currentSlot === 'tag'
+                ? 'border-amber-400 ring-2 ring-amber-500/50'
+                : tagImg
+                ? 'border-emerald-500'
+                : 'border-slate-800 bg-slate-900 text-slate-500'
+            }`}
+          >
+            {tagImg ? (
+              <>
+                <img src={tagImg} alt="Tag" className="w-full h-full object-cover" />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTagImg(undefined);
+                  }}
+                  className="absolute top-0 right-0 bg-black/80 hover:bg-rose-600 text-white w-4 h-4 rounded-bl flex items-center justify-center text-[9px]"
+                  title="Clear Tag Photo"
+                >
+                  ✕
+                </button>
+                <span className="absolute bottom-0 inset-x-0 bg-amber-600/90 text-white text-[8px] text-center font-bold font-mono">
+                  TAG
+                </span>
+              </>
+            ) : (
+              <span className="text-[10px] font-bold">Tag</span>
+            )}
           </div>
         </div>
+
+        {/* Confirm & Save Button with High-Contrast Touch Target */}
+        <button
+          type="button"
+          onClick={handleSaveAndClose}
+          className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs sm:text-sm min-h-[44px] min-w-[130px] flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/30 transition shrink-0 active:scale-95 cursor-pointer"
+        >
+          <Check className="w-4 h-4" />
+          <span>Attach to Piece</span>
+        </button>
+      </div>
       </div>
 
       {/* LIGHTBOX PREVIEW */}

@@ -161,7 +161,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               <img
                 src={defaultFrontImage}
                 alt={`${piece.brandName} - Front`}
-                className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
+                className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105 mix-blend-multiply"
                 loading="lazy"
               />
             ) : (

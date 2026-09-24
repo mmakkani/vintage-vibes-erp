@@ -46,6 +46,8 @@ export async function autoCropGarment(
     targetHeight?: number;
     paddingRatio?: number;
     minSubjectRatio?: number;
+    cleanBackground?: boolean;
+    cleanTolerance?: number;
   } = {}
 ): Promise<{ croppedImageUrl: string; didCrop: boolean; bounds: { x: number; y: number; width: number; height: number } }> {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -250,9 +252,183 @@ export async function autoCropGarment(
     outCtx.putImageData(outData, 0, 0);
   } catch (_) {}
 
+  // Lightweight Studio Background Cleaner:
+  // Converts external table/floor background and holding fingers to crisp studio white (#FFFFFF)
+  if (options.cleanBackground !== false) {
+    try {
+      cleanGarmentCanvasBackground(outCtx, outW, outH, options.cleanTolerance ?? 28);
+    } catch (_) {}
+  }
+
   return {
     croppedImageUrl: outCanvas.toDataURL('image/jpeg', 0.90),
     didCrop: true,
     bounds: { x: cropX, y: cropY, width: cropW, height: cropH }
   };
+}
+
+/**
+ * Lightweight Canvas Studio Background Cleaner
+ * Isolates the garment by flood-filling external background pixels and holding fingers
+ * from the outer edges and brightening them to a clean high-key studio white (#FFFFFF).
+ */
+export function cleanGarmentCanvasBackground(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  tolerance: number = 28
+): void {
+  try {
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
+
+    // 1. Sample perimeter border pixels (outer 3%) to establish the ambient surface color
+    let bgR = 0, bgG = 0, bgB = 0, count = 0;
+    const border = Math.max(2, Math.floor(Math.min(width, height) * 0.03));
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (y < border || y >= height - border || x < border || x >= width - border) {
+          const idx = (y * width + x) * 4;
+          const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+          if (!isSkin(r, g, b)) {
+            bgR += r;
+            bgG += g;
+            bgB += b;
+            count++;
+          }
+        }
+      }
+    }
+
+    if (count > 0) {
+      bgR /= count;
+      bgG /= count;
+      bgB /= count;
+    } else {
+      bgR = 240; bgG = 240; bgB = 240;
+    }
+
+    // 2. BFS flood fill starting strictly from all 4 image borders
+    const isBg = new Uint8Array(width * height);
+    const queue = new Int32Array(width * height);
+    let head = 0;
+    let tail = 0;
+
+    const pushSeed = (x: number, y: number) => {
+      const pIdx = y * width + x;
+      if (isBg[pIdx] === 0) {
+        const dIdx = pIdx * 4;
+        const r = data[dIdx], g = data[dIdx + 1], b = data[dIdx + 2];
+        if (isSkin(r, g, b) || colorDiff(r, g, b, bgR, bgG, bgB) <= tolerance) {
+          isBg[pIdx] = 1;
+          queue[tail++] = pIdx;
+        }
+      }
+    };
+
+    // Push top & bottom borders
+    for (let x = 0; x < width; x++) {
+      pushSeed(x, 0);
+      pushSeed(x, height - 1);
+    }
+    // Push left & right borders
+    for (let y = 0; y < height; y++) {
+      pushSeed(0, y);
+      pushSeed(width - 1, y);
+    }
+
+    // Expand flood fill inwards (4-way connectivity)
+    while (head < tail) {
+      const curr = queue[head++];
+      const cx = curr % width;
+      const cy = Math.floor(curr / width);
+
+      const neighbors = [
+        cx > 0 ? curr - 1 : -1,
+        cx < width - 1 ? curr + 1 : -1,
+        cy > 0 ? curr - width : -1,
+        cy < height - 1 ? curr + width : -1
+      ];
+
+      for (let i = 0; i < 4; i++) {
+        const n = neighbors[i];
+        if (n !== -1 && isBg[n] === 0) {
+          const nD = n * 4;
+          const nr = data[nD], ng = data[nD + 1], nb = data[nD + 2];
+          if (isSkin(nr, ng, nb) || colorDiff(nr, ng, nb, bgR, bgG, bgB) <= tolerance) {
+            isBg[n] = 1;
+            queue[tail++] = n;
+          }
+        }
+      }
+    }
+
+    // 3. Convert all detected exterior background pixels to clean studio white with subtle edge feather
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const pIdx = y * width + x;
+        const dIdx = pIdx * 4;
+
+        if (isBg[pIdx] === 1) {
+          // Direct background pixel -> crisp clean studio white
+          data[dIdx] = 255;
+          data[dIdx + 1] = 255;
+          data[dIdx + 2] = 255;
+        } else {
+          // Check if adjacent to background for soft anti-aliased edge
+          const hasBgNeighbor =
+            (x > 0 && isBg[pIdx - 1] === 1) ||
+            (x < width - 1 && isBg[pIdx + 1] === 1) ||
+            (y > 0 && isBg[pIdx - width] === 1) ||
+            (y < height - 1 && isBg[pIdx + width] === 1);
+
+          if (hasBgNeighbor) {
+            const r = data[dIdx], g = data[dIdx + 1], b = data[dIdx + 2];
+            const diff = colorDiff(r, g, b, bgR, bgG, bgB);
+            if (diff <= tolerance + 10) {
+              const alpha = Math.max(0, Math.min(1, (diff - (tolerance - 5)) / 15));
+              data[dIdx] = Math.round(r * alpha + 255 * (1 - alpha));
+              data[dIdx + 1] = Math.round(g * alpha + 255 * (1 - alpha));
+              data[dIdx + 2] = Math.round(b * alpha + 255 * (1 - alpha));
+            }
+          }
+        }
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+  } catch (err) {
+    console.warn('[GarmentCropper] Background cleanup notice:', err);
+  }
+}
+
+/**
+ * Direct Image URL / Base64 Background Cleaning Utility
+ */
+export async function cleanGarmentBackground(
+  imageDataUrl: string,
+  tolerance: number = 28
+): Promise<string> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return imageDataUrl;
+  }
+  try {
+    const img = await loadImage(imageDataUrl);
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    if (w <= 20 || h <= 20) return imageDataUrl;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return imageDataUrl;
+
+    ctx.drawImage(img, 0, 0, w, h);
+    cleanGarmentCanvasBackground(ctx, w, h, tolerance);
+    return canvas.toDataURL('image/jpeg', 0.92);
+  } catch {
+    return imageDataUrl;
+  }
 }

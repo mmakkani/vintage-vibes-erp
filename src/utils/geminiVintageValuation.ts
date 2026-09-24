@@ -133,36 +133,37 @@ Accurately identify and categorize the garment across 5 specific market tiers:
 5. Regular Thrift: Modern non-brand or mass-market high-turnover basics (plain tees, everyday jeans, standard hoodies, non-branded jackets).
 
 EVALUATION RULES:
-1. Brand & Tag Lineage: Identify the brand or indicate "Non-Brand / Everyday Basic" if unbranded or generic.
-2. Stitching: Single-stitch (pre-mid-1990s), Double-stitch (late 1990s to modern), Chain-stitch, or Union triple-stitch.
-3. Market Segment: Output EXACTLY one of: "Antique", "Grails", "Boutique", "Old Vintage", "Regular Thrift".
-4. Era / Year: Accurately output:
+1. Brand Identification (MANDATORY AUTO-FILL): Locate and extract the exact brand name visible on the neck tag, care label, graphic print, embroidery, badge, or metal hardware (e.g. "Levi's", "Carhartt", "Nike", "Champion", "Harley-Davidson", "Wrangler", "Stüssy", "Polo Ralph Lauren", "Dickies", "Tommy Hilfiger", "Disney", "The North Face", "Patagonia", "Fruit of the Loom", "Screen Stars", "Hanes", or "Non-Brand" if generic). The "brand" field MUST NEVER be left blank.
+2. Garment Size (MANDATORY AUTO-FILL): Inspect the collar tag, care label, or waist/inseam imprint to extract the garment size (e.g. "S", "M", "L", "XL", "2XL", "3XL", "32x32", "34x30", "Free Size"). If the tag size is torn or faded, estimate the standardized adult size based on chest and torso proportions ("M", "L", "XL", etc.). The "size" field MUST NEVER be left blank.
+3. Stitching: Single-stitch (pre-mid-1990s), Double-stitch (late 1990s to modern), Chain-stitch, or Union triple-stitch.
+4. Market Segment: Output EXACTLY one of: "Antique", "Grails", "Boutique", "Old Vintage", "Regular Thrift".
+5. Era / Year: Accurately output:
    - "Antique Heritage (1920s-1940s)" or "Antique Heritage (1950s-1960s)"
    - "1970s Vintage", "1980s Vintage", "1990s Vintage (c. 199X)"
    - "Y2K (Early 2000s)"
    - "Modern Non-Brand" or "Modern Commercial"
-5. Market Valuation & Selling Price (AED):
+6. Market Valuation & Selling Price (AED):
    - For Antique: Resale AED 450 - AED 1,500+. Recommended retail price AED 400 - AED 1,200.
    - For Grails: Resale AED 350 - AED 1,100+. Recommended retail price AED 300 - AED 950.
    - For Boutique: Resale AED 300 - AED 850+. Recommended retail price AED 280 - AED 750.
    - For Old Vintage: Resale AED 120 - AED 280. Recommended retail price AED 100 - AED 250.
    - For Regular Thrift: Suggest fast-turnover UAE market retail prices (T-Shirts: AED 25-35, Jeans: AED 45-60, Jackets: AED 75-95).
-6. Global Market Insights (Geo-Arbitrage):
+7. Global Market Insights (Geo-Arbitrage):
    - Estimate fair market value in USA ($ USD on eBay/Grailed), Europe (€ EUR on Vinted/Vestiaire), Australia (A$ AUD on Depop), and UAE (AED).
    - Provide an arbitrage analysis explaining the margin opportunity.
-7. Anti-Theft Grail Lock:
+8. Anti-Theft Grail Lock:
    - isGrail: true for Antique, Grails, Boutique, or items with market value >= AED 350.
    - rarityTier: "ANTIQUE" | "GRAIL" | "HIGH_VALUE" | "RARE_COLLECTIBLE" | "CREAM" | "GRADE_A" | "STANDARD" | "NON_BRAND".
-8. E-Commerce Archival Copywriting & SEO Keywords:
+9. E-Commerce Archival Copywriting & SEO Keywords:
    - ecommerce_description: Generate a 2-3 sentence, highly engaging luxury archival description. Highlight era provenance, fabric patina/wash, stitch lineage, fit/drape, and styling recommendation.
    - seo_tags: Return an array of 5-8 high-intent search keywords (e.g., ["vintage single stitch tee", "90s streetwear", "faded black wash", "rare archival thrift dubai"]).
 
 Return ONLY a pure JSON object matching this schema without markdown codeblocks:
 {
-  "brand": "Brand or Non-Brand",
-  "garmentTitle": "Full descriptive title",
+  "brand": "Exact brand name (e.g. Nike, Carhartt, Levi's, or Non-Brand)",
+  "garmentTitle": "Full descriptive title (e.g. 1990s Carhartt Detroit Jacket J97)",
   "category": "Category name",
-  "size": "L or XL or 32x32",
+  "size": "Exact garment size (e.g. L, XL, 32x32, M)",
   "countryOfOrigin": "Made in USA / etc.",
   "era": "1990s Vintage / Antique Heritage / Y2K / Modern Non-Brand",
   "marketSegment": "Antique or Grails or Boutique or Old Vintage or Regular Thrift",

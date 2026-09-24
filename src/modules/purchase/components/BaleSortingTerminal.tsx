@@ -21,6 +21,7 @@ import {
   Trash2,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Clock,
   X,
   DollarSign,
@@ -598,7 +599,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const handleMarketSegmentChange = (seg: string) => {
     const validSeg = (['Antique', 'Vintage', 'Brand', 'Non-Brand'].includes(seg) ? seg : 'Vintage') as 'Antique' | 'Vintage' | 'Brand' | 'Non-Brand';
     setMarketSegment(validSeg);
-    setIsGrail(validSeg === 'Antique' || validSeg === 'Vintage');
+    setIsGrail(validSeg === 'Antique');
     let newEra = era;
     if (validSeg === 'Antique') newEra = 'Antique Heritage (1920s-1960s)';
     else if (validSeg === 'Vintage') newEra = '1990s Vintage';
@@ -715,22 +716,38 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
   // Apply OCR extracted tag data (AI Grail & Vintage Value Hunter)
   const handleApplyExtractedTag = (tagData: ExtractedTagData) => {
-    // 1. Title & Brand
+    // 1. Title & Brand (Auto-fill Brand & Style)
     const titleToUse = tagData.garmentTitle || (tagData.brand ? `${tagData.brand} ${tagData.style || ''}`.trim() : '');
-    if (titleToUse) setBrandTitle(titleToUse);
+    if (titleToUse) {
+      setBrandTitle(titleToUse);
+    } else if (tagData.brand) {
+      setBrandTitle(tagData.brand.trim());
+    }
 
-    // 2. Size & Country of Origin
-    if (tagData.size) setSizeScanned(tagData.size);
-    if (tagData.countryOfOrigin) setCountryOfOrigin(tagData.countryOfOrigin);
+    // 2. Size & Country of Origin (Auto-fill Size)
+    if (tagData.size) setSizeScanned(tagData.size.trim());
+    if (tagData.countryOfOrigin) setCountryOfOrigin(tagData.countryOfOrigin.trim());
 
     // 3. Era & Vintage lineage & Market Segment
     if (tagData.era) setEra(tagData.era);
     if ((tagData as any).marketSegment) {
-      setMarketSegment((tagData as any).marketSegment);
+      const rawSeg = String((tagData as any).marketSegment);
+      if (rawSeg === 'Antique' || rawSeg === 'Grails' || rawSeg === 'Boutique') {
+        setMarketSegment('Antique');
+        setIsGrail(true);
+      } else if (rawSeg === 'Brand') {
+        setMarketSegment('Brand');
+        setIsGrail(false);
+      } else if (rawSeg === 'Regular Thrift' || rawSeg === 'Non-Brand') {
+        setMarketSegment('Non-Brand');
+        setIsGrail(false);
+      } else {
+        setMarketSegment('Vintage');
+        setIsGrail(false);
+      }
     } else if (tagData.era?.toLowerCase().includes('antique')) {
       setMarketSegment('Antique');
-    } else if (tagData.isGrail) {
-      setMarketSegment('Grails');
+      setIsGrail(true);
     }
 
     if (tagData.isGrail !== undefined) {
@@ -1006,45 +1023,52 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     } as any;
 
     // Direct Instant Sync to public.inventory_pieces for live Storefront
-    supabase
-      .from('inventory_pieces')
-      .upsert([{
-        id: pieceId,
-        gate_pass_id: String(activeBale.id),
-        barcode: barcode,
-        sku: generatedSku,
-        item_name: selectedCategory,
-        brand_name: brandTitle.split(' ')[0] || "Vintage",
-        brand_tier: finalGrailStatus ? 'Grail' : 'Vintage Curated',
-        label_grade: selectedGrade,
-        shop_location: shopLocation,
-        weight_kg: weightKg,
-        weight_grams: numericGramWeight,
-        cost_price: autoPieceCostAed,
-        estimated_price: effectiveSellingPrice,
-        retail_price_aed: effectiveSellingPrice,
-        size_scanned: sizeScanned,
-        country_of_origin: countryOfOrigin,
-        style: styleNotes || brandTitle,
-        front_image_url: frontImageUrl || '',
-        back_image_url: backImageUrl || '',
-        tag_image_url: tagImageUrl || '',
-        is_sold: false,
-        status: pieceStatus,
-        market_segment: marketSegment || 'Vintage',
-        is_grail: finalGrailStatus,
-        ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
-        is_price_overridden: isOverridden,
-        global_insights: globalInsights || null,
-        ready_for_ecommerce: readyForEcommerce,
-        ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
-        seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
-        parent_category_name: parentDeptName,
-        sub_category: subCategoryName,
-        collection_id: collectionId,
-        collection_name: collectionName
-      }], { onConflict: 'id' })
-      .catch(err => console.warn('Instant inventory sync notice:', err));
+    try {
+      const { error: upsertErr } = await supabase
+        .from('inventory_pieces')
+        .upsert([{
+          id: pieceId,
+          gate_pass_id: String(activeBale.id),
+          barcode: barcode,
+          sku: generatedSku,
+          item_name: selectedCategory,
+          brand_name: brandTitle.split(' ')[0] || "Vintage",
+          brand_tier: finalGrailStatus ? 'Grail' : 'Vintage Curated',
+          label_grade: selectedGrade,
+          shop_location: shopLocation,
+          weight_kg: weightKg,
+          weight_grams: numericGramWeight,
+          cost_price: autoPieceCostAed,
+          estimated_price: effectiveSellingPrice,
+          retail_price_aed: effectiveSellingPrice,
+          size_scanned: sizeScanned,
+          country_of_origin: countryOfOrigin,
+          style: styleNotes || brandTitle,
+          front_image_url: frontImageUrl || '',
+          back_image_url: backImageUrl || '',
+          tag_image_url: tagImageUrl || '',
+          is_sold: false,
+          status: pieceStatus,
+          market_segment: marketSegment || 'Vintage',
+          is_grail: finalGrailStatus,
+          ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
+          is_price_overridden: isOverridden,
+          global_insights: globalInsights || null,
+          ready_for_ecommerce: readyForEcommerce,
+          ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
+          seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
+          parent_category_name: parentDeptName,
+          sub_category: subCategoryName,
+          collection_id: collectionId,
+          collection_name: collectionName
+        }], { onConflict: 'id' });
+
+      if (upsertErr) {
+        console.warn('Instant inventory sync error:', upsertErr);
+      }
+    } catch (err) {
+      console.warn('Instant inventory sync notice:', err);
+    }
 
     // 1. Optimistically prepend the piece to the table
     const currentPieces = [{ ...newPiecePayload, ...newPieceDb }, ...pieces];
