@@ -1251,9 +1251,6 @@ export class FinanceService {
       await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
     try {
-      await supabase.from('financial_voucher_lines').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
-    } catch {}
-    try {
       await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
     try {
@@ -1376,10 +1373,10 @@ export class FinanceService {
     if (invIdClean) tokens.add(invIdClean);
 
     try {
-      // 0. Lookup purchase_invoices or sales_invoices to extract both ID and invoice_no
+      const isRefUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cleanRef);
       const [piLookup, siLookup] = await Promise.all([
-        supabase.from('purchase_invoices').select('id, invoice_no, supplier_id').or(`id.eq.${cleanRef},invoice_no.eq.${cleanRef}`).maybeSingle(),
-        supabase.from('sales_invoices').select('id, invoice_no, customer_id').or(`id.eq.${cleanRef},invoice_no.eq.${cleanRef}`).maybeSingle()
+        supabase.from('purchase_invoices').select('id, invoice_no, supplier_id').or(isRefUuid ? `id.eq.${cleanRef},invoice_no.eq.${cleanRef}` : `invoice_no.eq.${cleanRef}`).maybeSingle(),
+        supabase.from('sales_invoices').select('id, invoice_no, customer_id').or(isRefUuid ? `id.eq.${cleanRef},invoice_no.eq.${cleanRef}` : `invoice_no.eq.${cleanRef}`).maybeSingle()
       ]);
 
       if (piLookup.data) {
@@ -1461,9 +1458,6 @@ export class FinanceService {
 
         try {
           await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
-        } catch (_) {}
-        try {
-          await supabase.from('financial_voucher_lines').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
         try {
           await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);

@@ -213,6 +213,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isConvertingId, setIsConvertingId] = useState<string | null>(null);
   const [deletingInvoiceId, setDeletingInvoiceId] = useState<string | null>(null);
+  const [unpostingInvoiceId, setUnpostingInvoiceId] = useState<string | null>(null);
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
   const [totalInvoices, setTotalInvoices] = useState<number>(invoices?.length || 0);
@@ -449,6 +450,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   };
 
   const handleUnpostInvoice = async (invId: string) => {
+    if (unpostingInvoiceId) return;
     const invoice = invoicesList.find(i => String(i.id) === String(invId));
     const invoiceNo = invoice?.invoiceNo || invId;
 
@@ -462,12 +464,14 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
     }
 
     if (!window.confirm(`Are you sure you want to unpost invoice "${invoiceNo}" back to DRAFT? Auto-generated financial vouchers and ledger entries will be reversed.`)) return;
+
+    setUnpostingInvoiceId(String(invId));
     try {
-      // 1. Strict Pessimistic: Await PostgreSQL reversal transaction first
+      // 1. Single atomic backend call
       await PurchaseService.unpostPurchaseInvoice(invId);
 
-      // 2. ONLY AFTER DB confirmation, update local state
-      setInvoicesList(prev => prev.map(inv => String(inv.id) === String(invId) ? { ...inv, status: 'DRAFT' } : inv));
+      // 2. ONLY AFTER DB confirmation, update local state (Delta Cache Injection)
+      setInvoicesList(prev => prev.map(inv => String(inv.id) === String(invId) ? { ...inv, status: 'DRAFT', convertedToInward: false } : inv));
       triggerRowGlow(invId);
       setToastMessage("Purchase invoice unposted to DRAFT and financial vouchers reversed");
 
@@ -477,6 +481,8 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       onRefresh();
     } catch (e: any) {
       alert("Failed to unpost invoice: " + (e?.message || 'Error'));
+    } finally {
+      setUnpostingInvoiceId(null);
     }
   };
 
@@ -983,25 +989,33 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                             <span>View Doc</span>
                           </button>
 
-                          {/* Unpost Button - Hard Locked if Inward Gate Pass or Sorting Bales exist */}
+                          {/* Unpost Button - Hard Locked if Inward Gate Pass or Sorting Bales exist, with loading spinner */}
                           {inv.status === 'POSTED' && (
                             <button
                               type="button"
-                              disabled={isLocked}
-                              onClick={() => !isLocked && handleUnpostInvoice(inv.id)}
+                              disabled={isLocked || unpostingInvoiceId === String(inv.id)}
+                              onClick={() => !isLocked && unpostingInvoiceId !== String(inv.id) && handleUnpostInvoice(inv.id)}
                               className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 transition-colors border ${
-                                isLocked
+                                isLocked || unpostingInvoiceId === String(inv.id)
                                   ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-75'
                                   : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 cursor-pointer'
                               }`}
                               title={
                                 isLocked
                                   ? 'Locked: Cannot unpost while Inward Gate Pass or Sorting Bales exist. Delete bales in Sorting Terminal first.'
+                                  : unpostingInvoiceId === String(inv.id)
+                                  ? 'Unposting invoice and purging financial vouchers...'
                                   : 'Unpost this invoice back to DRAFT to allow changes or deletion'
                               }
                             >
-                              {isLocked ? <Lock className="w-3.5 h-3.5 text-slate-400" /> : <RotateCcw className="w-3.5 h-3.5 text-amber-700" />}
-                              <span>{isLocked ? 'Unpost (Locked)' : 'Unpost'}</span>
+                              {unpostingInvoiceId === String(inv.id) ? (
+                                <Loader2 className="w-3.5 h-3.5 text-amber-700 animate-spin" />
+                              ) : isLocked ? (
+                                <Lock className="w-3.5 h-3.5 text-slate-400" />
+                              ) : (
+                                <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                              )}
+                              <span>{unpostingInvoiceId === String(inv.id) ? 'Unposting...' : isLocked ? 'Unpost (Locked)' : 'Unpost'}</span>
                             </button>
                           )}
 

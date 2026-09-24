@@ -749,9 +749,6 @@ export class PurchaseService {
           await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
         try {
-          await supabase.from('financial_voucher_lines').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
-        } catch (_) {}
-        try {
           await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
         try {
@@ -795,102 +792,32 @@ export class PurchaseService {
   }
 
   public static async deletePurchaseInvoice(invoiceId: string, explicitInvoiceNo?: string): Promise<void> {
-    const cleanInvId = String(invoiceId);
+    const cleanInvId = String(invoiceId || '').trim();
+    if (!cleanInvId) throw new Error('Invoice ID is required for deletion');
 
-    // 0. Fetch invoice first to inspect status and metadata
-    const { data: invRow, error: invFetchErr } = await supabase
-      .from('purchase_invoices')
-      .select('id, invoice_no, status, converted_to_inward, supplier_id, supplier_name, total_amount, currency, exchange_rate')
-      .eq('id', cleanInvId)
-      .maybeSingle();
+    let invoiceNo = explicitInvoiceNo || cleanInvId;
 
-    if (invFetchErr) {
-      throw new Error(`Failed to fetch invoice: ${invFetchErr.message}`);
-    }
-
-    if (!invRow) {
-      console.info(`[PurchaseService] Purchase invoice ${cleanInvId} not found or already deleted; treating as idempotent success.`);
-      return;
-    }
-
-    const invoiceNo = invRow.invoice_no || explicitInvoiceNo || cleanInvId;
-
-    // Rule B (Unpost/Delete Dependency): An invoice CANNOT be unposted or deleted if an "Inward Pass" or "Sorting Bale" has already been generated for it.
-    const { data: existingPasses, error: passErr } = await supabase
-      .from('inward_gate_passes')
-      .select('id, gate_pass_no')
-      .or(`purchase_invoice_id.eq.${cleanInvId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
-
-    if (passErr) {
-      throw new Error(`Failed to verify related inward gate passes: ${passErr.message}`);
-    }
-
-    if ((existingPasses && existingPasses.length > 0) || invRow.converted_to_inward) {
-      const baleCount = existingPasses?.length || 1;
-      throw new Error(`Cannot delete invoice "${invoiceNo}" because ${baleCount} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`);
-    }
-
-    // 1. Cascade delete ALL associated financial vouchers, journal entries, ledger lines, and party khata logs BEFORE deleting invoice
-    let supplierId = invRow.supplier_id;
-    if (!supplierId && invRow.supplier_name) {
-      try {
-        const { data: pty } = await supabase
-          .from('parties')
-          .select('id')
-          .ilike('name', invRow.supplier_name.trim())
-          .maybeSingle();
-        if (pty?.id) supplierId = pty.id;
-      } catch (_) {}
-    }
-
-    try {
-      await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo, {
-        invoiceId: cleanInvId,
-        partyId: supplierId,
-        docType: 'PURCHASE'
+    if (typeof window !== 'undefined') {
+      // Browser environment: Exactly ONE network call to the backend atomic transaction API
+      const resp = await fetch(`/api/purchase/invoices/${encodeURIComponent(cleanInvId)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: cleanInvId, invoiceNo: explicitInvoiceNo })
       });
-      await this.deleteInvoiceFinancialVouchers(invoiceNo);
-    } catch (vchDelErr) {
-      console.error('[PurchaseService] Error cascading voucher deletion for invoice:', vchDelErr);
-    }
 
-    // 2. Delete child table purchase_invoice_items
-    try {
-      await supabase
-        .from('purchase_invoice_items')
-        .delete()
-        .eq('invoice_id', cleanInvId);
-    } catch (itemsError: any) {
-      console.warn("purchase_invoice_items delete notice:", itemsError?.message);
-    }
-
-    // 3. Delete parent record from purchase_invoices
-    const { error: invoiceError } = await supabase
-      .from('purchase_invoices')
-      .delete()
-      .eq('id', cleanInvId);
-
-    if (invoiceError) {
-      if (invoiceError.code === 'PGRST116' || invoiceError.message?.toLowerCase().includes('not found') || invoiceError.message?.toLowerCase().includes('0 rows')) {
-        console.info(`[PurchaseService] Invoice ${cleanInvId} deletion returned not found or 0 rows; idempotent success.`);
-      } else {
-        console.error("Failed to delete invoice:", invoiceError);
-        throw new Error(invoiceError.message || 'Failed to delete invoice');
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.success === false) {
+        throw new Error(data?.error || data?.message || 'Failed to delete invoice');
       }
+      if (data.invoiceNo) invoiceNo = data.invoiceNo;
+    } else {
+      // Backend / Node environment: Call atomic cascade backend engine directly
+      const { atomicDeletePurchaseInvoice } = await import('../modules/purchase/purchaseCascadeBackend.ts');
+      const res = await atomicDeletePurchaseInvoice(cleanInvId, explicitInvoiceNo);
+      if (res.invoiceNo) invoiceNo = res.invoiceNo;
     }
 
-    // 4. Recalculate supplier balance & COA in SQL
-    if (supplierId) {
-      try {
-        await FinanceService.recalculatePartyBalance(supplierId);
-      } catch (_) {}
-    }
-    try {
-      FinanceService.clearCoaCache();
-      await supabase.rpc('sync_coa_current_balances');
-    } catch (_) {}
-
-    // 5. Purge local cache
+    // Purge local caches
     try {
       localStorage.removeItem('vv_cached_pieces');
       localStorage.removeItem('vintage_cached_pieces');
@@ -914,110 +841,30 @@ export class PurchaseService {
   }
 
   public static async unpostPurchaseInvoice(invoiceId: string): Promise<void> {
-    const cleanInvId = String(invoiceId);
+    const cleanInvId = String(invoiceId || '').trim();
+    if (!cleanInvId) throw new Error('Invoice ID is required for unposting');
 
-    // 0. Fetch invoice first
-    const { data: invRow, error: invFetchErr } = await supabase
-      .from('purchase_invoices')
-      .select('id, invoice_no, status, total_amount, currency, exchange_rate, supplier_id, supplier_name, converted_to_inward')
-      .eq('id', cleanInvId)
-      .maybeSingle();
+    let invoiceNo = cleanInvId;
 
-    if (invFetchErr || !invRow) {
-      throw new Error(`Purchase invoice ${cleanInvId} not found`);
-    }
-
-    const invoiceNo = invRow.invoice_no || '';
-
-    // Rule B (Unpost/Delete Dependency): An invoice CANNOT be unposted if an "Inward Pass" or "Sorting Bale" has already been generated for it.
-    const { data: existingPasses, error: passErr } = await supabase
-      .from('inward_gate_passes')
-      .select('id, gate_pass_no')
-      .or(`purchase_invoice_id.eq.${cleanInvId}${invoiceNo ? `,purchase_invoice_no.eq.${invoiceNo}` : ''}`);
-
-    if (passErr) {
-      throw new Error(`Failed to check inward gate passes: ${passErr.message}`);
-    }
-
-    if (existingPasses && existingPasses.length > 0) {
-      const baleCount = existingPasses.length;
-      throw new Error(`Cannot unpost invoice "${invoiceNo}" because ${baleCount} Inward Pass(es) / Sorting Bale(s) have already been generated for it. You must delete the Sorting Bales first.`);
-    }
-
-    // Auto-heal: If no gate passes exist, ensure converted_to_inward is false
-    if (invRow.converted_to_inward) {
-      await supabase.from('purchase_invoices').update({ converted_to_inward: false }).eq('id', cleanInvId);
-      if (invoiceNo) {
-        await supabase.from('purchase_invoices').update({ converted_to_inward: false }).eq('invoice_no', invoiceNo);
-      }
-    }
-
-    // Status check
-    if (invRow.status !== 'POSTED') {
-      throw new Error(`Cannot unpost invoice "${invoiceNo}" because its status is "${invRow.status || 'DRAFT'}" (must be POSTED to unpost).`);
-    }
-
-    const currency = (invRow.currency || 'AED').toUpperCase();
-    const exchangeRate = Number(invRow.exchange_rate) || (currency === 'USD' ? 3.6725 : 1);
-    const invoiceTotalAmount = Number(invRow.total_amount || 0);
-    const invoiceTotalAed = currency === 'AED' ? invoiceTotalAmount : Number((invoiceTotalAmount * exchangeRate).toFixed(2));
-    const supplierName = invRow.supplier_name || 'Trade Supplier';
-
-    // 1. Delete financial vouchers, journal entries, and ledger rows (Strict Hard Delete - No Reversals)
-    await FinanceService.cascadeDeleteVouchersForDocument(cleanInvId, {
-      invoiceId: cleanInvId,
-      partyId: invRow.supplier_id,
-      docType: 'PURCHASE'
-    });
-    if (invoiceNo && invoiceNo !== cleanInvId) {
-      await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo, {
-        invoiceId: cleanInvId,
-        partyId: invRow.supplier_id,
-        docType: 'PURCHASE'
+    if (typeof window !== 'undefined') {
+      // Browser environment: Exactly ONE network call to the backend atomic transaction API
+      const resp = await fetch(`/api/purchase/invoices/${encodeURIComponent(cleanInvId)}/unpost`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: cleanInvId })
       });
-      await this.deleteInvoiceFinancialVouchers(invoiceNo);
-    }
 
-    // 2. Cascade delete party khata logs and recalculate balance to accurate zero state
-    try {
-      let partyId = invRow.supplier_id;
-      if (!partyId && supplierName) {
-        const { data: pty } = await supabase.from('parties').select('id').ilike('name', supplierName.trim()).maybeSingle();
-        if (pty?.id) partyId = pty.id;
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.success === false) {
+        throw new Error(data?.error || data?.message || 'Failed to unpost invoice');
       }
-
-      const delTokens = [cleanInvId];
-      if (invoiceNo) delTokens.push(invoiceNo);
-
-      for (const tok of delTokens) {
-        await supabase
-          .from('party_khata_logs')
-          .delete()
-          .or(`reference.eq.${tok},reference.ilike.%${tok}%,notes.ilike.%${tok}%`);
-      }
-
-      if (partyId) {
-        await FinanceService.recalculatePartyBalance(partyId);
-      }
-    } catch (partyRevErr) {
-      console.warn('Notice on unpost party recalculation:', partyRevErr);
+      if (data.invoiceNo) invoiceNo = data.invoiceNo;
+    } else {
+      // Backend / Node environment: Call atomic cascade backend engine directly
+      const { atomicUnpostPurchaseInvoice } = await import('../modules/purchase/purchaseCascadeBackend.ts');
+      const res = await atomicUnpostPurchaseInvoice(cleanInvId);
+      if (res.invoiceNo) invoiceNo = res.invoiceNo;
     }
-
-    // 5. Update invoice status to 'DRAFT'
-    const { error: updateErr } = await supabase
-      .from('purchase_invoices')
-      .update({ status: 'DRAFT' })
-      .eq('id', cleanInvId);
-
-    if (updateErr) {
-      throw new Error(`Failed to update invoice status to DRAFT: ${updateErr.message}`);
-    }
-
-    // 6. Refresh COA cache and balances
-    try {
-      FinanceService.clearCoaCache();
-      await supabase.rpc('sync_coa_current_balances');
-    } catch (_) {}
 
     PurchaseService.invalidateInvoicesCache();
     if (typeof window !== 'undefined') {

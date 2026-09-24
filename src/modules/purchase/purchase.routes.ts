@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { PurchaseController } from './purchase.controller.ts';
 import { PurchaseService } from '../../services/purchaseService.ts';
+import { atomicUnpostPurchaseInvoice, atomicDeletePurchaseInvoice } from './purchaseCascadeBackend.ts';
 
 export const purchaseRouter = Router();
 
@@ -32,11 +33,23 @@ purchaseRouter.put('/invoices/:id', async (req, res) => {
   }
 });
 
-purchaseRouter.delete('/invoices/:id', async (req, res) => {
-  const { id } = req.params;
+purchaseRouter.delete(['/invoices/:id', '/invoice/:id'], async (req, res) => {
+  const id = req.params.id || req.body?.id || req.body?.invoiceId;
+  const explicitNo = req.body?.invoiceNo;
   try {
-    await PurchaseService.deletePurchaseInvoice(id);
-    return res.json({ success: true, message: 'Invoice deleted successfully' });
+    const result = await atomicDeletePurchaseInvoice(id, explicitNo);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to delete invoice', message: err?.message });
+  }
+});
+
+purchaseRouter.post(['/invoices/delete', '/invoices/:id/delete', '/delete'], async (req, res) => {
+  const id = req.params.id || req.body?.id || req.body?.invoiceId;
+  const explicitNo = req.body?.invoiceNo;
+  try {
+    const result = await atomicDeletePurchaseInvoice(id, explicitNo);
+    return res.json(result);
   } catch (err: any) {
     return res.status(400).json({ success: false, error: err?.message || 'Failed to delete invoice', message: err?.message });
   }
@@ -52,11 +65,11 @@ purchaseRouter.post('/invoices/:id/post', async (req, res) => {
   }
 });
 
-purchaseRouter.post('/invoices/:id/unpost', async (req, res) => {
-  const { id } = req.params;
+purchaseRouter.post(['/invoices/:id/unpost', '/invoices/unpost', '/unpost'], async (req, res) => {
+  const id = req.params.id || req.body?.id || req.body?.invoiceId;
   try {
-    await PurchaseService.unpostPurchaseInvoice(id);
-    return res.json({ success: true, message: 'Invoice unposted successfully' });
+    const result = await atomicUnpostPurchaseInvoice(id);
+    return res.json(result);
   } catch (err: any) {
     return res.status(400).json({ success: false, error: err?.message || 'Failed to unpost invoice', message: err?.message });
   }
