@@ -219,6 +219,9 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   const [isConvertingId, setIsConvertingId] = useState<string | null>(null);
   const [deletingInvoiceId, setDeletingInvoiceId] = useState<string | null>(null);
   const [unpostingInvoiceId, setUnpostingInvoiceId] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const isSubmittingRef = React.useRef<boolean>(false);
+  const [postingInvoiceId, setPostingInvoiceId] = useState<string | null>(null);
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
   const [totalInvoices, setTotalInvoices] = useState<number>(invoices?.length || 0);
@@ -435,22 +438,34 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   };
 
   const handlePostInvoice = async (invId: string) => {
+    const cleanId = String(invId || '').trim();
+    if (!cleanId) return;
+    if (isSubmitting || isSubmittingRef.current || postingInvoiceId) return;
+
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+    setPostingInvoiceId(cleanId);
+
     try {
       // 1. Strict Pessimistic: Await PostgreSQL / Supabase commit first
-      const createdVoucher = await PurchaseService.postPurchaseInvoice(invId);
+      const createdVoucher = await PurchaseService.postPurchaseInvoice(cleanId);
 
       // 2. ONLY AFTER DB confirmation, inject confirmed state into local cache
-      setInvoicesList(prev => prev.map(inv => String(inv.id) === String(invId) ? { ...inv, status: 'POSTED' } : inv));
-      triggerRowGlow(invId);
+      setInvoicesList(prev => prev.map(inv => String(inv.id) === cleanId ? { ...inv, status: 'POSTED' } : inv));
+      triggerRowGlow(cleanId);
       setToastMessage("Purchase invoice posted to General Ledger & Supplier Khata!");
 
       // 3. Broadcast confirmed delta payload
-      notifyMutation('finance', 'vouchers', 'POSTED', invId, { voucher: createdVoucher });
-      notifyMutation('purchase', 'purchase_invoices', 'POSTED', invId);
+      notifyMutation('finance', 'vouchers', 'POSTED', cleanId, { voucher: createdVoucher });
+      notifyMutation('purchase', 'purchase_invoices', 'POSTED', cleanId);
       onRefresh();
     } catch (e: any) {
       console.warn('Error posting invoice:', e);
       alert("Failed to post invoice: " + (e?.message || 'Error'));
+    } finally {
+      setIsSubmitting(false);
+      isSubmittingRef.current = false;
+      setPostingInvoiceId(null);
     }
   };
 
@@ -1027,17 +1042,27 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
                           {inv.status !== 'POSTED' && (
                             <button
                               type="button"
-                              disabled={isLocked}
-                              onClick={() => !isLocked && handlePostInvoice(inv.id)}
+                              disabled={isLocked || isSubmitting || Boolean(postingInvoiceId)}
+                              onClick={() => !isLocked && !isSubmitting && !postingInvoiceId && handlePostInvoice(inv.id)}
                               className={`px-2 py-1 font-semibold text-[11px] rounded flex items-center gap-1 transition-colors border ${
-                                isLocked
+                                isLocked || isSubmitting || Boolean(postingInvoiceId)
                                   ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-75'
                                   : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200 cursor-pointer'
                               }`}
-                              title={isLocked ? 'Locked: Inward Gate Pass exists' : 'Post invoice to GL & Supplier Khata'}
+                              title={
+                                isLocked
+                                  ? 'Locked: Inward Gate Pass exists'
+                                  : postingInvoiceId === String(inv.id)
+                                  ? 'Posting invoice to GL & Supplier Khata...'
+                                  : 'Post invoice to GL & Supplier Khata'
+                              }
                             >
-                              <Lock className="w-3.5 h-3.5" />
-                              <span>Post</span>
+                              {postingInvoiceId === String(inv.id) ? (
+                                <Loader2 className="w-3.5 h-3.5 text-indigo-600 animate-spin" />
+                              ) : (
+                                <Lock className="w-3.5 h-3.5" />
+                              )}
+                              <span>{postingInvoiceId === String(inv.id) ? 'Posting...' : 'Post'}</span>
                             </button>
                           )}
 

@@ -418,18 +418,34 @@ export class PurchaseService {
     };
   }
 
+  private static _postingInvoiceIds: Set<string> = new Set<string>();
+
   public static async postPurchaseInvoice(invoiceId: string): Promise<any> {
-    const { data: invRows, error: invError } = await supabase
-      .from('purchase_invoices')
-      .select('*')
-      .eq('id', invoiceId)
-      .limit(1);
+    const cleanId = String(invoiceId || '').trim();
+    if (!cleanId) throw new Error('Invoice ID is required for posting');
 
-    if (invError || !invRows || invRows.length === 0) {
-      throw new Error(`Invoice with ID ${invoiceId} not found`);
+    if (PurchaseService._postingInvoiceIds.has(cleanId)) {
+      console.warn(`[PurchaseService] Invoice posting already in flight for ID ${cleanId}. Rejecting duplicate request.`);
+      throw new Error(`Invoice posting is already in progress for invoice ${cleanId}. Please wait.`);
     }
+    PurchaseService._postingInvoiceIds.add(cleanId);
 
-    const invoice = invRows[0];
+    try {
+      const { data: invRows, error: invError } = await supabase
+        .from('purchase_invoices')
+        .select('*')
+        .eq('id', cleanId)
+        .limit(1);
+
+      if (invError || !invRows || invRows.length === 0) {
+        throw new Error(`Invoice with ID ${cleanId} not found`);
+      }
+
+      const invoice = invRows[0];
+      if (invoice.status === 'POSTED') {
+        console.warn(`[PurchaseService] Invoice ${cleanId} is already in POSTED status. Skipping duplicate post.`);
+        return { alreadyPosted: true, invoice };
+      }
     const currency = (invoice.currency || 'AED').toUpperCase();
     const exchangeRate = Number(invoice.exchange_rate) || (currency === 'USD' ? 3.6725 : 1);
     const invoiceTotalAmount = Number(invoice.total_amount || 0);
@@ -448,7 +464,7 @@ export class PurchaseService {
     await supabase
       .from('purchase_invoices')
       .update({ status: 'POSTED' })
-      .eq('id', invoiceId);
+      .eq('id', cleanId);
 
     // 2. Check if voucher already created for this invoice
     const { data: existingVouchers } = await supabase
@@ -568,7 +584,10 @@ export class PurchaseService {
       } catch (_) {}
     }
 
-    return createdVoucher;
+      return createdVoucher;
+    } finally {
+      PurchaseService._postingInvoiceIds.delete(cleanId);
+    }
   }
 
   public static async addPurchaseInvoice(inv: Partial<PurchaseInvoice>): Promise<PurchaseInvoice> {
@@ -898,12 +917,12 @@ export class PurchaseService {
     const [bspCheck, invCheck, sessCheck] = await Promise.all([
       supabase.from('bale_sorted_pieces').select('id', { count: 'exact', head: true }).eq('bale_id', cleanId),
       supabase.from('inventory_pieces').select('id', { count: 'exact', head: true }).eq('gate_pass_id', cleanId),
-      supabase.from('bale_sessions').select('total_pieces, piece_count').eq('bale_id', cleanId).maybeSingle()
+      supabase.from('bale_sessions').select('total_pieces').eq('bale_id', cleanId).maybeSingle()
     ]);
 
     const bspCount = Number(bspCheck.count || 0);
     const invCount = Number(invCheck.count || 0);
-    const sessPieces = Number(sessCheck.data?.total_pieces ?? sessCheck.data?.piece_count ?? 0);
+    const sessPieces = Number(sessCheck.data?.total_pieces || 0);
     const actualPiecesCount = Math.max(bspCount, invCount, sessPieces);
 
     if (actualPiecesCount > 0) {
@@ -2445,8 +2464,7 @@ export class PurchaseService {
           total_grams: sessionStats.total_grams,
           sorted_grams: sessionStats.sorted_grams,
           remaining_grams: sessionStats.remaining_grams,
-          total_pieces: sessionStats.total_pieces ?? sessionStats.piece_count,
-          piece_count: sessionStats.piece_count ?? sessionStats.total_pieces,
+          total_pieces: sessionStats.total_pieces ?? sessionStats.piece_count ?? 0,
           broken_down_weight: sessionStats.broken_down_weight,
           status: 'PARTIAL',
           updated_at: new Date().toISOString()
