@@ -1508,9 +1508,29 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         updated_at: new Date().toISOString()
       };
 
-      await supabase
+      const { data: existingSession } = await supabase
         .from('bale_sessions')
-        .upsert(sessionPayload, { onConflict: 'bale_id' });
+        .select('id')
+        .eq('bale_id', activeBale.id)
+        .maybeSingle();
+
+      if (existingSession?.id) {
+        await supabase
+          .from('bale_sessions')
+          .update({
+            total_grams: sessionPayload.total_grams,
+            sorted_grams: sessionPayload.sorted_grams,
+            remaining_grams: sessionPayload.remaining_grams,
+            total_pieces: sessionPayload.total_pieces,
+            status: 'COMPLETED',
+            updated_at: sessionPayload.updated_at
+          })
+          .eq('id', existingSession.id);
+      } else {
+        await supabase
+          .from('bale_sessions')
+          .insert([sessionPayload]);
+      }
 
       // Call service to update inward_gate_passes & copy pieces into inventory_pieces
       await PurchaseService.finalizeBaleSession(activeBale.id);
@@ -1621,10 +1641,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       alert('Popup blocked. Please allow browser popups for this site.');
     }
   };
-  // Delete active bale if unbroken and unsorted
-  const activeSortedKg = Number(activeBale?.brokenDownWeight ?? (activeBale as any)?.broken_down_weight ?? (hudStats.sortedGrams / 1000) ?? 0);
-  const activeSortedCount = Number(activeBale?.pieceCount ?? (activeBale as any)?.piece_count ?? (pieces?.length || 0));
-  const isActiveDeletable = Boolean(activeBale) && activeSortedKg === 0 && activeSortedCount === 0 && hudStats.sortedGrams === 0;
+  // Delete active bale if unbroken and unsorted (strictly based on actual sorted pieces count, not total gross weight)
+  const activeSortedCount = Number(
+    (pieces && pieces.length > 0 ? pieces.length : 0) ||
+    activeBale?.pieceCount ||
+    (activeBale as any)?.piece_count ||
+    (activeBale as any)?.pieces_count ||
+    0
+  );
+  const isActiveDeletable = Boolean(activeBale) && activeSortedCount === 0;
 
   const handleDeleteActiveBale = async (e?: React.MouseEvent) => {
     if (e) {
@@ -1633,7 +1658,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }
     if (!activeBale) return;
     if (!isActiveDeletable) {
-      alert(`⚠️ Cannot delete bale: This bale contains ${activeSortedCount} sorted pieces (${hudStats.sortedGrams}g). Unsafe bale deletion is locked. Delete all pieces first.`);
+      alert(`⚠️ Cannot delete bale: This bale contains ${activeSortedCount} sorted pieces. Unsafe bale deletion is locked. Delete all pieces first.`);
       return;
     }
     const baleTitle = activeBale.baleCode || activeBale.gatePassNo || activeBale.id;

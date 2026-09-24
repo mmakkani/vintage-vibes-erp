@@ -653,7 +653,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                             <Scale className="w-3.5 h-3.5" />
                             Open Terminal
                           </button>
-                          {(depletion.pieceCount || 0) === 0 && (brokenDownKg || 0) === 0 ? (
+                          {(depletion.pieceCount || 0) === 0 ? (
                             <button
                               type="button"
                               disabled={deletingBaleId === String(bale.id)}

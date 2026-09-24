@@ -898,16 +898,16 @@ export class PurchaseService {
     const [bspCheck, invCheck, sessCheck] = await Promise.all([
       supabase.from('bale_sorted_pieces').select('id', { count: 'exact', head: true }).eq('bale_id', cleanId),
       supabase.from('inventory_pieces').select('id', { count: 'exact', head: true }).eq('gate_pass_id', cleanId),
-      supabase.from('bale_sessions').select('sorted_grams, total_pieces').eq('bale_id', cleanId).maybeSingle()
+      supabase.from('bale_sessions').select('total_pieces, piece_count').eq('bale_id', cleanId).maybeSingle()
     ]);
 
     const bspCount = Number(bspCheck.count || 0);
     const invCount = Number(invCheck.count || 0);
-    const sessGrams = Number(sessCheck.data?.sorted_grams || 0);
-    const sessPieces = Number(sessCheck.data?.total_pieces || 0);
+    const sessPieces = Number(sessCheck.data?.total_pieces ?? sessCheck.data?.piece_count ?? 0);
+    const actualPiecesCount = Math.max(bspCount, invCount, sessPieces);
 
-    if (bspCount > 0 || invCount > 0 || sessGrams > 0 || sessPieces > 0) {
-      throw new Error(`Cannot delete bale: This bale contains ${bspCount || invCount || sessPieces} sorted pieces (${sessGrams}g). Unsafe bale deletion is locked. Delete all pieces first.`);
+    if (actualPiecesCount > 0) {
+      throw new Error(`Cannot delete bale: This bale contains ${actualPiecesCount} sorted pieces. Unsafe bale deletion is locked. Delete all pieces first.`);
     }
 
     // 1. Try serverless / backend API endpoint first if running in browser
@@ -1642,11 +1642,26 @@ export class PurchaseService {
     }
 
     try {
-      await supabase
+      const { data: existingSession } = await supabase
         .from('bale_sessions')
-        .upsert(sessionPayload, { onConflict: 'bale_id' });
+        .select('id')
+        .eq('bale_id', cleanId)
+        .maybeSingle();
+
+      if (existingSession?.id) {
+        const updateData = { ...sessionPayload };
+        delete updateData.bale_id;
+        await supabase
+          .from('bale_sessions')
+          .update(updateData)
+          .eq('id', existingSession.id);
+      } else {
+        await supabase
+          .from('bale_sessions')
+          .insert([sessionPayload]);
+      }
     } catch (sessErr) {
-      console.warn('[PurchaseService] Error upserting bale_session:', sessErr);
+      console.warn('[PurchaseService] Error saving bale_session:', sessErr);
     }
 
     // 2. Strictly UPDATE inward_gate_passes by existing primary key ID (never INSERT, never generate new bale code)
@@ -2419,21 +2434,38 @@ export class PurchaseService {
     // 2. Atomic update to bale_sessions to prevent duplicate session logs
     if (sessionStats) {
       try {
-        await supabase
+        const { data: existingSession } = await supabase
           .from('bale_sessions')
-          .upsert({
-            bale_id: cleanId,
-            total_grams: sessionStats.total_grams,
-            sorted_grams: sessionStats.sorted_grams,
-            remaining_grams: sessionStats.remaining_grams,
-            total_pieces: sessionStats.total_pieces ?? sessionStats.piece_count,
-            piece_count: sessionStats.piece_count ?? sessionStats.total_pieces,
-            broken_down_weight: sessionStats.broken_down_weight,
-            status: 'PARTIAL',
-            updated_at: new Date().toISOString()
-          }, { onConflict: 'bale_id' });
+          .select('id')
+          .eq('bale_id', cleanId)
+          .maybeSingle();
+
+        const sessionPayload = {
+          bale_id: cleanId,
+          total_grams: sessionStats.total_grams,
+          sorted_grams: sessionStats.sorted_grams,
+          remaining_grams: sessionStats.remaining_grams,
+          total_pieces: sessionStats.total_pieces ?? sessionStats.piece_count,
+          piece_count: sessionStats.piece_count ?? sessionStats.total_pieces,
+          broken_down_weight: sessionStats.broken_down_weight,
+          status: 'PARTIAL',
+          updated_at: new Date().toISOString()
+        };
+
+        if (existingSession?.id) {
+          const updateData = { ...sessionPayload };
+          delete updateData.bale_id;
+          await supabase
+            .from('bale_sessions')
+            .update(updateData)
+            .eq('id', existingSession.id);
+        } else {
+          await supabase
+            .from('bale_sessions')
+            .insert([sessionPayload]);
+        }
       } catch (sessErr) {
-        console.warn('[PurchaseService] Session upsert notice:', sessErr);
+        console.warn('[PurchaseService] Session save notice:', sessErr);
       }
     }
 

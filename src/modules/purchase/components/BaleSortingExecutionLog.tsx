@@ -390,7 +390,7 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
 
                   const isComplete = percent === 100 || bale.sortingStatus === 'FULLY_SORTED' || bale.status === 'COMPLETED' || bale.status === 'POSTED';
                   const isInProgress = !isComplete && (piecesCount > 0 || sortedGrams > 0);
-                  const isDeletable = piecesCount === 0 && sortedGrams === 0 && sortedKg === 0;
+                  const isDeletable = piecesCount === 0;
 
                   return (
                     <tr

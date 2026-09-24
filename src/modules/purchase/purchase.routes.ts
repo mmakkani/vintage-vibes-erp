@@ -240,17 +240,18 @@ purchaseRouter.delete(['/gate-passes/:id', '/bales/:id'], async (req, res) => {
           `SELECT 
              (SELECT COUNT(*) FROM bale_sorted_pieces WHERE bale_id = $1) as sorted_cnt,
              (SELECT COUNT(*) FROM inventory_pieces WHERE gate_pass_id = $1) as inv_cnt,
-             (SELECT sorted_grams FROM bale_sessions WHERE bale_id = $1 LIMIT 1) as sorted_grams;`,
+             (SELECT total_pieces FROM bale_sessions WHERE bale_id = $1 LIMIT 1) as sess_pieces;`,
           [id]
         );
         const sortedCnt = Number(checkQ.rows[0]?.sorted_cnt || 0);
         const invCnt = Number(checkQ.rows[0]?.inv_cnt || 0);
-        const sortedGrams = Number(checkQ.rows[0]?.sorted_grams || 0);
-        if (sortedCnt > 0 || invCnt > 0 || sortedGrams > 0) {
+        const sessPieces = Number(checkQ.rows[0]?.sess_pieces || 0);
+        const actualPieces = Math.max(sortedCnt, invCnt, sessPieces);
+        if (actualPieces > 0) {
           await client.end();
           return res.status(400).json({
             success: false,
-            error: `Cannot delete bale: This bale contains ${sortedCnt || invCnt} sorted pieces (${sortedGrams}g). Unsafe bale deletion is locked.`
+            error: `Cannot delete bale: This bale contains ${actualPieces} sorted pieces. Unsafe bale deletion is locked. Delete all pieces first.`
           });
         }
       } finally {
