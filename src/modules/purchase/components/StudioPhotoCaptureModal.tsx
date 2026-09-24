@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { compressImage } from '../../../utils/imageCompressor.ts';
-import { autoCropGarment } from '../../../utils/garmentCropper.ts';
+import { autoCropGarment, cleanGarmentBackground } from '../../../utils/garmentCropper.ts';
 import { analyzeVintageGarment, getDefaultSellingPrice } from '../../../utils/geminiVintageValuation.ts';
 import { ExtractedTagData } from './CameraTagScannerModal.tsx';
 
@@ -453,7 +453,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       // 1. Isolate the garment / t-shirt from holding hands and background
       let processedUrl = rawDataUrl;
       try {
-        const isolated = await autoCropGarment(rawDataUrl);
+        const isolated = await autoCropGarment(rawDataUrl, { cleanBackground: true, cleanTolerance: 30 });
         if (isolated && isolated.didCrop) {
           processedUrl = isolated.croppedImageUrl;
         }
@@ -461,7 +461,19 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         console.warn('Garment auto-crop skipped:', e);
       }
 
-      // 2. Compress and save
+      // 2. True Background Removal: flood-fill & isolate external backgrounds to studio white (#FFFFFF)
+      if (currentSlot !== 'tag') {
+        try {
+          const cleaned = await cleanGarmentBackground(processedUrl, 30);
+          if (cleaned) {
+            processedUrl = cleaned;
+          }
+        } catch (bgErr) {
+          console.warn('Background cleaning notice:', bgErr);
+        }
+      }
+
+      // 3. Compress and save
       const compressed = await compressImage(processedUrl, 1280, 0.85);
       applyPhotoToCurrentSlot(compressed);
     } catch (e) {
@@ -492,7 +504,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // File input handler with automatic studio compression and garment isolation
+  // File input handler with automatic studio compression, garment isolation, and background removal
   const handleNativeFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -502,11 +514,19 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         // Smart garment isolation on uploaded photos
         let finalPhoto = compressed;
         try {
-          const isolated = await autoCropGarment(compressed);
+          const isolated = await autoCropGarment(compressed, { cleanBackground: true, cleanTolerance: 30 });
           if (isolated && isolated.didCrop) {
             finalPhoto = isolated.croppedImageUrl;
           }
         } catch (_) {}
+
+        // True background removal for garment front & back photos
+        if (currentSlot !== 'tag') {
+          try {
+            const cleaned = await cleanGarmentBackground(finalPhoto, 30);
+            if (cleaned) finalPhoto = cleaned;
+          } catch (_) {}
+        }
 
         applyPhotoToCurrentSlot(finalPhoto);
         try {
@@ -521,7 +541,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // Drag and drop handler for desktop users
+  // Drag and drop handler for desktop users with background removal
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
@@ -530,7 +550,22 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       setIsProcessing(true);
       try {
         const compressed = await compressImage(file, 1280, 0.85);
-        applyPhotoToCurrentSlot(compressed);
+        let finalPhoto = compressed;
+        try {
+          const isolated = await autoCropGarment(compressed, { cleanBackground: true, cleanTolerance: 30 });
+          if (isolated && isolated.didCrop) {
+            finalPhoto = isolated.croppedImageUrl;
+          }
+        } catch (_) {}
+
+        if (currentSlot !== 'tag') {
+          try {
+            const cleaned = await cleanGarmentBackground(finalPhoto, 30);
+            if (cleaned) finalPhoto = cleaned;
+          } catch (_) {}
+        }
+
+        applyPhotoToCurrentSlot(finalPhoto);
         try {
           luxuryAudio.playMechanicalClick();
         } catch {}
@@ -771,6 +806,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           {/* Viewfinder HUD Overlays (Top Right) */}
           {cameraActive && (
             <div className="absolute top-2 right-2 flex items-center gap-1.5 z-30">
+              <div className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold backdrop-blur-md">
+                <Sparkles className="w-3 h-3 text-emerald-300" />
+                <span>Studio BG Clean</span>
+              </div>
               {/* Multi-device camera switch selector */}
               {availableDevices.length > 1 && (
                 <select

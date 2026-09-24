@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { PieceBreakdownItem, InwardGatePass } from '../purchase.types.ts';
 import { StickerData } from '../../../components/ThermalBarcodeSticker.tsx';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { ImageOptimizer } from '../../../utils/imageOptimizer.ts';
+import { Pagination } from '../../../components/Pagination.tsx';
 import {
   Layers,
   Search,
@@ -49,6 +50,12 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   const [brandFilter, setBrandFilter] = useState('ALL');
   const [previewLightboxImage, setPreviewLightboxImage] = useState<string | null>(null);
   const [isPurging, setIsPurging] = useState(false);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, brandFilter, activeDimension]);
 
   const handlePurgeOrphaned = async () => {
     if (!confirm('Are you sure you want to scan and purge all orphaned inventory pieces that have no active commercial invoice or inward bale? This will clean up the database.')) return;
@@ -105,6 +112,13 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
       return true;
     });
   }, [pieces, searchTerm, statusFilter, brandFilter]);
+
+  const totalItems = filteredPieces.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const paginatedPieces = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredPieces.slice(start, start + pageSize);
+  }, [filteredPieces, currentPage, pageSize]);
 
   // Inventory KPIs
   const kpis = useMemo(() => {
@@ -466,7 +480,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                     </td>
                   </tr>
                 ) : (
-                  filteredPieces.map(piece => {
+                  paginatedPieces.map(piece => {
                     const grams = piece.weightGrams || Math.round((piece.weightKg || 0) * 1000);
                     const cost = piece.calculatedCostPrice || piece.costPrice || 0;
                     const price = piece.estimatedPrice || piece.retailPriceAed || 0;
@@ -625,6 +639,19 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
               </tbody>
             </table>
           </div>
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={totalItems}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={(newSize) => {
+              setPageSize(newSize);
+              setCurrentPage(1);
+            }}
+            pageSizeOptions={[10, 25, 50, 100]}
+            itemLabel="garments"
+          />
         </div>
       )}
 

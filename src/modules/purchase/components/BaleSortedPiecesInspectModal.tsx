@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { InwardGatePass, PieceBreakdownItem } from '../purchase.types.ts';
 import { supabase } from '../../../supabaseClient.ts';
 import { openThermalLabelPrintWindow } from '../../../utils/thermalPrinter.ts';
+import { Pagination } from '../../../components/Pagination.tsx';
 import {
   X,
   Search,
@@ -42,6 +43,12 @@ export const BaleSortedPiecesInspectModal: React.FC<BaleSortedPiecesInspectModal
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedFilter, setSelectedFilter] = useState<'ALL' | 'GRAILS' | 'OVERRIDDEN' | 'BELOW_COST'>('ALL');
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedFilter, bale?.id]);
 
   useEffect(() => {
     if (!isOpen || !bale?.id) return;
@@ -180,6 +187,13 @@ export const BaleSortedPiecesInspectModal: React.FC<BaleSortedPiecesInspectModal
       return true;
     });
   }, [pieces, searchQuery, selectedFilter]);
+
+  const totalItems = filteredPieces.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const paginatedPieces = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredPieces.slice(start, start + pageSize);
+  }, [filteredPieces, currentPage, pageSize]);
 
   const handlePrintSinglePieceThermal = (p: any) => {
     openThermalLabelPrintWindow({
@@ -430,7 +444,7 @@ export const BaleSortedPiecesInspectModal: React.FC<BaleSortedPiecesInspectModal
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-              {filteredPieces.map((p, idx) => {
+              {paginatedPieces.map((p, idx) => {
                 const weightG = Number(p.weight_grams || p.weightGrams || (p.weightKg ? p.weightKg * 1000 : 0));
                 const costAed = Number(p.cost_price || p.costPrice || p.calculatedCostPrice || 0);
                 const retailAed = Number(p.selling_price || p.retailPriceAed || p.estimatedPrice || 0);
@@ -587,6 +601,24 @@ export const BaleSortedPiecesInspectModal: React.FC<BaleSortedPiecesInspectModal
             </div>
           )}
         </div>
+
+        {/* REUSABLE PAGINATION */}
+        {filteredPieces.length > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={totalItems}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={(newSize) => {
+              setPageSize(newSize);
+              setCurrentPage(1);
+            }}
+            pageSizeOptions={[10, 25, 50, 100]}
+            itemLabel="sorted garments"
+            className="border-t border-slate-200"
+          />
+        )}
 
         {/* MODAL FOOTER */}
         <div className="bg-white border-t border-slate-200 px-6 py-3 flex items-center justify-between shrink-0">

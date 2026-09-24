@@ -1265,28 +1265,10 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
     const newStatus = pieces.length > 0 ? 'PARTIAL' : 'UNOPENED';
     try {
-      // 1. Update inward_gate_passes table in Supabase
-      await supabase
-        .from('inward_gate_passes')
-        .update({ status: newStatus })
-        .eq('id', activeBale.id);
+      // 1. Invoke PurchaseService.unlockBaleSession to revert status and delete JV-FIN auto-voucher (reversing balance to WIP 1150-01)
+      await PurchaseService.unlockBaleSession(activeBale.id, activeBale.baleCode || activeBale.gatePassNo);
 
-      // 2. Update bale_sessions table in Supabase
-      const sessionPayload = {
-        bale_id: activeBale.id,
-        total_grams: hudStats.totalGrams,
-        sorted_grams: hudStats.sortedGrams,
-        remaining_grams: hudStats.remainingGrams,
-        total_pieces: hudStats.piecesCount,
-        status: 'IN_PROGRESS',
-        updated_at: new Date().toISOString()
-      };
-
-      await supabase
-        .from('bale_sessions')
-        .upsert(sessionPayload, { onConflict: 'bale_id' });
-
-      // 3. Reset local state
+      // 2. Reset local state
       setIsTerminalFinalized(false);
       activeBale.status = newStatus as any;
       activeBale.sortingStatus = (newStatus === 'PARTIAL' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any;
@@ -1296,7 +1278,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       }
 
       setFeedbackToast({
-        text: `✓ Bale ${activeBale.baleCode || activeBale.gatePassNo} unlocked & re-opened for sorting!`,
+        text: `✓ Bale ${activeBale.baleCode || activeBale.gatePassNo} unlocked & re-opened for sorting! (WIP balance restored)`,
         type: 'success'
       });
     } catch (err: any) {

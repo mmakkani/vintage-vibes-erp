@@ -1882,7 +1882,195 @@ export class PurchaseService {
       if (upsertErr) {
         console.error('[PurchaseService] Error upserting inventory_pieces:', upsertErr);
       }
+
+      // 4. GAAP/IFRS WIP to Finished Goods Auto-Voucher Capitalization
+      // Transfer Landed Cost from 1150-01 (WIP) to 1160-01 (Finished Goods)
+      const totalPiecesCost = Number(sortedPieces.reduce((sum: number, p: any) => sum + (Number(p.cost_price) || 0), 0).toFixed(2));
+      if (totalPiecesCost > 0) {
+        let baleRef = String(baleId);
+        try {
+          const { data: baleRow } = await supabase
+            .from('inward_gate_passes')
+            .select('id, gate_pass_no, bale_code, supplier_name')
+            .eq('id', baleId)
+            .maybeSingle();
+          if (baleRow) {
+            baleRef = baleRow.bale_code || baleRow.gate_pass_no || baleRow.id || baleId;
+          }
+        } catch (_) {}
+
+        const todayDate = new Date().toISOString().slice(0, 10);
+        const jvNo = await SequenceService.getNextNumber('JV-FIN', todayDate);
+        const voucherPayload = {
+          voucherNo: jvNo,
+          date: todayDate,
+          type: 'JOURNAL',
+          reference: String(baleId),
+          documentRef: String(baleId),
+          narration: `Auto-Transfer: WIP (1150-01) to Finished Goods (1160-01) on finalizing Bale ${baleRef}`,
+          totalDebit: totalPiecesCost,
+          totalCredit: totalPiecesCost,
+          isAuto: true,
+          createdBy: 'System (Bale Finalizer)',
+          lines: [
+            {
+              accountCode: '1160-01',
+              accountName: 'Finished Goods Inventory',
+              debit: totalPiecesCost,
+              credit: 0,
+              memo: `Finished Goods capitalization from finalized Bale ${baleRef}`
+            },
+            {
+              accountCode: '1150-01',
+              accountName: 'Work in Progress (WIP) Inventory',
+              debit: 0,
+              credit: totalPiecesCost,
+              memo: `Relieve WIP for finalized Bale ${baleRef}`
+            }
+          ]
+        };
+
+        try {
+          await FinanceService.addVoucher(voucherPayload);
+          FinanceService.clearCoaCache();
+          await supabase.rpc('sync_coa_current_balances');
+        } catch (vchErr) {
+          console.error('[PurchaseService] Error creating WIP to Finished Goods auto-voucher:', vchErr);
+        }
+      }
     }
+
+    PurchaseService.invalidateGatePassesCache();
+    PurchaseService.invalidatePiecesCache();
+  }
+
+  public static async unlockBaleSession(baleId: string, explicitBaleCode?: string): Promise<void> {
+    const cleanBaleId = String(baleId || '').trim();
+    if (!cleanBaleId) throw new Error('Bale ID is required to unlock session');
+
+    // 1. Update bale_sessions back to IN_PROGRESS
+    await supabase
+      .from('bale_sessions')
+      .update({ status: 'IN_PROGRESS', updated_at: new Date().toISOString() })
+      .eq('bale_id', cleanBaleId);
+
+    // 2. Update inward_gate_passes back to PARTIAL
+    await supabase
+      .from('inward_gate_passes')
+      .update({ status: 'PARTIAL' })
+      .eq('id', cleanBaleId);
+
+    // 3. Find and DELETE the JV-FIN voucher, reversing balance back to WIP (1150-01)
+    try {
+      await FinanceService.cascadeDeleteVouchersForDocument(cleanBaleId, {
+        invoiceId: cleanBaleId,
+        docType: 'BALE'
+      });
+      if (explicitBaleCode && explicitBaleCode !== cleanBaleId) {
+        await FinanceService.cascadeDeleteVouchersForDocument(explicitBaleCode, {
+          invoiceId: cleanBaleId,
+          docType: 'BALE'
+        });
+      }
+
+      // Explicitly remove any JV-FIN vouchers referencing this bale
+      const { data: jvMatches } = await supabase
+        .from('financial_vouchers')
+        .select('id, voucher_no')
+        .or(`reference.eq.${cleanBaleId},reference.ilike.%${cleanBaleId}%,narration.ilike.%${cleanBaleId}%`);
+
+      if (Array.isArray(jvMatches) && jvMatches.length > 0) {
+        for (const jv of jvMatches) {
+          await FinanceService.deleteVoucher(jv.id, true);
+        }
+      }
+
+      FinanceService.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
+    } catch (delErr) {
+      console.error('[PurchaseService] Error removing JV-FIN voucher on bale unlock:', delErr);
+    }
+
+    PurchaseService.invalidateGatePassesCache();
+    PurchaseService.invalidatePiecesCache();
+  }
+
+  public static async getBaleSortedPiecesPaginated(
+    baleId: string,
+    options?: {
+      page?: number;
+      pageSize?: number;
+      search?: string;
+      filter?: string;
+    }
+  ): Promise<PaginatedResponse<PieceBreakdownItem>> {
+    const page = Math.max(1, options?.page || 1);
+    const pageSize = Math.max(1, options?.pageSize || 10);
+    const search = options?.search?.trim() || '';
+    const filter = options?.filter || 'ALL';
+
+    let query = supabase
+      .from('bale_sorted_pieces')
+      .select('*', { count: 'exact' })
+      .eq('bale_id', baleId);
+
+    if (search) {
+      query = query.or(`piece_code.ilike.%${search}%,category.ilike.%${search}%,brand_title.ilike.%${search}%,era.ilike.%${search}%`);
+    }
+
+    if (filter === 'GRAILS') {
+      query = query.eq('is_grail', true);
+    } else if (filter === 'OVERRIDDEN') {
+      query = query.eq('is_price_overridden', true);
+    }
+
+    query = applyPagination(query, page, pageSize, {
+      orderBy: 'created_at',
+      ascending: false,
+      secondaryOrderBy: 'id',
+      secondaryAscending: false
+    });
+
+    const { data, count, error } = await query;
+    if (error) {
+      console.warn('[PurchaseService] Error fetching paginated bale_sorted_pieces:', error.message);
+      return buildPaginatedResponse([], 0, page, pageSize);
+    }
+
+    const mapped = (data || []).map((d: any) => ({
+      id: d.id,
+      gatePassId: d.bale_id || baleId,
+      barcode: d.piece_code || d.id,
+      piece_code: d.piece_code || d.id,
+      itemName: d.category || 'Vintage Garment',
+      category: d.category || 'Vintage Garment',
+      sizeScanned: d.size || 'L',
+      size: d.size || 'L',
+      brandName: d.brand_title || 'Vintage',
+      brand_title: d.brand_title || 'Vintage',
+      weightGrams: Number(d.weight_grams) || 0,
+      weight_grams: Number(d.weight_grams) || 0,
+      weightKg: (Number(d.weight_grams) || 0) / 1000,
+      costPrice: Number(d.cost_price) || 0,
+      cost_price: Number(d.cost_price) || 0,
+      calculatedCostPrice: Number(d.cost_price) || 0,
+      retailPriceAed: Number(d.selling_price) || 0,
+      selling_price: Number(d.selling_price) || 0,
+      labelGrade: d.quality_grade || 'Grade A',
+      quality_grade: d.quality_grade || 'Grade A',
+      frontImageUrl: d.front_image,
+      backImageUrl: d.back_image,
+      tagImageUrl: d.tag_image,
+      era: d.era || '1990s Vintage',
+      marketSegment: d.market_segment || 'Regular Thrift',
+      isGrail: Boolean(d.is_grail),
+      aiSuggestedPrice: Number(d.ai_suggested_price) || 0,
+      isPriceOverridden: Boolean(d.is_price_overridden),
+      globalInsights: d.global_insights,
+      createdAt: d.created_at
+    }));
+
+    return buildPaginatedResponse(mapped, count || 0, page, pageSize);
   }
 
   public static async addInventoryPiece(piece: Partial<PieceBreakdownItem>): Promise<PieceBreakdownItem> {
