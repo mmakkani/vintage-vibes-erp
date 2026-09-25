@@ -911,6 +911,15 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       const CONTROL_ACC_CODE = CrmService.CONTROL_WALK_IN_ACCOUNT_CODE; // 1130-05
       const CONTROL_ACC_NAME = CrmService.CONTROL_WALK_IN_ACCOUNT_NAME; // Walk In Customer (Customer)
 
+      // Calculate total COGS safely:
+      const totalCogs = Number(
+        safeCart.reduce((sum: number, item: any) => {
+          const rawCost = item?.cost_price ?? item?.cogsCost ?? item?.piece?.cogsCost ?? item?.piece?.costPrice ?? item?.piece?.calculatedCostPrice ?? 0;
+          const num = Number(rawCost);
+          return sum + (isNaN(num) ? 0 : num);
+        }, 0).toFixed(2)
+      );
+
       let createdVoucherNo = `VCH-${Date.now().toString().slice(-6)}`;
       try {
         const paymentAccCode = effectivePaymentMode === 'CASH' ? '1110-01' : '1120-01';
@@ -971,7 +980,29 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               debit: 0,
               credit: totalAmt,
               memo: `Customer Payment Settlement ${invoiceNum}`
-            }
+            },
+            ...(totalCogs > 0 ? [
+              {
+                accountId: '5100-02', // COGS
+                accountCode: '5100-02',
+                accountName: 'Cost of Goods Sold - Finished Goods',
+                partyId: CONTROL_PARTY_ID,
+                partyName: 'Walk In Customer',
+                debit: totalCogs,
+                credit: 0,
+                memo: `COGS for POS Sale ${invoiceNum}`
+              },
+              {
+                accountId: '1160-01', // Finished Goods
+                accountCode: '1160-01',
+                accountName: 'Finished Goods',
+                partyId: CONTROL_PARTY_ID,
+                partyName: 'Walk In Customer',
+                debit: 0,
+                credit: totalCogs,
+                memo: `Inventory deduction for POS Sale ${invoiceNum}`
+              }
+            ] : [])
           ]
         });
         if (vRes?.voucherNo) {
@@ -989,7 +1020,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         clientId: CONTROL_PARTY_ID,
         customerName: selectedCustomer?.name || 'Walk-In Customer',
         customerPhone: selectedCustomer?.phone || '',
-        channel: 'POS_COUNTER',
+        channel: 'POS',
         paymentMethod: effectivePaymentMode as any,
         subtotal: subtotalAmt,
         discountAmount: discountTotal,

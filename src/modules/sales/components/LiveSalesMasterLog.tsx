@@ -47,7 +47,23 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
   const [thermalSlipInvoice, setThermalSlipInvoice] = useState<SalesInvoice | null>(null);
   const [whatsAppInvoice, setWhatsAppInvoice] = useState<SalesInvoice | null>(null);
 
-  // Summary Metrics
+  // Strict LIVE channel predicate: excludes POS sales completely
+  const isStrictlyLive = (inv: SalesInvoice) => {
+    const channel = String(inv?.channel || '').toUpperCase();
+    const invNo = String(inv?.invoiceNo || '').toUpperCase();
+    if (channel === 'POS' || channel === 'POS_COUNTER') return false;
+    if (invNo.startsWith('POS-') || invNo.startsWith('INV-POS-') || invNo.startsWith('SLS-POS-')) return false;
+    if (inv?.paymentMethod === 'CARD_POS') return false;
+    if (inv?.boothId === 'COUNTER_POS') return false;
+    return true;
+  };
+
+  const liveInvoices = useMemo(() => {
+    const safeInvoices = Array.isArray(invoices) ? invoices : [];
+    return safeInvoices.filter(isStrictlyLive);
+  }, [invoices]);
+
+  // Summary Metrics (Strictly LIVE Channel)
   const summary = useMemo(() => {
     let totalGrossSales = 0;
     let totalCogs = 0;
@@ -56,8 +72,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
     let postedCount = 0;
     let draftCount = 0;
 
-    const safeInvoices = Array.isArray(invoices) ? invoices : [];
-    safeInvoices.forEach(inv => {
+    liveInvoices.forEach(inv => {
       if (inv?.status === 'POSTED') postedCount++;
       if (inv?.status === 'DRAFT') draftCount++;
 
@@ -88,11 +103,11 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
       postedCount,
       draftCount
     };
-  }, [invoices]);
+  }, [liveInvoices]);
 
-  // Filtered Invoices
+  // Filtered Invoices (Strictly LIVE Channel)
   const filteredInvoices = useMemo(() => {
-    return invoices.filter(inv => {
+    return liveInvoices.filter(inv => {
       // Search
       const matchesSearch =
         (inv.invoiceNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -117,7 +132,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
 
       return true;
     });
-  }, [invoices, searchTerm, statusFilter, boothFilter, channelFilter, courierFilter]);
+  }, [liveInvoices, searchTerm, statusFilter, boothFilter, channelFilter, courierFilter]);
 
   // CSV Export
   const exportToCsv = () => {

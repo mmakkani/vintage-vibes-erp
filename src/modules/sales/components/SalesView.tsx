@@ -97,11 +97,19 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
   ) => {
     setIsLoadingSales(true);
     try {
+      let targetChannel: string | undefined = undefined;
+      if (subTab === 'counterSale') {
+        targetChannel = 'POS';
+      } else if (subTab === 'masterLog' || subTab === 'liveSelling' || subTab === 'drafts') {
+        targetChannel = 'LIVE';
+      }
+
       const res = await SalesService.getSalesInvoicesPaginated({
         page: targetPage,
         pageSize: targetPageSize,
         search: targetSearch,
-        status: targetStatus
+        status: targetStatus,
+        channel: targetChannel
       });
       setInvoices(res.data);
       setTotalInvoices(res.total);
@@ -111,7 +119,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
     } finally {
       setIsLoadingSales(false);
     }
-  }, [invPage, invPageSize, salesSearch, salesStatusFilter]);
+  }, [invPage, invPageSize, salesSearch, salesStatusFilter, subTab]);
 
   const [clients, setClients] = useState<Party[]>([]);
   const [stockPieces, setStockPieces] = useState<PieceBreakdownItem[]>([]);
@@ -216,7 +224,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
 
   useEffect(() => {
     fetchPaginatedSales(invPage, invPageSize, salesSearch, salesStatusFilter);
-  }, [fetchPaginatedSales, invPage, invPageSize, salesSearch, salesStatusFilter]);
+  }, [fetchPaginatedSales, invPage, invPageSize, salesSearch, salesStatusFilter, subTab]);
 
   // Realtime refetch current page on Supabase CDC update
   useEffect(() => {

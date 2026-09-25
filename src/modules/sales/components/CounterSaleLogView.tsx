@@ -24,8 +24,10 @@ import {
   SlidersHorizontal,
   ChevronDown,
   Clock,
-  RotateCcw
+  RotateCcw,
+  Trash2
 } from 'lucide-react';
+import { SalesService } from '../../../services/salesService.ts';
 
 interface CounterSaleLogViewProps {
   invoices: SalesInvoice[];
@@ -49,27 +51,32 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
   const [selectedInvoice, setSelectedInvoice] = useState<SalesInvoice | null>(null);
   const [showEmbeddedPos, setShowEmbeddedPos] = useState(false);
 
-  // Filter for Counter Sale invoices
+  // Strict POS Channel predicate: ONLY counter sale invoices
+  const isStrictlyPos = (inv: SalesInvoice) => {
+    const channel = String(inv?.channel || '').toUpperCase();
+    const invNo = String(inv?.invoiceNo || '').toUpperCase();
+    return (
+      channel === 'POS' ||
+      channel === 'POS_COUNTER' ||
+      invNo.startsWith('INV-POS-') ||
+      invNo.startsWith('SLS-POS-') ||
+      invNo.startsWith('POS-') ||
+      inv?.paymentMethod === 'CARD_POS' ||
+      inv?.paymentMethod === 'CARD_MANUAL' ||
+      inv?.notes?.includes('Counter Sale') ||
+      inv?.boothId === 'COUNTER_POS'
+    );
+  };
+
   const posInvoices = useMemo(() => {
     if (!Array.isArray(invoices)) return [];
-    return invoices.filter(inv => {
-      const invNo = inv?.invoiceNo || '';
-      const isPos = 
-        invNo.startsWith('INV-POS-') ||
-        invNo.startsWith('SLS-POS-') ||
-        inv?.paymentMethod === 'CARD_POS' ||
-        inv?.notes?.includes('Counter Sale') ||
-        inv?.boothId === 'COUNTER_POS';
-      return isPos;
-    });
+    return invoices.filter(isStrictlyPos);
   }, [invoices]);
 
-  // Fallback: If no counter invoices exist yet, show all retail invoices for review
+  // Display Invoices strictly filtered from POS transactions only (never leaks Live sales)
   const displayInvoices = useMemo(() => {
-    const safeInvoices = Array.isArray(invoices) ? invoices : [];
     const safePosInvoices = Array.isArray(posInvoices) ? posInvoices : [];
-    const sourceList = safePosInvoices.length > 0 ? safePosInvoices : safeInvoices;
-    return sourceList.filter(inv => {
+    return safePosInvoices.filter(inv => {
       const invNo = inv?.invoiceNo || '';
       const matchesSearch = 
         !searchTerm ||
@@ -86,13 +93,11 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
 
       return matchesSearch && matchesPayment;
     });
-  }, [posInvoices, invoices, searchTerm, paymentFilter]);
+  }, [posInvoices, searchTerm, paymentFilter]);
 
-  // Summary Metrics
+  // Summary Metrics strictly on posInvoices
   const metrics = useMemo(() => {
-    const safeInvoices = Array.isArray(invoices) ? invoices : [];
-    const safePosInvoices = Array.isArray(posInvoices) ? posInvoices : [];
-    const list = safePosInvoices.length > 0 ? safePosInvoices : safeInvoices;
+    const list = Array.isArray(posInvoices) ? posInvoices : [];
     const totalSales = list.reduce((sum, inv) => sum + (Number(inv?.totalAmount) || 0), 0);
     const totalVat = list.reduce((sum, inv) => sum + (Number(inv?.vatAmount) || 0), 0);
     const totalNetRevenue = list.reduce((sum, inv) => sum + (Number(inv?.subTotal) || 0), 0);
@@ -116,7 +121,29 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
       totalGrossProfit: Number(totalGrossProfit.toFixed(2)),
       marginPercent
     };
-  }, [posInvoices, invoices]);
+  }, [posInvoices]);
+
+  // Invoice Deletion & Void Logic (Restores Stock & Removes Financial Voucher)
+  const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
+
+  const handleDeleteInvoice = async (inv: SalesInvoice) => {
+    const itemCount = Array.isArray(inv?.items) ? inv.items.length : 0;
+    const confirmMsg = `⚠️ Are you sure you want to void / delete Counter POS Invoice ${inv.invoiceNo}?\n\n• Associated financial voucher & ledger balances will be reversed.\n• All ${itemCount} garment(s) will be restored back to IN_STOCK.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setIsDeletingId(inv.id);
+      await SalesService.deleteSalesInvoice(inv.id);
+      if (selectedInvoice?.id === inv.id) {
+        setSelectedInvoice(null);
+      }
+      onRefreshAll();
+    } catch (err: any) {
+      alert(`Failed to delete invoice: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setIsDeletingId(null);
+    }
+  };
 
   // Open Pop-up Window
   const handleOpenPosWindow = () => {
@@ -463,6 +490,15 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
+                          <button
+                            type="button"
+                            disabled={isDeletingId === inv.id}
+                            onClick={() => handleDeleteInvoice(inv)}
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer disabled:opacity-50"
+                            title="Void / Delete POS Invoice (Restores Stock & Reverses Voucher)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -527,23 +563,34 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
               </div>
             </div>
 
-            <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-3">
+            <div className="mt-4 flex justify-between items-center border-t border-slate-200 pt-3">
               <button
                 type="button"
-                onClick={() => handlePrintReceipt(selectedInvoice)}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs flex items-center gap-1 cursor-pointer"
+                disabled={isDeletingId === selectedInvoice.id}
+                onClick={() => handleDeleteInvoice(selectedInvoice)}
+                className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 font-bold rounded-lg text-xs flex items-center gap-1.5 transition border border-rose-200 cursor-pointer disabled:opacity-50"
               >
-                <Printer className="w-3.5 h-3.5" />
-                <span>Thermal 80mm</span>
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Void & Restore Stock</span>
               </button>
-              <button
-                type="button"
-                onClick={() => handleSendWhatsApp(selectedInvoice)}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs flex items-center gap-1 cursor-pointer"
-              >
-                <MessageCircle className="w-3.5 h-3.5" />
-                <span>WhatsApp</span>
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => handlePrintReceipt(selectedInvoice)}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs flex items-center gap-1 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Thermal 80mm</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendWhatsApp(selectedInvoice)}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs flex items-center gap-1 cursor-pointer"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>WhatsApp</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

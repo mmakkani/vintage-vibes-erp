@@ -124,15 +124,35 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
    * Sends an automated WhatsApp Invoice Receipt (Dhamaka 1 Auto-Invoicing)
    */
   public static async sendInvoiceNotification(payload: InvoiceNotificationPayload): Promise<WhatsAppSendResult> {
-    const cleanPhone = this.sanitizePhoneNumber(payload.customerPhone);
-    if (!cleanPhone || cleanPhone.length < 8) {
-      console.warn('[WhatsAppService] Skipping invoice notification: recipient phone number is missing or invalid.');
-      return { success: false, error: 'Recipient phone number is missing or invalid.' };
-    }
-
-    const formattedText = this.formatInvoiceMessage(payload);
-
     try {
+      const cleanPhone = this.sanitizePhoneNumber(payload?.customerPhone);
+      if (!cleanPhone || cleanPhone.length < 8) {
+        console.warn('[WhatsAppService] Skipping invoice notification: recipient phone number is missing or invalid.');
+        return { success: false, error: 'Recipient phone number is missing or invalid.' };
+      }
+
+      // Check whether Meta Official WhatsApp Cloud API is configured in this environment
+      const envMetaToken =
+        (typeof import.meta !== 'undefined' && ((import.meta as any).env?.VITE_META_WA_TOKEN || (import.meta as any).env?.VITE_WHATSAPP_TOKEN)) ||
+        (typeof process !== 'undefined' && (process.env?.META_WA_TOKEN || process.env?.WHATSAPP_ACCESS_TOKEN || process.env?.WHATSAPP_API_TOKEN));
+
+      const gatewayConfig = await this.getGatewayConfig().catch(() => null);
+      const hasActiveCredentials = Boolean(
+        envMetaToken ||
+        gatewayConfig?.accessToken ||
+        gatewayConfig?.metaCloudToken ||
+        gatewayConfig?.apiKey ||
+        gatewayConfig?.token
+      );
+
+      // If credentials are not configured, suppress network error and return early
+      if (!hasActiveCredentials) {
+        console.warn('[WhatsAppService] Meta Cloud WhatsApp API credentials not configured in environment. Skipping automatic invoice dispatch.');
+        return { success: false, message: 'WhatsApp API credentials not configured in environment.' };
+      }
+
+      const formattedText = this.formatInvoiceMessage(payload);
+
       // 1. Primary: Dispatch via dedicated serverless backend route
       const res = await fetch('/api/marketing/whatsapp/send-invoice', {
         method: 'POST',
@@ -146,10 +166,10 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
           totalAmount: payload.totalAmount,
           currency: payload.currency || 'AED'
         })
-      });
+      }).catch(() => null);
 
-      if (res.ok) {
-        const data = await res.json();
+      if (res && res.ok) {
+        const data = await res.json().catch(() => ({}));
         console.log(`[WhatsAppService] Successfully dispatched invoice #${payload.invoiceNo} to ${cleanPhone} via Meta Cloud API.`);
         return { success: true, message: data.message, messageId: data.messageId };
       }
@@ -163,46 +183,67 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
           to: cleanPhone,
           text: formattedText
         })
-      });
+      }).catch(() => null);
 
-      if (fallbackRes.ok) {
-        const data = await fallbackRes.json();
+      if (fallbackRes && fallbackRes.ok) {
+        const data = await fallbackRes.json().catch(() => ({}));
         return { success: true, message: data.message, messageId: data.metaData?.messages?.[0]?.id };
       }
 
-      const errData = await res.json().catch(() => ({}));
-      const errorMsg = errData.error || errData.message || 'WhatsApp dispatch request returned an error';
-      console.warn(`[WhatsAppService] Could not send WhatsApp invoice: ${errorMsg}`);
+      const errData = res ? await res.json().catch(() => ({})) : {};
+      const errorMsg = errData.error || errData.message || 'WhatsApp gateway inactive or unconfigured';
+      console.warn(`[WhatsAppService] WhatsApp invoice notification skipped: ${errorMsg}`);
       return { success: false, error: errorMsg };
     } catch (err: any) {
-      console.warn('[WhatsAppService] Network exception sending invoice WhatsApp:', err?.message);
-      return { success: false, error: err?.message || 'Network error' };
+      console.warn('[WhatsAppService] Silent catch: Could not send WhatsApp invoice:', err?.message || err);
+      return { success: false, error: err?.message || 'Silent error' };
     }
+  }
+
+  /**
+   * Alias for sendInvoiceNotification for receipt distribution
+   */
+  public static async sendReceipt(payload: InvoiceNotificationPayload): Promise<WhatsAppSendResult> {
+    return this.sendInvoiceNotification(payload);
   }
 
   /**
    * Dispatches a direct text message via Meta Cloud API
    */
   public static async sendTextMessage(to: string, text: string): Promise<WhatsAppSendResult> {
-    const cleanPhone = this.sanitizePhoneNumber(to);
-    if (!cleanPhone) {
-      return { success: false, error: 'Valid recipient phone number is required.' };
-    }
-
     try {
+      const cleanPhone = this.sanitizePhoneNumber(to);
+      if (!cleanPhone) {
+        return { success: false, error: 'Valid recipient phone number is required.' };
+      }
+
+      const envMetaToken =
+        (typeof import.meta !== 'undefined' && ((import.meta as any).env?.VITE_META_WA_TOKEN || (import.meta as any).env?.VITE_WHATSAPP_TOKEN)) ||
+        (typeof process !== 'undefined' && (process.env?.META_WA_TOKEN || process.env?.WHATSAPP_ACCESS_TOKEN));
+
+      if (!envMetaToken) {
+        console.warn('[WhatsAppService] Meta Cloud WhatsApp API token not present in environment. Skipping text dispatch.');
+        return { success: false, message: 'WhatsApp token missing in environment.' };
+      }
+
       const res = await fetch('/api/marketing/whatsapp/meta-cloud-send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ to: cleanPhone, text })
-      });
+      }).catch(() => null);
 
-      const data = await res.json();
+      if (!res) {
+        return { success: false, error: 'Network request failed' };
+      }
+
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
         return { success: true, message: data.message, messageId: data.metaData?.messages?.[0]?.id };
       }
       return { success: false, error: data.error || 'Failed to send WhatsApp message' };
     } catch (err: any) {
+      console.warn('[WhatsAppService] Silent catch sending text WhatsApp:', err?.message);
       return { success: false, error: err?.message || 'Network error' };
     }
   }
