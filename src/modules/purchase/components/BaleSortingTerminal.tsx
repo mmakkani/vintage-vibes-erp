@@ -3234,9 +3234,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
                       {/* 5b. Pit-to-Pit (in) */}
                       <div className="col-span-1 lg:col-span-1 space-y-1">
-                        <label className="block text-[11px] font-bold text-purple-300 uppercase tracking-wide flex items-center justify-between" title="Pit-to-Pit measurement in inches">
+                        <label className="block text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center justify-between" title="Pit-to-Pit measurement in inches">
                           <span>Pit-to-Pit (in)</span>
-                          {pitToPit && <span className="font-mono text-[9px] text-emerald-400 font-bold">📏 AI</span>}
+                          {pitToPit && <span className="font-mono text-[9px] text-amber-400 font-bold">📏 AI</span>}
                         </label>
                         <input
                           type="number"
@@ -3245,16 +3245,16 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           value={pitToPit}
                           onChange={e => setPitToPit(e.target.value)}
                           disabled={hudStats.isCompleted}
-                          className="w-full bg-slate-900 border border-purple-500/50 focus:border-purple-400 rounded-lg px-2 py-2 text-xs text-purple-200 font-mono font-bold focus:outline-hidden disabled:opacity-50 text-center"
+                          className="w-full bg-slate-900 border border-slate-700 text-white rounded-md px-3 py-2 text-xs font-mono font-bold focus:outline-hidden focus:border-amber-500 focus:ring-1 focus:ring-amber-500 disabled:opacity-50 text-center"
                           title="Pit-to-pit chest measurement in inches (from measuring tape)"
                         />
                       </div>
 
                       {/* 5c. Length (in) */}
                       <div className="col-span-1 lg:col-span-1 space-y-1">
-                        <label className="block text-[11px] font-bold text-purple-300 uppercase tracking-wide flex items-center justify-between" title="Garment vertical length in inches">
+                        <label className="block text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center justify-between" title="Garment vertical length in inches">
                           <span>Length (in)</span>
-                          {lengthInches && <span className="font-mono text-[9px] text-emerald-400 font-bold">📏 AI</span>}
+                          {lengthInches && <span className="font-mono text-[9px] text-amber-400 font-bold">📏 AI</span>}
                         </label>
                         <input
                           type="number"
@@ -3263,7 +3263,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           value={lengthInches}
                           onChange={e => setLengthInches(e.target.value)}
                           disabled={hudStats.isCompleted}
-                          className="w-full bg-slate-900 border border-purple-500/50 focus:border-purple-400 rounded-lg px-2 py-2 text-xs text-purple-200 font-mono font-bold focus:outline-hidden disabled:opacity-50 text-center"
+                          className="w-full bg-slate-900 border border-slate-700 text-white rounded-md px-3 py-2 text-xs font-mono font-bold focus:outline-hidden focus:border-amber-500 focus:ring-1 focus:ring-amber-500 disabled:opacity-50 text-center"
                           title="Garment vertical length in inches (from measuring tape)"
                         />
                       </div>

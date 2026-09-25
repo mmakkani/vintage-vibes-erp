@@ -51,13 +51,18 @@ export function useBarcodeScanner({
       const diff = now - lastKeyTimeRef.current;
       lastKeyTimeRef.current = now;
 
+      const currentBuffer = bufferRef.current || '';
+      const currentLength = (bufferRef.current || '').length;
+
       if (e.key === 'Enter') {
-        if (bufferRef.current.length >= minChars) {
-          const code = bufferRef.current.trim();
+        if (currentLength >= minChars) {
+          const barcode = currentBuffer.trim();
           bufferRef.current = '';
-          if (code) {
+          if (barcode && barcode.length > 0) {
             if (enableSound) playBeep();
-            onScan(code);
+            if (typeof onScan === 'function') {
+              onScan(barcode);
+            }
             if (!isInput) {
               e.preventDefault();
             }
@@ -69,12 +74,12 @@ export function useBarcodeScanner({
       }
 
       // If key is a printable character
-      if (e.key.length === 1) {
+      if (e.key && e.key.length === 1) {
         // If interval is longer than scanner speed, reset buffer
-        if (diff > maxIntervalMs && bufferRef.current.length > 0) {
+        if (diff > maxIntervalMs && (bufferRef.current || '').length > 0) {
           bufferRef.current = '';
         }
-        bufferRef.current += e.key;
+        bufferRef.current = (bufferRef.current || '') + e.key;
       }
     };
 

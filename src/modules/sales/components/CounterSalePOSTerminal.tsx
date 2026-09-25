@@ -465,7 +465,9 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   // 1. Universal Laser Barcode Gun Listener
   useBarcodeScanner({
     onScan: (code) => {
-      handleScanPiece(code);
+      if (code && code.length > 0) {
+        handleScanPiece(code);
+      }
     }
   });
 
@@ -544,9 +546,11 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   }, [cashTendered, grandTotal]);
 
   // Add piece to cart handler with pessimistic reservation
-  const handleScanPiece = async (rawCode: string) => {
-    const code = rawCode.trim();
-    if (!code) return;
+  const handleScanPiece = async (rawCode?: string) => {
+    const barcode = rawCode || '';
+    if (!barcode || barcode.length === 0) return;
+    const code = barcode.trim();
+    if (!code || code.length === 0) return;
 
     // Check if already in cart
     const inCartIdx = cart.findIndex(c => c.piece.barcode.toLowerCase() === code.toLowerCase());
@@ -1585,17 +1589,15 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                       }}
                       className={`w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
                         !selectedCustomer
-                          ? 'bg-amber-500/20 text-amber-800 dark:text-amber-200'
-                          : posTheme === 'light'
-                            ? 'hover:bg-stone-100 text-stone-700'
-                            : 'hover:bg-slate-900 text-slate-300'
+                          ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100'
+                          : 'hover:bg-slate-100 text-slate-900 dark:hover:bg-slate-900 dark:text-slate-300'
                       }`}
                     >
                       <span className="flex items-center gap-1.5">
                         <span>👤</span>
-                        <span>Standard Walk-In Retail Customer</span>
+                        <span className="text-slate-900 dark:text-slate-100 font-bold">Standard Walk-In Retail Customer</span>
                       </span>
-                      <span className="text-[10px] text-stone-400 font-mono">1130-05</span>
+                      <span className="text-[10px] text-slate-500 font-mono">1130-05</span>
                     </button>
 
                     {filteredParties.length === 0 ? (
@@ -1631,21 +1633,17 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                             setCustomerSearchQuery('');
                             setIsCustomerDropdownOpen(false);
                           }}
-                          className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center justify-between transition cursor-pointer ${
-                            posTheme === 'light'
-                              ? 'hover:bg-amber-50 text-stone-800'
-                              : 'hover:bg-slate-900 text-slate-200'
-                          }`}
+                          className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center justify-between transition cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-900"
                         >
                           <div className="truncate mr-2">
-                            <div className="font-bold truncate">
+                            <div className="text-slate-900 dark:text-slate-100 font-bold truncate">
                               ⭐ {p.name} {((p as any).company_name && (p as any).company_name !== p.name) ? `(${(p as any).company_name})` : ''}
                             </div>
-                            <div className="text-[10px] text-stone-400 font-mono">
+                            <div className="text-[10px] text-slate-500 font-mono">
                               {p.phone ? `📞 ${p.phone}` : 'No phone'} {p.code ? `• ${p.code}` : ''}
                             </div>
                           </div>
-                          <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-500/15 text-amber-800 dark:text-amber-300 shrink-0">
+                          <span className="bg-amber-100 text-amber-800 border border-amber-200 text-[10px] px-2 py-0.5 rounded-full font-mono font-bold shrink-0">
                             {(p as any).party_type === 'RETAIL_CUSTOMER' ? 'RETAIL' : 'VIP'}
                           </span>
                         </button>
@@ -1828,10 +1826,10 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               type="button"
               onClick={handleOpenCheckout}
               disabled={cart.length === 0}
-              className="w-full py-3.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white font-black text-sm uppercase tracking-wider rounded-xl shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer"
+              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-extrabold text-lg uppercase tracking-wider rounded-xl shadow-md flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer"
             >
               <span>Collect Payment (AED {grandTotal.toFixed(2)})</span>
-              <ArrowRight className="w-4 h-4" />
+              <ArrowRight className="w-5 h-5" />
             </button>
           </div>
 
@@ -2452,21 +2450,21 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 animate-in fade-in">
           <div className={`w-full max-w-lg rounded-2xl border shadow-2xl p-5 space-y-4 max-h-[92vh] overflow-y-auto ${
             posTheme === 'light'
-              ? 'bg-white border-amber-300 text-stone-900'
-              : 'bg-slate-950 border-slate-800 text-white'
+              ? 'bg-white border-slate-200 text-slate-900'
+              : 'bg-slate-900 border-slate-800 text-white'
           }`}>
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-stone-200 dark:border-slate-800">
               <div className="flex items-center gap-2">
-                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400">
                   <Camera className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold uppercase tracking-wider flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
+                  <h3 className="text-sm font-bold uppercase tracking-wider flex items-center gap-1.5 text-indigo-900 dark:text-indigo-300">
                     <span>AI Visiting Card Scanner</span>
-                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    <Sparkles className="w-4 h-4 text-indigo-500" />
                   </h3>
-                  <p className="text-[11px] text-stone-500 dark:text-slate-400">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
                     Instant OCR & CRM Contact Auto-Extraction powered by Gemini AI
                   </p>
                 </div>
@@ -2505,19 +2503,19 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             {!cardImagePreview ? (
               <div
                 onClick={() => cardFileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition hover:border-amber-500 ${
+                className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition ${
                   posTheme === 'light'
-                    ? 'border-amber-300/80 bg-amber-50/40 hover:bg-amber-50'
-                    : 'border-slate-700 bg-slate-900/60 hover:bg-slate-900'
+                    ? 'border-indigo-300 bg-indigo-50/50 text-indigo-700 hover:bg-indigo-50'
+                    : 'border-slate-700 bg-slate-900/60 hover:bg-slate-900 text-slate-200'
                 }`}
               >
-                <div className="w-12 h-12 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto mb-2">
+                <div className="w-12 h-12 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto mb-2">
                   <Camera className="w-6 h-6" />
                 </div>
-                <div className="text-xs font-bold text-amber-800 dark:text-amber-300">
+                <div className="text-xs font-bold text-indigo-700 dark:text-indigo-300">
                   📸 Click to Capture or Upload Visiting Card Photo
                 </div>
-                <div className="text-[11px] text-stone-500 dark:text-slate-400 mt-1">
+                <div className="text-[11px] text-indigo-600/70 dark:text-slate-400 mt-1">
                   Supports JPG, PNG, WEBP (Camera capture enabled)
                 </div>
               </div>
@@ -2548,7 +2546,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             <div className="space-y-2.5 pt-1">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider block mb-1 text-stone-600 dark:text-slate-400">
+                  <label className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase tracking-wider block mb-1">
                     Customer Name *
                   </label>
                   <input
@@ -2558,14 +2556,14 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                     placeholder="e.g. John Doe"
                     className={`w-full border rounded-xl px-3 py-2 text-xs font-semibold focus:outline-hidden transition ${
                       posTheme === 'light'
-                        ? 'bg-stone-50 border-stone-300 text-stone-900 focus:border-amber-500 focus:bg-white'
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-indigo-500 focus:bg-white'
                         : 'bg-slate-950 border-slate-700 text-white focus:border-indigo-400'
                     }`}
                   />
                 </div>
 
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider block mb-1 text-stone-600 dark:text-slate-400">
+                  <label className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase tracking-wider block mb-1">
                     Mobile / WhatsApp (+971...)
                   </label>
                   <input
@@ -2575,7 +2573,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                     placeholder="e.g. +971 50 123 4567"
                     className={`w-full border rounded-xl px-3 py-2 text-xs font-mono font-semibold focus:outline-hidden transition ${
                       posTheme === 'light'
-                        ? 'bg-stone-50 border-stone-300 text-stone-900 focus:border-amber-500 focus:bg-white'
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-indigo-500 focus:bg-white'
                         : 'bg-slate-950 border-slate-700 text-white focus:border-indigo-400'
                     }`}
                   />
@@ -2584,7 +2582,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider block mb-1 text-stone-600 dark:text-slate-400">
+                  <label className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase tracking-wider block mb-1">
                     Email Address
                   </label>
                   <input
@@ -2594,14 +2592,14 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                     placeholder="e.g. client@company.com"
                     className={`w-full border rounded-xl px-3 py-2 text-xs font-semibold focus:outline-hidden transition ${
                       posTheme === 'light'
-                        ? 'bg-stone-50 border-stone-300 text-stone-900 focus:border-amber-500 focus:bg-white'
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-indigo-500 focus:bg-white'
                         : 'bg-slate-950 border-slate-700 text-white focus:border-indigo-400'
                     }`}
                   />
                 </div>
 
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider block mb-1 text-stone-600 dark:text-slate-400">
+                  <label className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase tracking-wider block mb-1">
                     Company / Organization
                   </label>
                   <input
@@ -2611,7 +2609,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                     placeholder="e.g. Vintage Vault LLC"
                     className={`w-full border rounded-xl px-3 py-2 text-xs font-semibold focus:outline-hidden transition ${
                       posTheme === 'light'
-                        ? 'bg-stone-50 border-stone-300 text-stone-900 focus:border-amber-500 focus:bg-white'
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-indigo-500 focus:bg-white'
                         : 'bg-slate-950 border-slate-700 text-white focus:border-indigo-400'
                     }`}
                   />
@@ -2619,7 +2617,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               </div>
 
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider block mb-1 text-stone-600 dark:text-slate-400">
+                <label className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase tracking-wider block mb-1">
                   Address / City (Optional)
                 </label>
                 <input
@@ -2629,7 +2627,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   placeholder="e.g. Downtown Dubai / Al Ain"
                   className={`w-full border rounded-xl px-3 py-2 text-xs font-semibold focus:outline-hidden transition ${
                     posTheme === 'light'
-                      ? 'bg-stone-50 border-stone-300 text-stone-900 focus:border-amber-500 focus:bg-white'
+                      ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-indigo-500 focus:bg-white'
                       : 'bg-slate-950 border-slate-700 text-white focus:border-indigo-400'
                   }`}
                 />

@@ -539,13 +539,11 @@ export class PartiesService {
       } catch (_) {}
     }
 
-    const id = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ret-${Date.now()}`;
     const code = `RET-${Date.now().toString().slice(-4)}`;
     const CONTROL_KHATA_CODE = '1130-05';
     const CONTROL_KHATA_UUID = 'a5a8d92b-cdea-4418-8737-d3c4dca24909';
 
-    const partyPayload = {
-      id,
+    const insertPayload: any = {
       code,
       name: cleanName,
       company_name: cleanCompany,
@@ -569,9 +567,13 @@ export class PartiesService {
       created_at: new Date().toISOString()
     };
 
+    // Ensure database auto-generates integer Primary Key (fixes Error 22P02)
+    delete insertPayload.id;
+    delete insertPayload.party_id;
+
     const { data, error } = await supabase
       .from('parties')
-      .insert(partyPayload)
+      .insert([insertPayload])
       .select()
       .single();
 
