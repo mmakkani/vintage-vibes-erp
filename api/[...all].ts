@@ -5486,6 +5486,61 @@ RULES FOR YOUR RESPONSE:
         created_at: r.created_at || r.createdAt
       });
 
+      // Sub-route: GET /api/parties/retail (Retail CRM List & Live Metrics)
+      if (targetPartyId === 'retail' && method === 'GET') {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const query = `
+              SELECT p.*,
+                     COALESCE(s.order_count, 0) as total_orders,
+                     COALESCE(s.total_spent, 0) as total_spent,
+                     s.last_order_date
+              FROM parties p
+              LEFT JOIN (
+                SELECT client_id,
+                       COUNT(*) as order_count,
+                       SUM(total_amount) as total_spent,
+                       MAX(created_at) as last_order_date
+                FROM sales_invoices
+                GROUP BY client_id
+              ) s ON s.client_id::text = p.id::text
+              WHERE UPPER(COALESCE(p.party_type, p.type, '')) IN ('RETAIL', 'RETAIL_CUSTOMER')
+              ORDER BY p.created_at DESC;
+            `;
+            const result = await client.query(query);
+            await client.end();
+            const rows = (result.rows || []).map((row: any) => ({
+              ...formatParty(row),
+              totalOrders: Number(row.total_orders || 0),
+              totalSpent: Number(row.total_spent || 0),
+              lastOrderDate: row.last_order_date || null
+            }));
+            return res.status(200).json(rows);
+          } catch (pgErr: any) {
+            try { await client.end(); } catch (_) {}
+            console.warn('[Serverless Parties] Error fetching retail parties via PG:', pgErr?.message);
+          }
+        }
+
+        // Supabase Fallback
+        try {
+          const { data } = await supabaseAdmin
+            .from('parties')
+            .select('*')
+            .in('party_type', ['RETAIL', 'RETAIL_CUSTOMER'])
+            .order('created_at', { ascending: false });
+          return res.status(200).json((data || []).map((r: any) => ({
+            ...formatParty(r),
+            totalOrders: 0,
+            totalSpent: 0,
+            lastOrderDate: null
+          })));
+        } catch (_) {}
+
+        return res.status(200).json([]);
+      }
+
       // Sub-route: /api/parties/:id/khata or /api/parties/:id/transaction
       if (targetPartyId && (subAction === 'khata' || subAction === 'transaction')) {
         const client = await getPgClient();
@@ -5836,7 +5891,7 @@ RULES FOR YOUR RESPONSE:
       }
 
       // Sub-route: GET /api/parties/:id (Single party lookup)
-      if (method === 'GET' && targetPartyId && !subAction) {
+      if (method === 'GET' && targetPartyId && targetPartyId !== 'retail' && !subAction) {
         const client = await getPgClient();
         if (client) {
           try {
@@ -6142,6 +6197,63 @@ RULES FOR YOUR RESPONSE:
     // SALES MODULE ENDPOINTS
     // ========================================================================
     if (pathname.startsWith('/api/sales') || pathname.startsWith('/sales')) {
+      // Sub-route: GET /api/sales/customer-history (Customer statement & POS invoices)
+      if (pathname.includes('/customer-history') && method === 'GET') {
+        const partyId = parsedUrl.searchParams.get('partyId') || (req.query?.partyId as string) || '';
+        const phone = parsedUrl.searchParams.get('phone') || (req.query?.phone as string) || '';
+        const name = parsedUrl.searchParams.get('name') || (req.query?.name as string) || '';
+
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const cleanPhone = (phone || '').replace(/\D/g, '');
+            let query = 'SELECT * FROM sales_invoices WHERE 1=0';
+            const params: any[] = [];
+            if (partyId) {
+              params.push(partyId);
+              query += ` OR client_id::text = $${params.length}`;
+            }
+            if (cleanPhone && cleanPhone.length >= 7) {
+              params.push(`%${cleanPhone.slice(-7)}%`);
+              query += ` OR customer_phone LIKE $${params.length}`;
+            }
+            if (name && name.trim()) {
+              params.push(`%${name.trim()}%`);
+              query += ` OR customer_name ILIKE $${params.length}`;
+            }
+            query += ' ORDER BY created_at DESC LIMIT 100;';
+
+            const result = await client.query(query, params);
+            await client.end();
+            return res.status(200).json(result.rows || []);
+          } catch (err: any) {
+            try { await client.end(); } catch (_) {}
+            console.warn('[Serverless Sales] Error fetching customer-history via PG:', err?.message);
+          }
+        }
+
+        // Supabase Fallback
+        try {
+          let q = supabaseAdmin.from('sales_invoices').select('*').order('created_at', { ascending: false });
+          const cleanPhone = (phone || '').replace(/\D/g, '');
+          const orConditions: string[] = [];
+          if (partyId) orConditions.push(`client_id.eq.${partyId}`);
+          if (cleanPhone && cleanPhone.length >= 7) {
+            orConditions.push(`customer_phone.ilike.%${cleanPhone.slice(-7)}%`);
+          }
+          if (name && name.trim()) {
+            orConditions.push(`customer_name.ilike.%${name.trim()}%`);
+          }
+          if (orConditions.length > 0) {
+            q = q.or(orConditions.join(','));
+          }
+          const { data } = await q.limit(100);
+          return res.status(200).json(data || []);
+        } catch (_) {}
+
+        return res.status(200).json([]);
+      }
+
       if ((pathname.endsWith('/invoices') || pathname === '/api/sales' || pathname === '/sales') && method === 'GET') {
         let client: any = null;
         try {
