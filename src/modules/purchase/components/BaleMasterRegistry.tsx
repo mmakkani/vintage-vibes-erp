@@ -155,6 +155,35 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
     };
   }, [bales]);
 
+  // Unified Tab Counting Logic
+  const counts = useMemo(() => {
+    const source = bales && bales.length > 0 ? bales : balesList;
+    let completed = 0;
+    let inProgress = 0;
+    let unopened = 0;
+
+    source.forEach(bale => {
+      const totalPieces = Number(bale.pieceCount ?? (bale as any).total_pieces ?? (bale as any).pieces_count ?? bale.pieces?.length ?? 0);
+      const isCompleted = bale.status === 'COMPLETED' || bale.status === 'POSTED' || bale.sortingStatus === 'FULLY_SORTED' || (bale.sortingStatus as any) === 'COMPLETED';
+
+      if (isCompleted) {
+        completed++;
+      } else if (!isCompleted && totalPieces > 0) {
+        inProgress++;
+      } else if (!isCompleted && totalPieces === 0) {
+        unopened++;
+      }
+    });
+
+    return {
+      all: source.length,
+      completed,
+      inProgress,
+      unopened
+    };
+  }, [bales, balesList]);
+  const tabCounts = counts;
+
   // Filtered Bales
   const filteredBales = useMemo(() => {
     return balesList.filter(bale => {
@@ -171,8 +200,8 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
       const isCompleted = bale.status === 'COMPLETED' || bale.status === 'POSTED' || bale.sortingStatus === 'FULLY_SORTED' || (bale.sortingStatus as any) === 'COMPLETED';
 
       if (statusFilter === 'COMPLETED') return isCompleted;
-      if (statusFilter === 'IN_PROGRESS') return !isCompleted && (totalPieces > 0 || bale.status === 'IN_PROGRESS' || bale.status === 'PARTIAL');
-      if (statusFilter === 'UNOPENED') return !isCompleted && totalPieces === 0 && bale.status !== 'IN_PROGRESS' && bale.status !== 'PARTIAL';
+      if (statusFilter === 'IN_PROGRESS') return !isCompleted && totalPieces > 0;
+      if (statusFilter === 'UNOPENED') return !isCompleted && totalPieces === 0;
 
       return true;
     });
@@ -495,12 +524,12 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
               }`}
             >
               {tab === 'ALL'
-                ? 'All Bales'
+                ? `All Bales (${tabCounts.all})`
                 : tab === 'UNOPENED'
-                ? 'Unopened (0%)'
+                ? `Unopened (${tabCounts.unopened})`
                 : tab === 'IN_PROGRESS'
-                ? 'In Progress'
-                : 'Completed (100%)'}
+                ? `In Progress (${tabCounts.inProgress})`
+                : `Completed (${tabCounts.completed})`}
             </button>
           ))}
         </div>
@@ -543,7 +572,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
 
                   const isCompleted = bale.status === 'COMPLETED' || bale.status === 'POSTED' || bale.sortingStatus === 'FULLY_SORTED' || (bale.sortingStatus as any) === 'COMPLETED';
                   const totalPieces = Number(bale.pieceCount ?? (bale as any).total_pieces ?? (bale as any).pieces_count ?? bale.pieces?.length ?? 0);
-                  const isInProgress = !isCompleted && (totalPieces > 0 || bale.status === 'IN_PROGRESS' || bale.status === 'PARTIAL');
+                  const isInProgress = !isCompleted && totalPieces > 0;
 
                   const brokenDownKg = isCompleted
                     ? baleTotalWeight

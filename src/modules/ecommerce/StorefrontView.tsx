@@ -48,6 +48,7 @@ import { SalesService } from '../../services/salesService.ts';
 import { supabase } from '../../supabaseClient.ts';
 import { pixelTracking } from '../../utils/pixelTracking.ts';
 import { isPieceEvicted } from '../../services/queryClient.ts';
+import { useStorefrontAnalytics } from '../../hooks/useStorefrontAnalytics.ts';
 
 interface StorefrontViewProps {
   companyProfile: CompanyProfile;
@@ -62,6 +63,9 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   onOpenStaffMobileApp,
   onInventoryMutated
 }) => {
+  // Silent Storefront Session Analytics & Traffic Engine
+  useStorefrontAnalytics();
+
   const [pieces, setPieces] = useState<PieceBreakdownItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');

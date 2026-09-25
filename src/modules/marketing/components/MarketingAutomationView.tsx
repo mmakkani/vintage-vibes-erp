@@ -24,7 +24,8 @@ import {
   Calendar,
   Check,
   Percent,
-  Clock
+  Clock,
+  Globe
 } from 'lucide-react';
 import {
   MarketingService,
@@ -39,6 +40,7 @@ import { AutoPhotoBroadcastTab } from './AutoPhotoBroadcastTab.tsx';
 import { ChatClaimAutomationTab } from './ChatClaimAutomationTab.tsx';
 import { AdCatalogFeedsTab } from './AdCatalogFeedsTab.tsx';
 import { WhatsAppDeviceModal } from './WhatsAppDeviceModal.tsx';
+import { StorefrontAnalyticsView } from '../StorefrontAnalyticsView.tsx';
 
 interface MarketingAutomationViewProps {
   onRefreshAll?: () => void;
@@ -53,7 +55,8 @@ export type MarketingSubTab =
   | 'chat-claim'
   | 'auto-broadcast'
   | 'live-desk'
-  | 'ad-catalog-pixels';
+  | 'ad-catalog-pixels'
+  | 'storefront-analytics';
 
 export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = ({
   onRefreshAll,
@@ -610,6 +613,22 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
           <Rss className="w-3.5 h-3.5" />
           <span>Ad Feeds &amp; Tracking Pixels</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('storefront-analytics')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap border ${
+            activeSubTab === 'storefront-analytics'
+              ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-xs font-black ring-2 ring-amber-400/50'
+              : 'bg-white hover:bg-amber-50 text-slate-700 border-slate-200'
+          }`}
+        >
+          <Globe className="w-3.5 h-3.5" />
+          <span>Storefront Traffic &amp; Analytics</span>
+          <span className="text-[10px] font-mono bg-emerald-100 text-emerald-900 px-1.5 py-0.5 rounded font-black border border-emerald-300">
+            LIVE
+          </span>
+        </button>
       </div>
 
       {/* 3. SUB-TAB 1: WHATSAPP & SMS BROADCASTS */}
@@ -1144,6 +1163,9 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
 
       {/* 10. AD CATALOG FEEDS & TRACKING PIXELS */}
       {activeSubTab === 'ad-catalog-pixels' && <AdCatalogFeedsTab />}
+
+      {/* 11. STOREFRONT ANALYTICS & TRAFFIC ENGINE */}
+      {activeSubTab === 'storefront-analytics' && <StorefrontAnalyticsView />}
 
       {/* Multi-Device WhatsApp Linking Modal */}
       <WhatsAppDeviceModal
