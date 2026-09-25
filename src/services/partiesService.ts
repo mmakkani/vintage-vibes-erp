@@ -620,7 +620,7 @@ export class PartiesService {
         const res = await rawFetch('/api/parties/retail');
         if (res && res.ok) {
           const list = await res.json();
-          if (Array.isArray(list) && list.length > 0) return list;
+          if (Array.isArray(list)) return list;
         }
       } catch (_) {}
     }

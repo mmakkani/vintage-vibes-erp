@@ -195,7 +195,7 @@ partiesRouter.get('/', async (req, res) => {
 // -------------------------------------------------------------
 // 1b. GET /api/parties/retail - List isolated Retail CRM customers with order aggregates
 // -------------------------------------------------------------
-partiesRouter.get('/retail', async (req, res) => {
+const handleGetRetailCustomers = async (req: any, res: any) => {
   let client: Client | null = null;
   try {
     client = await getDbClient();
@@ -276,13 +276,18 @@ partiesRouter.get('/retail', async (req, res) => {
   } finally {
     if (client) await client.end().catch(() => {});
   }
-});
+};
+
+partiesRouter.get('/retail', handleGetRetailCustomers);
 
 // -------------------------------------------------------------
 // 2. GET /api/parties/:id - View single party with financial stats
 // -------------------------------------------------------------
 partiesRouter.get('/:id', async (req, res) => {
   const { id } = req.params;
+  if (id === 'retail') {
+    return handleGetRetailCustomers(req, res);
+  }
   let client: Client | null = null;
 
   try {
