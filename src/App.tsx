@@ -518,26 +518,26 @@ export default function App() {
     if (currentView === 'pos-standalone') {
       return (
         <ErrorBoundary sectionName="Counter Sale Standalone POS Register">
-          <div className="min-h-screen bg-slate-950 text-white flex flex-col p-2 sm:p-4">
+          <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col p-2 sm:p-4">
             {/* Minimal Top Cashier Bar */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 mb-2.5 flex items-center justify-between shadow-lg">
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 mb-2.5 flex items-center justify-between shadow-sm">
               <div className="flex items-center gap-3">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></span>
-                <span className="text-xs sm:text-sm font-black tracking-widest text-amber-400 uppercase">
+                <span className="text-xs sm:text-sm font-black tracking-widest text-slate-800 uppercase">
                   VINTAGE VIBES • FULLSCREEN CASH REGISTER TERMINAL
                 </span>
-                <span className="hidden sm:inline-block text-[10px] bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded-full border border-emerald-500/30">
+                <span className="hidden sm:inline-block text-[10px] bg-emerald-50 text-emerald-700 font-mono px-2 py-0.5 rounded-full border border-emerald-300 font-bold">
                   ● POS HARDWARE CONNECTED
                 </span>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-xs text-slate-400 font-mono">
-                  Cashier: <strong className="text-white">{currentUser?.name || 'Counter Lead'}</strong>
+                <span className="text-xs text-slate-500 font-mono">
+                  Cashier: <strong className="text-slate-800">{currentUser?.name || 'Counter Lead'}</strong>
                 </span>
                 <button
                   type="button"
                   onClick={() => window.close()}
-                  className="px-3 py-1 bg-red-600/90 hover:bg-red-600 text-white rounded text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                  className="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-sm"
                 >
                   ✕ Close Window
                 </button>

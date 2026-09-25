@@ -222,15 +222,16 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
 
       {/* Embedded Terminal (If toggled) */}
       {showEmbeddedPos && (
-        <div className="p-4 bg-stone-950 rounded-2xl border border-amber-500/40 shadow-2xl animate-in zoom-in-95 duration-200">
-          <div className="flex items-center justify-between pb-3 mb-3 border-b border-stone-800 text-white">
-            <span className="text-xs font-bold text-amber-300 uppercase tracking-wider">
-              ● Embedded Register Active (Continuous Gun Listener Active)
+        <div className="p-3 sm:p-4 bg-slate-50 rounded-2xl border border-slate-200 shadow-xl animate-in zoom-in-95 duration-200">
+          <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-200 text-slate-800">
+            <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>Embedded Register Active (Continuous Gun Listener Active)</span>
             </span>
             <button
               type="button"
               onClick={() => setShowEmbeddedPos(false)}
-              className="text-xs text-stone-400 hover:text-white cursor-pointer"
+              className="text-xs text-slate-500 hover:text-slate-800 cursor-pointer font-bold"
             >
               ✕ Collapse
             </button>

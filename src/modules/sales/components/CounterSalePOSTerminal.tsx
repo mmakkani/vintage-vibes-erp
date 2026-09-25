@@ -1076,27 +1076,31 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   };
 
   return (
-    <div className={`flex flex-col h-full space-y-3 animate-in fade-in duration-200 ${
-      posTheme === 'light' ? 'text-slate-800' : 'text-white'
+    <div className={`flex flex-col min-h-screen space-y-3 p-2 sm:p-3 animate-in fade-in duration-200 ${
+      posTheme === 'light' ? 'bg-slate-50 text-slate-800' : 'bg-slate-950 text-white'
     }`}>
       {/* 1. TOP STATUS & CONTROLS HUD */}
-      <div className={`border rounded-2xl p-3 sm:p-4 shadow-xl flex flex-wrap items-center justify-between gap-3 transition-colors ${
+      <div className={`border rounded-xl p-3 sm:p-4 shadow-sm flex flex-wrap items-center justify-between gap-3 transition-colors ${
         posTheme === 'light'
-          ? 'bg-white/95 border-amber-300/80 text-slate-800 shadow-sm'
+          ? 'bg-white border-slate-200 text-slate-800 shadow-sm'
           : 'bg-slate-900 border-slate-800 text-white shadow-xl'
       }`}>
         <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-amber-500/20 text-amber-500 rounded-xl border border-amber-500/40">
+          <div className={`p-2.5 rounded-xl border ${
+            posTheme === 'light'
+              ? 'bg-amber-50 text-amber-700 border-amber-200'
+              : 'bg-amber-500/20 text-amber-500 border-amber-500/40'
+          }`}>
             <ShoppingBag className="w-5 h-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h2 className={`text-sm sm:text-base font-black uppercase tracking-wider ${
-                posTheme === 'light' ? 'text-slate-900' : 'text-white'
+                posTheme === 'light' ? 'text-slate-800' : 'text-white'
               }`}>
                 Walk-In Counter Sale (POS)
               </h2>
-              <span className="text-[10px] bg-emerald-500/20 text-emerald-600 font-mono px-2 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1 font-bold">
+              <span className="text-[10px] bg-emerald-50 text-emerald-700 font-mono px-2 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1 font-bold">
                 <Wifi className="w-3 h-3 animate-pulse" />
                 {posConfig.terminalName} • ONLINE
               </span>
@@ -1104,7 +1108,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                 <button
                   type="button"
                   onClick={() => offlineQueue.syncPendingSales()}
-                  className="text-[10px] bg-amber-500/25 text-amber-800 dark:text-amber-300 font-mono px-2.5 py-0.5 rounded-full border border-amber-500/40 flex items-center gap-1 font-bold animate-pulse hover:bg-amber-500/40 cursor-pointer"
+                  className="text-[10px] bg-amber-100 text-amber-900 font-mono px-2.5 py-0.5 rounded-full border border-amber-300 flex items-center gap-1 font-bold animate-pulse hover:bg-amber-200 cursor-pointer"
                   title="Click to sync offline buffered sales to PostgreSQL"
                 >
                   <span>● {pendingOfflineCount} Offline Sales Buffered (Sync)</span>
@@ -1125,13 +1129,13 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             onClick={togglePosTheme}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition active:scale-95 cursor-pointer ${
               posTheme === 'light'
-                ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
+                ? 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
                 : 'bg-slate-800 text-amber-300 border-slate-700 hover:bg-slate-700'
             }`}
             title="Toggle Boutique Luxury Web Light / Dark Vault Mode"
           >
-            {posTheme === 'light' ? <Moon className="w-3.5 h-3.5 text-amber-700" /> : <Sun className="w-3.5 h-3.5 text-amber-400" />}
-            <span>{posTheme === 'light' ? '🌙 Dark Vault' : '☀️ Web Cream'}</span>
+            {posTheme === 'light' ? <Moon className="w-3.5 h-3.5 text-slate-600" /> : <Sun className="w-3.5 h-3.5 text-amber-400" />}
+            <span>{posTheme === 'light' ? '🌙 Dark Vault' : '☀️ Web Light'}</span>
           </button>
 
           {/* Parked Carts Button */}
@@ -1140,11 +1144,11 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             onClick={() => setShowParkedModal(true)}
             className={`relative px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition active:scale-95 cursor-pointer ${
               posTheme === 'light'
-                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
                 : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
             }`}
           >
-            <Clock className="w-3.5 h-3.5 text-amber-500" />
+            <Clock className="w-3.5 h-3.5 text-amber-600" />
             <span>Parked Carts</span>
             {parkedSales.length > 0 && (
               <span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-mono font-black">
@@ -1159,14 +1163,14 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             onClick={() => setShowManagerProfit(p => !p)}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition active:scale-95 cursor-pointer ${
               showManagerProfit
-                ? 'bg-amber-600/20 text-amber-700 border-amber-400'
+                ? 'bg-amber-100 text-amber-900 border-amber-300 font-black'
                 : posTheme === 'light'
-                ? 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-300'
-                : 'bg-slate-800 hover:bg-slate-700 text-slate-400 border-slate-700'
+                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
             }`}
             title="Toggle Live Gross Margin / Profit HUD (Manager Only)"
           >
-            {showManagerProfit ? <Eye className="w-3.5 h-3.5 text-amber-500" /> : <EyeOff className="w-3.5 h-3.5" />}
+            {showManagerProfit ? <Eye className="w-3.5 h-3.5 text-amber-600" /> : <EyeOff className="w-3.5 h-3.5 text-slate-500" />}
             <span className="hidden sm:inline">Manager Margin</span>
           </button>
 
@@ -1177,7 +1181,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             disabled={cart.length === 0}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition active:scale-95 cursor-pointer disabled:opacity-40 ${
               posTheme === 'light'
-                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
                 : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
             }`}
           >
@@ -1191,7 +1195,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             disabled={cart.length === 0}
             className={`p-2 rounded-xl border transition cursor-pointer disabled:opacity-40 ${
               posTheme === 'light'
-                ? 'bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-700 border-slate-300'
+                ? 'bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-700 border-slate-200'
                 : 'bg-slate-800 hover:bg-rose-900/50 text-slate-400 hover:text-rose-300 border-slate-700'
             }`}
             title="Clear Basket"
@@ -1206,14 +1210,14 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         {/* LEFT COLUMN: SCANNER INPUT & SCANNED GARMENTS STREAM (8 Cols) */}
         <div className="lg:col-span-8 flex flex-col space-y-3">
           {/* BARCODE GUN INPUT BAR */}
-          <div className={`border-2 rounded-2xl p-3 shadow-lg flex items-center gap-3 transition-colors ${
+          <div className={`border rounded-xl p-3 shadow-lg flex items-center gap-3 transition-colors ${
             posTheme === 'light'
-              ? 'bg-white border-amber-400/90 shadow-amber-500/10'
+              ? 'bg-white border-slate-200 shadow-slate-200/50'
               : 'bg-slate-900 border-indigo-500/50 shadow-lg'
           }`}>
-            <div className={`p-2.5 rounded-xl shadow-md ${
+            <div className={`p-2.5 rounded-xl shadow-sm ${
               posTheme === 'light'
-                ? 'bg-amber-600 text-white'
+                ? 'bg-slate-900 text-white'
                 : 'bg-indigo-600 text-white'
             }`}>
               <Barcode className="w-6 h-6" />
@@ -1234,7 +1238,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                 placeholder="Scan Barcode Gun (Laser Auto-Beep) or Enter SKU..."
                 className={`flex-1 border rounded-xl px-4 py-2.5 text-sm sm:text-base font-mono uppercase focus:outline-hidden transition-all ${
                   posTheme === 'light'
-                    ? 'bg-slate-50 border-amber-300 text-slate-900 placeholder:text-slate-400 focus:border-amber-600 focus:bg-white'
+                    ? 'bg-slate-50 border-slate-200 text-slate-800 placeholder:text-slate-400 focus:border-amber-600 focus:bg-white'
                     : 'bg-slate-950 border-slate-700 text-white placeholder:text-slate-500 focus:border-indigo-400'
                 }`}
               />
@@ -1242,9 +1246,9 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               <button
                 type="submit"
                 disabled={!barcodeInput.trim()}
-                className={`text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition shrink-0 active:scale-95 cursor-pointer ${
+                className={`text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition shrink-0 active:scale-95 cursor-pointer shadow-sm ${
                   posTheme === 'light'
-                    ? 'bg-amber-600 hover:bg-amber-500 disabled:opacity-40 shadow-sm'
+                    ? 'bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40'
                     : 'bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40'
                 }`}
               >
@@ -1276,34 +1280,34 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           )}
 
           {/* SCANNED ITEMS BASKET TABLE / LIST */}
-          <div className={`border rounded-2xl flex-1 p-3 overflow-hidden flex flex-col transition-colors ${
+          <div className={`border rounded-xl flex-1 p-3.5 overflow-hidden flex flex-col transition-colors ${
             posTheme === 'light'
-              ? 'bg-white/95 border-amber-300/80 shadow-md shadow-amber-500/5'
+              ? 'bg-white border-slate-200 shadow-lg'
               : 'bg-slate-900/90 border-slate-800'
           }`}>
             <div className={`flex items-center justify-between pb-2 border-b text-xs font-bold uppercase tracking-wider ${
-              posTheme === 'light' ? 'border-amber-200/80 text-stone-500' : 'border-slate-800 text-slate-400'
+              posTheme === 'light' ? 'border-slate-100 text-slate-500' : 'border-slate-800 text-slate-400'
             }`}>
               <span>Scanned Basket ({cart.length} Pieces)</span>
-              <span className={`font-mono ${posTheme === 'light' ? 'text-amber-700 font-bold' : 'text-indigo-400'}`}>{totalWeightGrams}g Total Net Weight</span>
+              <span className={`font-mono ${posTheme === 'light' ? 'text-slate-800 font-bold' : 'text-indigo-400'}`}>{totalWeightGrams}g Total Net Weight</span>
             </div>
 
-            <div className={`flex-1 overflow-y-auto mt-2 space-y-1 pr-1 max-h-[520px] ${
-              posTheme === 'light' ? 'divide-y divide-amber-100' : 'divide-y divide-slate-800/60'
+            <div className={`flex-1 overflow-y-auto mt-2 space-y-1.5 pr-1 max-h-[520px] ${
+              posTheme === 'light' ? 'divide-y divide-slate-100' : 'divide-y divide-slate-800/60'
             }`}>
               {cart.length === 0 ? (
                 <div className={`h-64 flex flex-col items-center justify-center space-y-2 select-none ${
-                  posTheme === 'light' ? 'text-stone-400' : 'text-slate-500'
+                  posTheme === 'light' ? 'text-slate-400' : 'text-slate-500'
                 }`}>
                   <div className={`w-16 h-16 rounded-full border flex items-center justify-center ${
                     posTheme === 'light'
-                      ? 'bg-amber-50/80 border-amber-200 text-amber-600'
+                      ? 'bg-slate-50 border-slate-200 text-slate-400'
                       : 'bg-slate-950 border-slate-800 text-slate-600'
                   }`}>
                     <Barcode className="w-8 h-8" />
                   </div>
-                  <p className={`text-sm font-bold ${posTheme === 'light' ? 'text-stone-700' : 'text-slate-400'}`}>Basket is Empty</p>
-                  <p className={`text-xs max-w-xs text-center ${posTheme === 'light' ? 'text-stone-500' : 'text-slate-600'}`}>
+                  <p className={`text-sm font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-slate-400'}`}>Basket is Empty</p>
+                  <p className={`text-xs max-w-xs text-center ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-600'}`}>
                     Point your USB or Bluetooth barcode gun at any garment tag to instantly add it to this counter checkout.
                   </p>
                 </div>
@@ -1311,9 +1315,9 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                 (cart || []).map((item, idx) => (
                   <div
                     key={`${item.piece.barcode}-${idx}`}
-                    className={`py-2.5 px-2.5 rounded-xl border flex items-center justify-between gap-3 transition ${
+                    className={`py-2.5 px-3 rounded-xl border flex items-center justify-between gap-3 transition ${
                       posTheme === 'light'
-                        ? 'bg-stone-50/90 hover:bg-amber-50/50 border-stone-200 hover:border-amber-300 shadow-xs'
+                        ? 'bg-slate-50/80 hover:bg-slate-100/90 border-slate-200 shadow-xs'
                         : 'bg-slate-950/60 hover:bg-slate-950 border-transparent hover:border-slate-800'
                     }`}
                   >
@@ -1323,32 +1327,32 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                       <div
                         onClick={() => item.piece.frontImageUrl && setPreviewPhoto(item.piece.frontImageUrl)}
                         className={`w-12 h-12 rounded-lg border overflow-hidden shrink-0 flex items-center justify-center cursor-pointer hover:opacity-80 transition ${
-                          posTheme === 'light' ? 'bg-white border-stone-200' : 'bg-slate-900 border-slate-800'
+                          posTheme === 'light' ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800'
                         }`}
                       >
                         {item.piece.frontImageUrl ? (
                           <img src={item.piece.frontImageUrl} alt="Front" className="w-full h-full object-cover" />
                         ) : (
-                          <span className={`text-[10px] font-mono ${posTheme === 'light' ? 'text-stone-400' : 'text-slate-600'}`}>No Pic</span>
+                          <span className={`text-[10px] font-mono ${posTheme === 'light' ? 'text-slate-400' : 'text-slate-600'}`}>No Pic</span>
                         )}
                       </div>
 
                       <div className="space-y-0.5">
                         <div className="flex items-center gap-2">
                           <span className={`font-bold text-xs sm:text-sm ${
-                            posTheme === 'light' ? 'text-stone-900' : 'text-white'
+                            posTheme === 'light' ? 'text-slate-900' : 'text-white'
                           }`}>
                             {item.piece.brandName} {item.piece.itemName}
                           </span>
-                          <span className="text-[10px] bg-amber-500/20 text-amber-700 dark:text-amber-300 px-1.5 py-0.2 rounded font-mono font-bold border border-amber-300/40">
+                          <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-mono font-bold border border-slate-200">
                             {item.piece.sizeScanned || 'M'}
                           </span>
-                          <span className="text-[9px] bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.2 rounded font-bold border border-emerald-300/40">
+                          <span className="text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-bold border border-emerald-200">
                             {item.piece.labelGrade || 'Grade A'}
                           </span>
                         </div>
                         <div className={`flex items-center gap-2 text-[10px] font-mono ${
-                          posTheme === 'light' ? 'text-stone-500' : 'text-slate-400'
+                          posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'
                         }`}>
                           <span>SKU: {item.piece.barcode}</span>
                           <span>•</span>
@@ -1373,9 +1377,9 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                         title={item.isGift ? "Undo Complimentary Gift (Restore Price)" : "Mark as Complimentary Free Gift (AED 0)"}
                         className={`px-2 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 border cursor-pointer ${
                           item.isGift
-                            ? 'bg-amber-500 text-stone-900 border-amber-400 shadow-sm shadow-amber-500/30 font-black'
+                            ? 'bg-amber-500 text-slate-900 border-amber-400 shadow-sm font-black'
                             : posTheme === 'light'
-                              ? 'bg-stone-100 text-stone-600 border-stone-200 hover:bg-amber-50 hover:text-amber-800 hover:border-amber-300'
+                              ? 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200 hover:text-slate-800'
                               : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-amber-950/40 hover:text-amber-300 hover:border-amber-800/40'
                         }`}
                       >
@@ -1390,18 +1394,18 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                               <span>FREE</span>
                               <span className="text-[10px]">🎁</span>
                             </div>
-                            <div className={`text-[9px] line-through font-mono ${posTheme === 'light' ? 'text-stone-400' : 'text-slate-500'}`}>
+                            <div className={`text-[9px] line-through font-mono ${posTheme === 'light' ? 'text-slate-400' : 'text-slate-500'}`}>
                               AED {(item.originalPrice ?? 0).toFixed(2)}
                             </div>
                           </>
                         ) : (
                           <>
                             <div className={`text-sm sm:text-base font-black font-mono ${
-                              posTheme === 'light' ? 'text-emerald-700' : 'text-emerald-400'
+                              posTheme === 'light' ? 'text-slate-900' : 'text-emerald-400'
                             }`}>
                               AED {item.sellingPrice.toFixed(2)}
                             </div>
-                            <div className={`text-[9px] ${posTheme === 'light' ? 'text-stone-400' : 'text-slate-500'}`}>VAT Incl.</div>
+                            <div className={`text-[9px] ${posTheme === 'light' ? 'text-slate-400' : 'text-slate-500'}`}>VAT Incl.</div>
                           </>
                         )}
                       </div>
@@ -1409,9 +1413,9 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                       <button
                         type="button"
                         onClick={() => handleRemoveItem(idx)}
-                        className={`p-1.5 rounded-lg transition ${
+                        className={`p-1.5 rounded-lg transition cursor-pointer ${
                           posTheme === 'light'
-                            ? 'text-stone-400 hover:text-rose-600 hover:bg-rose-50'
+                            ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
                             : 'text-slate-500 hover:text-rose-400 hover:bg-rose-950/40'
                         }`}
                         title="Remove piece"
@@ -1431,14 +1435,14 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           {/* CUSTOMER / VIP KHATA SELECTOR WITH AI SCANNER & QUICK INSIGHTS */}
           <div
             ref={customerDropdownRef}
-            className={`border rounded-2xl p-3 space-y-2.5 transition-colors relative ${
+            className={`border rounded-xl p-3.5 space-y-2.5 transition-colors relative ${
               posTheme === 'light'
-                ? 'bg-white/95 border-amber-300/80 text-stone-900 shadow-sm'
+                ? 'bg-white border-slate-200 text-slate-800 shadow-lg'
                 : 'bg-slate-900 border-slate-800 text-white'
             }`}
           >
             <div className={`flex items-center justify-between text-xs font-bold ${
-              posTheme === 'light' ? 'text-stone-700' : 'text-slate-300'
+              posTheme === 'light' ? 'text-slate-800' : 'text-slate-300'
             }`}>
               <span className="flex items-center gap-1.5">
                 <span>Customer / CRM Khata:</span>
@@ -1453,11 +1457,15 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                     setCardScannerError(null);
                     setCardFormData({ name: '', phone: '', email: '', company: '', address: '' });
                   }}
-                  className="px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 border border-amber-500/40 rounded-lg text-[11px] font-bold flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-2xs"
+                  className={`px-2.5 py-1 border rounded-lg text-[11px] font-bold flex items-center gap-1 transition active:scale-95 cursor-pointer ${
+                    posTheme === 'light'
+                      ? 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'
+                      : 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/40'
+                  }`}
                   title="Scan Business / Visiting Card with Gemini AI Vision"
                 >
-                  <Camera className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                  <Sparkles className="w-3 h-3 text-amber-500" />
+                  <Camera className={`w-3.5 h-3.5 ${posTheme === 'light' ? 'text-indigo-600' : 'text-amber-400'}`} />
+                  <Sparkles className={`w-3 h-3 ${posTheme === 'light' ? 'text-indigo-500' : 'text-amber-500'}`} />
                   <span>Scan Card (AI)</span>
                 </button>
 
@@ -1481,7 +1489,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               /* SELECTED CUSTOMER CARD & QUICK INSIGHTS */
               <div className={`p-3 rounded-xl border flex items-start justify-between gap-2 ${
                 posTheme === 'light'
-                  ? 'bg-amber-50/70 border-amber-300/80 text-stone-900'
+                  ? 'bg-slate-50 border-slate-200 text-slate-800'
                   : 'bg-slate-800/80 border-amber-500/30 text-white'
               }`}>
                 <div className="space-y-1 flex-1 min-w-0">
@@ -1489,15 +1497,21 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                     <span className="text-xs font-black truncate">
                       ⭐ {selectedCustomer.name}
                     </span>
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-full font-mono font-bold bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono font-bold border ${
+                      posTheme === 'light'
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                        : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                    }`}>
                       {(selectedCustomer as any).party_type === 'RETAIL_CUSTOMER' ? 'RETAIL' : 'VIP CLIENT'}
                     </span>
                     {selectedCustomer.code && (
-                      <span className="text-[10px] text-stone-400 font-mono">({selectedCustomer.code})</span>
+                      <span className={`text-[10px] font-mono ${posTheme === 'light' ? 'text-slate-400' : 'text-stone-400'}`}>({selectedCustomer.code})</span>
                     )}
                   </div>
 
-                  <div className="text-[11px] text-stone-600 dark:text-slate-400 flex items-center gap-3 flex-wrap">
+                  <div className={`text-[11px] flex items-center gap-3 flex-wrap ${
+                    posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'
+                  }`}>
                     {selectedCustomer.phone && (
                       <span className="font-mono">📞 {selectedCustomer.phone}</span>
                     )}
@@ -1510,17 +1524,21 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   <div className="pt-0.5">
                     {loadingCustomerInsights ? (
                       <div className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
-                        <Loader2 className="w-3 h-3 animate-spin text-amber-500" />
+                        <Loader2 className="w-3 h-3 animate-spin text-indigo-500" />
                         <span>Fetching CRM purchase history...</span>
                       </div>
                     ) : customerInsights ? (
-                      <div className="inline-flex items-center gap-2 text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30 font-mono">
+                      <div className={`inline-flex items-center gap-2 text-[10px] font-bold px-2 py-0.5 rounded-md border font-mono ${
+                        posTheme === 'light'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                      }`}>
                         <span>💎 Total Spent: AED {customerInsights.totalSpent.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                         <span>•</span>
                         <span>{customerInsights.totalInvoices} Orders</span>
                       </div>
                     ) : (
-                      <div className="text-[10px] text-stone-500 font-mono">Control Khata: 1130-05 (Walk In Customer)</div>
+                      <div className={`text-[10px] font-mono ${posTheme === 'light' ? 'text-slate-400' : 'text-stone-500'}`}>Control Khata: 1130-05 (Walk In Customer)</div>
                     )}
                   </div>
                 </div>
@@ -1535,7 +1553,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   }}
                   className={`p-1.5 rounded-lg text-xs font-bold transition shrink-0 cursor-pointer ${
                     posTheme === 'light'
-                      ? 'text-stone-400 hover:text-stone-700 hover:bg-stone-200/60'
+                      ? 'text-slate-400 hover:text-slate-700 hover:bg-slate-200/60'
                       : 'text-slate-400 hover:text-white hover:bg-slate-700'
                   }`}
                   title="Change Customer"
@@ -1548,7 +1566,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               <div className="relative">
                 <div className="relative flex items-center">
                   <Search className={`w-3.5 h-3.5 absolute left-3 pointer-events-none ${
-                    posTheme === 'light' ? 'text-stone-400' : 'text-slate-500'
+                    posTheme === 'light' ? 'text-slate-400' : 'text-slate-500'
                   }`} />
                   <input
                     type="text"
@@ -1561,21 +1579,23 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                     placeholder="Search customer (Name, Phone +971, Company)..."
                     className={`w-full border rounded-xl pl-9 pr-8 py-2 text-xs font-medium focus:outline-hidden transition ${
                       posTheme === 'light'
-                        ? 'bg-stone-50 border-stone-300 text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:bg-white'
+                        ? 'bg-slate-50 border-slate-200 text-slate-800 placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white'
                         : 'bg-slate-950 border-slate-700 text-white placeholder:text-slate-500 focus:border-indigo-400'
                     }`}
                   />
                   <ChevronDown
                     onClick={() => setIsCustomerDropdownOpen(prev => !prev)}
-                    className="w-4 h-4 absolute right-2.5 text-stone-400 cursor-pointer"
+                    className={`w-4 h-4 absolute right-2.5 cursor-pointer ${
+                      posTheme === 'light' ? 'text-slate-400' : 'text-stone-400'
+                    }`}
                   />
                 </div>
 
                 {/* Dropdown Menu Popover */}
                 {isCustomerDropdownOpen && (
-                  <div className={`absolute top-full left-0 right-0 mt-1.5 max-h-56 overflow-y-auto rounded-xl border-2 shadow-2xl z-30 space-y-0.5 p-1 ${
+                  <div className={`absolute top-full left-0 right-0 mt-1.5 max-h-56 overflow-y-auto rounded-xl border shadow-xl z-30 space-y-0.5 p-1 ${
                     posTheme === 'light'
-                      ? 'bg-white border-amber-400 text-slate-950 divide-y divide-amber-100'
+                      ? 'bg-white border-slate-200 text-slate-800 divide-y divide-slate-100'
                       : 'bg-slate-950 border-slate-700 text-white divide-y divide-slate-800'
                   }`}>
                     {/* Default Option: Standard Walk-In */}
@@ -1590,21 +1610,21 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                       className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold flex items-center justify-between transition cursor-pointer ${
                         !selectedCustomer
                           ? posTheme === 'light'
-                            ? 'bg-amber-100/80 text-slate-950 border-l-4 border-l-amber-600'
+                            ? 'bg-slate-100 text-slate-900 border-l-4 border-l-emerald-600'
                             : 'bg-slate-800 text-white border-l-4 border-l-amber-400'
                           : posTheme === 'light'
-                          ? 'hover:bg-amber-50 text-slate-950'
+                          ? 'hover:bg-slate-50 text-slate-800'
                           : 'hover:bg-slate-900 text-slate-200'
                       }`}
                     >
                       <span className="flex items-center gap-2">
                         <span className="text-sm">👤</span>
-                        <span className={posTheme === 'light' ? 'text-slate-950 font-black' : 'text-white font-black'}>
+                        <span className={posTheme === 'light' ? 'text-slate-900 font-bold' : 'text-white font-bold'}>
                           Standard Walk-In Retail Customer
                         </span>
                       </span>
                       <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
-                        posTheme === 'light' ? 'bg-stone-200 text-slate-800' : 'bg-slate-800 text-slate-300'
+                        posTheme === 'light' ? 'bg-slate-200 text-slate-700' : 'bg-slate-800 text-slate-300'
                       }`}>
                         1130-05
                       </span>
@@ -1629,7 +1649,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                             setIsCustomerDropdownOpen(false);
                           }}
                           className={`text-xs font-bold hover:underline cursor-pointer ${
-                            posTheme === 'light' ? 'text-amber-700 font-extrabold' : 'text-amber-400 font-bold'
+                            posTheme === 'light' ? 'text-indigo-600 font-bold' : 'text-amber-400 font-bold'
                           }`}
                         >
                           + Quick Add or Scan Visiting Card
@@ -1647,18 +1667,18 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                           }}
                           className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
                             posTheme === 'light'
-                              ? 'hover:bg-amber-50/90 text-slate-950 border-b border-stone-100 last:border-b-0'
+                              ? 'hover:bg-slate-50 text-slate-800 border-b border-slate-100 last:border-b-0'
                               : 'hover:bg-slate-900 text-white border-b border-slate-900 last:border-b-0'
                           }`}
                         >
                           <div className="truncate mr-2">
-                            <div className={`font-black text-xs truncate ${
-                              posTheme === 'light' ? 'text-slate-950' : 'text-white'
+                            <div className={`font-bold text-xs truncate ${
+                              posTheme === 'light' ? 'text-slate-900' : 'text-white'
                             }`}>
                               ⭐ {p.name} {((p as any).company_name && (p as any).company_name !== p.name) ? `(${(p as any).company_name})` : ''}
                             </div>
-                            <div className={`text-[11px] font-mono font-bold mt-0.5 flex items-center gap-2 ${
-                              posTheme === 'light' ? 'text-slate-700' : 'text-slate-300'
+                            <div className={`text-[11px] font-mono mt-0.5 flex items-center gap-2 ${
+                              posTheme === 'light' ? 'text-slate-500' : 'text-slate-300'
                             }`}>
                               {p.phone ? <span>📞 {p.phone}</span> : <span className="opacity-60">No phone</span>}
                               {p.code ? <span>• {p.code}</span> : null}
@@ -1666,7 +1686,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                           </div>
                           <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold shrink-0 border ${
                             posTheme === 'light'
-                              ? 'bg-amber-100 text-amber-950 border-amber-300'
+                              ? 'bg-slate-100 text-slate-700 border-slate-200'
                               : 'bg-amber-950/80 text-amber-300 border-amber-500/50'
                           }`}>
                             {(p as any).party_type === 'RETAIL_CUSTOMER' ? 'RETAIL' : 'VIP'}
@@ -1681,9 +1701,9 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           </div>
 
           {/* GIFT ORDER & LUXURY PACKAGING CARD */}
-          <div className={`border rounded-2xl p-3.5 space-y-2.5 transition-colors ${
+          <div className={`border rounded-xl p-3.5 space-y-2.5 transition-colors ${
             posTheme === 'light'
-              ? 'bg-amber-50/50 border-amber-300/80 text-stone-900 shadow-sm'
+              ? 'bg-white border-slate-200 text-slate-800 shadow-lg'
               : 'bg-slate-900 border-amber-500/30 text-white'
           }`}>
             <div className="flex items-center justify-between">
@@ -1692,25 +1712,31 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   type="checkbox"
                   checked={isGiftOrder}
                   onChange={(e) => setIsGiftOrder(e.target.checked)}
-                  className="w-4 h-4 rounded text-amber-500 focus:ring-amber-400 accent-amber-500 cursor-pointer"
+                  className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 accent-emerald-600 cursor-pointer"
                 />
-                <span className="flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
-                  <Gift className="w-4 h-4 text-amber-500" />
+                <span className={`flex items-center gap-1.5 ${posTheme === 'light' ? 'text-slate-800' : 'text-amber-300'}`}>
+                  <Gift className={`w-4 h-4 ${posTheme === 'light' ? 'text-emerald-600' : 'text-amber-500'}`} />
                   <span>Mark as Gift Order</span>
                 </span>
               </label>
 
               {isGiftOrder && (
-                <span className="text-[10px] bg-amber-500/20 text-amber-800 dark:text-amber-200 px-2 py-0.5 rounded-full font-bold border border-amber-400/40">
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
+                  posTheme === 'light'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-amber-500/20 text-amber-200 border-amber-400/40'
+                }`}>
                   Gift Slip Ready
                 </span>
               )}
             </div>
 
             {isGiftOrder && (
-              <div className="space-y-2.5 pt-2 border-t border-amber-200/70 dark:border-amber-500/20 animate-in fade-in">
+              <div className={`space-y-2.5 pt-2 border-t animate-in fade-in ${
+                posTheme === 'light' ? 'border-slate-100' : 'border-slate-800'
+              }`}>
                 <div>
-                  <label className={`text-[10px] font-bold block mb-1 ${posTheme === 'light' ? 'text-stone-600' : 'text-slate-400'}`}>
+                  <label className={`text-[10px] font-bold block mb-1 ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
                     Recipient Dedication / Gift Note (Printed on Gift Slip):
                   </label>
                   <input
@@ -1720,7 +1746,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                     placeholder="e.g. For Sarah - Happy Birthday! From Alex"
                     className={`w-full px-2.5 py-1.5 text-xs rounded-xl border outline-none font-medium ${
                       posTheme === 'light'
-                        ? 'bg-white border-amber-300 text-stone-900 focus:border-amber-500'
+                        ? 'bg-slate-50 border-slate-200 text-slate-800 focus:border-emerald-500 focus:bg-white'
                         : 'bg-slate-950 border-slate-700 text-white focus:border-amber-400'
                     }`}
                   />
@@ -1728,45 +1754,51 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
                 <label className={`flex items-center justify-between p-2 rounded-xl border cursor-pointer select-none transition ${
                   includeGiftBox
-                    ? 'border-amber-400 bg-amber-100/60 dark:bg-amber-950/40'
-                    : 'border-amber-200/60 bg-white/70 dark:bg-slate-950/60'
+                    ? posTheme === 'light'
+                      ? 'border-emerald-300 bg-emerald-50/60'
+                      : 'border-amber-400 bg-amber-100/60 dark:bg-amber-950/40'
+                    : posTheme === 'light'
+                    ? 'border-slate-200 bg-slate-50'
+                    : 'border-slate-800 bg-slate-950/60'
                 }`}>
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
                       checked={includeGiftBox}
                       onChange={(e) => setIncludeGiftBox(e.target.checked)}
-                      className="w-4 h-4 rounded text-amber-500 accent-amber-500 cursor-pointer"
+                      className="w-4 h-4 rounded text-emerald-600 accent-emerald-600 cursor-pointer"
                     />
                     <span className="text-xs font-semibold">Luxury Boutique Gift Box & Ribbon</span>
                   </div>
-                  <span className="text-xs font-mono font-bold text-amber-700 dark:text-amber-300">+AED 15.00</span>
+                  <span className={`text-xs font-mono font-bold ${
+                    posTheme === 'light' ? 'text-emerald-700' : 'text-amber-300'
+                  }`}>+AED 15.00</span>
                 </label>
               </div>
             )}
           </div>
 
           {/* FINANCIAL SUMMARY TOTALS CARD */}
-          <div className={`border rounded-2xl p-4 shadow-xl space-y-3 transition-colors ${
+          <div className={`border rounded-xl p-4 shadow-lg space-y-3 transition-colors ${
             posTheme === 'light'
-              ? 'bg-white/95 border-amber-300/80 text-stone-900 shadow-amber-500/5'
+              ? 'bg-white border-slate-200 text-slate-800'
               : 'bg-slate-900 border-slate-800 text-white shadow-xl'
           }`}>
             <h3 className={`text-xs font-bold uppercase tracking-wider pb-2 border-b ${
-              posTheme === 'light' ? 'text-stone-500 border-stone-200' : 'text-slate-400 border-slate-800'
+              posTheme === 'light' ? 'text-slate-500 border-slate-100' : 'text-slate-400 border-slate-800'
             }`}>
               Basket Summary & Taxes
             </h3>
 
             <div className="space-y-2 text-xs">
-              <div className={`flex justify-between ${posTheme === 'light' ? 'text-stone-600' : 'text-slate-300'}`}>
+              <div className={`flex justify-between ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-300'}`}>
                 <span>Total Items</span>
-                <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-stone-900' : 'text-white'}`}>{cart.length} Pieces</span>
+                <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-white'}`}>{cart.length} Pieces</span>
               </div>
 
-              <div className={`flex justify-between ${posTheme === 'light' ? 'text-stone-600' : 'text-slate-300'}`}>
+              <div className={`flex justify-between ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-300'}`}>
                 <span>Subtotal (Net)</span>
-                <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-stone-900' : 'text-white'}`}>AED {subTotal.toFixed(2)}</span>
+                <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-white'}`}>AED {subTotal.toFixed(2)}</span>
               </div>
 
               {discountTotal > 0 && (
@@ -1776,13 +1808,13 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                 </div>
               )}
 
-              <div className={`flex justify-between ${posTheme === 'light' ? 'text-stone-600' : 'text-slate-300'}`}>
+              <div className={`flex justify-between ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-300'}`}>
                 <span>UAE VAT (5.0%)</span>
-                <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-amber-700' : 'text-indigo-300'}`}>AED {vatAmount.toFixed(2)}</span>
+                <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-indigo-300'}`}>AED {vatAmount.toFixed(2)}</span>
               </div>
 
               {giftBoxFee > 0 && (
-                <div className="flex justify-between text-amber-600 dark:text-amber-400 font-semibold">
+                <div className={`flex justify-between font-semibold ${posTheme === 'light' ? 'text-emerald-700' : 'text-amber-400'}`}>
                   <span className="flex items-center gap-1">
                     <Gift className="w-3.5 h-3.5" />
                     <span>Luxury Gift Box</span>
@@ -1793,11 +1825,11 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
               <div className={`pt-2 border-t flex justify-between items-baseline ${
                 posTheme === 'light'
-                  ? 'border-amber-200 bg-amber-50/70 p-2.5 rounded-xl border'
+                  ? 'border-emerald-200 bg-emerald-50/80 p-3 rounded-xl border'
                   : 'border-slate-800'
               }`}>
                 <span className={`text-sm font-black uppercase ${
-                  posTheme === 'light' ? 'text-amber-900' : 'text-amber-300'
+                  posTheme === 'light' ? 'text-emerald-950' : 'text-amber-300'
                 }`}>Grand Total:</span>
                 <span className={`text-2xl font-black font-mono ${
                   posTheme === 'light' ? 'text-emerald-700' : 'text-emerald-400'
@@ -1811,7 +1843,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             {showManagerProfit && (
               <div className={`p-2.5 rounded-xl text-[11px] space-y-1 animate-in fade-in border ${
                 posTheme === 'light'
-                  ? 'bg-amber-50 border-amber-300 text-amber-900'
+                  ? 'bg-slate-50 border-slate-200 text-slate-800'
                   : 'bg-amber-950/30 border-amber-500/40 text-amber-200'
               }`}>
                 <div className="flex justify-between font-semibold">
@@ -1819,7 +1851,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   <span className="font-mono font-bold">AED {totalCogs.toFixed(2)}</span>
                 </div>
                 <div className={`flex justify-between font-bold text-xs pt-1 border-t ${
-                  posTheme === 'light' ? 'border-amber-200 text-emerald-800' : 'border-amber-500/20 text-emerald-300'
+                  posTheme === 'light' ? 'border-slate-200 text-emerald-700' : 'border-amber-500/20 text-emerald-300'
                 }`}>
                   <span>Live Gross Margin:</span>
                   <span className="font-mono">+AED {grossProfit.toFixed(2)} ({grossMarginPercent}%)</span>
@@ -1835,9 +1867,9 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   setTempDiscountVal(String(discountTotal));
                   setShowDiscountModal(true);
                 }}
-                className={`w-full py-1.5 rounded-xl text-xs font-semibold border flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                className={`w-full py-2 rounded-xl text-xs font-semibold border flex items-center justify-center gap-1.5 transition cursor-pointer ${
                   posTheme === 'light'
-                    ? 'bg-stone-100 hover:bg-stone-200 text-stone-700 border-stone-300'
+                    ? 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
                     : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
                 }`}
               >
@@ -1859,13 +1891,13 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           </div>
 
           {/* HARDWARE STATUS POD */}
-          <div className={`border rounded-2xl p-3 space-y-2 transition-colors ${
+          <div className={`border rounded-xl p-3.5 space-y-2 transition-colors ${
             posTheme === 'light'
-              ? 'bg-white/95 border-amber-300/80 text-stone-900 shadow-sm'
+              ? 'bg-white border-slate-200 text-slate-800 shadow-lg'
               : 'bg-slate-900 border-slate-800 text-white'
           }`}>
             <div className={`flex items-center justify-between text-[11px] ${
-              posTheme === 'light' ? 'text-stone-600' : 'text-slate-400'
+              posTheme === 'light' ? 'text-slate-600' : 'text-slate-400'
             }`}>
               <span className="flex items-center gap-1.5 font-bold">
                 <Radio className="w-3.5 h-3.5 text-emerald-500" />
@@ -1873,7 +1905,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               </span>
               <span className="text-emerald-600 dark:text-emerald-400 font-mono font-bold">PAX / Sunmi P2</span>
             </div>
-            <p className={`text-[10px] ${posTheme === 'light' ? 'text-stone-500' : 'text-slate-500'}`}>
+            <p className={`text-[10px] ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-500'}`}>
               Terminal: {posConfig.terminalId} • Ready to receive NFC Apple Pay & Contactless Card taps.
             </p>
           </div>
@@ -1882,34 +1914,34 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       {/* 3. MULTI-MODE PAYMENT POPUP MODAL */}
       {showPaymentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-3 animate-in fade-in duration-200">
           <div className={`border w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-colors ${
             posTheme === 'light'
-              ? 'bg-white border-amber-300 text-stone-900'
+              ? 'bg-white border-slate-200 text-slate-800'
               : 'bg-slate-950 border-slate-800 text-white'
           }`}>
             {/* MODAL HEADER */}
             <div className={`p-4 border-b flex items-center justify-between ${
               posTheme === 'light'
-                ? 'bg-amber-50/60 border-stone-200'
+                ? 'bg-slate-50 border-slate-200'
                 : 'bg-slate-900 border-slate-800'
             }`}>
               <div>
                 <h3 className={`text-base font-black uppercase tracking-wider ${
-                  posTheme === 'light' ? 'text-stone-900' : 'text-white'
+                  posTheme === 'light' ? 'text-slate-800' : 'text-white'
                 }`}>
                   Select Payment Method
                 </h3>
-                <p className={`text-xs ${posTheme === 'light' ? 'text-stone-600' : 'text-slate-400'}`}>
+                <p className={`text-xs ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
                   Total Due: <span className="text-emerald-600 dark:text-emerald-400 font-mono font-black text-sm">AED {grandTotal.toFixed(2)}</span> (VAT Included)
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setShowPaymentModal(false)}
-                className={`p-1.5 rounded-lg ${
+                className={`p-1.5 rounded-lg cursor-pointer transition ${
                   posTheme === 'light'
-                    ? 'text-stone-400 hover:text-stone-900 hover:bg-stone-100'
+                    ? 'text-slate-400 hover:text-slate-800 hover:bg-slate-100'
                     : 'text-slate-400 hover:text-white hover:bg-slate-800'
                 }`}
               >
@@ -1920,7 +1952,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             {/* PAYMENT TABS: CASH vs CARD vs BANK QR vs SPLIT */}
             <div className={`grid grid-cols-4 p-2 gap-1.5 border-b ${
               posTheme === 'light'
-                ? 'bg-stone-100/70 border-stone-200'
+                ? 'bg-slate-50 border-slate-200'
                 : 'bg-slate-900/70 border-slate-800'
             }`}>
               <button
@@ -1930,7 +1962,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   paymentMode === 'CASH'
                     ? 'bg-emerald-600 text-white shadow-md'
                     : posTheme === 'light'
-                    ? 'bg-white text-stone-600 hover:text-stone-900 border border-stone-200'
+                    ? 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200'
                     : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
                 }`}
               >
@@ -1948,7 +1980,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   paymentMode === 'CARD_POS'
                     ? 'bg-indigo-600 text-white shadow-md'
                     : posTheme === 'light'
-                    ? 'bg-white text-stone-600 hover:text-stone-900 border border-stone-200'
+                    ? 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200'
                     : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
                 }`}
               >
@@ -1963,7 +1995,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   paymentMode === 'BANK_QR'
                     ? 'bg-purple-600 text-white shadow-md'
                     : posTheme === 'light'
-                    ? 'bg-white text-stone-600 hover:text-stone-900 border border-stone-200'
+                    ? 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200'
                     : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
                 }`}
               >
@@ -1978,7 +2010,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   paymentMode === 'SPLIT'
                     ? 'bg-amber-600 text-white shadow-md'
                     : posTheme === 'light'
-                    ? 'bg-white text-stone-600 hover:text-stone-900 border border-stone-200'
+                    ? 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200'
                     : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
                 }`}
               >
@@ -1992,10 +2024,10 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               {grandTotal === 0 && (
                 <div className={`p-3 rounded-xl border text-xs font-semibold flex items-center gap-2.5 ${
                   posTheme === 'light'
-                    ? 'bg-amber-100/70 border-amber-300 text-amber-900'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
                     : 'bg-amber-950/40 border-amber-500/40 text-amber-200'
                 }`}>
-                  <Gift className="w-5 h-5 text-amber-500 shrink-0" />
+                  <Gift className="w-5 h-5 text-emerald-600 shrink-0" />
                   <span>🎁 <strong>100% Free Complimentary Giveaway:</strong> Customer payment is AED 0.00. Clicking &apos;Confirm Complimentary Giveaway&apos; below will mark the barcode as sold/gifted and relieve inventory stock.</span>
                 </div>
               )}
@@ -2004,10 +2036,10 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               {paymentMode === 'CASH' && (
                 <div className="space-y-3">
                   <div className={`flex items-center justify-between text-xs ${
-                    posTheme === 'light' ? 'text-stone-600' : 'text-slate-300'
+                    posTheme === 'light' ? 'text-slate-600' : 'text-slate-300'
                   }`}>
                     <span>Quick Currency Note Buttons:</span>
-                    <span className="font-mono font-bold text-amber-600 dark:text-amber-300">Grand Total: AED {grandTotal.toFixed(2)}</span>
+                    <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-amber-300'}`}>Grand Total: AED {grandTotal.toFixed(2)}</span>
                   </div>
 
                   {/* Fast Note AED Buttons */}
@@ -2025,7 +2057,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                         onClick={() => setCashTendered(String(n.val))}
                         className={`py-2 rounded-xl text-xs font-bold transition active:scale-95 cursor-pointer border ${
                           posTheme === 'light'
-                            ? 'bg-stone-50 hover:bg-stone-100 border-stone-200 hover:border-emerald-500 text-stone-800 shadow-xs'
+                            ? 'bg-slate-50 hover:bg-slate-100 border-slate-200 hover:border-emerald-500 text-slate-800 shadow-xs'
                             : 'bg-slate-900 hover:bg-slate-800 border-slate-700 hover:border-emerald-500 text-white'
                         }`}
                       >
@@ -2036,7 +2068,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
                   {/* Tendered Input & Change Box */}
                   <div className="space-y-1">
-                    <label className={`text-xs font-semibold ${posTheme === 'light' ? 'text-stone-600' : 'text-slate-400'}`}>
+                    <label className={`text-xs font-semibold ${posTheme === 'light' ? 'text-slate-600' : 'text-slate-400'}`}>
                       Cash Tendered by Customer (AED):
                     </label>
                     <input
@@ -2046,7 +2078,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                       onChange={e => setCashTendered(e.target.value)}
                       className={`w-full border-2 rounded-xl p-3 text-xl font-mono font-bold focus:outline-hidden transition ${
                         posTheme === 'light'
-                          ? 'bg-stone-50 border-stone-300 text-stone-900 focus:border-emerald-600 focus:bg-white'
+                          ? 'bg-slate-50 border-slate-200 text-slate-900 focus:border-emerald-600 focus:bg-white'
                           : 'bg-slate-900 border-slate-700 focus:border-emerald-500 text-white'
                       }`}
                     />
@@ -2054,7 +2086,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
                   <div className={`p-3 rounded-xl border flex items-center justify-between ${
                     posTheme === 'light'
-                      ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
                       : 'bg-emerald-950/40 border-emerald-500/40'
                   }`}>
                     <div>
@@ -2077,33 +2109,41 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               {/* OPTION 2: SMART POS CARD MACHINE (NFC / APPLE PAY / CHIP) */}
               {paymentMode === 'CARD_POS' && (
                 <div className="space-y-3 text-center py-2">
-                  <div className="w-16 h-16 rounded-full bg-indigo-950 border-2 border-indigo-500/60 flex items-center justify-center mx-auto text-indigo-400">
+                  <div className={`w-16 h-16 rounded-full border-2 flex items-center justify-center mx-auto ${
+                    posTheme === 'light'
+                      ? 'bg-indigo-50 border-indigo-200 text-indigo-600'
+                      : 'bg-indigo-950 border-indigo-500/60 text-indigo-400'
+                  }`}>
                     <CreditCard className="w-8 h-8 animate-pulse" />
                   </div>
 
                   <div>
-                    <h4 className={`text-sm font-bold ${posTheme === 'light' ? 'text-stone-900' : 'text-white'}`}>
+                    <h4 className={`text-sm font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-white'}`}>
                       Linked Terminal: {posConfig.terminalName}
                     </h4>
-                    <p className={`text-xs ${posTheme === 'light' ? 'text-stone-600' : 'text-slate-400'}`}>
-                      Terminal ID: <span className="font-mono text-indigo-600 dark:text-indigo-300 font-bold">{posConfig.terminalId}</span> • IP: <span className="font-mono">{posConfig.ipAddress}</span>
+                    <p className={`text-xs ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
+                      Terminal ID: <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-indigo-600' : 'text-indigo-300'}`}>{posConfig.terminalId}</span> • IP: <span className="font-mono">{posConfig.ipAddress}</span>
                     </p>
                   </div>
 
                   {posMachineStage === 'AWAITING_TAP' && (
-                    <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/50 text-amber-300 text-xs font-semibold flex items-center justify-center gap-2">
+                    <div className={`p-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 ${
+                      posTheme === 'light'
+                        ? 'bg-amber-50 border-amber-200 text-amber-800'
+                        : 'bg-amber-950/40 border-amber-500/50 text-amber-300'
+                    }`}>
                       <Radio className="w-4 h-4 animate-ping" />
                       <span>Transmitting AED {grandTotal.toFixed(2)} to POS Machine... Customer Tap Card / Apple Pay now.</span>
                     </div>
                   )}
 
                   {posMachineStage === 'APPROVED' && (
-                    <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/60 text-emerald-300 text-xs font-semibold space-y-1 animate-in zoom-in-95">
-                      <div className="flex items-center justify-center gap-1.5 font-black text-sm text-emerald-400">
-                        <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-semibold space-y-1 animate-in zoom-in-95">
+                      <div className="flex items-center justify-center gap-1.5 font-black text-sm text-emerald-700">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                         <span>PAYMENT APPROVED ON MACHINE!</span>
                       </div>
-                      <p className="font-mono text-[11px] text-slate-300">
+                      <p className="font-mono text-[11px] text-slate-600">
                         Card: {posCardBrand} • Auth: {posAuthCode} • Account: {posConfig.clearingAccountId}
                       </p>
                     </div>
@@ -2125,7 +2165,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               {paymentMode === 'BANK_QR' && (
                 <div className="space-y-3 text-center py-2">
                   <div className="flex justify-center">
-                    <div className="p-3 bg-white rounded-2xl shadow-xl border-4 border-amber-400 inline-block">
+                    <div className="p-3 bg-white rounded-2xl shadow-xl border-4 border-emerald-500 inline-block">
                       <img
                         src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=iban%3A${activeProfile?.bankIban || 'AE240331234567890123456'}%26amount%3D${grandTotal}%26title%3DVINTAGE%20VIBES`}
                         alt="Bank QR Code"
@@ -2135,9 +2175,9 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   </div>
 
                   <div>
-                    <div className={`text-sm font-bold ${posTheme === 'light' ? 'text-stone-900' : 'text-white'}`}>{activeProfile?.bankName || 'Emirates NBD Bank'}</div>
-                    <div className="text-xs text-amber-600 dark:text-amber-300 font-mono font-bold">{activeProfile?.bankIban || 'AE24 0331 2345 6789 0123 456'}</div>
-                    <div className={`text-[11px] mt-0.5 ${posTheme === 'light' ? 'text-stone-500' : 'text-slate-400'}`}>Customer scans with any UAE mobile banking app for instant deposit</div>
+                    <div className={`text-sm font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-white'}`}>{activeProfile?.bankName || 'Emirates NBD Bank'}</div>
+                    <div className={`text-xs font-mono font-bold ${posTheme === 'light' ? 'text-emerald-700' : 'text-amber-300'}`}>{activeProfile?.bankIban || 'AE24 0331 2345 6789 0123 456'}</div>
+                    <div className={`text-[11px] mt-0.5 ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>Customer scans with any UAE mobile banking app for instant deposit</div>
                   </div>
                 </div>
               )}
@@ -2146,50 +2186,50 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               {paymentMode === 'SPLIT' && (
                 <div className="space-y-3">
                   <div className={`flex items-center justify-between text-xs pb-2 border-b ${
-                    posTheme === 'light' ? 'text-stone-600 border-stone-200' : 'text-slate-300 border-slate-800'
+                    posTheme === 'light' ? 'text-slate-600 border-slate-100' : 'text-slate-300 border-slate-800'
                   }`}>
                     <span>Split Payment Breakdown:</span>
-                    <span className="font-mono font-black text-amber-600 dark:text-amber-300">Total Due: AED {grandTotal.toFixed(2)}</span>
+                    <span className={`font-mono font-black ${posTheme === 'light' ? 'text-slate-800' : 'text-amber-300'}`}>Total Due: AED {grandTotal.toFixed(2)}</span>
                   </div>
 
                   <div className="grid grid-cols-3 gap-2">
                     <div className="space-y-1">
-                      <label className={`text-[11px] ${posTheme === 'light' ? 'text-stone-600' : 'text-slate-400'}`}>💵 Cash Part (AED):</label>
+                      <label className={`text-[11px] ${posTheme === 'light' ? 'text-slate-600' : 'text-slate-400'}`}>💵 Cash Part (AED):</label>
                       <input
                         type="number"
                         value={splitCash}
                         onChange={e => setSplitCash(e.target.value)}
                         className={`w-full border rounded-lg p-2 text-xs font-mono transition ${
                           posTheme === 'light'
-                            ? 'bg-stone-50 border-stone-300 text-stone-900 focus:bg-white'
+                            ? 'bg-slate-50 border-slate-200 text-slate-800 focus:bg-white'
                             : 'bg-slate-900 border-slate-700 text-white'
                         }`}
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className={`text-[11px] ${posTheme === 'light' ? 'text-stone-600' : 'text-slate-400'}`}>💳 Card/POS Part (AED):</label>
+                      <label className={`text-[11px] ${posTheme === 'light' ? 'text-slate-600' : 'text-slate-400'}`}>💳 Card/POS Part (AED):</label>
                       <input
                         type="number"
                         value={splitCard}
                         onChange={e => setSplitCard(e.target.value)}
                         className={`w-full border rounded-lg p-2 text-xs font-mono transition ${
                           posTheme === 'light'
-                            ? 'bg-stone-50 border-stone-300 text-stone-900 focus:bg-white'
+                            ? 'bg-slate-50 border-slate-200 text-slate-800 focus:bg-white'
                             : 'bg-slate-900 border-slate-700 text-white'
                         }`}
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className={`text-[11px] ${posTheme === 'light' ? 'text-stone-600' : 'text-slate-400'}`}>📱 QR Part (AED):</label>
+                      <label className={`text-[11px] ${posTheme === 'light' ? 'text-slate-600' : 'text-slate-400'}`}>📱 QR Part (AED):</label>
                       <input
                         type="number"
                         value={splitQr}
                         onChange={e => setSplitQr(e.target.value)}
                         className={`w-full border rounded-lg p-2 text-xs font-mono transition ${
                           posTheme === 'light'
-                            ? 'bg-stone-50 border-stone-300 text-stone-900 focus:bg-white'
+                            ? 'bg-slate-50 border-slate-200 text-slate-800 focus:bg-white'
                             : 'bg-slate-900 border-slate-700 text-white'
                         }`}
                       />
@@ -2202,7 +2242,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             {/* MODAL FOOTER */}
             <div className={`p-3.5 border-t flex items-center justify-between ${
               posTheme === 'light'
-                ? 'bg-amber-50/40 border-stone-200'
+                ? 'bg-slate-50 border-slate-200'
                 : 'bg-slate-900 border-slate-800'
             }`}>
               <button
@@ -2210,7 +2250,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                 onClick={() => setShowPaymentModal(false)}
                 className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
                   posTheme === 'light'
-                    ? 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+                    ? 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
                     : 'bg-slate-800 text-slate-300 hover:text-white'
                 }`}
               >
@@ -2244,38 +2284,54 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       {/* 4. POST-CHECKOUT SUCCESS MODAL */}
       {checkoutSuccessData && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-3 animate-in zoom-in-95 duration-200">
-          <div className="bg-slate-950 border border-emerald-500/50 w-full max-w-md rounded-2xl shadow-2xl p-6 text-white text-center space-y-4">
-            <div className="w-16 h-16 rounded-full bg-emerald-950/80 border-2 border-emerald-400 flex items-center justify-center mx-auto text-emerald-400 shadow-xl shadow-emerald-500/20">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-3 animate-in zoom-in-95 duration-200">
+          <div className={`w-full max-w-md rounded-2xl shadow-2xl p-6 text-center space-y-4 border ${
+            posTheme === 'light'
+              ? 'bg-white border-slate-200 text-slate-800'
+              : 'bg-slate-950 border-emerald-500/50 text-white'
+          }`}>
+            <div className={`w-16 h-16 rounded-full border-2 flex items-center justify-center mx-auto shadow-xl ${
+              posTheme === 'light'
+                ? 'bg-emerald-50 border-emerald-500 text-emerald-600 shadow-emerald-500/10'
+                : 'bg-emerald-950/80 border-emerald-400 text-emerald-400 shadow-emerald-500/20'
+            }`}>
               <CheckCircle2 className="w-10 h-10" />
             </div>
 
             <div>
-              <h3 className="text-lg font-black uppercase tracking-wider text-white">
+              <h3 className={`text-lg font-black uppercase tracking-wider ${
+                posTheme === 'light' ? 'text-slate-800' : 'text-white'
+              }`}>
                 Transaction Successful!
               </h3>
-              <p className="text-xs text-slate-400">
-                Invoice No: <span className="font-mono font-bold text-amber-300">{checkoutSuccessData.invoice.invoiceNo}</span>
+              <p className={`text-xs ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
+                Invoice No: <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-indigo-600' : 'text-amber-300'}`}>{checkoutSuccessData.invoice.invoiceNo}</span>
               </p>
             </div>
 
             {/* Summary Box */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 text-left text-xs space-y-1.5 font-mono">
-              <div className="flex justify-between text-slate-400">
+            <div className={`rounded-xl p-3 text-left text-xs space-y-1.5 font-mono border ${
+              posTheme === 'light'
+                ? 'bg-slate-50 border-slate-200 text-slate-700'
+                : 'bg-slate-900 border-slate-800 text-slate-300'
+            }`}>
+              <div className={`flex justify-between ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
                 <span>Items Sold:</span>
-                <span className="text-white font-bold">{checkoutSuccessData.pieces.length} Garments</span>
+                <span className={`font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-white'}`}>{checkoutSuccessData.pieces.length} Garments</span>
               </div>
-              <div className="flex justify-between text-slate-400">
+              <div className={`flex justify-between ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
                 <span>Total Collected:</span>
-                <span className="text-emerald-400 font-bold">AED {checkoutSuccessData.invoice.totalAmount}</span>
+                <span className="text-emerald-600 dark:text-emerald-400 font-bold">AED {checkoutSuccessData.invoice.totalAmount}</span>
               </div>
-              <div className="flex justify-between text-slate-400">
+              <div className={`flex justify-between ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
                 <span>Total COGS Deducted:</span>
-                <span className="text-rose-400 font-bold">AED {checkoutSuccessData.cogsSummary.totalCogsAed}</span>
+                <span className="text-rose-500 dark:text-rose-400 font-bold">AED {checkoutSuccessData.cogsSummary.totalCogsAed}</span>
               </div>
-              <div className="flex justify-between text-slate-400 pt-1 border-t border-slate-800">
+              <div className={`flex justify-between pt-1 border-t ${
+                posTheme === 'light' ? 'border-slate-200 text-slate-500' : 'border-slate-800 text-slate-400'
+              }`}>
                 <span>Net Gross Margin:</span>
-                <span className="text-amber-300 font-bold">
+                <span className="text-emerald-700 dark:text-amber-300 font-bold">
                   +AED {checkoutSuccessData.cogsSummary.grossProfitAed} ({checkoutSuccessData.cogsSummary.grossMarginPercent}%)
                 </span>
               </div>
@@ -2287,7 +2343,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                 <button
                   type="button"
                   onClick={handlePrintThermalReceipt}
-                  className="py-2.5 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
+                  className="py-2.5 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-sm"
                 >
                   <Printer className="w-4 h-4" />
                   <span>Thermal Bill (80mm)</span>
@@ -2309,24 +2365,34 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               </div>
 
               {/* Gift Receipt Options (No Prices on Bill) */}
-              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+              <div className={`grid grid-cols-2 gap-2 pt-1 border-t ${
+                posTheme === 'light' ? 'border-slate-100' : 'border-slate-800'
+              }`}>
                 <button
                   type="button"
                   onClick={handlePrintGiftReceipt}
-                  className="py-2.5 px-3 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
+                  className={`py-2.5 px-3 border rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer ${
+                    posTheme === 'light'
+                      ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
+                      : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/40'
+                  }`}
                   title="Print Thermal 80mm Gift Receipt (Prices Hidden with Exchange Policy)"
                 >
-                  <Gift className="w-4 h-4 text-amber-400" />
+                  <Gift className="w-4 h-4 text-amber-600" />
                   <span>Gift Slip (No Price)</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={handleSendWhatsAppGiftReceipt}
-                  className="py-2.5 px-3 bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
+                  className={`py-2.5 px-3 border rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer ${
+                    posTheme === 'light'
+                      ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                      : 'bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border-emerald-500/30'
+                  }`}
                   title="Send WhatsApp Gift Slip with 14-day exchange notice"
                 >
-                  <Gift className="w-4 h-4 text-emerald-400" />
+                  <Gift className="w-4 h-4 text-emerald-600" />
                   <span>WhatsApp Gift Slip</span>
                 </button>
               </div>
@@ -2337,7 +2403,11 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   setCheckoutSuccessData(null);
                   setTimeout(() => barcodeInputRef.current?.focus(), 50);
                 }}
-                className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs transition cursor-pointer mt-1"
+                className={`w-full py-2.5 rounded-xl text-xs font-bold transition cursor-pointer mt-1 ${
+                  posTheme === 'light'
+                    ? 'bg-slate-900 hover:bg-slate-800 text-white'
+                    : 'bg-slate-800 hover:bg-slate-700 text-white'
+                }`}
               >
                 [ Start Next Sale (↵) ]
               </button>
@@ -2348,17 +2418,27 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       {/* 5. PARKED CARTS MODAL */}
       {showParkedModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 animate-in fade-in">
-          <div className="bg-slate-950 border border-slate-800 w-full max-w-lg rounded-2xl p-4 text-white space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
-                <Clock className="w-4 h-4" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-3 animate-in fade-in">
+          <div className={`border w-full max-w-lg rounded-2xl p-4 space-y-3 shadow-2xl ${
+            posTheme === 'light'
+              ? 'bg-white border-slate-200 text-slate-800'
+              : 'bg-slate-950 border-slate-800 text-white'
+          }`}>
+            <div className={`flex items-center justify-between pb-2 border-b ${
+              posTheme === 'light' ? 'border-slate-100' : 'border-slate-800'
+            }`}>
+              <h3 className={`text-sm font-bold uppercase tracking-wider flex items-center gap-1.5 ${
+                posTheme === 'light' ? 'text-slate-800' : 'text-amber-300'
+              }`}>
+                <Clock className="w-4 h-4 text-amber-500" />
                 <span>Parked / Held Customer Carts</span>
               </h3>
               <button
                 type="button"
                 onClick={() => setShowParkedModal(false)}
-                className="text-slate-400 hover:text-white"
+                className={`cursor-pointer transition ${
+                  posTheme === 'light' ? 'text-slate-400 hover:text-slate-800' : 'text-slate-400 hover:text-white'
+                }`}
               >
                 ✕
               </button>
@@ -2366,26 +2446,30 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
             <div className="max-h-60 overflow-y-auto space-y-2">
               {parkedSales.length === 0 ? (
-                <div className="p-6 text-center text-xs text-slate-500">
+                <div className={`p-6 text-center text-xs ${posTheme === 'light' ? 'text-slate-400' : 'text-slate-500'}`}>
                   No parked carts right now. Use "Hold Cart" when a customer steps away.
                 </div>
               ) : (
                 (parkedSales || []).map(park => (
                   <div
                     key={park.id}
-                    className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between"
+                    className={`p-3 rounded-xl border flex items-center justify-between ${
+                      posTheme === 'light'
+                        ? 'bg-slate-50 border-slate-200 text-slate-800'
+                        : 'bg-slate-900 border-slate-800 text-white'
+                    }`}
                   >
                     <div>
-                      <div className="text-xs font-bold text-white">
+                      <div className={`text-xs font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-white'}`}>
                         {park.customerName || 'Walk-In Customer'} ({(park?.items || []).length} garments)
                       </div>
-                      <div className="text-[10px] text-slate-400 font-mono">Held at {park.timestamp}</div>
+                      <div className={`text-[10px] font-mono ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>Held at {park.timestamp}</div>
                     </div>
 
                     <button
                       type="button"
                       onClick={() => handleResumeParkedSale(park)}
-                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition"
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition cursor-pointer"
                     >
                       Resume Cart (↵)
                     </button>
@@ -2418,29 +2502,43 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       {/* 7. DISCOUNT OVERRIDE MODAL */}
       {showDiscountModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 animate-in fade-in">
-          <div className="bg-slate-950 border border-slate-800 w-full max-w-sm rounded-2xl p-4 text-white space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-amber-300">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-3 animate-in fade-in">
+          <div className={`border w-full max-w-sm rounded-2xl p-4 space-y-3 shadow-2xl ${
+            posTheme === 'light'
+              ? 'bg-white border-slate-200 text-slate-800'
+              : 'bg-slate-950 border-slate-800 text-white'
+          }`}>
+            <div className={`flex items-center justify-between pb-2 border-b ${
+              posTheme === 'light' ? 'border-slate-100' : 'border-slate-800'
+            }`}>
+              <h3 className={`text-xs font-bold uppercase tracking-wider ${
+                posTheme === 'light' ? 'text-slate-800' : 'text-amber-300'
+              }`}>
                 Apply Promo / Manager Discount
               </h3>
               <button
                 type="button"
                 onClick={() => setShowDiscountModal(false)}
-                className="text-slate-400 hover:text-white"
+                className={`cursor-pointer transition ${
+                  posTheme === 'light' ? 'text-slate-400 hover:text-slate-800' : 'text-slate-400 hover:text-white'
+                }`}
               >
                 ✕
               </button>
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs text-slate-400">Discount Amount (AED):</label>
+              <label className={`text-xs ${posTheme === 'light' ? 'text-slate-600' : 'text-slate-400'}`}>Discount Amount (AED):</label>
               <input
                 type="number"
                 step="1"
                 value={tempDiscountVal}
                 onChange={e => setTempDiscountVal(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-sm font-mono text-white"
+                className={`w-full border rounded-xl p-2.5 text-sm font-mono transition ${
+                  posTheme === 'light'
+                    ? 'bg-slate-50 border-slate-200 text-slate-900 focus:border-emerald-500 focus:bg-white'
+                    : 'bg-slate-900 border-slate-700 text-white'
+                }`}
               />
             </div>
 
@@ -2451,7 +2549,11 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   setDiscountTotal(0);
                   setShowDiscountModal(false);
                 }}
-                className="px-3 py-1.5 bg-slate-800 text-slate-300 rounded-lg text-xs"
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  posTheme === 'light'
+                    ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    : 'bg-slate-800 text-slate-300 hover:text-white'
+                }`}
               >
                 Clear Discount
               </button>
@@ -2461,7 +2563,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   setDiscountTotal(Number(tempDiscountVal) || 0);
                   setShowDiscountModal(false);
                 }}
-                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs"
+                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs transition cursor-pointer"
               >
                 Apply (AED {tempDiscountVal})
               </button>

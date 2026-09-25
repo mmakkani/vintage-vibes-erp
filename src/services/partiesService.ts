@@ -539,12 +539,13 @@ export class PartiesService {
       } catch (_) {}
     }
 
-    const code = `RET-${Date.now().toString().slice(-4)}`;
+    // Generate a strict 9-character code: 'RET-' + 5 random digits (strictly <= 10 chars, fixes Error 22001)
+    const safeCode = 'RET-' + Math.floor(10000 + Math.random() * 90000);
     const CONTROL_KHATA_CODE = '1130-05';
     const CONTROL_KHATA_UUID = 'a5a8d92b-cdea-4418-8737-d3c4dca24909';
 
     const insertPayload: any = {
-      code,
+      code: safeCode,
       name: cleanName,
       company_name: cleanCompany,
       type: 'CUSTOMER',
@@ -585,7 +586,7 @@ export class PartiesService {
     if (typeof window !== 'undefined') {
       try {
         window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
-          detail: { module: 'parties', entity: 'parties', action: 'CREATED', documentRef: code }
+          detail: { module: 'parties', entity: 'parties', action: 'CREATED', documentRef: safeCode }
         }));
       } catch (_) {}
     }
