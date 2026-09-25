@@ -1282,6 +1282,14 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }
     if (!activeBale) return;
 
+    if (hudStats.isCompleted || isTerminalFinalized || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED') {
+      setFeedbackToast({
+        text: '🔒 Bale is finalized and locked. Please click "Re-open / Unlock Bale" first to delete pieces.',
+        type: 'error'
+      });
+      return;
+    }
+
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setFeedbackToast({
         text: 'Network disconnected. Please check your connection before saving.',
@@ -3146,6 +3154,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       const isOverridden = Boolean(piece.is_price_overridden ?? piece.isPriceOverridden);
                       const isGrailItem = Boolean(piece.is_grail ?? piece.isGrail ?? (piece.marketSegment === 'Antique' || piece.market_segment === 'Antique' || piece.marketSegment === 'Grails' || piece.market_segment === 'Grails' || piece.marketSegment === 'Boutique' || piece.market_segment === 'Boutique'));
                       const aiPrice = piece.ai_suggested_price ?? piece.aiSuggestedPrice;
+                      const isCompleted = Boolean(hudStats.isCompleted || isTerminalFinalized);
 
                       return (
                         <tr key={piece.id || idx} className="hover:bg-slate-900/80 transition-colors">
@@ -3266,8 +3275,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             <button
                               type="button"
                               onClick={(e) => handleDeletePiece(piece.id, e)}
-                              className="p-1.5 hover:bg-rose-950/60 text-slate-500 hover:text-rose-400 rounded transition-colors cursor-pointer"
-                              title="Delete piece from session"
+                              disabled={isCompleted}
+                              className={`p-1.5 rounded transition-colors ${
+                                isCompleted
+                                  ? 'opacity-50 cursor-not-allowed text-slate-600'
+                                  : 'hover:bg-rose-950/60 text-slate-500 hover:text-rose-400 cursor-pointer'
+                              }`}
+                              title={isCompleted ? "Locked: Re-open / Unlock bale to delete pieces" : "Delete piece from session"}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
