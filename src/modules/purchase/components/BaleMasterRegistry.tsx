@@ -35,6 +35,17 @@ interface BaleMasterRegistryProps {
   onRefresh: () => void;
 }
 
+export const getBaleDerivedState = (bale: any) => {
+  // Catch all possible backend variations of piece counts
+  const totalPieces = Number(bale?.pieceCount ?? bale?.total_pieces ?? bale?.pieces_count ?? bale?.sessionPieces ?? bale?.pieces?.length ?? 0);
+  
+  // Catch all possible backend variations of status (including healed effectiveStatus)
+  const currentStatus = String(bale?.effectiveStatus || bale?.sortingStatus || bale?.status || '').toUpperCase();
+  const isCompleted = currentStatus === 'COMPLETED' || currentStatus === 'POSTED' || currentStatus === 'FULLY_SORTED';
+  
+  return { totalPieces, isCompleted };
+};
+
 export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
   bales,
   parties,
@@ -158,14 +169,11 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
   // Unified Tab Counting Logic
   const counts = useMemo(() => {
     return bales.reduce((acc, bale) => {
-      const totalPieces = Number(bale.pieceCount ?? (bale as any).total_pieces ?? (bale as any).pieces_count ?? bale.pieces?.length ?? 0);
-      const isCompleted = bale.status === 'COMPLETED' || bale.status === 'POSTED' || bale.sortingStatus === 'FULLY_SORTED' || (bale.sortingStatus as any) === 'COMPLETED';
-
+      const { totalPieces, isCompleted } = getBaleDerivedState(bale);
       acc.all++;
       if (isCompleted) acc.completed++;
       else if (totalPieces > 0) acc.inProgress++;
       else acc.unopened++;
-
       return acc;
     }, { all: 0, inProgress: 0, completed: 0, unopened: 0 });
   }, [bales]);
@@ -173,7 +181,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
 
   // Filtered Bales
   const filteredBales = useMemo(() => {
-    return balesList.filter(bale => {
+    return bales.filter(bale => {
       const matchesSearch =
         (bale.baleCode || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (bale.gatePassNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -183,16 +191,13 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
 
       if (!matchesSearch) return false;
 
-      const totalPieces = Number(bale.pieceCount ?? (bale as any).total_pieces ?? (bale as any).pieces_count ?? bale.pieces?.length ?? 0);
-      const isCompleted = bale.status === 'COMPLETED' || bale.status === 'POSTED' || bale.sortingStatus === 'FULLY_SORTED' || (bale.sortingStatus as any) === 'COMPLETED';
-
+      const { totalPieces, isCompleted } = getBaleDerivedState(bale);
       if (statusFilter === 'COMPLETED') return isCompleted;
       if (statusFilter === 'IN_PROGRESS') return !isCompleted && totalPieces > 0;
       if (statusFilter === 'UNOPENED') return !isCompleted && totalPieces === 0;
-
       return true;
     });
-  }, [balesList, searchTerm, statusFilter]);
+  }, [bales, searchTerm, statusFilter]);
 
   const handlePrintBatchAll = () => {
     if (filteredBales.length === 0) return;
@@ -557,8 +562,7 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
                   );
                   const costPerGram = bale.costPerGram || PurchaseEngine.calculateCostPerGram(baleTotalCost, baleTotalWeight);
 
-                  const isCompleted = bale.status === 'COMPLETED' || bale.status === 'POSTED' || bale.sortingStatus === 'FULLY_SORTED' || (bale.sortingStatus as any) === 'COMPLETED';
-                  const totalPieces = Number(bale.pieceCount ?? (bale as any).total_pieces ?? (bale as any).pieces_count ?? bale.pieces?.length ?? 0);
+                  const { totalPieces, isCompleted } = getBaleDerivedState(bale);
                   const isInProgress = !isCompleted && totalPieces > 0;
 
                   const brokenDownKg = isCompleted
