@@ -43,6 +43,21 @@ interface BaleSortingExecutionLogProps {
   onDeleteBale?: (deletedBaleId: string) => void;
 }
 
+export const getBaleDerivedState = (bale: any) => {
+  const grossKg = Number(bale.totalBaleWeight) || 0;
+  const grossGrams = Math.round(grossKg * 1000);
+  const sortedKg = Number(bale.brokenDownWeight ?? (bale as any).broken_down_weight ?? ((bale as any).grams_sorted ? (bale as any).grams_sorted / 1000 : 0));
+  const sortedGrams = Math.round(Number((bale as any).sorted_grams ?? (bale as any).grams_sorted ?? (sortedKg * 1000)));
+  const piecesCount = Number(bale.pieceCount ?? (bale as any).piece_count ?? (bale as any).pieces_count ?? bale.pieces?.length ?? 0);
+  const percent = grossGrams > 0 ? Math.min(100, Math.round((sortedGrams / grossGrams) * 100)) : 0;
+  
+  const isCompleted = percent === 100 || bale.status === 'COMPLETED' || bale.status === 'POSTED' || bale.sortingStatus === 'FULLY_SORTED' || (bale.sortingStatus as any) === 'COMPLETED';
+  const isInProgress = !isCompleted && (piecesCount > 0 || sortedGrams > 0);
+  const isUnopened = !isCompleted && !isInProgress;
+  
+  return { isCompleted, isInProgress, isUnopened, piecesCount, sortedGrams, sortedKg, grossKg, grossGrams, percent };
+};
+
 export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = ({
   bales,
   invoices,
@@ -101,15 +116,14 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
       ? Math.min(100, Math.round((totalSortedGrams / totalGrossGrams) * 100))
       : 0;
 
-    const completedBales = bales.filter(b => {
-      const dep = PurchaseEngine.calculateBaleDepletion(b.totalBaleWeight, b.pieces || []);
-      return dep.sortingStatus === 'FULLY_SORTED';
-    }).length;
+    let completedBales = 0;
+    let inProgressBales = 0;
 
-    const inProgressBales = bales.filter(b => {
-      const dep = PurchaseEngine.calculateBaleDepletion(b.totalBaleWeight, b.pieces || []);
-      return dep.sortingStatus === 'PARTIALLY_SORTED';
-    }).length;
+    bales.forEach(b => {
+      const state = getBaleDerivedState(b);
+      if (state.isCompleted) completedBales++;
+      else if (state.isInProgress) inProgressBales++;
+    });
 
     return {
       totalBales,
@@ -120,9 +134,20 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
       totalPieces,
       overallProgressPercent,
       completedBales,
-      inProgressBales
+      inProgressBales,
+      unopenedBales: Math.max(0, totalBales - completedBales - inProgressBales)
     };
   }, [bales]);
+
+  // Master Tab Counters derived from Unified State Helper
+  const counts = useMemo(() => {
+    return {
+      all: kpis.totalBales,
+      inProgress: kpis.inProgressBales,
+      completed: kpis.completedBales,
+      unopened: kpis.unopenedBales
+    };
+  }, [kpis]);
 
   // Master Filtered Rows
   const filteredBales = useMemo(() => {
@@ -138,12 +163,11 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
         return false;
       }
 
-      const dep = PurchaseEngine.calculateBaleDepletion(bale.totalBaleWeight, bale.pieces || []);
-      const status = dep.sortingStatus;
+      const { isCompleted, isInProgress, isUnopened } = getBaleDerivedState(bale);
 
-      if (statusFilter === 'COMPLETED') return status === 'FULLY_SORTED';
-      if (statusFilter === 'IN_PROGRESS') return status === 'PARTIALLY_SORTED';
-      if (statusFilter === 'UNOPENED') return status === 'UNOPENED';
+      if (statusFilter === 'COMPLETED') return isCompleted;
+      if (statusFilter === 'IN_PROGRESS') return isInProgress;
+      if (statusFilter === 'UNOPENED') return isUnopened;
 
       return true;
     });
@@ -324,10 +348,10 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                   : 'text-slate-600 hover:bg-slate-100'
               }`}
             >
-              {tab === 'ALL' && `All Bales (${bales.length})`}
-              {tab === 'IN_PROGRESS' && `In Progress (${kpis.inProgressBales})`}
-              {tab === 'COMPLETED' && `Completed (${kpis.completedBales})`}
-              {tab === 'UNOPENED' && `Unopened (${bales.length - kpis.completedBales - kpis.inProgressBales})`}
+              {tab === 'ALL' && `All Bales (${counts.all})`}
+              {tab === 'IN_PROGRESS' && `In Progress (${counts.inProgress})`}
+              {tab === 'COMPLETED' && `Completed (${counts.completed})`}
+              {tab === 'UNOPENED' && `Unopened (${counts.unopened})`}
             </button>
           ))}
           <button
@@ -380,16 +404,17 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                 </tr>
               ) : (
                 filteredBales.map(bale => {
-                  const grossKg = Number(bale.totalBaleWeight) || 0;
-                  const grossGrams = Math.round(grossKg * 1000);
-                  const sortedKg = Number(bale.brokenDownWeight ?? (bale as any).broken_down_weight ?? ((bale as any).grams_sorted ? (bale as any).grams_sorted / 1000 : 0));
-                  const sortedGrams = Math.round(Number((bale as any).sorted_grams ?? (bale as any).grams_sorted ?? (sortedKg * 1000)));
+                  const {
+                    isCompleted: isComplete,
+                    isInProgress,
+                    grossKg,
+                    grossGrams,
+                    sortedKg,
+                    sortedGrams,
+                    piecesCount,
+                    percent
+                  } = getBaleDerivedState(bale);
                   const remainingGrams = Math.max(0, grossGrams - sortedGrams);
-                  const piecesCount = Number(bale.pieceCount ?? (bale as any).piece_count ?? (bale as any).pieces_count ?? bale.pieces?.length ?? 0);
-                  const percent = grossGrams > 0 ? Math.min(100, Math.round((sortedGrams / grossGrams) * 100)) : 0;
-
-                  const isComplete = percent === 100 || bale.sortingStatus === 'FULLY_SORTED' || bale.status === 'COMPLETED' || bale.status === 'POSTED';
-                  const isInProgress = !isComplete && (piecesCount > 0 || sortedGrams > 0);
                   const isDeletable = piecesCount === 0;
 
                   return (
