@@ -4360,7 +4360,7 @@ class RelationalStore {
       unitPrice?: number;
       discount?: number;
     }>;
-    paymentMethod: 'CASH' | 'CARD_POS' | 'BANK_QR' | 'SPLIT' | 'CREDIT_ACCOUNT';
+    paymentMethod: 'CASH' | 'CARD_POS' | 'CARD_MANUAL' | 'BANK_QR' | 'SPLIT' | 'CREDIT_ACCOUNT';
     splitBreakdown?: {
       cashAmount?: number;
       cardAmount?: number;
@@ -4528,7 +4528,7 @@ class RelationalStore {
         notes: params.notes || `Counter Retail POS Sale (${matchedPieces.length} garments)`,
         postedAt: new Date().toISOString(),
         postedBy: params.operatorName || 'Counter POS Cashier',
-        paymentMethod: params.paymentMethod === 'CARD_POS' ? 'CARD_MACHINE' : params.paymentMethod
+        paymentMethod: (params.paymentMethod === 'CARD_POS' || params.paymentMethod === 'CARD_MANUAL') ? 'CARD_MACHINE' : params.paymentMethod
       };
 
       this.salesInvoices.unshift(invoice);
@@ -4577,8 +4577,8 @@ class RelationalStore {
           creditAmount: 0,
           narration: `Counter Cash Sale: Invoice ${invoiceNo}`
         });
-      } else if (params.paymentMethod === 'CARD_POS') {
-        const terminalInfo = params.posMachineDetails?.terminalName || 'POS Terminal';
+      } else if (params.paymentMethod === 'CARD_POS' || params.paymentMethod === 'CARD_MANUAL') {
+        const terminalInfo = params.paymentMethod === 'CARD_MANUAL' ? 'Manual External Terminal' : (params.posMachineDetails?.terminalName || 'POS Terminal');
         const authRef = params.posMachineDetails?.authCode ? ` [Auth: ${params.posMachineDetails.authCode}]` : '';
         voucherLines.push({
           id: `line-${Date.now()}-${lineCounter++}`,

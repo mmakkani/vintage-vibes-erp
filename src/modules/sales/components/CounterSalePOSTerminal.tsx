@@ -251,7 +251,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
   // Payment Selection Modal
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentMode, setPaymentMode] = useState<'CASH' | 'CARD_POS' | 'BANK_QR' | 'SPLIT' | 'CREDIT_ACCOUNT'>('CASH');
+  const [paymentMode, setPaymentMode] = useState<'CASH' | 'CARD_POS' | 'CARD_MANUAL' | 'BANK_QR' | 'SPLIT' | 'CREDIT_ACCOUNT'>('CASH');
 
   // Cash payment state
   const [cashTendered, setCashTendered] = useState<string>('');
@@ -281,6 +281,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   const [posMachineStage, setPosMachineStage] = useState<'IDLE' | 'AWAITING_TAP' | 'APPROVED' | 'FAILED'>('IDLE');
   const [posAuthCode, setPosAuthCode] = useState<string>('');
   const [posCardBrand, setPosCardBrand] = useState<string>('VISA');
+  const [posErrorMessage, setPosErrorMessage] = useState<string | null>(null);
 
   // Split payment state
   const [splitCash, setSplitCash] = useState<string>('');
@@ -737,23 +738,58 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     loadInventoryAndParties();
   };
 
-  // Trigger NFC / Smart POS Machine Simulation or API call
-  const handleInitiatePosMachineTap = () => {
+  // Trigger NFC / Smart POS Machine Real TCP/IP Hardware Bridge Request
+  const handleInitiatePosMachineTap = async () => {
     setPosMachineStage('AWAITING_TAP');
+    setPosErrorMessage(null);
     try {
       if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
         navigator.vibrate?.(40);
       }
     } catch {}
 
-    // Simulated terminal approval or actual network bridge
-    setTimeout(() => {
-      const generatedAuth = 'AUTH-' + Math.floor(100000 + Math.random() * 900000);
+    const terminalIp = posConfig.ipAddress || posConfig.terminalIp || '192.168.1.150';
+    const terminalPort = posConfig.port || 8080;
+    const totalDue = grandTotal;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      // Real TCP/IP hardware bridge request to the configured Smart POS terminal
+      const response = await fetch(`http://${terminalIp}:${terminalPort}/v1/payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: totalDue,
+          currency: posConfig.currency || 'AED',
+          terminalId: posConfig.terminalId,
+          merchantId: posConfig.merchantId
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error('Terminal rejected payment');
+      }
+
+      const data = await response.json().catch(() => ({}));
+      const generatedAuth = data?.authCode || data?.approvalCode || ('AUTH-' + Math.floor(100000 + Math.random() * 900000));
+      const cardBrand = data?.cardBrand || data?.brand || 'VISA CONTACTLESS';
       setPosAuthCode(generatedAuth);
-      setPosCardBrand(['VISA CONTACTLESS', 'MASTERCARD PAYPASS', 'APPLE PAY', 'GOOGLE PAY'][Math.floor(Math.random() * 4)]);
+      setPosCardBrand(cardBrand);
       setPosMachineStage('APPROVED');
+      setPosErrorMessage(null);
       luxuryAudio.playCashChime();
-    }, 1800);
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      const displayMsg = `Connection Failed: POS Machine not found at IP ${terminalIp}. Please check network or use Manual Entry.`;
+      console.warn(`[POS Hardware Bridge] ${displayMsg}`, error);
+      setPosMachineStage('FAILED');
+      setPosErrorMessage(displayMsg);
+      // STRICT AUDIT MANDATE: Do NOT proceed to checkout on failed connection.
+    }
   };
 
   // Open Checkout Modal
@@ -766,11 +802,16 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     setSplitQr('0');
     setPosMachineStage('IDLE');
     setPosAuthCode('');
+    setPosErrorMessage(null);
     setShowPaymentModal(true);
   };
 
   // Finalize Counter Sale & Post COA
-  const handleConfirmFinalCheckout = async () => {
+  const handleConfirmFinalCheckout = async (overridePaymentMode?: typeof paymentMode) => {
+    const effectivePaymentMode = overridePaymentMode || paymentMode;
+    if (effectivePaymentMode !== paymentMode) {
+      setPaymentMode(effectivePaymentMode);
+    }
     setIsScanning(true);
     try {
       const invoiceNum = `POS-${Date.now().toString().slice(-6)}`;
@@ -790,7 +831,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           discountAmount: discountTotal,
           taxAmount: vatAmt,
           totalAmount: totalAmt,
-          paymentMethod: paymentMode,
+          paymentMethod: effectivePaymentMode,
           items: cart.map(c => ({
             barcode: c.piece.barcode,
             pieceId: c.piece.id,
@@ -815,7 +856,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             discountAmount: discountTotal,
             vatAmount: vatAmt,
             totalAmount: totalAmt,
-            paymentMethod: paymentMode,
+            paymentMethod: effectivePaymentMode,
             items: cart.map(c => ({
               barcode: c.piece.barcode,
               description: `${c.piece.brandName} ${c.piece.itemName}`,
@@ -859,7 +900,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         tax_amount: vatAmt,
         discount_amount: discountTotal,
         grand_total: totalAmt,
-        payment_type: paymentMode,
+        payment_type: effectivePaymentMode,
         payment_status: 'PAID'
       });
 
@@ -872,8 +913,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       let createdVoucherNo = `VCH-${Date.now().toString().slice(-6)}`;
       try {
-        const paymentAccCode = paymentMode === 'CASH' ? '1110-01' : '1120-01';
-        const paymentAccName = paymentMode === 'CASH' ? 'Cash in Hand (Counter)' : 'Bank / Card Clearing';
+        const paymentAccCode = effectivePaymentMode === 'CASH' ? '1110-01' : '1120-01';
+        const paymentAccName = effectivePaymentMode === 'CASH' ? 'Cash in Hand (Counter)' : 'Bank / Card Clearing';
         const vRes = await FinanceService.addVoucher({
           date: new Date().toISOString().slice(0, 10),
           type: 'CRV',
@@ -919,7 +960,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               partyName: 'Walk In Customer',
               debit: totalAmt,
               credit: 0,
-              memo: `Settlement ${invoiceNum} (${paymentMode})`
+              memo: `Settlement ${invoiceNum} (${effectivePaymentMode})`
             },
             {
               accountId: CONTROL_ACC_CODE,
@@ -949,7 +990,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         customerName: selectedCustomer?.name || 'Walk-In Customer',
         customerPhone: selectedCustomer?.phone || '',
         channel: 'POS_COUNTER',
-        paymentMethod: paymentMode as any,
+        paymentMethod: effectivePaymentMode as any,
         subtotal: subtotalAmt,
         discountAmount: discountTotal,
         taxAmount: vatAmt,
@@ -1004,12 +1045,12 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         try {
           openThermalLabelPrintWindow({
             itemCode: invoiceNum,
-            description: `RETAIL POS: ${cart.length} garments (${paymentMode})`,
+            description: `RETAIL POS: ${cart.length} garments (${effectivePaymentMode})`,
             brand: activeProfile?.companyName || 'VINTAGE VIBES',
             grade: `UAE VAT 5%: AED ${vatAmt.toFixed(2)}`,
             retailPriceAed: totalAmt,
             weightKg: Number((totalWeightGrams / 1000).toFixed(2)),
-            batchNo: `AUTH: ${paymentMode}`,
+            batchNo: `AUTH: ${effectivePaymentMode}`,
             date: new Date().toISOString()
           });
         } catch (e) {
@@ -1019,7 +1060,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       setCheckoutSuccessData({
         invoice: {
-          id: posRecord.id || invoiceNum,
+          id: posRecord?.id || invoiceNum,
           invoiceNo: invoiceNum,
           date: new Date().toISOString(),
           customerName: customerNameForSlip,
@@ -1028,7 +1069,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           discountAmount: discountTotal,
           vatAmount: vatAmt,
           totalAmount: totalAmt,
-          paymentMethod: paymentMode,
+          paymentMethod: effectivePaymentMode,
           items: cart.map(c => ({
             barcode: c.piece.barcode,
             description: `${c.piece.brandName} ${c.piece.itemName}`,
@@ -2203,7 +2244,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                       Linked Terminal: {posConfig.terminalName}
                     </h4>
                     <p className={`text-xs ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
-                      Terminal ID: <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-indigo-600' : 'text-indigo-300'}`}>{posConfig.terminalId}</span> • IP: <span className="font-mono">{posConfig.ipAddress}</span>
+                      Terminal ID: <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-indigo-600' : 'text-indigo-300'}`}>{posConfig.terminalId}</span> • IP: <span className="font-mono">{posConfig.ipAddress || '192.168.1.150'}</span>
                     </p>
                   </div>
 
@@ -2213,8 +2254,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                         ? 'bg-amber-50 border-amber-200 text-amber-800'
                         : 'bg-amber-950/40 border-amber-500/50 text-amber-300'
                     }`}>
-                      <Radio className="w-4 h-4 animate-ping" />
-                      <span>Transmitting AED {grandTotal.toFixed(2)} to POS Machine... Customer Tap Card / Apple Pay now.</span>
+                      <Radio className="w-4 h-4 animate-ping text-indigo-500" />
+                      <span>Transmitting AED {grandTotal.toFixed(2)} to POS Machine ({posConfig.ipAddress || '192.168.1.150'})... Customer Tap Card / Apple Pay now.</span>
                     </div>
                   )}
 
@@ -2230,13 +2271,46 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                     </div>
                   )}
 
-                  <div className="pt-2 flex justify-center gap-2">
+                  {posMachineStage === 'FAILED' && (
+                    <div className="p-3 rounded-xl bg-rose-50 border border-rose-300 text-rose-800 text-xs font-semibold space-y-1.5 animate-in zoom-in-95 text-left">
+                      <div className="flex items-center gap-1.5 font-black text-sm text-rose-700">
+                        <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                        <span>HARDWARE CONNECTION ERROR</span>
+                      </div>
+                      <p className="text-[12px] font-mono text-rose-700">
+                        {posErrorMessage || `Connection Failed: POS Machine not found at IP ${posConfig.ipAddress || '192.168.1.150'}. Please check network or use Manual Entry.`}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="pt-2 flex flex-col items-center gap-2">
                     <button
                       type="button"
                       onClick={handleInitiatePosMachineTap}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md"
+                      disabled={posMachineStage === 'AWAITING_TAP'}
+                      className="w-full max-w-sm px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md"
                     >
-                      <span>🔄 Re-Send Amount to Machine</span>
+                      {posMachineStage === 'AWAITING_TAP' ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Connecting to Terminal ({posConfig.ipAddress || '192.168.1.150'})...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Radio className="w-4 h-4" />
+                          <span>Send to Machine</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleConfirmFinalCheckout('CARD_MANUAL')}
+                      disabled={isScanning}
+                      className="w-full max-w-sm px-4 py-2.5 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-900/40 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-600 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-sm active:scale-95"
+                    >
+                      <CreditCard className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      <span>Manual Card Entry (External Terminal)</span>
                     </button>
                   </div>
                 </div>
@@ -2378,8 +2452,12 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
               <button
                 type="button"
-                onClick={handleConfirmFinalCheckout}
-                disabled={isScanning || (grandTotal > 0 && paymentMode === 'CASH' && Number(cashTendered) < grandTotal)}
+                onClick={() => handleConfirmFinalCheckout()}
+                disabled={
+                  isScanning ||
+                  (grandTotal > 0 && paymentMode === 'CASH' && Number(cashTendered) < grandTotal) ||
+                  (paymentMode === 'CARD_POS' && posMachineStage !== 'APPROVED')
+                }
                 className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-emerald-600/30 flex items-center gap-2 transition active:scale-95 cursor-pointer"
               >
                 {isScanning ? (
@@ -2388,6 +2466,11 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   <>
                     <Gift className="w-4 h-4 text-amber-300" />
                     <span>Confirm Complimentary Giveaway (AED 0.00)</span>
+                  </>
+                ) : paymentMode === 'CARD_POS' && posMachineStage !== 'APPROVED' ? (
+                  <>
+                    <Lock className="w-4 h-4 text-slate-300" />
+                    <span>{posMachineStage === 'FAILED' ? 'Hardware Offline (Use Manual Entry)' : 'Waiting for Machine Approval...'}</span>
                   </>
                 ) : (
                   <>

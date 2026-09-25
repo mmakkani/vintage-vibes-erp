@@ -400,7 +400,7 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
                       </td>
                       <td className="py-2.5 px-3 font-sans">
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          inv.paymentMethod === 'CARD_POS'
+                          inv.paymentMethod === 'CARD_POS' || inv.paymentMethod === 'CARD_MANUAL'
                             ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
                             : inv.paymentMethod === 'CASH'
                             ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
@@ -409,10 +409,11 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
                             : 'bg-purple-100 text-purple-800 border border-purple-200'
                         }`}>
                           {inv.paymentMethod === 'CARD_POS' && '💳 POS Card'}
+                          {inv.paymentMethod === 'CARD_MANUAL' && '💳 Manual Card'}
                           {inv.paymentMethod === 'CASH' && '💵 Cash'}
                           {inv.paymentMethod === 'BANK_TRANSFER' && '📱 Bank QR'}
                           {inv.paymentMethod === 'SPLIT' && '⚖️ Split'}
-                          {!['CARD_POS', 'CASH', 'BANK_TRANSFER', 'SPLIT'].includes(inv.paymentMethod) && inv.paymentMethod}
+                          {!['CARD_POS', 'CARD_MANUAL', 'CASH', 'BANK_TRANSFER', 'SPLIT'].includes(inv.paymentMethod) && inv.paymentMethod}
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-right text-slate-700">
