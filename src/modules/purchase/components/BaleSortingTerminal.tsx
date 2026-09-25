@@ -364,7 +364,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   // New Piece High-Speed Input Row Fields (Clean Defaults - No Dummy Values)
   const [bundleQuantity, setBundleQuantity] = useState<number>(1);
   const [gramWeight, setGramWeight] = useState<string>('');
-  const [sellingPriceOverride, setSellingPriceOverride] = useState<string>('');
+  const [sellingPriceOverride, setSellingPriceOverride] = useState<string | null>(null);
   const [brandTitle, setBrandTitle] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>(() => availableCategories[0] || DEFAULT_CATEGORIES[0]);
   const [sizeScanned, setSizeScanned] = useState<string>('L');
@@ -661,7 +661,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   }, [selectedCategory, era, brandTitle, autoPieceCostAed]);
 
   const effectiveSellingPrice = useMemo(() => {
-    if (sellingPriceOverride && Number(sellingPriceOverride) > 0) {
+    if (sellingPriceOverride !== null && sellingPriceOverride.trim() !== '' && Number(sellingPriceOverride) > 0) {
       return Number(sellingPriceOverride);
     }
     return suggestedSellingPrice;
@@ -932,7 +932,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
     const qty = Math.max(1, Math.floor(Number(bundleQuantity) || 1));
     const activeBaleId = activeBale.baleCode || activeBale.gatePassNo || activeBale.id || 'BAL-01';
-    const effectiveSellingPrice = Number(sellingPriceOverride || suggestedSellingPrice) || 0;
+    const effectiveSellingPrice = (sellingPriceOverride !== null && sellingPriceOverride.trim() !== '')
+      ? Number(sellingPriceOverride)
+      : suggestedSellingPrice;
     const isOverridden = aiSuggestedPrice > 0 && effectiveSellingPrice < aiSuggestedPrice;
     const finalGrailStatus = Boolean(isGrail || ['Antique', 'Boutique', 'Grails'].includes(marketSegment) || era.toLowerCase().includes('antique'));
 
@@ -1246,7 +1248,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setBundleQuantity(1);
     setActiveGrailAlert(null);
     setGramWeight('');
-    setSellingPriceOverride('');
+    setSellingPriceOverride(null);
     setBrandTitle('');
     setStyleNotes('');
     setEcommerceDescription('');
@@ -2687,7 +2689,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               {/* RAPID INPUT CONTROLS ROW */}
               {(() => {
                 const isGrailLocked = Boolean(isGrail || ['Antique', 'Boutique', 'Grails'].includes(marketSegment) || era.toLowerCase().includes('antique') || activeGrailAlert?.isGrail);
-                const currentSellingPrice = Number(sellingPriceOverride || suggestedSellingPrice || 0);
+                const currentSellingPrice = (sellingPriceOverride !== null && sellingPriceOverride.trim() !== '')
+                  ? Number(sellingPriceOverride)
+                  : Number(suggestedSellingPrice || 0);
                 const isBelowCost = autoPieceCostAed > 0 && currentSellingPrice > 0 && currentSellingPrice < autoPieceCostAed;
                 const isPristine = ['Super Cream', 'Grade A+', 'Grade A', 'CREAM', 'GRADE_A'].some(g =>
                   selectedGrade.toLowerCase().includes(g.toLowerCase())
@@ -2919,7 +2923,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           type="number"
                           step="5"
                           placeholder={String(suggestedSellingPrice)}
-                          value={sellingPriceOverride || String(suggestedSellingPrice)}
+                          value={sellingPriceOverride !== null ? sellingPriceOverride : String(suggestedSellingPrice)}
                           onChange={e => setSellingPriceOverride(e.target.value)}
                           onFocus={e => e.target.select()}
                           disabled={hudStats.isCompleted || isGrailLocked}
