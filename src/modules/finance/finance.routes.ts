@@ -800,9 +800,101 @@ financeRouter.post('/corporate-tax/provision', (req, res) => {
   return res.json(result);
 });
 
-// --- Bale Yield & Container ROI Analytics ---
-financeRouter.get('/yield-analytics', (req, res) => {
-  return res.json(relationalStore.getBaleYieldAnalytics());
+// --- Bale Yield & Container ROI Analytics (Live Warehouse ROI Engine) ---
+financeRouter.get('/yield-analytics', async (req, res) => {
+  try {
+    const analytics = await withDb(async (client) => {
+      const gpRes = await client.query(`
+        SELECT * FROM inward_gate_passes 
+        ORDER BY created_at DESC;
+      `);
+      const piecesRes = await client.query(`
+        SELECT * FROM inventory_pieces;
+      `);
+
+      const passes = gpRes.rows || [];
+      const pieces = piecesRes.rows || [];
+
+      // Include all passes that have sorting started, pieces present, or completed
+      const relevantPasses = passes.filter((gp: any) => {
+        const hasPieces = pieces.some((p: any) => String(p.gate_pass_id) === String(gp.id));
+        const status = String(gp.status || '').toUpperCase();
+        return hasPieces || ['COMPLETED', 'POSTED', 'FULLY_SORTED', 'PARTIALLY_SORTED', 'IN_PROGRESS'].includes(status) || Number(gp.piece_count || 0) > 0;
+      });
+
+      const baleDetails = relevantPasses.map((gp: any) => {
+        const gpPieces = pieces.filter((p: any) => String(p.gate_pass_id) === String(gp.id));
+        const totalPiecesCount = gpPieces.length || Number(gp.piece_count) || 0;
+        const soldPieces = gpPieces.filter((p: any) => p.is_sold || p.status === 'SOLD');
+        const inStockPieces = gpPieces.filter((p: any) => !p.is_sold && p.status !== 'SOLD');
+
+        const totalWeightKg = Number(gp.total_bale_weight ?? gp.weight_kg ?? 0);
+        const rawCost = Number(gp.total_bale_cost ?? gp.cost_price ?? 0);
+        const baleCostAed = rawCost > 0 ? rawCost : (totalWeightKg > 0 ? totalWeightKg * 8.5 : 0);
+
+        const totalPiecesRetailValue = gpPieces.reduce((s: number, p: any) => s + (Number(p.retail_price_aed ?? p.estimated_price) || 0), 0);
+        const soldRevenueAed = soldPieces.reduce((s: number, p: any) => s + (Number(p.sold_price_aed ?? p.retail_price_aed ?? p.estimated_price) || 0), 0);
+        const inStockValueAed = inStockPieces.reduce((s: number, p: any) => s + (Number(p.retail_price_aed ?? p.estimated_price) || 0), 0);
+
+        const estimatedCostOfSold = totalPiecesCount > 0 ? (soldPieces.length / totalPiecesCount) * baleCostAed : 0;
+        const grossMarginAed = soldRevenueAed - estimatedCostOfSold;
+        const grossMarginPercent = soldRevenueAed > 0 ? (grossMarginAed / soldRevenueAed) * 100 : 0;
+        const realizedRoiPercent = baleCostAed > 0 ? (((soldRevenueAed + inStockValueAed) - baleCostAed) / baleCostAed) * 100 : 0;
+
+        const gradeCount: Record<string, number> = {};
+        gpPieces.forEach((p: any) => {
+          const g = p.label_grade || 'Standard';
+          gradeCount[g] = (gradeCount[g] || 0) + 1;
+        });
+
+        const originCountry = gp.supplier_name?.includes('Rotterdam')
+          ? 'Netherlands'
+          : (gp.supplier_name?.includes('US') ? 'USA' : (gp.supplier_name || 'Global Import'));
+
+        return {
+          gatePassId: String(gp.id),
+          gatePassNo: gp.gate_pass_no || gp.pass_no || 'IGP',
+          date: (gp.created_at ? new Date(gp.created_at).toISOString() : new Date().toISOString()).slice(0, 10),
+          baleBatchNo: gp.bale_code || gp.bale_tag_no || 'BAL',
+          containerNo: gp.container_no || 'N/A',
+          originCountry,
+          totalBales: Number(gp.total_bales || 1),
+          totalWeightKg,
+          baleCostAed,
+          totalPiecesCount,
+          soldPiecesCount: soldPieces.length,
+          inStockPiecesCount: inStockPieces.length,
+          soldRevenueAed,
+          inStockValueAed,
+          totalPiecesRetailValue,
+          grossMarginAed,
+          grossMarginPercent,
+          realizedRoiPercent,
+          gradeCount
+        };
+      });
+
+      const totalBalesProcessed = relevantPasses.reduce((s: number, gp: any) => s + Number(gp.total_bales || 1), 0);
+      const totalPiecesRealized = pieces.length;
+      const totalPiecesSold = pieces.filter((p: any) => p.is_sold || p.status === 'SOLD').length;
+      const overallSoldRevenue = pieces.filter((p: any) => p.is_sold || p.status === 'SOLD').reduce((s: number, p: any) => s + (Number(p.sold_price_aed ?? p.retail_price_aed ?? p.estimated_price) || 0), 0);
+      const overallStockValue = pieces.filter((p: any) => !p.is_sold && p.status !== 'SOLD').reduce((s: number, p: any) => s + (Number(p.retail_price_aed ?? p.estimated_price) || 0), 0);
+
+      return {
+        totalBalesProcessed,
+        totalPiecesRealized,
+        totalPiecesSold,
+        overallSoldRevenue,
+        overallStockValue,
+        baleDetails
+      };
+    });
+
+    return res.json(analytics);
+  } catch (err: any) {
+    console.warn('[Finance Router] live yield analytics error, fallback to store:', err?.message || err);
+    return res.json(relationalStore.getBaleYieldAnalytics());
+  }
 });
 
 

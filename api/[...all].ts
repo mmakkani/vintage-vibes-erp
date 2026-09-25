@@ -4474,16 +4474,121 @@ RULES FOR YOUR RESPONSE:
       return res.status(200).json([]);
     }
 
-    // Finance Bale Yield & Container ROI Analytics
+    // Finance Bale Yield & Container ROI Analytics (Live Warehouse ROI Engine)
     if (pathname.includes('/finance/yield-analytics')) {
-      return res.status(200).json({
-        totalBalesProcessed: 0,
-        totalPiecesRealized: 0,
-        totalPiecesSold: 0,
-        overallSoldRevenue: 0,
-        overallStockValue: 0,
-        baleDetails: []
-      });
+      let client: any = null;
+      try {
+        try {
+          client = await borrowClient();
+        } catch (connErr: any) {
+          console.warn('[Serverless Yield Analytics] DB connection unavailable:', connErr?.message);
+        }
+
+        let passes: any[] = [];
+        let pieces: any[] = [];
+
+        if (client) {
+          try {
+            const gpRes = await client.query('SELECT * FROM inward_gate_passes ORDER BY created_at DESC;');
+            passes = gpRes.rows || [];
+            const piecesRes = await client.query('SELECT * FROM inventory_pieces;');
+            pieces = piecesRes.rows || [];
+          } finally {
+            try { client.release(); } catch (_) { try { await client.end(); } catch (__) {} }
+          }
+        } else {
+          const supabase = getSupabaseAdmin();
+          if (supabase) {
+            const { data: gpData } = await supabase.from('inward_gate_passes').select('*').order('created_at', { ascending: false });
+            passes = gpData || [];
+            const { data: pieceData } = await supabase.from('inventory_pieces').select('*');
+            pieces = pieceData || [];
+          }
+        }
+
+        const relevantPasses = passes.filter((gp: any) => {
+          const hasPieces = pieces.some((p: any) => String(p.gate_pass_id) === String(gp.id));
+          const status = String(gp.status || '').toUpperCase();
+          return hasPieces || ['COMPLETED', 'POSTED', 'FULLY_SORTED', 'PARTIALLY_SORTED', 'IN_PROGRESS'].includes(status) || Number(gp.piece_count || 0) > 0;
+        });
+
+        const baleDetails = relevantPasses.map((gp: any) => {
+          const gpPieces = pieces.filter((p: any) => String(p.gate_pass_id) === String(gp.id));
+          const totalPiecesCount = gpPieces.length || Number(gp.piece_count) || 0;
+          const soldPieces = gpPieces.filter((p: any) => p.is_sold || p.status === 'SOLD');
+          const inStockPieces = gpPieces.filter((p: any) => !p.is_sold && p.status !== 'SOLD');
+
+          const totalWeightKg = Number(gp.total_bale_weight ?? gp.weight_kg ?? 0);
+          const rawCost = Number(gp.total_bale_cost ?? gp.cost_price ?? 0);
+          const baleCostAed = rawCost > 0 ? rawCost : (totalWeightKg > 0 ? totalWeightKg * 8.5 : 0);
+
+          const totalPiecesRetailValue = gpPieces.reduce((s: number, p: any) => s + (Number(p.retail_price_aed ?? p.estimated_price) || 0), 0);
+          const soldRevenueAed = soldPieces.reduce((s: number, p: any) => s + (Number(p.sold_price_aed ?? p.retail_price_aed ?? p.estimated_price) || 0), 0);
+          const inStockValueAed = inStockPieces.reduce((s: number, p: any) => s + (Number(p.retail_price_aed ?? p.estimated_price) || 0), 0);
+
+          const estimatedCostOfSold = totalPiecesCount > 0 ? (soldPieces.length / totalPiecesCount) * baleCostAed : 0;
+          const grossMarginAed = soldRevenueAed - estimatedCostOfSold;
+          const grossMarginPercent = soldRevenueAed > 0 ? (grossMarginAed / soldRevenueAed) * 100 : 0;
+          const realizedRoiPercent = baleCostAed > 0 ? (((soldRevenueAed + inStockValueAed) - baleCostAed) / baleCostAed) * 100 : 0;
+
+          const gradeCount: Record<string, number> = {};
+          gpPieces.forEach((p: any) => {
+            const g = p.label_grade || 'Standard';
+            gradeCount[g] = (gradeCount[g] || 0) + 1;
+          });
+
+          const originCountry = gp.supplier_name?.includes('Rotterdam')
+            ? 'Netherlands'
+            : (gp.supplier_name?.includes('US') ? 'USA' : (gp.supplier_name || 'Global Import'));
+
+          return {
+            gatePassId: String(gp.id),
+            gatePassNo: gp.gate_pass_no || gp.pass_no || 'IGP',
+            date: (gp.created_at ? new Date(gp.created_at).toISOString() : new Date().toISOString()).slice(0, 10),
+            baleBatchNo: gp.bale_code || gp.bale_tag_no || 'BAL',
+            containerNo: gp.container_no || 'N/A',
+            originCountry,
+            totalBales: Number(gp.total_bales || 1),
+            totalWeightKg,
+            baleCostAed,
+            totalPiecesCount,
+            soldPiecesCount: soldPieces.length,
+            inStockPiecesCount: inStockPieces.length,
+            soldRevenueAed,
+            inStockValueAed,
+            totalPiecesRetailValue,
+            grossMarginAed,
+            grossMarginPercent,
+            realizedRoiPercent,
+            gradeCount
+          };
+        });
+
+        const totalBalesProcessed = relevantPasses.reduce((s: number, gp: any) => s + Number(gp.total_bales || 1), 0);
+        const totalPiecesRealized = pieces.length;
+        const totalPiecesSold = pieces.filter((p: any) => p.is_sold || p.status === 'SOLD').length;
+        const overallSoldRevenue = pieces.filter((p: any) => p.is_sold || p.status === 'SOLD').reduce((s: number, p: any) => s + (Number(p.sold_price_aed ?? p.retail_price_aed ?? p.estimated_price) || 0), 0);
+        const overallStockValue = pieces.filter((p: any) => !p.is_sold && p.status !== 'SOLD').reduce((s: number, p: any) => s + (Number(p.retail_price_aed ?? p.estimated_price) || 0), 0);
+
+        return res.status(200).json({
+          totalBalesProcessed,
+          totalPiecesRealized,
+          totalPiecesSold,
+          overallSoldRevenue,
+          overallStockValue,
+          baleDetails
+        });
+      } catch (err: any) {
+        console.error('[Serverless Yield Analytics Error]:', err?.message);
+        return res.status(200).json({
+          totalBalesProcessed: 0,
+          totalPiecesRealized: 0,
+          totalPiecesSold: 0,
+          overallSoldRevenue: 0,
+          overallStockValue: 0,
+          baleDetails: []
+        });
+      }
     }
 
     // Chart of Accounts (COA)

@@ -2062,20 +2062,50 @@ export class PurchaseService {
       }
     } catch (_) {}
 
-    // 2. Fetch and strictly deduplicate all pieces from bale_sorted_pieces
+    // 2. Fetch all pieces from bale_sorted_pieces and auto-rescue any duplicate barcodes / collisions
     const { data: rawSortedPieces } = await supabase
       .from('bale_sorted_pieces')
       .select('*')
       .eq('bale_id', cleanBaleId);
 
-    const uniquePiecesMap = new Map<string, any>();
-    (rawSortedPieces || []).forEach((p: any) => {
-      const key = String(p.piece_code || p.id).trim();
-      if (!uniquePiecesMap.has(key)) {
-        uniquePiecesMap.set(key, p);
-      }
+    const sortedPieces = [...(rawSortedPieces || [])];
+    // Sort consistently by created_at then id so sequence is deterministic
+    sortedPieces.sort((a: any, b: any) => {
+      const tA = new Date(a.created_at || 0).getTime();
+      const tB = new Date(b.created_at || 0).getTime();
+      if (tA !== tB) return tA - tB;
+      return String(a.id || '').localeCompare(String(b.id || ''));
     });
-    const sortedPieces = Array.from(uniquePiecesMap.values());
+
+    // Check for duplicate barcodes or barcode collisions
+    const seenBarcodes = new Set<string>();
+    let hasCollision = false;
+    for (const p of sortedPieces) {
+      const code = String(p.piece_code || p.id).trim();
+      if (!code || seenBarcodes.has(code)) {
+        hasCollision = true;
+        break;
+      }
+      seenBarcodes.add(code);
+    }
+
+    // Auto-rescue: re-sequence colliding pieces sequentially so every piece has a guaranteed unique barcode
+    if (hasCollision) {
+      console.log(`[PurchaseService] Auto-rescuing bale ${cleanBaleId}: fixing colliding barcodes on ${sortedPieces.length} pieces`);
+      for (let i = 0; i < sortedPieces.length; i++) {
+        const piece = sortedPieces[i];
+        const newCode = `${baleRef}-P${String(i + 1).padStart(4, '0')}`;
+        piece.piece_code = newCode;
+        try {
+          await supabase
+            .from('bale_sorted_pieces')
+            .update({ piece_code: newCode })
+            .eq('id', piece.id);
+        } catch (updateErr) {
+          console.warn(`[PurchaseService] Warning updating piece_code for piece ${piece.id}:`, updateErr);
+        }
+      }
+    }
 
     const totalPiecesCount = sortedPieces.length;
     const totalGramsSorted = sortedPieces.reduce((sum: number, p: any) => sum + (Number(p.weight_grams) || 0), 0);
@@ -2153,12 +2183,28 @@ export class PurchaseService {
         };
       });
 
+      // Clear out any old unsold pieces for this gate pass to prevent stale/ghost duplicates from aborted sessions
+      try {
+        await supabase
+          .from('inventory_pieces')
+          .delete()
+          .eq('gate_pass_id', cleanBaleId)
+          .neq('is_sold', true);
+      } catch (delErr) {
+        console.warn('[PurchaseService] Notice cleaning existing inventory_pieces before finalize:', delErr);
+      }
+
       const { error: upsertErr } = await supabase
         .from('inventory_pieces')
-        .upsert(inventoryRows, { onConflict: 'id' });
+        .upsert(inventoryRows, { onConflict: 'barcode' });
       if (upsertErr) {
-        console.error('[PurchaseService] Error upserting inventory_pieces:', upsertErr);
-        throw new Error(`Failed to save inventory pieces: ${upsertErr.message}`);
+        console.error('[PurchaseService] Error upserting inventory_pieces on barcode, retrying with onConflict id:', upsertErr);
+        const { error: retryErr } = await supabase
+          .from('inventory_pieces')
+          .upsert(inventoryRows, { onConflict: 'id' });
+        if (retryErr) {
+          throw new Error(`Failed to save inventory pieces: ${retryErr.message}`);
+        }
       }
 
       // 4. Update inward_gate_passes and bale_sessions with complete counts

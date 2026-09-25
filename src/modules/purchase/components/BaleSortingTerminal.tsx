@@ -723,9 +723,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   // Auto-generated Next Piece Barcode Preview (${activeBaleId || 'BAL-01'}-P0001)
   const nextPieceBarcode = useMemo(() => {
     const baseCode = activeBale?.baleCode || activeBale?.gatePassNo || activeBale?.id || 'BAL-01';
-    const nextIdx = pieces.length + 1;
+    const maxSeq = pieces.reduce((max, p) => {
+      const match = (p.piece_code || p.barcode)?.match(/-P(\d+)$/);
+      return match ? Math.max(max, parseInt(match[1], 10)) : max;
+    }, 0);
+    const nextIdx = Math.max(pieces.length, maxSeq) + 1;
     return `${baseCode}-P${String(nextIdx).padStart(4, '0')}`;
-  }, [activeBale, pieces.length]);
+  }, [activeBale, pieces]);
 
   // Apply OCR extracted tag data (AI Grail & Vintage Value Hunter)
   const handleApplyExtractedTag = (tagData: ExtractedTagData) => {
@@ -983,8 +987,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const stickerPayloads: StickerData[] = [];
     const nowIso = new Date().toISOString();
 
+    // Extract highest sequence number from existing pieces (Smart Sequencing)
+    const maxSeq = pieces.reduce((max, p) => {
+      const match = (p.piece_code || p.barcode)?.match(/-P(\d+)$/);
+      return match ? Math.max(max, parseInt(match[1], 10)) : max;
+    }, 0);
+    const startSeq = Math.max(pieces.length, maxSeq);
+
     for (let i = 0; i < qty; i++) {
-      const pieceIdx = pieces.length + 1 + i;
+      const pieceIdx = startSeq + 1 + i;
       const barcode = `${activeBaleId}-P${String(pieceIdx).padStart(4, '0')}`;
       const pieceSku = qty === 1 ? generatedSku : `${generatedSku}-${String(i + 1).padStart(2, '0')}`;
       const pieceWeightGrams = (i === qty - 1) ? remainingGramsToDistribute : baseGramsPerPiece;
@@ -1638,6 +1649,26 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         await supabase
           .from('bale_sessions')
           .insert([sessionPayload]);
+      }
+
+      // Auto-Rescue duplicate barcodes in local state if present
+      const barcodeCounts = new Map<string, number>();
+      pieces.forEach(p => {
+        const bc = p.piece_code || p.barcode;
+        if (bc) barcodeCounts.set(bc, (barcodeCounts.get(bc) || 0) + 1);
+      });
+      const hasDuplicateBarcodes = Array.from(barcodeCounts.values()).some(count => count > 1);
+      if (hasDuplicateBarcodes) {
+        const baseCode = activeBale.baleCode || activeBale.gatePassNo || activeBale.id;
+        const rescuedPieces = pieces.map((p, idx) => {
+          const rescuedBarcode = `${baseCode}-P${String(idx + 1).padStart(4, '0')}`;
+          return {
+            ...p,
+            piece_code: rescuedBarcode,
+            barcode: rescuedBarcode
+          };
+        });
+        setPieces(rescuedPieces);
       }
 
       // Call service to update inward_gate_passes & copy pieces into inventory_pieces
