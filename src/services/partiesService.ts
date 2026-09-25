@@ -549,7 +549,7 @@ export class PartiesService {
       name: cleanName,
       company_name: cleanCompany,
       type: 'CUSTOMER',
-      party_type: 'RETAIL_CUSTOMER',
+      party_type: 'RETAIL',
       phone: cleanPhone,
       email: cleanEmail,
       address: cleanAddress,
@@ -596,7 +596,7 @@ export class PartiesService {
       code: data.code,
       name: data.name,
       type: 'CUSTOMER',
-      party_type: 'RETAIL_CUSTOMER',
+      party_type: 'RETAIL',
       phone: data.phone || '',
       email: data.email || '',
       company_name: data.company_name || data.name,
@@ -606,6 +606,141 @@ export class PartiesService {
       coa_account_id: CONTROL_KHATA_CODE,
       account_map: data.account_map || { receivableAccountId: CONTROL_KHATA_CODE }
     } as Party;
+  }
+
+  /**
+   * Fetches retail CRM customers specifically (party_type = 'RETAIL' or 'RETAIL_CUSTOMER'),
+   * isolated from formal corporate B2B suppliers and wholesale ledger parties.
+   */
+  public static async getRetailCustomers(): Promise<Party[]> {
+    // 1. Try server route
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const res = await rawFetch('/api/parties/retail');
+        if (res && res.ok) {
+          const list = await res.json();
+          if (Array.isArray(list) && list.length > 0) return list;
+        }
+      } catch (_) {}
+    }
+
+    // 2. Direct Supabase query
+    try {
+      const { data, error } = await supabase
+        .from('parties')
+        .select('*')
+        .in('party_type', ['RETAIL', 'RETAIL_CUSTOMER'])
+        .order('created_at', { ascending: false });
+
+      if (error || !data) return [];
+      return data.map((row: any) => ({
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        type: 'CUSTOMER',
+        party_type: 'RETAIL',
+        company_name: row.company_name || row.name,
+        phone: row.phone || '',
+        email: row.email || '',
+        address: row.address || '',
+        current_balance: Number(row.current_balance || 0),
+        credit_limit: Number(row.credit_limit || 0),
+        is_active: row.is_active !== false,
+        coa_account_id: row.coa_account_id || '1130-05',
+        account_map: row.account_map || { receivableAccountId: '1130-05' },
+        createdAt: row.created_at || new Date().toISOString(),
+        created_at: row.created_at || new Date().toISOString()
+      } as Party));
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /**
+   * Fetches all sales invoices and line items associated with a retail CRM customer
+   * Matches by client_id, customer_phone, or customer_name
+   */
+  public static async getRetailCustomerInvoices(partyId: string, phone?: string, name?: string): Promise<any[]> {
+    // 1. Try server endpoint
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const res = await rawFetch(`/api/sales/customer-history?partyId=${encodeURIComponent(partyId || '')}&phone=${encodeURIComponent(phone || '')}&name=${encodeURIComponent(name || '')}`);
+        if (res && res.ok) {
+          const list = await res.json();
+          if (Array.isArray(list) && list.length > 0) {
+            return list.map((r: any) => ({
+              id: r.id,
+              invoiceNo: r.invoice_no || r.invoiceNo,
+              date: r.invoice_date || r.created_at || r.date,
+              customerName: r.customer_name || r.customerName || name,
+              customerPhone: r.customer_phone || r.customerPhone || phone,
+              channel: r.channel || 'POS_COUNTER',
+              paymentMethod: r.payment_method || r.paymentMethod || 'CASH',
+              subtotal: Number(r.subtotal ?? r.total_amount ?? 0),
+              discountAmount: Number(r.discount_amount ?? r.discountAmount ?? 0),
+              taxAmount: Number(r.tax_amount ?? r.taxAmount ?? 0),
+              totalAmount: Number(r.total_amount ?? r.totalAmount ?? 0),
+              status: r.status || 'PAID',
+              items: Array.isArray(r.items) ? r.items : (typeof r.items === 'string' ? JSON.parse(r.items || '[]') : [])
+            }));
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 2. Direct Supabase query
+    try {
+      let query = supabase.from('sales_invoices').select('*').order('created_at', { ascending: false });
+      const cleanPhone = (phone || '').replace(/\D/g, '');
+      const orConditions: string[] = [];
+      if (partyId) orConditions.push(`client_id.eq.${partyId}`);
+      if (cleanPhone && cleanPhone.length >= 7) {
+        orConditions.push(`customer_phone.ilike.%${cleanPhone.slice(-7)}%`);
+      }
+      if (name && name.trim()) {
+        orConditions.push(`customer_name.ilike.%${name.trim()}%`);
+      }
+
+      if (orConditions.length > 0) {
+        query = query.or(orConditions.join(','));
+      }
+
+      const { data, error } = await query.limit(100);
+      if (!error && Array.isArray(data)) {
+        return data.map((row: any) => {
+          let items: any[] = [];
+          if (Array.isArray(row.items)) {
+            items = row.items;
+          } else if (typeof row.items === 'string') {
+            try {
+              const parsed = JSON.parse(row.items);
+              if (Array.isArray(parsed)) items = parsed;
+            } catch {}
+          }
+          return {
+            id: row.id,
+            invoiceNo: row.invoice_no,
+            date: row.invoice_date || row.created_at || new Date().toISOString(),
+            customerName: row.customer_name || name,
+            customerPhone: row.customer_phone || phone,
+            channel: row.channel || 'POS_COUNTER',
+            paymentMethod: row.payment_method || 'CASH',
+            subtotal: Number(row.subtotal ?? row.total_amount ?? 0),
+            discountAmount: Number(row.discount_amount ?? 0),
+            taxAmount: Number(row.tax_amount ?? 0),
+            totalAmount: Number(row.total_amount ?? 0),
+            status: row.status || 'PAID',
+            items
+          };
+        });
+      }
+    } catch (err) {
+      console.warn('[PartiesService] Error querying retail customer invoices:', err);
+    }
+
+    return [];
   }
 
   public static async addParty(party: Partial<Party> & { party_type?: string; company_name?: string; companyName?: string; trn_no?: string; trnNo?: string; tax_id?: string; contact_no?: string; credit_limit?: number; receivable_account_id?: string; payable_account_id?: string }): Promise<Party> {

@@ -44,6 +44,7 @@ import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { SalesService } from '../../../services/salesService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
+import { WhatsAppService } from '../../../services/whatsappService.ts';
 import { openThermalLabelPrintWindow, openGiftReceiptPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { useBarcodeScanner } from '../../../hooks/useBarcodeScanner.ts';
 import { offlineQueue } from '../../../services/offlineQueueService.ts';
@@ -285,6 +286,9 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   const [splitCard, setSplitCard] = useState<string>('');
   const [splitQr, setSplitQr] = useState<string>('');
 
+  // Auto-Print Thermal Receipt Option (Toggleable on checkout)
+  const [autoPrintThermal, setAutoPrintThermal] = useState<boolean>(true);
+
   // Post Checkout Success Modal
   const [checkoutSuccessData, setCheckoutSuccessData] = useState<{
     invoice: any;
@@ -331,19 +335,25 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     if (stockPieces && stockPieces.length > 0) {
       setAllPieces(stockPieces.filter(p => !p.isSold && p.status === 'IN_STOCK'));
     }
-    if (clients && clients.length > 0) {
-      setParties(clients.filter(p => p.type === 'CLIENT' || p.type === 'CUSTOMER' || (p as any).party_type === 'RETAIL_CUSTOMER'));
-    }
     try {
-      const [piecesRes, partiesRes] = await Promise.all([
+      const [piecesRes, retailPartiesRes] = await Promise.all([
         fetch('/api/sales/stock-pieces').then(r => r.ok ? r.json() : []).catch(() => []),
-        fetch('/api/parties').then(r => r.ok ? r.json() : []).catch(() => [])
+        PartiesService.getRetailCustomers().catch(() => [])
       ]);
       if (Array.isArray(piecesRes) && piecesRes.length > 0) {
         setAllPieces(piecesRes.filter((p: any) => !p.isSold && p.status === 'IN_STOCK'));
       }
-      if (Array.isArray(partiesRes) && partiesRes.length > 0) {
-        setParties(partiesRes.filter((p: any) => p.type === 'CLIENT' || p.type === 'CUSTOMER' || p.party_type === 'RETAIL_CUSTOMER'));
+      if (Array.isArray(retailPartiesRes) && retailPartiesRes.length > 0) {
+        setParties(retailPartiesRes);
+      } else if (clients && clients.length > 0) {
+        // Fallback: exclude corporate suppliers and system control parties
+        const filtered = clients.filter(p => {
+          const name = String(p.name || '').toUpperCase();
+          if (name.includes('E-COOMERCE') || name.includes('ECOMMERCE') || name.includes('LIVE SALE') || name.includes('ACCOUNTS RECEIVABLE')) return false;
+          if (p.type === 'SUPPLIER' || (p as any).party_type === 'SUPPLIER') return false;
+          return (p as any).party_type === 'RETAIL' || (p as any).party_type === 'RETAIL_CUSTOMER' || p.type === 'CUSTOMER';
+        });
+        setParties(filtered);
       }
     } catch (err) {
       console.warn('POS Data Load Error:', err);
@@ -385,11 +395,18 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filtered customer parties list for search combobox
+  // Filtered customer parties list for search combobox: strictly isolated Retail CRM customers
   const filteredParties = useMemo(() => {
     const q = customerSearchQuery.trim().toLowerCase();
-    if (!q) return parties.slice(0, 40);
-    return parties.filter(p =>
+    const retailOnly = (parties || []).filter(p => {
+      if (!p) return false;
+      const name = String(p.name || '').toUpperCase();
+      if (name.includes('E-COOMERCE') || name.includes('ECOMMERCE') || name.includes('LIVE SALE') || name.includes('ACCOUNTS RECEIVABLE')) return false;
+      if (p.type === 'SUPPLIER' || (p as any).party_type === 'SUPPLIER') return false;
+      return true;
+    });
+    if (!q) return retailOnly.slice(0, 40);
+    return retailOnly.filter(p =>
       p.name?.toLowerCase().includes(q) ||
       p.phone?.toLowerCase().includes(q) ||
       p.code?.toLowerCase().includes(q) ||
@@ -936,13 +953,55 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       luxuryAudio.playCashChime();
       setShowPaymentModal(false);
+
+      const customerPhoneForSlip = (selectedCustomer?.phone || '').trim();
+      const customerNameForSlip = selectedCustomer?.name || 'Walk-In Customer';
+
+      // 4. Automated Marketing WhatsApp Invoice Slip
+      if (customerPhoneForSlip) {
+        WhatsAppService.sendInvoiceNotification({
+          invoiceNo: invoiceNum,
+          type: 'SALES',
+          customerName: customerNameForSlip,
+          customerPhone: customerPhoneForSlip,
+          totalAmount: totalAmt,
+          subtotal: subtotalAmt,
+          taxAmount: vatAmt,
+          currency: 'AED',
+          invoiceDate: new Date().toISOString(),
+          items: cart.map(c => ({
+            name: `${c.piece.brandName} ${c.piece.itemName}`,
+            quantity: 1,
+            price: c.sellingPrice - c.discount
+          }))
+        }).catch(err => console.warn('[POS Checkout] Auto-WhatsApp dispatch note:', err));
+      }
+
+      // 5. Automatic 80mm Thermal Receipt Print (if toggle enabled)
+      if (autoPrintThermal) {
+        try {
+          openThermalLabelPrintWindow({
+            itemCode: invoiceNum,
+            description: `RETAIL POS: ${cart.length} garments (${paymentMode})`,
+            brand: activeProfile?.companyName || 'VINTAGE VIBES',
+            grade: `UAE VAT 5%: AED ${vatAmt.toFixed(2)}`,
+            retailPriceAed: totalAmt,
+            weightKg: Number((totalWeightGrams / 1000).toFixed(2)),
+            batchNo: `AUTH: ${paymentMode}`,
+            date: new Date().toISOString()
+          });
+        } catch (e) {
+          console.warn('[POS Checkout] Auto print thermal receipt note:', e);
+        }
+      }
+
       setCheckoutSuccessData({
         invoice: {
           id: posRecord.id || invoiceNum,
           invoiceNo: invoiceNum,
           date: new Date().toISOString(),
-          customerName: selectedCustomer?.name || 'Walk-In Customer',
-          customerPhone: selectedCustomer?.phone || '',
+          customerName: customerNameForSlip,
+          customerPhone: customerPhoneForSlip,
           subTotal: subtotalAmt,
           discountAmount: discountTotal,
           vatAmount: vatAmt,
@@ -2237,6 +2296,44 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* POS OUTPUT CONTROLS: THERMAL PRINT TOGGLE & AUTO-WHATSAPP NOTICE */}
+              <div className={`p-3 rounded-xl border space-y-2 mt-3 ${
+                posTheme === 'light' ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={autoPrintThermal}
+                      onChange={e => setAutoPrintThermal(e.target.checked)}
+                      className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+                    />
+                    <span className={posTheme === 'light' ? 'text-slate-800 font-bold' : 'text-slate-200 font-bold'}>
+                      🖨️ Auto-Print 80mm Thermal Receipt (Slip)
+                    </span>
+                  </label>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                    autoPrintThermal
+                      ? (posTheme === 'light' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-indigo-950/60 text-indigo-300 border border-indigo-800')
+                      : (posTheme === 'light' ? 'bg-slate-200 text-slate-600' : 'bg-slate-800 text-slate-400')
+                  }`}>
+                    {autoPrintThermal ? 'Print Enabled' : 'Paperless Mode'}
+                  </span>
+                </div>
+
+                <div className={`text-[11px] flex items-center justify-between pt-1 border-t ${
+                  posTheme === 'light' ? 'border-slate-200/80 text-slate-500' : 'border-slate-800 text-slate-400'
+                }`}>
+                  <span className="flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full ${selectedCustomer?.phone ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`}></span>
+                    <span>📱 Marketing WhatsApp Slip:</span>
+                  </span>
+                  <span className={`font-mono font-bold ${selectedCustomer?.phone ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`}>
+                    {selectedCustomer?.phone ? `Auto-Send to ${selectedCustomer.phone}` : 'No phone linked (Slip skipped)'}
+                  </span>
+                </div>
+              </div>
             </div>
 
             {/* MODAL FOOTER */}
@@ -2273,7 +2370,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                 ) : (
                   <>
                     <Check className="w-4 h-4" />
-                    <span>Confirm Sale & Print Bill (↵)</span>
+                    <span>{autoPrintThermal ? 'Confirm Sale & Print Slip (↵)' : 'Confirm Sale (Paperless) (↵)'}</span>
                   </>
                 )}
               </button>

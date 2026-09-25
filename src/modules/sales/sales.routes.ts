@@ -88,6 +88,37 @@ salesRouter.post('/invoices', async (req, res) => {
   }
 });
 
+salesRouter.get('/customer-history', async (req, res) => {
+  const { partyId, phone, name } = req.query as { partyId?: string; phone?: string; name?: string };
+  let client: Client | null = null;
+  try {
+    client = await getDbClient();
+    const cleanPhone = (phone || '').replace(/\D/g, '');
+    let query = 'SELECT * FROM sales_invoices WHERE 1=0';
+    const params: any[] = [];
+    if (partyId) {
+      params.push(partyId);
+      query += ` OR client_id = $${params.length}`;
+    }
+    if (cleanPhone && cleanPhone.length >= 7) {
+      params.push(`%${cleanPhone.slice(-7)}%`);
+      query += ` OR customer_phone LIKE $${params.length}`;
+    }
+    if (name && name.trim()) {
+      params.push(`%${name.trim()}%`);
+      query += ` OR customer_name ILIKE $${params.length}`;
+    }
+    query += ' ORDER BY created_at DESC LIMIT 100;';
+
+    const result = await client.query(query, params);
+    return res.json(result.rows || []);
+  } catch (err: any) {
+    return res.json([]);
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
 salesRouter.get('/pos', async (req, res) => {
   try {
     const list = await SalesService.getPosSales();
