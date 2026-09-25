@@ -502,28 +502,62 @@ export const BaleMasterRegistry: React.FC<BaleMasterRegistryProps> = ({
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto overflow-x-auto w-full sm:w-auto">
-          {(['ALL', 'UNOPENED', 'IN_PROGRESS', 'COMPLETED'] as const).map(tab => (
-            <button
-              key={tab}
-              onClick={() => {
-                setStatusFilter(tab);
-                setPage(1);
-              }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-                statusFilter === tab
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              {tab === 'ALL'
-                ? `All Bales (${counts.all})`
-                : tab === 'UNOPENED'
-                ? `Unopened (${counts.unopened})`
-                : tab === 'IN_PROGRESS'
-                ? `In Progress (${counts.inProgress})`
-                : `Completed (${counts.completed})`}
-            </button>
-          ))}
+          <button
+            type="button"
+            onClick={() => {
+              setStatusFilter('ALL');
+              setPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+              statusFilter === 'ALL'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            All Bales ({counts.all})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setStatusFilter('IN_PROGRESS');
+              setPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+              statusFilter === 'IN_PROGRESS'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            In Progress ({counts.inProgress})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setStatusFilter('COMPLETED');
+              setPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+              statusFilter === 'COMPLETED'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            Completed ({counts.completed})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setStatusFilter('UNOPENED');
+              setPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+              statusFilter === 'UNOPENED'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            Unopened ({counts.unopened})
+          </button>
         </div>
       </div>
 

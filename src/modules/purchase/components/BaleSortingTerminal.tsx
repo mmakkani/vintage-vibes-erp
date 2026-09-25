@@ -1372,29 +1372,62 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     if (!confirm(`Are you sure you want to re-open and unlock Bale ${activeBale.baleCode || activeBale.gatePassNo}? This will unlock the terminal and allow you to scan and add remaining garments.`)) {
       return;
     }
+
+    // =========================================================================
+    // OPTIMISTIC UI INSTANT STATE MUTATION (0ms Latency)
+    // Instantly unlock UI, enable piece additions/deletions, restore terminal
+    // =========================================================================
+    setIsTerminalFinalized(false);
+    activeBale.status = 'IN_PROGRESS' as any;
+    activeBale.sortingStatus = 'PARTIALLY_SORTED' as any;
+    setInternalBales(prev => prev.map(b => (b.id === activeBale.id || b.gatePassNo === activeBale.gatePassNo) ? {
+      ...b,
+      status: 'IN_PROGRESS' as any,
+      sortingStatus: 'PARTIALLY_SORTED' as any
+    } : b));
+
+    if (onSavePartial) {
+      onSavePartial(activeBale.id);
+    }
+
+    setFeedbackToast({
+      text: `✓ Bale ${activeBale.baleCode || activeBale.gatePassNo} unlocked & re-opened for sorting! (WIP balance restored)`,
+      type: 'success'
+    });
+
     setIsSubmitting(true);
 
-    const newStatus = pieces.length > 0 ? 'PARTIAL' : 'UNOPENED';
     try {
       // 1. Invoke PurchaseService.unlockBaleSession to revert status and delete JV-FIN auto-voucher (reversing balance to WIP 1150-01)
       await PurchaseService.unlockBaleSession(activeBale.id, activeBale.baleCode || activeBale.gatePassNo);
 
-      // 2. Reset local state & propagate IN_PROGRESS
-      setIsTerminalFinalized(false);
-      activeBale.status = 'IN_PROGRESS' as any;
-      activeBale.sortingStatus = 'PARTIALLY_SORTED' as any;
-      setInternalBales(prev => prev.map(b => (b.id === activeBale.id || b.gatePassNo === activeBale.gatePassNo) ? { ...b, status: 'IN_PROGRESS' as any, sortingStatus: 'PARTIALLY_SORTED' as any } : b));
-
-      if (onSavePartial) {
-        onSavePartial(activeBale.id);
+      PurchaseService.invalidateAllPurchaseCaches();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('vv:realtime-record', {
+            detail: {
+              table: 'inward_gate_passes',
+              record: {
+                id: activeBale.id,
+                gate_pass_no: activeBale.gatePassNo,
+                bale_code: activeBale.baleCode,
+                status: 'IN_PROGRESS'
+              }
+            }
+          })
+        );
       }
-
-      setFeedbackToast({
-        text: `✓ Bale ${activeBale.baleCode || activeBale.gatePassNo} unlocked & re-opened for sorting! (WIP balance restored)`,
-        type: 'success'
-      });
     } catch (err: any) {
       console.error('Error reopening bale:', err);
+      // Rollback optimistic state if backend operation fails
+      setIsTerminalFinalized(true);
+      activeBale.status = 'COMPLETED' as any;
+      activeBale.sortingStatus = 'FULLY_SORTED' as any;
+      setInternalBales(prev => prev.map(b => (b.id === activeBale.id || b.gatePassNo === activeBale.gatePassNo) ? {
+        ...b,
+        status: 'COMPLETED' as any,
+        sortingStatus: 'FULLY_SORTED' as any
+      } : b));
       alert(`Failed to unlock bale: ${err?.message || 'Database error'}`);
     } finally {
       setIsSubmitting(false);
@@ -1511,6 +1544,26 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }
 
     luxuryAudio.playMechanicalClick();
+
+    // =========================================================================
+    // OPTIMISTIC UI INSTANT STATE MUTATION (0ms Latency)
+    // Instantly reflect finalized status in UI before heavy database/ledger transactions
+    // =========================================================================
+    setIsTerminalFinalized(true);
+    activeBale.status = 'COMPLETED' as any;
+    activeBale.sortingStatus = 'FULLY_SORTED' as any;
+    activeBale.pieceCount = hudStats.piecesCount;
+    activeBale.brokenDownWeight = Number((hudStats.sortedGrams / 1000).toFixed(3));
+    activeBale.remainingWeight = 0;
+    setInternalBales(prev => prev.map(b => (b.id === activeBale.id || b.gatePassNo === activeBale.gatePassNo) ? {
+      ...b,
+      status: 'COMPLETED' as any,
+      sortingStatus: 'FULLY_SORTED' as any,
+      pieceCount: hudStats.piecesCount,
+      brokenDownWeight: Number((hudStats.sortedGrams / 1000).toFixed(3))
+    } : b));
+    setFeedbackToast({ text: `Bale ${activeBale.baleCode || activeBale.gatePassNo} finalized & locked!`, type: 'success' });
+
     setIsSubmitting(true);
 
     try {
@@ -1551,13 +1604,6 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       // Call service to update inward_gate_passes & copy pieces into inventory_pieces
       await PurchaseService.finalizeBaleSession(activeBale.id);
 
-      setIsTerminalFinalized(true);
-      activeBale.status = 'COMPLETED' as any;
-      activeBale.sortingStatus = 'FULLY_SORTED' as any;
-      activeBale.pieceCount = hudStats.piecesCount;
-      activeBale.brokenDownWeight = Number((hudStats.sortedGrams / 1000).toFixed(3));
-      activeBale.remainingWeight = 0;
-
       // Force reactive cache invalidation & broadcast realtime event to update BaleMasterRegistry immediately
       PurchaseService.invalidateAllPurchaseCaches();
       if (typeof window !== 'undefined') {
@@ -1582,11 +1628,20 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       if (onPostBale) {
         onPostBale(activeBale.id);
       }
-      setFeedbackToast({ text: `Bale ${activeBale.baleCode || activeBale.gatePassNo} finalized & locked!`, type: 'success' });
       setTimeout(onClose, 400);
     } catch (err: any) {
       console.warn('Finalize session error:', err);
       setIsSubmitting(false);
+      // Rollback optimistic state if backend operation fails
+      setIsTerminalFinalized(false);
+      activeBale.status = 'IN_PROGRESS' as any;
+      activeBale.sortingStatus = 'PARTIALLY_SORTED' as any;
+      setInternalBales(prev => prev.map(b => (b.id === activeBale.id || b.gatePassNo === activeBale.gatePassNo) ? {
+        ...b,
+        status: 'IN_PROGRESS' as any,
+        sortingStatus: 'PARTIALLY_SORTED' as any
+      } : b));
+
       const isOffline = (typeof navigator !== 'undefined' && !navigator.onLine) ||
         String(err?.message || '').toLowerCase().includes('disconnected') ||
         String(err?.message || '').toLowerCase().includes('network') ||
