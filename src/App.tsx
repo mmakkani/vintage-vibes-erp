@@ -549,6 +549,8 @@ export default function App() {
                 <CounterSalePOSTerminal
                   companyProfile={companyProfile}
                   operatorName={currentUser?.name || 'Cashier Lead'}
+                  cashierId={currentUser?.id}
+                  currentUser={currentUser}
                   onRefreshAll={refreshGlobalData}
                   onSaleCompleted={refreshGlobalData}
                 />

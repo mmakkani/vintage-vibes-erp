@@ -31,7 +31,10 @@ import {
   Scale,
   Sun,
   Moon,
-  Gift
+  Gift,
+  ChevronDown,
+  UserPlus,
+  Loader2
 } from 'lucide-react';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
 import { Party } from '../../parties/parties.types.ts';
@@ -39,9 +42,71 @@ import { CompanyProfile } from '../../setup/setup.types.ts';
 import { POSTerminalConfig } from '../../setup/hardware.types.ts';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { SalesService } from '../../../services/salesService.ts';
+import { PartiesService } from '../../../services/partiesService.ts';
+import { FinanceService } from '../../../services/financeService.ts';
 import { openThermalLabelPrintWindow, openGiftReceiptPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { useBarcodeScanner } from '../../../hooks/useBarcodeScanner.ts';
 import { offlineQueue } from '../../../services/offlineQueueService.ts';
+
+/**
+ * Builds a professionally formatted WhatsApp receipt link with items, VAT, and store details.
+ */
+export function buildWhatsAppReceiptUrl({
+  phone,
+  invoiceNo,
+  date,
+  customerName,
+  paymentMethod,
+  items,
+  subTotal,
+  discountAmount,
+  vatAmount,
+  totalAmount,
+  companyName,
+  trn,
+  address
+}: {
+  phone: string;
+  invoiceNo: string;
+  date: string;
+  customerName?: string;
+  paymentMethod?: string;
+  items: Array<{ description: string; unitPrice?: number; discount?: number; finalAmount: number }>;
+  subTotal: number;
+  discountAmount?: number;
+  vatAmount: number;
+  totalAmount: number;
+  companyName?: string;
+  trn?: string;
+  address?: string;
+}): string {
+  const cleanPhone = phone.replace(/[^0-9]/g, '');
+  const itemsText = (Array.isArray(items) ? items : []).map(it => `• ${it.description} — AED ${Number(it.finalAmount).toFixed(2)}`).join('\n');
+  const discountLine = discountAmount && discountAmount > 0 ? `Discount: -AED ${Number(discountAmount).toFixed(2)}\n` : '';
+
+  const text =
+`🛍️ *${(companyName || 'VINTAGE VIBES DUBAI').toUpperCase()} - OFFICIAL RECEIPT*
+━━━━━━━━━━━━━━━━━━━━
+📄 *Tax Invoice:* ${invoiceNo}
+📅 *Date:* ${date}
+👤 *Customer:* ${customerName || 'Walk-In Valued Guest'}
+💳 *Payment:* ${paymentMethod || 'CASH'}
+━━━━━━━━━━━━━━━━━━━━
+*ITEMS PURCHASED:*
+${itemsText}
+━━━━━━━━━━━━━━━━━━━━
+Subtotal: AED ${Number(subTotal).toFixed(2)}
+${discountLine}UAE VAT (5%): AED ${Number(vatAmount).toFixed(2)}
+*TOTAL PAID: AED ${Number(totalAmount).toFixed(2)}*
+━━━━━━━━━━━━━━━━━━━━
+🏢 *${companyName || 'Vintage Vibes Luxury Boutiques'}*
+📍 ${address || 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, UAE'}
+TRN: ${trn || '100482910300003'}
+
+Thank you for shopping authentic vintage grails! ✨`;
+
+  return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
+}
 
 interface CounterCartItem {
   piece: PieceBreakdownItem;
@@ -63,6 +128,8 @@ interface ParkedSale {
 interface CounterSalePOSTerminalProps {
   companyProfile?: CompanyProfile | null;
   operatorName?: string;
+  cashierId?: string;
+  currentUser?: any;
   onRefreshAll?: () => void;
   onNavigateTab?: (tab: string) => void;
   stockPieces?: PieceBreakdownItem[];
@@ -73,6 +140,8 @@ interface CounterSalePOSTerminalProps {
 export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   companyProfile: propCompanyProfile,
   operatorName = 'Cashier Lead',
+  cashierId,
+  currentUser,
   onRefreshAll,
   onNavigateTab,
   stockPieces,
@@ -133,6 +202,28 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   const [allPieces, setAllPieces] = useState<PieceBreakdownItem[]>((stockPieces || []).filter(p => !p.isSold && p.status === 'IN_STOCK'));
   const [parties, setParties] = useState<Party[]>(clients || []);
   const [selectedCustomer, setSelectedCustomer] = useState<Party | null>(null);
+
+  // Customer Search & Quick CRM Insights State
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
+  const [customerInsights, setCustomerInsights] = useState<{ totalSpent: number; totalInvoices: number } | null>(null);
+  const [loadingCustomerInsights, setLoadingCustomerInsights] = useState(false);
+
+  // AI Visiting Card Scanner Modal State
+  const [showAiCardModal, setShowAiCardModal] = useState(false);
+  const [cardImagePreview, setCardImagePreview] = useState<string | null>(null);
+  const [isAnalyzingCard, setIsAnalyzingCard] = useState(false);
+  const [cardScannerError, setCardScannerError] = useState<string | null>(null);
+  const [cardFormData, setCardFormData] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    company: '',
+    address: ''
+  });
+  const [isSavingCardCustomer, setIsSavingCardCustomer] = useState(false);
+  const cardFileInputRef = useRef<HTMLInputElement | null>(null);
+  const customerDropdownRef = useRef<HTMLDivElement | null>(null);
 
   // Manager & Privacy Settings
   const [showManagerProfit, setShowManagerProfit] = useState(false);
@@ -241,7 +332,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       setAllPieces(stockPieces.filter(p => !p.isSold && p.status === 'IN_STOCK'));
     }
     if (clients && clients.length > 0) {
-      setParties(clients.filter(p => p.type === 'CLIENT'));
+      setParties(clients.filter(p => p.type === 'CLIENT' || p.type === 'CUSTOMER' || (p as any).party_type === 'RETAIL_CUSTOMER'));
     }
     try {
       const [piecesRes, partiesRes] = await Promise.all([
@@ -252,10 +343,122 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         setAllPieces(piecesRes.filter((p: any) => !p.isSold && p.status === 'IN_STOCK'));
       }
       if (Array.isArray(partiesRes) && partiesRes.length > 0) {
-        setParties(partiesRes.filter(p => p.type === 'CLIENT'));
+        setParties(partiesRes.filter((p: any) => p.type === 'CLIENT' || p.type === 'CUSTOMER' || p.party_type === 'RETAIL_CUSTOMER'));
       }
     } catch (err) {
       console.warn('POS Data Load Error:', err);
+    }
+  };
+
+  // Fetch Customer Insights (CRM history) whenever selected customer changes
+  useEffect(() => {
+    let isMounted = true;
+    if (selectedCustomer?.id) {
+      setLoadingCustomerInsights(true);
+      SalesService.getCustomerInsights(selectedCustomer.id)
+        .then(data => {
+          if (isMounted) setCustomerInsights(data);
+        })
+        .catch(() => {
+          if (isMounted) setCustomerInsights(null);
+        })
+        .finally(() => {
+          if (isMounted) setLoadingCustomerInsights(false);
+        });
+    } else {
+      setCustomerInsights(null);
+      setLoadingCustomerInsights(false);
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedCustomer?.id]);
+
+  // Click-outside listener to close the Customer Dropdown popover
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (customerDropdownRef.current && !customerDropdownRef.current.contains(e.target as Node)) {
+        setIsCustomerDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Filtered customer parties list for search combobox
+  const filteredParties = useMemo(() => {
+    const q = customerSearchQuery.trim().toLowerCase();
+    if (!q) return parties.slice(0, 40);
+    return parties.filter(p =>
+      p.name?.toLowerCase().includes(q) ||
+      p.phone?.toLowerCase().includes(q) ||
+      p.code?.toLowerCase().includes(q) ||
+      (p as any).company_name?.toLowerCase().includes(q) ||
+      (p as any).company?.toLowerCase().includes(q)
+    ).slice(0, 40);
+  }, [parties, customerSearchQuery]);
+
+  // Handle AI Visiting Card file upload
+  const handleCardFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const b64 = ev.target?.result as string;
+      setCardImagePreview(b64);
+      setIsAnalyzingCard(true);
+      setCardScannerError(null);
+      try {
+        const parsed = await SalesService.parseVisitingCardWithGemini(b64);
+        setCardFormData({
+          name: parsed.name || '',
+          phone: parsed.phone || '',
+          email: parsed.email || '',
+          company: parsed.company || '',
+          address: ''
+        });
+      } catch (err: any) {
+        setCardScannerError(err?.message || 'Could not parse card automatically. Please fill details manually.');
+      } finally {
+        setIsAnalyzingCard(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Handle saving customer created via AI Visiting Card Scanner
+  const handleSaveCardCustomer = async () => {
+    if (!cardFormData.name.trim()) {
+      setCardScannerError('Customer Name is required.');
+      return;
+    }
+    setIsSavingCardCustomer(true);
+    setCardScannerError(null);
+    try {
+      const savedParty = await SalesService.saveRetailCustomer({
+        name: cardFormData.name.trim(),
+        phone: cardFormData.phone.trim(),
+        email: cardFormData.email.trim(),
+        company: cardFormData.company.trim(),
+        address: cardFormData.address.trim()
+      });
+
+      setParties(prev => [savedParty, ...prev.filter(p => p.id !== savedParty.id)]);
+      setSelectedCustomer(savedParty);
+      setCustomerSearchQuery('');
+      setShowAiCardModal(false);
+      setCardImagePreview(null);
+      setCardFormData({ name: '', phone: '', email: '', company: '', address: '' });
+      luxuryAudio.playCashChime();
+      setScanFeedback({
+        text: `✨ CRM Contact "${savedParty.name}" linked to POS!`,
+        type: 'success'
+      });
+    } catch (err: any) {
+      setCardScannerError(err?.message || 'Failed to save customer');
+    } finally {
+      setIsSavingCardCustomer(false);
     }
   };
 
@@ -608,9 +811,11 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         return;
       }
 
-      // 1. Direct insert to public.pos_sales and auto stock decrement
+      // 1. Direct insert to public.pos_sales and auto stock decrement with cashier audit tagging
+      const effectiveCashierId = cashierId || currentUser?.id || currentUser?.operator_id || undefined;
       const posRecord = await SalesService.createPosSale({
         invoice_number: invoiceNum,
+        cashier_id: effectiveCashierId,
         customer_name: selectedCustomer?.name || 'Walk-In Customer',
         customer_phone: selectedCustomer?.phone || '',
         items: cart.map(c => ({
@@ -630,7 +835,78 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         payment_status: 'PAID'
       });
 
-      // 2. Also record in sales_invoices for general sales ledger
+      // 2. Dual-Entry Financial Voucher: Route strictly through Control Khata (1130-05) tagging partyId for CRM purchase history
+      let createdVoucherNo = `VCH-${Date.now().toString().slice(-6)}`;
+      try {
+        const paymentAccCode = paymentMode === 'CASH' ? '1110-01' : '1120-01';
+        const paymentAccName = paymentMode === 'CASH' ? 'Cash in Hand (Counter)' : 'Bank / Card Clearing';
+        const vRes = await FinanceService.addVoucher({
+          date: new Date().toISOString().slice(0, 10),
+          type: 'CRV',
+          reference: invoiceNum,
+          narration: `POS Counter Sale ${invoiceNum} - ${selectedCustomer?.name || 'Walk-In Customer'}`,
+          createdBy: operatorName || 'Cashier Lead',
+          lines: [
+            {
+              accountId: '1130-05',
+              accountCode: '1130-05',
+              accountName: 'Walk In Customer (Customer)',
+              partyId: selectedCustomer?.id || null,
+              partyName: selectedCustomer?.name || 'Walk-In Customer',
+              debit: totalAmt,
+              credit: 0,
+              memo: `POS Sale ${invoiceNum}`
+            },
+            {
+              accountId: '4100-01',
+              accountCode: '4100-01',
+              accountName: 'Sales Revenue',
+              partyId: selectedCustomer?.id || null,
+              partyName: selectedCustomer?.name || 'Walk-In Customer',
+              debit: 0,
+              credit: subtotalAmt,
+              memo: `Sales Revenue ${invoiceNum}`
+            },
+            ...(vatAmt > 0 ? [{
+              accountId: '2140-01',
+              accountCode: '2140-01',
+              accountName: 'VAT Output 5%',
+              partyId: selectedCustomer?.id || null,
+              partyName: selectedCustomer?.name || 'Walk-In Customer',
+              debit: 0,
+              credit: vatAmt,
+              memo: `5% UAE VAT ${invoiceNum}`
+            }] : []),
+            {
+              accountId: paymentAccCode,
+              accountCode: paymentAccCode,
+              accountName: paymentAccName,
+              partyId: selectedCustomer?.id || null,
+              partyName: selectedCustomer?.name || 'Walk-In Customer',
+              debit: totalAmt,
+              credit: 0,
+              memo: `Settlement ${invoiceNum} (${paymentMode})`
+            },
+            {
+              accountId: '1130-05',
+              accountCode: '1130-05',
+              accountName: 'Walk In Customer (Customer)',
+              partyId: selectedCustomer?.id || null,
+              partyName: selectedCustomer?.name || 'Walk-In Customer',
+              debit: 0,
+              credit: totalAmt,
+              memo: `Customer Payment Settlement ${invoiceNum}`
+            }
+          ]
+        });
+        if (vRes?.voucherNo) {
+          createdVoucherNo = vRes.voucherNo;
+        }
+      } catch (vErr) {
+        console.warn('[POS Terminal] Automatic voucher creation notice:', vErr);
+      }
+
+      // 3. Also record in sales_invoices for general sales ledger
       await SalesService.createSalesInvoice({
         invoiceNo: invoiceNum,
         clientId: selectedCustomer?.id,
@@ -677,7 +953,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             weightKg: c.piece.weightKg || 0.45
           }))
         },
-        voucher: { voucherNo: `VCH-${Date.now().toString().slice(-6)}` },
+        voucher: { voucherNo: createdVoucherNo },
         cogsSummary: { totalCogs: safeCart.reduce((sum, c) => sum + (Number(c?.cogsCost) || 0), 0) },
         pieces: safeCart.map(c => c.piece)
       });
@@ -685,6 +961,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       // Clear basket for next transaction
       setCart([]);
       setSelectedCustomer(null);
+      setCustomerSearchQuery('');
+      setCustomerInsights(null);
       setDiscountTotal(0);
       setIsGiftOrder(false);
       setGiftMessage('');
@@ -717,32 +995,34 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     } catch {}
   };
 
-  // WhatsApp E-Receipt
+  // WhatsApp Digital E-Receipt
   const handleSendWhatsAppReceipt = () => {
     if (!checkoutSuccessData) return;
     const inv = checkoutSuccessData.invoice;
-    const phone = (selectedCustomer?.phone || prompt('Enter Customer WhatsApp Number (+971...)', '+971') || '').replace(/[^0-9]/g, '');
-    if (!phone) return;
+    let phone = (inv.customerPhone || selectedCustomer?.phone || '').trim();
+    if (!phone) {
+      const input = prompt('Enter Customer WhatsApp Number (+971...)', '+971');
+      if (!input) return;
+      phone = input;
+    }
 
-    const itemsSummary = (Array.isArray(inv?.items) ? inv.items : []).map((it: any) => `• ${it.description} — AED ${it.finalAmount}`).join('\n');
-    const msg = encodeURIComponent(
-      `🛍️ *${activeProfile?.companyName || 'VINTAGE VIBES DUBAI'} - E-RECEIPT*\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n` +
-      `📄 *Tax Invoice:* ${inv.invoiceNo}\n` +
-      `📅 *Date:* ${inv.date}\n` +
-      `💳 *Payment:* ${inv.paymentMethod}\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n` +
-      `${itemsSummary}\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n` +
-      `Subtotal: AED ${inv.subTotal}\n` +
-      `UAE VAT 5%: AED ${inv.vatAmount}\n` +
-      `*TOTAL PAID: AED ${inv.totalAmount}*\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n` +
-      `TRN: ${activeProfile?.trn_number || activeProfile?.trnTaxNo || '100482910300003'}\n` +
-      `Store: ${activeProfile?.address_line_1 || activeProfile?.addressLine1 || 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, UAE'}\n` +
-      `Thank you for shopping vintage authenticated grails!`
-    );
-    window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
+    const url = buildWhatsAppReceiptUrl({
+      phone,
+      invoiceNo: inv.invoiceNo,
+      date: new Date(inv.date).toLocaleString(),
+      customerName: inv.customerName,
+      paymentMethod: inv.paymentMethod,
+      items: inv.items || [],
+      subTotal: inv.subTotal,
+      discountAmount: inv.discountAmount,
+      vatAmount: inv.vatAmount,
+      totalAmount: inv.totalAmount,
+      companyName: activeProfile?.companyName,
+      trn: activeProfile?.trn_number || activeProfile?.trnTaxNo,
+      address: activeProfile?.address_line_1 || activeProfile?.addressLine1
+    });
+
+    window.open(url, '_blank');
   };
 
   // Gift Receipt Print (Prices Hidden)
@@ -1144,46 +1424,237 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
         {/* RIGHT COLUMN: FINANCIAL SUMMARY & CHECKOUT ACTIONS (4 Cols) */}
         <div className="lg:col-span-4 flex flex-col space-y-3">
-          {/* CUSTOMER SELECTION BAR */}
-          <div className={`border rounded-2xl p-3 space-y-2 transition-colors ${
-            posTheme === 'light'
-              ? 'bg-white/95 border-amber-300/80 text-stone-900 shadow-sm'
-              : 'bg-slate-900 border-slate-800 text-white'
-          }`}>
+          {/* CUSTOMER / VIP KHATA SELECTOR WITH AI SCANNER & QUICK INSIGHTS */}
+          <div
+            ref={customerDropdownRef}
+            className={`border rounded-2xl p-3 space-y-2.5 transition-colors relative ${
+              posTheme === 'light'
+                ? 'bg-white/95 border-amber-300/80 text-stone-900 shadow-sm'
+                : 'bg-slate-900 border-slate-800 text-white'
+            }`}
+          >
             <div className={`flex items-center justify-between text-xs font-bold ${
               posTheme === 'light' ? 'text-stone-700' : 'text-slate-300'
             }`}>
-              <span>Customer / VIP Account:</span>
-              {selectedCustomer && (
+              <span className="flex items-center gap-1.5">
+                <span>Customer / CRM Khata:</span>
+              </span>
+
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setSelectedCustomer(null)}
-                  className="text-[10px] text-rose-500 hover:underline cursor-pointer"
+                  onClick={() => {
+                    setShowAiCardModal(true);
+                    setCardImagePreview(null);
+                    setCardScannerError(null);
+                    setCardFormData({ name: '', phone: '', email: '', company: '', address: '' });
+                  }}
+                  className="px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 border border-amber-500/40 rounded-lg text-[11px] font-bold flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-2xs"
+                  title="Scan Business / Visiting Card with Gemini AI Vision"
                 >
-                  Clear (Walk-In)
+                  <Camera className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                  <Sparkles className="w-3 h-3 text-amber-500" />
+                  <span>Scan Card (AI)</span>
                 </button>
-              )}
+
+                {selectedCustomer && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCustomer(null);
+                      setCustomerSearchQuery('');
+                      setCustomerInsights(null);
+                    }}
+                    className="text-[10px] text-rose-500 hover:underline cursor-pointer"
+                  >
+                    Clear (Walk-In)
+                  </button>
+                )}
+              </div>
             </div>
 
-            <select
-              value={selectedCustomer?.id || ''}
-              onChange={e => {
-                const found = parties.find(p => p.id === e.target.value);
-                setSelectedCustomer(found || null);
-              }}
-              className={`w-full border rounded-xl px-3 py-2 text-xs font-semibold focus:outline-hidden transition ${
+            {selectedCustomer ? (
+              /* SELECTED CUSTOMER CARD & QUICK INSIGHTS */
+              <div className={`p-3 rounded-xl border flex items-start justify-between gap-2 ${
                 posTheme === 'light'
-                  ? 'bg-stone-50 border-stone-300 text-stone-900 focus:border-amber-500 focus:bg-white'
-                  : 'bg-slate-950 border-slate-700 text-white focus:border-indigo-400'
-              }`}
-            >
-              <option value="">👤 Standard Walk-In Retail Customer</option>
-              {(parties || []).map(p => (
-                <option key={p.id} value={p.id}>
-                  ⭐ {p.name} ({p.code}) • {p.phone || 'VIP Client'}
-                </option>
-              ))}
-            </select>
+                  ? 'bg-amber-50/70 border-amber-300/80 text-stone-900'
+                  : 'bg-slate-800/80 border-amber-500/30 text-white'
+              }`}>
+                <div className="space-y-1 flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-black truncate">
+                      ⭐ {selectedCustomer.name}
+                    </span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full font-mono font-bold bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+                      {(selectedCustomer as any).party_type === 'RETAIL_CUSTOMER' ? 'RETAIL' : 'VIP CLIENT'}
+                    </span>
+                    {selectedCustomer.code && (
+                      <span className="text-[10px] text-stone-400 font-mono">({selectedCustomer.code})</span>
+                    )}
+                  </div>
+
+                  <div className="text-[11px] text-stone-600 dark:text-slate-400 flex items-center gap-3 flex-wrap">
+                    {selectedCustomer.phone && (
+                      <span className="font-mono">📞 {selectedCustomer.phone}</span>
+                    )}
+                    {((selectedCustomer as any).company_name || (selectedCustomer as any).company) && (
+                      <span className="truncate">🏢 {(selectedCustomer as any).company_name || (selectedCustomer as any).company}</span>
+                    )}
+                  </div>
+
+                  {/* QUICK INSIGHTS BADGE */}
+                  <div className="pt-0.5">
+                    {loadingCustomerInsights ? (
+                      <div className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
+                        <Loader2 className="w-3 h-3 animate-spin text-amber-500" />
+                        <span>Fetching CRM purchase history...</span>
+                      </div>
+                    ) : customerInsights ? (
+                      <div className="inline-flex items-center gap-2 text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30 font-mono">
+                        <span>💎 Total Spent: AED {customerInsights.totalSpent.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        <span>•</span>
+                        <span>{customerInsights.totalInvoices} Orders</span>
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-stone-500 font-mono">Control Khata: 1130-05 (Walk In Customer)</div>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCustomer(null);
+                    setCustomerSearchQuery('');
+                    setCustomerInsights(null);
+                    setIsCustomerDropdownOpen(true);
+                  }}
+                  className={`p-1.5 rounded-lg text-xs font-bold transition shrink-0 cursor-pointer ${
+                    posTheme === 'light'
+                      ? 'text-stone-400 hover:text-stone-700 hover:bg-stone-200/60'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-700'
+                  }`}
+                  title="Change Customer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              /* SMART SEARCHABLE CUSTOMER COMBOBOX */
+              <div className="relative">
+                <div className="relative flex items-center">
+                  <Search className={`w-3.5 h-3.5 absolute left-3 pointer-events-none ${
+                    posTheme === 'light' ? 'text-stone-400' : 'text-slate-500'
+                  }`} />
+                  <input
+                    type="text"
+                    value={customerSearchQuery}
+                    onChange={e => {
+                      setCustomerSearchQuery(e.target.value);
+                      setIsCustomerDropdownOpen(true);
+                    }}
+                    onFocus={() => setIsCustomerDropdownOpen(true)}
+                    placeholder="Search customer (Name, Phone +971, Company)..."
+                    className={`w-full border rounded-xl pl-9 pr-8 py-2 text-xs font-medium focus:outline-hidden transition ${
+                      posTheme === 'light'
+                        ? 'bg-stone-50 border-stone-300 text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:bg-white'
+                        : 'bg-slate-950 border-slate-700 text-white placeholder:text-slate-500 focus:border-indigo-400'
+                    }`}
+                  />
+                  <ChevronDown
+                    onClick={() => setIsCustomerDropdownOpen(prev => !prev)}
+                    className="w-4 h-4 absolute right-2.5 text-stone-400 cursor-pointer"
+                  />
+                </div>
+
+                {/* Dropdown Menu Popover */}
+                {isCustomerDropdownOpen && (
+                  <div className={`absolute top-full left-0 right-0 mt-1.5 max-h-56 overflow-y-auto rounded-xl border shadow-xl z-30 space-y-0.5 p-1 ${
+                    posTheme === 'light'
+                      ? 'bg-white border-amber-300 text-stone-900'
+                      : 'bg-slate-950 border-slate-800 text-white'
+                  }`}>
+                    {/* Default Option: Standard Walk-In */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCustomer(null);
+                        setCustomerSearchQuery('');
+                        setCustomerInsights(null);
+                        setIsCustomerDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
+                        !selectedCustomer
+                          ? 'bg-amber-500/20 text-amber-800 dark:text-amber-200'
+                          : posTheme === 'light'
+                            ? 'hover:bg-stone-100 text-stone-700'
+                            : 'hover:bg-slate-900 text-slate-300'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <span>👤</span>
+                        <span>Standard Walk-In Retail Customer</span>
+                      </span>
+                      <span className="text-[10px] text-stone-400 font-mono">1130-05</span>
+                    </button>
+
+                    {filteredParties.length === 0 ? (
+                      <div className="p-3 text-center text-xs text-slate-400 space-y-1">
+                        <div>No customers match "{customerSearchQuery}"</div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAiCardModal(true);
+                            setCardImagePreview(null);
+                            setCardScannerError(null);
+                            setCardFormData({
+                              name: customerSearchQuery,
+                              phone: '',
+                              email: '',
+                              company: '',
+                              address: ''
+                            });
+                            setIsCustomerDropdownOpen(false);
+                          }}
+                          className="text-[11px] text-amber-600 dark:text-amber-400 font-bold hover:underline cursor-pointer"
+                        >
+                          + Quick Add or Scan Visiting Card
+                        </button>
+                      </div>
+                    ) : (
+                      filteredParties.map(p => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedCustomer(p);
+                            setCustomerSearchQuery('');
+                            setIsCustomerDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center justify-between transition cursor-pointer ${
+                            posTheme === 'light'
+                              ? 'hover:bg-amber-50 text-stone-800'
+                              : 'hover:bg-slate-900 text-slate-200'
+                          }`}
+                        >
+                          <div className="truncate mr-2">
+                            <div className="font-bold truncate">
+                              ⭐ {p.name} {((p as any).company_name && (p as any).company_name !== p.name) ? `(${(p as any).company_name})` : ''}
+                            </div>
+                            <div className="text-[10px] text-stone-400 font-mono">
+                              {p.phone ? `📞 ${p.phone}` : 'No phone'} {p.code ? `• ${p.code}` : ''}
+                            </div>
+                          </div>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-500/15 text-amber-800 dark:text-amber-300 shrink-0">
+                            {(p as any).party_type === 'RETAIL_CUSTOMER' ? 'RETAIL' : 'VIP'}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* GIFT ORDER & LUXURY PACKAGING CARD */}
@@ -1802,10 +2273,15 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                 <button
                   type="button"
                   onClick={handleSendWhatsAppReceipt}
-                  className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
+                  className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-sm"
+                  title="Send digital receipt via WhatsApp"
                 >
                   <Send className="w-4 h-4" />
-                  <span>WhatsApp Bill</span>
+                  <span className="truncate">
+                    {checkoutSuccessData.invoice.customerPhone
+                      ? `WhatsApp (${checkoutSuccessData.invoice.customerPhone})`
+                      : '📱 Send WhatsApp Receipt'}
+                  </span>
                 </button>
               </div>
 
@@ -1965,6 +2441,245 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                 className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs"
               >
                 Apply (AED {tempDiscountVal})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. AI VISITING CARD SCANNER MODAL (GEMINI VISION) */}
+      {showAiCardModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 animate-in fade-in">
+          <div className={`w-full max-w-lg rounded-2xl border shadow-2xl p-5 space-y-4 max-h-[92vh] overflow-y-auto ${
+            posTheme === 'light'
+              ? 'bg-white border-amber-300 text-stone-900'
+              : 'bg-slate-950 border-slate-800 text-white'
+          }`}>
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-stone-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                  <Camera className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold uppercase tracking-wider flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
+                    <span>AI Visiting Card Scanner</span>
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                  </h3>
+                  <p className="text-[11px] text-stone-500 dark:text-slate-400">
+                    Instant OCR & CRM Contact Auto-Extraction powered by Gemini AI
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAiCardModal(false);
+                  setCardImagePreview(null);
+                  setCardScannerError(null);
+                }}
+                className="text-stone-400 hover:text-stone-700 dark:hover:text-white p-1 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Error Message */}
+            {cardScannerError && (
+              <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{cardScannerError}</span>
+              </div>
+            )}
+
+            {/* Upload Zone */}
+            <input
+              type="file"
+              ref={cardFileInputRef}
+              accept="image/*"
+              capture="environment"
+              onChange={handleCardFileSelected}
+              className="hidden"
+            />
+
+            {!cardImagePreview ? (
+              <div
+                onClick={() => cardFileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition hover:border-amber-500 ${
+                  posTheme === 'light'
+                    ? 'border-amber-300/80 bg-amber-50/40 hover:bg-amber-50'
+                    : 'border-slate-700 bg-slate-900/60 hover:bg-slate-900'
+                }`}
+              >
+                <div className="w-12 h-12 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto mb-2">
+                  <Camera className="w-6 h-6" />
+                </div>
+                <div className="text-xs font-bold text-amber-800 dark:text-amber-300">
+                  📸 Click to Capture or Upload Visiting Card Photo
+                </div>
+                <div className="text-[11px] text-stone-500 dark:text-slate-400 mt-1">
+                  Supports JPG, PNG, WEBP (Camera capture enabled)
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="relative rounded-xl overflow-hidden border border-amber-300/60 max-h-48 bg-black/40 flex items-center justify-center">
+                  <img src={cardImagePreview} alt="Visiting Card" className="max-h-48 w-auto object-contain" />
+                  <button
+                    type="button"
+                    onClick={() => cardFileInputRef.current?.click()}
+                    className="absolute bottom-2 right-2 px-2.5 py-1 bg-black/80 hover:bg-black text-white text-[11px] font-bold rounded-lg shadow-md flex items-center gap-1 cursor-pointer"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>Retake / Change</span>
+                  </button>
+                </div>
+
+                {isAnalyzingCard && (
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center gap-2 text-xs font-bold text-amber-700 dark:text-amber-300 font-mono animate-pulse">
+                    <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                    <span>Gemini AI is parsing business card details...</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Quick Auto-filled Form Fields */}
+            <div className="space-y-2.5 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider block mb-1 text-stone-600 dark:text-slate-400">
+                    Customer Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={cardFormData.name}
+                    onChange={e => setCardFormData(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="e.g. John Doe"
+                    className={`w-full border rounded-xl px-3 py-2 text-xs font-semibold focus:outline-hidden transition ${
+                      posTheme === 'light'
+                        ? 'bg-stone-50 border-stone-300 text-stone-900 focus:border-amber-500 focus:bg-white'
+                        : 'bg-slate-950 border-slate-700 text-white focus:border-indigo-400'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider block mb-1 text-stone-600 dark:text-slate-400">
+                    Mobile / WhatsApp (+971...)
+                  </label>
+                  <input
+                    type="text"
+                    value={cardFormData.phone}
+                    onChange={e => setCardFormData(prev => ({ ...prev, phone: e.target.value }))}
+                    placeholder="e.g. +971 50 123 4567"
+                    className={`w-full border rounded-xl px-3 py-2 text-xs font-mono font-semibold focus:outline-hidden transition ${
+                      posTheme === 'light'
+                        ? 'bg-stone-50 border-stone-300 text-stone-900 focus:border-amber-500 focus:bg-white'
+                        : 'bg-slate-950 border-slate-700 text-white focus:border-indigo-400'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider block mb-1 text-stone-600 dark:text-slate-400">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    value={cardFormData.email}
+                    onChange={e => setCardFormData(prev => ({ ...prev, email: e.target.value }))}
+                    placeholder="e.g. client@company.com"
+                    className={`w-full border rounded-xl px-3 py-2 text-xs font-semibold focus:outline-hidden transition ${
+                      posTheme === 'light'
+                        ? 'bg-stone-50 border-stone-300 text-stone-900 focus:border-amber-500 focus:bg-white'
+                        : 'bg-slate-950 border-slate-700 text-white focus:border-indigo-400'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider block mb-1 text-stone-600 dark:text-slate-400">
+                    Company / Organization
+                  </label>
+                  <input
+                    type="text"
+                    value={cardFormData.company}
+                    onChange={e => setCardFormData(prev => ({ ...prev, company: e.target.value }))}
+                    placeholder="e.g. Vintage Vault LLC"
+                    className={`w-full border rounded-xl px-3 py-2 text-xs font-semibold focus:outline-hidden transition ${
+                      posTheme === 'light'
+                        ? 'bg-stone-50 border-stone-300 text-stone-900 focus:border-amber-500 focus:bg-white'
+                        : 'bg-slate-950 border-slate-700 text-white focus:border-indigo-400'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider block mb-1 text-stone-600 dark:text-slate-400">
+                  Address / City (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={cardFormData.address}
+                  onChange={e => setCardFormData(prev => ({ ...prev, address: e.target.value }))}
+                  placeholder="e.g. Downtown Dubai / Al Ain"
+                  className={`w-full border rounded-xl px-3 py-2 text-xs font-semibold focus:outline-hidden transition ${
+                    posTheme === 'light'
+                      ? 'bg-stone-50 border-stone-300 text-stone-900 focus:border-amber-500 focus:bg-white'
+                      : 'bg-slate-950 border-slate-700 text-white focus:border-indigo-400'
+                  }`}
+                />
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-800 dark:text-amber-300 space-y-0.5">
+                <div className="font-bold flex items-center gap-1">
+                  <span>🛡️ CRM Isolation Active</span>
+                </div>
+                <div className="text-[10px] opacity-90">
+                  Customer will be saved as <code className="font-mono font-bold">RETAIL_CUSTOMER</code> linked strictly to Control Khata <code className="font-mono font-bold">1130-05</code>. Zero Chart of Accounts bloat!
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAiCardModal(false);
+                  setCardImagePreview(null);
+                  setCardScannerError(null);
+                }}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  posTheme === 'light'
+                    ? 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+                    : 'bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveCardCustomer}
+                disabled={isSavingCardCustomer || !cardFormData.name.trim()}
+                className="px-5 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-md shadow-amber-600/20"
+              >
+                {isSavingCardCustomer ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Saving to CRM...</span>
+                  </>
+                ) : (
+                  <>
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>Save Customer & Select for Sale</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

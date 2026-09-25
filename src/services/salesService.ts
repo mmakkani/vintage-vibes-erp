@@ -618,6 +618,130 @@ export class SalesService {
     return data || [];
   }
 
+  /**
+   * Save a new retail customer directly from POS (CRM Isolation, No COA account)
+   * Enforces party_type = 'RETAIL_CUSTOMER' and routes to Control Khata 1130-05
+   */
+  public static async saveRetailCustomer(customer: {
+    name: string;
+    phone?: string;
+    email?: string;
+    company?: string;
+    address?: string;
+  }): Promise<any> {
+    const { PartiesService } = await import('./partiesService.ts');
+    return PartiesService.saveRetailCustomer(customer);
+  }
+
+  /**
+   * AI Business / Visiting Card Parser for POS Terminal
+   * Extracts { name, phone, email, company } using Gemini AI vision.
+   * Strict AI prompt: "Extract the following from this business card as JSON: { name, phone, email, company }. Return ONLY valid JSON."
+   */
+  public static async parseVisitingCardWithGemini(imageBase64: string): Promise<{
+    name: string;
+    phone: string;
+    email: string;
+    company: string;
+  }> {
+    if (!imageBase64 || imageBase64.length < 50) {
+      throw new Error('Please provide a valid business card image.');
+    }
+
+    const cleanB64 = imageBase64.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
+    const mimeMatch = imageBase64.match(/^data:(image\/[a-zA-Z0-9.+]+);base64,/);
+    const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+
+    const envKey =
+      (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
+      (typeof window !== 'undefined' && (window as any).__ENV__?.VITE_GEMINI_API_KEY) ||
+      (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_api_key') || '').trim() : '');
+
+    const apiKey = (envKey || '').trim();
+    const promptText = 'Extract the following from this business card as JSON: { name, phone, email, company }. Return ONLY valid JSON.';
+
+    const models = [
+      'gemini-3.6-flash',
+      'gemini-3.7-flash',
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash'
+    ];
+
+    if (apiKey) {
+      for (const model of models) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    { text: promptText },
+                    {
+                      inline_data: {
+                        mime_type: mimeType,
+                        data: cleanB64
+                      }
+                    }
+                  ]
+                }
+              ],
+              generationConfig: {
+                temperature: 0.1,
+                response_mime_type: 'application/json'
+              }
+            })
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (rawText) {
+              const cleaned = rawText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+              const parsed = JSON.parse(cleaned);
+              return {
+                name: String(parsed.name || parsed.contactPerson || parsed.contact_person || '').trim(),
+                phone: String(parsed.phone || parsed.contact_no || parsed.mobile || '').trim(),
+                email: String(parsed.email || '').trim(),
+                company: String(parsed.company || parsed.companyName || parsed.company_name || '').trim()
+              };
+            }
+          }
+        } catch (e) {
+          console.warn(`[SalesService] Gemini ${model} visiting card parse notice:`, e);
+        }
+      }
+    }
+
+    return {
+      name: '',
+      phone: '',
+      email: '',
+      company: ''
+    };
+  }
+
+  /**
+   * Fetch customer lifetime purchase insights efficiently for POS quick badge
+   */
+  public static async getCustomerInsights(clientId: string): Promise<{ totalSpent: number; totalInvoices: number }> {
+    if (!clientId) return { totalSpent: 0, totalInvoices: 0 };
+    try {
+      const { data, error } = await supabase
+        .from('sales_invoices')
+        .select('total_amount')
+        .eq('client_id', clientId);
+      if (error || !data) return { totalSpent: 0, totalInvoices: 0 };
+      const totalSpent = data.reduce((sum, inv) => sum + (Number(inv.total_amount) || 0), 0);
+      return { totalSpent: Number(totalSpent.toFixed(2)), totalInvoices: data.length };
+    } catch {
+      return { totalSpent: 0, totalInvoices: 0 };
+    }
+  }
+
   public static async createPosSale(sale: {
     invoice_number?: string;
     cashier_id?: string;
@@ -633,10 +757,13 @@ export class SalesService {
   }): Promise<any> {
     const id = String(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : ('pos-' + Date.now()));
     const invoiceNumber = sale.invoice_number || `POS-${Date.now().toString().slice(-6)}`;
+    const isUuid = (val?: string) => Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val).trim()));
+    const validCashierUuid = isUuid(sale.cashier_id) ? String(sale.cashier_id).trim() : null;
+
     const payload = {
       id,
       invoice_number: invoiceNumber,
-      cashier_id: sale.cashier_id ? String(sale.cashier_id) : null,
+      cashier_id: validCashierUuid,
       customer_name: sale.customer_name || 'Walk-in Customer',
       customer_phone: sale.customer_phone || '',
       items: sale.items || [],

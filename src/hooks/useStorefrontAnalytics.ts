@@ -95,44 +95,24 @@ function getDeviceFingerprint(): DeviceFingerprint {
  * Fetches public IP and Geo-location silently using resilient public endpoints.
  * Automatically times out after 3.5s to prevent blocking.
  */
-async function fetchGeoLocation(): Promise<GeoLocationData> {
+async function fetchGeoLocation(): Promise<any> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 3500);
-
   try {
-    // Primary: ipapi.co
-    const res = await fetch('https://ipapi.co/json/', {
-      signal: controller.signal,
-      headers: { Accept: 'application/json' }
-    });
+    const res = await fetch('https://ipwho.is/', { signal: controller.signal, headers: { Accept: 'application/json' } });
     clearTimeout(timeoutId);
     if (res.ok) {
       const data = await res.json();
-      return {
-        ip: data.ip || 'Unknown',
-        country: data.country_name || data.country || 'Unknown',
-        city: data.city || 'Unknown'
-      };
+      if (data.success) return { ip: data.ip || 'Unknown', country: data.country || 'Unknown', city: data.city || 'Unknown' };
     }
-  } catch (_) {
-    // Fallback: ip-api.com
-    try {
-      const resFallback = await fetch('https://ip-api.com/json/?fields=status,country,city,query', {
-        headers: { Accept: 'application/json' }
-      });
-      if (resFallback.ok) {
-        const data = await resFallback.json();
-        if (data.status === 'success') {
-          return {
-            ip: data.query || 'Unknown',
-            country: data.country || 'Unknown',
-            city: data.city || 'Unknown'
-          };
-        }
-      }
-    } catch (_) {}
-  }
-
+  } catch (_) {}
+  try {
+    const resFallback = await fetch('https://freeipapi.com/api/json', { headers: { Accept: 'application/json' } });
+    if (resFallback.ok) {
+      const data = await resFallback.json();
+      return { ip: data.ipAddress || 'Unknown', country: data.countryName || 'Unknown', city: data.cityName || 'Unknown' };
+    }
+  } catch (_) {}
   return { ip: 'Unknown', country: 'Unknown', city: 'Unknown' };
 }
 

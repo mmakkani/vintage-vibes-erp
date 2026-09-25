@@ -25,6 +25,8 @@ export interface VintageValuationResult {
   estimatedMarketValueAed: number;
   estimatedMarketValueUsd: number;
   recommendedRetailPriceAed: number;
+  pitToPitInches?: number | string;
+  lengthInches?: number | string;
   global_insights?: {
     usa_market_usd?: number;
     europe_market_eur?: number;
@@ -32,6 +34,12 @@ export interface VintageValuationResult {
     uae_retail_aed?: number;
     arbitrage_analysis?: string;
     collector_notes?: string;
+    measurements?: {
+      pitToPit?: number | string;
+      length?: number | string;
+    };
+    measurement_image_url?: string | null;
+    [key: string]: any;
   };
   suggestedQualityGrade: string;
   confidence: number;
@@ -45,7 +53,8 @@ export interface VintageValuationResult {
 }
 
 export interface VintageScanPayload {
-  imageBase64: string;
+  imageBase64?: string;
+  imagesBase64?: string[];
   textPrompt?: string;
   apiKey?: string;
 }
@@ -157,6 +166,11 @@ EVALUATION RULES:
 9. E-Commerce Archival Copywriting & SEO Keywords:
    - ecommerce_description: Generate a 2-3 sentence, highly engaging luxury archival description. Highlight era provenance, fabric patina/wash, stitch lineage, fit/drape, and styling recommendation.
    - seo_tags: Return an array of 5-8 high-intent search keywords (e.g., ["vintage single stitch tee", "90s streetwear", "faded black wash", "rare archival thrift dubai"]).
+10. Garment Measurement Scaling & Tape Reading:
+   - If multi-angle photos are provided, inspect all images. In particular, the 4th image contains a measuring tape on the garment. Read the tape to extract the exact Pit-to-Pit (Chest) and Length in inches.
+   - If a tape is visible, read the numeric markings at the armpit seams (Pit-to-Pit) and from collar seam to hem (Length).
+   - If a tape is not visible or cannot be precisely read, estimate standard realistic vintage dimensions for the detected garment size (e.g. Size S ~ Pit: 19.5, Len: 26.5; Size M ~ Pit: 21.5, Len: 27.5; Size L ~ Pit: 23.5, Len: 29; Size XL ~ Pit: 25.5, Len: 30.5).
+   - Return "pitToPitInches" (e.g. 22 or 21.5) and "lengthInches" (e.g. 29 or 28.5).
 
 Return ONLY a pure JSON object matching this schema without markdown codeblocks:
 {
@@ -174,6 +188,8 @@ Return ONLY a pure JSON object matching this schema without markdown codeblocks:
   "estimatedMarketValueAed": 750,
   "estimatedMarketValueUsd": 205,
   "recommendedRetailPriceAed": 650,
+  "pitToPitInches": 22,
+  "lengthInches": 29,
   "global_insights": {
     "usa_market_usd": 220,
     "europe_market_eur": 200,
@@ -205,25 +221,33 @@ export const GEMINI_VALUATION_CASCADE_MODELS: string[] = [
  * Direct Gemini 2.5 / 2.0 Flash Vision browser execution with automatic cascade fallback
  * and exponential backoff retry for HTTP 503 Service Unavailable.
  */
-async function callGeminiVisionAppraisal(apiKey: string, imageBase64: string, preferredModel?: string): Promise<VintageValuationResult> {
+async function callGeminiVisionAppraisal(
+  apiKey: string,
+  imageBase64: string,
+  preferredModel?: string,
+  imagesBase64?: string[]
+): Promise<VintageValuationResult> {
   const models = Array.from(new Set([
     ...(preferredModel ? [preferredModel.trim()] : []),
     ...GEMINI_VALUATION_CASCADE_MODELS
   ]));
-  const mime = detectMime(imageBase64);
-  const data = cleanBase64(imageBase64);
 
-  const parts = [
-    {
+  const allImages = (imagesBase64 && imagesBase64.length > 0)
+    ? imagesBase64.filter(img => Boolean(img && img.trim().length > 100))
+    : (imageBase64 && imageBase64.trim().length > 100 ? [imageBase64] : []);
+
+  const parts: any[] = [];
+  for (const img of allImages) {
+    parts.push({
       inlineData: {
-        mimeType: mime,
-        data: data
+        mimeType: detectMime(img),
+        data: cleanBase64(img)
       }
-    },
-    {
-      text: VINTAGE_APPRAISER_PROMPT
-    }
-  ];
+    });
+  }
+  parts.push({
+    text: VINTAGE_APPRAISER_PROMPT
+  });
 
   let lastError: any = null;
 
@@ -326,20 +350,35 @@ async function callGeminiVisionAppraisal(apiKey: string, imageBase64: string, pr
         else finalTier = 'GRADE_A';
       }
 
+      const pitToPit = parsed.pitToPitInches !== undefined && parsed.pitToPitInches !== ''
+        ? parsed.pitToPitInches
+        : (parsed.measurements?.pitToPit || parsed.global_insights?.measurements?.pitToPit || '');
+      const garmentLength = parsed.lengthInches !== undefined && parsed.lengthInches !== ''
+        ? parsed.lengthInches
+        : (parsed.measurements?.length || parsed.global_insights?.measurements?.length || '');
+
       const globalInsights = parsed.global_insights ? {
         usa_market_usd: Number(parsed.global_insights.usa_market_usd) || Math.round(mktAed / 3.67),
         europe_market_eur: Number(parsed.global_insights.europe_market_eur) || Math.round(mktAed / 4.0),
         australia_market_aud: Number(parsed.global_insights.australia_market_aud) || Math.round(mktAed / 2.35),
         uae_retail_aed: Number(parsed.global_insights.uae_retail_aed) || retailAed,
         arbitrage_analysis: String(parsed.global_insights.arbitrage_analysis || (isGrail ? 'High demand in US/EU collector scene; substantial arbitrage over UAE local base cost.' : 'Standard local thrift market turnover.')),
-        collector_notes: String(parsed.global_insights.collector_notes || parsed.grailNotes || 'Verified valuation by Gemini.')
+        collector_notes: String(parsed.global_insights.collector_notes || parsed.grailNotes || 'Verified valuation by Gemini.'),
+        measurements: {
+          pitToPit: pitToPit || '',
+          length: garmentLength || ''
+        }
       } : {
         usa_market_usd: Math.round(mktAed / 3.67),
         europe_market_eur: Math.round(mktAed / 4.0),
         australia_market_aud: Math.round(mktAed / 2.35),
         uae_retail_aed: retailAed,
         arbitrage_analysis: isGrail ? 'High demand in US/EU collector scene; 3.5x arbitrage margin over UAE local wholesale cost.' : 'Standard local thrift market turnover.',
-        collector_notes: parsed.grailNotes || 'Evaluated for vintage authenticity and market resale.'
+        collector_notes: parsed.grailNotes || 'Evaluated for vintage authenticity and market resale.',
+        measurements: {
+          pitToPit: pitToPit || '',
+          length: garmentLength || ''
+        }
       };
 
       return {
@@ -358,6 +397,8 @@ async function callGeminiVisionAppraisal(apiKey: string, imageBase64: string, pr
         estimatedMarketValueAed: mktAed,
         estimatedMarketValueUsd: Number(parsed.estimatedMarketValueUsd) || Math.round(mktAed / 3.67),
         recommendedRetailPriceAed: retailAed,
+        pitToPitInches: pitToPit,
+        lengthInches: garmentLength,
         global_insights: globalInsights,
         suggestedQualityGrade: parsed.suggestedQualityGrade || (isGrail ? 'Super Cream (Mint / Luxury Vintage)' : (isNonBrand ? 'Grade A+ (Pristine Cream)' : 'Grade A (Branded Vintage)')),
         confidence: Number(parsed.confidence) || 0.95,
@@ -807,8 +848,9 @@ function ensureSeoAndCopy(res: VintageValuationResult): VintageValuationResult {
  * Main entry point: Performs Vintage Appraisal using Gemini Vision or intelligent fallback
  */
 export async function analyzeVintageGarment(payload: VintageScanPayload): Promise<VintageValuationResult> {
-  const { imageBase64, textPrompt } = payload;
-  if (!imageBase64 || imageBase64.trim().length < 200) {
+  const { imageBase64, imagesBase64, textPrompt } = payload;
+  const primaryImage = imageBase64 || (imagesBase64 && imagesBase64.length > 0 ? imagesBase64[0] : '');
+  if (!primaryImage || primaryImage.trim().length < 200) {
     throw new Error('Please snap or upload a clear photo of the garment tag or design.');
   }
 
@@ -823,7 +865,7 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
   if (apiKey && apiKey.length > 10) {
     try {
       const preferredModel = (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_model') || '').trim() : '') || 'gemini-3.7-flash';
-      const result = await callGeminiVisionAppraisal(apiKey, imageBase64, preferredModel);
+      const result = await callGeminiVisionAppraisal(apiKey, primaryImage, preferredModel, imagesBase64);
       return ensureSeoAndCopy(result);
     } catch (apiErr: any) {
       console.warn('[Gemini Vision Appraisal failed, attempting backend route or heuristic]:', apiErr?.message);
@@ -838,7 +880,7 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
         'Content-Type': 'application/json',
         ...(apiKey ? { 'x-gemini-api-key': apiKey } : {})
       },
-      body: JSON.stringify({ imageBase64, textPrompt })
+      body: JSON.stringify({ imageBase64: primaryImage, imagesBase64, textPrompt })
     });
 
     if (res.ok) {
@@ -846,7 +888,7 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
       if (data && (data.brand || data.garmentTitle)) {
         return ensureSeoAndCopy({
           ...data,
-          tagImageUrl: imageBase64,
+          tagImageUrl: primaryImage,
           source: data.source || 'GEMINI_AI_VISION'
         });
       }
@@ -856,5 +898,5 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
   }
 
   // 4. Intelligent Heuristic Fallback Engine
-  return ensureSeoAndCopy(getHeuristicVintageAppraisal(textPrompt, imageBase64));
+  return ensureSeoAndCopy(getHeuristicVintageAppraisal(textPrompt, primaryImage));
 }

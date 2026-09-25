@@ -106,16 +106,23 @@ export const VINTAGE_FIT_SILHOUETTES: FitGuideSilhouette[] = [
  * Calculates exact pit-to-pit, length, and fit silhouette for any garment.
  */
 export function getGarmentMeasurements(piece: PieceBreakdownItem): GarmentMeasurements {
-  // If piece already has custom measurements specified
-  if (piece.pitToPitInches && piece.lengthInches) {
-    const p2p = piece.pitToPitInches;
-    const len = piece.lengthInches;
+  const rawMeasurements = (piece as any)?.global_insights?.measurements || (piece as any)?.globalInsights?.measurements;
+  const p2pFromInsights = rawMeasurements?.pitToPit ? Number(rawMeasurements.pitToPit) : undefined;
+  const lenFromInsights = rawMeasurements?.length ? Number(rawMeasurements.length) : undefined;
+
+  const customP2p = piece.pitToPitInches || p2pFromInsights;
+  const customLen = piece.lengthInches || lenFromInsights;
+
+  // If piece already has custom measurements specified (from manual input or AI tape scan in global_insights)
+  if (customP2p && customLen) {
+    const p2p = customP2p;
+    const len = customLen;
     const silhouette = piece.fitSilhouette || 'Boxy 90s Fit';
     return {
       pitToPitInches: p2p,
       lengthInches: len,
-      pitToPitCm: Math.round(p2p * 2.54),
-      lengthCm: Math.round(len * 2.54),
+      pitToPitCm: Math.round(p2p * 2.54 * 10) / 10,
+      lengthCm: Math.round(len * 2.54 * 10) / 10,
       fitSilhouette: silhouette,
       silhouetteBadge: 'Exact Measured Piece',
       vintageEra: '1990s Vintage Archive',
@@ -199,6 +206,9 @@ export function getGarmentMeasurements(piece: PieceBreakdownItem): GarmentMeasur
     else if (size.includes('2XL') || size.includes('XXL')) { p2p = 27.5; len = 31.5; }
     else { p2p = 23.5; len = 29.0; } // L
   }
+
+  if (customP2p) p2p = customP2p;
+  if (customLen) len = customLen;
 
   return {
     pitToPitInches: p2p,

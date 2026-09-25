@@ -487,6 +487,124 @@ export class PartiesService {
     return data as any;
   }
 
+  /**
+   * CRM Isolation & Retail Party Creation:
+   * Saves a new retail customer directly into `public.parties` with `party_type = 'RETAIL_CUSTOMER'`.
+   * CRITICAL RULE: DOES NOT create an individual account in `chart_of_accounts`.
+   * Maps their receivables strictly to Control Khata 1130-05 (Walk In Customer).
+   */
+  public static async saveRetailCustomer(customer: {
+    name: string;
+    phone?: string;
+    email?: string;
+    company?: string;
+    address?: string;
+  }): Promise<Party> {
+    const cleanName = String(customer.name || '').trim();
+    if (!cleanName) {
+      throw new Error('Customer name is required');
+    }
+
+    const cleanPhone = String(customer.phone || '').trim();
+    const cleanEmail = String(customer.email || '').trim();
+    const cleanCompany = String(customer.company || cleanName).trim();
+    const cleanAddress = String(customer.address || '').trim();
+
+    // Check if customer already exists by phone
+    if (cleanPhone) {
+      try {
+        const { data: existing } = await supabase
+          .from('parties')
+          .select('*')
+          .eq('phone', cleanPhone)
+          .maybeSingle();
+
+        if (existing) {
+          return {
+            id: existing.id,
+            code: existing.code,
+            name: existing.name,
+            type: 'CUSTOMER',
+            party_type: 'RETAIL_CUSTOMER',
+            phone: existing.phone || '',
+            email: existing.email || '',
+            company_name: existing.company_name || existing.name,
+            current_balance: Number(existing.current_balance || 0),
+            credit_limit: Number(existing.credit_limit || 0),
+            is_active: existing.is_active !== false,
+            coa_account_id: existing.coa_account_id || '1130-05',
+            account_map: existing.account_map || { receivableAccountId: '1130-05' }
+          } as Party;
+        }
+      } catch (_) {}
+    }
+
+    const id = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ret-${Date.now()}`;
+    const code = `RET-${Date.now().toString().slice(-4)}`;
+    const CONTROL_KHATA_CODE = '1130-05';
+    const CONTROL_KHATA_UUID = 'a5a8d92b-cdea-4418-8737-d3c4dca24909';
+
+    const partyPayload = {
+      id,
+      code,
+      name: cleanName,
+      company_name: cleanCompany,
+      type: 'CUSTOMER',
+      party_type: 'RETAIL_CUSTOMER',
+      phone: cleanPhone,
+      email: cleanEmail,
+      address: cleanAddress,
+      linked_account_id: CONTROL_KHATA_UUID,
+      account_id: CONTROL_KHATA_UUID,
+      coa_account_id: CONTROL_KHATA_CODE,
+      account_map: {
+        receivableAccountId: CONTROL_KHATA_CODE,
+        controlKhata: CONTROL_KHATA_CODE,
+        isControlKhataOnly: true
+      },
+      credit_limit: 0,
+      current_balance: 0,
+      currency: 'AED',
+      is_active: true,
+      created_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('parties')
+      .insert(partyPayload)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[PartiesService] Error creating retail customer:', error);
+      throw new Error(`Failed to save retail customer: ${error.message}`);
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+          detail: { module: 'parties', entity: 'parties', action: 'CREATED', documentRef: code }
+        }));
+      } catch (_) {}
+    }
+
+    return {
+      id: data.id,
+      code: data.code,
+      name: data.name,
+      type: 'CUSTOMER',
+      party_type: 'RETAIL_CUSTOMER',
+      phone: data.phone || '',
+      email: data.email || '',
+      company_name: data.company_name || data.name,
+      current_balance: 0,
+      credit_limit: 0,
+      is_active: true,
+      coa_account_id: CONTROL_KHATA_CODE,
+      account_map: data.account_map || { receivableAccountId: CONTROL_KHATA_CODE }
+    } as Party;
+  }
+
   public static async addParty(party: Partial<Party> & { party_type?: string; company_name?: string; companyName?: string; trn_no?: string; trnNo?: string; tax_id?: string; contact_no?: string; credit_limit?: number; receivable_account_id?: string; payable_account_id?: string }): Promise<Party> {
     const cleanName = String(party.name || party.company_name || party.companyName || '').trim();
     if (!cleanName) {

@@ -53,6 +53,12 @@ export interface ExtractedTagData {
   seo_tags?: string[];
   marketSegment?: string;
   global_insights?: any;
+  pitToPitInches?: number | string;
+  lengthInches?: number | string;
+  measurements?: {
+    pitToPit?: number | string;
+    length?: number | string;
+  };
 }
 
 interface CameraTagScannerModalProps {
@@ -392,7 +398,10 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
           ecommerce_description: valuation.ecommerce_description,
           seo_tags: valuation.seo_tags,
           marketSegment: valuation.marketSegment,
-          global_insights: valuation.global_insights
+          global_insights: valuation.global_insights,
+          pitToPitInches: valuation.pitToPitInches,
+          lengthInches: valuation.lengthInches,
+          measurements: valuation.global_insights?.measurements || (valuation.pitToPitInches || valuation.lengthInches ? { pitToPit: valuation.pitToPitInches, length: valuation.lengthInches } : undefined)
         });
       } else {
         throw new Error(valuation.error || 'Could not identify vintage apparel details.');

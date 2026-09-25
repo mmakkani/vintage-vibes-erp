@@ -348,14 +348,17 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     };
   }, [activeBale?.id]);
 
-  // Studio 3-Angle Photos (Front Look, Back Look, Tag OCR)
+  // Studio 4-Angle Photos (Front Look, Back Look, Tag OCR, Measurement Tape)
   const [showTagScanner, setShowTagScanner] = useState(false);
   const [showStudioCamera, setShowStudioCamera] = useState(false);
-  const [studioCameraSlot, setStudioCameraSlot] = useState<'front' | 'back' | 'tag'>('front');
+  const [studioCameraSlot, setStudioCameraSlot] = useState<'front' | 'back' | 'tag' | 'measurement'>('front');
   const [previewLightboxImage, setPreviewLightboxImage] = useState<string | null>(null);
   const [tagImageUrl, setTagImageUrl] = useState<string | undefined>(undefined);
   const [frontImageUrl, setFrontImageUrl] = useState<string | undefined>(undefined);
   const [backImageUrl, setBackImageUrl] = useState<string | undefined>(undefined);
+  const [measurementImageUrl, setMeasurementImageUrl] = useState<string | undefined>(undefined);
+  const [pitToPit, setPitToPit] = useState<string>('');
+  const [lengthInches, setLengthInches] = useState<string>('');
   const [activeGrailAlert, setActiveGrailAlert] = useState<ExtractedTagData | null>(null);
 
   // Auto print toggle
@@ -745,6 +748,23 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     if (tagData.size) setSizeScanned(tagData.size.trim());
     if (tagData.countryOfOrigin) setCountryOfOrigin(tagData.countryOfOrigin.trim());
 
+    // 2b. Measurements Auto-Fill (Pit-to-Pit & Length)
+    if (tagData.pitToPitInches !== undefined && tagData.pitToPitInches !== '') {
+      setPitToPit(String(tagData.pitToPitInches));
+    } else if (tagData.measurements?.pitToPit !== undefined && tagData.measurements?.pitToPit !== '') {
+      setPitToPit(String(tagData.measurements.pitToPit));
+    } else if ((tagData as any).global_insights?.measurements?.pitToPit) {
+      setPitToPit(String((tagData as any).global_insights.measurements.pitToPit));
+    }
+
+    if (tagData.lengthInches !== undefined && tagData.lengthInches !== '') {
+      setLengthInches(String(tagData.lengthInches));
+    } else if (tagData.measurements?.length !== undefined && tagData.measurements?.length !== '') {
+      setLengthInches(String(tagData.measurements.length));
+    } else if ((tagData as any).global_insights?.measurements?.length) {
+      setLengthInches(String((tagData as any).global_insights.measurements.length));
+    }
+
     // 3. Era & Vintage lineage & Market Segment
     if (tagData.era) setEra(tagData.era);
     if ((tagData as any).marketSegment) {
@@ -994,6 +1014,18 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }, 0);
     const startSeq = Math.max(pieces.length, maxSeq);
 
+    const pieceGlobalInsights = {
+      ...(globalInsights || {}),
+      ...(pitToPit || lengthInches ? {
+        measurements: {
+          pitToPit: pitToPit || (globalInsights as any)?.measurements?.pitToPit || '',
+          length: lengthInches || (globalInsights as any)?.measurements?.length || ''
+        }
+      } : {}),
+      ...(measurementImageUrl ? { measurement_image_url: measurementImageUrl } : {})
+    };
+    const effectiveGlobalInsights = Object.keys(pieceGlobalInsights).length > 0 ? pieceGlobalInsights : null;
+
     for (let i = 0; i < qty; i++) {
       const pieceIdx = startSeq + 1 + i;
       const barcode = `${activeBaleId}-P${String(pieceIdx).padStart(4, '0')}`;
@@ -1041,7 +1073,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         is_grail: finalGrailStatus,
         ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
         is_price_overridden: isOverridden,
-        global_insights: globalInsights || null
+        global_insights: effectiveGlobalInsights
       };
 
       // Payload for public.inventory_pieces (sanitized: strict column bounds)
@@ -1072,7 +1104,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         is_grail: finalGrailStatus,
         ai_suggested_price: aiSuggestedPrice || effectiveSellingPrice,
         is_price_overridden: isOverridden,
-        global_insights: globalInsights || null,
+        global_insights: effectiveGlobalInsights,
         ready_for_ecommerce: readyForEcommerce,
         ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
         seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
@@ -1110,7 +1142,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         isGrail: finalGrailStatus,
         aiSuggestedPrice: aiSuggestedPrice || effectiveSellingPrice,
         isPriceOverridden: isOverridden,
-        globalInsights: globalInsights || undefined,
+        globalInsights: effectiveGlobalInsights || undefined,
+        pitToPitInches: pitToPit ? Number(pitToPit) || undefined : undefined,
+        lengthInches: lengthInches ? Number(lengthInches) || undefined : undefined,
         isSold: false,
         isTagged: true,
         ready_for_ecommerce: readyForEcommerce,
@@ -1267,6 +1301,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setFrontImageUrl(undefined);
     setBackImageUrl(undefined);
     setTagImageUrl(undefined);
+    setMeasurementImageUrl(undefined);
+    setPitToPit('');
+    setLengthInches('');
     setEra('1990s Vintage');
     setMarketSegment('Vintage');
     setIsGrail(false);
@@ -2205,7 +2242,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       setShowStudioCamera(true);
                     }}
                     className="bg-gradient-to-r from-indigo-600 via-purple-600 to-amber-500 hover:from-indigo-500 hover:to-amber-400 text-white font-black text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 active:scale-95 transition cursor-pointer"
-                    title="Unified 3-Angle Studio & AI Vintage Appraisal Hub"
+                    title="Unified 4-Angle Studio & AI Vintage Appraisal Hub"
                   >
                     <Camera className="w-3.5 h-3.5 animate-pulse text-indigo-200" />
                     <span>🎥 Live Studio & AI Appraiser</span>
@@ -2213,7 +2250,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                   {/* Slot 1: Front Look */}
                   <div className={`p-2 rounded-lg border flex flex-col justify-between gap-2 transition ${
                     frontImageUrl
@@ -2592,6 +2629,136 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                                   } catch {
                                     const r = new FileReader();
                                     r.onload = () => setTagImageUrl(r.result as string);
+                                    r.readAsDataURL(file);
+                                  }
+                                }
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Slot 4: Measurement Tape (Internal) */}
+                  <div className={`p-2 rounded-lg border flex flex-col justify-between gap-2 transition ${
+                    measurementImageUrl
+                      ? 'bg-purple-950/30 border-purple-500/50 ring-1 ring-purple-500/20'
+                      : 'bg-slate-950/90 border-slate-800'
+                  }`}>
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[11px] font-bold text-purple-300 flex items-center gap-1">
+                        <span>📏 Measurement Tape:</span>
+                      </span>
+                      {measurementImageUrl ? (
+                        <span className="text-[10px] bg-purple-500/20 text-purple-300 font-mono px-1.5 py-0.5 rounded border border-purple-500/30 flex items-center gap-1">
+                          <Check className="w-2.5 h-2.5" /> Attached
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-500 font-mono">Optional</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      {measurementImageUrl ? (
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={measurementImageUrl}
+                              alt="Measurement Tape"
+                              onClick={() => setPreviewLightboxImage(measurementImageUrl)}
+                              className="w-10 h-10 object-cover rounded-lg border border-purple-500 cursor-pointer hover:opacity-80 transition"
+                              title="Click to view full photo"
+                            />
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                type="button"
+                                onClick={() => setPreviewLightboxImage(measurementImageUrl)}
+                                className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1"
+                              >
+                                <Eye className="w-3 h-3 text-purple-400" /> View
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStudioCameraSlot('measurement');
+                                  setShowStudioCamera(true);
+                                }}
+                                className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-1"
+                              >
+                                <RotateCw className="w-3 h-3" /> Retake
+                              </button>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setMeasurementImageUrl(undefined)}
+                            className="text-[10px] text-rose-400 hover:text-rose-300 p-1 rounded hover:bg-rose-950/40 transition"
+                            title="Remove Measurement Photo"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-1.5 w-full">
+                          {/* Live studio camera for measurement */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setStudioCameraSlot('measurement');
+                              setShowStudioCamera(true);
+                            }}
+                            className="bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer transition active:scale-95"
+                            title="Open live camera for tape measurement"
+                          >
+                            <Camera className="w-3 h-3 text-purple-400" />
+                            <span>Live</span>
+                          </button>
+
+                          {/* Snap Measurement Photo with Phone */}
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition" title="Snap Tape with phone camera">
+                            <Smartphone className="w-3 h-3 text-purple-400" />
+                            <span>Snap</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              className="hidden"
+                              onChange={async e => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  try {
+                                    const compressed = await compressImage(file, 1280, 0.85);
+                                    setMeasurementImageUrl(compressed);
+                                  } catch {
+                                    const r = new FileReader();
+                                    r.onload = () => setMeasurementImageUrl(r.result as string);
+                                    r.readAsDataURL(file);
+                                  }
+                                }
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+
+                          {/* Upload Measurement Photo */}
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer transition" title="Upload Tape File">
+                            <UploadCloud className="w-3 h-3 text-slate-400" />
+                            <span>Upload</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={async e => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  try {
+                                    const compressed = await compressImage(file, 1280, 0.85);
+                                    setMeasurementImageUrl(compressed);
+                                  } catch {
+                                    const r = new FileReader();
+                                    r.onload = () => setMeasurementImageUrl(r.result as string);
                                     r.readAsDataURL(file);
                                   }
                                 }
@@ -3044,7 +3211,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       </div>
 
                       {/* 5. Size Selector Dropdown */}
-                      <div className="col-span-1 lg:col-span-2 space-y-1">
+                      <div className="col-span-1 lg:col-span-1 space-y-1">
                         <label className="block text-[11px] font-bold text-indigo-300 uppercase tracking-wide flex items-center justify-between">
                           <span>Size</span>
                           <span className="font-mono text-[9px] text-amber-400 font-bold bg-slate-800 px-1 py-0.2 rounded">
@@ -3065,8 +3232,44 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                         </select>
                       </div>
 
+                      {/* 5b. Pit-to-Pit (in) */}
+                      <div className="col-span-1 lg:col-span-1 space-y-1">
+                        <label className="block text-[11px] font-bold text-purple-300 uppercase tracking-wide flex items-center justify-between" title="Pit-to-Pit measurement in inches">
+                          <span>Pit-to-Pit (in)</span>
+                          {pitToPit && <span className="font-mono text-[9px] text-emerald-400 font-bold">📏 AI</span>}
+                        </label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          placeholder="Chest"
+                          value={pitToPit}
+                          onChange={e => setPitToPit(e.target.value)}
+                          disabled={hudStats.isCompleted}
+                          className="w-full bg-slate-900 border border-purple-500/50 focus:border-purple-400 rounded-lg px-2 py-2 text-xs text-purple-200 font-mono font-bold focus:outline-hidden disabled:opacity-50 text-center"
+                          title="Pit-to-pit chest measurement in inches (from measuring tape)"
+                        />
+                      </div>
+
+                      {/* 5c. Length (in) */}
+                      <div className="col-span-1 lg:col-span-1 space-y-1">
+                        <label className="block text-[11px] font-bold text-purple-300 uppercase tracking-wide flex items-center justify-between" title="Garment vertical length in inches">
+                          <span>Length (in)</span>
+                          {lengthInches && <span className="font-mono text-[9px] text-emerald-400 font-bold">📏 AI</span>}
+                        </label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          placeholder="Len"
+                          value={lengthInches}
+                          onChange={e => setLengthInches(e.target.value)}
+                          disabled={hudStats.isCompleted}
+                          className="w-full bg-slate-900 border border-purple-500/50 focus:border-purple-400 rounded-lg px-2 py-2 text-xs text-purple-200 font-mono font-bold focus:outline-hidden disabled:opacity-50 text-center"
+                          title="Garment vertical length in inches (from measuring tape)"
+                        />
+                      </div>
+
                       {/* 6. Quality Grade Dropdown */}
-                      <div className="col-span-2 sm:col-span-1 lg:col-span-2 space-y-1">
+                      <div className="col-span-1 lg:col-span-1 space-y-1">
                         <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
                           <span className="flex items-center gap-1">
                             <Sparkles className="w-3 h-3 text-amber-400" />
@@ -3589,7 +3792,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           />
         )}
 
-        {/* UNIFIED STUDIO 3-ANGLE & AI LIVE APPRAISAL CAMERA MODAL */}
+        {/* UNIFIED STUDIO 4-ANGLE & AI LIVE APPRAISAL CAMERA MODAL */}
         {showStudioCamera && (
           <StudioPhotoCaptureModal
             isOpen={showStudioCamera}
@@ -3598,10 +3801,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             frontImageUrl={frontImageUrl}
             backImageUrl={backImageUrl}
             tagImageUrl={tagImageUrl}
-            onSavePhotos={({ front, back, tag }, appraisalData) => {
+            measurementImageUrl={measurementImageUrl}
+            onSavePhotos={({ front, back, tag, measurement }, appraisalData) => {
               setFrontImageUrl(front);
               setBackImageUrl(back);
               setTagImageUrl(tag);
+              setMeasurementImageUrl(measurement);
               if (appraisalData) {
                 handleApplyExtractedTag(appraisalData);
               }
