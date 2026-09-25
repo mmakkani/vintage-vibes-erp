@@ -1274,7 +1274,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }, 10);
   };
 
-  // Delete piece handler (sync with public.bale_sorted_pieces)
+  // Delete piece handler (sync with public.bale_sorted_pieces, inward_gate_passes & bale_sessions)
   const handleDeletePiece = async (pieceId: string, e?: React.MouseEvent) => {
     if (e) {
       e.preventDefault();
@@ -1302,27 +1302,83 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     if (!confirm('Are you sure you want to remove this piece from the session?')) return;
 
     const removedItem = pieces.find(p => p.id === pieceId);
-    // Optimistic removal
-    setPieces(prev => prev.filter(p => p.id !== pieceId));
+    // 1. Calculate new totals after deletion
+    const remainingPieces = pieces.filter(p => p.id !== pieceId);
+    const newPiecesCount = remainingPieces.length;
+    const newSortedGrams = remainingPieces.reduce((sum, p) => sum + Number(p.weight_grams ?? p.weightGrams ?? (Number(p.weightKg ?? p.weight_kg ?? 0) * 1000)), 0);
+    const newSortedKg = Number((newSortedGrams / 1000).toFixed(3));
+    const newRemainingGrams = Math.max(0, hudStats.totalGrams - newSortedGrams);
+    const newRemainingKg = Number((newRemainingGrams / 1000).toFixed(3));
+
+    const updatedGatePass: InwardGatePass = {
+      ...activeBale,
+      brokenDownWeight: newSortedKg,
+      broken_down_weight: newSortedKg,
+      remainingWeight: newRemainingKg,
+      remaining_weight: newRemainingKg,
+      pieceCount: newPiecesCount,
+      piece_count: newPiecesCount,
+      pieces_count: newPiecesCount,
+      total_pieces: newPiecesCount,
+      pieces: remainingPieces,
+      sortingStatus: (newPiecesCount === 0 && newSortedGrams === 0) ? 'UNOPENED' : 'PARTIALLY_SORTED'
+    } as any;
+
+    // Optimistic removal (Instant 0ms latency)
+    setPieces(remainingPieces);
+    setInternalBales(prev => prev.map(b => (b.id === activeBale.id || b.gatePassNo === activeBale.gatePassNo) ? updatedGatePass : b));
 
     try {
-      const { error } = await supabase
-        .from('bale_sorted_pieces')
-        .delete()
-        .eq('id', pieceId);
+      // 1. Delete child records from Supabase
+      await supabase.from('inventory_pieces').delete().eq('id', pieceId);
+      const { error: supaErr } = await supabase.from('bale_sorted_pieces').delete().eq('id', pieceId);
+      if (supaErr) {
+        console.error('Failed to delete piece from Supabase:', supaErr);
+        throw supaErr;
+      }
 
-      if (error) {
-        console.error('Failed to delete piece from Supabase:', error);
-        if (removedItem) {
-          setPieces(prev => [...prev, removedItem]);
-        }
-        alert(`Failed to delete piece: ${error.message}`);
-        return;
+      // 2. Update inward_gate_passes
+      await supabase
+        .from('inward_gate_passes')
+        .update({
+          piece_count: newPiecesCount,
+          broken_down_weight: newSortedKg
+        })
+        .eq('id', activeBale.id);
+
+      // 3. Update bale_sessions
+      await supabase
+        .from('bale_sessions')
+        .update({
+          total_pieces: newPiecesCount,
+          sorted_grams: newSortedGrams,
+          remaining_grams: newRemainingGrams
+        })
+        .eq('bale_id', activeBale.id);
+
+      // 4. Force Cache Invalidation & Realtime Sync
+      PurchaseService.invalidateAllPurchaseCaches();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('vv:realtime-record', {
+            detail: {
+              table: 'inward_gate_passes',
+              record: {
+                id: activeBale.id,
+                gate_pass_no: activeBale.gatePassNo,
+                piece_count: newPiecesCount,
+                broken_down_weight: newSortedKg
+              }
+            }
+          })
+        );
       }
     } catch (err: any) {
-      console.error(err);
+      console.error('Failed to sync piece deletion to Supabase:', err);
+      // Rollback optimistic state if backend operation fails
       if (removedItem) {
         setPieces(prev => [...prev, removedItem]);
+        setInternalBales(prev => prev.map(b => (b.id === activeBale.id || b.gatePassNo === activeBale.gatePassNo) ? activeBale : b));
       }
       const isOffline = (typeof navigator !== 'undefined' && !navigator.onLine) ||
         String(err?.message || '').toLowerCase().includes('disconnected') ||
@@ -1336,25 +1392,6 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         type: 'error'
       });
       return;
-    }
-
-    const remaining = pieces.filter(p => p.id !== pieceId);
-    const depletion = PurchaseEngine.calculateBaleDepletion(activeBale.totalBaleWeight, remaining);
-    const updatedGatePass: InwardGatePass = {
-      ...activeBale,
-      brokenDownWeight: depletion.brokenDownWeightKg,
-      remainingWeight: depletion.remainingWeightKg,
-      pieceCount: depletion.pieceCount,
-      pieces: remaining,
-      sortingStatus: depletion.sortingStatus
-    };
-
-    try {
-      // 1. Direct standard Supabase JS client deletion to prevent 404
-      await supabase.from('inventory_pieces').delete().eq('id', pieceId);
-      await supabase.from('bale_sorted_pieces').delete().eq('id', pieceId);
-    } catch (supaErr) {
-      console.warn('Supabase piece delete warning:', supaErr);
     }
 
     onPieceDeleted(pieceId, updatedGatePass);
