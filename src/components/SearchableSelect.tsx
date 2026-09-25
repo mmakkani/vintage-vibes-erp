@@ -33,6 +33,9 @@ export interface SearchableSelectProps {
   id?: string;
   name?: string;
   required?: boolean;
+  theme?: 'light' | 'dark';
+  showSublabelInTrigger?: boolean;
+  showBadgeInTrigger?: boolean;
 }
 
 export const SearchableSelect: React.FC<SearchableSelectProps> = ({
@@ -48,7 +51,10 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   allowClear = false,
   maxHeight = 'max-h-64',
   id,
-  name
+  name,
+  theme = 'light',
+  showSublabelInTrigger = false,
+  showBadgeInTrigger = true
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -284,34 +290,52 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen(prev => !prev)}
-        className={`w-full flex items-center justify-between text-left text-xs bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-800 transition-all focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 shadow-xs cursor-pointer hover:border-amber-400 ${
-          isOpen ? 'ring-2 ring-amber-500 border-amber-500 shadow-md' : ''
+        className={`w-full flex items-center justify-between text-left text-xs rounded-lg px-2.5 py-1.5 transition-all cursor-pointer ${
+          theme === 'dark'
+            ? 'bg-slate-900 border-2 border-indigo-500/50 hover:border-indigo-400 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50 shadow-inner'
+            : 'bg-white border border-slate-300 hover:border-amber-400 text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 shadow-xs'
+        } ${
+          isOpen
+            ? theme === 'dark'
+              ? 'ring-2 ring-indigo-500 border-indigo-400 shadow-md'
+              : 'ring-2 ring-amber-500 border-amber-500 shadow-md'
+            : ''
         } ${className}`}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
       >
-        <div className="flex items-center gap-1.5 truncate pr-2">
+        <div className="flex items-center gap-1.5 truncate pr-1">
           {selectedOption ? (
             <>
-              {selectedOption.icon && <span className="shrink-0 text-slate-500">{selectedOption.icon}</span>}
-              {selectedOption.badge && (
+              {selectedOption.icon && (
+                <span className={`shrink-0 ${theme === 'dark' ? 'text-indigo-400' : 'text-slate-500'}`}>
+                  {selectedOption.icon}
+                </span>
+              )}
+              {showBadgeInTrigger && selectedOption.badge && (
                 <span
                   className={`shrink-0 px-1.5 py-0.2 rounded text-[9px] font-bold font-mono uppercase ${
-                    selectedOption.badgeColor || 'bg-amber-100 text-amber-900 border border-amber-300'
+                    selectedOption.badgeColor || (
+                      theme === 'dark'
+                        ? 'bg-indigo-950 text-indigo-300 border border-indigo-500/50'
+                        : 'bg-amber-100 text-amber-900 border border-amber-300'
+                    )
                   }`}
                 >
                   {selectedOption.badge}
                 </span>
               )}
-              <span className="truncate font-medium text-slate-900">{selectedOption.label}</span>
-              {selectedOption.sublabel && (
-                <span className="text-[10px] text-slate-400 truncate hidden sm:inline">
+              <span className={`truncate ${theme === 'dark' ? 'font-bold text-white tracking-tight' : 'font-medium text-slate-900'}`}>
+                {selectedOption.label}
+              </span>
+              {showSublabelInTrigger && selectedOption.sublabel && (
+                <span className={`text-[10px] truncate hidden sm:inline ${theme === 'dark' ? 'text-slate-400' : 'text-slate-400'}`}>
                   ({selectedOption.sublabel})
                 </span>
               )}
             </>
           ) : (
-            <span className="text-slate-400 font-normal">{placeholder}</span>
+            <span className={theme === 'dark' ? 'text-slate-400 font-normal' : 'text-slate-400 font-normal'}>{placeholder}</span>
           )}
         </div>
 
@@ -319,14 +343,20 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
           {allowClear && value && !disabled && (
             <span
               onClick={handleClear}
-              className="p-0.5 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+              className={`p-0.5 rounded-full transition-colors cursor-pointer ${
+                theme === 'dark'
+                  ? 'hover:bg-slate-800 text-slate-400 hover:text-white'
+                  : 'hover:bg-slate-200 text-slate-400 hover:text-slate-700'
+              }`}
               title="Clear selection"
             >
               <X className="w-3 h-3" />
             </span>
           )}
           <ChevronDown
-            className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180 text-amber-600' : ''}`}
+            className={`w-3.5 h-3.5 transition-transform duration-200 ${
+              theme === 'dark' ? 'text-indigo-400' : 'text-slate-500'
+            } ${isOpen ? (theme === 'dark' ? 'rotate-180 text-indigo-300' : 'rotate-180 text-amber-600') : ''}`}
           />
         </div>
       </button>
@@ -343,14 +373,24 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
             width: `${dropdownCoords.width}px`,
             zIndex: 9999999
           }}
-          className={`bg-white rounded-xl shadow-2xl border border-amber-300 ring-2 ring-amber-500/20 overflow-hidden animate-in fade-in zoom-in-95 duration-100 ${dropdownClassName}`}
+          className={`rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100 ${
+            theme === 'dark'
+              ? 'bg-slate-950 border-2 border-indigo-500/60 ring-2 ring-indigo-500/30 text-white'
+              : 'bg-white border border-amber-300 ring-2 ring-amber-500/20 text-slate-900'
+          } ${dropdownClassName}`}
           role="listbox"
           onKeyDown={handleKeyDown}
         >
           {/* Integrated Search Box */}
-          <div className="p-2 border-b border-amber-100 bg-amber-50/40 sticky top-0 z-10">
+          <div className={`p-2 border-b sticky top-0 z-10 ${
+            theme === 'dark'
+              ? 'border-indigo-950 bg-slate-900/95'
+              : 'border-amber-100 bg-amber-50/40'
+          }`}>
             <div className="relative flex items-center">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 text-amber-700 pointer-events-none" />
+              <Search className={`w-3.5 h-3.5 absolute left-2.5 pointer-events-none ${
+                theme === 'dark' ? 'text-indigo-400' : 'text-amber-700'
+              }`} />
               <input
                 ref={searchInputRef}
                 type="text"
@@ -360,13 +400,19 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                   setHighlightedIndex(0);
                 }}
                 placeholder={searchPlaceholder}
-                className="w-full text-xs pl-8 pr-7 py-1.5 bg-white border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 font-sans text-slate-900 placeholder:text-slate-400 shadow-xs"
+                className={`w-full text-xs pl-8 pr-7 py-1.5 rounded-lg focus:outline-none focus:ring-2 font-sans shadow-xs ${
+                  theme === 'dark'
+                    ? 'bg-slate-950 border border-slate-700 text-white placeholder:text-slate-500 focus:border-indigo-400 focus:ring-indigo-500/50'
+                    : 'bg-white border border-amber-300 text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:ring-amber-500'
+                }`}
               />
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-2 p-0.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full cursor-pointer"
+                  className={`absolute right-2 p-0.5 rounded-full cursor-pointer ${
+                    theme === 'dark' ? 'text-slate-400 hover:text-white hover:bg-slate-800' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
+                  }`}
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -374,22 +420,28 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
             </div>
 
             {/* Quick Filter Counts */}
-            <div className="flex items-center justify-between mt-1 px-1 text-[10px] text-slate-500">
+            <div className={`flex items-center justify-between mt-1 px-1 text-[10px] ${
+              theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+            }`}>
               <span>Type code, name, or category</span>
-              <span className="font-mono font-bold text-amber-900">
+              <span className={`font-mono font-bold ${
+                theme === 'dark' ? 'text-indigo-300' : 'text-amber-900'
+              }`}>
                 {totalFilteredCount} matching option{totalFilteredCount === 1 ? '' : 's'}
               </span>
             </div>
           </div>
 
           {/* Scrollable Items Container */}
-          <div ref={listRef} className={`overflow-y-auto p-1 divide-y divide-slate-100 ${maxHeight}`}>
+          <div ref={listRef} className={`overflow-y-auto p-1 ${
+            theme === 'dark' ? 'divide-y divide-slate-800' : 'divide-y divide-slate-100'
+          } ${maxHeight}`}>
             {totalFilteredCount === 0 ? (
               <div className="py-6 text-center text-xs text-slate-500">
-                <Search className="w-5 h-5 mx-auto text-amber-500/50 mb-1" />
-                <p className="font-bold text-slate-700">No matching options</p>
+                <Search className={`w-5 h-5 mx-auto mb-1 ${theme === 'dark' ? 'text-indigo-400/50' : 'text-amber-500/50'}`} />
+                <p className={`font-bold ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>No matching options</p>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  No results for &ldquo;<span className="font-mono text-amber-800">{searchQuery}</span>&rdquo;
+                  No results for &ldquo;<span className={`font-mono ${theme === 'dark' ? 'text-indigo-300' : 'text-amber-800'}`}>{searchQuery}</span>&rdquo;
                 </p>
               </div>
             ) : (
@@ -405,15 +457,17 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                           onClick={() => handleSelect(opt.value, opt.disabled)}
                           className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
                             opt.disabled
-                              ? 'opacity-40 cursor-not-allowed bg-slate-50'
+                              ? `opacity-40 cursor-not-allowed ${theme === 'dark' ? 'bg-slate-900' : 'bg-slate-50'}`
                               : isSelected
-                              ? 'bg-amber-500 text-white font-bold shadow-xs'
+                              ? `${theme === 'dark' ? 'bg-indigo-600 text-white font-bold' : 'bg-amber-500 text-white font-bold'} shadow-xs`
+                              : theme === 'dark'
+                              ? 'hover:bg-indigo-950/70 text-slate-200 hover:text-white'
                               : 'hover:bg-amber-50 text-slate-800'
                           }`}
                         >
                           <div className="flex items-center gap-1.5 truncate">
                             {opt.icon && (
-                              <span className={`shrink-0 ${isSelected ? 'text-white' : 'text-slate-500'}`}>
+                              <span className={`shrink-0 ${isSelected ? 'text-white' : theme === 'dark' ? 'text-indigo-400' : 'text-slate-500'}`}>
                                 {opt.icon}
                               </span>
                             )}
@@ -421,8 +475,12 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                               <span
                                 className={`shrink-0 px-1.5 py-0.2 rounded text-[9px] font-mono font-bold uppercase ${
                                   isSelected
-                                    ? 'bg-amber-700 text-amber-100 border border-amber-400'
-                                    : opt.badgeColor || 'bg-amber-100 text-amber-900 border border-amber-300'
+                                    ? theme === 'dark' ? 'bg-indigo-800 text-indigo-100 border border-indigo-400' : 'bg-amber-700 text-amber-100 border border-amber-400'
+                                    : opt.badgeColor || (
+                                      theme === 'dark'
+                                        ? 'bg-indigo-950 text-indigo-300 border border-indigo-500/50'
+                                        : 'bg-amber-100 text-amber-900 border border-amber-300'
+                                    )
                                 }`}
                               >
                                 {opt.badge}
@@ -432,7 +490,9 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                             {opt.sublabel && (
                               <span
                                 className={`text-[10px] truncate ${
-                                  isSelected ? 'text-amber-100' : 'text-slate-400'
+                                  isSelected
+                                    ? theme === 'dark' ? 'text-indigo-200' : 'text-amber-100'
+                                    : theme === 'dark' ? 'text-slate-400' : 'text-slate-400'
                                 }`}
                               >
                                 ({opt.sublabel})
@@ -451,12 +511,18 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                 {filteredGroups.map((grp, gIdx) => (
                   <div key={grp.label || gIdx} className="pt-1.5 pb-0.5">
                     {/* Group Header */}
-                    <div className="px-2 py-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-amber-900 bg-amber-100/50 rounded-md mb-1 font-mono">
+                    <div className={`px-2 py-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider rounded-md mb-1 font-mono ${
+                      theme === 'dark'
+                        ? 'text-indigo-300 bg-indigo-950/70 border border-indigo-900/50'
+                        : 'text-amber-900 bg-amber-100/50'
+                    }`}>
                       <div className="flex items-center gap-1">
                         {grp.icon}
                         <span>{grp.label}</span>
                       </div>
-                      <span className="text-[9px] bg-amber-200/80 px-1 py-0.2 rounded text-amber-950 font-bold">
+                      <span className={`text-[9px] px-1 py-0.2 rounded font-bold ${
+                        theme === 'dark' ? 'bg-indigo-900/80 text-indigo-200' : 'bg-amber-200/80 text-amber-950'
+                      }`}>
                         {grp.options.length}
                       </span>
                     </div>
@@ -471,15 +537,17 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                             onClick={() => handleSelect(opt.value, opt.disabled)}
                             className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
                               opt.disabled
-                                ? 'opacity-40 cursor-not-allowed bg-slate-50'
+                                ? `opacity-40 cursor-not-allowed ${theme === 'dark' ? 'bg-slate-900' : 'bg-slate-50'}`
                                 : isSelected
-                                ? 'bg-amber-500 text-white font-bold shadow-xs'
+                                ? `${theme === 'dark' ? 'bg-indigo-600 text-white font-bold' : 'bg-amber-500 text-white font-bold'} shadow-xs`
+                                : theme === 'dark'
+                                ? 'hover:bg-indigo-950/70 text-slate-200 hover:text-white'
                                 : 'hover:bg-amber-50 text-slate-800'
                             }`}
                           >
                             <div className="flex items-center gap-1.5 truncate">
                               {opt.icon && (
-                                <span className={`shrink-0 ${isSelected ? 'text-white' : 'text-slate-500'}`}>
+                                <span className={`shrink-0 ${isSelected ? 'text-white' : theme === 'dark' ? 'text-indigo-400' : 'text-slate-500'}`}>
                                   {opt.icon}
                                 </span>
                               )}
@@ -487,8 +555,12 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                                 <span
                                   className={`shrink-0 px-1.5 py-0.2 rounded text-[9px] font-mono font-bold uppercase ${
                                     isSelected
-                                      ? 'bg-amber-700 text-amber-100 border border-amber-400'
-                                      : opt.badgeColor || 'bg-amber-100 text-amber-900 border border-amber-300'
+                                      ? theme === 'dark' ? 'bg-indigo-800 text-indigo-100 border border-indigo-400' : 'bg-amber-700 text-amber-100 border border-amber-400'
+                                      : opt.badgeColor || (
+                                        theme === 'dark'
+                                          ? 'bg-indigo-950 text-indigo-300 border border-indigo-500/50'
+                                          : 'bg-amber-100 text-amber-900 border border-amber-300'
+                                      )
                                   }`}
                                 >
                                   {opt.badge}
@@ -498,7 +570,9 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                               {opt.sublabel && (
                                 <span
                                   className={`text-[10px] truncate ${
-                                    isSelected ? 'text-amber-100' : 'text-slate-400'
+                                    isSelected
+                                      ? theme === 'dark' ? 'text-indigo-200' : 'text-amber-100'
+                                      : theme === 'dark' ? 'text-slate-400' : 'text-slate-400'
                                   }`}
                                 >
                                   ({opt.sublabel})

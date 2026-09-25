@@ -509,7 +509,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }
     return depts.map(d => ({
       value: d.id,
-      label: d.name,
+      label: d.name.toLowerCase().includes('men')
+        ? `👔 ${d.name}`
+        : d.name.toLowerCase().includes('lad')
+        ? `👗 ${d.name}`
+        : d.name.toLowerCase().includes('kid') || d.name.toLowerCase().includes('child')
+        ? `🧸 ${d.name}`
+        : `🏷️ ${d.name}`,
       badge: (d as any).department_code || d.slug.toUpperCase().slice(0, 5),
       sublabel: `Tier 1 Department (${d.slug})`
     }));
@@ -525,7 +531,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     return cats.map(c => ({
       value: c.id,
       label: c.name,
-      badge: c.slug,
+      badge: c.slug.toUpperCase(),
       sublabel: 'Tier 2 Main Category'
     }));
   }, [productCategoriesList, selectedDeptId]);
@@ -539,7 +545,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     return subs.map(s => ({
       value: s.id,
       label: s.name,
-      badge: s.slug,
+      badge: s.slug.toUpperCase(),
       sublabel: 'Tier 3 Sub-Category'
     }));
   }, [productCategoriesList, selectedMainCategoryId]);
@@ -2961,6 +2967,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             <span className="text-[9px] text-indigo-400 font-mono">Tier 1</span>
                           </label>
                           <SearchableSelect
+                            theme="dark"
+                            showBadgeInTrigger={false}
+                            showSublabelInTrigger={false}
                             options={deptOptions}
                             value={selectedDeptId}
                             onChange={handleDepartmentChange}
@@ -2978,6 +2987,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             <span className="text-[9px] text-indigo-400 font-mono">Tier 2</span>
                           </label>
                           <SearchableSelect
+                            theme="dark"
+                            showBadgeInTrigger={false}
+                            showSublabelInTrigger={false}
                             options={mainCatOptions}
                             value={selectedMainCategoryId}
                             onChange={handleMainCategoryChange}
@@ -2995,6 +3007,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             <span className="text-[9px] text-indigo-400 font-mono">Tier 3</span>
                           </label>
                           <SearchableSelect
+                            theme="dark"
+                            showBadgeInTrigger={false}
+                            showSublabelInTrigger={false}
                             options={subCatOptions}
                             value={selectedSubCategoryId}
                             onChange={handleSubCategoryChange}
@@ -3012,6 +3027,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             <span className="text-[9px] text-amber-400 font-mono">Tier 4</span>
                           </label>
                           <SearchableSelect
+                            theme="dark"
+                            showBadgeInTrigger={false}
+                            showSublabelInTrigger={false}
                             options={collectionOptions}
                             value={selectedCollectionId}
                             onChange={handleCollectionChange}
@@ -3029,6 +3047,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             <span className="text-[9px] text-amber-400 font-mono">Archive Tier</span>
                           </label>
                           <SearchableSelect
+                            theme="dark"
+                            showBadgeInTrigger={false}
+                            showSublabelInTrigger={false}
                             options={marketSegmentOptions}
                             value={marketSegment}
                             onChange={handleMarketSegmentChange}
@@ -3234,9 +3255,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
                       {/* 5b. Pit-to-Pit (in) */}
                       <div className="col-span-1 lg:col-span-1 space-y-1">
-                        <label className="block text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center justify-between" title="Pit-to-Pit measurement in inches">
+                        <label className="block text-[11px] font-bold text-sky-400 uppercase tracking-wide flex items-center justify-between" title="Pit-to-Pit measurement in inches">
                           <span>Pit-to-Pit (in)</span>
-                          {pitToPit && <span className="font-mono text-[9px] text-amber-400 font-bold">📏 AI</span>}
+                          {pitToPit && <span className="font-mono text-[9px] bg-sky-950 text-sky-300 border border-sky-500/40 px-1 py-0.2 rounded font-bold">📏 AI</span>}
                         </label>
                         <input
                           type="number"
@@ -3245,16 +3266,16 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           value={pitToPit}
                           onChange={e => setPitToPit(e.target.value)}
                           disabled={hudStats.isCompleted}
-                          className="w-full bg-slate-900 border border-slate-700 text-white rounded-md px-3 py-2 text-xs font-mono font-bold focus:outline-hidden focus:border-amber-500 focus:ring-1 focus:ring-amber-500 disabled:opacity-50 text-center"
+                          className="w-full bg-slate-900 border-2 border-sky-500/60 focus:border-sky-400 rounded-lg px-2 py-2 text-sm font-black font-mono text-sky-200 placeholder:text-slate-600 focus:outline-hidden disabled:opacity-50 text-center shadow-inner"
                           title="Pit-to-pit chest measurement in inches (from measuring tape)"
                         />
                       </div>
 
                       {/* 5c. Length (in) */}
                       <div className="col-span-1 lg:col-span-1 space-y-1">
-                        <label className="block text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center justify-between" title="Garment vertical length in inches">
+                        <label className="block text-[11px] font-bold text-sky-400 uppercase tracking-wide flex items-center justify-between" title="Garment vertical length in inches">
                           <span>Length (in)</span>
-                          {lengthInches && <span className="font-mono text-[9px] text-amber-400 font-bold">📏 AI</span>}
+                          {lengthInches && <span className="font-mono text-[9px] bg-sky-950 text-sky-300 border border-sky-500/40 px-1 py-0.2 rounded font-bold">📏 AI</span>}
                         </label>
                         <input
                           type="number"
@@ -3263,7 +3284,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                           value={lengthInches}
                           onChange={e => setLengthInches(e.target.value)}
                           disabled={hudStats.isCompleted}
-                          className="w-full bg-slate-900 border border-slate-700 text-white rounded-md px-3 py-2 text-xs font-mono font-bold focus:outline-hidden focus:border-amber-500 focus:ring-1 focus:ring-amber-500 disabled:opacity-50 text-center"
+                          className="w-full bg-slate-900 border-2 border-sky-500/60 focus:border-sky-400 rounded-lg px-2 py-2 text-sm font-black font-mono text-sky-200 placeholder:text-slate-600 focus:outline-hidden disabled:opacity-50 text-center shadow-inner"
                           title="Garment vertical length in inches (from measuring tape)"
                         />
                       </div>
@@ -3273,17 +3294,17 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                         <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center justify-between">
                           <span className="flex items-center gap-1">
                             <Sparkles className="w-3 h-3 text-amber-400" />
-                            <span>Quality Grade</span>
+                            <span>Grade</span>
                           </span>
                         </label>
                         <select
                           value={selectedGrade}
                           onChange={e => setSelectedGrade(e.target.value)}
                           disabled={hudStats.isCompleted}
-                          className="w-full bg-slate-900 border-2 border-amber-500/70 focus:border-amber-400 rounded-lg px-2 py-2 text-xs text-amber-200 font-bold focus:outline-hidden cursor-pointer disabled:opacity-50"
+                          className="w-full bg-slate-900 border-2 border-amber-500/70 focus:border-amber-400 rounded-lg px-1.5 py-2 text-[11px] font-black text-amber-200 focus:outline-hidden cursor-pointer disabled:opacity-50 tracking-tight"
                         >
                           {availableQualityGrades.map(q => (
-                            <option key={q.id || q.code} value={q.name}>
+                            <option key={q.id || q.code} value={q.name} className="bg-slate-900 text-amber-200">
                               {q.name}
                             </option>
                           ))}

@@ -552,8 +552,6 @@ export class PartiesService {
       phone: cleanPhone,
       email: cleanEmail,
       address: cleanAddress,
-      linked_account_id: CONTROL_KHATA_UUID,
-      account_id: CONTROL_KHATA_UUID,
       coa_account_id: CONTROL_KHATA_CODE,
       account_map: {
         receivableAccountId: CONTROL_KHATA_CODE,
@@ -567,9 +565,11 @@ export class PartiesService {
       created_at: new Date().toISOString()
     };
 
-    // Ensure database auto-generates integer Primary Key (fixes Error 22P02)
+    // Ensure database auto-generates integer Primary Key & prevents integer column type mismatch (fixes Error 22P02)
     delete insertPayload.id;
     delete insertPayload.party_id;
+    delete insertPayload.linked_account_id;
+    delete insertPayload.account_id;
 
     const { data, error } = await supabase
       .from('parties')
