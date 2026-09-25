@@ -200,41 +200,28 @@ const handleGetRetailCustomers = async (req: any, res: any) => {
   try {
     client = await getDbClient();
     const query = `
-      SELECT p.*,
-             COALESCE(s.order_count, 0) as total_orders,
-             COALESCE(s.total_spent, 0) as total_spent,
-             s.last_order_date
-      FROM parties p
-      LEFT JOIN (
-        SELECT client_id,
-               COUNT(*) as order_count,
-               SUM(total_amount) as total_spent,
-               MAX(created_at) as last_order_date
-        FROM sales_invoices
-        GROUP BY client_id
-      ) s ON s.client_id::text = p.id::text
-      WHERE UPPER(p.party_type) IN ('RETAIL', 'RETAIL_CUSTOMER')
-      ORDER BY p.created_at DESC;
+      SELECT * FROM public.crm_retail_customers
+      ORDER BY created_at DESC;
     `;
     const result = await client.query(query);
     const rows = (result.rows || []).map((row: any) => ({
       id: String(row.id),
-      code: row.code,
+      code: `CRM-${String(row.id).slice(0, 6).toUpperCase()}`,
       name: row.name,
-      company_name: row.company_name || row.name,
+      company_name: row.company || row.name,
       type: 'CUSTOMER',
       party_type: 'RETAIL',
       phone: row.phone || '',
       email: row.email || '',
       address: row.address || '',
-      current_balance: Number(row.current_balance || 0),
-      credit_limit: Number(row.credit_limit || 0),
-      is_active: row.is_active !== false,
-      coa_account_id: row.coa_account_id || '1130-05',
-      account_map: row.account_map || { receivableAccountId: '1130-05' },
+      current_balance: 0,
+      credit_limit: 0,
+      is_active: true,
+      coa_account_id: '1130-05',
+      account_map: { receivableAccountId: '1130-05' },
       totalOrders: Number(row.total_orders || 0),
       totalSpent: Number(row.total_spent || 0),
-      lastOrderDate: row.last_order_date || null,
+      lastOrderDate: row.created_at || null,
       createdAt: row.created_at || new Date().toISOString(),
       created_at: row.created_at || new Date().toISOString()
     }));
@@ -244,28 +231,27 @@ const handleGetRetailCustomers = async (req: any, res: any) => {
     // Fallback: Supabase query
     try {
       const { data, error } = await supabase
-        .from('parties')
+        .from('crm_retail_customers')
         .select('*')
-        .in('party_type', ['RETAIL', 'RETAIL_CUSTOMER'])
         .order('created_at', { ascending: false });
       if (!error && Array.isArray(data)) {
         return res.json(data.map((r: any) => ({
           id: String(r.id),
-          code: r.code,
+          code: `CRM-${String(r.id).slice(0, 6).toUpperCase()}`,
           name: r.name,
-          company_name: r.company_name || r.name,
+          company_name: r.company || r.name,
           type: 'CUSTOMER',
           party_type: 'RETAIL',
           phone: r.phone || '',
           email: r.email || '',
           address: r.address || '',
-          current_balance: Number(r.current_balance || 0),
-          credit_limit: Number(r.credit_limit || 0),
-          is_active: r.is_active !== false,
-          coa_account_id: r.coa_account_id || '1130-05',
-          account_map: r.account_map || { receivableAccountId: '1130-05' },
-          totalOrders: 0,
-          totalSpent: 0,
+          current_balance: 0,
+          credit_limit: 0,
+          is_active: true,
+          coa_account_id: '1130-05',
+          account_map: { receivableAccountId: '1130-05' },
+          totalOrders: Number(r.total_orders || 0),
+          totalSpent: Number(r.total_spent || 0),
           lastOrderDate: null,
           createdAt: r.created_at || new Date().toISOString(),
           created_at: r.created_at || new Date().toISOString()

@@ -5440,6 +5440,69 @@ RULES FOR YOUR RESPONSE:
       });
     }
 
+    // ========================================================================
+    // RETAIL CRM MODULE (Strictly Isolated in crm_retail_customers)
+    // ========================================================================
+    if (pathname.startsWith('/api/crm') || pathname.startsWith('/crm')) {
+      if (pathname.includes('/customers') && method === 'GET') {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const resData = await client.query('SELECT * FROM public.crm_retail_customers ORDER BY created_at DESC;');
+            await client.end();
+            return res.status(200).json(resData.rows || []);
+          } catch (e: any) {
+            try { await client.end(); } catch (_) {}
+            console.warn('[Serverless CRM] Fetch error:', e?.message);
+          }
+        }
+        try {
+          const { data } = await supabaseAdmin.from('crm_retail_customers').select('*').order('created_at', { ascending: false });
+          return res.status(200).json(data || []);
+        } catch (_) {}
+        return res.status(200).json([]);
+      }
+
+      if (pathname.includes('/customers') && method === 'POST') {
+        const p = body || {};
+        const cleanName = String(p.name || '').trim();
+        if (!cleanName) return res.status(400).json({ error: 'Customer name is required' });
+        const cleanPhone = String(p.phone || '').trim();
+        const cleanEmail = String(p.email || '').trim();
+        const cleanCompany = String(p.company || cleanName).trim();
+        const cleanAddress = String(p.address || '').trim();
+
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const insertRes = await client.query(`
+              INSERT INTO public.crm_retail_customers (name, phone, email, company, address)
+              VALUES ($1, $2, $3, $4, $5)
+              RETURNING *;
+            `, [cleanName, cleanPhone || null, cleanEmail || null, cleanCompany || null, cleanAddress || null]);
+            await client.end();
+            return res.status(201).json(insertRes.rows[0]);
+          } catch (e: any) {
+            try { await client.end(); } catch (_) {}
+            console.warn('[Serverless CRM] Insert error:', e?.message);
+          }
+        }
+        try {
+          const { data, error } = await supabaseAdmin.from('crm_retail_customers').insert([{
+            name: cleanName,
+            phone: cleanPhone || null,
+            email: cleanEmail || null,
+            company: cleanCompany || null,
+            address: cleanAddress || null
+          }]).select().single();
+          if (error) throw error;
+          return res.status(201).json(data);
+        } catch (err: any) {
+          return res.status(500).json({ error: err?.message || 'Failed to save CRM customer' });
+        }
+      }
+    }
+
     // Parties (Suppliers & Clients) Endpoint
     if (pathname.includes('/parties')) {
       const parts = pathname.split('/').filter(Boolean);
@@ -5486,35 +5549,23 @@ RULES FOR YOUR RESPONSE:
         created_at: r.created_at || r.createdAt
       });
 
-      // Sub-route: GET /api/parties/retail (Retail CRM List & Live Metrics)
+      // Sub-route: GET /api/parties/retail (Retail CRM List strictly from crm_retail_customers)
       if (targetPartyId === 'retail' && method === 'GET') {
         const client = await getPgClient();
         if (client) {
           try {
             const query = `
-              SELECT p.*,
-                     COALESCE(s.order_count, 0) as total_orders,
-                     COALESCE(s.total_spent, 0) as total_spent,
-                     s.last_order_date
-              FROM parties p
-              LEFT JOIN (
-                SELECT client_id,
-                       COUNT(*) as order_count,
-                       SUM(total_amount) as total_spent,
-                       MAX(created_at) as last_order_date
-                FROM sales_invoices
-                GROUP BY client_id
-              ) s ON s.client_id::text = p.id::text
-              WHERE UPPER(COALESCE(p.party_type, p.type, '')) IN ('RETAIL', 'RETAIL_CUSTOMER')
-              ORDER BY p.created_at DESC;
+              SELECT * FROM public.crm_retail_customers
+              ORDER BY created_at DESC;
             `;
             const result = await client.query(query);
             await client.end();
             const rows = (result.rows || []).map((row: any) => ({
               ...formatParty(row),
+              code: `CRM-${String(row.id).slice(0, 6).toUpperCase()}`,
               totalOrders: Number(row.total_orders || 0),
               totalSpent: Number(row.total_spent || 0),
-              lastOrderDate: row.last_order_date || null
+              lastOrderDate: row.created_at || null
             }));
             return res.status(200).json(rows);
           } catch (pgErr: any) {
@@ -5526,15 +5577,15 @@ RULES FOR YOUR RESPONSE:
         // Supabase Fallback
         try {
           const { data } = await supabaseAdmin
-            .from('parties')
+            .from('crm_retail_customers')
             .select('*')
-            .in('party_type', ['RETAIL', 'RETAIL_CUSTOMER'])
             .order('created_at', { ascending: false });
           return res.status(200).json((data || []).map((r: any) => ({
             ...formatParty(r),
-            totalOrders: 0,
-            totalSpent: 0,
-            lastOrderDate: null
+            code: `CRM-${String(r.id).slice(0, 6).toUpperCase()}`,
+            totalOrders: Number(r.total_orders || 0),
+            totalSpent: Number(r.total_spent || 0),
+            lastOrderDate: r.created_at || null
           })));
         } catch (_) {}
 

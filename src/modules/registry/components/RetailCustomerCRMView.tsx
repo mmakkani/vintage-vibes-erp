@@ -1,0 +1,273 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Users,
+  Search,
+  Plus,
+  Phone,
+  MapPin,
+  ExternalLink,
+  FileText,
+  Loader2,
+  Receipt
+} from 'lucide-react';
+import { CrmService, CrmRetailCustomer } from '../../../services/crmService.ts';
+import { NewRetailCustomerModal } from '../../parties/components/NewRetailCustomerModal.tsx';
+import { RetailCustomerStatementModal } from '../../parties/components/RetailCustomerStatementModal.tsx';
+
+export const RetailCustomerCRMView: React.FC = () => {
+  const [customers, setCustomers] = useState<CrmRetailCustomer[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [showNewModal, setShowNewModal] = useState<boolean>(false);
+  const [showStatementModal, setShowStatementModal] = useState<boolean>(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<CrmRetailCustomer | null>(null);
+  const [customerInvoices, setCustomerInvoices] = useState<any[]>([]);
+  const [isLoadingStatement, setIsLoadingStatement] = useState<boolean>(false);
+
+  const loadCustomers = async () => {
+    setIsLoading(true);
+    try {
+      const data = await CrmService.getCrmCustomers();
+      setCustomers(data || []);
+    } catch (err) {
+      console.error('[RetailCustomerCRMView] Error loading crm_retail_customers:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadCustomers();
+  }, []);
+
+  const openStatement = async (cust: CrmRetailCustomer) => {
+    setSelectedCustomer(cust);
+    setShowStatementModal(true);
+    setIsLoadingStatement(true);
+    try {
+      const invs = await CrmService.getCustomerInvoices(cust.id, cust.phone, cust.name);
+      setCustomerInvoices(invs || []);
+    } catch (err) {
+      console.warn('Failed to load customer statement:', err);
+      setCustomerInvoices([]);
+    } finally {
+      setIsLoadingStatement(false);
+    }
+  };
+
+  const filtered = customers.filter(c => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      c.name.toLowerCase().includes(q) ||
+      (c.phone && c.phone.includes(q)) ||
+      (c.code && c.code.toLowerCase().includes(q)) ||
+      (c.company && c.company.toLowerCase().includes(q))
+    );
+  });
+
+  const totalOrders = customers.reduce((s, c) => s + (Number(c.totalOrders || c.total_orders) || 0), 0);
+  const totalSpent = customers.reduce((s, c) => s + (Number(c.totalSpent || c.total_spent) || 0), 0);
+
+  return (
+    <div className="space-y-4">
+      {/* Top Banner & Stats */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🛍️</span>
+              <h2 className="text-base font-bold text-slate-900 tracking-tight">
+                Retail Customer CRM & Statements (Khata)
+              </h2>
+              <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 rounded-full border border-emerald-200">
+                COA: 1130-05 Walk-In Control
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Strictly isolated in <code className="font-mono text-emerald-700 bg-emerald-50 px-1 rounded">crm_retail_customers</code>. Core accounting & parties table remain completely insulated.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowNewModal(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs transition cursor-pointer self-start md:self-auto"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>+ New Retail Customer</span>
+          </button>
+        </div>
+
+        {/* Search & Metrics */}
+        <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="relative w-full sm:w-80">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search by customer name, phone, code..."
+              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-emerald-600 text-slate-800"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 text-xs font-semibold text-slate-500 self-end sm:self-auto flex-wrap">
+            <span>Total Customers: <strong className="text-slate-800">{customers.length}</strong></span>
+            <span>•</span>
+            <span>Total Orders: <strong className="text-indigo-700">{totalOrders}</strong></span>
+            <span>•</span>
+            <span>Total Retail Sales: <strong className="text-emerald-700">AED {totalSpent.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
+          </div>
+        </div>
+      </div>
+
+      {/* Customers Grid */}
+      {isLoading ? (
+        <div className="p-12 text-center bg-white rounded-xl border border-slate-200">
+          <Loader2 className="w-6 h-6 animate-spin text-emerald-600 mx-auto mb-2" />
+          <p className="text-xs text-slate-500">Loading retail CRM customers...</p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="p-12 text-center bg-white rounded-xl border border-dashed border-slate-300">
+          <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-3">
+            <Users className="w-6 h-6" />
+          </div>
+          <h4 className="text-sm font-bold text-slate-800">No Retail Customers Found</h4>
+          <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+            {searchQuery
+              ? `No retail customers match "${searchQuery}".`
+              : 'Register your first retail customer or scan a visiting card in POS Terminal.'}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {filtered.map(cust => {
+            const ordersCount = Number(cust.totalOrders || cust.total_orders || 0);
+            const spentAmt = Number(cust.totalSpent || cust.total_spent || 0);
+
+            return (
+              <div
+                key={cust.id}
+                className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs hover:shadow-md transition flex flex-col justify-between"
+              >
+                <div className="space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 font-bold flex items-center justify-center text-xs border border-emerald-100">
+                        {cust.name.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-slate-900 line-clamp-1">{cust.name}</h3>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-100">
+                            {cust.code}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono">1130-05</span>
+                        </div>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
+                      CRM RETAIL
+                    </span>
+                  </div>
+
+                  <div className="space-y-1 text-xs text-slate-600 pt-1 border-t border-slate-100">
+                    {cust.phone ? (
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-1.5 text-slate-500 text-[11px]">
+                          <Phone className="w-3 h-3 text-emerald-600" />
+                          <span>{cust.phone}</span>
+                        </span>
+                        <a
+                          href={`https://wa.me/${cust.phone.replace(/\D/g, '')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] font-bold text-emerald-600 hover:underline flex items-center gap-0.5"
+                        >
+                          <span>WhatsApp</span>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-slate-400 italic">No phone registered</div>
+                    )}
+
+                    {cust.address && (
+                      <div className="flex items-center gap-1.5 text-slate-500 text-[11px] truncate">
+                        <MapPin className="w-3 h-3 text-amber-500 shrink-0" />
+                        <span className="truncate">{cust.address}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Spend & Order Stats */}
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 bg-slate-50/60 p-2 rounded-lg">
+                    <div>
+                      <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Total Orders</div>
+                      <div className="text-xs font-bold text-indigo-700 font-mono flex items-center gap-1">
+                        <Receipt className="w-3 h-3" />
+                        <span>{ordersCount} {ordersCount === 1 ? 'Sale' : 'Sales'}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Total Spent</div>
+                      <div className="text-xs font-bold text-emerald-700 font-mono">
+                        AED {spentAmt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card Footer Actions */}
+                <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-slate-400">
+                    Added: {new Date(cust.createdAt || cust.created_at || '').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openStatement(cust)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-indigo-700 hover:text-white bg-indigo-50 hover:bg-indigo-700 border border-indigo-200 hover:border-indigo-700 rounded-lg transition shadow-2xs cursor-pointer"
+                  >
+                    <FileText className="w-3 h-3" />
+                    <span>Statement / Khata</span>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Modals */}
+      <NewRetailCustomerModal
+        isOpen={showNewModal}
+        onClose={() => setShowNewModal(false)}
+        onSuccess={saved => {
+          setCustomers(prev => [saved, ...prev]);
+          loadCustomers();
+        }}
+      />
+
+      <RetailCustomerStatementModal
+        isOpen={showStatementModal}
+        onClose={() => {
+          setShowStatementModal(false);
+          setSelectedCustomer(null);
+        }}
+        customer={selectedCustomer as any}
+        invoices={customerInvoices}
+        isLoading={isLoadingStatement}
+      />
+    </div>
+  );
+};

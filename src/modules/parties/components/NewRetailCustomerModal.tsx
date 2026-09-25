@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, User, Phone, Mail, MapPin, Building, ShieldCheck, Loader2 } from 'lucide-react';
-import { PartiesService } from '../../../services/partiesService.ts';
+import { CrmService } from '../../../services/crmService.ts';
 
 interface NewRetailCustomerModalProps {
   isOpen: boolean;
@@ -34,9 +34,9 @@ export const NewRetailCustomerModal: React.FC<NewRetailCustomerModalProps> = ({
     setIsSubmitting(true);
     setErrorMsg(null);
     try {
-      const saved = await PartiesService.saveRetailCustomer({
+      const saved = await CrmService.saveCrmCustomer({
         name: cleanName,
-        company_name: company.trim() || cleanName,
+        company: company.trim() || cleanName,
         phone: phone.trim(),
         email: email.trim(),
         address: address.trim()

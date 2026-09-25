@@ -489,9 +489,8 @@ export class PartiesService {
 
   /**
    * CRM Isolation & Retail Party Creation:
-   * Saves a new retail customer directly into `public.parties` with `party_type = 'RETAIL_CUSTOMER'`.
-   * CRITICAL RULE: DOES NOT create an individual account in `chart_of_accounts`.
-   * Maps their receivables strictly to Control Khata 1130-05 (Walk In Customer).
+   * Saves retail customer STRICTLY into `public.crm_retail_customers`.
+   * CRITICAL SECURITY RULE: STRICTLY PROHIBITED from touching `public.parties` or `chart_of_accounts`.
    */
   public static async saveRetailCustomer(customer: {
     name: string;
@@ -500,161 +499,19 @@ export class PartiesService {
     company?: string;
     address?: string;
   }): Promise<Party> {
-    const cleanName = String(customer.name || '').trim();
-    if (!cleanName) {
-      throw new Error('Customer name is required');
-    }
-
-    const cleanPhone = String(customer.phone || '').trim();
-    const cleanEmail = String(customer.email || '').trim();
-    const cleanCompany = String(customer.company || cleanName).trim();
-    const cleanAddress = String(customer.address || '').trim();
-
-    // Check if customer already exists by phone
-    if (cleanPhone) {
-      try {
-        const { data: existing } = await supabase
-          .from('parties')
-          .select('*')
-          .eq('phone', cleanPhone)
-          .maybeSingle();
-
-        if (existing) {
-          return {
-            id: existing.id,
-            code: existing.code,
-            name: existing.name,
-            type: 'CUSTOMER',
-            party_type: 'RETAIL_CUSTOMER',
-            phone: existing.phone || '',
-            email: existing.email || '',
-            company_name: existing.company_name || existing.name,
-            current_balance: Number(existing.current_balance || 0),
-            credit_limit: Number(existing.credit_limit || 0),
-            is_active: existing.is_active !== false,
-            coa_account_id: existing.coa_account_id || '1130-05',
-            account_map: existing.account_map || { receivableAccountId: '1130-05' }
-          } as Party;
-        }
-      } catch (_) {}
-    }
-
-    // Generate a strict 9-character code: 'RET-' + 5 random digits (strictly <= 10 chars, fixes Error 22001)
-    const safeCode = 'RET-' + Math.floor(10000 + Math.random() * 90000);
-    const CONTROL_KHATA_CODE = '1130-05';
-    const CONTROL_KHATA_UUID = 'a5a8d92b-cdea-4418-8737-d3c4dca24909';
-
-    const insertPayload: any = {
-      code: safeCode,
-      name: cleanName,
-      company_name: cleanCompany,
-      type: 'CUSTOMER',
-      party_type: 'RETAIL',
-      phone: cleanPhone,
-      email: cleanEmail,
-      address: cleanAddress,
-      coa_account_id: CONTROL_KHATA_CODE,
-      account_map: {
-        receivableAccountId: CONTROL_KHATA_CODE,
-        controlKhata: CONTROL_KHATA_CODE,
-        isControlKhataOnly: true
-      },
-      credit_limit: 0,
-      current_balance: 0,
-      currency: 'AED',
-      is_active: true,
-      created_at: new Date().toISOString()
-    };
-
-    // Ensure database auto-generates integer Primary Key & prevents integer column type mismatch (fixes Error 22P02)
-    delete insertPayload.id;
-    delete insertPayload.party_id;
-    delete insertPayload.linked_account_id;
-    delete insertPayload.account_id;
-
-    const { data, error } = await supabase
-      .from('parties')
-      .insert([insertPayload])
-      .select()
-      .single();
-
-    if (error) {
-      console.error('[PartiesService] Error creating retail customer:', error);
-      throw new Error(`Failed to save retail customer: ${error.message}`);
-    }
-
-    if (typeof window !== 'undefined') {
-      try {
-        window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
-          detail: { module: 'parties', entity: 'parties', action: 'CREATED', documentRef: safeCode }
-        }));
-      } catch (_) {}
-    }
-
-    return {
-      id: data.id,
-      code: data.code,
-      name: data.name,
-      type: 'CUSTOMER',
-      party_type: 'RETAIL',
-      phone: data.phone || '',
-      email: data.email || '',
-      company_name: data.company_name || data.name,
-      current_balance: 0,
-      credit_limit: 0,
-      is_active: true,
-      coa_account_id: CONTROL_KHATA_CODE,
-      account_map: data.account_map || { receivableAccountId: CONTROL_KHATA_CODE }
-    } as Party;
+    const { CrmService } = await import('./crmService.ts');
+    const crmCust = await CrmService.saveCrmCustomer(customer);
+    return crmCust as unknown as Party;
   }
 
   /**
-   * Fetches retail CRM customers specifically (party_type = 'RETAIL' or 'RETAIL_CUSTOMER'),
-   * isolated from formal corporate B2B suppliers and wholesale ledger parties.
+   * Fetches retail CRM customers specifically from `public.crm_retail_customers`,
+   * completely isolated from formal corporate B2B suppliers and wholesale ledger parties.
    */
   public static async getRetailCustomers(): Promise<Party[]> {
-    // 1. Try server route
-    if (typeof window !== 'undefined') {
-      try {
-        const rawFetch = (window as any).__originalFetch || window.fetch;
-        const res = await rawFetch('/api/parties/retail');
-        if (res && res.ok) {
-          const list = await res.json();
-          if (Array.isArray(list)) return list;
-        }
-      } catch (_) {}
-    }
-
-    // 2. Direct Supabase query
-    try {
-      const { data, error } = await supabase
-        .from('parties')
-        .select('*')
-        .in('party_type', ['RETAIL', 'RETAIL_CUSTOMER'])
-        .order('created_at', { ascending: false });
-
-      if (error || !data) return [];
-      return data.map((row: any) => ({
-        id: row.id,
-        code: row.code,
-        name: row.name,
-        type: 'CUSTOMER',
-        party_type: 'RETAIL',
-        company_name: row.company_name || row.name,
-        phone: row.phone || '',
-        email: row.email || '',
-        address: row.address || '',
-        current_balance: Number(row.current_balance || 0),
-        credit_limit: Number(row.credit_limit || 0),
-        is_active: row.is_active !== false,
-        coa_account_id: row.coa_account_id || '1130-05',
-        account_map: row.account_map || { receivableAccountId: '1130-05' },
-        createdAt: row.created_at || new Date().toISOString(),
-        created_at: row.created_at || new Date().toISOString()
-      } as Party));
-    } catch (_) {
-      return [];
-    }
+    const { CrmService } = await import('./crmService.ts');
+    const list = await CrmService.getCrmCustomers();
+    return list as unknown as Party[];
   }
 
   /**

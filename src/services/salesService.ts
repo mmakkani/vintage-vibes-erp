@@ -619,8 +619,8 @@ export class SalesService {
   }
 
   /**
-   * Save a new retail customer directly from POS (CRM Isolation, No COA account)
-   * Enforces party_type = 'RETAIL_CUSTOMER' and routes to Control Khata 1130-05
+   * Save a new retail customer directly from POS into public.crm_retail_customers
+   * Strictly isolated from core finance and parties table.
    */
   public static async saveRetailCustomer(customer: {
     name: string;
@@ -629,8 +629,8 @@ export class SalesService {
     company?: string;
     address?: string;
   }): Promise<any> {
-    const { PartiesService } = await import('./partiesService.ts');
-    return PartiesService.saveRetailCustomer(customer);
+    const { CrmService } = await import('./crmService.ts');
+    return CrmService.saveCrmCustomer(customer);
   }
 
   /**

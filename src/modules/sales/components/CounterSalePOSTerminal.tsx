@@ -44,6 +44,7 @@ import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { SalesService } from '../../../services/salesService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
+import { CrmService, CrmRetailCustomer } from '../../../services/crmService.ts';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
 import { openThermalLabelPrintWindow, openGiftReceiptPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { useBarcodeScanner } from '../../../hooks/useBarcodeScanner.ts';
@@ -331,32 +332,38 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     return () => window.removeEventListener('vv:realtime-record', handleRealtime);
   }, []);
 
+  const DEFAULT_WALK_IN_CUSTOMER: any = useMemo(() => ({
+    id: CrmService.CONTROL_WALK_IN_PARTY_ID,
+    code: 'CLI-0010',
+    name: 'Walk In Customer',
+    company: 'Counter Sale',
+    company_name: 'Counter Sale',
+    phone: '',
+    email: '',
+    address: '',
+    coa_account_id: CrmService.CONTROL_WALK_IN_ACCOUNT_CODE,
+    account_map: { receivableAccountId: CrmService.CONTROL_WALK_IN_ACCOUNT_CODE, isControlKhataOnly: true },
+    total_spent: 0,
+    total_orders: 0
+  }), []);
+
   const loadInventoryAndParties = async () => {
     if (stockPieces && stockPieces.length > 0) {
       setAllPieces(stockPieces.filter(p => !p.isSold && p.status === 'IN_STOCK'));
     }
     try {
-      const [piecesRes, retailPartiesRes] = await Promise.all([
+      const [piecesRes, crmCustomersRes] = await Promise.all([
         fetch('/api/sales/stock-pieces').then(r => r.ok ? r.json() : []).catch(() => []),
-        PartiesService.getRetailCustomers().catch(() => [])
+        CrmService.getCrmCustomers().catch(() => [])
       ]);
       if (Array.isArray(piecesRes) && piecesRes.length > 0) {
         setAllPieces(piecesRes.filter((p: any) => !p.isSold && p.status === 'IN_STOCK'));
       }
-      if (Array.isArray(retailPartiesRes) && retailPartiesRes.length > 0) {
-        setParties(retailPartiesRes);
-      } else if (clients && clients.length > 0) {
-        // Fallback: exclude corporate suppliers and system control parties
-        const filtered = clients.filter(p => {
-          const name = String(p.name || '').toUpperCase();
-          if (name.includes('E-COOMERCE') || name.includes('ECOMMERCE') || name.includes('LIVE SALE') || name.includes('ACCOUNTS RECEIVABLE')) return false;
-          if (p.type === 'SUPPLIER' || (p as any).party_type === 'SUPPLIER') return false;
-          return (p as any).party_type === 'RETAIL' || (p as any).party_type === 'RETAIL_CUSTOMER' || p.type === 'CUSTOMER';
-        });
-        setParties(filtered);
-      }
+      const list = Array.isArray(crmCustomersRes) ? crmCustomersRes : [];
+      setParties([DEFAULT_WALK_IN_CUSTOMER, ...list.filter(c => c.id !== CrmService.CONTROL_WALK_IN_PARTY_ID)]);
     } catch (err) {
       console.warn('POS Data Load Error:', err);
+      setParties([DEFAULT_WALK_IN_CUSTOMER]);
     }
   };
 
@@ -453,7 +460,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     setIsSavingCardCustomer(true);
     setCardScannerError(null);
     try {
-      const savedParty = await SalesService.saveRetailCustomer({
+      const savedParty = await CrmService.saveCrmCustomer({
         name: cardFormData.name.trim(),
         phone: cardFormData.phone.trim(),
         email: cardFormData.email.trim(),
@@ -461,8 +468,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         address: cardFormData.address.trim()
       });
 
-      setParties(prev => [savedParty, ...prev.filter(p => p.id !== savedParty.id)]);
-      setSelectedCustomer(savedParty);
+      setParties(prev => [savedParty as any, ...prev.filter(p => p.id !== savedParty.id)]);
+      setSelectedCustomer(savedParty as any);
       setCustomerSearchQuery('');
       setShowAiCardModal(false);
       setCardImagePreview(null);
@@ -856,7 +863,13 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         payment_status: 'PAID'
       });
 
-      // 2. Dual-Entry Financial Voucher: Route strictly through Control Khata (1130-05) tagging partyId for CRM purchase history
+      // 2. Dual-Entry Financial Voucher: CRITICAL AUDIT MANDATE
+      // Financial Vouchers & Ledgers MUST hardcode the partyId and accountId to official Control Khata (1130-05 Walk In Customer)
+      // DO NOT pass crm_retail_customers.id into any ledger or voucher party_id field.
+      const CONTROL_PARTY_ID = CrmService.CONTROL_WALK_IN_PARTY_ID; // 5eb820da-3bb1-4e54-8fd8-59b3db72aebf (CLI-0010)
+      const CONTROL_ACC_CODE = CrmService.CONTROL_WALK_IN_ACCOUNT_CODE; // 1130-05
+      const CONTROL_ACC_NAME = CrmService.CONTROL_WALK_IN_ACCOUNT_NAME; // Walk In Customer (Customer)
+
       let createdVoucherNo = `VCH-${Date.now().toString().slice(-6)}`;
       try {
         const paymentAccCode = paymentMode === 'CASH' ? '1110-01' : '1120-01';
@@ -869,11 +882,11 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           createdBy: operatorName || 'Cashier Lead',
           lines: [
             {
-              accountId: '1130-05',
-              accountCode: '1130-05',
-              accountName: 'Walk In Customer (Customer)',
-              partyId: selectedCustomer?.id || null,
-              partyName: selectedCustomer?.name || 'Walk-In Customer',
+              accountId: CONTROL_ACC_CODE,
+              accountCode: CONTROL_ACC_CODE,
+              accountName: CONTROL_ACC_NAME,
+              partyId: CONTROL_PARTY_ID,
+              partyName: 'Walk In Customer',
               debit: totalAmt,
               credit: 0,
               memo: `POS Sale ${invoiceNum}`
@@ -882,8 +895,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               accountId: '4100-01',
               accountCode: '4100-01',
               accountName: 'Sales Revenue',
-              partyId: selectedCustomer?.id || null,
-              partyName: selectedCustomer?.name || 'Walk-In Customer',
+              partyId: CONTROL_PARTY_ID,
+              partyName: 'Walk In Customer',
               debit: 0,
               credit: subtotalAmt,
               memo: `Sales Revenue ${invoiceNum}`
@@ -892,8 +905,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               accountId: '2140-01',
               accountCode: '2140-01',
               accountName: 'VAT Output 5%',
-              partyId: selectedCustomer?.id || null,
-              partyName: selectedCustomer?.name || 'Walk-In Customer',
+              partyId: CONTROL_PARTY_ID,
+              partyName: 'Walk In Customer',
               debit: 0,
               credit: vatAmt,
               memo: `5% UAE VAT ${invoiceNum}`
@@ -902,18 +915,18 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               accountId: paymentAccCode,
               accountCode: paymentAccCode,
               accountName: paymentAccName,
-              partyId: selectedCustomer?.id || null,
-              partyName: selectedCustomer?.name || 'Walk-In Customer',
+              partyId: CONTROL_PARTY_ID,
+              partyName: 'Walk In Customer',
               debit: totalAmt,
               credit: 0,
               memo: `Settlement ${invoiceNum} (${paymentMode})`
             },
             {
-              accountId: '1130-05',
-              accountCode: '1130-05',
-              accountName: 'Walk In Customer (Customer)',
-              partyId: selectedCustomer?.id || null,
-              partyName: selectedCustomer?.name || 'Walk-In Customer',
+              accountId: CONTROL_ACC_CODE,
+              accountCode: CONTROL_ACC_CODE,
+              accountName: CONTROL_ACC_NAME,
+              partyId: CONTROL_PARTY_ID,
+              partyName: 'Walk In Customer',
               debit: 0,
               credit: totalAmt,
               memo: `Customer Payment Settlement ${invoiceNum}`
@@ -927,10 +940,12 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         console.warn('[POS Terminal] Automatic voucher creation notice:', vErr);
       }
 
-      // 3. Also record in sales_invoices for general sales ledger
+      // 3. Record in sales_invoices:
+      // Financial clientId is hardcoded to CONTROL_PARTY_ID
+      // CRM customer details are stored for receipt/printing/WhatsApp
       await SalesService.createSalesInvoice({
         invoiceNo: invoiceNum,
-        clientId: selectedCustomer?.id,
+        clientId: CONTROL_PARTY_ID,
         customerName: selectedCustomer?.name || 'Walk-In Customer',
         customerPhone: selectedCustomer?.phone || '',
         channel: 'POS_COUNTER',
@@ -950,6 +965,13 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           weightKg: c.piece.weightKg || 0.45
         }))
       }).catch(e => console.warn('sales_invoices sync note:', e));
+
+      // 4. Update isolated CRM retail customer purchase metrics
+      if (selectedCustomer?.id && selectedCustomer.id !== CONTROL_PARTY_ID) {
+        CrmService.incrementCustomerSales(selectedCustomer.id, totalAmt).catch(err => {
+          console.warn('[POS Terminal] Non-blocking CRM metric update notice:', err);
+        });
+      }
 
       luxuryAudio.playCashChime();
       setShowPaymentModal(false);
