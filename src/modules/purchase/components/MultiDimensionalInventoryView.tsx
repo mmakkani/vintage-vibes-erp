@@ -23,9 +23,11 @@ import {
   ExternalLink,
   Trash2,
   X,
-  Loader2
+  Loader2,
+  Unlock
 } from 'lucide-react';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
+import { SalesService } from '../../../services/salesService.ts';
 
 interface MultiDimensionalInventoryViewProps {
   pieces: PieceBreakdownItem[];
@@ -50,16 +52,86 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
 }) => {
   const [activeDimension, setActiveDimension] = useState<ViewDimension>('ITEM');
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'IN_STOCK' | 'SOLD' | 'WIP_LAUNDRY'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'IN_STOCK' | 'RESERVED' | 'SOLD' | 'WIP_LAUNDRY'>('ALL');
   const [brandFilter, setBrandFilter] = useState('ALL');
   const [previewLightboxImage, setPreviewLightboxImage] = useState<string | null>(null);
   const [isPurging, setIsPurging] = useState(false);
+  const [isReleasingAll, setIsReleasingAll] = useState(false);
+  const [releasingId, setReleasingId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
 
   // Pessimistic Delta Cache Injection for instant UI updates on Restock
   const [deltaUpdates, setDeltaUpdates] = useState<Record<string, Partial<PieceBreakdownItem>>>({});
   const [restockingId, setRestockingId] = useState<string | null>(null);
+
+  const handleReleasePiece = async (piece: PieceBreakdownItem) => {
+    try {
+      setReleasingId(piece.id);
+      luxuryAudio.playMechanicalClick();
+
+      // 1. Optimistic Delta Cache: immediately mark as IN_STOCK
+      const delta: Partial<PieceBreakdownItem> = {
+        status: 'IN_STOCK'
+      };
+      setDeltaUpdates(prev => ({ ...prev, [piece.id]: delta }));
+
+      // 2. Database update: UPDATE inventory_pieces SET status = 'IN_STOCK' WHERE barcode/id
+      await SalesService.releasePiece({ id: piece.id, barcode: piece.barcode });
+
+      luxuryAudio.playCashRegisterSound();
+
+      // 3. Notify parent components
+      if (onPieceUpdated) {
+        onPieceUpdated(piece.id, delta);
+      }
+      if (onRefresh) {
+        onRefresh();
+      }
+    } catch (err: any) {
+      setDeltaUpdates(prev => {
+        const next = { ...prev };
+        delete next[piece.id];
+        return next;
+      });
+      alert(`Failed to release reservation: ${err?.message || 'Database error'}`);
+    } finally {
+      setReleasingId(null);
+    }
+  };
+
+  const handleReleaseAllReservations = async () => {
+    const reservedItems = effectivePieces.filter(p => !p.isSold && (p.status === 'RESERVED' || (p as any).status === 'CLAIMED_PENDING'));
+    if (reservedItems.length === 0) {
+      alert('No stuck or locked cart reservations currently in database.');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to release all ${reservedItems.length} stuck cart reservations back to IN_STOCK? This will empty open unbilled carts across all POS terminals.`)) {
+      return;
+    }
+
+    setIsReleasingAll(true);
+    try {
+      luxuryAudio.playMechanicalClick();
+      const result = await SalesService.releaseAllStuckReservations();
+      luxuryAudio.playCashRegisterSound();
+      
+      // Update local delta cache for all released items
+      const newDeltas: Record<string, Partial<PieceBreakdownItem>> = {};
+      reservedItems.forEach(p => {
+        newDeltas[p.id] = { status: 'IN_STOCK' };
+      });
+      setDeltaUpdates(prev => ({ ...prev, ...newDeltas }));
+
+      alert(`Successfully released ${result.count || reservedItems.length} stuck cart reservations back to active IN_STOCK status.`);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      alert(`Failed to release stuck reservations: ${err?.message || 'Database error'}`);
+    } finally {
+      setIsReleasingAll(false);
+    }
+  };
 
   const handleRestockPiece = async (piece: PieceBreakdownItem) => {
     try {
@@ -160,6 +232,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
       if (brandFilter !== 'ALL' && piece.brandName !== brandFilter) return false;
 
       if (statusFilter === 'IN_STOCK' && (piece.isSold || piece.status === 'WIP_LAUNDRY' || piece.status === 'RESERVED' || piece.status === 'SOLD')) return false;
+      if (statusFilter === 'RESERVED' && (piece.isSold || (piece.status !== 'RESERVED' && (piece as any).status !== 'CLAIMED_PENDING'))) return false;
       if (statusFilter === 'SOLD' && !piece.isSold) return false;
       if (statusFilter === 'WIP_LAUNDRY' && piece.status !== 'WIP_LAUNDRY') return false;
 
@@ -178,6 +251,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   const kpis = useMemo(() => {
     const totalCount = effectivePieces.length;
     const inStockCount = effectivePieces.filter(p => !p.isSold && p.status !== 'WIP_LAUNDRY' && p.status !== 'RESERVED' && p.status !== 'SOLD').length;
+    const reservedCount = effectivePieces.filter(p => !p.isSold && (p.status === 'RESERVED' || (p as any).status === 'CLAIMED_PENDING')).length;
     const laundryCount = effectivePieces.filter(p => p.status === 'WIP_LAUNDRY').length;
     const soldCount = effectivePieces.filter(p => p.isSold).length;
     const totalGrams = effectivePieces.reduce((sum, p) => sum + (p.weightGrams || Math.round((p.weightKg || 0) * 1000)), 0);
@@ -190,6 +264,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
     return {
       totalCount,
       inStockCount,
+      reservedCount,
       laundryCount,
       soldCount,
       totalWeightKg,
@@ -328,7 +403,24 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <button
+            onClick={handleReleaseAllReservations}
+            disabled={isReleasingAll || kpis.reservedCount === 0}
+            className={`px-3 py-1.5 font-bold text-xs rounded-lg shadow-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+              kpis.reservedCount > 0
+                ? 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 border border-amber-600 shadow-sm animate-pulse active:scale-95'
+                : 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'
+            }`}
+            title="Force release all stuck unbilled cart reservations back to IN_STOCK across all POS terminals"
+          >
+            {isReleasingAll ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Unlock className="w-3.5 h-3.5 text-slate-950" />
+            )}
+            <span>Release Stuck Carts {kpis.reservedCount > 0 ? `(${kpis.reservedCount})` : ''}</span>
+          </button>
           <button
             onClick={handleExportCSV}
             className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
@@ -362,8 +454,16 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
           <div className="text-2xl font-bold font-mono text-slate-900 mt-1">
             {kpis.totalCount} <span className="text-xs font-normal text-slate-400">pieces</span>
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">
-            <strong className="text-emerald-700">{kpis.inStockCount}</strong> In Stock &bull; {kpis.soldCount} Sold
+          <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-1 flex-wrap">
+            <span className="text-emerald-700 font-bold">{kpis.inStockCount} In Stock</span>
+            <span>&bull;</span>
+            {kpis.reservedCount > 0 && (
+              <>
+                <span className="text-amber-800 font-bold bg-amber-100 px-1 rounded">{kpis.reservedCount} Locked Cart</span>
+                <span>&bull;</span>
+              </>
+            )}
+            <span>{kpis.soldCount} Sold</span>
           </div>
         </div>
 
@@ -461,8 +561,8 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {(['ALL', 'IN_STOCK', 'WIP_LAUNDRY', 'SOLD'] as const).map(st => (
+          <div className="flex items-center gap-2 flex-wrap">
+            {(['ALL', 'IN_STOCK', 'RESERVED', 'WIP_LAUNDRY', 'SOLD'] as const).map(st => (
               <button
                 key={st}
                 type="button"
@@ -471,9 +571,13 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                   statusFilter === st
                     ? st === 'WIP_LAUNDRY'
                       ? 'bg-amber-600 text-white shadow-xs'
+                      : st === 'RESERVED'
+                      ? 'bg-amber-500 text-slate-950 font-bold shadow-xs'
                       : 'bg-slate-900 text-white'
                     : st === 'WIP_LAUNDRY'
                       ? 'bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100'
+                    : st === 'RESERVED'
+                      ? 'bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
@@ -481,6 +585,8 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                   ? 'All Pieces'
                   : st === 'IN_STOCK'
                   ? 'In Stock Only'
+                  : st === 'RESERVED'
+                  ? `🔒 On Hold / In Cart (${kpis.reservedCount})`
                   : st === 'WIP_LAUNDRY'
                   ? '🧺 Laundry / WIP'
                   : 'Sold History'}
@@ -653,6 +759,11 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                               <span>🧺</span>
                               <span>IN LAUNDRY</span>
                             </span>
+                          ) : piece.status === 'RESERVED' ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 w-fit shadow-xs font-mono">
+                              <span>🔒</span>
+                              <span>ON HOLD (CART)</span>
+                            </span>
                           ) : piece.status === 'CLAIMED_PENDING' ? (
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700">
                               LIVE HOLD
@@ -665,6 +776,24 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
+                            {/* Unlock Action Button for RESERVED cart items */}
+                            {piece.status === 'RESERVED' && !piece.isSold && (
+                              <button
+                                type="button"
+                                disabled={releasingId === piece.id}
+                                onClick={() => handleReleasePiece(piece)}
+                                className="px-2 py-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold text-[10px] rounded-md flex items-center gap-1 shadow-sm transition active:scale-95 cursor-pointer disabled:opacity-50"
+                                title="Release locked cart reservation back to active In-Stock & available for POS sale"
+                              >
+                                {releasingId === piece.id ? (
+                                  <Loader2 className="w-3 h-3 animate-spin text-slate-950" />
+                                ) : (
+                                  <Unlock className="w-3 h-3 text-slate-950" />
+                                )}
+                                <span>Unlock</span>
+                              </button>
+                            )}
+
                             {/* Restock Action Button for WIP Laundry items */}
                             {piece.status === 'WIP_LAUNDRY' && !piece.isSold && (
                               <button

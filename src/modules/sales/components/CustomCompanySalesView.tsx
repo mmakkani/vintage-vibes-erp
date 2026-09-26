@@ -158,7 +158,68 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   useEffect(() => {
     fetchAvailableBales();
+
+    const handleCartForceCleared = (e: any) => {
+      fetchAvailableBales();
+      setItems(prevItems => {
+        if (prevItems.length === 0) return prevItems;
+        const releasedPieces = e?.detail?.pieces;
+        if (!releasedPieces || releasedPieces.length === 0) {
+          showMsg('Sales basket synchronized: All reservations released by Admin.');
+          return [];
+        }
+        const releasedBarcodes = new Set(
+          releasedPieces.map((p: any) => String(p.barcode || '').trim().toLowerCase())
+        );
+        const remaining = prevItems.filter(item => !releasedBarcodes.has(String(item.barcode || '').trim().toLowerCase()));
+        if (remaining.length !== prevItems.length) {
+          showMsg(`${prevItems.length - remaining.length} item(s) released by Inventory sync.`);
+        }
+        return remaining;
+      });
+    };
+
+    window.addEventListener('vv:cart-force-cleared', handleCartForceCleared);
+
+    let bc: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        bc = new BroadcastChannel('vv_pos_sync');
+        bc.onmessage = (msg) => {
+          if (msg.data?.type === 'CART_FORCE_CLEARED') {
+            handleCartForceCleared({ detail: { pieces: msg.data.pieces, count: msg.data.count } });
+          } else if (msg.data?.type === 'PIECE_RELEASED') {
+            handleCartForceCleared({ detail: { pieces: [msg.data.piece], count: 1 } });
+          }
+        };
+      } catch (_) {}
+    }
+
+    return () => {
+      window.removeEventListener('vv:cart-force-cleared', handleCartForceCleared);
+      if (bc) bc.close();
+    };
   }, []);
+
+  // Auto-Release Guard on Window / Tab Close for B2B Sales Terminal
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (items.length > 0) {
+        for (const item of items) {
+          if (item?.barcode && !item.isRawBale) {
+            SalesService.releasePiece(item.barcode).catch(() => {});
+          }
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handleBeforeUnload);
+    };
+  }, [items]);
 
   const refreshAllB2BData = () => {
     loadParties();

@@ -335,8 +335,75 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       }
     };
     window.addEventListener('vv:realtime-record', handleRealtime);
-    return () => window.removeEventListener('vv:realtime-record', handleRealtime);
+
+    // Cross-Tab & Cross-Terminal Realtime Sync when Cart Reservations are Force Released
+    const handleCartForceCleared = (e: any) => {
+      loadInventoryAndParties();
+      setCart(prevCart => {
+        if (prevCart.length === 0) return prevCart;
+        const releasedPieces = e?.detail?.pieces;
+        if (!releasedPieces || releasedPieces.length === 0) {
+          setScanFeedback({
+            text: 'ℹ️ Basket synchronized: All reservations released by Admin.',
+            type: 'info'
+          });
+          return [];
+        }
+        const releasedBarcodes = new Set(
+          releasedPieces.map((p: any) => String(p.barcode || '').trim().toLowerCase())
+        );
+        const remaining = prevCart.filter(item => !releasedBarcodes.has(String(item.piece.barcode || '').trim().toLowerCase()));
+        if (remaining.length !== prevCart.length) {
+          setScanFeedback({
+            text: `ℹ️ ${prevCart.length - remaining.length} item(s) in basket were released by Inventory sync.`,
+            type: 'info'
+          });
+        }
+        return remaining;
+      });
+    };
+    window.addEventListener('vv:cart-force-cleared', handleCartForceCleared);
+
+    let bc: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        bc = new BroadcastChannel('vv_pos_sync');
+        bc.onmessage = (msg) => {
+          if (msg.data?.type === 'CART_FORCE_CLEARED') {
+            handleCartForceCleared({ detail: { pieces: msg.data.pieces, count: msg.data.count } });
+          } else if (msg.data?.type === 'PIECE_RELEASED') {
+            handleCartForceCleared({ detail: { pieces: [msg.data.piece], count: 1 } });
+          }
+        };
+      } catch (_) {}
+    }
+
+    return () => {
+      window.removeEventListener('vv:realtime-record', handleRealtime);
+      window.removeEventListener('vv:cart-force-cleared', handleCartForceCleared);
+      if (bc) bc.close();
+    };
   }, []);
+
+  // Auto-Release Guard on Window / Tab Close: Never leave orphaned reservations
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (cart.length > 0) {
+        for (const item of cart) {
+          if (item?.piece?.barcode) {
+            SalesService.releasePiece({ id: item.piece.id, barcode: item.piece.barcode }).catch(() => {});
+          }
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handleBeforeUnload);
+    };
+  }, [cart]);
 
   const DEFAULT_WALK_IN_CUSTOMER: any = useMemo(() => ({
     id: CrmService.CONTROL_WALK_IN_PARTY_ID,

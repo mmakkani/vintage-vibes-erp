@@ -51,6 +51,35 @@ export class SalesService {
       throw new Error('Item already reserved by another user.');
     }
 
+    // TTL Auto-Reclaim: If piece wasn't claimed, check if it's trapped in a stale reservation (> 15 mins)
+    if (!data || data.length === 0) {
+      try {
+        const checkQuery = pieceId && isUuid(pieceId)
+          ? supabase.from('inventory_pieces').select('id, barcode, status, is_sold, updated_at').eq('id', pieceId.trim())
+          : supabase.from('inventory_pieces').select('id, barcode, status, is_sold, updated_at').eq('barcode', String(barcode).trim());
+
+        const { data: existing } = await checkQuery;
+        if (existing && existing.length > 0) {
+          const item = existing[0];
+          if (item.status === 'RESERVED' && !item.is_sold) {
+            const updatedAt = item.updated_at ? new Date(item.updated_at).getTime() : 0;
+            const fifteenMinutesAgo = Date.now() - (15 * 60 * 1000);
+            if (updatedAt < fifteenMinutesAgo) {
+              // Stale orphaned cart reservation detected: safely reclaim for this active terminal
+              const reclaimRes = await supabase
+                .from('inventory_pieces')
+                .update({ status: 'RESERVED', updated_at: new Date().toISOString() })
+                .eq('id', item.id)
+                .select();
+              if (reclaimRes.data && reclaimRes.data.length > 0) {
+                data = reclaimRes.data;
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
     if (!data || data.length === 0) {
       throw new Error('Item already reserved by another user.');
     }
@@ -108,10 +137,70 @@ export class SalesService {
         window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
           detail: { module: 'inventory', entity: 'inventory_pieces', action: 'UPDATE', documentRef: data[0].barcode || barcode }
         }));
+        window.dispatchEvent(new CustomEvent('vv:cart-force-cleared', {
+          detail: { count: 1, pieces: data }
+        }));
+        if ('BroadcastChannel' in window) {
+          const bc = new BroadcastChannel('vv_pos_sync');
+          bc.postMessage({ type: 'PIECE_RELEASED', piece: data[0] });
+          bc.close();
+        }
       } catch (_) {}
     }
 
     return data && data.length > 0 ? data[0] : null;
+  }
+
+  /**
+   * Force release all stuck / orphaned cart reservations back to IN_STOCK.
+   * Strictly targets unbilled pieces: status = 'RESERVED' AND is_sold = false AND (sold_invoice_id IS NULL)
+   */
+  public static async releaseAllStuckReservations(): Promise<{ success: boolean; count: number; pieces: any[] }> {
+    try {
+      const { data, error } = await supabase
+        .from('inventory_pieces')
+        .update({ status: 'IN_STOCK', is_sold: false, updated_at: new Date().toISOString() })
+        .eq('status', 'RESERVED')
+        .eq('is_sold', false)
+        .is('sold_invoice_id', null)
+        .select('id, barcode, item_name, brand_name, status');
+
+      if (error) {
+        console.error('[SalesService] releaseAllStuckReservations error:', error);
+        throw error;
+      }
+
+      const releasedPieces = data || [];
+
+      // Also clean up any active ecommerce cart reservations
+      try {
+        await supabase
+          .from('cart_reservations')
+          .update({ is_active: false })
+          .eq('is_active', true);
+      } catch (_) {}
+
+      if (typeof window !== 'undefined') {
+        try {
+          window.dispatchEvent(new CustomEvent('vv:cart-force-cleared', {
+            detail: { count: releasedPieces.length, pieces: releasedPieces }
+          }));
+          window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+            detail: { module: 'inventory', entity: 'inventory_pieces', action: 'RELEASE_ALL_RESERVATIONS', count: releasedPieces.length }
+          }));
+          if ('BroadcastChannel' in window) {
+            const bc = new BroadcastChannel('vv_pos_sync');
+            bc.postMessage({ type: 'CART_FORCE_CLEARED', count: releasedPieces.length, pieces: releasedPieces });
+            bc.close();
+          }
+        } catch (_) {}
+      }
+
+      return { success: true, count: releasedPieces.length, pieces: releasedPieces };
+    } catch (err: any) {
+      console.error('[SalesService] releaseAllStuckReservations exception:', err);
+      throw new Error(err.message || 'Failed to release stuck reservations');
+    }
   }
 
   /**
