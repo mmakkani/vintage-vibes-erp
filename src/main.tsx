@@ -14,6 +14,8 @@ if (typeof window !== 'undefined') {
     if (
       msg.includes('useCache') ||
       msg.includes('rytr') ||
+      msg.includes('Could not establish connection') ||
+      msg.includes('Receiving end does not exist') ||
       stack.includes('content.js') ||
       stack.includes('chrome-extension://') ||
       stack.includes('moz-extension://')
@@ -28,6 +30,8 @@ if (typeof window !== 'undefined') {
     const filename = String(event.filename || '');
     if (
       msg.includes('useCache') ||
+      msg.includes('Could not establish connection') ||
+      msg.includes('Receiving end does not exist') ||
       filename.includes('content.js') ||
       filename.includes('chrome-extension://')
     ) {

@@ -24,6 +24,40 @@
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <script>
+      // Early Extension Crash Isolation Shield (suppresses third-party Chrome extension crashes: content.js, useCache, closed messaging ports)
+      window.addEventListener('unhandledrejection', function(event) {
+        var reason = event.reason;
+        var msg = String((reason && reason.message) || reason || '');
+        var stack = String((reason && reason.stack) || '');
+        if (
+          msg.indexOf('useCache') !== -1 ||
+          msg.indexOf('rytr') !== -1 ||
+          msg.indexOf('Could not establish connection') !== -1 ||
+          msg.indexOf('Receiving end does not exist') !== -1 ||
+          stack.indexOf('content.js') !== -1 ||
+          stack.indexOf('chrome-extension://') !== -1 ||
+          stack.indexOf('moz-extension://') !== -1
+        ) {
+          event.preventDefault();
+          if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        }
+      });
+
+      window.addEventListener('error', function(event) {
+        var msg = String((event && event.message) || '');
+        var filename = String((event && event.filename) || '');
+        if (
+          msg.indexOf('useCache') !== -1 ||
+          msg.indexOf('Could not establish connection') !== -1 ||
+          msg.indexOf('Receiving end does not exist') !== -1 ||
+          filename.indexOf('content.js') !== -1 ||
+          filename.indexOf('chrome-extension://') !== -1
+        ) {
+          event.preventDefault();
+          if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        }
+      }, true);
+
       // Early PWA Install Prompt Capture for Android & Desktop Chromium
       window.addEventListener('beforeinstallprompt', function(e) {
         e.preventDefault();
