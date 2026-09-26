@@ -302,10 +302,15 @@ export function openThermalLabelPrintWindow(data: ThermalLabelData): Window | nu
   </div>
 
   <script>
+    window.addEventListener('afterprint', function() {
+      setTimeout(function() {
+        try { window.close(); } catch(e) {}
+      }, 350);
+    });
     window.addEventListener('load', function() {
       setTimeout(function() {
         window.print();
-      }, 300);
+      }, 250);
     });
   </script>
 </body>
@@ -576,10 +581,15 @@ export function openThermalShippingWaybillPrintWindow(data: ThermalShippingWaybi
   </div>
 
   <script>
+    window.addEventListener('afterprint', function() {
+      setTimeout(function() {
+        try { window.close(); } catch(e) {}
+      }, 350);
+    });
     window.addEventListener('load', function() {
       setTimeout(function() {
         window.print();
-      }, 300);
+      }, 250);
     });
   </script>
 </body>
@@ -736,10 +746,15 @@ export function openBaleThermalTagPrintWindow(data: BaleThermalTagData): Window 
       console.error(e);
     }
 
+    window.addEventListener('afterprint', function() {
+      setTimeout(function() {
+        try { window.close(); } catch(e) {}
+      }, 350);
+    });
     window.addEventListener('load', function() {
       setTimeout(function() {
         window.print();
-      }, 350);
+      }, 250);
     });
   </script>
 </body>
@@ -988,10 +1003,15 @@ export function openBatchBaleThermalTagsPrintWindow(bales: BatchBaleThermalTagIt
       }
     });
 
+    window.addEventListener('afterprint', function() {
+      setTimeout(function() {
+        try { window.close(); } catch(e) {}
+      }, 350);
+    });
     window.addEventListener('load', function() {
       setTimeout(function() {
         window.print();
-      }, 400);
+      }, 300);
     });
   </script>
 </body>
@@ -1019,7 +1039,7 @@ export interface GiftReceiptData {
 }
 
 export function openGiftReceiptPrintWindow(data: GiftReceiptData): Window | null {
-  const win = window.open('', '_blank', 'width=420,height=600,resizable=yes,scrollbars=yes');
+  const win = window.open('', '_blank', 'width=440,height=650,resizable=yes,scrollbars=yes');
   if (!win) {
     alert('Popup blocked by browser. Please allow popups to print gift receipts.');
     return null;
@@ -1043,103 +1063,174 @@ export function openGiftReceiptPrintWindow(data: GiftReceiptData): Window | null
   <meta charset="UTF-8">
   <title>Gift Receipt - ${data.invoiceNo}</title>
   <style>
-    @page { size: 80mm auto; margin: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace, sans-serif;
+    @page {
+      size: 80mm auto;
       margin: 0;
-      padding: 12px;
+    }
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #f1f5f9;
       color: #000;
-      font-size: 11px;
-      background: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace, sans-serif;
+      font-size: 10px;
+      line-height: 1.3;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .gift-container {
+      width: 76mm;
+      max-width: 76mm;
+      margin: 0 auto;
+      background: #ffffff;
+      padding: 10px 8px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
     .text-center { text-align: center; }
     .header { border-bottom: 2px dashed #000; padding-bottom: 8px; margin-bottom: 8px; }
-    .title { font-size: 14px; font-weight: 900; letter-spacing: 1px; }
+    .title { font-size: 13px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; }
     .gift-badge {
       display: inline-block;
       border: 1.5px solid #000;
       padding: 3px 10px;
       font-weight: 900;
-      font-size: 12px;
-      margin: 6px 0;
+      font-size: 11px;
+      margin: 5px 0;
       border-radius: 4px;
       background: #000;
       color: #fff;
       letter-spacing: 0.5px;
     }
-    .info { font-size: 10px; line-height: 1.4; }
+    .info { font-size: 9px; line-height: 1.4; }
     .gift-msg-box {
       border: 1.5px solid #000;
       border-radius: 6px;
       padding: 8px;
-      margin: 10px 0;
+      margin: 8px 0;
       background: #fafafa;
       text-align: center;
       font-style: italic;
-      font-size: 11px;
+      font-size: 10px;
     }
-    .table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+    .table { width: 100%; border-collapse: collapse; margin: 6px 0; }
     .policy-box {
       border-top: 2px dashed #000;
       padding-top: 8px;
-      margin-top: 10px;
-      font-size: 9.5px;
-      line-height: 1.4;
+      margin-top: 8px;
+      font-size: 8.5px;
+      line-height: 1.35;
       text-align: center;
     }
     @media print {
-      .no-print { display: none; }
+      .no-print { display: none !important; }
+      html, body {
+        background: #ffffff !important;
+        width: 76mm !important;
+        margin: 0 auto !important;
+        padding: 0 !important;
+      }
+      .gift-container {
+        width: 76mm !important;
+        max-width: 76mm !important;
+        margin: 0 auto !important;
+        padding: 2mm 1mm !important;
+        box-shadow: none !important;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="no-print" style="margin-bottom: 10px; text-align: right;">
-    <button onclick="window.print()" style="padding: 6px 14px; font-weight: bold; background: #000; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Print Gift Slip</button>
-    <button onclick="window.close()" style="padding: 6px 14px; margin-left: 6px; cursor: pointer;">Close</button>
-  </div>
-
-  <div class="header text-center">
-    <div class="title">${data.companyName || 'VINTAGE VIBES DUBAI'}</div>
-    <div style="font-size: 9px; color: #444;">Al Quoz Industrial 3, Dubai &bull; TRN: ${data.trn || '100482910300003'}</div>
-    <div class="gift-badge">🎁 GIFT RECEIPT</div>
-    <div class="info">
-      <div>Ref: <strong>${data.invoiceNo}</strong></div>
-      <div>Date: <strong>${data.date}</strong></div>
-      ${data.customerName ? `<div>Gifted By: <strong>${data.customerName}</strong></div>` : ''}
+  <div class="no-print" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; background: #0f172a; color: #fff; padding: 8px 12px; border-radius: 6px;">
+    <span style="font-weight: bold; font-size: 11px;">80mm Gift Receipt (${data.invoiceNo})</span>
+    <div>
+      <button onclick="window.print()" style="padding: 6px 14px; font-weight: bold; background: #f59e0b; color: #000; border: none; border-radius: 4px; cursor: pointer; margin-right: 6px;">Print Gift Slip</button>
+      <button onclick="window.close()" style="padding: 6px 12px; background: #475569; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Close</button>
     </div>
   </div>
 
-  ${data.giftMessage ? `
-    <div class="gift-msg-box">
-      <div style="font-size: 9px; font-weight: bold; text-transform: uppercase; color: #666; margin-bottom: 2px;">A Special Gift For You:</div>
-      "${data.giftMessage}"
+  <div class="gift-container">
+    <div class="header text-center">
+      <div class="title">${data.companyName || 'VINTAGE VIBES DUBAI'}</div>
+      <div style="font-size: 8.5px; color: #444;">Al Quoz Industrial 3, Dubai &bull; TRN: ${data.trn || '100482910300003'}</div>
+      <div class="gift-badge">🎁 GIFT RECEIPT</div>
+      <div class="info">
+        <div>Ref: <strong>${data.invoiceNo}</strong></div>
+        <div>Date: <strong>${data.date}</strong></div>
+        ${data.customerName ? `<div>Gifted By: <strong>${data.customerName}</strong></div>` : ''}
+      </div>
     </div>
-  ` : ''}
 
-  <table class="table">
-    <thead>
-      <tr style="border-bottom: 1px solid #000; font-size: 9px; text-transform: uppercase;">
-        <th style="text-align: left; padding-bottom: 3px;">Item Description</th>
-        <th style="text-align: right; padding-bottom: 3px;">Price</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${itemsHtml}
-    </tbody>
-  </table>
+    ${data.giftMessage ? `
+      <div class="gift-msg-box">
+        <div style="font-size: 8.5px; font-weight: bold; text-transform: uppercase; color: #666; margin-bottom: 2px;">A Special Gift For You:</div>
+        "${data.giftMessage}"
+      </div>
+    ` : ''}
 
-  <div class="policy-box">
-    <div style="font-weight: 900; margin-bottom: 3px;">★ 14-DAY EXCHANGE POLICY ★</div>
-    <div>Items may be exchanged within 14 days of purchase date.</div>
-    <div>Garment security tags and barcodes must remain intact.</div>
-    <div>No cash refund. Exchange or Store Credit only.</div>
-    <div style="margin-top: 6px; font-weight: bold;">Thank you for shopping vintage authenticated grails!</div>
+    <table class="table">
+      <thead>
+        <tr style="border-bottom: 1px solid #000; font-size: 8.5px; text-transform: uppercase;">
+          <th style="text-align: left; padding-bottom: 3px;">Item Description</th>
+          <th style="text-align: right; padding-bottom: 3px;">Price</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemsHtml}
+      </tbody>
+    </table>
+
+    <div class="policy-box">
+      <div style="font-weight: 900; margin-bottom: 3px;">★ 14-DAY EXCHANGE POLICY ★</div>
+      <div>Items may be exchanged within 14 days of purchase date.</div>
+      <div>Garment security tags and barcodes must remain intact.</div>
+      <div>No cash refund. Exchange or Store Credit only.</div>
+      <div style="margin-top: 5px; font-weight: bold;">Thank you for shopping vintage authenticated grails!</div>
+    </div>
   </div>
 
   <script>
-    window.addEventListener('load', function() {
-      setTimeout(function() { window.print(); }, 400);
-    });
+    (function() {
+      var printed = false;
+      function doPrint() {
+        if (printed) return;
+        printed = true;
+        try {
+          window.focus();
+          window.print();
+        } catch(e) {
+          console.warn('[GiftReceipt] Print error:', e);
+        }
+      }
+      window.addEventListener('afterprint', function() {
+        setTimeout(function() {
+          try { window.close(); } catch(e) {}
+        }, 350);
+      });
+      function initPrint() {
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(function() {
+            requestAnimationFrame(function() {
+              setTimeout(doPrint, 50);
+            });
+          }).catch(function() {
+            setTimeout(doPrint, 60);
+          });
+        } else {
+          requestAnimationFrame(function() {
+            setTimeout(doPrint, 60);
+          });
+        }
+      }
+      if (document.readyState === 'complete') {
+        initPrint();
+      } else {
+        window.addEventListener('load', initPrint);
+        setTimeout(doPrint, 350);
+      }
+    })();
   </script>
 </body>
 </html>`;
@@ -1198,7 +1289,7 @@ export function generatePosBarcodeSvg(barcodeText: string): string {
 }
 
 export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): Window | null {
-  const win = window.open('', '_blank', 'width=460,height=700,resizable=yes,scrollbars=yes');
+  const win = window.open('', '_blank', 'width=460,height=720,resizable=yes,scrollbars=yes');
   if (!win) {
     alert('Popup blocked by browser. Please allow popups to print POS thermal receipts.');
     return null;
@@ -1206,11 +1297,21 @@ export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): W
 
   const barcodeSvgHtml = generatePosBarcodeSvg(data.invoiceNo);
 
+  const isDefaultLogo = !data.logoUrl || data.logoUrl.includes('vintage_logo.svg') || data.logoUrl.includes('vintage_vibes_seal.svg');
   const resolvedLogoUrl = data.logoUrl
     ? (data.logoUrl.startsWith('http') || data.logoUrl.startsWith('data:')
         ? data.logoUrl
         : `${typeof window !== 'undefined' ? window.location.origin : ''}${data.logoUrl.startsWith('/') ? '' : '/'}${data.logoUrl}`)
     : '';
+
+  const logoMarkup = !isDefaultLogo && resolvedLogoUrl
+    ? `<img src="${resolvedLogoUrl}" class="receipt-logo" alt="Company Logo" onerror="this.style.display='none'" />`
+    : `<div class="receipt-logo-inline" style="text-align:center;margin-bottom:4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 38" width="130" height="22" style="display:inline-block;">
+          <text x="120" y="18" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="15" font-weight="900" letter-spacing="2" text-anchor="middle" fill="#000">VINTAGE VIBES</text>
+          <text x="120" y="32" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="8.5" font-weight="700" letter-spacing="3" text-anchor="middle" fill="#333">DUBAI &bull; ARCHIVE</text>
+        </svg>
+      </div>`;
 
   const safeItems = Array.isArray(data.items) ? data.items : [];
   const itemsHtml = safeItems.map((it) => {
@@ -1249,16 +1350,24 @@ export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): W
     *, *::before, *::after {
       box-sizing: border-box;
     }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Courier New", monospace, sans-serif;
+    html, body {
       margin: 0;
-      padding: 10px;
+      padding: 0;
+      background: #f1f5f9;
       color: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Courier New", monospace, sans-serif;
       font-size: 10px;
       line-height: 1.3;
-      background: #fff;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
+    }
+    .receipt-container {
+      width: 76mm;
+      max-width: 76mm;
+      margin: 0 auto;
+      background: #ffffff;
+      padding: 10px 8px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
     .text-center { text-align: center; }
     .text-right { text-align: right; }
@@ -1268,14 +1377,11 @@ export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): W
       margin-bottom: 8px;
     }
     .receipt-logo {
-      max-width: 140px;
-      max-height: 56px;
+      max-width: 130px;
+      max-height: 48px;
       object-fit: contain;
-      margin: 0 auto 6px auto;
+      margin: 0 auto 4px auto;
       display: block;
-      filter: grayscale(100%) contrast(160%);
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
     }
     .store-name {
       font-size: 13px;
@@ -1364,7 +1470,19 @@ export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): W
     }
     @media print {
       .no-print { display: none !important; }
-      body { padding: 4mm !important; }
+      html, body {
+        background: #ffffff !important;
+        width: 76mm !important;
+        margin: 0 auto !important;
+        padding: 0 !important;
+      }
+      .receipt-container {
+        width: 76mm !important;
+        max-width: 76mm !important;
+        margin: 0 auto !important;
+        padding: 2mm 1mm !important;
+        box-shadow: none !important;
+      }
     }
   </style>
 </head>
@@ -1377,94 +1495,133 @@ export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): W
     </div>
   </div>
 
-  <div class="header text-center">
-    ${resolvedLogoUrl ? `<img src="${resolvedLogoUrl}" class="receipt-logo" alt="Company Logo" onerror="this.style.display='none'" />` : ''}
-    <div class="store-name">${data.companyName || 'VINTAGE VIBES DUBAI'}</div>
-    <div class="store-sub">${data.address || 'Al Quoz Industrial 3, Dubai, UAE'}</div>
-    <div class="store-sub"><strong>TRN:</strong> ${data.trn || '100482910300003'}</div>
-    <div class="tax-badge">TAX INVOICE / CASH MEMO</div>
-  </div>
+  <div class="receipt-container">
+    <div class="header text-center">
+      ${logoMarkup}
+      <div class="store-name">${data.companyName || 'VINTAGE VIBES DUBAI'}</div>
+      <div class="store-sub">${data.address || 'Al Quoz Industrial 3, Dubai, UAE'}</div>
+      <div class="store-sub"><strong>TRN:</strong> ${data.trn || '100482910300003'}</div>
+      <div class="tax-badge">TAX INVOICE / CASH MEMO</div>
+    </div>
 
-  <div class="meta-box">
-    <div style="display: flex; justify-content: space-between;">
-      <span><strong>INVOICE:</strong> ${data.invoiceNo}</span>
-      <span><strong>PAYMENT:</strong> ${(data.paymentMethod || 'CASH').toUpperCase()}</span>
+    <div class="meta-box">
+      <div style="display: flex; justify-content: space-between;">
+        <span><strong>INVOICE:</strong> ${data.invoiceNo}</span>
+        <span><strong>PAYMENT:</strong> ${(data.paymentMethod || 'CASH').toUpperCase()}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; margin-top: 2px;">
+        <span><strong>DATE:</strong> ${displayDate}</span>
+        <span><strong>CASHIER:</strong> ${data.cashierName || 'Cashier 01'}</span>
+      </div>
     </div>
-    <div style="display: flex; justify-content: space-between; margin-top: 2px;">
-      <span><strong>DATE:</strong> ${displayDate}</span>
-      <span><strong>CASHIER:</strong> ${data.cashierName || 'Cashier 01'}</span>
-    </div>
-  </div>
 
-  <div class="customer-box">
-    <div class="customer-title">CUSTOMER INFORMATION</div>
-    <div style="display: flex; justify-content: space-between;">
-      <span><strong>NAME:</strong> ${customerName}</span>
-      <span><strong>PHONE:</strong> ${customerPhone || 'N/A'}</span>
+    <div class="customer-box">
+      <div class="customer-title">CUSTOMER INFORMATION</div>
+      <div style="display: flex; justify-content: space-between;">
+        <span><strong>NAME:</strong> ${customerName}</span>
+        <span><strong>PHONE:</strong> ${customerPhone || 'N/A'}</span>
+      </div>
     </div>
-  </div>
 
-  <table class="table">
-    <thead>
-      <tr style="border-bottom: 1px solid #000; font-size: 8.5px; text-transform: uppercase;">
-        <th style="text-align: left; padding-bottom: 3px;">Item &amp; Description</th>
-        <th style="text-align: right; padding-bottom: 3px;">Amount (AED)</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${itemsHtml}
-    </tbody>
-  </table>
+    <table class="table">
+      <thead>
+        <tr style="border-bottom: 1px solid #000; font-size: 8.5px; text-transform: uppercase;">
+          <th style="text-align: left; padding-bottom: 3px;">Item &amp; Description</th>
+          <th style="text-align: right; padding-bottom: 3px;">Amount (AED)</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemsHtml}
+      </tbody>
+    </table>
 
-  <div class="totals-box">
-    <div class="total-row">
-      <span>Subtotal (Excl. VAT):</span>
-      <span>AED ${Number(data.subTotal || 0).toFixed(2)}</span>
+    <div class="totals-box">
+      <div class="total-row">
+        <span>Subtotal (Excl. VAT):</span>
+        <span>AED ${Number(data.subTotal || 0).toFixed(2)}</span>
+      </div>
+      ${Number(data.discountAmount || 0) > 0 ? `
+      <div class="total-row" style="color: #b91c1c;">
+        <span>Discount:</span>
+        <span>-AED ${Number(data.discountAmount).toFixed(2)}</span>
+      </div>` : ''}
+      <div class="total-row">
+        <span>UAE VAT 5%:</span>
+        <span>AED ${Number(data.vatAmount || 0).toFixed(2)}</span>
+      </div>
+      <div class="total-row grand-total">
+        <span>NET TOTAL (AED):</span>
+        <span>AED ${Number(data.totalAmount || 0).toFixed(2)}</span>
+      </div>
+      ${Number(data.tenderedAmount || 0) > 0 ? `
+      <div class="total-row" style="margin-top: 4px; font-size: 8.5px; color: #444;">
+        <span>Tendered (${data.paymentMethod}):</span>
+        <span>AED ${Number(data.tenderedAmount).toFixed(2)}</span>
+      </div>
+      <div class="total-row" style="font-size: 8.5px; color: #444;">
+        <span>Change Due:</span>
+        <span>AED ${Number(data.changeDue || 0).toFixed(2)}</span>
+      </div>` : ''}
     </div>
-    ${Number(data.discountAmount || 0) > 0 ? `
-    <div class="total-row" style="color: #b91c1c;">
-      <span>Discount:</span>
-      <span>-AED ${Number(data.discountAmount).toFixed(2)}</span>
-    </div>` : ''}
-    <div class="total-row">
-      <span>UAE VAT 5%:</span>
-      <span>AED ${Number(data.vatAmount || 0).toFixed(2)}</span>
-    </div>
-    <div class="total-row grand-total">
-      <span>NET TOTAL (AED):</span>
-      <span>AED ${Number(data.totalAmount || 0).toFixed(2)}</span>
-    </div>
-    ${Number(data.tenderedAmount || 0) > 0 ? `
-    <div class="total-row" style="margin-top: 4px; font-size: 8.5px; color: #444;">
-      <span>Tendered (${data.paymentMethod}):</span>
-      <span>AED ${Number(data.tenderedAmount).toFixed(2)}</span>
-    </div>
-    <div class="total-row" style="font-size: 8.5px; color: #444;">
-      <span>Change Due:</span>
-      <span>AED ${Number(data.changeDue || 0).toFixed(2)}</span>
-    </div>` : ''}
-  </div>
 
-  <div class="barcode-section">
-    ${barcodeSvgHtml}
-  </div>
+    <div class="barcode-section">
+      ${barcodeSvgHtml}
+    </div>
 
-  <div class="footer-policy">
-    <div style="font-weight: 800;">★ 14-DAY EXCHANGE POLICY ★</div>
-    <div>Items may be exchanged within 14 days of purchase.</div>
-    <div>Security tag &amp; barcode must remain attached. No cash refunds.</div>
-    <div style="margin-top: 4px; font-weight: 900; letter-spacing: 0.5px;">THANK YOU FOR SHOPPING VINTAGE VIBES!</div>
+    <div class="footer-policy">
+      <div style="font-weight: 800;">★ 14-DAY EXCHANGE POLICY ★</div>
+      <div>Items may be exchanged within 14 days of purchase.</div>
+      <div>Security tag &amp; barcode must remain attached. No cash refunds.</div>
+      <div style="margin-top: 4px; font-weight: 900; letter-spacing: 0.5px;">THANK YOU FOR SHOPPING VINTAGE VIBES!</div>
+    </div>
   </div>
 
   <script>
-    window.addEventListener('load', function() {
-      setTimeout(function() {
+    (function() {
+      var printed = false;
+      function doPrint() {
+        if (printed) return;
+        printed = true;
         try {
           window.focus();
           window.print();
-        } catch(e) {}
-      }, 150);
-    });
+        } catch(e) {
+          console.warn('[POS Thermal Print] Window print failed:', e);
+        }
+      }
+
+      // Automatically close the popup window after printing or cancelling
+      window.addEventListener('afterprint', function() {
+        setTimeout(function() {
+          try { window.close(); } catch(e) {}
+        }, 350);
+      });
+
+      // Synchronize with DOM paint & system font decoding
+      function prepareAndPrint() {
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(function() {
+            requestAnimationFrame(function() {
+              setTimeout(doPrint, 50);
+            });
+          }).catch(function() {
+            setTimeout(doPrint, 60);
+          });
+        } else {
+          requestAnimationFrame(function() {
+            setTimeout(doPrint, 60);
+          });
+        }
+      }
+
+      if (document.readyState === 'complete') {
+        prepareAndPrint();
+      } else {
+        window.addEventListener('load', prepareAndPrint);
+        // Fallback safety timeout so it never hangs if an external asset stalls
+        setTimeout(doPrint, 350);
+      }
+    })();
   </script>
 </body>
 </html>`;
