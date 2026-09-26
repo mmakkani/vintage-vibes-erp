@@ -1,3 +1,5 @@
+import JsBarcode from 'jsbarcode';
+
 export interface ThermalLabelData {
   itemCode: string;
   description: string;
@@ -1155,6 +1157,7 @@ export interface PosThermalReceiptData {
   customerPhone?: string;
   cashierName?: string;
   paymentMethod?: string;
+  logoUrl?: string;
   companyName?: string;
   trn?: string;
   address?: string;
@@ -1174,12 +1177,40 @@ export interface PosThermalReceiptData {
   changeDue?: number;
 }
 
+export function generatePosBarcodeSvg(barcodeText: string): string {
+  try {
+    if (typeof document !== 'undefined') {
+      const svgElem = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      JsBarcode(svgElem, barcodeText || 'POS-REC', {
+        format: 'CODE128',
+        width: 1.6,
+        height: 34,
+        displayValue: true,
+        fontSize: 9,
+        margin: 2
+      });
+      return svgElem.outerHTML;
+    }
+  } catch (e) {
+    console.warn('[ThermalPrinter] Barcode SVG generation fallback:', e);
+  }
+  return `<div style="font-family:monospace;font-size:10px;text-align:center;padding:4px 0;letter-spacing:1px;">*${barcodeText}*</div>`;
+}
+
 export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): Window | null {
   const win = window.open('', '_blank', 'width=460,height=700,resizable=yes,scrollbars=yes');
   if (!win) {
     alert('Popup blocked by browser. Please allow popups to print POS thermal receipts.');
     return null;
   }
+
+  const barcodeSvgHtml = generatePosBarcodeSvg(data.invoiceNo);
+
+  const resolvedLogoUrl = data.logoUrl
+    ? (data.logoUrl.startsWith('http') || data.logoUrl.startsWith('data:')
+        ? data.logoUrl
+        : `${typeof window !== 'undefined' ? window.location.origin : ''}${data.logoUrl.startsWith('/') ? '' : '/'}${data.logoUrl}`)
+    : '';
 
   const safeItems = Array.isArray(data.items) ? data.items : [];
   const itemsHtml = safeItems.map((it) => {
@@ -1210,7 +1241,6 @@ export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): W
 <head>
   <meta charset="UTF-8">
   <title>Receipt - ${data.invoiceNo}</title>
-  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
   <style>
     @page {
       size: 80mm auto;
@@ -1236,6 +1266,16 @@ export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): W
       border-bottom: 2px dashed #000;
       padding-bottom: 8px;
       margin-bottom: 8px;
+    }
+    .receipt-logo {
+      max-width: 140px;
+      max-height: 56px;
+      object-fit: contain;
+      margin: 0 auto 6px auto;
+      display: block;
+      filter: grayscale(100%) contrast(160%);
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
     }
     .store-name {
       font-size: 13px;
@@ -1338,6 +1378,7 @@ export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): W
   </div>
 
   <div class="header text-center">
+    ${resolvedLogoUrl ? `<img src="${resolvedLogoUrl}" class="receipt-logo" alt="Company Logo" onerror="this.style.display='none'" />` : ''}
     <div class="store-name">${data.companyName || 'VINTAGE VIBES DUBAI'}</div>
     <div class="store-sub">${data.address || 'Al Quoz Industrial 3, Dubai, UAE'}</div>
     <div class="store-sub"><strong>TRN:</strong> ${data.trn || '100482910300003'}</div>
@@ -1405,7 +1446,7 @@ export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): W
   </div>
 
   <div class="barcode-section">
-    <svg id="pos-barcode"></svg>
+    ${barcodeSvgHtml}
   </div>
 
   <div class="footer-policy">
@@ -1416,23 +1457,13 @@ export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): W
   </div>
 
   <script>
-    try {
-      JsBarcode("#pos-barcode", "${data.invoiceNo}", {
-        format: "CODE128",
-        width: 1.6,
-        height: 34,
-        displayValue: true,
-        fontSize: 9,
-        margin: 2
-      });
-    } catch(e) {
-      console.warn("Barcode render notice:", e);
-    }
-
     window.addEventListener('load', function() {
       setTimeout(function() {
-        window.print();
-      }, 350);
+        try {
+          window.focus();
+          window.print();
+        } catch(e) {}
+      }, 150);
     });
   </script>
 </body>

@@ -918,47 +918,58 @@ export class SalesService {
       throw new Error(error.message);
     }
 
-    // Decrement stock in inventory_items and mark inventory_pieces sold
-    if (Array.isArray(sale.items)) {
+    // Decrement stock in inventory_items and mark inventory_pieces sold (Batched & Parallelized)
+    if (Array.isArray(sale.items) && sale.items.length > 0) {
+      const pieceIds: string[] = [];
+      const barcodes: string[] = [];
+      const itemStockUpdates: Promise<any>[] = [];
+
+      const isUuid = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+
       for (const item of sale.items) {
         const qty = Number(item.quantity || 1);
-        // If inventory item id exists
-        if (item.inventory_item_id || item.itemId) {
-          const targetId = item.inventory_item_id || item.itemId;
-          try {
-            const { data: itemData } = await supabase
-              .from('inventory_items')
-              .select('stock_quantity')
-              .eq('id', targetId)
-              .maybeSingle();
+        const targetId = item.inventory_item_id || item.itemId;
+        if (targetId) {
+          itemStockUpdates.push(
+            (async () => {
+              try {
+                const { data: itemData } = await supabase
+                  .from('inventory_items')
+                  .select('stock_quantity')
+                  .eq('id', targetId)
+                  .maybeSingle();
 
-            if (itemData) {
-              const newQty = Math.max(0, (itemData.stock_quantity || 0) - qty);
-              await supabase
-                .from('inventory_items')
-                .update({ stock_quantity: newQty })
-                .eq('id', targetId);
-            }
-          } catch (e) {
-            console.warn('Could not decrement inventory_items stock:', e);
-          }
+                if (itemData) {
+                  const newQty = Math.max(0, (itemData.stock_quantity || 0) - qty);
+                  await supabase
+                    .from('inventory_items')
+                    .update({ stock_quantity: newQty })
+                    .eq('id', targetId);
+                }
+              } catch (e) {
+                console.warn('[SalesService] Non-blocking inventory_items stock decrement notice:', e);
+              }
+            })()
+          );
         }
 
-        // If piece barcode/id exists
-        const pieceId = item.pieceId;
-        const barcode = item.barcode;
-        const isUuid = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
-        try {
-          if (pieceId && isUuid(pieceId)) {
-            await supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).eq('id', pieceId);
-          }
-          if (barcode) {
-            await supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).eq('barcode', String(barcode).trim());
-          }
-        } catch (e) {
-          console.warn('Could not mark piece sold:', e);
+        if (item.pieceId && isUuid(item.pieceId)) {
+          pieceIds.push(String(item.pieceId).trim());
+        }
+        if (item.barcode) {
+          barcodes.push(String(item.barcode).trim());
         }
       }
+
+      await Promise.all([
+        ...itemStockUpdates,
+        pieceIds.length > 0
+          ? supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('id', pieceIds)
+          : Promise.resolve(),
+        barcodes.length > 0
+          ? supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('barcode', barcodes)
+          : Promise.resolve()
+      ]).catch(e => console.warn('[SalesService] Batch piece mark sold notice:', e));
     }
 
     return data;

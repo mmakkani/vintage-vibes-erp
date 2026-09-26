@@ -1212,7 +1212,57 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       const customerPhoneForSlip = (selectedCustomer?.phone || '').trim();
       const customerNameForSlip = selectedCustomer?.name || 'Walk-In Customer';
 
-      // 4. Automated Marketing WhatsApp Invoice Slip
+      // 1. Snapshot completed checkout data immediately for the success modal
+      const completedCart = [...cart];
+      const completedPieces = safeCart.map(c => c.piece);
+      const completedInvoice = {
+        id: posRecord?.id || invoiceNum,
+        invoiceNo: invoiceNum,
+        date: new Date().toISOString(),
+        customerName: customerNameForSlip,
+        customerPhone: customerPhoneForSlip,
+        subTotal: subtotalAmt,
+        discountAmount: discountTotal,
+        vatAmount: vatAmt,
+        totalAmount: totalAmt,
+        paymentMethod: effectivePaymentMode,
+        items: completedCart.map(c => ({
+          barcode: c.piece.barcode,
+          description: `${c.piece.brandName} ${c.piece.itemName}`,
+          unitPrice: c.sellingPrice,
+          discount: c.discount,
+          finalAmount: c.sellingPrice - c.discount,
+          weightKg: c.piece.weightKg || 0.45
+        }))
+      };
+
+      setCheckoutSuccessData({
+        invoice: completedInvoice,
+        voucher: { voucherNo: createdVoucherNo },
+        cogsSummary: { totalCogs },
+        pieces: completedPieces
+      });
+
+      // 2. Clear basket and inputs immediately for instant UI responsiveness
+      setCart([]);
+      setSelectedCustomer(null);
+      setCustomerSearchQuery('');
+      setCustomerInsights(null);
+      setDiscountTotal(0);
+      setIsGiftOrder(false);
+      setGiftMessage('');
+      setIncludeGiftBox(false);
+
+      // 3. Instant zero-latency inventory update (optimistically remove sold items from local stock)
+      const soldBarcodes = new Set(completedCart.map(c => String(c.piece.barcode || '').trim().toLowerCase()));
+      const soldIds = new Set(completedCart.map(c => String(c.piece.id || '').trim().toLowerCase()));
+      setAllPieces(prev => prev.filter(p => !soldBarcodes.has(String(p.barcode || '').trim().toLowerCase()) && !soldIds.has(String(p.id || '').trim().toLowerCase())));
+
+      // 4. Release terminal submission locks immediately so cashier screen is NEVER frozen
+      setIsSubmitting(false);
+      setIsScanning(false);
+
+      // 5. Automated Marketing WhatsApp Invoice Slip (Background task)
       if (customerPhoneForSlip) {
         WhatsAppService.sendInvoiceNotification({
           invoiceNo: invoiceNum,
@@ -1224,7 +1274,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           taxAmount: vatAmt,
           currency: 'AED',
           invoiceDate: new Date().toISOString(),
-          items: cart.map(c => ({
+          items: completedCart.map(c => ({
             name: `${c.piece.brandName} ${c.piece.itemName}`,
             quantity: 1,
             price: c.sellingPrice - c.discount
@@ -1232,77 +1282,52 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         }).catch(err => console.warn('[POS Checkout] Auto-WhatsApp dispatch note:', err));
       }
 
-      // 5. Automatic 80mm Thermal Receipt Print (if toggle enabled)
+      // 6. Automatic 80mm Thermal Receipt Print (Decoupled in microtask so print popup never blocks POS)
       if (autoPrintThermal) {
-        try {
-          openPosThermalReceiptPrintWindow({
-            invoiceNo: invoiceNum,
-            date: new Date().toISOString(),
-            customerName: customerNameForSlip,
-            customerPhone: customerPhoneForSlip,
-            cashierName: operatorName || currentUser?.name || currentUser?.username || 'Cashier 01',
-            paymentMethod: effectivePaymentMode,
-            items: cart.map(c => ({
-              description: `${c.piece.brandName} ${c.piece.itemName}`,
-              barcode: c.piece.barcode,
-              unitPrice: c.sellingPrice,
-              discount: c.discount,
-              finalAmount: c.sellingPrice - c.discount,
-              quantity: 1
-            })),
-            subTotal: subtotalAmt,
-            discountAmount: discountTotal,
-            vatAmount: vatAmt,
-            totalAmount: totalAmt,
-            tenderedAmount: Number(cashTendered) || totalAmt,
-            changeDue: changeDue,
-            companyName: activeProfile?.companyName,
-            trn: activeProfile?.trn_number || activeProfile?.trnTaxNo,
-            address: activeProfile?.address_line_1 || activeProfile?.addressLine1
-          });
-        } catch (e) {
-          console.warn('[POS Checkout] Auto print thermal receipt note:', e);
-        }
+        setTimeout(() => {
+          try {
+            openPosThermalReceiptPrintWindow({
+              invoiceNo: invoiceNum,
+              date: new Date().toISOString(),
+              customerName: customerNameForSlip,
+              customerPhone: customerPhoneForSlip,
+              cashierName: operatorName || currentUser?.name || currentUser?.username || 'Cashier 01',
+              paymentMethod: effectivePaymentMode,
+              items: completedCart.map(c => ({
+                description: `${c.piece.brandName} ${c.piece.itemName}`,
+                barcode: c.piece.barcode,
+                unitPrice: c.sellingPrice,
+                discount: c.discount,
+                finalAmount: c.sellingPrice - c.discount,
+                quantity: 1
+              })),
+              subTotal: subtotalAmt,
+              discountAmount: discountTotal,
+              vatAmount: vatAmt,
+              totalAmount: totalAmt,
+              tenderedAmount: Number(cashTendered) || totalAmt,
+              changeDue: changeDue,
+              logoUrl: activeProfile?.logoUrl || '/vintage_logo.svg',
+              companyName: activeProfile?.companyName,
+              trn: activeProfile?.trn_number || activeProfile?.trnTaxNo,
+              address: activeProfile?.address_line_1 || activeProfile?.addressLine1
+            });
+          } catch (e) {
+            console.warn('[POS Checkout] Auto print thermal receipt note:', e);
+          }
+        }, 60);
       }
 
-      setCheckoutSuccessData({
-        invoice: {
-          id: posRecord?.id || invoiceNum,
-          invoiceNo: invoiceNum,
-          date: new Date().toISOString(),
-          customerName: customerNameForSlip,
-          customerPhone: customerPhoneForSlip,
-          subTotal: subtotalAmt,
-          discountAmount: discountTotal,
-          vatAmount: vatAmt,
-          totalAmount: totalAmt,
-          paymentMethod: effectivePaymentMode,
-          items: cart.map(c => ({
-            barcode: c.piece.barcode,
-            description: `${c.piece.brandName} ${c.piece.itemName}`,
-            unitPrice: c.sellingPrice,
-            discount: c.discount,
-            finalAmount: c.sellingPrice - c.discount,
-            weightKg: c.piece.weightKg || 0.45
-          }))
-        },
-        voucher: { voucherNo: createdVoucherNo },
-        cogsSummary: { totalCogs },
-        pieces: safeCart.map(c => c.piece)
-      });
-
-      // Clear basket for next transaction
-      setCart([]);
-      setSelectedCustomer(null);
-      setCustomerSearchQuery('');
-      setCustomerInsights(null);
-      setDiscountTotal(0);
-      setIsGiftOrder(false);
-      setGiftMessage('');
-      setIncludeGiftBox(false);
-      onRefreshAll?.();
-      onSaleCompleted?.();
-      loadInventoryAndParties();
+      // 7. Non-blocking background sync of full datasets
+      setTimeout(() => {
+        try {
+          onRefreshAll?.();
+          onSaleCompleted?.();
+          loadInventoryAndParties();
+        } catch (e) {
+          console.warn('[POS Checkout] Background sync note:', e);
+        }
+      }, 350);
     } catch (err: any) {
       console.error('[POS Terminal] Checkout failed, executing inventory rollback guard:', err);
       // Automatic Rollback Guard: ensure any piece in active basket is guaranteed IN_STOCK and NOT sold
@@ -1346,6 +1371,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         totalAmount: inv.totalAmount,
         tenderedAmount: Number(cashTendered) || inv.totalAmount,
         changeDue: changeDue,
+        logoUrl: activeProfile?.logoUrl || '/vintage_logo.svg',
         companyName: activeProfile?.companyName,
         trn: activeProfile?.trn_number || activeProfile?.trnTaxNo,
         address: activeProfile?.address_line_1 || activeProfile?.addressLine1

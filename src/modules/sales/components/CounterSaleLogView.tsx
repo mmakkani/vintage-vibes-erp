@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { SalesInvoice } from '../sales.types.ts';
 import { Party } from '../../parties/parties.types.ts';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
 import { CounterSalePOSTerminal } from './CounterSalePOSTerminal.tsx';
-import { openThermalLabelPrintWindow } from '../../../utils/thermalPrinter.ts';
+import { openThermalLabelPrintWindow, openPosThermalReceiptPrintWindow } from '../../../utils/thermalPrinter.ts';
+import { CompanyProfileService } from '../../../services/companyProfileService.ts';
 import {
   Store,
   ExternalLink,
@@ -50,6 +51,11 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
   const [paymentFilter, setPaymentFilter] = useState<'ALL' | 'CASH' | 'CARD_POS' | 'BANK_TRANSFER' | 'SPLIT'>('ALL');
   const [selectedInvoice, setSelectedInvoice] = useState<SalesInvoice | null>(null);
   const [showEmbeddedPos, setShowEmbeddedPos] = useState(false);
+  const [companyProfile, setCompanyProfile] = useState<any>(null);
+
+  useEffect(() => {
+    CompanyProfileService.getCompanyProfile().then(setCompanyProfile).catch(() => {});
+  }, []);
 
   // Strict POS Channel predicate: ONLY counter sale invoices
   const isStrictlyPos = (inv: SalesInvoice) => {
@@ -162,15 +168,32 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
   // Thermal 80mm Receipt Print
   const handlePrintReceipt = (inv: SalesInvoice) => {
     try {
-      openThermalLabelPrintWindow({
-        itemCode: inv.invoiceNo,
-        description: `RETAIL POS: ${Array.isArray(inv?.items) ? inv.items.length : 0} garments (${inv?.paymentMethod || 'CASH'})`,
-        brand: 'VINTAGE VIBES DUBAI',
-        grade: `UAE VAT 5%: AED ${inv?.vatAmount || 0}`,
-        retailPriceAed: inv?.totalAmount || 0,
-        weightKg: Number((Array.isArray(inv?.items) ? inv.items.reduce((acc, it) => acc + (it?.weightKg || 0.4), 0) : 0).toFixed(2)),
-        batchNo: `AUTH: ${inv.paymentMethod}`,
-        date: inv.date
+      const safeItems = Array.isArray(inv?.items) ? inv.items : [];
+      openPosThermalReceiptPrintWindow({
+        invoiceNo: inv.invoiceNo,
+        date: inv.date || (inv as any).invoice_date || (inv as any).created_at || new Date().toISOString(),
+        customerName: inv.customerName || (inv as any).client_name || 'Walk-In Customer',
+        customerPhone: inv.customerPhone || '',
+        cashierName: (inv as any).cashier_name || (inv as any).createdBy || 'Cashier 01',
+        paymentMethod: inv.paymentMethod || 'CASH',
+        logoUrl: companyProfile?.logoUrl || '/vintage_logo.svg',
+        companyName: companyProfile?.companyName || 'VINTAGE VIBES DUBAI',
+        trn: companyProfile?.trn_number || companyProfile?.trnTaxNo || '100482910300003',
+        address: companyProfile?.address_line_1 || companyProfile?.addressLine1 || 'Al Quoz Industrial 3, Dubai, UAE',
+        items: safeItems.map((it: any) => ({
+          description: it.description || it.itemName || `${it.brandName || ''} ${it.itemName || ''}`.trim() || 'Garment Item',
+          barcode: it.barcode || '',
+          unitPrice: Number(it.unitPrice ?? it.finalAmount ?? 0),
+          discount: Number(it.discount ?? 0),
+          finalAmount: Number(it.finalAmount ?? it.unitPrice ?? 0),
+          quantity: Number(it.quantity || 1)
+        })),
+        subTotal: Number(inv.subTotal || 0),
+        discountAmount: Number(inv.discountAmount || 0),
+        vatAmount: Number(inv.vatAmount || 0),
+        totalAmount: Number(inv.totalAmount || 0),
+        tenderedAmount: Number(inv.totalAmount || 0),
+        changeDue: 0
       });
     } catch (e) {
       console.warn('Thermal print trigger:', e);
