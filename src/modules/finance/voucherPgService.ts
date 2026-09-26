@@ -39,9 +39,6 @@ export async function insertVoucherPg(v: any): Promise<any> {
   else prefix = 'JV';
 
   let voucherNo = String(v.voucherNo || '').trim();
-  if (!voucherNo || voucherNo.startsWith('VCH-')) {
-    voucherNo = await SequenceService.getNextNumber(prefix, date);
-  }
   const reference = String(v.reference || v.documentRef || '');
   const narration = String(v.narration || '');
   const totalDebit = Number(v.totalDebit || 0);
@@ -57,9 +54,31 @@ export async function insertVoucherPg(v: any): Promise<any> {
     v.foreignTotalAmount ?? v.foreign_total_amount ?? (currency === 'AED' ? totalDebit : (totalDebit / (exchangeRate || 1.0)))
   );
 
+  const lines = v.lines || v.entries || [];
+
   return await withDb(async (client) => {
     await client.query('BEGIN');
     try {
+      if (!voucherNo || voucherNo.startsWith('VCH-')) {
+        const dateObj = date ? new Date(date) : new Date();
+        const safeDate = isNaN(dateObj.getTime()) ? new Date() : dateObj;
+        const mm = String(safeDate.getMonth() + 1).padStart(2, '0');
+        const yyyy = String(safeDate.getFullYear());
+        const prefixWithDate = `${prefix}-${mm}-${yyyy}`;
+
+        const seqRes = await client.query(
+          `SELECT voucher_no FROM vouchers WHERE voucher_no LIKE $1 UNION SELECT voucher_no FROM financial_vouchers WHERE voucher_no LIKE $1`,
+          [`${prefixWithDate}-%`]
+        );
+        let maxSeq = 0;
+        for (const r of seqRes.rows) {
+          const parts = String(r.voucher_no || '').split('-');
+          const num = parseInt(parts[parts.length - 1], 10);
+          if (!isNaN(num) && num > maxSeq) maxSeq = num;
+        }
+        voucherNo = `${prefixWithDate}-${String(maxSeq + 1).padStart(4, '0')}`;
+      }
+
       // 1. vouchers
       await client.query(`
         INSERT INTO vouchers (id, voucher_no, date, type, reference, narration, total_debit, total_credit, status, created_by)
@@ -92,7 +111,6 @@ export async function insertVoucherPg(v: any): Promise<any> {
       `, [id, voucherNo, date, type, reference, narration, totalDebit, totalCredit, currency, exchangeRate, baseCurrency, foreignTotalAmount, status, createdBy, isAuto]);
 
       // Lines processing
-      const lines = v.lines || v.entries || [];
       if (Array.isArray(lines) && lines.length > 0) {
         const codes = Array.from(new Set(lines.map((l: any) => String(l.accountCode || l.account_code || '').trim()).filter(Boolean)));
 
