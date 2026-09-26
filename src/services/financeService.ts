@@ -667,26 +667,17 @@ export class FinanceService {
   public static async addVoucher(v: any): Promise<Voucher> {
     this.clearCoaCache();
 
-    // 1. In browser environment, securely delegate to Express Backend API connected to PostgreSQL
-    if (typeof window !== 'undefined') {
-      const res = await safeFetchMutation<any>('/api/finance/vouchers', 'POST', v);
-      if (!res) {
-        throw new Error('Failed to create financial voucher: Empty response from server');
-      }
-      if (res.success === false) {
-        throw new Error(res.error || res.message || 'Failed to record financial voucher');
-      }
-      return (res.voucher || res) as Voucher;
+    // Strictly route through the backend API. No direct DB inserts or Node imports.
+    const res = await safeFetchMutation<any>('/api/finance/vouchers', 'POST', v);
+
+    if (!res) {
+      throw new Error('Failed to create financial voucher: Empty response from server');
+    }
+    if (res.success === false) {
+      throw new Error(res.error || res.message || 'Failed to record financial voucher');
     }
 
-    // 2. In server / Node environment, execute direct PostgreSQL insertion
-    try {
-      const { insertVoucherPg } = await import('../modules/finance/voucherPgService.ts');
-      return await insertVoucherPg(v);
-    } catch (pgErr: any) {
-      console.error('[FinanceService] insertVoucherPg failed on server:', pgErr);
-      throw new Error(`Failed to record financial voucher: ${pgErr?.message || pgErr}`);
-    }
+    return (res.voucher || res) as Voucher;
   }
 
   public static async updateVoucherStatus(id: string, status: string): Promise<void> {
