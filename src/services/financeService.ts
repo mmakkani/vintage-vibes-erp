@@ -582,7 +582,12 @@ export class FinanceService {
       }
     }
 
-    await supabase.from('chart_of_accounts').update({ is_active: isActive }).or(`id.eq.${id}${code ? `,code.eq.${code}` : ''}`);
+    const isIdUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+    if (isIdUuid) {
+      await supabase.from('chart_of_accounts').update({ is_active: isActive }).or(`id.eq.${id}${code ? `,code.eq.${code}` : ''}`);
+    } else {
+      await supabase.from('chart_of_accounts').update({ is_active: isActive }).or(`code.eq.${id}${code ? `,code.eq.${code}` : ''}`);
+    }
     try {
       await supabase.from('accounts').update({ is_active: isActive }).or(`account_id.eq.${id}${code ? `,account_code.eq.${code}` : ''}`);
     } catch (_) {}
@@ -1078,18 +1083,37 @@ export class FinanceService {
 
       // 4. Update mapped coa_account if present
       if (party.coa_account_id) {
+        const coaRef = String(party.coa_account_id).trim();
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(coaRef);
         try {
-          await supabase
-            .from('coa_accounts')
-            .update({ current_balance: calculatedBalance })
-            .eq('id', party.coa_account_id);
-        } catch (_) {}
-        try {
-          await supabase
-            .from('chart_of_accounts')
-            .update({ current_balance: calculatedBalance })
-            .eq('id', party.coa_account_id);
-        } catch (_) {}
+          if (isUuid) {
+            await supabase
+              .from('coa_accounts')
+              .update({ current_balance: calculatedBalance })
+              .eq('id', coaRef);
+            await supabase
+              .from('chart_of_accounts')
+              .update({ current_balance: calculatedBalance })
+              .eq('id', coaRef);
+          } else {
+            await supabase
+              .from('coa_accounts')
+              .update({ current_balance: calculatedBalance })
+              .eq('code', coaRef);
+            await supabase
+              .from('chart_of_accounts')
+              .update({ current_balance: calculatedBalance })
+              .eq('code', coaRef);
+            try {
+              await supabase
+                .from('accounts')
+                .update({ current_balance: calculatedBalance })
+                .eq('account_code', coaRef);
+            } catch (_) {}
+          }
+        } catch (coaErr) {
+          console.warn(`[FinanceService] Notice updating COA balance for ${coaRef}:`, coaErr);
+        }
       }
 
       return calculatedBalance;

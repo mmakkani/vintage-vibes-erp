@@ -533,144 +533,129 @@ export class SalesService {
   }
 
   public static async deleteSalesInvoice(id: string): Promise<void> {
-    const cleanId = String(id).trim();
-
-    // 0. Fetch sales invoice row to retrieve metadata & items for inventory reversal
-    let invoiceNo = cleanId;
-    let customerId: string | undefined;
-    let itemsToRestore: any[] = [];
+    const cleanId = String(id || '').trim();
 
     try {
-      const { data: invRow } = await supabase
-        .from('sales_invoices')
-        .select('id, invoice_no, client_id, customer_name, items')
-        .or(`id.eq.${cleanId},invoice_no.eq.${cleanId}`)
+      // STEP 1: Fetch the invoice to get the items BEFORE deleting it
+      let invoice: any = null;
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cleanId);
+      const { data: invData, error: fetchErr } = await (
+        isUuid
+          ? supabase.from('sales_invoices').select('id, items, invoice_no, client_id').eq('id', cleanId).maybeSingle()
+          : supabase.from('sales_invoices').select('id, items, invoice_no, client_id').or(`id.eq.${cleanId},invoice_no.eq.${cleanId}`).maybeSingle()
+      );
+
+      if (fetchErr || !invData) {
+        throw new Error('Invoice not found for deletion');
+      }
+      invoice = invData;
+
+      // STEP 2: Extract barcodes safely
+      let items = invoice.items || [];
+      if (typeof items === 'string') {
+        try {
+          items = JSON.parse(items);
+        } catch {}
+      }
+      if (!Array.isArray(items)) items = [];
+      const barcodesToRevert = items.map((item: any) => item.barcode).filter(Boolean);
+      const pieceIdsToRevert = items.map((item: any) => item.pieceId || item.piece_id || item.id).filter(Boolean);
+
+      // STEP 3: Revert Inventory Pieces FIRST (Fix PGRST204)
+      if (barcodesToRevert.length > 0) {
+        const { error: invErr } = await supabase
+          .from('inventory_pieces')
+          .update({ 
+            is_sold: false, 
+            status: 'IN_STOCK' 
+            // CRITICAL: DO NOT include sold_invoice_id (Column does not exist)
+          })
+          .in('barcode', barcodesToRevert);
+          
+        if (invErr) console.error('Failed to revert inventory:', invErr);
+      }
+      if (pieceIdsToRevert.length > 0) {
+        try {
+          await supabase
+            .from('inventory_pieces')
+            .update({ 
+              is_sold: false, 
+              status: 'IN_STOCK' 
+            })
+            .in('id', pieceIdsToRevert);
+        } catch (_) {}
+      }
+
+      // STEP 4: Delete Accounting Vouchers safely (Fix 42703)
+      // CRITICAL: journal_entries does not have a 'reference' column. Find voucher ID first.
+      const invoiceNo = invoice.invoice_no || cleanId;
+      const { data: voucher } = await supabase
+        .from('financial_vouchers')
+        .select('id')
+        .or(`reference.eq.${invoiceNo},reference_no.eq.${invoiceNo},reference.eq.${cleanId}`)
         .maybeSingle();
 
-      if (invRow) {
-        invoiceNo = invRow.invoice_no || cleanId;
-        customerId = invRow.client_id;
-        if (invRow.items) {
-          if (Array.isArray(invRow.items)) {
-            itemsToRestore = invRow.items;
-          } else if (typeof invRow.items === 'string') {
-            try {
-              itemsToRestore = JSON.parse(invRow.items);
-            } catch {}
+      if (voucher?.id) {
+        await supabase.from('voucher_entries').delete().eq('voucher_id', voucher.id);
+        await supabase.from('journal_entries').delete().eq('voucher_id', voucher.id);
+        await supabase.from('financial_vouchers').delete().eq('id', voucher.id);
+        await supabase.from('vouchers').delete().eq('id', voucher.id);
+      }
+
+      try {
+        await supabase.from('pos_sales').delete().or(`invoice_number.eq.${invoiceNo},invoice_number.eq.${cleanId}`);
+      } catch (_) {}
+
+      // STEP 5: Delete the Invoice itself (Fix PGRST205)
+      // CRITICAL: Completely REMOVE any reference to deleting from 'sales_items' (Table does not exist)
+      const { error: delErr } = await supabase
+        .from('sales_invoices')
+        .delete()
+        .or(`id.eq.${cleanId},invoice_no.eq.${cleanId}`);
+
+      if (delErr) {
+        console.error('Failed to delete sales invoice:', delErr);
+        throw new Error(delErr.message || 'Failed to delete sales invoice');
+      }
+
+      // STEP 6: COA Sync (Fix 22P02)
+      // If calling sync_coa_current_balances or updating COA, ensure you use .eq('account_code', code) / .eq('code', code) NOT .eq('id', code)
+      if (invoice.client_id) {
+        try {
+          await FinanceService.recalculatePartyBalance(invoice.client_id);
+        } catch (_) {}
+
+        try {
+          const isClientUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(invoice.client_id);
+          if (!isClientUuid) {
+            await supabase.from('chart_of_accounts').update({ current_balance: 0 }).eq('code', invoice.client_id);
+            await supabase.from('coa_accounts').update({ current_balance: 0 }).eq('code', invoice.client_id);
           }
-        }
+        } catch (_) {}
       }
-    } catch (_) {}
 
-    // Fallback: check child tables if items was empty
-    if (itemsToRestore.length === 0) {
       try {
-        const { data: itemRows } = await supabase
-          .from('sales_invoice_items')
-          .select('*')
-          .eq('invoice_id', cleanId);
-        if (Array.isArray(itemRows) && itemRows.length > 0) {
-          itemsToRestore = itemRows;
-        }
+        FinanceService.clearCoaCache();
+        await supabase.rpc('sync_coa_current_balances');
       } catch (_) {}
-    }
 
-    // 1. INVENTORY REVERSAL: Restore all garment pieces back to IN_STOCK & unsold
-    try {
-      const pieceIds = itemsToRestore.map((it: any) => it.pieceId || it.piece_id || it.id).filter(Boolean);
-      const pieceBarcodes = itemsToRestore.map((it: any) => it.barcode).filter(Boolean);
-
-      const restorePromises: Promise<any>[] = [];
-      if (pieceIds.length > 0) {
-        restorePromises.push(
-          supabase.from('inventory_pieces').update({
-            is_sold: false,
-            status: 'IN_STOCK',
-            sold_price_aed: null,
-            sold_invoice_id: null
-          }).in('id', pieceIds)
-        );
+      // STEP 7: Dispatch entity mutation event
+      if (typeof window !== 'undefined') {
+        try {
+          window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+            detail: {
+              module: 'sales',
+              entity: 'sales_invoices',
+              action: 'DELETED',
+              documentRef: invoiceNo,
+              affectedModules: ['sales', 'finance', 'inventory']
+            }
+          }));
+        } catch (_) {}
       }
-      if (pieceBarcodes.length > 0) {
-        restorePromises.push(
-          supabase.from('inventory_pieces').update({
-            is_sold: false,
-            status: 'IN_STOCK',
-            sold_price_aed: null,
-            sold_invoice_id: null
-          }).in('barcode', pieceBarcodes)
-        );
-      }
-      await Promise.all(restorePromises);
-    } catch (invRestErr) {
-      console.warn('[SalesService] Notice restoring inventory pieces on invoice deletion:', invRestErr);
-    }
-
-    // 2. Cascade delete all financial vouchers, journal entries, ledger rows, and party khata logs BEFORE deleting sales invoice
-    try {
-      await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo, {
-        invoiceId: cleanId,
-        partyId: customerId,
-        docType: 'SALES'
-      });
-      if (cleanId !== invoiceNo) {
-        await FinanceService.cascadeDeleteVouchersForDocument(cleanId, {
-          invoiceId: cleanId,
-          partyId: customerId,
-          docType: 'SALES'
-        });
-      }
-    } catch (vchErr) {
-      console.warn('[SalesService] Notice cascading vouchers on sales invoice deletion:', vchErr);
-    }
-
-    // Direct deletion from financial_vouchers and vouchers as hard safety
-    try {
-      await supabase.from('financial_vouchers').delete().or(`reference.eq.${invoiceNo},reference_no.eq.${invoiceNo},reference.eq.${cleanId}`);
-      await supabase.from('vouchers').delete().or(`reference.eq.${invoiceNo},reference.eq.${cleanId}`);
-      await supabase.from('journal_entries').delete().or(`reference.eq.${invoiceNo},reference.eq.${cleanId}`);
-      await supabase.from('pos_sales').delete().or(`invoice_number.eq.${invoiceNo},invoice_number.eq.${cleanId}`);
-    } catch (_) {}
-
-    // 3. Delete child items
-    try {
-      await supabase.from('sales_invoice_items').delete().eq('invoice_id', cleanId);
-    } catch (_) {}
-    try {
-      await supabase.from('sales_items').delete().eq('invoice_id', cleanId);
-    } catch (_) {}
-
-    // 4. Delete parent sales invoice record
-    const { error } = await supabase.from('sales_invoices').delete().or(`id.eq.${cleanId},invoice_no.eq.${cleanId}`);
-    if (error) {
-      console.error('Supabase error on sales_invoices deletion:', error);
-      throw new Error(error.message || 'Failed to delete sales invoice');
-    }
-
-    // 5. Recalculate customer balance & COA in SQL
-    if (customerId) {
-      try {
-        await FinanceService.recalculatePartyBalance(customerId);
-      } catch (_) {}
-    }
-    try {
-      FinanceService.clearCoaCache();
-      await supabase.rpc('sync_coa_current_balances');
-    } catch (_) {}
-
-    // 6. Dispatch entity mutation event
-    if (typeof window !== 'undefined') {
-      try {
-        window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
-          detail: {
-            module: 'sales',
-            entity: 'sales_invoices',
-            action: 'DELETED',
-            documentRef: invoiceNo,
-            affectedModules: ['sales', 'finance', 'inventory']
-          }
-        }));
-      } catch (_) {}
+    } catch (error) {
+      console.error("Deletion failed:", error);
+      throw error;
     }
   }
 
