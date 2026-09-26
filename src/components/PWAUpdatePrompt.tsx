@@ -15,9 +15,9 @@ export const PWAUpdatePrompt: React.FC = () => {
     try {
       const updateSW = registerSW({
         onNeedRefresh() {
-          // Triggered ONLY when the new Service Worker has finished downloading & installing into waiting state
-          console.log('[PWA] New version downloaded and fully ready to activate.');
-          setNeedRefresh(true);
+          // Automated Enterprise Takeover: Activate new build silently without manual user clicking
+          console.log('[PWA] New version downloaded -> auto-activating new bundle.');
+          updateSW(true);
         },
         onOfflineReady() {
           console.log('[PWA] Vintage Vibes is ready for offline operation.');

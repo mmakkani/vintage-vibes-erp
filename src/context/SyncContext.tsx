@@ -193,30 +193,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     cleanupChannelRef.current = cleanupChannel;
   }, [cleanupChannel]);
 
-  // Mobile Visibility Auto-Recovery: Catch up on any CDC events missed while mobile browser slept
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        console.log('[SyncContext] Tab restored to visible. Triggering auto-recovery refetch...');
-        queryClient.refetchQueries().catch(() => {});
-        triggerGlobalSyncRef.current?.();
-        refreshPresenceRef.current?.();
-        if (onGlobalRefreshRef.current) {
-          Promise.resolve(onGlobalRefreshRef.current()).catch(() => {});
-        }
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleVisibilityChange);
-    window.addEventListener('online', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleVisibilityChange);
-      window.removeEventListener('online', handleVisibilityChange);
-    };
-  }, []);
+  // Note: Tab visibility auto-recovery is cleanly managed below by the debounced 30s jittered wake handler (lines 616+) to prevent query storms on simple window focus.
 
   // Lock manager to prevent double submissions across forms
   const acquireLock = useCallback((lockKey: string): boolean => {

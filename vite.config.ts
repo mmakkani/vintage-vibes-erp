@@ -62,7 +62,7 @@ export default defineConfig(() => {
           skipWaiting: true,
           clientsClaim: true,
           navigateFallback: null,
-          globPatterns: ['**/*.{css,ico,png,svg,woff,woff2}', 'index.html'],
+          globPatterns: ['**/*.{css,ico,png,svg,woff,woff2}'],
           globIgnores: [
             '**/assets/*.js',
             '**/assets/**/*.js',
@@ -70,6 +70,17 @@ export default defineConfig(() => {
             '**/workbox-*.js'
           ],
           runtimeCaching: [
+            {
+              urlPattern: ({ request }) => request.mode === 'navigate',
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'html-navigation-cache',
+                networkTimeoutSeconds: 3,
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
             {
               urlPattern: /\/assets\/.*\.js$/i,
               handler: 'NetworkFirst',

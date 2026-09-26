@@ -7728,8 +7728,18 @@ RULES FOR YOUR RESPONSE:
                 const userCountRes = await client.query("SELECT COUNT(*) AS count FROM device_installations WHERE username = $1 AND install_status = 'ACTIVE';", [cleanUser]);
                 const activeCount = parseInt(userCountRes.rows[0]?.count || '0', 10);
                 if (activeCount >= maxLimit) {
-                  await client.end();
-                  return res.status(403).json({ success: false, limitReached: true, message: `Device limit reached (${maxLimit} devices) for operator @${cleanUser}.` });
+                  // Self-Healing FIFO: Automatically retire oldest inactive device session instead of blocking legitimate user
+                  await client.query(`
+                    UPDATE device_installations
+                    SET install_status = 'ARCHIVED',
+                        block_reason = 'Auto-retired to accommodate newer session (FIFO)'
+                    WHERE id = (
+                      SELECT id FROM device_installations
+                      WHERE username = $1 AND install_status = 'ACTIVE'
+                      ORDER BY last_active_at ASC
+                      LIMIT 1
+                    );
+                  `, [cleanUser]).catch(err => console.warn('[DeviceRegister] Auto-retire FIFO note:', err));
                 }
               }
               const inserted = await client.query(`
