@@ -431,7 +431,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           : Promise.resolve(stockPieces),
         CrmService.getCrmCustomers().catch(() => []),
         (!clients || clients.length === 0)
-          ? PartiesService.getParties().then(pts => pts.filter(p => p.type === 'CLIENT')).catch(() => [])
+          ? PartiesService.getParties().then(pts => pts.filter(p => p.type === 'CLIENT' || p.type === 'CUSTOMER' || (p as any).party_type === 'CLIENT' || (p as any).party_type === 'CUSTOMER' || !p.type)).catch(() => [])
           : Promise.resolve(clients),
         SalesService.getSalesChannelSettings().catch(() => [])
       ]);

@@ -126,7 +126,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         ]);
 
         if (partiesData) {
-          const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT');
+          const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT' || p.type === 'CUSTOMER' || (p as any).party_type === 'CLIENT' || (p as any).party_type === 'CUSTOMER');
           setCustomers(clientList);
           setSelectedCustomerIds(clientList.map((c: Party) => c.id));
         }
@@ -525,7 +525,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       if (res.ok) {
         alert(`✅ WhatsApp Phone Sync Complete!\n\nImported/Updated: ${data.count || data.syncedCount || 0} authentic contacts directly from your connected WhatsApp account.`);
         const partiesData = await PartiesService.getParties();
-        const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT');
+        const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT' || p.type === 'CUSTOMER' || (p as any).party_type === 'CLIENT' || (p as any).party_type === 'CUSTOMER');
         setCustomers(clientList);
         setSelectedCustomerIds(clientList.map((c: Party) => c.id));
       } else {
@@ -550,7 +550,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       if (res.ok) {
         alert(`✅ Demo Contacts Purged!\n\nWiped contacts successfully.`);
         const partiesData = await PartiesService.getParties();
-        const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT');
+        const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT' || p.type === 'CUSTOMER' || (p as any).party_type === 'CLIENT' || (p as any).party_type === 'CUSTOMER');
         setCustomers(clientList);
         setSelectedCustomerIds(clientList.map((c: Party) => c.id));
       }

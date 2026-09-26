@@ -29,6 +29,8 @@ import {
 } from 'lucide-react';
 import { SalesService } from '../../../services/salesService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
+import { FinanceService } from '../../../services/financeService.ts';
+import { COAAccount } from '../../finance/finance.types.ts';
 
 interface AvailableRawBale {
   id: string;
@@ -55,6 +57,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 }) => {
   const [internalClients, setInternalClients] = useState<Party[]>(propClients || []);
   const [internalInvoices, setInternalInvoices] = useState<SalesInvoice[]>(propInvoices || []);
+  const [coaAccounts, setCoaAccounts] = useState<COAAccount[]>([]);
 
   // Screen Search & Filters for the Invoices Log
   const [logSearch, setLogSearch] = useState('');
@@ -112,8 +115,19 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   const loadParties = async () => {
     try {
-      const data = await PartiesService.getParties();
-      if (Array.isArray(data)) setInternalClients(data.filter(p => p.type === 'CLIENT'));
+      const [partiesData, coaData] = await Promise.all([
+        PartiesService.getParties().catch(() => []),
+        FinanceService.getCoaAccounts().catch(() => [])
+      ]);
+      if (Array.isArray(partiesData)) {
+        setInternalClients(partiesData.filter(p => {
+          const t = String(p.type || (p as any).party_type || '').toUpperCase();
+          return t === 'CLIENT' || t === 'CUSTOMER' || !t;
+        }));
+      }
+      if (Array.isArray(coaData)) {
+        setCoaAccounts(coaData);
+      }
     } catch {}
   };
 
@@ -126,7 +140,13 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   useEffect(() => {
     if (propClients && propClients.length > 0) {
-      setInternalClients(propClients);
+      setInternalClients(propClients.filter(p => {
+        const t = String(p.type || (p as any).party_type || '').toUpperCase();
+        return t === 'CLIENT' || t === 'CUSTOMER' || !t;
+      }));
+      FinanceService.getCoaAccounts().then(data => {
+        if (Array.isArray(data)) setCoaAccounts(data);
+      }).catch(() => {});
     } else {
       loadParties();
     }
@@ -230,7 +250,10 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   // Filter clients
   const customerClients = useMemo(() => {
-    return internalClients.filter(c => c.type === 'CLIENT' || !c.type || c.type === ('CUSTOMER' as any));
+    return (internalClients || []).filter(c => {
+      const t = String(c.type || (c as any).party_type || '').toUpperCase();
+      return t === 'CLIENT' || t === 'CUSTOMER' || !t;
+    });
   }, [internalClients]);
 
   // Filter B2B Custom Sales invoices from all invoices
@@ -276,6 +299,19 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   const selectedCustomer = useMemo(() => {
     return (Array.isArray(customerClients) ? customerClients : []).find(c => c?.id === selectedCustomerId) || null;
   }, [customerClients, selectedCustomerId]);
+
+  // Linked Chart of Accounts (COA) Account & Code for the selected customer
+  const selectedCustomerCoaAccount = useMemo(() => {
+    if (!selectedCustomer) return null;
+    const targetCodeOrId = selectedCustomer.coaAccountId || (selectedCustomer as any).coa_account_id || selectedCustomer.accountMap?.receivableAccountId || (selectedCustomer as any).linked_account_id;
+    if (!targetCodeOrId) return null;
+    return (coaAccounts || []).find(a => a.id === targetCodeOrId || a.code === targetCodeOrId || (a as any).account_code === targetCodeOrId) || null;
+  }, [selectedCustomer, coaAccounts]);
+
+  const selectedCustomerCoaCode = useMemo(() => {
+    if (selectedCustomerCoaAccount) return selectedCustomerCoaAccount.code || (selectedCustomerCoaAccount as any).account_code;
+    return selectedCustomer?.coaAccountId || (selectedCustomer as any)?.coa_account_id || (selectedCustomer?.code ? `1130-${(selectedCustomer.code).replace(/[^A-Za-z0-9]/g, '')}` : '1130-00');
+  }, [selectedCustomer, selectedCustomerCoaAccount]);
 
   // Totals calculations for active editor
   const itemsSubtotal = useMemo(() => {
@@ -561,7 +597,9 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   const handleOpenExistingInvoiceModal = (inv: SalesInvoice) => {
     setInvoiceId(inv.id);
     setInvoiceNo(inv.invoiceNo);
-    setSelectedCustomerId(inv.customerId || inv.clientId || '');
+    const targetCustId = inv.customerId || inv.clientId || '';
+    const matched = customerClients.find(c => c.id === targetCustId || (inv.customerName && c.name?.trim().toLowerCase() === inv.customerName.trim().toLowerCase()));
+    setSelectedCustomerId(matched ? matched.id : targetCustId);
     setInvoiceDate(inv.date);
     setStatus(inv.status as any || 'DRAFT');
     setTaxType(inv.taxType || 'MAINLAND_5_VAT');
@@ -883,8 +921,19 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                       </td>
 
                       {/* Customer Name */}
-                      <td className="py-2.5 px-3 font-bold text-slate-900">
-                        {inv.customerName || inv.clientName || 'Corporate Client'}
+                      <td className="py-2.5 px-3">
+                        <div className="font-bold text-slate-900">
+                          {inv.customerName || inv.clientName || 'Corporate Client'}
+                        </div>
+                        {(() => {
+                          const matchedClient = customerClients.find(c => c.id === (inv.customerId || inv.clientId) || c.name?.toLowerCase() === (inv.customerName || '').toLowerCase());
+                          const coaCode = matchedClient?.coaAccountId || (matchedClient as any)?.coa_account_id;
+                          return coaCode ? (
+                            <div className="text-[10px] font-mono text-indigo-700 font-semibold flex items-center gap-1 mt-0.5">
+                              <span>COA:</span> <span className="bg-indigo-50 px-1 rounded border border-indigo-200">{coaCode}</span>
+                            </div>
+                          ) : null;
+                        })()}
                       </td>
 
                       {/* TRN */}
@@ -1060,7 +1109,9 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                         <User className="w-3.5 h-3.5 text-indigo-600" />
                         <span>Buyer / Corporate Client (Parties Khata)</span>
                       </div>
-                      <span className="text-[10px] text-slate-400 font-mono">COA 1130-00</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        COA: {selectedCustomerCoaCode || '1130-00'}
+                      </span>
                     </div>
 
                     <div>
@@ -1072,41 +1123,78 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                         className="w-full bg-[#FAF4E6]/50 border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:bg-white focus:border-indigo-500 transition"
                       >
                         <option value="">-- Choose Corporate Buyer / Khata --</option>
-                        {(customerClients || []).map(c => (
-                          <option key={c.id} value={c.id}>
-                            {c.code ? `[${c.code}] ` : ''}{c.name} {c.trnNo ? `(TRN: ${c.trnNo})` : ''} — Bal: AED {Number(c.currentBalance || 0).toFixed(2)}
-                          </option>
-                        ))}
+                        {(customerClients || []).map(c => {
+                          const coaCode = c.coaAccountId || (c as any).coa_account_id;
+                          return (
+                            <option key={c.id} value={c.id}>
+                              {c.code ? `[${c.code}] ` : ''}{c.name} {coaCode ? `(COA: ${coaCode})` : ''} {c.trnNo ? `(TRN: ${c.trnNo})` : ''} — Bal: AED {Number(c.currentBalance || 0).toFixed(2)}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
 
                     {selectedCustomer ? (
-                      <div className="bg-[#FAF4E6]/60 rounded-lg p-2.5 border border-amber-200 text-xs space-y-1.5">
-                        <div className="flex justify-between items-center text-slate-900 font-bold border-b border-amber-200/70 pb-1">
-                          <span>{selectedCustomer.name}</span>
-                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 font-bold">
-                            {selectedCustomer.code || 'B2B-CLIENT'}
+                      <div className="bg-[#FAF4E6]/60 rounded-lg p-3 border border-amber-200 text-xs space-y-2.5">
+                        <div className="flex justify-between items-center text-slate-900 font-bold border-b border-amber-200/70 pb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-black text-slate-950">{selectedCustomer.name}</span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 font-bold">
+                              {selectedCustomer.code || 'B2B-CLIENT'}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
+                            ACTIVE KHATA
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600">
-                          <div>
-                            <span className="font-bold text-slate-500">TRN (UAE VAT): </span>
-                            <span className="font-mono text-slate-800">{selectedCustomer.trnNo || 'Not Registered / Freezone'}</span>
+                        {/* COA Link Sub-ledger Account Box */}
+                        <div className="bg-white/90 rounded-lg p-2.5 border border-indigo-200 shadow-2xs space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="font-bold text-indigo-950 flex items-center gap-1.5">
+                              <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                              General Ledger Sub-Account (COA):
+                            </span>
+                            <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 text-[11px]">
+                              {selectedCustomerCoaCode}
+                            </span>
                           </div>
-                          <div>
-                            <span className="font-bold text-slate-500">Phone: </span>
-                            <span className="text-slate-800">{selectedCustomer.phone || 'N/A'}</span>
+                          <div className="flex items-center justify-between text-[11px] text-slate-600">
+                            <span className="text-slate-500 font-medium">Sub-Ledger Title:</span>
+                            <span className="font-bold text-slate-800">
+                              {selectedCustomerCoaAccount?.name || `${selectedCustomer.name} (Customer)`}
+                            </span>
                           </div>
-                          <div className="col-span-2">
-                            <span className="font-bold text-slate-500">Address: </span>
-                            <span className="text-slate-800">{selectedCustomer.address || 'Industrial Area / Warehouse, UAE'}</span>
+                          <div className="flex items-center justify-between text-[10px] text-slate-500 border-t border-slate-100 pt-1">
+                            <span>Parent Control Account:</span>
+                            <span className="font-mono text-slate-600">1130-00 (Accounts Receivable - Trade Debtors)</span>
                           </div>
                         </div>
 
-                        <div className="pt-1.5 border-t border-amber-200/70 flex items-center justify-between text-xs">
+                        <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 bg-white/60 p-2 rounded border border-amber-200/50">
                           <div>
-                            <span className="text-slate-500 font-bold">Khata Balance: </span>
+                            <span className="font-bold text-slate-500">TRN (UAE VAT): </span>
+                            <span className="font-mono font-bold text-slate-800">{selectedCustomer.trnNo || 'Not Registered / Freezone'}</span>
+                          </div>
+                          <div>
+                            <span className="font-bold text-slate-500">Phone: </span>
+                            <span className="font-mono text-slate-800">{selectedCustomer.phone || 'N/A'}</span>
+                          </div>
+                          <div className="col-span-2">
+                            <span className="font-bold text-slate-500">Delivery Address: </span>
+                            <span className="text-slate-800">{selectedCustomer.address || 'Industrial Area / Warehouse, UAE'}</span>
+                          </div>
+                          {selectedCustomer.contactPerson && (
+                            <div className="col-span-2">
+                              <span className="font-bold text-slate-500">Contact Person: </span>
+                              <span className="text-slate-800">{selectedCustomer.contactPerson}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="pt-2 border-t border-amber-200/70 flex items-center justify-between text-xs">
+                          <div>
+                            <span className="text-slate-500 font-bold">Live Khata Balance: </span>
                             <span className={`font-mono font-bold ${Number(selectedCustomer.currentBalance) > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
                               AED {Number(selectedCustomer.currentBalance || 0).toFixed(2)}
                             </span>
@@ -1121,7 +1209,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                       </div>
                     ) : (
                       <div className="p-3 bg-amber-50/50 border border-dashed border-amber-200 rounded-lg text-center text-amber-800 text-xs">
-                        Please select a company from Parties Khata to display TRN, delivery address, and credit parameters.
+                        Please select a company from Parties Khata to display TRN, COA ledger link, delivery address, and credit parameters.
                       </div>
                     )}
 
@@ -1938,6 +2026,9 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                       <div className="font-bold text-slate-900 text-sm">{selectedCustomer?.name || 'Walk-in Corporate Client'}</div>
                       <div className="text-slate-600">{selectedCustomer?.address || 'Industrial Area, Dubai, UAE'}</div>
                       <div className="text-slate-600">Contact: {selectedCustomer?.phone || 'N/A'}</div>
+                      {selectedCustomerCoaCode && (
+                        <div className="text-[10px] font-mono text-indigo-800 font-semibold mt-0.5">COA Khata Sub-Ledger: {selectedCustomerCoaCode}</div>
+                      )}
                     </div>
                     <div className="text-right">
                       <div className="text-[10px] uppercase font-bold text-slate-500">Buyer UAE TRN:</div>

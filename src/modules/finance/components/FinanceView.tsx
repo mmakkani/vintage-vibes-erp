@@ -1595,7 +1595,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       },
       {
         label: 'Customers / Clients',
-        options: safePty.filter(p => p.type === 'CLIENT').map(p => ({
+        options: safePty.filter(p => p.type === 'CLIENT' || p.type === 'CUSTOMER' || (p as any).party_type === 'CLIENT' || (p as any).party_type === 'CUSTOMER').map(p => ({
           value: `PTY:${p.id}`,
           label: `${p.code} - ${p.name}`,
           badge: 'CLIENT',
