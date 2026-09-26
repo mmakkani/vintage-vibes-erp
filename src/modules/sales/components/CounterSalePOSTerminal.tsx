@@ -200,6 +200,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   const [isScanning, setIsScanning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [scanFeedback, setScanFeedback] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [channelSettings, setChannelSettings] = useState<Record<string, string>>({});
 
   // Available pieces for manual search dropdown
   const [allPieces, setAllPieces] = useState<PieceBreakdownItem[]>((stockPieces || []).filter(p => !p.isSold && p.status === 'IN_STOCK'));
@@ -354,15 +355,26 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       setAllPieces(stockPieces.filter(p => !p.isSold && p.status === 'IN_STOCK'));
     }
     try {
-      const [piecesRes, crmCustomersRes] = await Promise.all([
+      const [piecesRes, crmCustomersRes, channelSettingsRes] = await Promise.all([
         fetch('/api/sales/stock-pieces').then(r => r.ok ? r.json() : []).catch(() => []),
-        CrmService.getCrmCustomers().catch(() => [])
+        CrmService.getCrmCustomers().catch(() => []),
+        SalesService.getSalesChannelSettings().catch(() => [])
       ]);
       if (Array.isArray(piecesRes) && piecesRes.length > 0) {
         setAllPieces(piecesRes.filter((p: any) => !p.isSold && p.status === 'IN_STOCK'));
       }
       const list = Array.isArray(crmCustomersRes) ? crmCustomersRes : [];
       setParties([DEFAULT_WALK_IN_CUSTOMER, ...list.filter(c => c.id !== CrmService.CONTROL_WALK_IN_PARTY_ID)]);
+
+      if (Array.isArray(channelSettingsRes)) {
+        const map: Record<string, string> = {};
+        channelSettingsRes.forEach((s: any) => {
+          const k = s.setting_key || s.settingKey;
+          const v = s.account_code || s.accountCode;
+          if (k && v) map[k] = v;
+        });
+        setChannelSettings(map);
+      }
     } catch (err) {
       console.warn('POS Data Load Error:', err);
       setParties([DEFAULT_WALK_IN_CUSTOMER]);
@@ -822,17 +834,33 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       const vatAmt = Number((subtotalAmt * 0.05).toFixed(2));
       const totalAmt = Number((subtotalAmt + vatAmt + giftBoxFee).toFixed(2));
 
-      // Extract dynamic accounts from your settings/config state
-      const settings = (activeProfile || {}) as any;
-      const cogsAcc = settings?.cogsAccountCode || settings?.cogs_account_code || '5100-02';
-      const fgAcc = settings?.finishedGoodsAccountCode || settings?.finished_goods_account_code || '1160-01';
-      const revenueAcc = settings?.posRevenueAccountCode || settings?.pos_revenue_account_code || '4110-01';
-      const walkInAcc = settings?.walkInCustomerAccountCode || settings?.walk_in_customer_account_code || '1130-05';
-      const vatAcc = settings?.vatOutputAccountCode || settings?.vat_output_account_code || '2140-01';
+      // Extract dynamic accounts from sales_channel_settings state
+      let activeSettings = channelSettings;
+      if (!activeSettings || Object.keys(activeSettings).length === 0) {
+        try {
+          const raw = await SalesService.getSalesChannelSettings();
+          if (Array.isArray(raw)) {
+            const map: Record<string, string> = {};
+            raw.forEach((s: any) => {
+              const k = s.setting_key || s.settingKey;
+              const v = s.account_code || s.accountCode;
+              if (k && v) map[k] = v;
+            });
+            activeSettings = map;
+            setChannelSettings(map);
+          }
+        } catch (_) {}
+      }
+
+      const cogsAcc = activeSettings['cogs_account'] || '5100-02';
+      const fgAcc = activeSettings['finished_goods_inventory'] || '1160-01';
+      const revenueAcc = activeSettings['omnichannel_retail_revenue'] || '4110-01';
+      const walkInAcc = activeSettings['pos_sales_clearing'] || '1130-05';
+      const vatAcc = activeSettings['vat_output_account'] || '2140-01';
       const isCash = String(effectivePaymentMode).toLowerCase() === 'cash';
       const paymentAccCode = isCash
-        ? (settings?.cashAccountCode || settings?.cash_account_code || '1110-01')
-        : (settings?.bankAccountCode || settings?.bank_account_code || '1120-01');
+        ? (activeSettings['pos_cash_drawer'] || '1110-01')
+        : (activeSettings['pos_terminal_clearing'] || '1125-01');
 
       // Validation: Halt checkout if incomplete
       if (!cogsAcc || !fgAcc || !revenueAcc || !walkInAcc) {
