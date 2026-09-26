@@ -703,23 +703,6 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                             >
                               <Printer className="w-3.5 h-3.5" />
                             </button>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                if (!confirm(`Delete piece ${piece.barcode} (${piece.itemName}) from inventory?`)) return;
-                                try {
-                                  await PurchaseService.deleteInventoryPiece(piece.id);
-                                  if (onPieceDeleted) onPieceDeleted(piece.id, null as any);
-                                  if (onRefresh) onRefresh();
-                                } catch (e: any) {
-                                  alert(`Failed to delete piece: ${e.message}`);
-                                }
-                              }}
-                              className="p-1.5 hover:bg-rose-50 text-rose-500 hover:text-rose-700 rounded cursor-pointer transition-colors"
-                              title="Delete Piece from Inventory"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
                           </div>
                         </td>
                       </tr>

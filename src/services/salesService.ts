@@ -555,43 +555,64 @@ export class SalesService {
     const cleanId = String(id || '').trim();
 
     try {
-      // STEP 1: Fetch the invoice to get the items BEFORE deleting it
+      // STEP 1: Fetch the invoice and pos_sales to get the items BEFORE deleting
       let invoice: any = null;
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cleanId);
-      const { data: invData, error: fetchErr } = await (
+      const { data: invData } = await (
         isUuid
           ? supabase.from('sales_invoices').select('id, items, invoice_no, client_id').eq('id', cleanId).maybeSingle()
           : supabase.from('sales_invoices').select('id, items, invoice_no, client_id').or(`id.eq.${cleanId},invoice_no.eq.${cleanId}`).maybeSingle()
       );
 
-      if (fetchErr || !invData) {
-        throw new Error('Invoice not found for deletion');
-      }
       invoice = invData;
+      let invoiceNo = invoice?.invoice_no || cleanId;
 
-      // STEP 2: Extract barcodes safely
-      let items = invoice.items || [];
-      if (typeof items === 'string') {
-        try {
-          items = JSON.parse(items);
-        } catch {}
+      // Also query pos_sales to gather pieces and fallback if sales_invoices wasn't found
+      let posSale: any = null;
+      try {
+        const { data: ps } = await supabase
+          .from('pos_sales')
+          .select('id, items, invoice_number')
+          .or(`invoice_number.eq.${invoiceNo},invoice_number.eq.${cleanId},id.eq.${cleanId}`)
+          .maybeSingle();
+        posSale = ps;
+        if (!invoice && posSale) {
+          invoiceNo = posSale.invoice_number || cleanId;
+        }
+      } catch (_) {}
+
+      if (!invoice && !posSale) {
+        throw new Error('Invoice or POS sale not found for deletion');
       }
-      if (!Array.isArray(items)) items = [];
-      const barcodesToRevert = items.map((item: any) => item.barcode).filter(Boolean);
-      const pieceIdsToRevert = items.map((item: any) => item.pieceId || item.piece_id || item.id).filter(Boolean);
 
-      // STEP 3: Revert Inventory Pieces FIRST (Fix PGRST204)
+      // STEP 2: Extract barcodes safely from both sales_invoices and pos_sales
+      let items1 = invoice?.items || [];
+      if (typeof items1 === 'string') {
+        try { items1 = JSON.parse(items1); } catch {}
+      }
+      if (!Array.isArray(items1)) items1 = [];
+
+      let items2 = posSale?.items || [];
+      if (typeof items2 === 'string') {
+        try { items2 = JSON.parse(items2); } catch {}
+      }
+      if (!Array.isArray(items2)) items2 = [];
+
+      const combinedItems = [...items1, ...items2];
+      const barcodesToRevert = Array.from(new Set(combinedItems.map((item: any) => item.barcode).filter(Boolean)));
+      const pieceIdsToRevert = Array.from(new Set(combinedItems.map((item: any) => item.pieceId || item.piece_id || item.id).filter(Boolean)));
+
+      // STEP 3: Revert Inventory Pieces FIRST
       if (barcodesToRevert.length > 0) {
         const { error: invErr } = await supabase
           .from('inventory_pieces')
           .update({ 
             is_sold: false, 
             status: 'IN_STOCK' 
-            // CRITICAL: DO NOT include sold_invoice_id (Column does not exist)
           })
           .in('barcode', barcodesToRevert);
           
-        if (invErr) console.error('Failed to revert inventory:', invErr);
+        if (invErr) console.error('Failed to revert inventory by barcode:', invErr);
       }
       if (pieceIdsToRevert.length > 0) {
         try {
@@ -605,32 +626,50 @@ export class SalesService {
         } catch (_) {}
       }
 
-      // STEP 4: Delete Accounting Vouchers safely (Fix 42703)
-      // CRITICAL: journal_entries does not have a 'reference' column. Find voucher ID first.
-      const invoiceNo = invoice.invoice_no || cleanId;
-      const { data: voucher } = await supabase
+      // STEP 4: Delete Accounting Vouchers & Ledgers safely
+      const { data: vList1 } = await supabase
         .from('financial_vouchers')
-        .select('id')
-        .or(`reference.eq.${invoiceNo},reference_no.eq.${invoiceNo},reference.eq.${cleanId}`)
-        .maybeSingle();
+        .select('id, voucher_no')
+        .or(`reference.eq.${invoiceNo},reference_no.eq.${invoiceNo},reference.eq.${cleanId}`);
+      const { data: vList2 } = await supabase
+        .from('vouchers')
+        .select('id, voucher_no')
+        .or(`reference.eq.${invoiceNo},reference.eq.${cleanId}`);
 
-      if (voucher?.id) {
-        await supabase.from('voucher_entries').delete().eq('voucher_id', voucher.id);
-        await supabase.from('journal_entries').delete().eq('voucher_id', voucher.id);
-        await supabase.from('financial_vouchers').delete().eq('id', voucher.id);
-        await supabase.from('vouchers').delete().eq('id', voucher.id);
+      const allVouchers = [...(vList1 || []), ...(vList2 || [])];
+      const vIds = Array.from(new Set(allVouchers.map(v => v.id).filter(Boolean)));
+      const vNos = Array.from(new Set(allVouchers.map(v => v.voucher_no).filter(Boolean)));
+
+      for (const vid of vIds) {
+        try { await supabase.from('voucher_entries').delete().eq('voucher_id', vid); } catch (_) {}
+        try { await supabase.from('journal_entries').delete().eq('voucher_id', vid); } catch (_) {}
+        try { await supabase.from('general_ledger').delete().eq('voucher_id', vid); } catch (_) {}
+        try { await supabase.from('ledgers').delete().eq('voucher_id', vid); } catch (_) {}
+        try { await supabase.from('financial_vouchers').delete().eq('id', vid); } catch (_) {}
+        try { await supabase.from('vouchers').delete().eq('id', vid); } catch (_) {}
+      }
+      for (const vno of vNos) {
+        try { await supabase.from('voucher_entries').delete().eq('voucher_no', vno); } catch (_) {}
+        try { await supabase.from('journal_entries').delete().eq('voucher_no', vno); } catch (_) {}
+        try { await supabase.from('general_ledger').delete().eq('voucher_no', vno); } catch (_) {}
+        try { await supabase.from('ledgers').delete().eq('voucher_no', vno); } catch (_) {}
+        try { await supabase.from('financial_vouchers').delete().eq('voucher_no', vno); } catch (_) {}
+        try { await supabase.from('vouchers').delete().eq('voucher_no', vno); } catch (_) {}
       }
 
+      // Purge any lingering ledger entries mentioning this invoice number
+      try { await supabase.from('general_ledger').delete().ilike('narration', `%${invoiceNo}%`); } catch (_) {}
+      try { await supabase.from('ledgers').delete().ilike('narration', `%${invoiceNo}%`); } catch (_) {}
+
       try {
-        await supabase.from('pos_sales').delete().or(`invoice_number.eq.${invoiceNo},invoice_number.eq.${cleanId}`);
+        await supabase.from('pos_sales').delete().or(`invoice_number.eq.${invoiceNo},invoice_number.eq.${cleanId},id.eq.${cleanId}`);
       } catch (_) {}
 
-      // STEP 5: Delete the Invoice itself (Fix PGRST205)
-      // CRITICAL: Completely REMOVE any reference to deleting from 'sales_items' (Table does not exist)
+      // STEP 5: Delete the Invoice itself
       const { error: delErr } = await supabase
         .from('sales_invoices')
         .delete()
-        .or(`id.eq.${cleanId},invoice_no.eq.${cleanId}`);
+        .or(`id.eq.${cleanId},invoice_no.eq.${invoiceNo},invoice_no.eq.${cleanId}`);
 
       if (delErr) {
         console.error('Failed to delete sales invoice:', delErr);

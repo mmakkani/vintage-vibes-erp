@@ -42,11 +42,12 @@ import { CompanyProfile } from '../../setup/setup.types.ts';
 import { POSTerminalConfig } from '../../setup/hardware.types.ts';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { SalesService } from '../../../services/salesService.ts';
+import { SequenceService } from '../../../services/sequenceService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
 import { CrmService, CrmRetailCustomer } from '../../../services/crmService.ts';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
-import { openThermalLabelPrintWindow, openGiftReceiptPrintWindow } from '../../../utils/thermalPrinter.ts';
+import { openThermalLabelPrintWindow, openGiftReceiptPrintWindow, openPosThermalReceiptPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { useBarcodeScanner } from '../../../hooks/useBarcodeScanner.ts';
 import { offlineQueue } from '../../../services/offlineQueueService.ts';
 
@@ -828,7 +829,16 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     setIsScanning(true);
     setIsSubmitting(true);
     try {
-      const invoiceNum = `POS-${Date.now().toString().slice(-6)}`;
+      let invoiceNum = `POS-${Date.now().toString().slice(-6)}`;
+      try {
+        invoiceNum = await SequenceService.getNextNumber('POS');
+      } catch (seqErr) {
+        console.warn('[POS Terminal] Sequence generation fallback:', seqErr);
+        const now = new Date();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const yyyy = now.getFullYear();
+        invoiceNum = `POS-${mm}-${yyyy}-${Date.now().toString().slice(-4)}`;
+      }
       const safeCart = Array.isArray(cart) ? cart : [];
       const subtotalAmt = safeCart.reduce((sum, c) => sum + ((Number(c?.sellingPrice) || 0) - (Number(c?.discount) || 0)), 0);
       const vatAmt = Number((subtotalAmt * 0.05).toFixed(2));
@@ -954,87 +964,96 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       let createdVoucherNo = `VCH-${Date.now().toString().slice(-6)}`;
       const paymentAccName = isCash ? 'Cash in Hand (Counter)' : 'Bank / Card Clearing';
+      const voucherLines = [
+        // Part 1: Inventory Depletion & COGS
+        {
+          accountId: cogsAcc,
+          accountCode: cogsAcc,
+          accountName: 'Cost of Goods Sold - Finished Goods',
+          partyId: CONTROL_PARTY_ID,
+          partyName: 'Walk In Customer',
+          debit: totalCogs,
+          credit: 0,
+          memo: `COGS for POS Sale ${invoiceNum}`
+        },
+        {
+          accountId: fgAcc,
+          accountCode: fgAcc,
+          accountName: 'Finished Goods',
+          partyId: CONTROL_PARTY_ID,
+          partyName: 'Walk In Customer',
+          debit: 0,
+          credit: totalCogs,
+          memo: `Inventory deduction ${invoiceNum}`
+        },
+        // Part 2: Revenue Recognition & Receivable
+        {
+          accountId: walkInAcc,
+          accountCode: walkInAcc,
+          accountName: CONTROL_ACC_NAME,
+          partyId: CONTROL_PARTY_ID,
+          partyName: 'Walk In Customer',
+          debit: totalAmt,
+          credit: 0,
+          memo: `Receivable for POS Sale ${invoiceNum}`
+        },
+        {
+          accountId: revenueAcc,
+          accountCode: revenueAcc,
+          accountName: 'POS / Counter Retail Sales',
+          partyId: CONTROL_PARTY_ID,
+          partyName: 'Walk In Customer',
+          debit: 0,
+          credit: subtotalAmt,
+          memo: `Sales Revenue ${invoiceNum}`
+        },
+        ...(vatAmt > 0 ? [{
+          accountId: vatAcc,
+          accountCode: vatAcc,
+          accountName: 'VAT Output 5%',
+          partyId: CONTROL_PARTY_ID,
+          partyName: 'Walk In Customer',
+          debit: 0,
+          credit: vatAmt,
+          memo: `5% UAE VAT ${invoiceNum}`
+        }] : []),
+        // Part 3: Payment Settlement
+        {
+          accountId: paymentAccCode,
+          accountCode: paymentAccCode,
+          accountName: paymentAccName,
+          partyId: CONTROL_PARTY_ID,
+          partyName: 'Walk In Customer',
+          debit: totalAmt,
+          credit: 0,
+          memo: `Payment Received ${invoiceNum} (${effectivePaymentMode})`
+        },
+        {
+          accountId: walkInAcc,
+          accountCode: walkInAcc,
+          accountName: CONTROL_ACC_NAME,
+          partyId: CONTROL_PARTY_ID,
+          partyName: 'Walk In Customer',
+          debit: 0,
+          credit: totalAmt,
+          memo: `Payment Cleared ${invoiceNum}`
+        }
+      ];
+
+      const vDebitSum = Number(voucherLines.reduce((sum, l) => sum + (Number(l.debit) || 0), 0).toFixed(2));
+      const vCreditSum = Number(voucherLines.reduce((sum, l) => sum + (Number(l.credit) || 0), 0).toFixed(2));
+
       const vRes = await FinanceService.addVoucher({
         date: new Date().toISOString().slice(0, 10),
         type: 'CRV',
         reference: invoiceNum,
         narration: `POS Counter Sale ${invoiceNum} - ${selectedCustomer?.name || 'Walk-In Customer'}`,
         createdBy: operatorName || 'Cashier Lead',
-        lines: [
-          // Part 1: Inventory Depletion & COGS
-          {
-            accountId: cogsAcc,
-            accountCode: cogsAcc,
-            accountName: 'Cost of Goods Sold - Finished Goods',
-            partyId: CONTROL_PARTY_ID,
-            partyName: 'Walk In Customer',
-            debit: totalCogs,
-            credit: 0,
-            memo: `COGS for POS Sale ${invoiceNum}`
-          },
-          {
-            accountId: fgAcc,
-            accountCode: fgAcc,
-            accountName: 'Finished Goods',
-            partyId: CONTROL_PARTY_ID,
-            partyName: 'Walk In Customer',
-            debit: 0,
-            credit: totalCogs,
-            memo: `Inventory deduction ${invoiceNum}`
-          },
-          // Part 2: Revenue Recognition & Receivable
-          {
-            accountId: walkInAcc,
-            accountCode: walkInAcc,
-            accountName: CONTROL_ACC_NAME,
-            partyId: CONTROL_PARTY_ID,
-            partyName: 'Walk In Customer',
-            debit: totalAmt,
-            credit: 0,
-            memo: `Receivable for POS Sale ${invoiceNum}`
-          },
-          {
-            accountId: revenueAcc,
-            accountCode: revenueAcc,
-            accountName: 'POS / Counter Retail Sales',
-            partyId: CONTROL_PARTY_ID,
-            partyName: 'Walk In Customer',
-            debit: 0,
-            credit: subtotalAmt,
-            memo: `Sales Revenue ${invoiceNum}`
-          },
-          ...(vatAmt > 0 ? [{
-            accountId: vatAcc,
-            accountCode: vatAcc,
-            accountName: 'VAT Output 5%',
-            partyId: CONTROL_PARTY_ID,
-            partyName: 'Walk In Customer',
-            debit: 0,
-            credit: vatAmt,
-            memo: `5% UAE VAT ${invoiceNum}`
-          }] : []),
-          // Part 3: Payment Settlement
-          {
-            accountId: paymentAccCode,
-            accountCode: paymentAccCode,
-            accountName: paymentAccName,
-            partyId: CONTROL_PARTY_ID,
-            partyName: 'Walk In Customer',
-            debit: totalAmt,
-            credit: 0,
-            memo: `Payment Received ${invoiceNum} (${effectivePaymentMode})`
-          },
-          {
-            accountId: walkInAcc,
-            accountCode: walkInAcc,
-            accountName: CONTROL_ACC_NAME,
-            partyId: CONTROL_PARTY_ID,
-            partyName: 'Walk In Customer',
-            debit: 0,
-            credit: totalAmt,
-            memo: `Payment Cleared ${invoiceNum}`
-          }
-        ]
+        isAuto: true,
+        is_auto: true,
+        totalDebit: vDebitSum,
+        totalCredit: vCreditSum,
+        lines: voucherLines
       });
       if (vRes?.voucherNo) {
         createdVoucherNo = vRes.voucherNo;
@@ -1139,15 +1158,30 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       // 5. Automatic 80mm Thermal Receipt Print (if toggle enabled)
       if (autoPrintThermal) {
         try {
-          openThermalLabelPrintWindow({
-            itemCode: invoiceNum,
-            description: `RETAIL POS: ${cart.length} garments (${effectivePaymentMode})`,
-            brand: activeProfile?.companyName || 'VINTAGE VIBES',
-            grade: `UAE VAT 5%: AED ${vatAmt.toFixed(2)}`,
-            retailPriceAed: totalAmt,
-            weightKg: Number((totalWeightGrams / 1000).toFixed(2)),
-            batchNo: `AUTH: ${effectivePaymentMode}`,
-            date: new Date().toISOString()
+          openPosThermalReceiptPrintWindow({
+            invoiceNo: invoiceNum,
+            date: new Date().toISOString(),
+            customerName: customerNameForSlip,
+            customerPhone: customerPhoneForSlip,
+            cashierName: operatorName || currentUser?.name || currentUser?.username || 'Cashier 01',
+            paymentMethod: effectivePaymentMode,
+            items: cart.map(c => ({
+              description: `${c.piece.brandName} ${c.piece.itemName}`,
+              barcode: c.piece.barcode,
+              unitPrice: c.sellingPrice,
+              discount: c.discount,
+              finalAmount: c.sellingPrice - c.discount,
+              quantity: 1
+            })),
+            subTotal: subtotalAmt,
+            discountAmount: discountTotal,
+            vatAmount: vatAmt,
+            totalAmount: totalAmt,
+            tenderedAmount: Number(cashTendered) || totalAmt,
+            changeDue: changeDue,
+            companyName: activeProfile?.companyName,
+            trn: activeProfile?.trn_number || activeProfile?.trnTaxNo,
+            address: activeProfile?.address_line_1 || activeProfile?.addressLine1
           });
         } catch (e) {
           console.warn('[POS Checkout] Auto print thermal receipt note:', e);
@@ -1214,17 +1248,34 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     if (!checkoutSuccessData) return;
     const inv = checkoutSuccessData.invoice;
     try {
-      openThermalLabelPrintWindow({
-        itemCode: inv.invoiceNo,
-        description: `RETAIL POS: ${inv.items.length} garments (${inv.paymentMethod})`,
-        brand: activeProfile?.companyName || 'VINTAGE VIBES',
-        grade: `UAE VAT 5%: AED ${inv.vatAmount}`,
-        retailPriceAed: inv.totalAmount,
-        weightKg: Number((totalWeightGrams / 1000).toFixed(2)),
-        batchNo: `AUTH: ${inv.paymentMethod}`,
-        date: inv.date
+      openPosThermalReceiptPrintWindow({
+        invoiceNo: inv.invoiceNo,
+        date: inv.date,
+        customerName: inv.customerName || selectedCustomer?.name || 'Walk-In Customer',
+        customerPhone: inv.customerPhone || selectedCustomer?.phone || '',
+        cashierName: operatorName || currentUser?.name || currentUser?.username || 'Cashier 01',
+        paymentMethod: inv.paymentMethod,
+        items: (inv.items || []).map((it: any) => ({
+          description: it.description,
+          barcode: it.barcode,
+          unitPrice: it.unitPrice,
+          discount: it.discount,
+          finalAmount: it.finalAmount,
+          quantity: 1
+        })),
+        subTotal: inv.subTotal,
+        discountAmount: inv.discountAmount,
+        vatAmount: inv.vatAmount,
+        totalAmount: inv.totalAmount,
+        tenderedAmount: Number(cashTendered) || inv.totalAmount,
+        changeDue: changeDue,
+        companyName: activeProfile?.companyName,
+        trn: activeProfile?.trn_number || activeProfile?.trnTaxNo,
+        address: activeProfile?.address_line_1 || activeProfile?.addressLine1
       });
-    } catch {}
+    } catch (e) {
+      console.warn('[POS Checkout] Print thermal receipt error:', e);
+    }
   };
 
   // WhatsApp Digital E-Receipt

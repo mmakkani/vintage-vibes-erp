@@ -750,8 +750,9 @@ export class FinanceService {
     const ref = String(v.reference || v.reference_no || '').trim().toUpperCase();
     const narr = String(v.narration || '').toLowerCase();
 
-    // 1. Automated upstream reference document prefixes (Inward Gate Pass, Invoices, Payroll, Bales)
+    // 1. Automated upstream reference document prefixes (POS Sales, Inward Gate Pass, Invoices, Payroll, Bales)
     if (
+      ref.startsWith('POS-') ||
       ref.startsWith('INWARD-') ||
       ref.startsWith('IGP-') ||
       ref.startsWith('IGP_VCH-') ||
@@ -771,6 +772,9 @@ export class FinanceService {
     // 2. Automated narrations
     if (
       narr.startsWith('[auto]') ||
+      narr.includes('pos counter sale') ||
+      narr.includes('pos cash sale') ||
+      narr.includes('pos card sale') ||
       narr.includes('inward gate pass') ||
       narr.includes('commercial purchase invoice') ||
       narr.includes('commercial sales invoice') ||
@@ -989,7 +993,7 @@ export class FinanceService {
       if (existing) {
         vNo = existing.voucherNo || cleanId;
         if (this.isAutoVoucher(existing)) {
-          throw new Error('Deletion Blocked: System auto-generated vouchers (Inward Gate Passes, Commercial Invoices, Payroll) are audit-locked and cannot be deleted. Only manual vouchers can be deleted.');
+          throw new Error('Deletion Blocked: System auto-generated vouchers (Inward Gate Passes, Commercial Invoices, POS Sales, Payroll) are audit-locked and cannot be deleted from Finance. Please delete the originating source transaction (e.g. POS Sale or Sales Invoice).');
         }
       }
     } catch (checkErr: any) {

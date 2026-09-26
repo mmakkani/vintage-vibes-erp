@@ -47,6 +47,30 @@ export class SequenceService {
             if (seq > maxSeq) maxSeq = seq;
           }
         }
+      } else if (cleanPrefix === 'POS') {
+        const { data: posData } = await supabase
+          .from('pos_sales')
+          .select('invoice_number')
+          .like('invoice_number', `${prefixWithDate}-%`);
+
+        if (Array.isArray(posData)) {
+          for (const row of posData) {
+            const seq = SequenceService.extractSequence(row.invoice_number, prefixWithDate);
+            if (seq > maxSeq) maxSeq = seq;
+          }
+        }
+
+        const { data: invData } = await supabase
+          .from('sales_invoices')
+          .select('invoice_no')
+          .like('invoice_no', `${prefixWithDate}-%`);
+
+        if (Array.isArray(invData)) {
+          for (const row of invData) {
+            const seq = SequenceService.extractSequence(row.invoice_no, prefixWithDate);
+            if (seq > maxSeq) maxSeq = seq;
+          }
+        }
       } else if (cleanPrefix === 'IGP') {
         const { data } = await supabase
           .from('inward_gate_passes')

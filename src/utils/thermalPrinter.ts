@@ -1148,4 +1148,301 @@ export function openGiftReceiptPrintWindow(data: GiftReceiptData): Window | null
   return win;
 }
 
+export interface PosThermalReceiptData {
+  invoiceNo: string;
+  date: string;
+  customerName?: string;
+  customerPhone?: string;
+  cashierName?: string;
+  paymentMethod?: string;
+  companyName?: string;
+  trn?: string;
+  address?: string;
+  items: Array<{
+    description: string;
+    barcode?: string;
+    unitPrice?: number;
+    discount?: number;
+    finalAmount: number;
+    quantity?: number;
+  }>;
+  subTotal: number;
+  discountAmount?: number;
+  vatAmount: number;
+  totalAmount: number;
+  tenderedAmount?: number;
+  changeDue?: number;
+}
+
+export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): Window | null {
+  const win = window.open('', '_blank', 'width=460,height=700,resizable=yes,scrollbars=yes');
+  if (!win) {
+    alert('Popup blocked by browser. Please allow popups to print POS thermal receipts.');
+    return null;
+  }
+
+  const safeItems = Array.isArray(data.items) ? data.items : [];
+  const itemsHtml = safeItems.map((it) => {
+    const qty = it.quantity || 1;
+    const unitP = Number(it.unitPrice ?? it.finalAmount ?? 0).toFixed(2);
+    const lineTotal = Number(it.finalAmount ?? 0).toFixed(2);
+    const disc = Number(it.discount ?? 0);
+    return `
+      <tr>
+        <td style="padding: 4px 0; border-bottom: 1px dashed #ddd; vertical-align: top;">
+          <div style="font-weight: 800; font-size: 10px; text-transform: uppercase;">${it.description}</div>
+          <div style="font-size: 8.5px; color: #555; font-family: monospace;">SKU: ${it.barcode || 'N/A'} ${qty > 1 ? `&times; ${qty} @ AED ${unitP}` : ''}</div>
+          ${disc > 0 ? `<div style="font-size: 8px; color: #b91c1c;">Disc: -AED ${disc.toFixed(2)}</div>` : ''}
+        </td>
+        <td style="padding: 4px 0; border-bottom: 1px dashed #ddd; text-align: right; font-weight: 900; font-size: 10.5px; vertical-align: top; white-space: nowrap;">
+          AED ${lineTotal}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  const displayDate = data.date ? new Date(data.date).toLocaleString('en-GB', { hour12: true }) : new Date().toLocaleString();
+  const customerName = (data.customerName || 'Walk-In Customer').trim();
+  const customerPhone = (data.customerPhone || '').trim();
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Receipt - ${data.invoiceNo}</title>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+  <style>
+    @page {
+      size: 80mm auto;
+      margin: 0;
+    }
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Courier New", monospace, sans-serif;
+      margin: 0;
+      padding: 10px;
+      color: #000;
+      font-size: 10px;
+      line-height: 1.3;
+      background: #fff;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .header {
+      border-bottom: 2px dashed #000;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+    }
+    .store-name {
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .store-sub {
+      font-size: 8px;
+      color: #333;
+      margin-top: 2px;
+    }
+    .tax-badge {
+      display: inline-block;
+      border: 1px solid #000;
+      padding: 2px 8px;
+      font-weight: 900;
+      font-size: 9px;
+      margin: 5px 0 3px 0;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .meta-box {
+      border-bottom: 1px dashed #000;
+      padding-bottom: 6px;
+      margin-bottom: 6px;
+      font-size: 9px;
+    }
+    .customer-box {
+      border: 1.5px solid #000;
+      background: #f8fafc;
+      padding: 5px 8px;
+      margin-bottom: 8px;
+      font-size: 9px;
+      border-radius: 4px;
+    }
+    .customer-title {
+      font-size: 8px;
+      font-weight: 900;
+      text-transform: uppercase;
+      color: #444;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 2px;
+      margin-bottom: 3px;
+    }
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 6px 0;
+    }
+    .totals-box {
+      border-top: 2px dashed #000;
+      border-bottom: 2px solid #000;
+      padding: 6px 0;
+      margin: 8px 0;
+      font-size: 9.5px;
+    }
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 3px;
+    }
+    .grand-total {
+      font-size: 13px;
+      font-weight: 900;
+      border-top: 1px solid #000;
+      padding-top: 4px;
+      margin-top: 4px;
+    }
+    .barcode-section {
+      text-align: center;
+      margin: 8px 0 4px 0;
+    }
+    .barcode-section svg {
+      max-width: 100%;
+      height: 38px;
+    }
+    .footer-policy {
+      border-top: 1px dashed #888;
+      padding-top: 6px;
+      margin-top: 6px;
+      font-size: 8px;
+      text-align: center;
+      line-height: 1.35;
+      color: #222;
+    }
+    @media print {
+      .no-print { display: none !important; }
+      body { padding: 4mm !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="no-print" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; background: #0f172a; color: #fff; padding: 8px 12px; border-radius: 6px;">
+    <span style="font-weight: bold; font-size: 11px;">80mm POS Thermal Receipt (${data.invoiceNo})</span>
+    <div>
+      <button onclick="window.print()" style="padding: 6px 14px; font-weight: bold; background: #f59e0b; color: #000; border: none; border-radius: 4px; cursor: pointer; margin-right: 6px;">Print Receipt</button>
+      <button onclick="window.close()" style="padding: 6px 12px; background: #475569; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Close</button>
+    </div>
+  </div>
+
+  <div class="header text-center">
+    <div class="store-name">${data.companyName || 'VINTAGE VIBES DUBAI'}</div>
+    <div class="store-sub">${data.address || 'Al Quoz Industrial 3, Dubai, UAE'}</div>
+    <div class="store-sub"><strong>TRN:</strong> ${data.trn || '100482910300003'}</div>
+    <div class="tax-badge">TAX INVOICE / CASH MEMO</div>
+  </div>
+
+  <div class="meta-box">
+    <div style="display: flex; justify-content: space-between;">
+      <span><strong>INVOICE:</strong> ${data.invoiceNo}</span>
+      <span><strong>PAYMENT:</strong> ${(data.paymentMethod || 'CASH').toUpperCase()}</span>
+    </div>
+    <div style="display: flex; justify-content: space-between; margin-top: 2px;">
+      <span><strong>DATE:</strong> ${displayDate}</span>
+      <span><strong>CASHIER:</strong> ${data.cashierName || 'Cashier 01'}</span>
+    </div>
+  </div>
+
+  <div class="customer-box">
+    <div class="customer-title">CUSTOMER INFORMATION</div>
+    <div style="display: flex; justify-content: space-between;">
+      <span><strong>NAME:</strong> ${customerName}</span>
+      <span><strong>PHONE:</strong> ${customerPhone || 'N/A'}</span>
+    </div>
+  </div>
+
+  <table class="table">
+    <thead>
+      <tr style="border-bottom: 1px solid #000; font-size: 8.5px; text-transform: uppercase;">
+        <th style="text-align: left; padding-bottom: 3px;">Item &amp; Description</th>
+        <th style="text-align: right; padding-bottom: 3px;">Amount (AED)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${itemsHtml}
+    </tbody>
+  </table>
+
+  <div class="totals-box">
+    <div class="total-row">
+      <span>Subtotal (Excl. VAT):</span>
+      <span>AED ${Number(data.subTotal || 0).toFixed(2)}</span>
+    </div>
+    ${Number(data.discountAmount || 0) > 0 ? `
+    <div class="total-row" style="color: #b91c1c;">
+      <span>Discount:</span>
+      <span>-AED ${Number(data.discountAmount).toFixed(2)}</span>
+    </div>` : ''}
+    <div class="total-row">
+      <span>UAE VAT 5%:</span>
+      <span>AED ${Number(data.vatAmount || 0).toFixed(2)}</span>
+    </div>
+    <div class="total-row grand-total">
+      <span>NET TOTAL (AED):</span>
+      <span>AED ${Number(data.totalAmount || 0).toFixed(2)}</span>
+    </div>
+    ${Number(data.tenderedAmount || 0) > 0 ? `
+    <div class="total-row" style="margin-top: 4px; font-size: 8.5px; color: #444;">
+      <span>Tendered (${data.paymentMethod}):</span>
+      <span>AED ${Number(data.tenderedAmount).toFixed(2)}</span>
+    </div>
+    <div class="total-row" style="font-size: 8.5px; color: #444;">
+      <span>Change Due:</span>
+      <span>AED ${Number(data.changeDue || 0).toFixed(2)}</span>
+    </div>` : ''}
+  </div>
+
+  <div class="barcode-section">
+    <svg id="pos-barcode"></svg>
+  </div>
+
+  <div class="footer-policy">
+    <div style="font-weight: 800;">★ 14-DAY EXCHANGE POLICY ★</div>
+    <div>Items may be exchanged within 14 days of purchase.</div>
+    <div>Security tag &amp; barcode must remain attached. No cash refunds.</div>
+    <div style="margin-top: 4px; font-weight: 900; letter-spacing: 0.5px;">THANK YOU FOR SHOPPING VINTAGE VIBES!</div>
+  </div>
+
+  <script>
+    try {
+      JsBarcode("#pos-barcode", "${data.invoiceNo}", {
+        format: "CODE128",
+        width: 1.6,
+        height: 34,
+        displayValue: true,
+        fontSize: 9,
+        margin: 2
+      });
+    } catch(e) {
+      console.warn("Barcode render notice:", e);
+    }
+
+    window.addEventListener('load', function() {
+      setTimeout(function() {
+        window.print();
+      }, 350);
+    });
+  </script>
+</body>
+</html>`;
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  return win;
+}
+
+
 

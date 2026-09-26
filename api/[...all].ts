@@ -5154,11 +5154,33 @@ RULES FOR YOUR RESPONSE:
           let voucherNo = String(v.voucherNo || '').trim();
           const reference = String(v.reference || v.documentRef || '');
           const narration = String(v.narration || '');
-          const totalDebit = Number(v.totalDebit || 0);
-          const totalCredit = Number(v.totalCredit || 0);
+          const lines = v.lines || v.entries || [];
+          let totalDebit = Number(v.totalDebit || 0);
+          let totalCredit = Number(v.totalCredit || 0);
+          if (totalDebit === 0 && Array.isArray(lines) && lines.length > 0) {
+            totalDebit = Number(lines.reduce((sum: number, l: any) => sum + (Number(l.debitAmount ?? l.debit ?? 0) || 0), 0).toFixed(4));
+            totalCredit = Number(lines.reduce((sum: number, l: any) => sum + (Number(l.creditAmount ?? l.credit ?? 0) || 0), 0).toFixed(4));
+          }
           const status = String(v.status || 'POSTED');
           const createdBy = String(v.createdBy || 'System');
-          const isAuto = Boolean(v.isAuto || v.is_auto);
+          const refUpper = reference.toUpperCase();
+          const isAuto = Boolean(
+            v.isAuto || 
+            v.is_auto || 
+            refUpper.startsWith('POS-') || 
+            refUpper.startsWith('INWARD-') || 
+            refUpper.startsWith('IGP-') || 
+            refUpper.startsWith('PINV-') || 
+            refUpper.startsWith('INV-') || 
+            refUpper.startsWith('PUR-') || 
+            refUpper.startsWith('PAYROLL-') || 
+            refUpper.startsWith('BALE-') || 
+            refUpper.startsWith('COMM-') || 
+            refUpper.startsWith('SAL-') || 
+            refUpper.startsWith('TAX-') ||
+            narration.toLowerCase().startsWith('[auto]') ||
+            narration.toLowerCase().includes('pos counter sale')
+          );
 
           const currency = String(v.currency || 'AED').toUpperCase();
           const exchangeRate = Number(v.exchangeRate ?? v.exchange_rate ?? 1.0);
@@ -5166,8 +5188,6 @@ RULES FOR YOUR RESPONSE:
           const foreignTotalAmount = Number(
             v.foreignTotalAmount ?? v.foreign_total_amount ?? (currency === 'AED' ? totalDebit : (totalDebit / (exchangeRate || 1.0)))
           );
-
-          const lines = v.lines || v.entries || [];
 
           await client.query('BEGIN');
 
@@ -5193,15 +5213,16 @@ RULES FOR YOUR RESPONSE:
 
           // 1. vouchers
           await client.query(`
-            INSERT INTO vouchers (id, voucher_no, date, type, reference, narration, total_debit, total_credit, status, created_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO vouchers (id, voucher_no, date, type, reference, narration, total_debit, total_credit, status, created_by, is_auto)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (id) DO UPDATE SET
               voucher_no = EXCLUDED.voucher_no,
               date = EXCLUDED.date,
               total_debit = EXCLUDED.total_debit,
               total_credit = EXCLUDED.total_credit,
-              status = EXCLUDED.status;
-          `, [id, voucherNo, date, type, reference, narration, totalDebit, totalCredit, status, createdBy]);
+              status = EXCLUDED.status,
+              is_auto = EXCLUDED.is_auto;
+          `, [id, voucherNo, date, type, reference, narration, totalDebit, totalCredit, status, createdBy, isAuto]);
 
           // 2. financial_vouchers
           await client.query(`
@@ -5219,7 +5240,8 @@ RULES FOR YOUR RESPONSE:
               total_debit = EXCLUDED.total_debit,
               total_credit = EXCLUDED.total_credit,
               total_amount = EXCLUDED.total_amount,
-              status = EXCLUDED.status;
+              status = EXCLUDED.status,
+              is_auto = EXCLUDED.is_auto;
           `, [id, voucherNo, date, type, reference, narration, totalDebit, totalCredit, currency, exchangeRate, baseCurrency, foreignTotalAmount, status, createdBy, isAuto]);
 
           // Lines processing
@@ -5412,6 +5434,34 @@ RULES FOR YOUR RESPONSE:
                 creditAmount: Number(e.credit ?? e.credit_amount ?? 0),
                 memo: e.memo || e.particulars || e.narration || ''
               }));
+
+            let totalDebit = Number(row.total_debit ?? row.totalDebit ?? 0);
+            let totalCredit = Number(row.total_credit ?? row.totalCredit ?? 0);
+            if (totalDebit === 0 && matched.length > 0) {
+              totalDebit = Number(matched.reduce((s: number, m: any) => s + (Number(m.debitAmount) || 0), 0).toFixed(2));
+              totalCredit = Number(matched.reduce((s: number, m: any) => s + (Number(m.creditAmount) || 0), 0).toFixed(2));
+            }
+
+            const refUpper = String(row.reference || row.reference_no || '').trim().toUpperCase();
+            const narr = String(row.narration || '').toLowerCase();
+            const isAuto = Boolean(
+              row.is_auto === true ||
+              row.isAuto === true ||
+              refUpper.startsWith('POS-') ||
+              refUpper.startsWith('INWARD-') ||
+              refUpper.startsWith('IGP-') ||
+              refUpper.startsWith('PINV-') ||
+              refUpper.startsWith('INV-') ||
+              refUpper.startsWith('PUR-') ||
+              refUpper.startsWith('PAYROLL-') ||
+              refUpper.startsWith('BALE-') ||
+              refUpper.startsWith('COMM-') ||
+              refUpper.startsWith('SAL-') ||
+              refUpper.startsWith('TAX-') ||
+              narr.startsWith('[auto]') ||
+              narr.includes('pos counter sale')
+            );
+
             return {
               id: row.id,
               voucherNo: vNo || row.id,
@@ -5419,14 +5469,16 @@ RULES FOR YOUR RESPONSE:
               type: row.type || row.voucher_type || 'JOURNAL',
               reference: row.reference || row.reference_no || '',
               narration: row.narration || '',
-              totalDebit: Number(row.total_debit ?? row.totalDebit ?? 0),
-              totalCredit: Number(row.total_credit ?? row.totalCredit ?? 0),
+              totalDebit,
+              totalCredit,
               status: row.status || 'POSTED',
               currency: (row.currency || 'AED').toUpperCase(),
               exchangeRate: Number(row.exchange_rate || 1.0),
               baseCurrency: (row.base_currency || 'AED').toUpperCase(),
               foreignTotalAmount: Number(row.foreign_total_amount || 0),
               createdBy: row.created_by || 'System',
+              isAuto,
+              is_auto: isAuto,
               entries: matched,
               lines: matched,
               createdAt: row.created_at
@@ -5443,6 +5495,26 @@ RULES FOR YOUR RESPONSE:
           const client = await getPgClient();
           if (client) {
             try {
+              // Block auto voucher deletion directly from finance
+              const checkVch = await client.query(
+                `SELECT is_auto, reference, reference_no, voucher_no FROM financial_vouchers WHERE id = $1 OR voucher_no = $1
+                 UNION
+                 SELECT is_auto, reference, reference AS reference_no, voucher_no FROM vouchers WHERE id = $1 OR voucher_no = $1`,
+                [vId]
+              );
+              if (checkVch.rows.length > 0) {
+                const row = checkVch.rows[0];
+                const ref = String(row.reference || row.reference_no || '').trim().toUpperCase();
+                const isAuto = Boolean(row.is_auto || ref.startsWith('POS-') || ref.startsWith('INV-') || ref.startsWith('PINV-') || ref.startsWith('INWARD-') || ref.startsWith('IGP-') || ref.startsWith('PUR-') || ref.startsWith('PAYROLL-') || ref.startsWith('BALE-'));
+                if (isAuto) {
+                  await client.end().catch(() => {});
+                  return res.status(403).json({
+                    success: false,
+                    error: 'Deletion Blocked: System auto-generated voucher cannot be deleted from Finance. Please delete the originating source transaction (e.g. POS Sale or Sales Invoice).'
+                  });
+                }
+              }
+
               await client.query('DELETE FROM voucher_entries WHERE voucher_id = $1 OR voucher_no = $1;', [vId]);
               await client.query('DELETE FROM general_ledger WHERE voucher_id = $1 OR voucher_no = $1;', [vId]);
               await client.query('DELETE FROM ledgers WHERE voucher_id = $1 OR voucher_no = $1;', [vId]);
