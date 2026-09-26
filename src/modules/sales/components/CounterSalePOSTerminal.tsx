@@ -947,39 +947,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         return;
       }
 
-      // 1. Direct insert to public.pos_sales and auto stock decrement with cashier audit tagging
-      const effectiveCashierId = cashierId || currentUser?.id || currentUser?.operator_id || undefined;
-      const posRecord = await SalesService.createPosSale({
-        invoice_number: invoiceNum,
-        cashier_id: effectiveCashierId,
-        customer_name: selectedCustomer?.name || 'Walk-In Customer',
-        customer_phone: selectedCustomer?.phone || '',
-        items: cart.map(c => {
-          const itemCost = Number(c?.cogsCost ?? (c?.piece as any)?.cost_price ?? (c?.piece as any)?.calculatedCostPrice ?? (c?.piece as any)?.cogsCost ?? 0);
-          return {
-            barcode: c.piece.barcode,
-            pieceId: c.piece.id,
-            itemName: c.piece.itemName,
-            brandName: c.piece.brandName,
-            unitPrice: c.sellingPrice,
-            discount: c.discount,
-            finalAmount: c.sellingPrice - c.discount,
-            calculatedCostPrice: itemCost,
-            cost_price: itemCost,
-            cogsCost: itemCost
-          };
-        }),
-        subtotal: subtotalAmt,
-        tax_amount: vatAmt,
-        discount_amount: discountTotal,
-        grand_total: totalAmt,
-        payment_type: effectivePaymentMode,
-        payment_status: 'PAID'
-      });
-
-      // 2. Dual-Entry Financial Voucher: CRITICAL AUDIT MANDATE (3-Part POS Voucher)
-      // Financial Vouchers & Ledgers MUST hardcode the partyId and accountId to official Control Khata (1130-05 Walk In Customer)
-      // DO NOT pass crm_retail_customers.id into any ledger or voucher party_id field.
+      // 1. Dual-Entry Financial Voucher: CRITICAL AUDIT MANDATE (3-Part POS Voucher)
+      // Posts FIRST. If this fails, no sale is committed and inventory pieces are never marked sold!
       const CONTROL_PARTY_ID = CrmService.CONTROL_WALK_IN_PARTY_ID; // 5eb820da-3bb1-4e54-8fd8-59b3db72aebf (CLI-0010)
       const CONTROL_ACC_NAME = CrmService.CONTROL_WALK_IN_ACCOUNT_NAME; // Walk In Customer (Customer)
 
@@ -1071,7 +1040,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         createdVoucherNo = vRes.voucherNo;
       }
 
-      // 3. Record in sales_invoices:
+      // 2. Record in sales_invoices:
       // Financial clientId is hardcoded to CONTROL_PARTY_ID
       // CRM customer details are stored for receipt/printing/WhatsApp
       await SalesService.createSalesInvoice({
@@ -1102,6 +1071,36 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             cogsCost: itemCost
           };
         })
+      });
+
+      // 3. Direct insert to public.pos_sales and auto stock decrement with cashier audit tagging
+      const effectiveCashierId = cashierId || currentUser?.id || currentUser?.operator_id || undefined;
+      const posRecord = await SalesService.createPosSale({
+        invoice_number: invoiceNum,
+        cashier_id: effectiveCashierId,
+        customer_name: selectedCustomer?.name || 'Walk-In Customer',
+        customer_phone: selectedCustomer?.phone || '',
+        items: cart.map(c => {
+          const itemCost = Number(c?.cogsCost ?? (c?.piece as any)?.cost_price ?? (c?.piece as any)?.calculatedCostPrice ?? (c?.piece as any)?.cogsCost ?? 0);
+          return {
+            barcode: c.piece.barcode,
+            pieceId: c.piece.id,
+            itemName: c.piece.itemName,
+            brandName: c.piece.brandName,
+            unitPrice: c.sellingPrice,
+            discount: c.discount,
+            finalAmount: c.sellingPrice - c.discount,
+            calculatedCostPrice: itemCost,
+            cost_price: itemCost,
+            cogsCost: itemCost
+          };
+        }),
+        subtotal: subtotalAmt,
+        tax_amount: vatAmt,
+        discount_amount: discountTotal,
+        grand_total: totalAmt,
+        payment_type: effectivePaymentMode,
+        payment_status: 'PAID'
       });
 
       // 4. Update isolated CRM retail customer purchase metrics
@@ -1194,6 +1193,15 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       onSaleCompleted?.();
       loadInventoryAndParties();
     } catch (err: any) {
+      console.error('[POS Terminal] Checkout failed, executing inventory rollback guard:', err);
+      // Automatic Rollback Guard: ensure any piece in active basket is guaranteed IN_STOCK and NOT sold
+      try {
+        const safeCart = Array.isArray(cart) ? cart : [];
+        const pieceItems = safeCart.map(c => ({ id: c?.piece?.id, barcode: c?.piece?.barcode }));
+        await SalesService.revertSoldPieces(pieceItems);
+      } catch (rollbackErr) {
+        console.error('[POS Terminal] Rollback error:', rollbackErr);
+      }
       alert(err.message || 'Network error executing POS checkout.');
     } finally {
       setIsScanning(false);

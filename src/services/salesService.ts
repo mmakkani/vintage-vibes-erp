@@ -84,7 +84,7 @@ export class SalesService {
     if (pieceId && isUuid(pieceId)) {
       const res = await supabase
         .from('inventory_pieces')
-        .update({ status: 'IN_STOCK', updated_at: new Date().toISOString() })
+        .update({ status: 'IN_STOCK', is_sold: false, updated_at: new Date().toISOString() })
         .eq('id', pieceId.trim())
         .select();
       data = res.data;
@@ -93,7 +93,7 @@ export class SalesService {
     if ((!data || data.length === 0) && barcode) {
       const res = await supabase
         .from('inventory_pieces')
-        .update({ status: 'IN_STOCK', updated_at: new Date().toISOString() })
+        .update({ status: 'IN_STOCK', is_sold: false, updated_at: new Date().toISOString() })
         .eq('barcode', barcode.trim())
         .select();
       data = res.data;
@@ -111,6 +111,25 @@ export class SalesService {
     }
 
     return data && data.length > 0 ? data[0] : null;
+  }
+
+  /**
+   * Revert any accidentally sold pieces back to IN_STOCK & is_sold: false
+   */
+  public static async revertSoldPieces(items: Array<{ id?: string; barcode?: string }>): Promise<void> {
+    if (!Array.isArray(items) || items.length === 0) return;
+    const isUuid = (val?: string) => Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val || '').trim()));
+    const ids = items.map(it => it?.id).filter(isUuid);
+    const barcodes = items.map(it => it?.barcode).filter(Boolean);
+
+    await Promise.allSettled([
+      ids.length > 0
+        ? supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK', updated_at: new Date().toISOString() }).in('id', ids)
+        : Promise.resolve(),
+      barcodes.length > 0
+        ? supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK', updated_at: new Date().toISOString() }).in('barcode', barcodes)
+        : Promise.resolve()
+    ]);
   }
 
   public static async getSalesInvoicesPaginated(options?: {
@@ -871,16 +890,18 @@ export class SalesService {
         }
 
         // If piece barcode/id exists
-        const pieceId = item.pieceId || item.barcode;
-        if (pieceId) {
-          try {
-            await supabase
-              .from('inventory_pieces')
-              .update({ is_sold: true, status: 'SOLD' })
-              .or(`id.eq.${pieceId},barcode.eq.${pieceId}`);
-          } catch (e) {
-            console.warn('Could not mark piece sold:', e);
+        const pieceId = item.pieceId;
+        const barcode = item.barcode;
+        const isUuid = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+        try {
+          if (pieceId && isUuid(pieceId)) {
+            await supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).eq('id', pieceId);
           }
+          if (barcode) {
+            await supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).eq('barcode', String(barcode).trim());
+          }
+        } catch (e) {
+          console.warn('Could not mark piece sold:', e);
         }
       }
     }

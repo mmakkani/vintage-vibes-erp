@@ -5128,14 +5128,262 @@ RULES FOR YOUR RESPONSE:
     // Finance Vouchers
     if (pathname.includes('/finance/vouchers')) {
       if (method === 'POST') {
+        let client: any = null;
         try {
-          const v = req.body;
-          const { insertVoucherPg } = await import('../src/modules/finance/voucherPgService.ts');
-          const result = await insertVoucherPg(v);
-          return res.status(200).json({ success: true, voucher: result });
+          client = await borrowClient();
+        } catch (_) {}
+
+        if (!client) {
+          return res.status(500).json({ success: false, error: 'Database connection failed' });
+        }
+        try {
+          const v = req.body || {};
+          const id = String(v.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v.id).trim()) ? v.id : crypto.randomUUID());
+          const date = v.date || new Date().toISOString().slice(0, 10);
+          const type = String(v.type || 'JOURNAL');
+          const typeUpper = type.toUpperCase();
+
+          let prefix = 'JV';
+          if (typeUpper.includes('CASH_RECEIPT') || typeUpper === 'CRV') prefix = 'CRV';
+          else if (typeUpper.includes('BANK_RECEIPT') || typeUpper === 'BRV') prefix = 'BRV';
+          else if (typeUpper.includes('CASH_PAYMENT') || typeUpper === 'CPV') prefix = 'CPV';
+          else if (typeUpper.includes('BANK_PAYMENT') || typeUpper === 'BPV') prefix = 'BPV';
+          else if (typeUpper.includes('CONTRA') || typeUpper === 'CV') prefix = 'CV';
+          else prefix = 'JV';
+
+          let voucherNo = String(v.voucherNo || '').trim();
+          const reference = String(v.reference || v.documentRef || '');
+          const narration = String(v.narration || '');
+          const totalDebit = Number(v.totalDebit || 0);
+          const totalCredit = Number(v.totalCredit || 0);
+          const status = String(v.status || 'POSTED');
+          const createdBy = String(v.createdBy || 'System');
+          const isAuto = Boolean(v.isAuto || v.is_auto);
+
+          const currency = String(v.currency || 'AED').toUpperCase();
+          const exchangeRate = Number(v.exchangeRate ?? v.exchange_rate ?? 1.0);
+          const baseCurrency = String(v.baseCurrency || v.base_currency || 'AED').toUpperCase();
+          const foreignTotalAmount = Number(
+            v.foreignTotalAmount ?? v.foreign_total_amount ?? (currency === 'AED' ? totalDebit : (totalDebit / (exchangeRate || 1.0)))
+          );
+
+          const lines = v.lines || v.entries || [];
+
+          await client.query('BEGIN');
+
+          if (!voucherNo || voucherNo.startsWith('VCH-')) {
+            const dateObj = date ? new Date(date) : new Date();
+            const safeDate = isNaN(dateObj.getTime()) ? new Date() : dateObj;
+            const mm = String(safeDate.getMonth() + 1).padStart(2, '0');
+            const yyyy = String(safeDate.getFullYear());
+            const prefixWithDate = `${prefix}-${mm}-${yyyy}`;
+
+            const seqRes = await client.query(
+              `SELECT voucher_no FROM vouchers WHERE voucher_no LIKE $1 UNION SELECT voucher_no FROM financial_vouchers WHERE voucher_no LIKE $1`,
+              [`${prefixWithDate}-%`]
+            );
+            let maxSeq = 0;
+            for (const r of seqRes.rows) {
+              const parts = String(r.voucher_no || '').split('-');
+              const num = parseInt(parts[parts.length - 1], 10);
+              if (!isNaN(num) && num > maxSeq) maxSeq = num;
+            }
+            voucherNo = `${prefixWithDate}-${String(maxSeq + 1).padStart(4, '0')}`;
+          }
+
+          // 1. vouchers
+          await client.query(`
+            INSERT INTO vouchers (id, voucher_no, date, type, reference, narration, total_debit, total_credit, status, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (id) DO UPDATE SET
+              voucher_no = EXCLUDED.voucher_no,
+              date = EXCLUDED.date,
+              total_debit = EXCLUDED.total_debit,
+              total_credit = EXCLUDED.total_credit,
+              status = EXCLUDED.status;
+          `, [id, voucherNo, date, type, reference, narration, totalDebit, totalCredit, status, createdBy]);
+
+          // 2. financial_vouchers
+          await client.query(`
+            INSERT INTO financial_vouchers (
+              id, voucher_no, date, voucher_date, type, voucher_type, reference, reference_no,
+              narration, total_debit, total_credit, total_amount, currency, exchange_rate,
+              base_currency, foreign_total_amount, status, created_by, is_auto
+            ) VALUES (
+              $1, $2, $3, $3, $4, $4, $5, $5,
+              $6, $7, $8, $7, $9, $10,
+              $11, $12, $13, $14, $15
+            ) ON CONFLICT (id) DO UPDATE SET
+              voucher_no = EXCLUDED.voucher_no,
+              date = EXCLUDED.date,
+              total_debit = EXCLUDED.total_debit,
+              total_credit = EXCLUDED.total_credit,
+              total_amount = EXCLUDED.total_amount,
+              status = EXCLUDED.status;
+          `, [id, voucherNo, date, type, reference, narration, totalDebit, totalCredit, currency, exchangeRate, baseCurrency, foreignTotalAmount, status, createdBy, isAuto]);
+
+          // Lines processing
+          if (Array.isArray(lines) && lines.length > 0) {
+            const codes = Array.from(new Set(lines.map((l: any) => String(l.accountCode || l.account_code || '').trim()).filter(Boolean)));
+
+            const chartMap = new Map<string, { id: string; name: string }>();
+            const coaMap = new Map<string, { id: string; name: string }>();
+
+            if (codes.length > 0) {
+              const chartRes = await client.query(
+                `SELECT id, code, name FROM chart_of_accounts WHERE code = ANY($1::text[])`,
+                [codes]
+              );
+              for (const r of chartRes.rows) {
+                chartMap.set(r.code, { id: r.id, name: r.name });
+              }
+
+              const coaRes = await client.query(
+                `SELECT id, code, name FROM coa_accounts WHERE code = ANY($1::text[])`,
+                [codes]
+              );
+              for (const r of coaRes.rows) {
+                coaMap.set(r.code, { id: r.id, name: r.name });
+              }
+            }
+
+            const isValidUuid = (val: any): boolean => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+
+            for (const l of lines) {
+              const lineId = String(l.id && isValidUuid(l.id) ? l.id : crypto.randomUUID());
+              const debit = Number(Number(l.debitAmount ?? l.debit ?? 0).toFixed(4));
+              const credit = Number(Number(l.creditAmount ?? l.credit ?? 0).toFixed(4));
+              const foreignDebit = Number(Number(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0)))).toFixed(4));
+              const foreignCredit = Number(Number(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0)))).toFixed(4));
+              const memo = l.memo || l.narration || narration;
+
+              const rawCode = String(l.accountCode || l.account_code || '').trim();
+              const chartEntry = chartMap.get(rawCode);
+              const coaEntry = coaMap.get(rawCode);
+
+              const resolvedCode = rawCode || '';
+              const resolvedName = String(l.accountName || l.account_name || chartEntry?.name || coaEntry?.name || '');
+              const chartAccId = chartEntry?.id || (isValidUuid(l.accountId || l.account_id) ? (l.accountId || l.account_id) : null);
+              const coaAccId = coaEntry?.id || null;
+
+              const resolvedPartyId = isValidUuid(l.partyId || l.party_id) ? (l.partyId || l.party_id) : null;
+              const resolvedPartyName = l.partyName || l.party_name || null;
+
+              // 3. voucher_entries
+              await client.query(`
+                INSERT INTO voucher_entries (
+                  id, voucher_id, voucher_no, account_id, account_code, account_name,
+                  party_id, party_name, debit, credit, currency, exchange_rate,
+                  foreign_debit, foreign_credit, particulars, memo, narration, date
+                ) VALUES (
+                  $1, $2, $3, $4, $5, $6,
+                  $7, $8, $9, $10, $11, $12,
+                  $13, $14, $15, $16, $17, $18
+                )
+              `, [
+                lineId, id, voucherNo, chartAccId, resolvedCode, resolvedName,
+                resolvedPartyId, resolvedPartyName, debit, credit, currency, exchangeRate,
+                foreignDebit, foreignCredit, memo, memo, memo, date
+              ]);
+
+              // 4. ledgers (FK strictly requires coa_accounts.id)
+              if (coaAccId) {
+                const ledgerId = crypto.randomUUID();
+                await client.query(`
+                  INSERT INTO ledgers (
+                    id, voucher_id, voucher_no, account_id, account_code, account_name,
+                    party_id, party_name, date, entry_date, debit, credit,
+                    currency, exchange_rate, foreign_debit, foreign_credit,
+                    balance, running_balance, narration, description
+                  ) VALUES (
+                    $1, $2, $3, $4, $5, $6,
+                    $7, $8, $9, $9, $10, $11,
+                    $12, $13, $14, $15,
+                    $16, $16, $17, $17
+                  )
+                `, [
+                  ledgerId, id, voucherNo, coaAccId, resolvedCode, resolvedName,
+                  resolvedPartyId, resolvedPartyName, date, debit, credit,
+                  currency, exchangeRate, foreignDebit, foreignCredit,
+                  Number((debit - credit).toFixed(4)), memo
+                ]);
+              }
+
+              // 5. general_ledger
+              const glId = crypto.randomUUID();
+              await client.query(`
+                INSERT INTO general_ledger (
+                  id, voucher_id, voucher_no, account_id, account_code, account_name,
+                  party_id, party_name, date, entry_date, debit, credit,
+                  currency, exchange_rate, foreign_debit, foreign_credit,
+                  balance, running_balance, narration, description
+                ) VALUES (
+                  $1, $2, $3, $4, $5, $6,
+                  $7, $8, $9, $9, $10, $11,
+                  $12, $13, $14, $15,
+                  $16, $16, $17, $17
+                )
+              `, [
+                glId, id, voucherNo, chartAccId, resolvedCode, resolvedName,
+                resolvedPartyId, resolvedPartyName, date, debit, credit,
+                currency, exchangeRate, foreignDebit, foreignCredit,
+                Number((debit - credit).toFixed(4)), memo
+              ]);
+
+              // 6. journal_entries (chart_of_accounts)
+              if (chartAccId) {
+                const jeId = crypto.randomUUID();
+                await client.query(`
+                  INSERT INTO journal_entries (
+                    id, voucher_id, account_id, party_id, debit, credit, description
+                  ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7
+                  )
+                `, [
+                  jeId, id, chartAccId, resolvedPartyId, debit, credit, memo
+                ]);
+              }
+            }
+          }
+
+          // 7. sync_coa_current_balances()
+          await client.query(`SELECT sync_coa_current_balances();`).catch(err => {
+            console.warn('[Voucher Gateway] sync_coa_current_balances notice:', err?.message);
+          });
+
+          await client.query('COMMIT');
+
+          return res.status(200).json({
+            success: true,
+            voucher: {
+              id,
+              voucherNo,
+              date,
+              type,
+              reference,
+              narration,
+              totalDebit,
+              totalCredit,
+              status,
+              currency,
+              exchangeRate,
+              baseCurrency,
+              foreignTotalAmount,
+              createdBy,
+              entries: lines,
+              lines
+            }
+          });
         } catch (err: any) {
+          if (client) {
+            try { await client.query('ROLLBACK'); } catch (_) {}
+          }
           console.error('[Gateway /finance/vouchers POST] Error:', err);
           return res.status(400).json({ success: false, error: err?.message || 'Failed to record financial voucher' });
+        } finally {
+          if (client && typeof client.release === 'function') {
+            try { client.release(); } catch (_) {}
+          }
         }
       }
 
