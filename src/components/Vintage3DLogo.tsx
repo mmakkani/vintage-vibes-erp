@@ -112,13 +112,13 @@ export const Vintage3DLogo: React.FC<Vintage3DLogoProps> = ({
             ===================================================================== */}
         {showOuterOrbit && (
           <>
-            {/* Primary Clockwise Celestial Orbit */}
+            {/* Primary Clockwise Celestial Orbit (Active only on hover for 0% idle GPU) */}
             <div
               className="absolute -inset-2.5 rounded-full pointer-events-none"
               style={{
                 transformStyle: 'preserve-3d',
                 transform: 'translateZ(-4px)',
-                animation: `orbitSpinClockwise ${orbitDuration} linear infinite`,
+                animation: isHovered ? `orbitSpinClockwise ${orbitDuration} linear infinite` : 'none',
                 transition: 'animation-duration 0.4s ease'
               }}
             >
@@ -156,13 +156,13 @@ export const Vintage3DLogo: React.FC<Vintage3DLogoProps> = ({
               </svg>
             </div>
 
-            {/* Secondary Counter-Rotating Orbital Ring */}
+            {/* Secondary Counter-Rotating Orbital Ring (Active only on hover for 0% idle GPU) */}
             <div
               className="absolute -inset-1 rounded-full pointer-events-none"
               style={{
                 transformStyle: 'preserve-3d',
                 transform: 'translateZ(-1px)',
-                animation: `orbitSpinCounter ${counterOrbitDuration} linear infinite`,
+                animation: isHovered ? `orbitSpinCounter ${counterOrbitDuration} linear infinite` : 'none',
                 transition: 'animation-duration 0.4s ease'
               }}
             >
@@ -276,7 +276,7 @@ export const Vintage3DLogo: React.FC<Vintage3DLogoProps> = ({
             style={{
               transformStyle: 'preserve-3d',
               WebkitTransformStyle: 'preserve-3d',
-              animation: `vSpin3D ${vSpinDuration} linear infinite`,
+              animation: isHovered ? `vSpin3D ${vSpinDuration} linear infinite` : 'none',
               transition: 'animation-duration 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)'
             }}
           >

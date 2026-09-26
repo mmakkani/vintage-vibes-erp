@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
-import { Sparkles, TrendingUp, Ship, Coins, ShieldCheck, DollarSign, ArrowUpRight } from 'lucide-react';
-import { luxuryAudio } from '../utils/luxuryAudio.ts';
+import React from 'react';
+import { TrendingUp, Ship, Coins, ShieldCheck, DollarSign } from 'lucide-react';
 
 interface DubaiLiveSoukTickerProps {
   className?: string;
@@ -9,8 +8,6 @@ interface DubaiLiveSoukTickerProps {
 export const DubaiLiveSoukTicker: React.FC<DubaiLiveSoukTickerProps> = ({
   className = ''
 }) => {
-  const [isPaused, setIsPaused] = useState(false);
-
   const tickerItems = [
     {
       icon: <Coins className="w-3.5 h-3.5 text-amber-500" />,
@@ -72,71 +69,48 @@ export const DubaiLiveSoukTicker: React.FC<DubaiLiveSoukTickerProps> = ({
 
   return (
     <div
-      onMouseEnter={() => {
-        setIsPaused(true);
-        luxuryAudio.playMechanicalClick(0.9);
-      }}
-      onMouseLeave={() => setIsPaused(false)}
-      className={`relative w-full overflow-hidden bg-gradient-to-r from-amber-900 via-amber-950 to-slate-950 border-b border-amber-500/40 text-amber-200 py-1.5 text-xs shadow-md select-none ${className}`}
-      title="Live Dubai Gold Souk, Forex Exchange & Inbound Cargo Telemetry (Hover to Pause)"
+      className={`relative w-full bg-gradient-to-r from-amber-950 via-slate-950 to-amber-950 border-b border-amber-500/40 text-amber-200 py-1.5 text-xs shadow-md select-none ${className}`}
+      title="Live Dubai Gold Souk, Forex Exchange & Inbound Cargo Telemetry"
     >
-      {/* Subtle Gold Foil Sheen Overlay */}
-      <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(251,191,36,0.15)_50%,transparent_100%)] pointer-events-none" />
+      <div className="w-full px-3 sm:px-4 flex items-center justify-between gap-3 overflow-x-auto no-scrollbar">
+        {/* Left Badge: Live Status Pill */}
+        <div className="flex items-center gap-1.5 shrink-0 px-2.5 py-0.5 rounded-full bg-amber-900/60 border border-amber-400/40 text-[10px] font-black uppercase tracking-wider text-amber-300">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]"></span>
+          <span className="font-serif">DUBAI SOUK LIVE</span>
+        </div>
 
-      {/* Left Badge: Live Status Pill */}
-      <div className="absolute left-0 top-0 bottom-0 z-10 px-3 sm:px-4 bg-gradient-to-r from-amber-900 via-amber-900/90 to-transparent flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-amber-300">
-        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-        <span className="font-serif">DUBAI SOUK LIVE</span>
-      </div>
-
-      {/* Marquee Track Container */}
-      <div
-        className="flex whitespace-nowrap will-change-transform pl-44"
-        style={{
-          animation: `tickerMarquee 38s linear infinite`,
-          animationPlayState: isPaused ? 'paused' : 'running'
-        }}
-      >
-        {/* Render items twice for continuous infinite scroll */}
-        {[...tickerItems, ...tickerItems].map((item, idx) => (
-          <div
-            key={`ticker-${idx}`}
-            className="inline-flex items-center gap-2.5 mx-6 text-[11px] font-medium transition-colors hover:text-white cursor-pointer"
-          >
-            <div className="p-1 rounded bg-amber-500/20 border border-amber-400/30 flex items-center justify-center">
-              {item.icon}
-            </div>
-            <span className="font-bold text-amber-300 text-[10px] tracking-wider uppercase font-mono">
-              {item.label}:
-            </span>
-            <span className="text-white font-mono font-bold tracking-tight">
-              {item.value}
-            </span>
-            <span
-              className={`text-[9px] font-bold px-1.5 py-0.2 rounded font-mono ${
-                item.positive
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                  : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-              }`}
+        {/* Live Rates Row (Static, Zero GPU compositing load) */}
+        <div className="flex items-center gap-3 sm:gap-5 overflow-x-auto no-scrollbar py-0.5">
+          {tickerItems.map((item, idx) => (
+            <div
+              key={`ticker-${idx}`}
+              className="inline-flex items-center gap-2 text-[11px] font-medium shrink-0 transition-colors hover:text-white cursor-pointer"
             >
-              {item.change}
-            </span>
-            <span className="text-amber-600/70 font-bold mx-2">◆</span>
-          </div>
-        ))}
+              <div className="p-1 rounded bg-amber-500/20 border border-amber-400/30 flex items-center justify-center">
+                {item.icon}
+              </div>
+              <span className="font-bold text-amber-300 text-[10px] tracking-wider uppercase font-mono">
+                {item.label}:
+              </span>
+              <span className="text-white font-mono font-bold tracking-tight">
+                {item.value}
+              </span>
+              <span
+                className={`text-[9px] font-bold px-1.5 py-0.2 rounded font-mono ${
+                  item.positive
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                }`}
+              >
+                {item.change}
+              </span>
+              {idx < tickerItems.length - 1 && (
+                <span className="text-amber-600/70 font-bold ml-1.5">◆</span>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
-
-      {/* Embedded Hardware-Accelerated Marquee Animation */}
-      <style>{`
-        @keyframes tickerMarquee {
-          0% {
-            transform: translateX(0%);
-          }
-          100% {
-            transform: translateX(-50%);
-          }
-        }
-      `}</style>
     </div>
   );
 };
