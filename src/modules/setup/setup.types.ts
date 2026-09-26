@@ -123,6 +123,21 @@ export interface CompanyProfile {
   pixelTracking?: PixelTrackingConfig;
   metaPixelId?: string;
   tiktokPixelId?: string;
+  // Sales & Dynamic COA Routing Configuration
+  cogsAccountCode?: string; // e.g. '5100-02' (COGS Finished Goods)
+  cogs_account_code?: string;
+  finishedGoodsAccountCode?: string; // e.g. '1160-01' (Finished Goods Asset)
+  finished_goods_account_code?: string;
+  posRevenueAccountCode?: string; // e.g. '4110-01' (POS Counter Retail Sales)
+  pos_revenue_account_code?: string;
+  walkInCustomerAccountCode?: string; // e.g. '1130-05' (Walk In Customer Control Khata)
+  walk_in_customer_account_code?: string;
+  vatOutputAccountCode?: string; // e.g. '2140-01' (VAT Output 5%)
+  vat_output_account_code?: string;
+  cashAccountCode?: string; // e.g. '1110-01' (Cash in Hand Counter)
+  cash_account_code?: string;
+  bankAccountCode?: string; // e.g. '1120-01' (Bank / Card Clearing)
+  bank_account_code?: string;
 }
 
 export interface PixelTrackingConfig {

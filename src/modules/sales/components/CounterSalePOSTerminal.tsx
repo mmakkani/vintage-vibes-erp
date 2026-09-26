@@ -198,6 +198,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   const [cart, setCart] = useState<CounterCartItem[]>([]);
   const [barcodeInput, setBarcodeInput] = useState('');
   const [isScanning, setIsScanning] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [scanFeedback, setScanFeedback] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   // Available pieces for manual search dropdown
@@ -813,12 +814,50 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       setPaymentMode(effectivePaymentMode);
     }
     setIsScanning(true);
+    setIsSubmitting(true);
     try {
       const invoiceNum = `POS-${Date.now().toString().slice(-6)}`;
       const safeCart = Array.isArray(cart) ? cart : [];
       const subtotalAmt = safeCart.reduce((sum, c) => sum + ((Number(c?.sellingPrice) || 0) - (Number(c?.discount) || 0)), 0);
       const vatAmt = Number((subtotalAmt * 0.05).toFixed(2));
       const totalAmt = Number((subtotalAmt + vatAmt + giftBoxFee).toFixed(2));
+
+      // Extract dynamic accounts from your settings/config state
+      const settings = (activeProfile || {}) as any;
+      const cogsAcc = settings?.cogsAccountCode || settings?.cogs_account_code || '5100-02';
+      const fgAcc = settings?.finishedGoodsAccountCode || settings?.finished_goods_account_code || '1160-01';
+      const revenueAcc = settings?.posRevenueAccountCode || settings?.pos_revenue_account_code || '4110-01';
+      const walkInAcc = settings?.walkInCustomerAccountCode || settings?.walk_in_customer_account_code || '1130-05';
+      const vatAcc = settings?.vatOutputAccountCode || settings?.vat_output_account_code || '2140-01';
+      const isCash = String(effectivePaymentMode).toLowerCase() === 'cash';
+      const paymentAccCode = isCash
+        ? (settings?.cashAccountCode || settings?.cash_account_code || '1110-01')
+        : (settings?.bankAccountCode || settings?.bank_account_code || '1120-01');
+
+      // Validation: Halt checkout if incomplete
+      if (!cogsAcc || !fgAcc || !revenueAcc || !walkInAcc) {
+        alert("Audit Error: Dynamic COA mapping incomplete. Check Sales/COA settings.");
+        setIsSubmitting(false);
+        setIsScanning(false);
+        return;
+      }
+
+      // Calculate total COGS safely:
+      const totalCogs = Number(
+        safeCart.reduce((sum: number, item: any) => {
+          const rawCost = item?.cost_price ?? item?.cogsCost ?? item?.piece?.cogsCost ?? item?.piece?.costPrice ?? item?.piece?.calculatedCostPrice ?? 0;
+          const num = Number(rawCost);
+          return sum + (isNaN(num) ? 0 : num);
+        }, 0).toFixed(2)
+      );
+
+      // Strict Cost Check: Extract the landed cost price for each item. If totalCogs <= 0, HALT checkout:
+      if (totalCogs <= 0) {
+        alert("Cost of Goods Sold (COGS) is zero or unassigned. POS checkout cannot proceed without landed cost.");
+        setIsSubmitting(false);
+        setIsScanning(false);
+        return;
+      }
 
       // Offline resilience: buffer locally if network is offline
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -910,25 +949,14 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         payment_status: 'PAID'
       });
 
-      // 2. Dual-Entry Financial Voucher: CRITICAL AUDIT MANDATE
+      // 2. Dual-Entry Financial Voucher: CRITICAL AUDIT MANDATE (3-Part POS Voucher)
       // Financial Vouchers & Ledgers MUST hardcode the partyId and accountId to official Control Khata (1130-05 Walk In Customer)
       // DO NOT pass crm_retail_customers.id into any ledger or voucher party_id field.
       const CONTROL_PARTY_ID = CrmService.CONTROL_WALK_IN_PARTY_ID; // 5eb820da-3bb1-4e54-8fd8-59b3db72aebf (CLI-0010)
-      const CONTROL_ACC_CODE = CrmService.CONTROL_WALK_IN_ACCOUNT_CODE; // 1130-05
       const CONTROL_ACC_NAME = CrmService.CONTROL_WALK_IN_ACCOUNT_NAME; // Walk In Customer (Customer)
 
-      // Calculate total COGS safely:
-      const totalCogs = Number(
-        safeCart.reduce((sum: number, item: any) => {
-          const rawCost = item?.cost_price ?? item?.cogsCost ?? item?.piece?.cogsCost ?? item?.piece?.costPrice ?? item?.piece?.calculatedCostPrice ?? 0;
-          const num = Number(rawCost);
-          return sum + (isNaN(num) ? 0 : num);
-        }, 0).toFixed(2)
-      );
-
       let createdVoucherNo = `VCH-${Date.now().toString().slice(-6)}`;
-      const paymentAccCode = effectivePaymentMode === 'CASH' ? '1110-01' : '1120-01';
-      const paymentAccName = effectivePaymentMode === 'CASH' ? 'Cash in Hand (Counter)' : 'Bank / Card Clearing';
+      const paymentAccName = isCash ? 'Cash in Hand (Counter)' : 'Bank / Card Clearing';
       const vRes = await FinanceService.addVoucher({
         date: new Date().toISOString().slice(0, 10),
         type: 'CRV',
@@ -936,19 +964,41 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         narration: `POS Counter Sale ${invoiceNum} - ${selectedCustomer?.name || 'Walk-In Customer'}`,
         createdBy: operatorName || 'Cashier Lead',
         lines: [
+          // Part 1: Inventory Depletion & COGS
           {
-            accountId: CONTROL_ACC_CODE,
-            accountCode: CONTROL_ACC_CODE,
+            accountId: cogsAcc,
+            accountCode: cogsAcc,
+            accountName: 'Cost of Goods Sold - Finished Goods',
+            partyId: CONTROL_PARTY_ID,
+            partyName: 'Walk In Customer',
+            debit: totalCogs,
+            credit: 0,
+            memo: `COGS for POS Sale ${invoiceNum}`
+          },
+          {
+            accountId: fgAcc,
+            accountCode: fgAcc,
+            accountName: 'Finished Goods',
+            partyId: CONTROL_PARTY_ID,
+            partyName: 'Walk In Customer',
+            debit: 0,
+            credit: totalCogs,
+            memo: `Inventory deduction ${invoiceNum}`
+          },
+          // Part 2: Revenue Recognition & Receivable
+          {
+            accountId: walkInAcc,
+            accountCode: walkInAcc,
             accountName: CONTROL_ACC_NAME,
             partyId: CONTROL_PARTY_ID,
             partyName: 'Walk In Customer',
             debit: totalAmt,
             credit: 0,
-            memo: `POS Sale ${invoiceNum}`
+            memo: `Receivable for POS Sale ${invoiceNum}`
           },
           {
-            accountId: '4110-01',
-            accountCode: '4110-01',
+            accountId: revenueAcc,
+            accountCode: revenueAcc,
             accountName: 'POS / Counter Retail Sales',
             partyId: CONTROL_PARTY_ID,
             partyName: 'Walk In Customer',
@@ -957,8 +1007,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             memo: `Sales Revenue ${invoiceNum}`
           },
           ...(vatAmt > 0 ? [{
-            accountId: '2140-01',
-            accountCode: '2140-01',
+            accountId: vatAcc,
+            accountCode: vatAcc,
             accountName: 'VAT Output 5%',
             partyId: CONTROL_PARTY_ID,
             partyName: 'Walk In Customer',
@@ -966,6 +1016,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             credit: vatAmt,
             memo: `5% UAE VAT ${invoiceNum}`
           }] : []),
+          // Part 3: Payment Settlement
           {
             accountId: paymentAccCode,
             accountCode: paymentAccCode,
@@ -974,40 +1025,18 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             partyName: 'Walk In Customer',
             debit: totalAmt,
             credit: 0,
-            memo: `Settlement ${invoiceNum} (${effectivePaymentMode})`
+            memo: `Payment Received ${invoiceNum} (${effectivePaymentMode})`
           },
           {
-            accountId: CONTROL_ACC_CODE,
-            accountCode: CONTROL_ACC_CODE,
+            accountId: walkInAcc,
+            accountCode: walkInAcc,
             accountName: CONTROL_ACC_NAME,
             partyId: CONTROL_PARTY_ID,
             partyName: 'Walk In Customer',
             debit: 0,
             credit: totalAmt,
-            memo: `Customer Payment Settlement ${invoiceNum}`
-          },
-          ...(totalCogs > 0 ? [
-            {
-              accountId: '5100-02', // COGS
-              accountCode: '5100-02',
-              accountName: 'Cost of Goods Sold - Finished Goods',
-              partyId: CONTROL_PARTY_ID,
-              partyName: 'Walk In Customer',
-              debit: totalCogs,
-              credit: 0,
-              memo: `COGS for POS Sale ${invoiceNum}`
-            },
-            {
-              accountId: '1160-01', // Finished Goods
-              accountCode: '1160-01',
-              accountName: 'Finished Goods',
-              partyId: CONTROL_PARTY_ID,
-              partyName: 'Walk In Customer',
-              debit: 0,
-              credit: totalCogs,
-              memo: `Inventory deduction for POS Sale ${invoiceNum}`
-            }
-          ] : [])
+            memo: `Payment Cleared ${invoiceNum}`
+          }
         ]
       });
       if (vRes?.voucherNo) {
@@ -1120,7 +1149,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           }))
         },
         voucher: { voucherNo: createdVoucherNo },
-        cogsSummary: { totalCogs: safeCart.reduce((sum, c) => sum + (Number(c?.cogsCost) || 0), 0) },
+        cogsSummary: { totalCogs },
         pieces: safeCart.map(c => c.piece)
       });
 
@@ -1140,6 +1169,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       alert(err.message || 'Network error executing POS checkout.');
     } finally {
       setIsScanning(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -2495,12 +2525,13 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                 onClick={() => handleConfirmFinalCheckout()}
                 disabled={
                   isScanning ||
+                  isSubmitting ||
                   (grandTotal > 0 && paymentMode === 'CASH' && Number(cashTendered) < grandTotal) ||
                   (paymentMode === 'CARD_POS' && posMachineStage !== 'APPROVED')
                 }
                 className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-emerald-600/30 flex items-center gap-2 transition active:scale-95 cursor-pointer"
               >
-                {isScanning ? (
+                {isScanning || isSubmitting ? (
                   <span>Posting COGS & Inventory Relief...</span>
                 ) : grandTotal === 0 ? (
                   <>

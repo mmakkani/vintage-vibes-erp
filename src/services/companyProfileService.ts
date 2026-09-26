@@ -83,7 +83,21 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
     sorting: false,
     vouchers: false,
     inventory: false
-  }
+  },
+  cogsAccountCode: '5100-02',
+  cogs_account_code: '5100-02',
+  finishedGoodsAccountCode: '1160-01',
+  finished_goods_account_code: '1160-01',
+  posRevenueAccountCode: '4110-01',
+  pos_revenue_account_code: '4110-01',
+  walkInCustomerAccountCode: '1130-05',
+  walk_in_customer_account_code: '1130-05',
+  vatOutputAccountCode: '2140-01',
+  vat_output_account_code: '2140-01',
+  cashAccountCode: '1110-01',
+  cash_account_code: '1110-01',
+  bankAccountCode: '1120-01',
+  bank_account_code: '1120-01'
 };
 
 export function cleanWhatsAppNumber(input?: string): string {
@@ -220,6 +234,13 @@ export class CompanyProfileService {
       posBridge: data.pos_bridge || data.posBridge,
       maintenance_modules: data.maintenance_modules || data.maintenanceModules || DEFAULT_COMPANY_PROFILE.maintenance_modules,
       maintenanceModules: data.maintenance_modules || data.maintenanceModules || DEFAULT_COMPANY_PROFILE.maintenance_modules,
+      cogsAccountCode: data.cogs_account_code || data.cogsAccountCode || data.profile_data?.cogsAccountCode || DEFAULT_COMPANY_PROFILE.cogsAccountCode,
+      finishedGoodsAccountCode: data.finished_goods_account_code || data.finishedGoodsAccountCode || data.profile_data?.finishedGoodsAccountCode || DEFAULT_COMPANY_PROFILE.finishedGoodsAccountCode,
+      posRevenueAccountCode: data.pos_revenue_account_code || data.posRevenueAccountCode || data.profile_data?.posRevenueAccountCode || DEFAULT_COMPANY_PROFILE.posRevenueAccountCode,
+      walkInCustomerAccountCode: data.walk_in_customer_account_code || data.walkInCustomerAccountCode || data.profile_data?.walkInCustomerAccountCode || DEFAULT_COMPANY_PROFILE.walkInCustomerAccountCode,
+      vatOutputAccountCode: data.vat_output_account_code || data.vatOutputAccountCode || data.profile_data?.vatOutputAccountCode || DEFAULT_COMPANY_PROFILE.vatOutputAccountCode,
+      cashAccountCode: data.cash_account_code || data.cashAccountCode || data.profile_data?.cashAccountCode || DEFAULT_COMPANY_PROFILE.cashAccountCode,
+      bankAccountCode: data.bank_account_code || data.bankAccountCode || data.profile_data?.bankAccountCode || DEFAULT_COMPANY_PROFILE.bankAccountCode,
       ...(data.profile_data || {})
     };
 
@@ -305,7 +326,14 @@ export class CompanyProfileService {
         social_links: socialLinks,
         whatsapp_orders_number: cleanedWa,
         whatsappOrderNumber: cleanedWa,
-        maintenance_modules: profile.maintenance_modules || profile.maintenanceModules || (this.cachedProfile?.maintenance_modules ?? DEFAULT_COMPANY_PROFILE.maintenance_modules)
+        maintenance_modules: profile.maintenance_modules || profile.maintenanceModules || (this.cachedProfile?.maintenance_modules ?? DEFAULT_COMPANY_PROFILE.maintenance_modules),
+        cogsAccountCode: profile.cogsAccountCode || profile.cogs_account_code || DEFAULT_COMPANY_PROFILE.cogsAccountCode,
+        finishedGoodsAccountCode: profile.finishedGoodsAccountCode || profile.finished_goods_account_code || DEFAULT_COMPANY_PROFILE.finishedGoodsAccountCode,
+        posRevenueAccountCode: profile.posRevenueAccountCode || profile.pos_revenue_account_code || DEFAULT_COMPANY_PROFILE.posRevenueAccountCode,
+        walkInCustomerAccountCode: profile.walkInCustomerAccountCode || profile.walk_in_customer_account_code || DEFAULT_COMPANY_PROFILE.walkInCustomerAccountCode,
+        vatOutputAccountCode: profile.vatOutputAccountCode || profile.vat_output_account_code || DEFAULT_COMPANY_PROFILE.vatOutputAccountCode,
+        cashAccountCode: profile.cashAccountCode || profile.cash_account_code || DEFAULT_COMPANY_PROFILE.cashAccountCode,
+        bankAccountCode: profile.bankAccountCode || profile.bank_account_code || DEFAULT_COMPANY_PROFILE.bankAccountCode
       },
       updated_at: new Date().toISOString()
     };

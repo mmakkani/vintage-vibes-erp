@@ -75,7 +75,7 @@ import { CompanyProfileService } from '../../../services/companyProfileService.t
 import { SetupService } from '../../../services/setupService.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 
-export type SetupSubTab = 'profile' | 'ai_vision' | 'maintenance' | 'payment_gateways' | 'live_multicast_sockets' | 'banks' | 'pos_terminal' | 'bale_qr' | 'currency' | 'categories' | 'sizes' | 'items' | 'brands' | 'labels' | 'shops' | 'whatsapp' | 'security';
+export type SetupSubTab = 'profile' | 'sales_coa' | 'ai_vision' | 'maintenance' | 'payment_gateways' | 'live_multicast_sockets' | 'banks' | 'pos_terminal' | 'bale_qr' | 'currency' | 'categories' | 'sizes' | 'items' | 'brands' | 'labels' | 'shops' | 'whatsapp' | 'security';
 
 const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
@@ -134,12 +134,12 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       const urlParams = new URLSearchParams(window.location.search);
       let sub = urlParams.get('setupSubTab') as any;
       if (sub === 'social_sockets' || sub === 'live_stream') sub = 'live_multicast_sockets';
-      if (sub && ['profile', 'ai_vision', 'maintenance', 'payment_gateways', 'live_multicast_sockets', 'banks', 'pos_terminal', 'currency', 'categories', 'sizes', 'items', 'brands', 'labels', 'shops', 'whatsapp', 'bale_qr', 'security'].includes(sub)) {
+      if (sub && ['profile', 'sales_coa', 'ai_vision', 'maintenance', 'payment_gateways', 'live_multicast_sockets', 'banks', 'pos_terminal', 'currency', 'categories', 'sizes', 'items', 'brands', 'labels', 'shops', 'whatsapp', 'bale_qr', 'security'].includes(sub)) {
         return sub;
       }
       let saved = localStorage.getItem('vintage_setup_subtab') as any;
       if (saved === 'social_sockets' || saved === 'live_stream') saved = 'live_multicast_sockets';
-      if (saved && ['profile', 'ai_vision', 'maintenance', 'payment_gateways', 'live_multicast_sockets', 'banks', 'pos_terminal', 'currency', 'categories', 'sizes', 'items', 'brands', 'labels', 'shops', 'whatsapp', 'bale_qr', 'security'].includes(saved)) {
+      if (saved && ['profile', 'sales_coa', 'ai_vision', 'maintenance', 'payment_gateways', 'live_multicast_sockets', 'banks', 'pos_terminal', 'currency', 'categories', 'sizes', 'items', 'brands', 'labels', 'shops', 'whatsapp', 'bale_qr', 'security'].includes(saved)) {
         return saved;
       }
     } catch {}
@@ -180,6 +180,32 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   const [confirmPinInput, setConfirmPinInput] = useState('');
 
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(DEFAULT_COMPANY_PROFILE);
+
+  // Sales & Dynamic COA Routing Configuration State
+  const [salesCoaConfig, setSalesCoaConfig] = useState({
+    cogsAccountCode: '5100-02',
+    finishedGoodsAccountCode: '1160-01',
+    posRevenueAccountCode: '4110-01',
+    walkInCustomerAccountCode: '1130-05',
+    vatOutputAccountCode: '2140-01',
+    cashAccountCode: '1110-01',
+    bankAccountCode: '1120-01'
+  });
+  const [isSavingSalesCoa, setIsSavingSalesCoa] = useState(false);
+
+  useEffect(() => {
+    if (companyProfile) {
+      setSalesCoaConfig({
+        cogsAccountCode: companyProfile.cogsAccountCode || companyProfile.cogs_account_code || '5100-02',
+        finishedGoodsAccountCode: companyProfile.finishedGoodsAccountCode || companyProfile.finished_goods_account_code || '1160-01',
+        posRevenueAccountCode: companyProfile.posRevenueAccountCode || companyProfile.pos_revenue_account_code || '4110-01',
+        walkInCustomerAccountCode: companyProfile.walkInCustomerAccountCode || companyProfile.walk_in_customer_account_code || '1130-05',
+        vatOutputAccountCode: companyProfile.vatOutputAccountCode || companyProfile.vat_output_account_code || '2140-01',
+        cashAccountCode: companyProfile.cashAccountCode || companyProfile.cash_account_code || '1110-01',
+        bankAccountCode: companyProfile.bankAccountCode || companyProfile.bank_account_code || '1120-01'
+      });
+    }
+  }, [companyProfile]);
   const [currencies, setCurrencies] = useState<CurrencyItem[]>([]);
   const [items, setItems] = useState<ItemMaster[]>([]);
   const [brands, setBrands] = useState<BrandMaster[]>([]);
@@ -532,6 +558,52 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       setPosPingStatus('FAILED');
       showMsg('Could not reach POS terminal. Please verify IP address and local subnet.', 'error');
     }
+  };
+
+  const handleSaveSalesCoaConfig = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!companyProfile) return;
+    setIsSavingSalesCoa(true);
+    try {
+      const updatedProfile: CompanyProfile = {
+        ...companyProfile,
+        cogsAccountCode: salesCoaConfig.cogsAccountCode,
+        cogs_account_code: salesCoaConfig.cogsAccountCode,
+        finishedGoodsAccountCode: salesCoaConfig.finishedGoodsAccountCode,
+        finished_goods_account_code: salesCoaConfig.finishedGoodsAccountCode,
+        posRevenueAccountCode: salesCoaConfig.posRevenueAccountCode,
+        pos_revenue_account_code: salesCoaConfig.posRevenueAccountCode,
+        walkInCustomerAccountCode: salesCoaConfig.walkInCustomerAccountCode,
+        walk_in_customer_account_code: salesCoaConfig.walkInCustomerAccountCode,
+        vatOutputAccountCode: salesCoaConfig.vatOutputAccountCode,
+        vat_output_account_code: salesCoaConfig.vatOutputAccountCode,
+        cashAccountCode: salesCoaConfig.cashAccountCode,
+        cash_account_code: salesCoaConfig.cashAccountCode,
+        bankAccountCode: salesCoaConfig.bankAccountCode,
+        bank_account_code: salesCoaConfig.bankAccountCode
+      };
+      await CompanyProfileService.updateCompanyProfile(updatedProfile);
+      setCompanyProfile(updatedProfile);
+      showMsg('Sales & COA account routing settings saved successfully!');
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving Sales & COA settings', 'error');
+    } finally {
+      setIsSavingSalesCoa(false);
+    }
+  };
+
+  const handleResetSalesCoaDefaults = () => {
+    setSalesCoaConfig({
+      cogsAccountCode: '5100-02',
+      finishedGoodsAccountCode: '1160-01',
+      posRevenueAccountCode: '4110-01',
+      walkInCustomerAccountCode: '1130-05',
+      vatOutputAccountCode: '2140-01',
+      cashAccountCode: '1110-01',
+      bankAccountCode: '1120-01'
+    });
+    showMsg('COA account mappings reset to system defaults. Click Save to persist.');
   };
 
   // Bank Account Handlers (Auto-synced to COA)
@@ -1391,6 +1463,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
             { id: 'payment_gateways', label: 'Payment Gateway (Apple Pay / Stripe)', icon: <Zap className="w-3.5 h-3.5 text-amber-500" /> },
             { id: 'live_multicast_sockets', label: 'Live Multicast & Social Sockets Hub', icon: <Radio className="w-3.5 h-3.5 text-red-500" /> },
             { id: 'banks', label: 'Bank Accounts & COA', icon: <Landmark className="w-3.5 h-3.5 text-emerald-600" /> },
+            { id: 'sales_coa', label: 'Sales & COA Settings', icon: <Landmark className="w-3.5 h-3.5 text-indigo-600" /> },
             { id: 'pos_terminal', label: 'POS Card Machines', icon: <CreditCard className="w-3.5 h-3.5 text-blue-600" /> },
             { id: 'bale_qr', label: 'Thermal Barcode & QR Config', icon: <Printer className="w-3.5 h-3.5" /> },
             { id: 'currency', label: 'Currencies & FX', icon: <DollarSign className="w-3.5 h-3.5" /> },
@@ -2183,6 +2256,209 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* SALES & DYNAMIC CHART OF ACCOUNTS (COA) ROUTING SETTINGS */}
+      {subTab === 'sales_coa' && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 max-w-4xl space-y-6">
+          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-200">
+                <Landmark className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wider flex items-center gap-2">
+                  Sales & Chart of Accounts (COA) Dynamic Routing
+                  <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300">
+                    Live Enterprise COA
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Configure Chart of Accounts codes for POS counter sales, inventory relief (COGS), VAT output, and payment settlements. Changes take effect instantly in the POS terminal without code modifications.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleResetSalesCoaDefaults}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs shadow-xs transition cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+                <span>Reset to Defaults</span>
+              </button>
+            </div>
+          </div>
+
+          <form onSubmit={handleSaveSalesCoaConfig} className="space-y-6">
+            {/* PART 1: Inventory Depletion & COGS Accounts */}
+            <div className="rounded-xl border border-blue-200/80 bg-blue-50/30 p-4 space-y-4">
+              <div className="flex items-center gap-2 border-b border-blue-200/60 pb-2">
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-blue-600 text-white">Part 1</span>
+                <h4 className="font-bold text-xs uppercase tracking-wider text-blue-900">Inventory Depletion & Cost of Goods Sold (COGS)</h4>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Cost of Goods Sold (COGS) Account Code
+                  </label>
+                  <input
+                    type="text"
+                    value={salesCoaConfig.cogsAccountCode}
+                    onChange={e => setSalesCoaConfig({ ...salesCoaConfig, cogsAccountCode: e.target.value })}
+                    placeholder="e.g. 5100-02"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Default: <code className="font-mono text-slate-700 font-bold">5100-02</code> (Cost of Goods Sold - Finished Goods). Debited with landed cost.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Finished Goods (Inventory Asset) Account Code
+                  </label>
+                  <input
+                    type="text"
+                    value={salesCoaConfig.finishedGoodsAccountCode}
+                    onChange={e => setSalesCoaConfig({ ...salesCoaConfig, finishedGoodsAccountCode: e.target.value })}
+                    placeholder="e.g. 1160-01"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Default: <code className="font-mono text-slate-700 font-bold">1160-01</code> (Finished Goods Asset). Credited with landed cost to relieve inventory.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* PART 2: Revenue Recognition & Receivable */}
+            <div className="rounded-xl border border-indigo-200/80 bg-indigo-50/30 p-4 space-y-4">
+              <div className="flex items-center gap-2 border-b border-indigo-200/60 pb-2">
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-indigo-600 text-white">Part 2</span>
+                <h4 className="font-bold text-xs uppercase tracking-wider text-indigo-900">Revenue Recognition & Khata Receivable</h4>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Walk-In Customer Khata Account Code
+                  </label>
+                  <input
+                    type="text"
+                    value={salesCoaConfig.walkInCustomerAccountCode}
+                    onChange={e => setSalesCoaConfig({ ...salesCoaConfig, walkInCustomerAccountCode: e.target.value })}
+                    placeholder="e.g. 1130-05"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Default: <code className="font-mono text-slate-700 font-bold">1130-05</code> (Walk-In Customer Control Khata). Debited with gross invoice total.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    POS Retail Sales Revenue Account Code
+                  </label>
+                  <input
+                    type="text"
+                    value={salesCoaConfig.posRevenueAccountCode}
+                    onChange={e => setSalesCoaConfig({ ...salesCoaConfig, posRevenueAccountCode: e.target.value })}
+                    placeholder="e.g. 4110-01"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Default: <code className="font-mono text-slate-700 font-bold">4110-01</code> (POS / Counter Retail Sales). Credited with net subtotal.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    VAT Output (5% Tax Liability) Account Code
+                  </label>
+                  <input
+                    type="text"
+                    value={salesCoaConfig.vatOutputAccountCode}
+                    onChange={e => setSalesCoaConfig({ ...salesCoaConfig, vatOutputAccountCode: e.target.value })}
+                    placeholder="e.g. 2140-01"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Default: <code className="font-mono text-slate-700 font-bold">2140-01</code> (VAT Output 5%). Credited with collected UAE sales tax.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* PART 3: Payment Settlement Accounts */}
+            <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/30 p-4 space-y-4">
+              <div className="flex items-center gap-2 border-b border-emerald-200/60 pb-2">
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-emerald-600 text-white">Part 3</span>
+                <h4 className="font-bold text-xs uppercase tracking-wider text-emerald-900">Payment Clearing & Settlement</h4>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Cash in Hand (Counter Drawer) Account Code
+                  </label>
+                  <input
+                    type="text"
+                    value={salesCoaConfig.cashAccountCode}
+                    onChange={e => setSalesCoaConfig({ ...salesCoaConfig, cashAccountCode: e.target.value })}
+                    placeholder="e.g. 1110-01"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Default: <code className="font-mono text-slate-700 font-bold">1110-01</code> (Cash in Hand - Counter). Debited when cash payment is received.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Bank / Card Clearing Account Code
+                  </label>
+                  <input
+                    type="text"
+                    value={salesCoaConfig.bankAccountCode}
+                    onChange={e => setSalesCoaConfig({ ...salesCoaConfig, bankAccountCode: e.target.value })}
+                    placeholder="e.g. 1120-01"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Default: <code className="font-mono text-slate-700 font-bold">1120-01</code> (Bank / Card Clearing). Debited for card/electronic payments.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Save Buttons & Action Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200">
+              <div className="text-xs text-slate-500 flex items-center gap-1.5">
+                <CheckCircle className="w-4 h-4 text-emerald-600" />
+                <span>Accounts automatically validate during checkout and reflect in general ledger.</span>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSavingSalesCoa}
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider shadow-sm transition cursor-pointer"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>{isSavingSalesCoa ? 'Saving Settings...' : 'Save Sales & COA Settings'}</span>
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
