@@ -49,6 +49,8 @@ import { CrmService, CrmRetailCustomer } from '../../../services/crmService.ts';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
 import { openThermalLabelPrintWindow, openGiftReceiptPrintWindow, openPosThermalReceiptPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { useBarcodeScanner } from '../../../hooks/useBarcodeScanner.ts';
+import { PurchaseService } from '../../../services/purchaseService.ts';
+import { supabase } from '../../../lib/supabase.ts';
 import { offlineQueue } from '../../../services/offlineQueueService.ts';
 
 /**
@@ -356,16 +358,50 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       setAllPieces(stockPieces.filter(p => !p.isSold && p.status === 'IN_STOCK'));
     }
     try {
-      const [piecesRes, crmCustomersRes, channelSettingsRes] = await Promise.all([
-        fetch('/api/sales/stock-pieces').then(r => r.ok ? r.json() : []).catch(() => []),
+      const [piecesRes, crmCustomersRes, partiesRes, channelSettingsRes] = await Promise.all([
+        (!stockPieces || stockPieces.length === 0)
+          ? PurchaseService.getInventoryPieces(2000, true).catch(() => [])
+          : Promise.resolve(stockPieces),
         CrmService.getCrmCustomers().catch(() => []),
+        (!clients || clients.length === 0)
+          ? PartiesService.getParties().then(pts => pts.filter(p => p.type === 'CLIENT')).catch(() => [])
+          : Promise.resolve(clients),
         SalesService.getSalesChannelSettings().catch(() => [])
       ]);
+
       if (Array.isArray(piecesRes) && piecesRes.length > 0) {
         setAllPieces(piecesRes.filter((p: any) => !p.isSold && p.status === 'IN_STOCK'));
       }
-      const list = Array.isArray(crmCustomersRes) ? crmCustomersRes : [];
-      setParties([DEFAULT_WALK_IN_CUSTOMER, ...list.filter(c => c.id !== CrmService.CONTROL_WALK_IN_PARTY_ID)]);
+
+      const crmList = Array.isArray(crmCustomersRes) ? crmCustomersRes : [];
+      const partiesList = Array.isArray(partiesRes) ? partiesRes : [];
+
+      // Combine CRM customers and parties, ensuring Control Walk-In Customer is primary
+      const customerMap = new Map<string, Party>();
+      customerMap.set(CrmService.CONTROL_WALK_IN_PARTY_ID, DEFAULT_WALK_IN_CUSTOMER);
+
+      partiesList.forEach(p => {
+        if (p.id !== CrmService.CONTROL_WALK_IN_PARTY_ID) {
+          customerMap.set(p.id, p);
+        }
+      });
+
+      crmList.forEach(c => {
+        if (c.id !== CrmService.CONTROL_WALK_IN_PARTY_ID && !customerMap.has(c.id)) {
+          customerMap.set(c.id, {
+            id: c.id,
+            name: c.name || 'Customer',
+            company: c.company || '',
+            phone: c.phone || '',
+            email: c.email || '',
+            type: 'CLIENT',
+            address: c.address || '',
+            account_map: { receivableAccountId: CrmService.CONTROL_WALK_IN_ACCOUNT_CODE, isControlKhataOnly: true }
+          } as Party);
+        }
+      });
+
+      setParties(Array.from(customerMap.values()));
 
       if (Array.isArray(channelSettingsRes)) {
         const map: Record<string, string> = {};
@@ -604,7 +640,48 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     }
 
     // Lookup piece in stock
-    const piece = allPieces.find(p => p.barcode.toLowerCase() === code.toLowerCase());
+    let piece = allPieces.find(p => p.barcode.toLowerCase() === code.toLowerCase());
+
+    // Live Database Fallback: if not found in memory (e.g., initial hydration or freshly sorted piece)
+    if (!piece) {
+      try {
+        const { data: dbPiece } = await supabase
+          .from('inventory_pieces')
+          .select(PurchaseService.INVENTORY_PIECES_COLUMNS)
+          .ilike('barcode', code)
+          .maybeSingle();
+
+        if (dbPiece) {
+          const mappedPiece: PieceBreakdownItem = {
+            id: dbPiece.id,
+            barcode: dbPiece.barcode,
+            itemName: dbPiece.item_name || 'Vintage Garment',
+            brandName: dbPiece.brand_name || 'Vintage Brand',
+            brandTier: dbPiece.brand_tier || 'TIER_3_MASS_MARKET',
+            labelGrade: dbPiece.label_grade || 'Grade A',
+            shopLocation: dbPiece.shop_location || 'SHOP_FLOOR',
+            weightKg: Number(dbPiece.weight_kg || 0.45),
+            weightGrams: Number(dbPiece.weight_grams || 450),
+            costPrice: Number(dbPiece.cost_price || 0),
+            calculatedCostPrice: Number(dbPiece.cost_price || 0),
+            sellingPrice: Number(dbPiece.retail_price_aed || dbPiece.estimated_price || 0),
+            size: dbPiece.size_scanned || 'M',
+            countryOfOrigin: dbPiece.country_of_origin || 'Unknown',
+            style: dbPiece.style || '',
+            frontImage: dbPiece.front_image_url || '',
+            isSold: Boolean(dbPiece.is_sold),
+            status: dbPiece.status || 'IN_STOCK'
+          };
+          piece = mappedPiece;
+          if (!mappedPiece.isSold && mappedPiece.status === 'IN_STOCK') {
+            setAllPieces(prev => [mappedPiece, ...prev.filter(p => p.barcode.toLowerCase() !== code.toLowerCase())]);
+          }
+        }
+      } catch (err) {
+        console.warn('Live piece lookup error:', err);
+      }
+    }
+
     if (!piece) {
       setScanFeedback({
         text: `❌ Barcode "${code}" not found in available stock. Check tag or inward bale.`,

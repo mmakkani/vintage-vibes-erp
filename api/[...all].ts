@@ -9972,6 +9972,54 @@ RULES FOR YOUR RESPONSE:
         }
       }
 
+      // Available Stock Pieces for POS & Sales
+      if ((pathname.endsWith('/sales/stock-pieces') || pathname.includes('/sales/stock-pieces')) && method === 'GET') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        try {
+          const result = await client.query(`
+            SELECT 
+              id, gate_pass_id, barcode, item_name, brand_name, brand_tier, label_grade, 
+              shop_location, weight_kg, weight_grams, cost_per_gram, cost_price, 
+              estimated_price, retail_price_aed, size_scanned, country_of_origin, 
+              style, front_image_url, back_image_url, tag_image_url, is_sold, status, 
+              locked_by_buyer, locked_by_booth, lock_expires_at, reserved_until, 
+              market_segment, is_grail, ai_suggested_price, is_price_overridden, 
+              global_insights, created_at
+            FROM inventory_pieces 
+            WHERE is_sold = false AND status = 'IN_STOCK'
+            ORDER BY created_at DESC 
+            LIMIT 2000;
+          `);
+          const formatted = result.rows.map(r => ({
+            id: r.id,
+            barcode: r.barcode,
+            itemName: r.item_name || 'Vintage Garment',
+            brandName: r.brand_name || 'Vintage Brand',
+            brandTier: r.brand_tier || 'TIER_3_MASS_MARKET',
+            labelGrade: r.label_grade || 'Grade A',
+            shopLocation: r.shop_location || 'SHOP_FLOOR',
+            weightKg: Number(r.weight_kg || 0.45),
+            weightGrams: Number(r.weight_grams || 450),
+            costPrice: Number(r.cost_price || 0),
+            calculatedCostPrice: Number(r.cost_price || 0),
+            sellingPrice: Number(r.retail_price_aed || r.estimated_price || 0),
+            size: r.size_scanned || 'M',
+            countryOfOrigin: r.country_of_origin || 'Unknown',
+            style: r.style || '',
+            frontImage: r.front_image_url || '',
+            isSold: Boolean(r.is_sold),
+            status: r.status || 'IN_STOCK',
+            createdAt: r.created_at
+          }));
+          return res.status(200).json(formatted);
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr?.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
       // 16. Omnichannel Sales Settings, Dispatch & COD Courier Clearing
       if ((pathname.endsWith('/sales/settings') || pathname.includes('/sales/settings')) && method === 'GET') {
         const client = await getPgClient();
