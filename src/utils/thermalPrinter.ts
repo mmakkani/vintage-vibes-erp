@@ -1038,6 +1038,79 @@ export interface GiftReceiptData {
   }>;
 }
 
+export const VINTAGE_VIBES_THERMAL_MEDALLION_SVG = `
+  <div class="receipt-logo-inline" style="text-align: center; margin: 0 auto 6px auto;">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="68" height="68" style="display: inline-block;">
+      <!-- Outer Concentric Carved Rings -->
+      <circle cx="250" cy="250" r="242" fill="none" stroke="#000" stroke-width="5" />
+      <circle cx="250" cy="250" r="236" fill="none" stroke="#000" stroke-width="2" />
+      <circle cx="250" cy="250" r="222" fill="none" stroke="#000" stroke-width="3" />
+
+      <!-- Circular Paths for Typography -->
+      <path id="posArcTop" d="M 58 250 A 192 192 0 1 1 442 250" fill="none" />
+      <path id="posArcBottom" d="M 442 250 A 192 192 0 1 1 58 250" fill="none" />
+
+      <!-- Top Text: VINTAGE VIBES -->
+      <text font-family="'Times New Roman', 'Playfair Display', Georgia, serif" font-weight="900" font-size="34" fill="#000" letter-spacing="8">
+        <textPath href="#posArcTop" startOffset="50%" text-anchor="middle">
+          VINTAGE VIBES
+        </textPath>
+      </text>
+
+      <!-- Bottom Text: GENERAL TRADING L.L.C -->
+      <text font-family="'Times New Roman', 'Cinzel', serif" font-weight="800" font-size="20" fill="#000" letter-spacing="4">
+        <textPath href="#posArcBottom" startOffset="50%" text-anchor="middle">
+          GENERAL TRADING L.L.C
+        </textPath>
+      </text>
+
+      <!-- Left 3 Stars -->
+      <g transform="translate(68, 230) scale(0.7)" fill="#000">
+        <polygon points="0,-10 3,-3 10,-3 5,2 7,9 0,5 -7,9 -5,2 -10,-3 -3,-3" />
+      </g>
+      <g transform="translate(62, 252) scale(0.9)" fill="#000">
+        <polygon points="0,-10 3,-3 10,-3 5,2 7,9 0,5 -7,9 -5,2 -10,-3 -3,-3" />
+      </g>
+      <g transform="translate(68, 274) scale(0.7)" fill="#000">
+        <polygon points="0,-10 3,-3 10,-3 5,2 7,9 0,5 -7,9 -5,2 -10,-3 -3,-3" />
+      </g>
+
+      <!-- Right 3 Stars -->
+      <g transform="translate(432, 230) scale(0.7)" fill="#000">
+        <polygon points="0,-10 3,-3 10,-3 5,2 7,9 0,5 -7,9 -5,2 -10,-3 -3,-3" />
+      </g>
+      <g transform="translate(438, 252) scale(0.9)" fill="#000">
+        <polygon points="0,-10 3,-3 10,-3 5,2 7,9 0,5 -7,9 -5,2 -10,-3 -3,-3" />
+      </g>
+      <g transform="translate(432, 274) scale(0.7)" fill="#000">
+        <polygon points="0,-10 3,-3 10,-3 5,2 7,9 0,5 -7,9 -5,2 -10,-3 -3,-3" />
+      </g>
+
+      <!-- Inner Beaded Ring -->
+      <circle cx="250" cy="250" r="148" fill="none" stroke="#000" stroke-width="4" stroke-dasharray="4,3" />
+      <circle cx="250" cy="250" r="138" fill="none" stroke="#000" stroke-width="2" />
+
+      <!-- 3D Globe Wireframe Grid -->
+      <g>
+        <ellipse cx="250" cy="250" rx="134" ry="134" fill="none" stroke="#000" stroke-width="2" />
+        <ellipse cx="250" cy="250" rx="95" ry="134" fill="none" stroke="#000" stroke-width="1.5" />
+        <ellipse cx="250" cy="250" rx="50" ry="134" fill="none" stroke="#000" stroke-width="1.5" />
+        <line x1="250" y1="116" x2="250" y2="384" stroke="#000" stroke-width="2" />
+        <line x1="116" y1="250" x2="384" y2="250" stroke="#000" stroke-width="2" />
+        <path d="M 148 185 Q 250 215 352 185" fill="none" stroke="#000" stroke-width="1.5" />
+        <path d="M 148 315 Q 250 285 352 315" fill="none" stroke="#000" stroke-width="1.5" />
+      </g>
+
+      <!-- Medallion Center Background Circle -->
+      <circle cx="250" cy="250" r="95" fill="#fff" stroke="#000" stroke-width="4" />
+
+      <!-- Interlocking Double "VV" Royal Monogram -->
+      <path d="M 152 216 L 218 216 L 250 318 L 282 216 L 348 216 L 272 352 L 228 352 Z" fill="#000" />
+      <path d="M 184 228 L 226 228 L 250 298 L 274 228 L 316 228 L 264 324 L 236 324 Z" fill="#fff" />
+    </svg>
+  </div>
+`;
+
 export function openGiftReceiptPrintWindow(data: GiftReceiptData): Window | null {
   const win = window.open('', '_blank', 'width=440,height=650,resizable=yes,scrollbars=yes');
   if (!win) {
@@ -1153,6 +1226,7 @@ export function openGiftReceiptPrintWindow(data: GiftReceiptData): Window | null
 
   <div class="gift-container">
     <div class="header text-center">
+      ${VINTAGE_VIBES_THERMAL_MEDALLION_SVG}
       <div class="title">${data.companyName || 'VINTAGE VIBES DUBAI'}</div>
       <div style="font-size: 8.5px; color: #444;">Al Quoz Industrial 3, Dubai &bull; TRN: ${data.trn || '100482910300003'}</div>
       <div class="gift-badge">🎁 GIFT RECEIPT</div>
@@ -1306,12 +1380,7 @@ export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): W
 
   const logoMarkup = !isDefaultLogo && resolvedLogoUrl
     ? `<img src="${resolvedLogoUrl}" class="receipt-logo" alt="Company Logo" onerror="this.style.display='none'" />`
-    : `<div class="receipt-logo-inline" style="text-align:center;margin-bottom:4px;">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 38" width="130" height="22" style="display:inline-block;">
-          <text x="120" y="18" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="15" font-weight="900" letter-spacing="2" text-anchor="middle" fill="#000">VINTAGE VIBES</text>
-          <text x="120" y="32" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="8.5" font-weight="700" letter-spacing="3" text-anchor="middle" fill="#333">DUBAI &bull; ARCHIVE</text>
-        </svg>
-      </div>`;
+    : VINTAGE_VIBES_THERMAL_MEDALLION_SVG;
 
   const safeItems = Array.isArray(data.items) ? data.items : [];
   const itemsHtml = safeItems.map((it) => {
