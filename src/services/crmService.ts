@@ -15,8 +15,12 @@ export interface CrmRetailCustomer {
   lastOrderDate?: string | null;
   created_at?: string;
   createdAt?: string;
-  // Compatibility fields for UI rendering
-  code?: string;
+  // Omnichannel 2.0 & B2B Engine fields
+  auth_id?: string | null;
+  customer_type?: 'RETAIL' | 'B2B_RESELLER';
+  vip_tier?: 'BRONZE' | 'SILVER' | 'GOLD' | 'PLATINUM' | string;
+  wallet_balance?: number;
+  walletBalance?: number;
   type?: string;
   party_type?: string;
   coa_account_id?: string;
@@ -217,6 +221,7 @@ export class CrmService {
   private static formatCustomer(row: any): CrmRetailCustomer {
     const totalSpent = Number(row.total_spent || row.totalSpent || 0);
     const totalOrders = Number(row.total_orders || row.totalOrders || 0);
+    const walletBalance = Number(row.wallet_balance || row.walletBalance || 0);
     return {
       id: String(row.id),
       code: `CRM-${String(row.id).slice(0, 6).toUpperCase()}`,
@@ -226,6 +231,11 @@ export class CrmService {
       phone: row.phone || '',
       email: row.email || '',
       address: row.address || '',
+      auth_id: row.auth_id || null,
+      customer_type: (row.customer_type || 'RETAIL') as any,
+      vip_tier: row.vip_tier || 'BRONZE',
+      wallet_balance: walletBalance,
+      walletBalance: walletBalance,
       total_spent: totalSpent,
       totalSpent: totalSpent,
       total_orders: totalOrders,
@@ -235,13 +245,101 @@ export class CrmService {
       createdAt: row.created_at || new Date().toISOString(),
       // Read-only compatibility helpers
       type: 'CUSTOMER',
-      party_type: 'RETAIL',
+      party_type: (row.customer_type === 'B2B_RESELLER' ? 'B2B_RESELLER' : 'RETAIL'),
       coa_account_id: CrmService.CONTROL_WALK_IN_ACCOUNT_CODE,
       account_map: { receivableAccountId: CrmService.CONTROL_WALK_IN_ACCOUNT_CODE, isControlKhataOnly: true },
-      current_balance: 0,
+      current_balance: walletBalance,
       credit_limit: 0,
       is_active: true
     };
+  }
+
+  public static async updateCustomerType(customerId: string, type: 'RETAIL' | 'B2B_RESELLER'): Promise<void> {
+    if (!customerId) return;
+    try {
+      const res = await fetch(`/api/parties/retail/${encodeURIComponent(customerId)}/type`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customer_type: type })
+      });
+      if (!res.ok) {
+        await supabase.from('crm_retail_customers').update({ customer_type: type }).eq('id', customerId);
+      }
+    } catch (_) {
+      await supabase.from('crm_retail_customers').update({ customer_type: type }).eq('id', customerId);
+    }
+  }
+
+  public static async adjustWalletBalance(params: {
+    customerId: string;
+    amount: number;
+    type: 'CREDIT' | 'DEBIT';
+    description: string;
+    orderId?: string;
+  }): Promise<{ success: boolean; newBalance: number }> {
+    const { customerId, amount, type, description, orderId } = params;
+    if (!customerId || !amount || amount <= 0) {
+      throw new Error('Valid customer ID and positive amount required');
+    }
+
+    try {
+      const res = await fetch(`/api/parties/retail/${encodeURIComponent(customerId)}/wallet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount, type, description, orderId })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data;
+      }
+    } catch (_) {}
+
+    // Fallback via Supabase
+    const { data: cust } = await supabase.from('crm_retail_customers').select('wallet_balance').eq('id', customerId).single();
+    const current = Number(cust?.wallet_balance || 0);
+    const newBal = type === 'CREDIT' ? current + amount : Math.max(0, current - amount);
+    await supabase.from('crm_retail_customers').update({ wallet_balance: newBal }).eq('id', customerId);
+    await supabase.from('customer_wallet_transactions').insert([{
+      customer_id: customerId,
+      amount,
+      transaction_type: type,
+      description,
+      reference_order_id: orderId || null
+    }]);
+
+    return { success: true, newBalance: newBal };
+  }
+
+  public static async getCustomerByAuthId(authId: string): Promise<CrmRetailCustomer | null> {
+    if (!authId) return null;
+    try {
+      const { data, error } = await supabase
+        .from('crm_retail_customers')
+        .select('*')
+        .eq('auth_id', authId)
+        .maybeSingle();
+
+      if (error || !data) return null;
+      return this.formatCustomer(data);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  public static async getWalletTransactions(customerId: string): Promise<any[]> {
+    if (!customerId) return [];
+    try {
+      const { data, error } = await supabase
+        .from('customer_wallet_transactions')
+        .select('*')
+        .eq('customer_id', customerId)
+        .order('created_at', { ascending: false });
+
+      if (error || !data) return [];
+      return data;
+    } catch (_) {
+      return [];
+    }
   }
 
   private static formatInvoice(r: any) {

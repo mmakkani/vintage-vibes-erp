@@ -27,6 +27,7 @@ interface ProductCardProps {
   onInspectGarment?: (piece: PieceBreakdownItem) => void;
   onOpenFitGuide?: (silhouetteId?: string) => void;
   isVanishing?: boolean;
+  isB2B?: boolean;
 }
 
 export const ProductCard: React.FC<ProductCardProps> = ({
@@ -37,7 +38,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onInspectTag,
   onInspectGarment,
   onOpenFitGuide,
-  isVanishing = false
+  isVanishing = false,
+  isB2B = false
 }) => {
   if (!piece) return null;
 
@@ -57,10 +59,35 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     return 2 + (Math.abs(hash) % 4);
   }, [piece?.barcode, piece?.id]);
 
+  // Deterministic live in-cart count (1 or 2 carts based on barcode hash)
+  const cartCount = React.useMemo(() => {
+    let hash = 0;
+    const str = piece?.barcode || piece?.id || 'vv-1';
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 3) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return 1 + (Math.abs(hash) % 2);
+  }, [piece?.barcode, piece?.id]);
+
   const defaultFrontImage = piece.frontImageUrl || null;
   const defaultBackImage = piece.backImageUrl || null;
 
-  const price = piece.estimatedPrice || piece.retailPriceAed || 295;
+  const basePrice = piece.estimatedPrice || piece.retailPriceAed || 295;
+  const b2bDiscountRate = 0.20; // 20% B2B wholesale pricing rule
+  const effectivePrice = isB2B ? Math.round(basePrice * (1 - b2bDiscountRate)) : basePrice;
+  const price = effectivePrice;
+
+  // Active piece copy with effective B2B pricing if applicable
+  const activePiece = React.useMemo(() => {
+    if (!isB2B) return piece;
+    return {
+      ...piece,
+      estimatedPrice: effectivePrice,
+      retailPriceAed: effectivePrice
+    };
+  }, [piece, isB2B, effectivePrice]);
+
   const gradeBadge = piece.labelGrade || 'Grade A+ (Pristine)';
   const measurements = getGarmentMeasurements(piece);
 
@@ -220,11 +247,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-1">
-                {/* Live Viewers Scarcity Badge */}
-                <span className="px-2 py-0.5 rounded-full bg-slate-950/85 backdrop-blur-md border border-rose-500/50 text-[9.5px] font-mono font-bold text-rose-300 shadow-md flex items-center gap-1">
+              {/* Dynamic FOMO Engine Badges */}
+              <div className="flex items-center justify-between gap-1 flex-wrap">
+                <span className="px-2 py-0.5 rounded-full bg-slate-950/85 backdrop-blur-md border border-rose-500/50 text-[9px] font-mono font-bold text-rose-300 shadow-md flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
-                  <span>👁️ {viewerCount} viewing now</span>
+                  <span>🔥 {viewerCount} viewing this Grail</span>
+                </span>
+
+                <span className="px-2 py-0.5 rounded-full bg-slate-950/85 backdrop-blur-md border border-amber-400/50 text-[9px] font-mono font-bold text-amber-300 shadow-md flex items-center gap-1">
+                  <span>🛒 In {cartCount} carts</span>
                 </span>
               </div>
             </div>
@@ -236,7 +267,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 onClick={(e) => {
                   e.stopPropagation();
                   luxuryAudio.playMechanicalClick();
-                  onInspectTag(piece);
+                  onInspectTag(activePiece);
                 }}
                 className="px-2.5 py-1.5 rounded-xl bg-white/95 hover:bg-white text-slate-900 font-extrabold text-[10px] shadow-lg flex items-center gap-1 transition-transform hover:scale-105 cursor-pointer border border-amber-300"
               >
@@ -306,16 +337,29 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             {/* Pricing & Double Action: 1-Click WhatsApp Claim + Instant Buy */}
             <div className="pt-2.5 border-t border-amber-200/80 space-y-2">
               <div className="flex items-baseline justify-between">
-                <span className="text-[10px] text-slate-600 uppercase font-extrabold block leading-none">Price</span>
+                <div>
+                  <span className={`text-[10px] uppercase font-extrabold block leading-none ${isB2B ? 'text-purple-700' : 'text-slate-600'}`}>
+                    {isB2B ? 'Wholesale B2B Rate' : 'Price'}
+                  </span>
+                  {isB2B && (
+                    <span className="text-[9px] text-slate-400 line-through font-mono">
+                      Retail AED {Number(basePrice).toLocaleString()}
+                    </span>
+                  )}
+                </div>
                 <div className="text-right">
-                  <span className="text-xl font-black text-amber-950 font-mono tracking-tight drop-shadow-xs">
+                  <span className={`text-xl font-black font-mono tracking-tight drop-shadow-xs ${isB2B ? 'text-purple-900' : 'text-amber-950'}`}>
                     AED {Number(price).toLocaleString()}
                   </span>
-                  {(piece.globalInsights?.usa_market_usd || (piece as any).global_insights?.usa_market_usd) && (
+                  {isB2B ? (
+                    <div className="text-[9px] font-bold text-purple-700 uppercase">
+                      🏢 20% B2B Tier Applied
+                    </div>
+                  ) : (piece.globalInsights?.usa_market_usd || (piece as any).global_insights?.usa_market_usd) ? (
                     <div className="text-[9px] font-mono text-emerald-700 font-bold">
                       Int'l Val: ~${piece.globalInsights?.usa_market_usd || (piece as any).global_insights?.usa_market_usd} USD
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
 
@@ -327,7 +371,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                     onClick={(e) => {
                       e.stopPropagation();
                       luxuryAudio.playMechanicalClick();
-                      openWhatsAppClaim(piece);
+                      openWhatsAppClaim(activePiece);
                     }}
                     className="px-2 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 text-white font-black text-[10px] uppercase tracking-wider shadow-xs hover:shadow-emerald-600/30 flex items-center justify-center gap-1 transition-all transform active:scale-95 cursor-pointer border border-emerald-400"
                     title="Claim 1-of-1 Piece on WhatsApp"
@@ -342,7 +386,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                     onClick={(e) => {
                       e.stopPropagation();
                       luxuryAudio.playMechanicalClick();
-                      if (onAddToCart) onAddToCart(piece);
+                      if (onAddToCart) onAddToCart(activePiece);
                     }}
                     className={`px-2 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-wider shadow-xs flex items-center justify-center gap-1 transition-all transform active:scale-95 cursor-pointer border ${
                       isInCart
@@ -361,7 +405,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onInstantBuy(piece);
+                    onInstantBuy(activePiece);
                   }}
                   className="w-full btn-3d btn-3d-amber py-1.5 text-slate-950 font-black text-[11px] uppercase tracking-wider rounded-xl flex items-center justify-center gap-1 shadow-md transition-all transform active:scale-95 cursor-pointer"
                 >
@@ -462,7 +506,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onInstantBuy(piece);
+                  onInstantBuy(activePiece);
                 }}
                 className="btn-3d btn-3d-amber py-2 text-slate-950 font-black text-[11px] uppercase rounded-xl flex items-center justify-center gap-1 cursor-pointer"
               >

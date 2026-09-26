@@ -17,7 +17,10 @@ import {
   ChevronLeft,
   Flame,
   Shirt,
-  Scissors
+  Scissors,
+  Package,
+  Building2,
+  Phone
 } from 'lucide-react';
 import { PieceBreakdownItem } from '../purchase/purchase.types.ts';
 import { ProductCard } from './ProductCard.tsx';
@@ -26,6 +29,8 @@ import { luxuryAudio } from '../../utils/luxuryAudio.ts';
 import { pixelTracking } from '../../utils/pixelTracking.ts';
 import { supabase } from '../../supabaseClient.ts';
 import { isPieceEvicted } from '../../services/queryClient.ts';
+import { CrmRetailCustomer } from '../../services/crmService.ts';
+import { EcommerceService, WholesaleBaleItem } from '../../services/ecommerceService.ts';
 
 export interface DynamicCategory {
   id: string;
@@ -47,6 +52,8 @@ export interface ShopCatalogViewProps {
   onInspectGarment: (piece: PieceBreakdownItem) => void;
   onOpenFitGuide: (silhouetteId?: string) => void;
   onBackToHome?: () => void;
+  isB2B?: boolean;
+  customerUser?: CrmRetailCustomer | null;
 }
 
 const SIZE_OPTIONS = ['ALL', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'Free Size'];
@@ -87,7 +94,9 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
   onInspectTag,
   onInspectGarment,
   onOpenFitGuide,
-  onBackToHome
+  onBackToHome,
+  isB2B = false,
+  customerUser = null
 }) => {
   // Filter States
   const [searchQuery, setSearchQuery] = useState<string>(initialSearch);
@@ -100,6 +109,21 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
   const [selectedCollectionId, setSelectedCollectionId] = useState<string>('ALL');
   const [collectionsList, setCollectionsList] = useState<{ id: string; name: string; code?: string; season?: string; year?: number }[]>([]);
   const [sortBy, setSortBy] = useState<string>('newest');
+
+  // Wholesale Bales state for B2B Resellers
+  const [wholesaleBales, setWholesaleBales] = useState<WholesaleBaleItem[]>([]);
+  const [isLoadingBales, setIsLoadingBales] = useState<boolean>(false);
+
+  // Fetch Wholesale Bales when B2B user selects Wholesale Bales category
+  useEffect(() => {
+    if (isB2B && selectedCategory === 'WHOLESALE_BALES') {
+      setIsLoadingBales(true);
+      EcommerceService.getWholesaleBales()
+        .then(data => setWholesaleBales(data))
+        .catch(() => setWholesaleBales([]))
+        .finally(() => setIsLoadingBales(false));
+    }
+  }, [isB2B, selectedCategory]);
 
   // Fetch seasonal collections on mount
   useEffect(() => {
@@ -461,22 +485,34 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
               )}
               {onBackToHome && <span>/</span>}
               <span className="text-slate-800 font-bold">Shop Full Vault Catalog</span>
-              {activeCategoryObject && (
+              {selectedCategory === 'WHOLESALE_BALES' ? (
+                <>
+                  <span>/</span>
+                  <span className="text-amber-900 font-black">📦 Wholesale Bales (Unopened)</span>
+                </>
+              ) : activeCategoryObject ? (
                 <>
                   <span>/</span>
                   <span className="text-amber-900 font-black">{activeCategoryObject.name}</span>
                 </>
-              )}
+              ) : null}
             </div>
             <h1 className="text-2xl sm:text-4xl font-black font-serif text-slate-950 flex items-center gap-2.5">
               <span>Verified 1-of-1 Vault Archive</span>
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-mono font-black bg-amber-200 text-amber-950 border border-amber-400">
-                {totalItems} Available
+                {selectedCategory === 'WHOLESALE_BALES' ? `${wholesaleBales.length} Bales` : `${totalItems} Available`}
               </span>
             </h1>
             <p className="text-xs sm:text-sm text-slate-600 mt-1 max-w-2xl font-medium">
               Every single piece is a verified 1-of-1 original vintage artifact. Once claimed, it is archived from the vault forever.
             </p>
+
+            {isB2B && (
+              <div className="mt-2.5 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-400/90 text-amber-950 font-black text-xs border border-amber-500 shadow-2xs">
+                <Building2 className="w-4 h-4 text-amber-900" />
+                <span>💼 Verified B2B Wholesale Reseller Account Active • 20% Wholesale Tier Applied Automatically</span>
+              </div>
+            )}
           </div>
 
           {/* Quick Filter Reset and Count badge */}
@@ -554,6 +590,24 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                 <span>All Categories</span>
                 {selectedCategory === 'ALL' && <Check className="w-3.5 h-3.5 stroke-[3]" />}
               </button>
+
+              {isB2B && (
+                <button
+                  type="button"
+                  onClick={() => handleFilterChange(() => setSelectedCategory('WHOLESALE_BALES'))}
+                  className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between cursor-pointer border ${
+                    selectedCategory === 'WHOLESALE_BALES'
+                      ? 'bg-amber-500 text-slate-950 font-black shadow-xs border-amber-600'
+                      : 'bg-amber-100/70 hover:bg-amber-200 text-amber-950 border-amber-300'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5 font-black truncate">
+                    <Package className="w-3.5 h-3.5 text-amber-900 shrink-0" />
+                    📦 Wholesale Bales
+                  </span>
+                  {selectedCategory === 'WHOLESALE_BALES' && <Check className="w-3.5 h-3.5 stroke-[3] shrink-0" />}
+                </button>
+              )}
 
               {categories.map(cat => {
                 const isSelected =
@@ -802,7 +856,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
 
               {selectedCategory !== 'ALL' && (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-200 text-amber-950 border border-amber-400 shadow-2xs">
-                  <span>Category: {activeCategoryObject?.name || selectedCategory}</span>
+                  <span>Category: {selectedCategory === 'WHOLESALE_BALES' ? '📦 Wholesale Bales (Unopened)' : (activeCategoryObject?.name || selectedCategory)}</span>
                   <button
                     type="button"
                     onClick={() => handleFilterChange(() => setSelectedCategory('ALL'))}
@@ -888,8 +942,122 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
             </div>
           )}
 
-          {/* PRODUCT GRID / LOADING / EMPTY STATE */}
-          {isLoading ? (
+          {/* PRODUCT GRID / B2B WHOLESALE BALES / LOADING / EMPTY STATE */}
+          {isB2B && selectedCategory === 'WHOLESALE_BALES' ? (
+            isLoadingBales ? (
+              <div className="py-28 flex flex-col items-center justify-center text-slate-600 bg-white/60 rounded-2xl border-2 border-dashed border-amber-300">
+                <RefreshCw className="w-8 h-8 text-amber-600 animate-spin mb-3" />
+                <p className="font-extrabold text-slate-950 text-sm">Loading Unopened Wholesale Bales...</p>
+                <p className="text-xs text-slate-500 mt-1">Connecting directly with Al Ain Central Inward Quarantine Vault</p>
+              </div>
+            ) : wholesaleBales.length === 0 ? (
+              <div className="py-24 text-center text-slate-600 bg-white/90 rounded-2xl border-2 border-amber-300 p-8 shadow-md">
+                <Package className="w-14 h-14 text-amber-800/40 mx-auto mb-3" />
+                <h3 className="font-extrabold text-xl text-slate-950 font-serif">
+                  No Unopened Wholesale Bales In Quarantine
+                </h3>
+                <p className="text-xs text-slate-600 mt-2 max-w-md mx-auto leading-relaxed">
+                  All current container bales have been sorted into piece-level inventory. New import containers arrive bi-weekly from USA, Japan & Europe.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const waMsg = encodeURIComponent("Hello Vintage Vibes Wholesale Team, I am a verified B2B Reseller inquiring about upcoming wholesale bale shipments.");
+                    window.open(`https://wa.me/971554186086?text=${waMsg}`, '_blank');
+                  }}
+                  className="mt-5 px-6 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-500 text-slate-950 text-xs font-black shadow-md transition-all cursor-pointer inline-flex items-center gap-2"
+                >
+                  <Phone className="w-4 h-4" />
+                  <span>Notify Me On Next Container Arrival</span>
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div className="p-4 rounded-xl bg-amber-500/15 border border-amber-400 flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl">📦</span>
+                    <div>
+                      <h4 className="text-sm font-black text-amber-950">Unopened B2B Wholesale Container Bales</h4>
+                      <p className="text-xs text-slate-600">Factory-sealed import bales available for licensed reseller purchase. Strictly B2B rate.</p>
+                    </div>
+                  </div>
+                  <span className="px-3 py-1 rounded-full bg-amber-400 text-slate-950 font-black text-xs">
+                    {wholesaleBales.length} Bales Ready for Dispatch
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                  {wholesaleBales.map(bale => {
+                    const estPieces = Math.round(bale.weight_kg * 2.5);
+                    const waClaimText = encodeURIComponent(
+                      `Hi Vintage Vibe Wholesale Desk, I am a verified B2B Reseller interested in purchasing Bale #${bale.bale_tag_no || bale.bale_id} (${bale.bale_category || 'Vintage Assorted'}, ${bale.weight_kg}kg) at AED ${bale.wholesale_price_aed || 1200}.`
+                    );
+
+                    return (
+                      <div
+                        key={bale.bale_id}
+                        className="bg-white rounded-2xl border-2 border-amber-300/80 p-5 shadow-lg hover:shadow-xl transition-all flex flex-col justify-between relative overflow-hidden group"
+                      >
+                        <div className="absolute top-0 right-0 bg-amber-400 text-slate-950 font-black text-[10px] uppercase px-3 py-1 rounded-bl-xl tracking-wider shadow-xs">
+                          📦 SEALED BALE
+                        </div>
+
+                        <div>
+                          <div className="flex items-center gap-2 text-xs font-bold text-amber-800 mb-1">
+                            <span>Bale #{bale.bale_tag_no || bale.bale_id.slice(0, 8)}</span>
+                            {bale.gate_pass_no && (
+                              <span className="text-[10px] text-slate-500 font-mono">({bale.gate_pass_no})</span>
+                            )}
+                          </div>
+                          <h3 className="text-lg font-serif font-black text-slate-950">
+                            {bale.bale_category || 'Vintage Heritage Assorted'}
+                          </h3>
+
+                          <div className="grid grid-cols-2 gap-2 mt-4 p-3 bg-amber-50/80 rounded-xl border border-amber-200/80 text-xs">
+                            <div>
+                              <p className="text-[10px] uppercase font-bold text-slate-500 font-mono">Gross Weight</p>
+                              <p className="text-sm font-black text-slate-900 mt-0.5">{bale.weight_kg} kg</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] uppercase font-bold text-slate-500 font-mono">Est. Yield</p>
+                              <p className="text-sm font-black text-slate-900 mt-0.5">~{estPieces} Pieces</p>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 p-2 bg-slate-50 rounded-lg text-[11px] text-slate-600 flex items-center gap-1.5">
+                            <span className="text-emerald-700 font-bold">✓ Grade A/B Vintage</span>
+                            <span>•</span>
+                            <span>Direct Import Container</span>
+                          </div>
+                        </div>
+
+                        <div className="pt-4 mt-4 border-t border-slate-200">
+                          <div className="flex items-baseline justify-between mb-3">
+                            <span className="text-xs font-bold text-slate-500 uppercase font-mono">Wholesale Price</span>
+                            <span className="text-xl font-serif font-black text-amber-950">
+                              AED {(bale.wholesale_price_aed || 1200).toLocaleString()}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              luxuryAudio.playWaxSealSound();
+                              window.open(`https://wa.me/971554186086?text=${waClaimText}`, '_blank');
+                            }}
+                            className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 font-black text-xs uppercase tracking-wider shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                          >
+                            <span>WhatsApp VIP Wholesale Desk</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )
+          ) : isLoading ? (
             <div className="py-28 flex flex-col items-center justify-center text-slate-600 bg-white/60 rounded-2xl border-2 border-dashed border-amber-300">
               <RefreshCw className="w-8 h-8 text-amber-600 animate-spin mb-3" />
               <p className="font-extrabold text-slate-900 text-sm">Loading 1-of-1 Vault Archive...</p>
@@ -925,13 +1093,14 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                   onInspectTag={onInspectTag}
                   onInspectGarment={onInspectGarment}
                   onOpenFitGuide={onOpenFitGuide}
+                  isB2B={isB2B}
                 />
               ))}
             </div>
           )}
 
           {/* PAGINATION COMPONENT */}
-          {!isLoading && totalItems > 0 && (
+          {!isLoading && selectedCategory !== 'WHOLESALE_BALES' && totalItems > 0 && (
             <div className="pt-4">
               <Pagination
                 currentPage={currentPage}
@@ -995,6 +1164,24 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                     <span>All Categories</span>
                     {selectedCategory === 'ALL' && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                   </button>
+
+                  {isB2B && (
+                    <button
+                      type="button"
+                      onClick={() => handleFilterChange(() => setSelectedCategory('WHOLESALE_BALES'))}
+                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold flex justify-between border ${
+                        selectedCategory === 'WHOLESALE_BALES'
+                          ? 'bg-amber-500 text-slate-950 font-black border-amber-600'
+                          : 'bg-amber-100 text-amber-950 border-amber-300'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 font-black truncate">
+                        <Package className="w-3.5 h-3.5 text-amber-900 shrink-0" />
+                        📦 Wholesale Bales
+                      </span>
+                      {selectedCategory === 'WHOLESALE_BALES' && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                    </button>
+                  )}
                   {categories.map(cat => (
                     <button
                       key={cat.id || cat.slug}

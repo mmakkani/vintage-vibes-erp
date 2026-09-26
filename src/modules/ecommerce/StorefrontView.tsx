@@ -11,6 +11,9 @@ import { NextDropBanner } from './NextDropBanner.tsx';
 import { GarmentInspectorModal } from './GarmentInspectorModal.tsx';
 import { VintageFitGuideModal } from './VintageFitGuideModal.tsx';
 import { CheckoutCustomerInfo } from './ecommerce.types.ts';
+import { CustomerAuthModal } from './CustomerAuthModal.tsx';
+import { CustomerPortalModal } from './CustomerPortalModal.tsx';
+import { CrmRetailCustomer, CrmService } from '../../services/crmService.ts';
 import {
   Sparkles,
   ShoppingBag,
@@ -37,7 +40,10 @@ import {
   MessageCircle,
   Smartphone,
   Radio,
-  X
+  X,
+  User,
+  Wallet,
+  Crown
 } from 'lucide-react';
 import { Vintage3DLogo } from '../../components/Vintage3DLogo.tsx';
 import { CompanyName3D } from '../../components/CompanyName3D.tsx';
@@ -73,6 +79,63 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const [selectedSegment, setSelectedSegment] = useState<string>('ALL');
   const [showNoticeBar, setShowNoticeBar] = useState<boolean>(true);
   const [isLiveStreamBroadcasting, setIsLiveStreamBroadcasting] = useState<boolean>(false);
+
+  // Omnichannel Customer User Session (Supabase Auth + CRM Sync)
+  const [customerUser, setCustomerUser] = useState<CrmRetailCustomer | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
+  const [portalModalOpen, setPortalModalOpen] = useState<boolean>(false);
+
+  // Computed B2B status
+  const isB2B = customerUser?.customer_type === 'B2B_RESELLER';
+
+  // Initialize and listen for Supabase Customer Auth
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        CrmService.getCustomerByAuthId(session.user.id).then(cust => {
+          if (cust) {
+            setCustomerUser(cust);
+          } else {
+            const userEmail = (session.user.email || '').toLowerCase();
+            supabase
+              .from('crm_retail_customers')
+              .select('*')
+              .eq('email', userEmail)
+              .maybeSingle()
+              .then(({ data }) => {
+                if (data) {
+                  setCustomerUser({
+                    id: String(data.id),
+                    code: `CRM-${String(data.id).slice(0, 6).toUpperCase()}`,
+                    name: data.name || userEmail.split('@')[0] || 'Collector',
+                    email: data.email || userEmail,
+                    phone: data.phone || '',
+                    address: data.address || '',
+                    auth_id: session.user.id,
+                    customer_type: data.customer_type || 'RETAIL',
+                    vip_tier: data.vip_tier || 'BRONZE',
+                    wallet_balance: Number(data.wallet_balance || 0)
+                  });
+                }
+              });
+          }
+        });
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        const cust = await CrmService.getCustomerByAuthId(session.user.id);
+        if (cust) setCustomerUser(cust);
+      } else if (event === 'SIGNED_OUT') {
+        setCustomerUser(null);
+      }
+    });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, []);
 
   // E-Commerce Storefront Mode: 'home' (the trailer with carousels) vs 'shop' (the dedicated catalog with sidebar filters)
   const [storeMode, setStoreMode] = useState<'home' | 'shop'>(() => {
@@ -700,14 +763,15 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
     try {
       // 1. Execute Atomic E-Commerce SQL Checkout via Backend API
+      const walletAmountUsed = (customerInfo as any)?.walletAmountUsed || 0;
       const checkoutRes = await fetch('/api/ecommerce/orders/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customerName: customerInfo?.name || 'Online Boutique Collector',
-          customerPhone: customerInfo?.phone || '+971 50 000 0000',
-          customerEmail: customerInfo?.email || '',
-          shippingAddress: customerInfo?.shippingAddress || '',
+          customerName: customerInfo?.name || customerUser?.name || 'Online Boutique Collector',
+          customerPhone: customerInfo?.phone || customerUser?.phone || '+971 50 000 0000',
+          customerEmail: customerInfo?.email || customerUser?.email || '',
+          shippingAddress: customerInfo?.shippingAddress || customerUser?.address || '',
           city: customerInfo?.city || customerInfo?.emirate || 'Dubai',
           country: 'UAE',
           items: piecesToBuy.map(piece => ({
@@ -715,13 +779,25 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             barcode: piece.barcode,
             description: `${piece.brandName} ${piece.itemName} (${piece.sizeScanned || 'L'}) - Ref ${paymentRef || paymentMethod}`,
             weightKg: piece.weightKg || 0.4,
-            unitPrice: piece.estimatedPrice || piece.retailPriceAed || 295
+            unitPrice: isB2B
+              ? Math.round((piece.estimatedPrice || piece.retailPriceAed || 295) * 0.8)
+              : (piece.estimatedPrice || piece.retailPriceAed || 295)
           })),
           paymentMethod,
           paymentRef,
-          sessionId
+          sessionId,
+          customerId: customerUser?.id,
+          customerType: customerUser?.customer_type || 'RETAIL',
+          walletAmountUsed
         })
       });
+
+      if (customerUser && walletAmountUsed > 0) {
+        setCustomerUser(prev => prev ? {
+          ...prev,
+          wallet_balance: Math.max(0, Number(prev.wallet_balance || 0) - walletAmountUsed)
+        } : null);
+      }
 
       let openedWa = false;
       let confirmedOrderNo = `ORD-${Date.now().toString().slice(-6)}`;
@@ -1000,6 +1076,49 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             <span className="hidden md:inline">Request Grail</span>
           </button>
 
+          {/* CUSTOMER PORTAL / SIGN IN BUTTON */}
+          {customerUser ? (
+            <button
+              type="button"
+              id="btn-customer-account"
+              onClick={() => {
+                luxuryAudio.playMechanicalClick();
+                setPortalModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+              title="Open My Customer Account & Order History"
+            >
+              <User className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline truncate max-w-[110px]">
+                {customerUser.name.split(' ')[0]}
+              </span>
+              {isB2B && (
+                <span className="hidden md:inline px-1.5 py-0.5 rounded text-[9px] bg-slate-950 text-amber-300 font-mono">
+                  B2B
+                </span>
+              )}
+              {Number(customerUser.wallet_balance || 0) > 0 && (
+                <span className="hidden lg:inline px-1.5 py-0.5 rounded bg-white text-slate-950 font-mono text-[10px]">
+                  🪙 {Number(customerUser.wallet_balance).toFixed(0)}
+                </span>
+              )}
+            </button>
+          ) : (
+            <button
+              type="button"
+              id="btn-customer-signin"
+              onClick={() => {
+                luxuryAudio.playMechanicalClick();
+                setAuthModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-xs uppercase tracking-wider rounded-xl border border-amber-400 shadow-xs transition-all active:scale-95 cursor-pointer"
+              title="Sign in or Register for Store Credit & B2B Wholesale"
+            >
+              <User className="w-3.5 h-3.5 text-amber-900" />
+              <span className="hidden sm:inline">Sign In</span>
+            </button>
+          )}
+
           {/* ERP Access Button (Prominently Highlighted 3D Button) */}
           <button
             type="button"
@@ -1048,6 +1167,8 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             setFitGuideOpen(true);
           }}
           onBackToHome={navigateToHome}
+          isB2B={isB2B}
+          customerUser={customerUser}
         />
       ) : (
         <>
@@ -1314,6 +1435,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                         setCheckoutModalOpen(true);
                         pixelTracking.trackInitiateCheckout([p], p.retailPriceAed || p.estimatedPrice || 295);
                       }}
+                      isB2B={isB2B}
                     />
                   </div>
                 ))}
@@ -1406,6 +1528,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                         setCheckoutModalOpen(true);
                         pixelTracking.trackInitiateCheckout([p], p.retailPriceAed || p.estimatedPrice || 295);
                       }}
+                      isB2B={isB2B}
                     />
                   </div>
                 ))}
@@ -1958,6 +2081,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         onClose={() => setCheckoutModalOpen(false)}
         items={checkoutPieces}
         companyProfile={companyProfile}
+        customerUser={customerUser}
         onOpenBankQr={(items, total) => {
           setBankQrPieces(items);
           setBankQrTotalAmount(total);
@@ -2008,6 +2132,44 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         isOpen={fitGuideOpen}
         onClose={() => setFitGuideOpen(false)}
         initialSilhouetteId={fitGuideSilhouetteId}
+      />
+
+      {/* 16. CUSTOMER AUTH MODAL (SUPABASE EMAIL/PASSWORD + GOOGLE OAUTH) */}
+      <CustomerAuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        onAuthSuccess={customer => {
+          setCustomerUser(customer);
+          setAuthModalOpen(false);
+          setSuccessToast({
+            title: `Welcome, ${customer.name}!`,
+            subtitle: customer.customer_type === 'B2B_RESELLER'
+              ? '💼 B2B Reseller portal unlocked! 20% wholesale pricing active.'
+              : 'Logged into your Vintage Vibe account.'
+          });
+          setTimeout(() => setSuccessToast(null), 5000);
+        }}
+      />
+
+      {/* 17. CUSTOMER PORTAL / MY ACCOUNT MODAL */}
+      <CustomerPortalModal
+        isOpen={portalModalOpen}
+        onClose={() => setPortalModalOpen(false)}
+        customer={customerUser}
+        onLogout={async () => {
+          await supabase.auth.signOut();
+          setCustomerUser(null);
+          setPortalModalOpen(false);
+          setSuccessToast({
+            title: 'Logged Out',
+            subtitle: 'You have been signed out of your account.'
+          });
+          setTimeout(() => setSuccessToast(null), 4000);
+        }}
+        onNavigateToWholesale={() => {
+          setPortalModalOpen(false);
+          navigateToShop('WHOLESALE_BALES');
+        }}
       />
 
       {/* 16. GRAIL BOUNTY WISHLIST MODAL (SQL BACKED) */}

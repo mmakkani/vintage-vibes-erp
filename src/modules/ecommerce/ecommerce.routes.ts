@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { supabase } from '../../supabaseClient.ts';
 import { withDb } from '../../db/pgPool.ts';
 import crypto from 'crypto';
+import { insertVoucherPg } from '../finance/voucherPgService.ts';
 
 export const ecommerceRouter = Router();
 
@@ -461,7 +462,10 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
       items,
       paymentMethod,
       paymentRef,
-      sessionId
+      sessionId,
+      customerId,
+      customerType,
+      walletAmountUsed
     } = req.body;
 
     if (!customerName || !customerPhone || !Array.isArray(items) || items.length === 0) {
@@ -474,7 +478,7 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
         // 1. Verify pieces are still available
         const barcodes = items.map((i: any) => i.barcode || i.id);
         const checkQuery = await client.query(`
-          SELECT barcode, is_sold, status FROM inventory_pieces 
+          SELECT barcode, is_sold, status, cost_price, purchase_cost, estimated_price FROM inventory_pieces 
           WHERE barcode = ANY($1) FOR UPDATE
         `, [barcodes]);
 
@@ -491,27 +495,79 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           }
         }
 
-        // 2. Compute financial totals
+        // 2. Compute financial totals & COGS
         const subtotal = items.reduce((sum: number, item: any) => sum + Number(item.unitPrice || item.price || item.estimatedPrice || 0), 0);
         const deliveryFee = subtotal >= 350 ? 0 : 25; // Free delivery over 350 AED
         const totalAmount = subtotal + deliveryFee;
         const orderId = crypto.randomUUID();
         const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
 
-        // 3. Compute payment classification
-        const isOnlinePaid = paymentMethod && paymentMethod !== 'COD' && paymentMethod !== 'CASH_ON_DELIVERY';
-        const computedPaymentStatus = isOnlinePaid ? 'PAID' : 'UNPAID_PENDING_COD';
-        const computedPaymentRef = isOnlinePaid
-          ? (paymentRef || `TXN-${Date.now().toString().slice(-6)}`)
-          : 'COD-PAY-ON-DELIVERY';
+        // Calculate COGS
+        let totalCogs = 0;
+        for (const row of checkQuery.rows) {
+          const cost = Number(row.cost_price || row.purchase_cost || (Number(row.estimated_price || 0) * 0.4) || 0);
+          totalCogs += cost;
+        }
 
-        // 4. Insert into orders table
+        // 3. Resolve Customer & Customer Type
+        let resolvedCustomerId: string | null = customerId || null;
+        let resolvedCustomerType: string = (customerType || 'RETAIL').toUpperCase();
+        let currentWalletBal = 0;
+
+        if (resolvedCustomerId) {
+          const custRes = await client.query(`SELECT id, customer_type, wallet_balance FROM crm_retail_customers WHERE id = $1 FOR UPDATE`, [resolvedCustomerId]);
+          if (custRes.rows.length > 0) {
+            resolvedCustomerType = (custRes.rows[0].customer_type || 'RETAIL').toUpperCase();
+            currentWalletBal = Number(custRes.rows[0].wallet_balance || 0);
+          }
+        } else if (customerPhone || customerEmail) {
+          const custRes = await client.query(`SELECT id, customer_type, wallet_balance FROM crm_retail_customers WHERE phone = $1 OR (email = $2 AND email != '') LIMIT 1 FOR UPDATE`, [customerPhone, customerEmail || '']);
+          if (custRes.rows.length > 0) {
+            resolvedCustomerId = custRes.rows[0].id;
+            resolvedCustomerType = (custRes.rows[0].customer_type || 'RETAIL').toUpperCase();
+            currentWalletBal = Number(custRes.rows[0].wallet_balance || 0);
+          }
+        }
+
+        // 4. Compute Wallet deduction
+        const requestedWallet = Math.max(0, Number(walletAmountUsed) || 0);
+        const effectiveWalletUsed = Math.min(requestedWallet, currentWalletBal, totalAmount);
+
+        if (effectiveWalletUsed > 0 && resolvedCustomerId) {
+          await client.query(`
+            UPDATE crm_retail_customers 
+            SET wallet_balance = wallet_balance - $1 
+            WHERE id = $2
+          `, [effectiveWalletUsed, resolvedCustomerId]);
+
+          await client.query(`
+            INSERT INTO customer_wallet_transactions (
+              customer_id, amount, transaction_type, description, reference_order_id, created_by
+            ) VALUES ($1, $2, 'DEBIT', $3, $4, 'Checkout Engine')
+          `, [
+            resolvedCustomerId,
+            effectiveWalletUsed,
+            `Store credit applied to Order #${orderNumber}`,
+            orderId
+          ]);
+        }
+
+        // 5. Compute payment classification
+        const isOnlinePaid = paymentMethod && paymentMethod !== 'COD' && paymentMethod !== 'CASH_ON_DELIVERY';
+        const isFullyWalletPaid = effectiveWalletUsed >= totalAmount;
+        const computedPaymentStatus = (isOnlinePaid || isFullyWalletPaid) ? 'PAID' : 'UNPAID_PENDING_COD';
+        const computedPaymentRef = isFullyWalletPaid
+          ? `WALLET-${Date.now().toString().slice(-6)}`
+          : (isOnlinePaid ? (paymentRef || `TXN-${Date.now().toString().slice(-6)}`) : 'COD-PAY-ON-DELIVERY');
+
+        // 6. Insert into orders table
         await client.query(`
           INSERT INTO orders (
             id, order_number, customer_name, customer_phone, customer_email, customer_address, 
             city, country, items, subtotal, delivery_fee, total_amount, currency, 
-            payment_method, payment_status, payment_reference, order_status, source, notes, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW())
+            payment_method, payment_status, payment_reference, order_status, source, notes,
+            customer_id, customer_type, wallet_amount_used, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW())
         `, [
           orderId,
           orderNumber,
@@ -526,29 +582,34 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           deliveryFee,
           totalAmount,
           'AED',
-          paymentMethod || 'COD',
+          isFullyWalletPaid ? 'STORE_CREDIT' : (paymentMethod || 'COD'),
           computedPaymentStatus,
           computedPaymentRef,
           'CONFIRMED',
           'STOREFRONT',
-          isOnlinePaid ? `Online Payment Ref: ${computedPaymentRef}` : `Cash on Delivery (Collect AED ${totalAmount.toFixed(2)})`
+          effectiveWalletUsed > 0 
+            ? `Store Credit Used: AED ${effectiveWalletUsed.toFixed(2)}${isOnlinePaid ? ` | Online Ref: ${computedPaymentRef}` : ''}`
+            : (isOnlinePaid ? `Online Payment Ref: ${computedPaymentRef}` : `Cash on Delivery (Collect AED ${totalAmount.toFixed(2)})`),
+          resolvedCustomerId,
+          resolvedCustomerType,
+          effectiveWalletUsed
         ]);
 
-        // 5. Atomically reserve pieces for Draft invoice: status = 'RESERVED', is_sold = false
+        // 7. Atomically reserve pieces for Draft invoice: status = 'RESERVED', is_sold = false
         await client.query(`
           UPDATE inventory_pieces 
           SET is_sold = false, status = 'RESERVED', updated_at = NOW() 
           WHERE barcode = ANY($1)
         `, [barcodes]);
 
-        // 6. Deactivate cart reservations
+        // 8. Deactivate cart reservations
         await client.query(`
           UPDATE cart_reservations 
           SET is_active = false 
           WHERE barcode = ANY($1)
         `, [barcodes]);
 
-        // 7. Queue active DRAFT sales invoice in Dispatch Hub (DraftInvoicesManager)
+        // 9. Queue active DRAFT sales invoice in Dispatch Hub (DraftInvoicesManager)
         const invoiceId = `inv-${Date.now()}`;
         const invoiceNo = `SINV-${Date.now().toString().slice(-6)}`;
         await client.query(`
@@ -563,7 +624,7 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           invoiceNo,
           customerName,
           customerPhone,
-          paymentMethod || 'COD',
+          isFullyWalletPaid ? 'STORE_CREDIT' : (paymentMethod || 'COD'),
           computedPaymentStatus,
           computedPaymentRef,
           shippingAddress || '',
@@ -576,17 +637,111 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
 
         await client.query('COMMIT');
 
-        // 8. Format WhatsApp notification URL
+        // 10. STRICT COA FINANCIAL ROUTING VOUCHER (Phase 4 Double-Entry)
+        // Control Khata: B2B -> 1130-01 (POS SALE / B2B) vs B2C -> 1130-03 (E-COMMERCE SALE)
+        const controlAccountCode = resolvedCustomerType === 'B2B_RESELLER' ? '1130-01' : '1130-03';
+        const controlAccountName = resolvedCustomerType === 'B2B_RESELLER' ? 'POS SALE (Customer)' : 'E-COOMERCE SALE (Customer)';
+        const remainingAmount = Math.max(0, totalAmount - effectiveWalletUsed);
+
+        const voucherLines: any[] = [];
+
+        // Line A: Store Credit Wallet Debit (2150-01) if wallet used
+        if (effectiveWalletUsed > 0) {
+          voucherLines.push({
+            accountId: '2150-01',
+            accountCode: '2150-01',
+            accountName: 'Customer Wallet Balances (Liability)',
+            debit: effectiveWalletUsed,
+            credit: 0,
+            memo: `Store Credit payment - Order #${orderNumber}`
+          });
+        }
+
+        // Line B: Remaining Amount (Cash in Bank 1120-01 if online paid, or Control Khata 1130-03/1130-01 if COD/receivable)
+        if (remainingAmount > 0) {
+          if (isOnlinePaid) {
+            voucherLines.push({
+              accountId: '1120-01',
+              accountCode: '1120-01',
+              accountName: 'Cash in Bank (AED)',
+              debit: remainingAmount,
+              credit: 0,
+              memo: `Online settlement (${paymentMethod}) - Order #${orderNumber}`
+            });
+          } else {
+            voucherLines.push({
+              accountId: controlAccountCode,
+              accountCode: controlAccountCode,
+              accountName: controlAccountName,
+              debit: remainingAmount,
+              credit: 0,
+              memo: `Receivable pending delivery (${resolvedCustomerType}) - Order #${orderNumber}`
+            });
+          }
+        }
+
+        // Line C: Revenue Credit (4110-01 POS / Counter Retail Sales)
+        voucherLines.push({
+          accountId: '4110-01',
+          accountCode: '4110-01',
+          accountName: 'POS / Counter Retail Sales',
+          debit: 0,
+          credit: totalAmount,
+          memo: `Omnichannel Sale (${resolvedCustomerType}) - Order #${orderNumber}`
+        });
+
+        // Line D & E: COGS Double-Entry (Debit 5100-02, Credit 1160-01)
+        if (totalCogs > 0) {
+          voucherLines.push({
+            accountId: '5100-02',
+            accountCode: '5100-02',
+            accountName: 'Cost of Goods Sold - Finished Goods',
+            debit: totalCogs,
+            credit: 0,
+            memo: `COGS for pieces sold - Order #${orderNumber}`
+          });
+          voucherLines.push({
+            accountId: '1160-01',
+            accountCode: '1160-01',
+            accountName: 'Finished Goods',
+            debit: 0,
+            credit: totalCogs,
+            memo: `Inventory reduction for pieces sold - Order #${orderNumber}`
+          });
+        }
+
+        const totalDebitVoucher = voucherLines.reduce((acc, l) => acc + (Number(l.debit) || 0), 0);
+        const totalCreditVoucher = voucherLines.reduce((acc, l) => acc + (Number(l.credit) || 0), 0);
+
+        try {
+          await insertVoucherPg({
+            date: new Date().toISOString().slice(0, 10),
+            type: isOnlinePaid ? 'BANK_RECEIPT' : 'JOURNAL',
+            reference: orderNumber,
+            documentRef: orderNumber,
+            narration: `Omnichannel ${resolvedCustomerType} Sale - Order #${orderNumber} [${items.length} pcs]`,
+            totalDebit: totalDebitVoucher,
+            totalCredit: totalCreditVoucher,
+            status: 'POSTED',
+            createdBy: 'Omnichannel Checkout Engine',
+            lines: voucherLines
+          });
+        } catch (vErr: any) {
+          console.error('[Ecommerce Checkout] Warning: Financial voucher auto-generation encountered error:', vErr?.message);
+        }
+
+        // 11. Format WhatsApp notification URL
         const itemsList = items.map((it: any) => `• ${it.description || it.itemName || it.barcode} (AED ${it.unitPrice || it.price})`).join('\n');
         const waText = encodeURIComponent(
           `*Vintage Vibes Dubai - Order Confirmation*\n` +
           `Order Ref: *#${orderNumber}*\n` +
-          `Customer: ${customerName}\n` +
+          `Customer: ${customerName} (${resolvedCustomerType})\n` +
           `Phone: ${customerPhone}\n` +
           `Address: ${shippingAddress || city}\n\n` +
           `*Items:*\n${itemsList}\n\n` +
-          `*Total Payable:* AED ${totalAmount.toFixed(2)} (${paymentMethod})\n\n` +
-          `Thank you for shopping authentic vintage!`
+          `*Total Payable:* AED ${totalAmount.toFixed(2)} (${isFullyWalletPaid ? 'Store Credit' : paymentMethod})\n` +
+          (effectiveWalletUsed > 0 ? `*Wallet Credit Applied:* AED ${effectiveWalletUsed.toFixed(2)}\n` : '') +
+          `\nThank you for shopping authentic vintage!`
         );
         const whatsappUrl = `https://wa.me/971508839120?text=${waText}`;
 
@@ -602,8 +757,10 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
               totalAmount,
               subtotal,
               deliveryFee,
+              walletAmountUsed: effectiveWalletUsed,
+              customerType: resolvedCustomerType,
               items,
-              paymentMethod,
+              paymentMethod: isFullyWalletPaid ? 'STORE_CREDIT' : paymentMethod,
               orderStatus: 'CONFIRMED'
             },
             invoiceNo,
@@ -787,6 +944,133 @@ ecommerceRouter.get('/orders/:orderNumber', async (req: Request, res: Response) 
     }
 
     return res.json(row);
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message });
+  }
+});
+
+// -------------------------------------------------------------
+// 7. GET /api/ecommerce/wholesale-bales - Available Unopened Bales for B2B Resellers
+// -------------------------------------------------------------
+ecommerceRouter.get('/wholesale-bales', async (req: Request, res: Response) => {
+  try {
+    const rows = await withDb(async (client) => {
+      const q = `
+        SELECT 
+          bs.bale_id,
+          bs.total_grams,
+          ROUND(bs.total_grams / 1000.0, 2) AS weight_kg,
+          bs.status,
+          COALESCE(igp.bale_category, 'Mixed Vintage & Thrift Grade A') AS bale_category,
+          COALESCE(igp.bale_tag_no, bs.bale_id) AS bale_tag_no,
+          COALESCE(igp.gate_pass_no, 'IGP-WH') AS gate_pass_no,
+          ROUND(COALESCE(igp.total_bale_cost * 1.25, (bs.total_grams / 1000.0) * 18.0), 2) AS wholesale_price_aed
+        FROM bale_sessions bs
+        LEFT JOIN inward_gate_passes igp 
+          ON bs.bale_id = igp.id::text OR bs.bale_id = igp.gate_pass_no OR bs.bale_id = igp.bale_code
+        WHERE bs.status = 'UNOPENED'
+        ORDER BY bs.updated_at DESC
+        LIMIT 50;
+      `;
+      const result = await client.query(q);
+      return (result.rows || []).map(r => ({
+        bale_id: r.bale_id,
+        weight_kg: Number(r.weight_kg || (r.total_grams / 1000)),
+        total_grams: Number(r.total_grams || 0),
+        status: r.status,
+        bale_category: r.bale_category,
+        bale_tag_no: r.bale_tag_no,
+        gate_pass_no: r.gate_pass_no,
+        wholesale_price_aed: Number(r.wholesale_price_aed || 0)
+      }));
+    });
+    return res.json(rows);
+  } catch (err: any) {
+    console.error('Error fetching wholesale bales:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to fetch wholesale bales' });
+  }
+});
+
+// -------------------------------------------------------------
+// 8. GET /api/ecommerce/orders/customer/by-contact - Order Tracking by Phone / Email
+// -------------------------------------------------------------
+ecommerceRouter.get('/orders/customer/by-contact', async (req: Request, res: Response) => {
+  try {
+    const phone = (req.query.phone as string) || '';
+    const email = (req.query.email as string) || '';
+    if (!phone && !email) {
+      return res.json([]);
+    }
+    const rows = await withDb(async (client) => {
+      const result = await client.query(
+        `SELECT id, order_number as "orderNumber", total_amount as "totalAmount", 
+                subtotal, delivery_fee as "deliveryFee", order_status as "orderStatus",
+                payment_status as "paymentStatus", payment_method as "paymentMethod",
+                items, notes, created_at as "createdAt"
+         FROM orders 
+         WHERE (customer_phone = $1 AND customer_phone != '') OR (customer_email = $2 AND customer_email != '')
+         ORDER BY created_at DESC LIMIT 50`,
+        [phone, email]
+      );
+      return result.rows.map((r: any) => ({
+        ...r,
+        trackingNumber: `TRK-DXB-${String(r.orderNumber).replace('ORD-', '')}`,
+        courierName: 'Aramex UAE Express Live',
+        trackingUrl: `https://www.aramex.com/ae/en/track/results?shipmentNumber=TRK-DXB-${String(r.orderNumber).replace('ORD-', '')}`
+      }));
+    });
+    return res.json(rows);
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message });
+  }
+});
+
+// -------------------------------------------------------------
+// 9. GET /api/ecommerce/orders/customer/:customerId - Customer Portal Order History
+// -------------------------------------------------------------
+ecommerceRouter.get('/orders/customer/:customerId', async (req: Request, res: Response) => {
+  try {
+    const { customerId } = req.params;
+    const phone = (req.query.phone as string) || '';
+    const email = (req.query.email as string) || '';
+
+    const rows = await withDb(async (client) => {
+      let query = `
+        SELECT id, order_number as "orderNumber", total_amount as "totalAmount", 
+               subtotal, delivery_fee as "deliveryFee", order_status as "orderStatus",
+               payment_status as "paymentStatus", payment_method as "paymentMethod",
+               items, notes, created_at as "createdAt"
+        FROM orders 
+        WHERE 1=1
+      `;
+      const params: any[] = [];
+      const conds: string[] = [];
+
+      if (customerId && customerId !== 'null' && customerId !== 'undefined') {
+        params.push(customerId);
+        conds.push(`customer_id = $${params.length}`);
+      }
+      if (phone) {
+        params.push(phone);
+        conds.push(`(customer_phone = $${params.length} AND customer_phone != '')`);
+      }
+      if (email) {
+        params.push(email);
+        conds.push(`(customer_email = $${params.length} AND customer_email != '')`);
+      }
+
+      if (conds.length === 0) return [];
+      query += ` AND (${conds.join(' OR ')}) ORDER BY created_at DESC LIMIT 50`;
+
+      const result = await client.query(query, params);
+      return result.rows.map((r: any) => ({
+        ...r,
+        trackingNumber: `TRK-DXB-${String(r.orderNumber).replace('ORD-', '')}`,
+        courierName: 'Aramex UAE Express Live',
+        trackingUrl: `https://www.aramex.com/ae/en/track/results?shipmentNumber=TRK-DXB-${String(r.orderNumber).replace('ORD-', '')}`
+      }));
+    });
+    return res.json(rows);
   } catch (err: any) {
     return res.status(500).json({ error: err?.message });
   }

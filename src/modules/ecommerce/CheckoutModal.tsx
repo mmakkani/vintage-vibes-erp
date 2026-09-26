@@ -18,9 +18,11 @@ import {
   Smartphone,
   Check,
   Fingerprint,
-  CameraOff
+  CameraOff,
+  Wallet
 } from 'lucide-react';
 import { luxuryAudio } from '../../utils/luxuryAudio.ts';
+import { CrmRetailCustomer } from '../../services/crmService.ts';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -28,6 +30,7 @@ interface CheckoutModalProps {
   piece?: PieceBreakdownItem | null;
   items?: PieceBreakdownItem[];
   companyProfile: CompanyProfile;
+  customerUser?: CrmRetailCustomer | null;
   onOpenBankQr: (items: PieceBreakdownItem[], totalAmount: number) => void;
   onCompleteCheckout: (
     items: PieceBreakdownItem[],
@@ -44,6 +47,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   piece,
   items,
   companyProfile,
+  customerUser,
   onOpenBankQr,
   onCompleteCheckout,
   isProcessing
@@ -66,16 +70,17 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [activeWallet, setActiveWallet] = useState<'APPLE_PAY' | 'GOOGLE_PAY'>('APPLE_PAY');
   const [showBiometricSheet, setShowBiometricSheet] = useState(false);
   const [biometricSuccess, setBiometricSuccess] = useState(false);
+  const [useStoreCredit, setUseStoreCredit] = useState<boolean>(true);
 
-  // Customer Form
-  const [customer, setCustomer] = useState<CheckoutCustomerInfo>({
-    name: 'Rashid Al-Nuaimi',
-    phone: '+971 50 293 8812',
-    email: 'rashid@vintagearchive.ae',
-    shippingAddress: 'Villa 18, Street 4b, Jumeirah 1',
+  // Customer Form initialized from authenticated customerUser if present
+  const [customer, setCustomer] = useState<CheckoutCustomerInfo>(() => ({
+    name: customerUser?.name || 'Rashid Al-Nuaimi',
+    phone: customerUser?.phone || '+971 50 293 8812',
+    email: customerUser?.email || 'rashid@vintagearchive.ae',
+    shippingAddress: customerUser?.address || 'Villa 18, Street 4b, Jumeirah 1',
     city: 'Dubai',
     emirate: 'Dubai'
-  });
+  }));
 
   // Credit card inputs (Only used if user explicitly selects standard Credit Card)
   const [cardNumber, setCardNumber] = useState('4532 •••• •••• 8821');
@@ -98,7 +103,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const shippingFee = isFreeShipping ? 0 : standardFee;
 
   const vatAmount = Number((subtotal * 0.05).toFixed(2));
-  const totalAmount = Number((subtotal + shippingFee + vatAmount).toFixed(2));
+  const rawTotalAmount = Number((subtotal + shippingFee + vatAmount).toFixed(2));
+
+  // Store Credit Wallet (COA: 2150-01) Deduction
+  const userWalletBal = Number(customerUser?.wallet_balance ?? customerUser?.walletBalance ?? 0);
+  const effectiveWalletUsed = (useStoreCredit && userWalletBal > 0) ? Math.min(userWalletBal, rawTotalAmount) : 0;
+  const totalAmount = Number((rawTotalAmount - effectiveWalletUsed).toFixed(2));
 
   // Dynamic QR Code for Desktop Apple Pay / Google Pay scan
   const barcodesParam = checkoutItems.map(i => i.barcode).join(',');
@@ -139,7 +149,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         type: activeWallet,
         authorizedVia: activeWallet === 'APPLE_PAY' ? 'Apple Pay Face ID' : 'Google Pay Biometric',
         walletRef: gatewayIntent?.paymentIntentId || `${activeWallet}-${Date.now().toString().slice(-6)}`,
-        isLiveGateway: gatewayIntent?.isLiveGateway || false
+        isLiveGateway: gatewayIntent?.isLiveGateway || false,
+        walletAmountUsed: effectiveWalletUsed,
+        customerId: customerUser?.id,
+        customerType: customerUser?.customer_type
       });
     }, 1200);
   };
@@ -147,6 +160,16 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     luxuryAudio.playMechanicalClick();
+
+    if (totalAmount === 0) {
+      await onCompleteCheckout(checkoutItems, 'COD', customer, {
+        type: 'STORE_CREDIT',
+        walletAmountUsed: effectiveWalletUsed,
+        customerId: customerUser?.id,
+        customerType: customerUser?.customer_type
+      });
+      return;
+    }
 
     if (paymentMethod === 'APPLE_GOOGLE_PAY') {
       await triggerBiometricPayment(activeWallet);
@@ -158,12 +181,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         cardNumber,
         cardExpiry,
         cardCvc,
-        type: 'MANUAL_CARD'
+        type: 'MANUAL_CARD',
+        walletAmountUsed: effectiveWalletUsed,
+        customerId: customerUser?.id,
+        customerType: customerUser?.customer_type
       });
     } else {
       // Cash on Delivery
       await onCompleteCheckout(checkoutItems, 'COD', customer, {
-        type: 'CASH_ON_DELIVERY'
+        type: 'CASH_ON_DELIVERY',
+        walletAmountUsed: effectiveWalletUsed,
+        customerId: customerUser?.id,
+        customerType: customerUser?.customer_type
       });
     }
   };
@@ -566,7 +595,30 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           )}
 
           {/* Order Summary Box */}
-          <div className="bg-white/90 p-3.5 rounded-xl border border-amber-200/80 space-y-1.5 text-xs shadow-xs">
+          <div className="bg-white/90 p-3.5 rounded-xl border border-amber-200/80 space-y-2 text-xs shadow-xs">
+            {userWalletBal > 0 && (
+              <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-300 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1.5">
+                  <Wallet className="w-4 h-4 text-amber-700" />
+                  <div>
+                    <span className="font-bold text-amber-950 block leading-tight">Store Credit Wallet</span>
+                    <span className="text-[10px] text-amber-800/80 font-mono">Available: AED {userWalletBal.toFixed(2)} (COA 2150-01)</span>
+                  </div>
+                </div>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={useStoreCredit}
+                    onChange={e => setUseStoreCredit(e.target.checked)}
+                    className="rounded text-amber-600 focus:ring-amber-500"
+                  />
+                  <span className="text-xs font-bold text-emerald-800">
+                    {useStoreCredit ? `- AED ${effectiveWalletUsed.toFixed(2)}` : 'Apply'}
+                  </span>
+                </label>
+              </div>
+            )}
+
             <div className="flex justify-between text-slate-600">
               <span>Items Subtotal ({checkoutItems.length}):</span>
               <span className="font-mono font-bold text-slate-900">AED {subtotal.toFixed(2)}</span>
@@ -581,6 +633,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <span>UAE VAT (5%):</span>
               <span className="font-mono font-bold text-slate-900">AED {vatAmount.toFixed(2)}</span>
             </div>
+            {effectiveWalletUsed > 0 && (
+              <div className="flex justify-between text-emerald-800 font-bold border-t border-dashed border-emerald-300 pt-1">
+                <span>Store Credit Applied (2150-01):</span>
+                <span className="font-mono">- AED {effectiveWalletUsed.toFixed(2)}</span>
+              </div>
+            )}
             <div className="pt-2 border-t border-amber-200 flex justify-between items-center text-sm font-bold">
               <span className="text-slate-800">Total Payable:</span>
               <span className="font-mono font-black text-amber-950 text-base">
@@ -600,7 +658,17 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             Cancel
           </button>
 
-          {paymentMethod === 'APPLE_GOOGLE_PAY' ? (
+          {totalAmount === 0 ? (
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={isProcessing}
+              className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-lg transition-transform active:scale-98"
+            >
+              <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+              <span>Confirm Order with Store Credit (AED 0.00 Due)</span>
+            </button>
+          ) : paymentMethod === 'APPLE_GOOGLE_PAY' ? (
             <button
               type="button"
               onClick={() => triggerBiometricPayment(activeWallet)}

@@ -5561,47 +5561,163 @@ RULES FOR YOUR RESPONSE:
         created_at: r.created_at || r.createdAt
       });
 
-      // Sub-route: GET /api/parties/retail (Retail CRM List strictly from crm_retail_customers)
-      if (targetPartyId === 'retail' && method === 'GET') {
-        const client = await getPgClient();
-        if (client) {
-          try {
-            const query = `
-              SELECT * FROM public.crm_retail_customers
-              ORDER BY created_at DESC;
-            `;
-            const result = await client.query(query);
-            await client.end();
-            const rows = (result.rows || []).map((row: any) => ({
-              ...formatParty(row),
-              code: `CRM-${String(row.id).slice(0, 6).toUpperCase()}`,
-              totalOrders: Number(row.total_orders || 0),
-              totalSpent: Number(row.total_spent || 0),
-              lastOrderDate: row.created_at || null
-            }));
-            return res.status(200).json(rows);
-          } catch (pgErr: any) {
-            try { await client.end(); } catch (_) {}
-            console.warn('[Serverless Parties] Error fetching retail parties via PG:', pgErr?.message);
+      // Sub-route: /api/parties/retail (Retail CRM List & Omnichannel 2.0 Actions)
+      if (targetPartyId === 'retail') {
+        const retailCustomerId = subAction;
+        const retailAction = parts.length > partiesIdx + 3 ? decodeURIComponent(parts[partiesIdx + 3]).split('?')[0] : null;
+
+        // 1. PATCH /api/parties/retail/:id/type
+        if (retailCustomerId && retailAction === 'type' && method === 'PATCH') {
+          const { customer_type } = body || {};
+          const targetType = String(customer_type).toUpperCase();
+          if (!['RETAIL', 'B2B_RESELLER'].includes(targetType)) {
+            return res.status(400).json({ error: "Invalid customer_type. Must be 'RETAIL' or 'B2B_RESELLER'." });
           }
+          const client = await getPgClient();
+          if (client) {
+            try {
+              await client.query(`UPDATE public.crm_retail_customers SET customer_type = $1 WHERE id = $2`, [targetType, retailCustomerId]);
+              await client.end();
+              return res.status(200).json({ success: true, customer_type: targetType });
+            } catch (err: any) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          await supabaseAdmin.from('crm_retail_customers').update({ customer_type: targetType }).eq('id', retailCustomerId);
+          return res.status(200).json({ success: true, customer_type: targetType });
         }
 
-        // Supabase Fallback
-        try {
-          const { data } = await supabaseAdmin
-            .from('crm_retail_customers')
-            .select('*')
-            .order('created_at', { ascending: false });
-          return res.status(200).json((data || []).map((r: any) => ({
-            ...formatParty(r),
-            code: `CRM-${String(r.id).slice(0, 6).toUpperCase()}`,
-            totalOrders: Number(r.total_orders || 0),
-            totalSpent: Number(r.total_spent || 0),
-            lastOrderDate: r.created_at || null
-          })));
-        } catch (_) {}
+        // 2. POST /api/parties/retail/:id/wallet
+        if (retailCustomerId && retailAction === 'wallet' && method === 'POST') {
+          const { amount, type, description, orderId } = body || {};
+          const numAmount = Number(amount);
+          if (isNaN(numAmount) || numAmount <= 0) {
+            return res.status(400).json({ error: 'Valid positive amount in AED is required' });
+          }
+          const txType = String(type).toUpperCase() === 'DEBIT' ? 'DEBIT' : 'CREDIT';
+          const desc = String(description || (txType === 'CREDIT' ? 'Store Credit Added' : 'Store Credit Deducted'));
 
-        return res.status(200).json([]);
+          const client = await getPgClient();
+          if (client) {
+            try {
+              await client.query('BEGIN');
+              const cRes = await client.query(`SELECT wallet_balance FROM public.crm_retail_customers WHERE id = $1 FOR UPDATE`, [retailCustomerId]);
+              if (cRes.rows.length === 0) {
+                await client.query('ROLLBACK');
+                await client.end();
+                return res.status(404).json({ error: 'Retail customer not found' });
+              }
+              const curBal = Number(cRes.rows[0].wallet_balance || 0);
+              const newBal = txType === 'CREDIT' ? curBal + numAmount : Math.max(0, curBal - numAmount);
+              await client.query(`UPDATE public.crm_retail_customers SET wallet_balance = $1 WHERE id = $2`, [newBal, retailCustomerId]);
+              const tx = await client.query(
+                `INSERT INTO public.customer_wallet_transactions (customer_id, amount, transaction_type, description, reference_order_id, created_by)
+                 VALUES ($1, $2, $3, $4, $5, 'Admin') RETURNING *`,
+                [retailCustomerId, numAmount, txType, desc, orderId || null]
+              );
+              await client.query('COMMIT');
+              await client.end();
+              return res.status(200).json({ success: true, newBalance: newBal, transaction: tx.rows[0] });
+            } catch (err: any) {
+              try { await client.query('ROLLBACK'); await client.end(); } catch (_) {}
+            }
+          }
+
+          // Fallback Supabase
+          const { data: cust } = await supabaseAdmin.from('crm_retail_customers').select('wallet_balance').eq('id', retailCustomerId).single();
+          const curBal = Number(cust?.wallet_balance || 0);
+          const newBal = txType === 'CREDIT' ? curBal + numAmount : Math.max(0, curBal - numAmount);
+          await supabaseAdmin.from('crm_retail_customers').update({ wallet_balance: newBal }).eq('id', retailCustomerId);
+          const { data: tx } = await supabaseAdmin.from('customer_wallet_transactions').insert([{
+            customer_id: retailCustomerId,
+            amount: numAmount,
+            transaction_type: txType,
+            description: desc,
+            reference_order_id: orderId || null
+          }]).select().single();
+          return res.status(200).json({ success: true, newBalance: newBal, transaction: tx });
+        }
+
+        // 3. GET /api/parties/retail/:id/transactions
+        if (retailCustomerId && retailAction === 'transactions' && method === 'GET') {
+          const client = await getPgClient();
+          if (client) {
+            try {
+              const txs = await client.query(`SELECT * FROM public.customer_wallet_transactions WHERE customer_id = $1 ORDER BY created_at DESC`, [retailCustomerId]);
+              await client.end();
+              return res.status(200).json(txs.rows || []);
+            } catch (_) {
+              try { await client.end(); } catch (_) {}
+            }
+          }
+          const { data } = await supabaseAdmin.from('customer_wallet_transactions').select('*').eq('customer_id', retailCustomerId).order('created_at', { ascending: false });
+          return res.status(200).json(data || []);
+        }
+
+        // 4. GET /api/parties/retail - List isolated Retail CRM customers
+        if (!retailCustomerId && method === 'GET') {
+          const client = await getPgClient();
+          if (client) {
+            try {
+              const query = `
+                SELECT * FROM public.crm_retail_customers
+                ORDER BY created_at DESC;
+              `;
+              const result = await client.query(query);
+              await client.end();
+              const rows = (result.rows || []).map((row: any) => {
+                const walletBal = Number(row.wallet_balance || 0);
+                return {
+                  ...formatParty(row),
+                  code: `CRM-${String(row.id).slice(0, 6).toUpperCase()}`,
+                  party_type: (row.customer_type === 'B2B_RESELLER' ? 'B2B_RESELLER' : 'RETAIL'),
+                  customer_type: row.customer_type || 'RETAIL',
+                  vip_tier: row.vip_tier || 'BRONZE',
+                  wallet_balance: walletBal,
+                  walletBalance: walletBal,
+                  current_balance: walletBal,
+                  currentBalance: walletBal,
+                  auth_id: row.auth_id || null,
+                  totalOrders: Number(row.total_orders || 0),
+                  totalSpent: Number(row.total_spent || 0),
+                  lastOrderDate: row.created_at || null
+                };
+              });
+              return res.status(200).json(rows);
+            } catch (pgErr: any) {
+              try { await client.end(); } catch (_) {}
+              console.warn('[Serverless Parties] Error fetching retail parties via PG:', pgErr?.message);
+            }
+          }
+
+          // Supabase Fallback
+          try {
+            const { data } = await supabaseAdmin
+              .from('crm_retail_customers')
+              .select('*')
+              .order('created_at', { ascending: false });
+            return res.status(200).json((data || []).map((r: any) => {
+              const walletBal = Number(r.wallet_balance || 0);
+              return {
+                ...formatParty(r),
+                code: `CRM-${String(r.id).slice(0, 6).toUpperCase()}`,
+                party_type: (r.customer_type === 'B2B_RESELLER' ? 'B2B_RESELLER' : 'RETAIL'),
+                customer_type: r.customer_type || 'RETAIL',
+                vip_tier: r.vip_tier || 'BRONZE',
+                wallet_balance: walletBal,
+                walletBalance: walletBal,
+                current_balance: walletBal,
+                currentBalance: walletBal,
+                auth_id: r.auth_id || null,
+                totalOrders: Number(r.total_orders || 0),
+                totalSpent: Number(r.total_spent || 0),
+                lastOrderDate: r.created_at || null
+              };
+            }));
+          } catch (_) {}
+
+          return res.status(200).json([]);
+        }
       }
 
       // Sub-route: /api/parties/:id/khata or /api/parties/:id/transaction
@@ -9920,6 +10036,102 @@ RULES FOR YOUR RESPONSE:
         } finally {
           try { await client.end(); } catch (_) {}
         }
+      }
+
+      // GET /api/ecommerce/wholesale-bales
+      if (pathname.includes('/ecommerce/wholesale-bales') && method === 'GET') {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const q = `
+              SELECT 
+                bs.bale_id,
+                bs.total_grams,
+                ROUND(bs.total_grams / 1000.0, 2) AS weight_kg,
+                bs.status,
+                COALESCE(igp.bale_category, 'Mixed Vintage & Thrift Grade A') AS bale_category,
+                COALESCE(igp.bale_tag_no, bs.bale_id) AS bale_tag_no,
+                COALESCE(igp.gate_pass_no, 'IGP-WH') AS gate_pass_no,
+                ROUND(COALESCE(igp.total_bale_cost * 1.25, (bs.total_grams / 1000.0) * 18.0), 2) AS wholesale_price_aed
+              FROM bale_sessions bs
+              LEFT JOIN inward_gate_passes igp 
+                ON bs.bale_id = igp.id::text OR bs.bale_id = igp.gate_pass_no OR bs.bale_id = igp.bale_code
+              WHERE bs.status = 'UNOPENED'
+              ORDER BY bs.updated_at DESC
+              LIMIT 50;
+            `;
+            const result = await client.query(q);
+            await client.end();
+            return res.status(200).json((result.rows || []).map(r => ({
+              bale_id: r.bale_id,
+              weight_kg: Number(r.weight_kg || (r.total_grams / 1000)),
+              total_grams: Number(r.total_grams || 0),
+              status: r.status,
+              bale_category: r.bale_category,
+              bale_tag_no: r.bale_tag_no,
+              gate_pass_no: r.gate_pass_no,
+              wholesale_price_aed: Number(r.wholesale_price_aed || 0)
+            })));
+          } catch (_) {
+            try { await client.end(); } catch (_) {}
+          }
+        }
+        return res.status(200).json([]);
+      }
+
+      // GET /api/ecommerce/orders/customer/:customerId or /by-contact
+      if (pathname.includes('/ecommerce/orders/customer') && method === 'GET') {
+        const parts = pathname.split('/').filter(Boolean);
+        const lastPart = parts[parts.length - 1] || '';
+        const phone = (parsedUrl.query?.phone as string) || '';
+        const email = (parsedUrl.query?.email as string) || '';
+        const customerId = (lastPart !== 'by-contact' && lastPart !== 'customer') ? lastPart : ((parsedUrl.query?.customerId as string) || '');
+
+        const client = await getPgClient();
+        if (client) {
+          try {
+            let q = `
+              SELECT id, order_number as "orderNumber", total_amount as "totalAmount", 
+                     subtotal, delivery_fee as "deliveryFee", order_status as "orderStatus",
+                     payment_status as "paymentStatus", payment_method as "paymentMethod",
+                     items, notes, created_at as "createdAt"
+              FROM orders 
+              WHERE 1=1
+            `;
+            const params: any[] = [];
+            const conds: string[] = [];
+            if (customerId && customerId !== 'null' && customerId !== 'undefined') {
+              params.push(customerId);
+              conds.push(`customer_id = $${params.length}`);
+            }
+            if (phone) {
+              params.push(phone);
+              conds.push(`(customer_phone = $${params.length} AND customer_phone != '')`);
+            }
+            if (email) {
+              params.push(email);
+              conds.push(`(customer_email = $${params.length} AND customer_email != '')`);
+            }
+
+            if (conds.length === 0) {
+              await client.end();
+              return res.status(200).json([]);
+            }
+            q += ` AND (${conds.join(' OR ')}) ORDER BY created_at DESC LIMIT 50`;
+
+            const result = await client.query(q, params);
+            await client.end();
+            return res.status(200).json(result.rows.map((r: any) => ({
+              ...r,
+              trackingNumber: `TRK-DXB-${String(r.orderNumber).replace('ORD-', '')}`,
+              courierName: 'Aramex UAE Express Live',
+              trackingUrl: `https://www.aramex.com/ae/en/track/results?shipmentNumber=TRK-DXB-${String(r.orderNumber).replace('ORD-', '')}`
+            })));
+          } catch (_) {
+            try { await client.end(); } catch (_) {}
+          }
+        }
+        return res.status(200).json([]);
       }
 
       if ((pathname.includes('/grail-bounties') || pathname.endsWith('/ecommerce/bounty') || pathname.includes('/ecommerce/bounty')) && method === 'POST') {

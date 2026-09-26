@@ -204,27 +204,35 @@ const handleGetRetailCustomers = async (req: any, res: any) => {
       ORDER BY created_at DESC;
     `;
     const result = await client.query(query);
-    const rows = (result.rows || []).map((row: any) => ({
-      id: String(row.id),
-      code: `CRM-${String(row.id).slice(0, 6).toUpperCase()}`,
-      name: row.name,
-      company_name: row.company || row.name,
-      type: 'CUSTOMER',
-      party_type: 'RETAIL',
-      phone: row.phone || '',
-      email: row.email || '',
-      address: row.address || '',
-      current_balance: 0,
-      credit_limit: 0,
-      is_active: true,
-      coa_account_id: '1130-05',
-      account_map: { receivableAccountId: '1130-05' },
-      totalOrders: Number(row.total_orders || 0),
-      totalSpent: Number(row.total_spent || 0),
-      lastOrderDate: row.created_at || null,
-      createdAt: row.created_at || new Date().toISOString(),
-      created_at: row.created_at || new Date().toISOString()
-    }));
+    const rows = (result.rows || []).map((row: any) => {
+      const walletBal = Number(row.wallet_balance || 0);
+      return {
+        id: String(row.id),
+        code: `CRM-${String(row.id).slice(0, 6).toUpperCase()}`,
+        name: row.name,
+        company_name: row.company || row.name,
+        type: 'CUSTOMER',
+        party_type: (row.customer_type === 'B2B_RESELLER' ? 'B2B_RESELLER' : 'RETAIL'),
+        customer_type: row.customer_type || 'RETAIL',
+        vip_tier: row.vip_tier || 'BRONZE',
+        wallet_balance: walletBal,
+        walletBalance: walletBal,
+        auth_id: row.auth_id || null,
+        phone: row.phone || '',
+        email: row.email || '',
+        address: row.address || '',
+        current_balance: walletBal,
+        credit_limit: 0,
+        is_active: true,
+        coa_account_id: row.customer_type === 'B2B_RESELLER' ? '1130-01' : '1130-05',
+        account_map: { receivableAccountId: row.customer_type === 'B2B_RESELLER' ? '1130-01' : '1130-05' },
+        totalOrders: Number(row.total_orders || 0),
+        totalSpent: Number(row.total_spent || 0),
+        lastOrderDate: row.created_at || null,
+        createdAt: row.created_at || new Date().toISOString(),
+        created_at: row.created_at || new Date().toISOString()
+      };
+    });
     return res.json(rows);
   } catch (err: any) {
     console.warn('[PartiesRouter] Failed to fetch retail customers via PG:', err.message);
@@ -235,27 +243,35 @@ const handleGetRetailCustomers = async (req: any, res: any) => {
         .select('*')
         .order('created_at', { ascending: false });
       if (!error && Array.isArray(data)) {
-        return res.json(data.map((r: any) => ({
-          id: String(r.id),
-          code: `CRM-${String(r.id).slice(0, 6).toUpperCase()}`,
-          name: r.name,
-          company_name: r.company || r.name,
-          type: 'CUSTOMER',
-          party_type: 'RETAIL',
-          phone: r.phone || '',
-          email: r.email || '',
-          address: r.address || '',
-          current_balance: 0,
-          credit_limit: 0,
-          is_active: true,
-          coa_account_id: '1130-05',
-          account_map: { receivableAccountId: '1130-05' },
-          totalOrders: Number(r.total_orders || 0),
-          totalSpent: Number(r.total_spent || 0),
-          lastOrderDate: null,
-          createdAt: r.created_at || new Date().toISOString(),
-          created_at: r.created_at || new Date().toISOString()
-        })));
+        return res.json(data.map((r: any) => {
+          const walletBal = Number(r.wallet_balance || 0);
+          return {
+            id: String(r.id),
+            code: `CRM-${String(r.id).slice(0, 6).toUpperCase()}`,
+            name: r.name,
+            company_name: r.company || r.name,
+            type: 'CUSTOMER',
+            party_type: (r.customer_type === 'B2B_RESELLER' ? 'B2B_RESELLER' : 'RETAIL'),
+            customer_type: r.customer_type || 'RETAIL',
+            vip_tier: r.vip_tier || 'BRONZE',
+            wallet_balance: walletBal,
+            walletBalance: walletBal,
+            auth_id: r.auth_id || null,
+            phone: r.phone || '',
+            email: r.email || '',
+            address: r.address || '',
+            current_balance: walletBal,
+            credit_limit: 0,
+            is_active: true,
+            coa_account_id: r.customer_type === 'B2B_RESELLER' ? '1130-01' : '1130-05',
+            account_map: { receivableAccountId: r.customer_type === 'B2B_RESELLER' ? '1130-01' : '1130-05' },
+            totalOrders: Number(r.total_orders || 0),
+            totalSpent: Number(r.total_spent || 0),
+            lastOrderDate: null,
+            createdAt: r.created_at || new Date().toISOString(),
+            created_at: r.created_at || new Date().toISOString()
+          };
+        }));
       }
     } catch (_) {}
     return res.json([]);
@@ -265,6 +281,134 @@ const handleGetRetailCustomers = async (req: any, res: any) => {
 };
 
 partiesRouter.get('/retail', handleGetRetailCustomers);
+
+// -------------------------------------------------------------
+// 1c. PATCH /api/parties/retail/:id/type - Toggle RETAIL vs B2B_RESELLER
+// -------------------------------------------------------------
+partiesRouter.patch('/retail/:id/type', async (req, res) => {
+  const { id } = req.params;
+  const { customer_type } = req.body;
+  const validTypes = ['RETAIL', 'B2B_RESELLER'];
+  const targetType = String(customer_type).toUpperCase();
+
+  if (!validTypes.includes(targetType)) {
+    return res.status(400).json({ error: "Invalid customer_type. Must be 'RETAIL' or 'B2B_RESELLER'." });
+  }
+
+  let client: Client | null = null;
+  try {
+    client = await getDbClient();
+    await client.query(
+      `UPDATE public.crm_retail_customers SET customer_type = $1 WHERE id = $2`,
+      [targetType, id]
+    );
+    return res.json({ success: true, customer_type: targetType });
+  } catch (err: any) {
+    console.error('[PartiesRouter] Failed to update customer_type via PG:', err.message);
+    try {
+      const { error } = await supabase
+        .from('crm_retail_customers')
+        .update({ customer_type: targetType })
+        .eq('id', id);
+      if (error) throw error;
+      return res.json({ success: true, customer_type: targetType });
+    } catch (sbErr: any) {
+      return res.status(500).json({ error: sbErr.message || 'Failed to update customer type' });
+    }
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// -------------------------------------------------------------
+// 1d. POST /api/parties/retail/:id/wallet - Adjust Store Credit Wallet Balance
+// -------------------------------------------------------------
+partiesRouter.post('/retail/:id/wallet', async (req, res) => {
+  const { id } = req.params;
+  const { amount, type, description, orderId } = req.body;
+  const numAmount = Number(amount);
+
+  if (isNaN(numAmount) || numAmount <= 0) {
+    return res.status(400).json({ error: 'Valid positive amount in AED is required' });
+  }
+
+  const txType = String(type).toUpperCase() === 'DEBIT' ? 'DEBIT' : 'CREDIT';
+  const desc = String(description || (txType === 'CREDIT' ? 'Store Credit Added' : 'Store Credit Deducted'));
+
+  let client: Client | null = null;
+  try {
+    client = await getDbClient();
+    await client.query('BEGIN');
+
+    const custRes = await client.query(
+      `SELECT wallet_balance FROM public.crm_retail_customers WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+
+    if (custRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Retail customer not found' });
+    }
+
+    const currentBal = Number(custRes.rows[0].wallet_balance || 0);
+    const newBal = txType === 'CREDIT' ? currentBal + numAmount : Math.max(0, currentBal - numAmount);
+
+    await client.query(
+      `UPDATE public.crm_retail_customers SET wallet_balance = $1 WHERE id = $2`,
+      [newBal, id]
+    );
+
+    const txRes = await client.query(
+      `INSERT INTO public.customer_wallet_transactions (
+        customer_id, amount, transaction_type, description, reference_order_id, created_by
+      ) VALUES ($1, $2, $3, $4, $5, 'Admin')
+      RETURNING *`,
+      [id, numAmount, txType, desc, orderId || null]
+    );
+
+    await client.query('COMMIT');
+    return res.json({
+      success: true,
+      newBalance: newBal,
+      transaction: txRes.rows[0]
+    });
+  } catch (err: any) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('[PartiesRouter] Failed to adjust wallet balance:', err.message);
+    return res.status(500).json({ error: err.message || 'Failed to adjust wallet balance' });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// -------------------------------------------------------------
+// 1e. GET /api/parties/retail/:id/transactions - Customer Wallet Ledger
+// -------------------------------------------------------------
+partiesRouter.get('/retail/:id/transactions', async (req, res) => {
+  const { id } = req.params;
+  let client: Client | null = null;
+  try {
+    client = await getDbClient();
+    const result = await client.query(
+      `SELECT * FROM public.customer_wallet_transactions WHERE customer_id = $1 ORDER BY created_at DESC`,
+      [id]
+    );
+    return res.json(result.rows || []);
+  } catch (err: any) {
+    try {
+      const { data } = await supabase
+        .from('customer_wallet_transactions')
+        .select('*')
+        .eq('customer_id', id)
+        .order('created_at', { ascending: false });
+      return res.json(data || []);
+    } catch (_) {
+      return res.json([]);
+    }
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
 
 // -------------------------------------------------------------
 // 2. GET /api/parties/:id - View single party with financial stats

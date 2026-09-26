@@ -8,11 +8,19 @@ import {
   ExternalLink,
   FileText,
   Loader2,
-  Receipt
+  Receipt,
+  Wallet,
+  Building2,
+  ShoppingBag,
+  ArrowRightLeft,
+  CheckCircle2,
+  ShieldCheck,
+  Crown
 } from 'lucide-react';
 import { CrmService, CrmRetailCustomer } from '../../../services/crmService.ts';
 import { NewRetailCustomerModal } from '../../parties/components/NewRetailCustomerModal.tsx';
 import { RetailCustomerStatementModal } from '../../parties/components/RetailCustomerStatementModal.tsx';
+import { AdjustWalletModal } from './AdjustWalletModal.tsx';
 
 export const RetailCustomerCRMView: React.FC = () => {
   const [customers, setCustomers] = useState<CrmRetailCustomer[]>([]);
@@ -20,9 +28,11 @@ export const RetailCustomerCRMView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showNewModal, setShowNewModal] = useState<boolean>(false);
   const [showStatementModal, setShowStatementModal] = useState<boolean>(false);
+  const [showWalletModal, setShowWalletModal] = useState<boolean>(false);
   const [selectedCustomer, setSelectedCustomer] = useState<CrmRetailCustomer | null>(null);
   const [customerInvoices, setCustomerInvoices] = useState<any[]>([]);
   const [isLoadingStatement, setIsLoadingStatement] = useState<boolean>(false);
+  const [updatingTypeId, setUpdatingTypeId] = useState<string | null>(null);
 
   const loadCustomers = async () => {
     setIsLoading(true);
@@ -55,6 +65,36 @@ export const RetailCustomerCRMView: React.FC = () => {
     }
   };
 
+  const handleToggleCustomerType = async (cust: CrmRetailCustomer) => {
+    const isCurrentB2B = cust.customer_type === 'B2B_RESELLER';
+    const newType = isCurrentB2B ? 'RETAIL' : 'B2B_RESELLER';
+    setUpdatingTypeId(cust.id);
+    try {
+      await CrmService.updateCustomerType(cust.id, newType);
+      setCustomers(prev =>
+        prev.map(c =>
+          c.id === cust.id
+            ? {
+                ...c,
+                customer_type: newType,
+                party_type: newType,
+                coa_account_id: newType === 'B2B_RESELLER' ? '1130-01' : '1130-05'
+              }
+            : c
+        )
+      );
+    } catch (err) {
+      console.error('Failed to update customer type:', err);
+    } finally {
+      setUpdatingTypeId(null);
+    }
+  };
+
+  const openWalletModal = (cust: CrmRetailCustomer) => {
+    setSelectedCustomer(cust);
+    setShowWalletModal(true);
+  };
+
   const filtered = customers.filter(c => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
@@ -62,12 +102,15 @@ export const RetailCustomerCRMView: React.FC = () => {
       c.name.toLowerCase().includes(q) ||
       (c.phone && c.phone.includes(q)) ||
       (c.code && c.code.toLowerCase().includes(q)) ||
-      (c.company && c.company.toLowerCase().includes(q))
+      (c.company && c.company.toLowerCase().includes(q)) ||
+      (c.customer_type && c.customer_type.toLowerCase().includes(q))
     );
   });
 
   const totalOrders = customers.reduce((s, c) => s + (Number(c.totalOrders || c.total_orders) || 0), 0);
   const totalSpent = customers.reduce((s, c) => s + (Number(c.totalSpent || c.total_spent) || 0), 0);
+  const totalB2B = customers.filter(c => c.customer_type === 'B2B_RESELLER').length;
+  const totalWalletLiability = customers.reduce((s, c) => s + (Number(c.wallet_balance || c.walletBalance) || 0), 0);
 
   return (
     <div className="space-y-4">
@@ -75,13 +118,16 @@ export const RetailCustomerCRMView: React.FC = () => {
       <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xl">🛍️</span>
               <h2 className="text-base font-bold text-slate-900 tracking-tight">
-                Retail Customer CRM & Statements (Khata)
+                Retail Customer CRM & Omnichannel 2.0 Command Center
               </h2>
               <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 rounded-full border border-emerald-200">
-                COA: 1130-05 Walk-In Control
+                COA: 1130-05 Walk-In • 1130-01 Wholesale
+              </span>
+              <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-900 rounded-full border border-amber-200">
+                COA: 2150-01 Store Credit Wallets
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
@@ -107,7 +153,7 @@ export const RetailCustomerCRMView: React.FC = () => {
               type="text"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search by customer name, phone, code..."
+              placeholder="Search by customer name, phone, code, or type..."
               className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-emerald-600 text-slate-800"
             />
             {searchQuery && (
@@ -124,9 +170,13 @@ export const RetailCustomerCRMView: React.FC = () => {
           <div className="flex items-center gap-3 text-xs font-semibold text-slate-500 self-end sm:self-auto flex-wrap">
             <span>Total Customers: <strong className="text-slate-800">{customers.length}</strong></span>
             <span>•</span>
+            <span>B2B Resellers: <strong className="text-purple-700">{totalB2B}</strong></span>
+            <span>•</span>
             <span>Total Orders: <strong className="text-indigo-700">{totalOrders}</strong></span>
             <span>•</span>
-            <span>Total Retail Sales: <strong className="text-emerald-700">AED {totalSpent.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
+            <span>Total Sales: <strong className="text-emerald-700">AED {totalSpent.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
+            <span>•</span>
+            <span>Wallet Liabilities (2150-01): <strong className="text-amber-700 font-mono">AED {totalWalletLiability.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
           </div>
         </div>
       </div>
@@ -154,6 +204,9 @@ export const RetailCustomerCRMView: React.FC = () => {
           {filtered.map(cust => {
             const ordersCount = Number(cust.totalOrders || cust.total_orders || 0);
             const spentAmt = Number(cust.totalSpent || cust.total_spent || 0);
+            const walletBal = Number(cust.wallet_balance ?? cust.walletBalance ?? 0);
+            const isB2B = cust.customer_type === 'B2B_RESELLER';
+            const isUpdatingType = updatingTypeId === cust.id;
 
             return (
               <div
@@ -163,7 +216,11 @@ export const RetailCustomerCRMView: React.FC = () => {
                 <div className="space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 font-bold flex items-center justify-center text-xs border border-emerald-100">
+                      <div className={`w-9 h-9 rounded-lg font-bold flex items-center justify-center text-xs border ${
+                        isB2B
+                          ? 'bg-purple-50 text-purple-700 border-purple-200'
+                          : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                      }`}>
                         {cust.name.slice(0, 2).toUpperCase()}
                       </div>
                       <div>
@@ -172,13 +229,46 @@ export const RetailCustomerCRMView: React.FC = () => {
                           <span className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-100">
                             {cust.code}
                           </span>
-                          <span className="text-[10px] text-slate-400 font-mono">1130-05</span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {isB2B ? '1130-01 (B2B)' : '1130-05 (Retail)'}
+                          </span>
+                          {cust.vip_tier && (
+                            <span className="text-[9px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 px-1 py-0.2 rounded border border-amber-200 flex items-center gap-0.5">
+                              <Crown className="w-2.5 h-2.5 text-amber-600" />
+                              <span>{cust.vip_tier}</span>
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
-                      CRM RETAIL
-                    </span>
+
+                    {/* Single-Click Customer Type Admin Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleCustomerType(cust)}
+                      disabled={isUpdatingType}
+                      className={`px-2 py-0.5 rounded-full text-[9px] font-bold border transition flex items-center gap-1 shrink-0 cursor-pointer ${
+                        isB2B
+                          ? 'bg-purple-100 text-purple-800 border-purple-300 hover:bg-purple-200'
+                          : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
+                      }`}
+                      title={isB2B ? 'Click to toggle back to RETAIL customer' : 'Click to promote to B2B RESELLER'}
+                    >
+                      {isUpdatingType ? (
+                        <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                      ) : isB2B ? (
+                        <>
+                          <Building2 className="w-2.5 h-2.5 text-purple-700" />
+                          <span>B2B RESELLER</span>
+                        </>
+                      ) : (
+                        <>
+                          <ShoppingBag className="w-2.5 h-2.5 text-slate-600" />
+                          <span>RETAIL</span>
+                        </>
+                      )}
+                      <ArrowRightLeft className="w-2 h-2 text-slate-400 ml-0.5" />
+                    </button>
                   </div>
 
                   <div className="space-y-1 text-xs text-slate-600 pt-1 border-t border-slate-100">
@@ -226,6 +316,30 @@ export const RetailCustomerCRMView: React.FC = () => {
                       </div>
                     </div>
                   </div>
+
+                  {/* Store Credit Wallet (COA: 2150-01) */}
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-amber-50/70 border border-amber-200/60">
+                    <div className="flex items-center gap-1.5">
+                      <Wallet className="w-3.5 h-3.5 text-amber-700" />
+                      <div>
+                        <div className="text-[10px] font-bold text-amber-900 leading-tight">Store Credit Wallet</div>
+                        <span className="text-[9px] font-mono text-amber-700/80">COA 2150-01</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono font-black text-amber-900">
+                        AED {walletBal.toFixed(2)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => openWalletModal(cust)}
+                        className="px-2 py-0.5 text-[10px] font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-md shadow-2xs transition cursor-pointer"
+                        title="Add or Deduct Store Credit with audit reason"
+                      >
+                        ± Credit
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Card Footer Actions */}
@@ -267,6 +381,27 @@ export const RetailCustomerCRMView: React.FC = () => {
         customer={selectedCustomer as any}
         invoices={customerInvoices}
         isLoading={isLoadingStatement}
+      />
+
+      <AdjustWalletModal
+        isOpen={showWalletModal}
+        onClose={() => {
+          setShowWalletModal(false);
+          setSelectedCustomer(null);
+        }}
+        customer={selectedCustomer}
+        onSuccess={newBal => {
+          if (selectedCustomer) {
+            setCustomers(prev =>
+              prev.map(c =>
+                c.id === selectedCustomer.id
+                  ? { ...c, wallet_balance: newBal, walletBalance: newBal }
+                  : c
+              )
+            );
+          }
+          loadCustomers();
+        }}
       />
     </div>
   );
