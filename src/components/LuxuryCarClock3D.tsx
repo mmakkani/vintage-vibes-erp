@@ -19,11 +19,14 @@ export const LuxuryCarClock3D: React.FC<LuxuryCarClock3DProps> = ({
   const [resetKey, setResetKey] = useState(0);
   const clockRef = useRef<HTMLDivElement>(null);
 
-  // Tick clock every 250ms for smooth sweeping motion
+  // Tick clock once per second to reduce CPU wakeups and React re-renders by 75%
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTime(new Date());
-    }, 250);
+    const update = () => {
+      if (!document.hidden) {
+        setTime(new Date());
+      }
+    };
+    const timer = setInterval(update, 1000);
     return () => clearInterval(timer);
   }, []);
 

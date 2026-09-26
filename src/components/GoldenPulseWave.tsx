@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 
 interface GoldenPulseWaveProps {
   className?: string;
@@ -24,20 +24,33 @@ export const GoldenPulseWave: React.FC<GoldenPulseWaveProps> = ({
 
     let animationFrameId: number;
     let step = 0;
+    let lastFrameTime = 0;
+    const FRAME_INTERVAL = 1000 / 24; // 24 FPS is silky smooth for waveforms while saving 60% CPU
 
-    const render = () => {
+    const render = (currentTime: number) => {
+      if (document.hidden) {
+        animationFrameId = requestAnimationFrame(render);
+        return;
+      }
+
+      const elapsed = currentTime - lastFrameTime;
+      if (elapsed < FRAME_INTERVAL) {
+        animationFrameId = requestAnimationFrame(render);
+        return;
+      }
+
+      lastFrameTime = currentTime - (elapsed % FRAME_INTERVAL);
+
       ctx.clearRect(0, 0, width, height);
 
       step += 0.045 * intensity;
 
-      // Draw flowing golden sine waveform
+      // Draw flowing golden sine waveform (clean, crisp, zero GPU blur lag)
       ctx.beginPath();
       ctx.lineWidth = 1.6;
       ctx.strokeStyle = '#f59e0b';
-      ctx.shadowBlur = 8;
-      ctx.shadowColor = 'rgba(245, 158, 11, 0.8)';
 
-      for (let x = 0; x < width; x += 2) {
+      for (let x = 0; x < width; x += 3) {
         // Multi-frequency harmonic wave with heartbeat pulse packets
         const pulseCenter = (width / 2) + Math.sin(step * 0.4) * (width * 0.35);
         const distFromCenter = Math.abs(x - pulseCenter);
@@ -57,14 +70,12 @@ export const GoldenPulseWave: React.FC<GoldenPulseWaveProps> = ({
       }
       ctx.stroke();
 
-      // Second soft ambient glow wave
+      // Second soft ambient gold wave
       ctx.beginPath();
-      ctx.lineWidth = 0.8;
-      ctx.strokeStyle = 'rgba(254, 240, 138, 0.6)';
-      ctx.shadowBlur = 3;
-      ctx.shadowColor = 'rgba(254, 240, 138, 0.5)';
+      ctx.lineWidth = 1.0;
+      ctx.strokeStyle = 'rgba(254, 240, 138, 0.45)';
 
-      for (let x = 0; x < width; x += 3) {
+      for (let x = 0; x < width; x += 4) {
         const y = height / 2 + Math.sin(x * 0.04 - step * 0.8) * 4;
         if (x === 0) {
           ctx.moveTo(x, y);
@@ -77,14 +88,14 @@ export const GoldenPulseWave: React.FC<GoldenPulseWaveProps> = ({
       animationFrameId = requestAnimationFrame(render);
     };
 
-    render();
+    animationFrameId = requestAnimationFrame(render);
 
     const handleResize = () => {
       if (!canvas || !canvas.parentElement) return;
       width = canvas.width = canvas.parentElement.clientWidth;
       height = canvas.height = 24;
     };
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('resize', handleResize, { passive: true });
 
     return () => {
       window.removeEventListener('resize', handleResize);

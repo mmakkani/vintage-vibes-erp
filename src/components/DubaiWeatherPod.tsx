@@ -56,7 +56,7 @@ export const DubaiWeatherPod: React.FC<DubaiWeatherPodProps> = ({
       {/* Weather Icon Pod with Animated Glow */}
       <div className="relative w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white shadow-2xs flex-shrink-0">
         {isDay ? (
-          <Sun className="w-4 h-4 text-amber-100 animate-spin" style={{ animationDuration: '24s' }} />
+          <Sun className="w-4 h-4 text-amber-100 transition-transform duration-500 hover:rotate-90" />
         ) : (
           <Moon className="w-4 h-4 text-amber-100" />
         )}
