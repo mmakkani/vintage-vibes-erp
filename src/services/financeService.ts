@@ -984,7 +984,7 @@ export class FinanceService {
     };
   }
 
-  public static async deleteVoucher(id: string, force: boolean = true): Promise<boolean> {
+  public static async deleteVoucher(id: string, force: boolean = false): Promise<boolean> {
     const cleanId = String(id);
     let vNo = cleanId;
     try {
@@ -992,7 +992,7 @@ export class FinanceService {
       const existing = vouchersList.find(item => String(item.id) === cleanId || item.voucherNo === cleanId);
       if (existing) {
         vNo = existing.voucherNo || cleanId;
-        if (this.isAutoVoucher(existing)) {
+        if (!force && this.isAutoVoucher(existing)) {
           throw new Error('Deletion Blocked: System auto-generated vouchers (Inward Gate Passes, Commercial Invoices, POS Sales, Payroll) are audit-locked and cannot be deleted from Finance. Please delete the originating source transaction (e.g. POS Sale or Sales Invoice).');
         }
       }
@@ -1004,7 +1004,7 @@ export class FinanceService {
 
     // Call serverless endpoint if available
     try {
-      fetch(`/api/finance/vouchers/${cleanId}`, { method: 'DELETE' }).catch(() => {});
+      fetch(`/api/finance/vouchers/${cleanId}${force ? '?force=true' : ''}`, { method: 'DELETE' }).catch(() => {});
     } catch (_) {}
 
     try {
@@ -1108,12 +1108,6 @@ export class FinanceService {
               .from('chart_of_accounts')
               .update({ current_balance: calculatedBalance })
               .eq('code', coaRef);
-            try {
-              await supabase
-                .from('accounts')
-                .update({ current_balance: calculatedBalance })
-                .eq('account_code', coaRef);
-            } catch (_) {}
           }
         } catch (coaErr) {
           console.warn(`[FinanceService] Notice updating COA balance for ${coaRef}:`, coaErr);

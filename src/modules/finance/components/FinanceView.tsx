@@ -1464,7 +1464,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     }
     setDeletingVoucherId(String(v.id));
     try {
-      await FinanceService.deleteVoucher(v.id, true);
+      await FinanceService.deleteVoucher(v.id, false);
       showMsg(`Voucher ${v.voucherNo} deleted successfully from SQL!`);
       notifyMutation('FINANCE', 'VOUCHER', 'DELETE', v.voucherNo);
       setVouchers(prev => {

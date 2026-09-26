@@ -542,8 +542,9 @@ financeRouter.put('/vouchers/:id', async (req, res) => {
 
 financeRouter.delete('/vouchers/:id', async (req, res) => {
   const { id } = req.params;
+  const isForce = req.query?.force === 'true';
   try {
-    await FinanceService.deleteVoucher(id);
+    await FinanceService.deleteVoucher(id, isForce);
     return res.json({ success: true });
   } catch (err: any) {
     const isBlocked = err?.message?.includes('Deletion Blocked');

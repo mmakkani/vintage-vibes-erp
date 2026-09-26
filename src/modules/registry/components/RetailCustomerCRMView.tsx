@@ -55,6 +55,25 @@ export const RetailCustomerCRMView: React.FC = () => {
 
   useEffect(() => {
     loadCustomers();
+
+    const handleMutation = (e: any) => {
+      const detail = e?.detail;
+      if (
+        detail?.module === 'crm' ||
+        detail?.module === 'sales' ||
+        detail?.affectedModules?.includes('crm') ||
+        detail?.affectedModules?.includes('sales')
+      ) {
+        loadCustomers();
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('vv:entity-mutated', handleMutation);
+      return () => {
+        window.removeEventListener('vv:entity-mutated', handleMutation);
+      };
+    }
   }, []);
 
   const openStatement = async (cust: CrmRetailCustomer) => {

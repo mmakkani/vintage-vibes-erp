@@ -5495,7 +5495,8 @@ RULES FOR YOUR RESPONSE:
           const client = await getPgClient();
           if (client) {
             try {
-              // Block auto voucher deletion directly from finance
+              // Block auto voucher deletion directly from finance unless forced by source transaction
+              const isForce = parsedUrl.searchParams.get('force') === 'true' || (req.query as any)?.force === 'true';
               const checkVch = await client.query(
                 `SELECT is_auto, reference, reference_no, voucher_no FROM financial_vouchers WHERE id = $1 OR voucher_no = $1
                  UNION
@@ -5506,7 +5507,7 @@ RULES FOR YOUR RESPONSE:
                 const row = checkVch.rows[0];
                 const ref = String(row.reference || row.reference_no || '').trim().toUpperCase();
                 const isAuto = Boolean(row.is_auto || ref.startsWith('POS-') || ref.startsWith('INV-') || ref.startsWith('PINV-') || ref.startsWith('INWARD-') || ref.startsWith('IGP-') || ref.startsWith('PUR-') || ref.startsWith('PAYROLL-') || ref.startsWith('BALE-'));
-                if (isAuto) {
+                if (isAuto && !isForce) {
                   await client.end().catch(() => {});
                   return res.status(403).json({
                     success: false,

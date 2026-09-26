@@ -171,9 +171,169 @@ export class CrmService {
             total_orders: newOrders
           })
           .eq('id', customerId);
+
+        if (typeof window !== 'undefined') {
+          try {
+            window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+              detail: {
+                module: 'crm',
+                entity: 'crm_retail_customers',
+                action: 'UPDATED',
+                documentRef: customerId
+              }
+            }));
+          } catch (_) {}
+        }
       }
     } catch (err: any) {
       console.warn('[CrmService] Failed to update customer sales metrics:', err?.message);
+    }
+  }
+
+  /**
+   * Decrements retail customer's CRM purchase metrics (total_spent and total_orders)
+   * Safely floors at 0.
+   */
+  public static async decrementCustomerSales(customerId: string, saleAmount: number): Promise<void> {
+    if (!customerId || customerId === this.CONTROL_WALK_IN_PARTY_ID) return;
+    try {
+      const { data: current } = await supabase
+        .from('crm_retail_customers')
+        .select('total_spent, total_orders')
+        .eq('id', customerId)
+        .maybeSingle();
+
+      if (current) {
+        const newSpent = Math.max(0, Number((Number(current.total_spent || 0) - Number(saleAmount || 0)).toFixed(2)));
+        const newOrders = Math.max(0, Number(current.total_orders || 0) - 1);
+        await supabase
+          .from('crm_retail_customers')
+          .update({
+            total_spent: newSpent,
+            total_orders: newOrders
+          })
+          .eq('id', customerId);
+
+        if (typeof window !== 'undefined') {
+          try {
+            window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+              detail: {
+                module: 'crm',
+                entity: 'crm_retail_customers',
+                action: 'UPDATED',
+                documentRef: customerId
+              }
+            }));
+          } catch (_) {}
+        }
+      }
+    } catch (err: any) {
+      console.warn('[CrmService] Failed to decrement customer sales metrics:', err?.message);
+    }
+  }
+
+  /**
+   * Recalculates retail customer's CRM purchase metrics (total_spent and total_orders)
+   * based on actual active sales invoices in public.sales_invoices.
+   * If all invoices are deleted or none remain, metrics safely reset to 0.
+   */
+  public static async recalculateCustomerMetrics(params: {
+    customerId?: string;
+    phone?: string;
+    name?: string;
+  }): Promise<void> {
+    try {
+      const { customerId, phone, name } = params;
+      if (!customerId && !phone && !name) return;
+
+      // 1. Locate the customer row in crm_retail_customers
+      let targetCustomer: any = null;
+      const isUuid = customerId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(customerId);
+
+      if (isUuid && customerId !== this.CONTROL_WALK_IN_PARTY_ID) {
+        const { data } = await supabase
+          .from('crm_retail_customers')
+          .select('id, name, phone')
+          .eq('id', customerId)
+          .maybeSingle();
+        targetCustomer = data;
+      }
+
+      const cleanPhone = (phone || targetCustomer?.phone || '').replace(/\D/g, '');
+      const cleanName = (name || targetCustomer?.name || '').trim();
+
+      if (!targetCustomer) {
+        if (cleanPhone && cleanPhone.length >= 7) {
+          const { data } = await supabase
+            .from('crm_retail_customers')
+            .select('id, name, phone')
+            .ilike('phone', `%${cleanPhone.slice(-7)}%`)
+            .maybeSingle();
+          targetCustomer = data;
+        }
+      }
+
+      if (!targetCustomer && cleanName && cleanName.toLowerCase() !== 'walk-in customer') {
+        const { data } = await supabase
+          .from('crm_retail_customers')
+          .select('id, name, phone')
+          .ilike('name', `%${cleanName}%`)
+          .maybeSingle();
+        targetCustomer = data;
+      }
+
+      if (!targetCustomer) return;
+
+      // 2. Query remaining active sales invoices for this customer
+      const queryPhone = (targetCustomer.phone || phone || '').replace(/\D/g, '');
+      const queryName = (targetCustomer.name || name || '').trim();
+
+      let orConditions: string[] = [];
+      if (queryPhone && queryPhone.length >= 7) {
+        orConditions.push(`customer_phone.ilike.%${queryPhone.slice(-7)}%`);
+      }
+      if (queryName && queryName.toLowerCase() !== 'walk-in customer') {
+        orConditions.push(`customer_name.ilike.%${queryName}%`);
+      }
+
+      let activeInvoices: any[] = [];
+      if (orConditions.length > 0) {
+        const { data: invs } = await supabase
+          .from('sales_invoices')
+          .select('id, total_amount, status')
+          .or(orConditions.join(','));
+        activeInvoices = (invs || []).filter(inv => inv.status !== 'VOIDED' && inv.status !== 'CANCELLED');
+      }
+
+      const calculatedOrders = activeInvoices.length;
+      const calculatedSpent = Number(
+        activeInvoices.reduce((sum, inv) => sum + (Number(inv.total_amount) || 0), 0).toFixed(2)
+      );
+
+      // 3. Update crm_retail_customers with accurate recalculated metrics
+      await supabase
+        .from('crm_retail_customers')
+        .update({
+          total_spent: calculatedSpent,
+          total_orders: calculatedOrders
+        })
+        .eq('id', targetCustomer.id);
+
+      // 4. Dispatch entity mutation so UI customer list / cards reflect changes immediately
+      if (typeof window !== 'undefined') {
+        try {
+          window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+            detail: {
+              module: 'crm',
+              entity: 'crm_retail_customers',
+              action: 'UPDATED',
+              documentRef: targetCustomer.id
+            }
+          }));
+        } catch (_) {}
+      }
+    } catch (err: any) {
+      console.warn('[CrmService] Failed to recalculate customer metrics:', err?.message);
     }
   }
 

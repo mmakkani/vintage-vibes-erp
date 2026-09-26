@@ -3,6 +3,7 @@ import { SalesInvoice } from '../modules/sales/sales.types.ts';
 import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
 import { FinanceService, generateLedgerUuid } from './financeService.ts';
 import { SequenceService } from './sequenceService.ts';
+import { CrmService } from './crmService.ts';
 
 export class SalesService {
   public static readonly SALES_INVOICE_GRID_COLUMNS = 'id, invoice_no, client_id, customer_name, customer_phone, subtotal, tax_amount, total_amount, status, payment_method, invoice_date, created_at, items';
@@ -560,8 +561,8 @@ export class SalesService {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cleanId);
       const { data: invData } = await (
         isUuid
-          ? supabase.from('sales_invoices').select('id, items, invoice_no, client_id').eq('id', cleanId).maybeSingle()
-          : supabase.from('sales_invoices').select('id, items, invoice_no, client_id').or(`id.eq.${cleanId},invoice_no.eq.${cleanId}`).maybeSingle()
+          ? supabase.from('sales_invoices').select('*').eq('id', cleanId).maybeSingle()
+          : supabase.from('sales_invoices').select('*').or(`id.eq.${cleanId},invoice_no.eq.${cleanId}`).maybeSingle()
       );
 
       invoice = invData;
@@ -572,7 +573,7 @@ export class SalesService {
       try {
         const { data: ps } = await supabase
           .from('pos_sales')
-          .select('id, items, invoice_number')
+          .select('*')
           .or(`invoice_number.eq.${invoiceNo},invoice_number.eq.${cleanId},id.eq.${cleanId}`)
           .maybeSingle();
         posSale = ps;
@@ -580,6 +581,10 @@ export class SalesService {
           invoiceNo = posSale.invoice_number || cleanId;
         }
       } catch (_) {}
+
+      // Retain customer details for CRM retail customer metrics rollback
+      const customerPhone = invoice?.customer_phone || posSale?.customer_phone || '';
+      const customerName = invoice?.customer_name || posSale?.customer_name || '';
 
       if (!invoice && !posSale) {
         throw new Error('Invoice or POS sale not found for deletion');
@@ -650,7 +655,6 @@ export class SalesService {
       }
       for (const vno of vNos) {
         try { await supabase.from('voucher_entries').delete().eq('voucher_no', vno); } catch (_) {}
-        try { await supabase.from('journal_entries').delete().eq('voucher_no', vno); } catch (_) {}
         try { await supabase.from('general_ledger').delete().eq('voucher_no', vno); } catch (_) {}
         try { await supabase.from('ledgers').delete().eq('voucher_no', vno); } catch (_) {}
         try { await supabase.from('financial_vouchers').delete().eq('voucher_no', vno); } catch (_) {}
@@ -678,7 +682,7 @@ export class SalesService {
 
       // STEP 6: COA Sync (Fix 22P02)
       // If calling sync_coa_current_balances or updating COA, ensure you use .eq('account_code', code) / .eq('code', code) NOT .eq('id', code)
-      if (invoice.client_id) {
+      if (invoice?.client_id) {
         try {
           await FinanceService.recalculatePartyBalance(invoice.client_id);
         } catch (_) {}
@@ -697,6 +701,18 @@ export class SalesService {
         await supabase.rpc('sync_coa_current_balances');
       } catch (_) {}
 
+      // STEP 6.5: Recalculate isolated retail CRM customer metrics
+      if (customerPhone || customerName) {
+        try {
+          await CrmService.recalculateCustomerMetrics({
+            phone: customerPhone,
+            name: customerName
+          });
+        } catch (crmErr) {
+          console.warn('[SalesService] CRM metrics rollback notice:', crmErr);
+        }
+      }
+
       // STEP 7: Dispatch entity mutation event
       if (typeof window !== 'undefined') {
         try {
@@ -706,7 +722,7 @@ export class SalesService {
               entity: 'sales_invoices',
               action: 'DELETED',
               documentRef: invoiceNo,
-              affectedModules: ['sales', 'finance', 'inventory']
+              affectedModules: ['sales', 'finance', 'inventory', 'crm']
             }
           }));
         } catch (_) {}
