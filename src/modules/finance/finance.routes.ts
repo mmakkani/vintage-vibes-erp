@@ -5,6 +5,7 @@ import { FinanceController } from './finance.controller.ts';
 import { FinanceService } from '../../services/financeService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { withDb, sanitizeDbUrl, DEFAULT_DB_URL } from '../../db/pgPool.ts';
+import { insertVoucherPg } from './voucherPgService.ts';
 import { verifyAuthToken, checkModulePermission, extractAuthToken } from '../../server/authValidator.ts';
 
 export const financeRouter = Router();
@@ -492,14 +493,11 @@ financeRouter.get('/vouchers', async (req, res) => {
 
 financeRouter.post('/vouchers', async (req, res) => {
   try {
-    const v = await FinanceService.addVoucher(req.body);
+    const v = await insertVoucherPg(req.body);
     return res.json({ success: true, voucher: v });
   } catch (err: any) {
-    const result = FinanceController.createVoucher(req.body);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    return res.json(result);
+    console.error('[Finance POST /vouchers] Error:', err);
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to record financial voucher' });
   }
 });
 

@@ -5127,6 +5127,18 @@ RULES FOR YOUR RESPONSE:
 
     // Finance Vouchers
     if (pathname.includes('/finance/vouchers')) {
+      if (method === 'POST') {
+        try {
+          const v = req.body;
+          const { insertVoucherPg } = await import('../src/modules/finance/voucherPgService.ts');
+          const result = await insertVoucherPg(v);
+          return res.status(200).json({ success: true, voucher: result });
+        } catch (err: any) {
+          console.error('[Gateway /finance/vouchers POST] Error:', err);
+          return res.status(400).json({ success: false, error: err?.message || 'Failed to record financial voucher' });
+        }
+      }
+
       try {
         const client = await getPgClient();
         if (client) {

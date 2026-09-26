@@ -887,15 +887,21 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         cashier_id: effectiveCashierId,
         customer_name: selectedCustomer?.name || 'Walk-In Customer',
         customer_phone: selectedCustomer?.phone || '',
-        items: cart.map(c => ({
-          barcode: c.piece.barcode,
-          pieceId: c.piece.id,
-          itemName: c.piece.itemName,
-          brandName: c.piece.brandName,
-          unitPrice: c.sellingPrice,
-          discount: c.discount,
-          finalAmount: c.sellingPrice - c.discount
-        })),
+        items: cart.map(c => {
+          const itemCost = Number(c?.cogsCost ?? (c?.piece as any)?.cost_price ?? (c?.piece as any)?.calculatedCostPrice ?? (c?.piece as any)?.cogsCost ?? 0);
+          return {
+            barcode: c.piece.barcode,
+            pieceId: c.piece.id,
+            itemName: c.piece.itemName,
+            brandName: c.piece.brandName,
+            unitPrice: c.sellingPrice,
+            discount: c.discount,
+            finalAmount: c.sellingPrice - c.discount,
+            calculatedCostPrice: itemCost,
+            cost_price: itemCost,
+            cogsCost: itemCost
+          };
+        }),
         subtotal: subtotalAmt,
         tax_amount: vatAmt,
         discount_amount: discountTotal,
@@ -921,95 +927,91 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       );
 
       let createdVoucherNo = `VCH-${Date.now().toString().slice(-6)}`;
-      try {
-        const paymentAccCode = effectivePaymentMode === 'CASH' ? '1110-01' : '1120-01';
-        const paymentAccName = effectivePaymentMode === 'CASH' ? 'Cash in Hand (Counter)' : 'Bank / Card Clearing';
-        const vRes = await FinanceService.addVoucher({
-          date: new Date().toISOString().slice(0, 10),
-          type: 'CRV',
-          reference: invoiceNum,
-          narration: `POS Counter Sale ${invoiceNum} - ${selectedCustomer?.name || 'Walk-In Customer'}`,
-          createdBy: operatorName || 'Cashier Lead',
-          lines: [
+      const paymentAccCode = effectivePaymentMode === 'CASH' ? '1110-01' : '1120-01';
+      const paymentAccName = effectivePaymentMode === 'CASH' ? 'Cash in Hand (Counter)' : 'Bank / Card Clearing';
+      const vRes = await FinanceService.addVoucher({
+        date: new Date().toISOString().slice(0, 10),
+        type: 'CRV',
+        reference: invoiceNum,
+        narration: `POS Counter Sale ${invoiceNum} - ${selectedCustomer?.name || 'Walk-In Customer'}`,
+        createdBy: operatorName || 'Cashier Lead',
+        lines: [
+          {
+            accountId: CONTROL_ACC_CODE,
+            accountCode: CONTROL_ACC_CODE,
+            accountName: CONTROL_ACC_NAME,
+            partyId: CONTROL_PARTY_ID,
+            partyName: 'Walk In Customer',
+            debit: totalAmt,
+            credit: 0,
+            memo: `POS Sale ${invoiceNum}`
+          },
+          {
+            accountId: '4110-01',
+            accountCode: '4110-01',
+            accountName: 'POS / Counter Retail Sales',
+            partyId: CONTROL_PARTY_ID,
+            partyName: 'Walk In Customer',
+            debit: 0,
+            credit: subtotalAmt,
+            memo: `Sales Revenue ${invoiceNum}`
+          },
+          ...(vatAmt > 0 ? [{
+            accountId: '2140-01',
+            accountCode: '2140-01',
+            accountName: 'VAT Output 5%',
+            partyId: CONTROL_PARTY_ID,
+            partyName: 'Walk In Customer',
+            debit: 0,
+            credit: vatAmt,
+            memo: `5% UAE VAT ${invoiceNum}`
+          }] : []),
+          {
+            accountId: paymentAccCode,
+            accountCode: paymentAccCode,
+            accountName: paymentAccName,
+            partyId: CONTROL_PARTY_ID,
+            partyName: 'Walk In Customer',
+            debit: totalAmt,
+            credit: 0,
+            memo: `Settlement ${invoiceNum} (${effectivePaymentMode})`
+          },
+          {
+            accountId: CONTROL_ACC_CODE,
+            accountCode: CONTROL_ACC_CODE,
+            accountName: CONTROL_ACC_NAME,
+            partyId: CONTROL_PARTY_ID,
+            partyName: 'Walk In Customer',
+            debit: 0,
+            credit: totalAmt,
+            memo: `Customer Payment Settlement ${invoiceNum}`
+          },
+          ...(totalCogs > 0 ? [
             {
-              accountId: CONTROL_ACC_CODE,
-              accountCode: CONTROL_ACC_CODE,
-              accountName: CONTROL_ACC_NAME,
+              accountId: '5100-02', // COGS
+              accountCode: '5100-02',
+              accountName: 'Cost of Goods Sold - Finished Goods',
               partyId: CONTROL_PARTY_ID,
               partyName: 'Walk In Customer',
-              debit: totalAmt,
+              debit: totalCogs,
               credit: 0,
-              memo: `POS Sale ${invoiceNum}`
+              memo: `COGS for POS Sale ${invoiceNum}`
             },
             {
-              accountId: '4100-01',
-              accountCode: '4100-01',
-              accountName: 'Sales Revenue',
+              accountId: '1160-01', // Finished Goods
+              accountCode: '1160-01',
+              accountName: 'Finished Goods',
               partyId: CONTROL_PARTY_ID,
               partyName: 'Walk In Customer',
               debit: 0,
-              credit: subtotalAmt,
-              memo: `Sales Revenue ${invoiceNum}`
-            },
-            ...(vatAmt > 0 ? [{
-              accountId: '2140-01',
-              accountCode: '2140-01',
-              accountName: 'VAT Output 5%',
-              partyId: CONTROL_PARTY_ID,
-              partyName: 'Walk In Customer',
-              debit: 0,
-              credit: vatAmt,
-              memo: `5% UAE VAT ${invoiceNum}`
-            }] : []),
-            {
-              accountId: paymentAccCode,
-              accountCode: paymentAccCode,
-              accountName: paymentAccName,
-              partyId: CONTROL_PARTY_ID,
-              partyName: 'Walk In Customer',
-              debit: totalAmt,
-              credit: 0,
-              memo: `Settlement ${invoiceNum} (${effectivePaymentMode})`
-            },
-            {
-              accountId: CONTROL_ACC_CODE,
-              accountCode: CONTROL_ACC_CODE,
-              accountName: CONTROL_ACC_NAME,
-              partyId: CONTROL_PARTY_ID,
-              partyName: 'Walk In Customer',
-              debit: 0,
-              credit: totalAmt,
-              memo: `Customer Payment Settlement ${invoiceNum}`
-            },
-            ...(totalCogs > 0 ? [
-              {
-                accountId: '5100-02', // COGS
-                accountCode: '5100-02',
-                accountName: 'Cost of Goods Sold - Finished Goods',
-                partyId: CONTROL_PARTY_ID,
-                partyName: 'Walk In Customer',
-                debit: totalCogs,
-                credit: 0,
-                memo: `COGS for POS Sale ${invoiceNum}`
-              },
-              {
-                accountId: '1160-01', // Finished Goods
-                accountCode: '1160-01',
-                accountName: 'Finished Goods',
-                partyId: CONTROL_PARTY_ID,
-                partyName: 'Walk In Customer',
-                debit: 0,
-                credit: totalCogs,
-                memo: `Inventory deduction for POS Sale ${invoiceNum}`
-              }
-            ] : [])
-          ]
-        });
-        if (vRes?.voucherNo) {
-          createdVoucherNo = vRes.voucherNo;
-        }
-      } catch (vErr) {
-        console.warn('[POS Terminal] Automatic voucher creation notice:', vErr);
+              credit: totalCogs,
+              memo: `Inventory deduction for POS Sale ${invoiceNum}`
+            }
+          ] : [])
+        ]
+      });
+      if (vRes?.voucherNo) {
+        createdVoucherNo = vRes.voucherNo;
       }
 
       // 3. Record in sales_invoices:
@@ -1026,17 +1028,24 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         discountAmount: discountTotal,
         taxAmount: vatAmt,
         totalAmount: totalAmt,
+        grossProfitAed: Number((subtotalAmt - totalCogs).toFixed(2)),
         status: 'PAID',
-        items: cart.map(c => ({
-          barcode: c.piece.barcode,
-          pieceId: c.piece.id,
-          description: `${c.piece.brandName} ${c.piece.itemName}`,
-          unitPrice: c.sellingPrice,
-          discount: c.discount,
-          finalAmount: c.sellingPrice - c.discount,
-          weightKg: c.piece.weightKg || 0.45
-        }))
-      }).catch(e => console.warn('sales_invoices sync note:', e));
+        items: cart.map(c => {
+          const itemCost = Number(c?.cogsCost ?? (c?.piece as any)?.cost_price ?? (c?.piece as any)?.calculatedCostPrice ?? (c?.piece as any)?.cogsCost ?? 0);
+          return {
+            barcode: c.piece.barcode,
+            pieceId: c.piece.id,
+            description: `${c.piece.brandName} ${c.piece.itemName}`,
+            unitPrice: c.sellingPrice,
+            discount: c.discount,
+            finalAmount: c.sellingPrice - c.discount,
+            weightKg: c.piece.weightKg || 0.45,
+            calculatedCostPrice: itemCost,
+            cost_price: itemCost,
+            cogsCost: itemCost
+          };
+        })
+      });
 
       // 4. Update isolated CRM retail customer purchase metrics
       if (selectedCustomer?.id && selectedCustomer.id !== CONTROL_PARTY_ID) {
