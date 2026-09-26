@@ -17,6 +17,8 @@ export interface CrmRetailCustomer {
   createdAt?: string;
   // Omnichannel 2.0 & B2B Engine fields
   auth_id?: string | null;
+  source?: 'Online' | 'POS';
+  code?: string;
   customer_type?: 'RETAIL' | 'B2B_RESELLER';
   vip_tier?: 'BRONZE' | 'SILVER' | 'GOLD' | 'PLATINUM' | string;
   wallet_balance?: number;
@@ -232,6 +234,7 @@ export class CrmService {
       email: row.email || '',
       address: row.address || '',
       auth_id: row.auth_id || null,
+      source: row.auth_id ? 'Online' : 'POS',
       customer_type: (row.customer_type || 'RETAIL') as any,
       vip_tier: row.vip_tier || 'BRONZE',
       wallet_balance: walletBalance,
