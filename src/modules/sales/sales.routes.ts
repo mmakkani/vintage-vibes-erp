@@ -447,6 +447,7 @@ salesRouter.delete('/custom-b2b/:id', async (req, res) => {
 
 // GET /api/sales/settings
 salesRouter.get('/settings', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   let client;
   try {
     client = await getDbClient();
@@ -513,7 +514,8 @@ salesRouter.post('/settings/reset', async (req, res) => {
       ['pos_terminal_clearing', '1125-01', 'POS Card / Terminal Clearing'],
       ['live_sales_clearing', '1130-02', 'LIVE SALES Control Khata'],
       ['ecommerce_sales_clearing', '1130-03', 'E-COMMERCE SALES Control Khata'],
-      ['pos_sales_clearing', '1130-04', 'POS SALES Control Khata'],
+      ['pos_sales_clearing', '1130-05', 'Walk In Customer (Customer) Control Khata'],
+      ['vat_output_account', '2140-01', 'UAE VAT Output Tax (5%) Account'],
       ['b2b_sales_receivable', '1130-01', 'Default B2B Wholesale Receivable'],
       ['b2b_revenue', '4110-05', 'B2B Wholesale Revenue'],
       ['omnichannel_retail_revenue', '4110-01', 'POS, Live & E-Commerce Revenue']

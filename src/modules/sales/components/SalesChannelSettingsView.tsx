@@ -49,10 +49,10 @@ const SETTING_GROUPS = [
     keys: ['courier_cod_clearing', 'courier_payable', 'delivery_expense']
   },
   {
-    title: 'POS Counter Sales Clearing',
+    title: 'POS Counter Sales Clearing & VAT',
     icon: Store,
     accent: 'emerald',
-    keys: ['pos_cash_drawer', 'pos_terminal_clearing', 'pos_sales_clearing']
+    keys: ['pos_cash_drawer', 'pos_terminal_clearing', 'pos_sales_clearing', 'vat_output_account']
   },
   {
     title: 'Live Streaming Studio & Claims Khata',
@@ -102,18 +102,23 @@ const SETTING_LABELS: Record<string, { label: string; sub: string; defaultCode: 
   },
   pos_cash_drawer: {
     label: 'POS Cash in Hand (Drawer)',
-    sub: 'Debited on physical cash receipts at counter checkout',
+    sub: 'Debited on physical cash receipts at counter checkout (1110-01)',
     defaultCode: '1110-01'
   },
   pos_terminal_clearing: {
     label: 'POS Card & Terminal Clearing',
-    sub: 'Debited on card swipe / tap terminal payments',
+    sub: 'Debited on card swipe / tap terminal payments (1125-01)',
     defaultCode: '1125-01'
   },
   pos_sales_clearing: {
-    label: 'POS Sales Control Khata',
-    sub: 'Receivable control account for counter POS registers',
-    defaultCode: '1130-04'
+    label: 'POS Sales Control Khata (Walk-In Customer)',
+    sub: 'Receivable intermediary control khata for counter POS registers (1130-05)',
+    defaultCode: '1130-05'
+  },
+  vat_output_account: {
+    label: 'UAE VAT Output Tax (5%) Account',
+    sub: 'Credited with 5% UAE VAT collection on counter & retail sales (2140-01)',
+    defaultCode: '2140-01'
   },
   live_sales_clearing: {
     label: 'LIVE SALES Control Khata',
@@ -122,7 +127,7 @@ const SETTING_LABELS: Record<string, { label: string; sub: string; defaultCode: 
   },
   omnichannel_retail_revenue: {
     label: 'Omnichannel Retail & Online Revenue',
-    sub: 'Credited with selling amount for POS, Live & E-Commerce orders',
+    sub: 'Credited with net selling price for POS, Live & E-Commerce orders (4110-01)',
     defaultCode: '4110-01'
   },
   b2b_sales_receivable: {
@@ -285,44 +290,101 @@ export const SalesChannelSettingsView: React.FC<{ onRefreshAll?: () => void }> =
         </div>
       )}
 
-      {/* Automated Double-Entry Architecture Preview */}
-      <div className="bg-stone-50 border border-stone-200 rounded-xl p-4 shadow-sm">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span className="text-xs font-black uppercase tracking-wider text-stone-800">
-              Automated Dispatch Journal Voucher Structure (Total Debits = Total Credits)
+      {/* Automated Double-Entry Architecture Preview (POS & Courier) */}
+      <div className="space-y-4">
+        {/* POS Counter Sales 3-Part Double-Entry Architecture */}
+        <div className="bg-emerald-950/10 border border-emerald-500/30 rounded-xl p-4 shadow-sm bg-gradient-to-r from-emerald-900/10 via-stone-900/5 to-transparent">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Store className="w-4 h-4 text-emerald-600" />
+              <span className="text-xs font-black uppercase tracking-wider text-stone-900">
+                POS Counter Sale 3-Part Balanced Double-Entry Flow (Walk-In Customer Khata Audit Trail)
+              </span>
+            </div>
+            <span className="text-[11px] text-emerald-700 font-bold font-mono bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+              Debits = Credits (Discrepancy: AED 0.00)
             </span>
           </div>
-          <span className="text-[11px] text-stone-500 font-mono">Discrepancy: Exactly AED 0.00</span>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-          <div className="bg-white p-3 rounded-lg border border-stone-200 space-y-1">
-            <div className="font-bold text-stone-900 flex items-center gap-1.5">
-              <Truck className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Customer Bears Shipping Mode</span>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            {/* Part 1: COGS */}
+            <div className="bg-white p-3 rounded-lg border border-stone-200 space-y-1 shadow-2xs">
+              <div className="font-bold text-stone-900 flex items-center gap-1.5">
+                <span className="w-4 h-4 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black flex items-center justify-center">1</span>
+                <span>Part 1: Inventory & Cost Depletion</span>
+              </div>
+              <p className="text-stone-600 text-[11px]">
+                <span className="text-emerald-700 font-semibold">Debit:</span> COGS ({settings.cogs_account || '5100-02'}) = Landed Cost<br />
+                <span className="text-indigo-700 font-semibold">Credit:</span> Finished Goods ({settings.finished_goods_inventory || '1160-01'}) = Landed Cost
+              </p>
             </div>
-            <p className="text-stone-600 text-[11px]">
-              <span className="text-emerald-700 font-semibold">Debit:</span> Courier COD Clearing ({settings.courier_cod_clearing || '1128-01'}) = Price + Fee<br />
-              <span className="text-indigo-700 font-semibold">Credit:</span> Sales Revenue ({settings.omnichannel_retail_revenue || '4110-01'}) = Item Price<br />
-              <span className="text-indigo-700 font-semibold">Credit:</span> Courier Payable ({settings.courier_payable || '2120-01'}) = Shipping Fee<br />
-              <span className="text-emerald-700 font-semibold">Debit:</span> COGS ({settings.cogs_account || '5100-02'}) = Cost Value<br />
-              <span className="text-indigo-700 font-semibold">Credit:</span> Finished Goods ({settings.finished_goods_inventory || '1160-01'}) = Cost Value
-            </p>
+
+            {/* Part 2: Revenue Recognition */}
+            <div className="bg-white p-3 rounded-lg border border-stone-200 space-y-1 shadow-2xs">
+              <div className="font-bold text-stone-900 flex items-center gap-1.5">
+                <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-800 text-[10px] font-black flex items-center justify-center">2</span>
+                <span>Part 2: Billing & Revenue (Khata)</span>
+              </div>
+              <p className="text-stone-600 text-[11px]">
+                <span className="text-emerald-700 font-semibold">Debit:</span> Walk-In Customer ({settings.pos_sales_clearing || '1130-05'}) = Gross Bill + VAT<br />
+                <span className="text-indigo-700 font-semibold">Credit:</span> Retail Sales ({settings.omnichannel_retail_revenue || '4110-01'}) = Item Price<br />
+                <span className="text-indigo-700 font-semibold">Credit:</span> VAT Output Tax ({settings.vat_output_account || '2140-01'}) = 5% UAE VAT
+              </p>
+            </div>
+
+            {/* Part 3: Settlement */}
+            <div className="bg-white p-3 rounded-lg border border-stone-200 space-y-1 shadow-2xs">
+              <div className="font-bold text-stone-900 flex items-center gap-1.5">
+                <span className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black flex items-center justify-center">3</span>
+                <span>Part 3: Payment Settlement & Drawer</span>
+              </div>
+              <p className="text-stone-600 text-[11px]">
+                <span className="text-emerald-700 font-semibold">Debit:</span> Cash Drawer ({settings.pos_cash_drawer || '1110-01'}) / Card ({settings.pos_terminal_clearing || '1125-01'}) = Bill Paid<br />
+                <span className="text-indigo-700 font-semibold">Credit:</span> Walk-In Customer ({settings.pos_sales_clearing || '1130-05'}) = Bill Cleared
+              </p>
+            </div>
           </div>
-          <div className="bg-white p-3 rounded-lg border border-stone-200 space-y-1">
-            <div className="font-bold text-stone-900 flex items-center gap-1.5">
-              <DollarSign className="w-3.5 h-3.5 text-amber-600" />
-              <span>Company Free Shipping Mode</span>
+        </div>
+
+        {/* Courier Dispatch Structure */}
+        <div className="bg-stone-50 border border-stone-200 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Truck className="w-4 h-4 text-indigo-600" />
+              <span className="text-xs font-black uppercase tracking-wider text-stone-800">
+                Automated Courier Dispatch Journal Voucher Structure (Logistics Delivery Flow)
+              </span>
             </div>
-            <p className="text-stone-600 text-[11px]">
-              <span className="text-emerald-700 font-semibold">Debit:</span> Courier COD Clearing ({settings.courier_cod_clearing || '1128-01'}) = Item Price<br />
-              <span className="text-emerald-700 font-semibold">Debit:</span> Delivery Expense ({settings.delivery_expense || '5140-01'}) = Shipping Fee<br />
-              <span className="text-indigo-700 font-semibold">Credit:</span> Courier Payable ({settings.courier_payable || '2120-01'}) = Shipping Fee<br />
-              <span className="text-indigo-700 font-semibold">Credit:</span> Sales Revenue ({settings.omnichannel_retail_revenue || '4110-01'}) = Item Price<br />
-              <span className="text-emerald-700 font-semibold">Debit:</span> COGS ({settings.cogs_account || '5100-02'}) = Cost Value<br />
-              <span className="text-indigo-700 font-semibold">Credit:</span> Finished Goods ({settings.finished_goods_inventory || '1160-01'}) = Cost Value
-            </p>
+            <span className="text-[11px] text-stone-500 font-mono">Discrepancy: Exactly AED 0.00</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <div className="bg-white p-3 rounded-lg border border-stone-200 space-y-1">
+              <div className="font-bold text-stone-900 flex items-center gap-1.5">
+                <Truck className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Customer Bears Shipping Mode</span>
+              </div>
+              <p className="text-stone-600 text-[11px]">
+                <span className="text-emerald-700 font-semibold">Debit:</span> Courier COD Clearing ({settings.courier_cod_clearing || '1128-01'}) = Price + Fee<br />
+                <span className="text-indigo-700 font-semibold">Credit:</span> Sales Revenue ({settings.omnichannel_retail_revenue || '4110-01'}) = Item Price<br />
+                <span className="text-indigo-700 font-semibold">Credit:</span> Courier Payable ({settings.courier_payable || '2120-00'}) = Shipping Fee<br />
+                <span className="text-emerald-700 font-semibold">Debit:</span> COGS ({settings.cogs_account || '5100-02'}) = Cost Value<br />
+                <span className="text-indigo-700 font-semibold">Credit:</span> Finished Goods ({settings.finished_goods_inventory || '1160-01'}) = Cost Value
+              </p>
+            </div>
+            <div className="bg-white p-3 rounded-lg border border-stone-200 space-y-1">
+              <div className="font-bold text-stone-900 flex items-center gap-1.5">
+                <DollarSign className="w-3.5 h-3.5 text-amber-600" />
+                <span>Company Free Shipping Mode</span>
+              </div>
+              <p className="text-stone-600 text-[11px]">
+                <span className="text-emerald-700 font-semibold">Debit:</span> Courier COD Clearing ({settings.courier_cod_clearing || '1128-01'}) = Item Price<br />
+                <span className="text-emerald-700 font-semibold">Debit:</span> Delivery Expense ({settings.delivery_expense || '5140-01'}) = Shipping Fee<br />
+                <span className="text-indigo-700 font-semibold">Credit:</span> Courier Payable ({settings.courier_payable || '2120-00'}) = Shipping Fee<br />
+                <span className="text-indigo-700 font-semibold">Credit:</span> Sales Revenue ({settings.omnichannel_retail_revenue || '4110-01'}) = Item Price<br />
+                <span className="text-emerald-700 font-semibold">Debit:</span> COGS ({settings.cogs_account || '5100-02'}) = Cost Value<br />
+                <span className="text-indigo-700 font-semibold">Credit:</span> Finished Goods ({settings.finished_goods_inventory || '1160-01'}) = Cost Value
+              </p>
+            </div>
           </div>
         </div>
       </div>

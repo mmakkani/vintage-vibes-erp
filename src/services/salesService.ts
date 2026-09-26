@@ -1098,7 +1098,7 @@ export class SalesService {
 
   public static async getSalesChannelSettings(): Promise<any[]> {
     try {
-      const res = await fetch('/api/sales/settings');
+      const res = await fetch('/api/sales/settings?_t=' + Date.now(), { cache: 'no-store' });
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.settings)) return json.settings;
@@ -1139,7 +1139,7 @@ export class SalesService {
 
   public static async getTransactionalAccounts(): Promise<any[]> {
     try {
-      const res = await fetch('/api/sales/accounts');
+      const res = await fetch('/api/sales/accounts?_t=' + Date.now(), { cache: 'no-store' });
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.accounts)) return json.accounts;
