@@ -38,12 +38,20 @@ export const PWAUpdatePrompt: React.FC = () => {
 
       setUpdateFunction(() => updateSW);
 
-      // When the new worker takes control, immediately reload to run the updated bundle
+      // Guard against double reload: only reload if an existing controller is replaced by a newer worker.
+      // On fresh load or hard refresh (Ctrl+Shift+R), navigator.serviceWorker.controller is initially null,
+      // so the initial controllerchange event is just the initial claim and should NOT trigger a second reload.
       let refreshing = false;
+      let hadPreviousController = Boolean(navigator.serviceWorker.controller);
+
       const handleControllerChange = () => {
+        if (!hadPreviousController) {
+          hadPreviousController = true;
+          return;
+        }
         if (!refreshing) {
           refreshing = true;
-          console.log('[PWA] Controller changed -> reloading to latest build.');
+          console.log('[PWA] Active controller updated to new build -> reloading once to apply fresh bundle.');
           window.location.reload();
         }
       };
