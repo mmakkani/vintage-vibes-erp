@@ -441,7 +441,7 @@ export class SalesService {
 
     const { data, error } = await supabase
       .from('sales_invoices')
-      .insert(payload)
+      .upsert(payload, { onConflict: 'id' })
       .select()
       .single();
 

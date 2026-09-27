@@ -811,54 +811,101 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   };
 
   // Save Draft (No Ledgers, No Financial Vouchers, Reserve Stock)
-  const handleSaveDraft = async () => {
+  const handleSaveDraft = async (forcedInvoiceNo?: string): Promise<{ id: string; invoiceNo: string } | null> => {
     if (!selectedCustomerId) {
       showMsg('Please select a Customer / Company from Parties Khata first!', 'error');
-      return;
+      return null;
     }
     if (items.length === 0) {
       showMsg('Please scan at least one Raw Bale or Garment Piece!', 'error');
-      return;
+      return null;
     }
 
     setIsSaving(true);
     try {
-      const genInvoiceNo = invoiceNo || `B2B-${Date.now().toString().slice(-6)}`;
-      
-      // 1. Direct write to public.b2b_sales with credit_status: 'DRAFT'
-      const b2bRecord = await SalesService.createB2bSale({
-        b2b_invoice_number: genInvoiceNo,
-        company_name: selectedCustomer.name || 'Wholesale Client',
-        trn_number: selectedCustomer.trnNo || '',
-        contact_person: selectedCustomer.contactPerson || '',
-        phone: selectedCustomer.phone || '',
-        email: selectedCustomer.email || '',
-        items: items,
-        total_amount: grandTotal,
-        paid_amount: Number(advanceAmountPaid) || 0,
-        balance_due: creditAmountDue,
-        payment_terms: 'Net 30',
-        credit_status: 'DRAFT',
-        shipping_address: selectedCustomer.address || ''
-      });
+      const genInvoiceNo = forcedInvoiceNo || invoiceNo || `B2B-${Date.now().toString().slice(-6)}`;
+      let finalId = invoiceId;
 
-      // 2. Direct write to sales_invoices with status: 'DRAFT'
-      await SalesService.createSalesInvoice({
-        id: invoiceId || undefined,
-        invoiceNo: genInvoiceNo,
-        clientId: selectedCustomer.id,
-        customerName: selectedCustomer.name,
-        customerPhone: selectedCustomer.phone || '',
-        invoiceDate: invoiceDate,
-        channel: 'WHOLESALE_B2B',
-        paymentMethod: paymentMethod as any,
-        subtotal: itemsSubtotal,
-        discountAmount: 0,
-        taxAmount: vatAmount,
-        totalAmount: grandTotal,
-        status: 'DRAFT',
-        items: items
-      }).catch(e => console.warn('B2B sales_invoices sync note:', e));
+      if (invoiceId) {
+        // 1. Update existing b2b_sales record
+        await supabase
+          .from('b2b_sales')
+          .update({
+            b2b_invoice_number: genInvoiceNo,
+            company_name: selectedCustomer.name || 'Wholesale Client',
+            trn_number: selectedCustomer.trnNo || '',
+            contact_person: selectedCustomer.contactPerson || '',
+            phone: selectedCustomer.phone || '',
+            email: selectedCustomer.email || '',
+            items: items,
+            total_amount: grandTotal,
+            paid_amount: Number(advanceAmountPaid) || 0,
+            balance_due: creditAmountDue,
+            payment_terms: 'Net 30',
+            credit_status: 'DRAFT',
+            shipping_address: selectedCustomer.address || ''
+          })
+          .or(`id.eq.${invoiceId},b2b_invoice_number.eq.${genInvoiceNo}`)
+          .catch(() => {});
+
+        // 2. Update existing sales_invoices record
+        await SalesService.updateSalesInvoice(invoiceId, {
+          invoiceNo: genInvoiceNo,
+          clientId: selectedCustomer.id,
+          customerName: selectedCustomer.name,
+          customerPhone: selectedCustomer.phone || '',
+          invoiceDate: invoiceDate,
+          channel: 'WHOLESALE_B2B',
+          paymentMethod: paymentMethod as any,
+          subtotal: itemsSubtotal,
+          discountAmount: 0,
+          taxAmount: vatAmount,
+          totalAmount: grandTotal,
+          status: 'DRAFT',
+          items: items
+        }).catch(e => console.warn('B2B sales_invoices update note:', e));
+      } else {
+        // 1. Direct write to public.b2b_sales with credit_status: 'DRAFT'
+        const b2bRecord = await SalesService.createB2bSale({
+          b2b_invoice_number: genInvoiceNo,
+          company_name: selectedCustomer.name || 'Wholesale Client',
+          trn_number: selectedCustomer.trnNo || '',
+          contact_person: selectedCustomer.contactPerson || '',
+          phone: selectedCustomer.phone || '',
+          email: selectedCustomer.email || '',
+          items: items,
+          total_amount: grandTotal,
+          paid_amount: Number(advanceAmountPaid) || 0,
+          balance_due: creditAmountDue,
+          payment_terms: 'Net 30',
+          credit_status: 'DRAFT',
+          shipping_address: selectedCustomer.address || ''
+        });
+
+        finalId = b2bRecord?.id || genInvoiceNo;
+
+        // 2. Direct write to sales_invoices with status: 'DRAFT'
+        const createdSInv = await SalesService.createSalesInvoice({
+          id: finalId,
+          invoiceNo: genInvoiceNo,
+          clientId: selectedCustomer.id,
+          customerName: selectedCustomer.name,
+          customerPhone: selectedCustomer.phone || '',
+          invoiceDate: invoiceDate,
+          channel: 'WHOLESALE_B2B',
+          paymentMethod: paymentMethod as any,
+          subtotal: itemsSubtotal,
+          discountAmount: 0,
+          taxAmount: vatAmount,
+          totalAmount: grandTotal,
+          status: 'DRAFT',
+          items: items
+        }).catch(e => console.warn('B2B sales_invoices sync note:', e));
+
+        if (createdSInv?.id) {
+          finalId = createdSInv.id;
+        }
+      }
 
       // 3. Mark piece barcodes as RESERVED (not SOLD, no ledger entries)
       const pieceBarcodes = (items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
@@ -866,13 +913,15 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         await supabase.from('inventory_pieces').update({ is_sold: false, status: 'RESERVED' }).in('barcode', pieceBarcodes).catch(() => {});
       }
 
-      setInvoiceId(b2bRecord.id || genInvoiceNo);
+      setInvoiceId(finalId);
       setInvoiceNo(genInvoiceNo);
       setStatus('DRAFT');
       showMsg(`Invoice ${genInvoiceNo} saved as DRAFT in cloud database.`);
       refreshAllB2BData();
+      return { id: finalId, invoiceNo: genInvoiceNo };
     } catch (err: any) {
       showMsg(err?.message || 'Save draft error.', 'error');
+      return null;
     } finally {
       setIsSaving(false);
     }
@@ -880,14 +929,21 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   // POST & Dispatch (Deduct Inventory, Create Double-Entry Journal Voucher)
   const handlePostInvoice = async () => {
-    if (!invoiceId) {
-      await handleSaveDraft();
+    let activeInvoiceId = invoiceId;
+    let activeInvoiceNo = invoiceNo;
+
+    // Ensure invoice is saved as draft first and grab exact IDs synchronously
+    if (!activeInvoiceId || !activeInvoiceNo) {
+      const saved = await handleSaveDraft();
+      if (!saved) return;
+      activeInvoiceId = saved.id;
+      activeInvoiceNo = saved.invoiceNo;
     }
 
     const confirmPost = window.confirm(
-      `Are you sure you want to POST & DISPATCH Invoice ${invoiceNo || invoiceId}?\n\n` +
-      `• Raw Bales (${items.filter(i => i.isRawBale).length}) will be deducted from 1140-01 to 5120-00 COGS\n` +
-      `• Garment Pieces (${items.filter(i => !i.isRawBale).length}) will be deducted from 1160-01 to 5110-00 COGS\n` +
+      `Are you sure you want to POST & DISPATCH Invoice ${activeInvoiceNo}?\n\n` +
+      `• Raw Bales (${items.filter(i => i.isRawBale).length}) will be deducted from 1140-01 to 5100-01 COGS\n` +
+      `• Garment Pieces (${items.filter(i => !i.isRawBale).length}) will be deducted from 1160-01 to 5100-02 COGS\n` +
       `• Double-Entry General Ledger Journal Voucher will be dispatched.\n` +
       `• Customer Khata (${selectedCustomerCoaCode}) will be debited AED ${grandTotal.toFixed(2)}.`
     );
@@ -895,7 +951,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
     setIsSaving(true);
     try {
-      const genInvoiceNo = invoiceNo || `B2B-${Date.now().toString().slice(-6)}`;
+      const genInvoiceNo = activeInvoiceNo;
 
       // 1. Mark inventory pieces as SOLD
       const pieceBarcodes = (items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
@@ -972,15 +1028,21 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         });
       }
 
-      // Line 5 & 6: COGS vs Inventory Relief for Garment Pieces
+      // Line 5 & 6: COGS vs Inventory Relief for Garment Pieces (Tier 3 Transaction Account 5100-02)
       const pieceCogsTotal = Number(
         (items || []).filter(i => !i.isRawBale).reduce((sum, i) => sum + (Number(i.calculatedCostPrice) || 0), 0).toFixed(2)
       );
       if (pieceCogsTotal > 0) {
+        const fgCogsAccount = (coaAccounts || []).find(a => a.code === '5100-02') ||
+                              (coaAccounts || []).find(a => a.tier === 3 && a.name?.toLowerCase().includes('finished goods') && a.category === 'EXPENSE');
+        const fgCogsCode = fgCogsAccount?.code || '5100-02';
+        const fgCogsId = fgCogsAccount?.id || fgCogsCode;
+        const fgCogsName = fgCogsAccount?.name || 'Cost of Goods Sold - Finished Goods';
+
         voucherLines.push({
-          accountId: '5110-00',
-          accountCode: '5110-00',
-          accountName: 'Cost of Goods Sold (COGS) - Finished Garments',
+          accountId: fgCogsId,
+          accountCode: fgCogsCode,
+          accountName: fgCogsName,
           debit: pieceCogsTotal,
           credit: 0,
           memo: `COGS for Sorted Garment Pieces Sold: Invoice ${genInvoiceNo}`
@@ -995,15 +1057,21 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         });
       }
 
-      // Line 7 & 8: COGS vs Inventory Relief for Raw Bales (if any)
+      // Line 7 & 8: COGS vs Inventory Relief for Raw Bales (Tier 3 Transaction Account 5100-01)
       const baleCogsTotal = Number(
         (items || []).filter(i => i.isRawBale).reduce((sum, i) => sum + (Number(i.calculatedCostPrice || (i as any).landedCostAed) || 0), 0).toFixed(2)
       );
       if (baleCogsTotal > 0) {
+        const rawBaleCogsAccount = (coaAccounts || []).find(a => a.code === '5100-01') ||
+                                   (coaAccounts || []).find(a => a.tier === 3 && a.name?.toLowerCase().includes('raw bales') && a.category === 'EXPENSE');
+        const baleCogsCode = rawBaleCogsAccount?.code || '5100-01';
+        const baleCogsId = rawBaleCogsAccount?.id || baleCogsCode;
+        const baleCogsName = rawBaleCogsAccount?.name || 'Cost of Raw Bales Consumed';
+
         voucherLines.push({
-          accountId: '5120-00',
-          accountCode: '5120-00',
-          accountName: 'Cost of Goods Sold (COGS) - Bulk Bales Sold',
+          accountId: baleCogsId,
+          accountCode: baleCogsCode,
+          accountName: baleCogsName,
           debit: baleCogsTotal,
           credit: 0,
           memo: `COGS for Bulk Bales Sold: Invoice ${genInvoiceNo}`
@@ -1063,11 +1131,13 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       }).catch(e => console.warn('B2B Finance voucher dispatch note:', e));
 
       // 4. Update b2b_sales & sales_invoices status to POSTED
-      await supabase.from('b2b_sales').update({ credit_status: 'POSTED' }).or(`b2b_invoice_number.eq.${genInvoiceNo},id.eq.${invoiceId}`).catch(() => {});
-      await supabase.from('sales_invoices').update({ status: 'POSTED' }).or(`invoice_no.eq.${genInvoiceNo},id.eq.${invoiceId}`).catch(() => {});
+      await supabase.from('b2b_sales').update({ credit_status: 'POSTED' }).or(`b2b_invoice_number.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`).catch(() => {});
+      await supabase.from('sales_invoices').update({ status: 'POSTED' }).or(`invoice_no.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`).catch(() => {});
 
       setStatus('POSTED');
-      showMsg(`Invoice ${invoiceNo || genInvoiceNo} successfully POSTED & DISPATCHED! Inventory deducted, General Ledger JV posted.`);
+      setInvoiceNo(genInvoiceNo);
+      setInvoiceId(activeInvoiceId);
+      showMsg(`Invoice ${genInvoiceNo} successfully POSTED & DISPATCHED! Inventory deducted, General Ledger JV posted.`);
       refreshAllB2BData();
     } catch (err: any) {
       showMsg(err?.message || 'Post error.', 'error');
@@ -1118,16 +1188,28 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   // Delete Draft Invoice
   const handleDeleteDraft = async () => {
-    if (!invoiceId) {
+    if (!invoiceId && !invoiceNo) {
       setIsInvoiceModalOpen(false);
       return;
     }
-    const confirmDel = window.confirm(`Delete DRAFT Invoice ${invoiceNo}? This cannot be undone.`);
+    const targetNo = invoiceNo || invoiceId;
+    const confirmDel = window.confirm(`Delete DRAFT Invoice ${targetNo}? This cannot be undone.`);
     if (!confirmDel) return;
 
     try {
-      await SalesService.deleteSalesInvoice(invoiceId).catch(() => {});
-      showMsg(`Draft invoice ${invoiceNo} deleted.`);
+      if (invoiceId) {
+        await SalesService.deleteSalesInvoice(invoiceId).catch(() => {});
+      }
+      await supabase.from('b2b_sales').delete().or(`id.eq.${invoiceId},b2b_invoice_number.eq.${invoiceNo}`).catch(() => {});
+      await supabase.from('sales_invoices').delete().or(`id.eq.${invoiceId},invoice_no.eq.${invoiceNo}`).catch(() => {});
+
+      // Restore piece barcodes back to IN_STOCK (not RESERVED)
+      const pieceBarcodes = (items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
+      if (pieceBarcodes.length > 0) {
+        await supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK' }).in('barcode', pieceBarcodes).catch(() => {});
+      }
+
+      showMsg(`Draft invoice ${targetNo} deleted and inventory items restored to stock.`);
       setIsInvoiceModalOpen(false);
       refreshAllB2BData();
     } catch (err) {
