@@ -409,7 +409,8 @@ export async function autoCropAndResizeDocument(
     } catch (_) {}
   }
 
-  const croppedDataUrl = outCanvas.toDataURL('image/jpeg', 0.94);
+  // Export lightweight, crisp JPEG (~90KB-140KB) avoiding huge payloads
+  const croppedDataUrl = outCanvas.toDataURL('image/jpeg', 0.85);
 
   return {
     croppedImageUrl: croppedDataUrl,
@@ -449,7 +450,8 @@ export async function manualCropDocument(
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, validX, validY, validW, validH, 0, 0, outW, outH);
 
-  return canvas.toDataURL('image/jpeg', 0.94);
+  // Studio-grade crisp compression (~90KB-140KB) keeping payload small and fast
+  return canvas.toDataURL('image/jpeg', 0.85);
 }
 
 /**

@@ -14,6 +14,7 @@ import { useSync } from '../../../context/SyncContext.tsx';
 import { HrService } from '../../../services/hrService.ts';
 import { PayrollService } from '../../../services/payrollService.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
+import { compressImage } from '../../../utils/imageCompressor.ts';
 import { printEmployeeProfileA4, printAttendanceSheetA4, printPayrollRegisterA4 } from '../../../utils/printHrA4.ts';
 import { cropFaceFromImage } from '../../../utils/geminiOcrService.ts';
 import { Pagination } from '../../../components/Pagination.tsx';
@@ -57,7 +58,8 @@ import {
   AlertCircle,
   Search,
   Crop,
-  Loader2
+  Loader2,
+  RotateCcw
 } from 'lucide-react';
 
 interface HRViewProps {
@@ -171,28 +173,54 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   const passportDocRef = useRef<HTMLInputElement>(null);
   const residencyDocRef = useRef<HTMLInputElement>(null);
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, fieldName: keyof typeof defaultEmpForm) => {
+  // Preserves uncropped, full-view original documents (compressed lightweight ~150KB JPEGs)
+  // so that repeated cropping always operates on the full scanner/camera picture without destructive clipping!
+  const [rawDocImages, setRawDocImages] = useState<{
+    idFrontImageUrl?: string;
+    idBackImageUrl?: string;
+    passportImageUrl?: string;
+    residencyImageUrl?: string;
+  }>({});
+
+  const handlePhotoUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    fieldName: 'idFrontImageUrl' | 'idBackImageUrl' | 'passportImageUrl' | 'residencyImageUrl',
+    autoOpenCropper = false
+  ) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        if (typeof reader.result === 'string') {
-          const raw = reader.result;
-          try {
-            const docType = (fieldName === 'passportImageUrl')
-              ? 'PASSPORT'
-              : (fieldName === 'residencyImageUrl')
-              ? 'RESIDENCY_VISA'
-              : 'EMIRATES_ID';
-            const { croppedImageUrl } = await autoCropAndResizeDocument(raw, { docType });
-            setEmpForm(prev => ({ ...prev, [fieldName]: croppedImageUrl }));
-            showMsg('Photo automatically cropped & resized to card boundaries! (Surroundings removed)');
-          } catch (_) {
-            setEmpForm(prev => ({ ...prev, [fieldName]: raw }));
-          }
+      try {
+        // 1. Fast client-side image compression down to ~150KB crisp JPEG (prevents huge memory/payload)
+        const compressedRaw = await compressImage(file, 1280, 0.85);
+
+        // 2. Preserve uncropped raw image in non-destructive state so re-crop always has full field-of-view!
+        setRawDocImages(prev => ({ ...prev, [fieldName]: compressedRaw }));
+
+        const docType = (fieldName === 'passportImageUrl')
+          ? 'PASSPORT'
+          : (fieldName === 'residencyImageUrl')
+          ? 'RESIDENCY_VISA'
+          : 'EMIRATES_ID';
+
+        if (autoOpenCropper) {
+          // Open cropper immediately with full uncropped scan
+          setCropModalState({
+            isOpen: true,
+            imageUrl: compressedRaw,
+            docType,
+            fieldKey: fieldName
+          });
+        } else {
+          // Perform high-precision auto-crop with small size output (~100KB)
+          const { croppedImageUrl } = await autoCropAndResizeDocument(compressedRaw, { docType });
+          setEmpForm(prev => ({ ...prev, [fieldName]: croppedImageUrl }));
+          showMsg('Photo compressed & cropped to card boundaries! (Full raw scan preserved for re-crop)');
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (err) {
+        console.error('Image compression or auto-crop failed:', err);
+      } finally {
+        e.target.value = '';
+      }
     }
   };
 
@@ -212,14 +240,18 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   const [isRescanningDoc, setIsRescanningDoc] = useState<{ [key: string]: boolean }>({});
 
   const handleOpenCropModal = (fieldKey: keyof typeof defaultEmpForm, docType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA') => {
-    const img = empForm[fieldKey] as string;
-    if (!img) {
+    // Priority: use the full uncut raw scan if available, so user has complete document margins!
+    const rawImg = rawDocImages[fieldKey as keyof typeof rawDocImages];
+    const currentImg = empForm[fieldKey] as string;
+    const imgToCrop = rawImg || currentImg;
+
+    if (!imgToCrop) {
       showMsg('Please upload a document image first to crop.', 'error');
       return;
     }
     setCropModalState({
       isOpen: true,
-      imageUrl: img,
+      imageUrl: imgToCrop,
       docType,
       fieldKey
     });
@@ -1320,6 +1352,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     const onClose = () => {
       setShowEmpModal(false);
       setEditingEmpId(null);
+      setRawDocImages({});
     };
 
     try {
@@ -1550,6 +1583,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       profile_picture: facePhoto || (prev as any).profile_picture || prev.photoUrl,
       avatar_url: facePhoto || (prev as any).avatar_url || prev.photoUrl
     }));
+    if ((data as any).rawDocImages) {
+      setRawDocImages(prev => ({ ...prev, ...(data as any).rawDocImages }));
+    }
     loadData();
     showMsg(`AI OCR verified and populated legal identity records for ${data.name || 'employee'}! Scan log registered.`);
   };
@@ -1726,6 +1762,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
               onClick={() => {
                 setEditingEmpId(null);
                 setEmpForm(defaultEmpForm);
+                setRawDocImages({});
                 setShowEmpModal(true);
               }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#0056b3] hover:bg-[#004494] text-white text-xs font-bold uppercase tracking-wider shadow-xs transition-colors"
@@ -2634,6 +2671,12 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                             residencyImageUrl: emp.residencyImageUrl || '',
                             photoUrl: emp.photoUrl || ''
                           });
+                          setRawDocImages({
+                            idFrontImageUrl: emp.idFrontImageUrl || '',
+                            idBackImageUrl: emp.idBackImageUrl || '',
+                            passportImageUrl: emp.passportImageUrl || (emp as any).passport_image_url || '',
+                            residencyImageUrl: emp.residencyImageUrl || (emp as any).residency_image_url || ''
+                          });
                           setShowEmpModal(true);
                         }}
                         className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
@@ -2722,6 +2765,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                               address: '',
                               notes: ''
                             });
+                            setRawDocImages({});
                             setShowEmpModal(true);
                           }}
                           className="mt-2 px-3 py-1.5 rounded-lg bg-blue-600 text-white font-bold text-xs hover:bg-blue-700 transition-all shadow-xs"
@@ -3248,15 +3292,32 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                         <span>{empForm.idFrontImageUrl ? 'Change Front Photo' : 'Upload Front Photo'}</span>
                       </button>
                       {empForm.idFrontImageUrl && (
-                        <button
-                          type="button"
-                          onClick={() => handleOpenCropModal('idFrontImageUrl', 'EMIRATES_ID')}
-                          className="px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-[10px] flex items-center gap-1 cursor-pointer shadow-2xs"
-                          title="Fine-tune Front ID Card crop"
-                        >
-                          <Crop className="w-3 h-3 text-blue-600" />
-                          <span>Crop</span>
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCropModal('idFrontImageUrl', 'EMIRATES_ID')}
+                            className="px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-[10px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                            title="Fine-tune Front ID Card crop (loads full uncropped master scan)"
+                          >
+                            <Crop className="w-3 h-3 text-blue-600" />
+                            <span>Crop</span>
+                          </button>
+
+                          {rawDocImages.idFrontImageUrl && rawDocImages.idFrontImageUrl !== empForm.idFrontImageUrl && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEmpForm(prev => ({ ...prev, idFrontImageUrl: rawDocImages.idFrontImageUrl! }));
+                                showMsg('Restored full uncropped Front ID photo.');
+                              }}
+                              className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[9px] flex items-center gap-0.5 cursor-pointer"
+                              title="Revert to full uncropped original scan"
+                            >
+                              <RotateCcw className="w-2.5 h-2.5" />
+                              <span>Full</span>
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -3312,15 +3373,32 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                         <span>{empForm.idBackImageUrl ? 'Change Back Photo' : 'Upload Back Photo'}</span>
                       </button>
                       {empForm.idBackImageUrl && (
-                        <button
-                          type="button"
-                          onClick={() => handleOpenCropModal('idBackImageUrl', 'EMIRATES_ID')}
-                          className="px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-[10px] flex items-center gap-1 cursor-pointer shadow-2xs"
-                          title="Fine-tune Back ID Card crop"
-                        >
-                          <Crop className="w-3 h-3 text-indigo-600" />
-                          <span>Crop</span>
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCropModal('idBackImageUrl', 'EMIRATES_ID')}
+                            className="px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-[10px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                            title="Fine-tune Back ID Card crop (loads full uncropped master scan)"
+                          >
+                            <Crop className="w-3 h-3 text-indigo-600" />
+                            <span>Crop</span>
+                          </button>
+
+                          {rawDocImages.idBackImageUrl && rawDocImages.idBackImageUrl !== empForm.idBackImageUrl && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEmpForm(prev => ({ ...prev, idBackImageUrl: rawDocImages.idBackImageUrl! }));
+                                showMsg('Restored full uncropped Back ID photo.');
+                              }}
+                              className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[9px] flex items-center gap-0.5 cursor-pointer"
+                              title="Revert to full uncropped original scan"
+                            >
+                              <RotateCcw className="w-2.5 h-2.5" />
+                              <span>Full</span>
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -3455,11 +3533,26 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                             type="button"
                             onClick={() => handleOpenCropModal('passportImageUrl', 'PASSPORT')}
                             className="px-2.5 py-1.5 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-[10px] flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
-                            title="Fine-tune Passport crop to eliminate desk/borders"
+                            title="Fine-tune Passport crop to eliminate desk/borders (always loads full uncropped scan if available)"
                           >
                             <Crop className="w-3 h-3 text-indigo-600" />
                             <span>Crop / Adjust</span>
                           </button>
+
+                          {rawDocImages.passportImageUrl && rawDocImages.passportImageUrl !== empForm.passportImageUrl && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEmpForm(prev => ({ ...prev, passportImageUrl: rawDocImages.passportImageUrl! }));
+                                showMsg('Restored full uncropped Passport scan.');
+                              }}
+                              className="px-2.5 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center gap-1 transition-colors cursor-pointer"
+                              title="Revert to full uncropped original scan"
+                            >
+                              <RotateCcw className="w-3 h-3 text-slate-600" />
+                              <span>Full Scan</span>
+                            </button>
+                          )}
 
                           <button
                             type="button"
@@ -3645,11 +3738,26 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                             type="button"
                             onClick={() => handleOpenCropModal('residencyImageUrl', 'RESIDENCY_VISA')}
                             className="px-2.5 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[10px] flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
-                            title="Fine-tune Visa crop to eliminate desk/borders"
+                            title="Fine-tune Visa crop to eliminate desk/borders (always loads full uncropped scan if available)"
                           >
                             <Crop className="w-3 h-3 text-emerald-600" />
                             <span>Crop / Adjust</span>
                           </button>
+
+                          {rawDocImages.residencyImageUrl && rawDocImages.residencyImageUrl !== empForm.residencyImageUrl && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEmpForm(prev => ({ ...prev, residencyImageUrl: rawDocImages.residencyImageUrl! }));
+                                showMsg('Restored full uncropped Residency Visa scan.');
+                              }}
+                              className="px-2.5 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                              title="Revert to full uncropped original scan"
+                            >
+                              <RotateCcw className="w-3 h-3 text-slate-600" />
+                              <span>Full Scan</span>
+                            </button>
+                          )}
 
                           <button
                             type="button"

@@ -315,7 +315,7 @@ export const DocumentCropModal: React.FC<DocumentCropModalProps> = ({
       ctx.rotate((90 * Math.PI) / 180);
       ctx.drawImage(imageElement, -naturalWidth / 2, -naturalHeight / 2);
 
-      const rotatedDataUrl = rotCanvas.toDataURL('image/jpeg', 0.95);
+      const rotatedDataUrl = rotCanvas.toDataURL('image/jpeg', 0.88);
       const newImg = new Image();
       newImg.crossOrigin = 'anonymous';
       newImg.onload = async () => {
@@ -450,6 +450,27 @@ export const DocumentCropModal: React.FC<DocumentCropModalProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5">
+            {/* Expand to 100% Full Uncropped Image */}
+            <button
+              type="button"
+              onClick={() => {
+                if (naturalWidth && naturalHeight) {
+                  setCrop({
+                    x: 0,
+                    y: 0,
+                    width: naturalWidth,
+                    height: naturalHeight
+                  });
+                  setIsAspectRatioLocked(false);
+                }
+              }}
+              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 font-semibold flex items-center gap-1 text-xs cursor-pointer"
+              title="Expand crop box to 100% of image (Full Uncut Document)"
+            >
+              <Maximize2 className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Full Uncut View</span>
+            </button>
+
             {/* Rotate Button */}
             <button
               type="button"

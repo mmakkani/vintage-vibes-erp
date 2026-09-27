@@ -7,6 +7,7 @@ import {
 import { AIOCRScanResult } from '../hr.controller.ts';
 import { HrService } from '../../../services/hrService.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
+import { compressImage } from '../../../utils/imageCompressor.ts';
 import { executeDocumentOcr, validateGeminiApiKey, cropFaceFromImage, FaceBoundingBox } from '../../../utils/geminiOcrService.ts';
 import { LiveAIOcrCamera } from './LiveAIOcrCamera.tsx';
 import { DocumentCropModal } from './DocumentCropModal.tsx';
@@ -42,6 +43,7 @@ interface AIOcrScannerModalProps {
     profile_picture?: string;
     avatar_url?: string;
     face_box?: FaceBoundingBox | null;
+    rawDocImages?: Record<string, string>;
   }) => void;
 }
 
@@ -230,7 +232,7 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
    * Reads the uploaded file, preserves original uncropped raw image,
    * and executes high-precision automatic edge-detection & background stripping.
    */
-  const handleFileChange = (
+  const handleFileChange = async (
     e: React.ChangeEvent<HTMLInputElement>,
     setter: (val: string) => void,
     fieldKey: string,
@@ -238,24 +240,25 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
   ) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        if (typeof reader.result === 'string') {
-          const raw = reader.result;
-          setRawImages(prev => ({ ...prev, [fieldKey]: raw }));
-          setIsCropping(prev => ({ ...prev, [fieldKey]: true }));
-          try {
-            const { croppedImageUrl } = await autoCropAndResizeDocument(raw, { docType });
-            setter(croppedImageUrl);
-            setIsAutoCropped(prev => ({ ...prev, [fieldKey]: true }));
-          } catch (err) {
-            setter(raw);
-          } finally {
-            setIsCropping(prev => ({ ...prev, [fieldKey]: false }));
-          }
+      try {
+        setIsCropping(prev => ({ ...prev, [fieldKey]: true }));
+        // Compress large mobile photos (10-25MB) to studio-grade crisp JPEGs (~150KB-200KB)
+        const compressedRaw = await compressImage(file, 1280, 0.85);
+        setRawImages(prev => ({ ...prev, [fieldKey]: compressedRaw }));
+
+        try {
+          const { croppedImageUrl } = await autoCropAndResizeDocument(compressedRaw, { docType });
+          setter(croppedImageUrl);
+          setIsAutoCropped(prev => ({ ...prev, [fieldKey]: true }));
+        } catch (cropErr) {
+          setter(compressedRaw);
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (err) {
+        console.error('OCR Modal image compression failed:', err);
+      } finally {
+        setIsCropping(prev => ({ ...prev, [fieldKey]: false }));
+        e.target.value = '';
+      }
     }
   };
 
@@ -425,7 +428,13 @@ export const AIOcrScannerModal: React.FC<AIOcrScannerModalProps> = ({ isOpen, on
       photoUrl: scanResult.photoUrl,
       profile_picture: scanResult.profile_picture || scanResult.photoUrl,
       avatar_url: scanResult.avatar_url || scanResult.photoUrl,
-      face_box: scanResult.face_box
+      face_box: scanResult.face_box,
+      rawDocImages: {
+        idFrontImageUrl: rawImages.front || frontImage,
+        idBackImageUrl: rawImages.back || backImage,
+        passportImageUrl: rawImages.passport || passportImage,
+        residencyImageUrl: rawImages.residency || residencyImage
+      }
     });
     onClose();
   };
