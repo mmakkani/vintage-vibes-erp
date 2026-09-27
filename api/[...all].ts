@@ -6966,7 +6966,7 @@ RULES FOR YOUR RESPONSE:
       }
 
       // Sales Invoice Unpost (Hard Deletion of Vouchers & Khata Logs, Reset to DRAFT)
-      if (pathname.includes('/unpost') && method === 'POST') {
+      if (pathname.includes('/unpost') && !pathname.includes('/custom-b2b') && method === 'POST') {
         const invId = pathname.replace('/unpost', '').split('/').pop();
         try {
           let invRow: any = null;

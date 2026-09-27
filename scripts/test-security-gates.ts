@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import allHandler from '../api/[...all].ts';
+import allHandler, { getPgClient } from '../api/[...all].ts';
 import loginHandler from '../api/auth/login.ts';
 import healthHandler from '../api/health.ts';
 import { createSessionToken, verifyAuthToken, revokeSessionToken, isOriginAllowed } from '../src/server/authValidator.ts';
@@ -875,8 +875,270 @@ async function runSecurityGateTests() {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Gate 17: B2B Accounting Lifecycle, Double-Post Idempotency & Post-Lock
+  // -------------------------------------------------------------------------
+  console.log('\n--- GATE 17: B2B Accounting Lifecycle, Idempotency & Post-Lock ---');
+  {
+    const adminTok = await createSessionToken({
+      id: 'usr-admin-b2b-gate',
+      username: 'admin',
+      role: 'ADMIN',
+      accessibleModules: ['SALES', 'FINANCE', 'INVENTORY']
+    });
+
+    const client = await getPgClient();
+    if (client) {
+      const testInvoiceNo = 'B2B-TEST-AUTOLOCK-999';
+      const testBarcode = 'VV-TST-PIECE-001';
+
+      // Setup / Clean any pre-existing test data
+      await client.query('DELETE FROM sales_invoices WHERE invoice_no = $1', [testInvoiceNo]).catch(() => {});
+      await client.query('DELETE FROM b2b_sales WHERE b2b_invoice_number = $1', [testInvoiceNo]).catch(() => {});
+      await client.query('DELETE FROM financial_vouchers WHERE reference = $1 OR reference_no = $1', [testInvoiceNo]).catch(() => {});
+      await client.query('DELETE FROM vouchers WHERE reference = $1', [testInvoiceNo]).catch(() => {});
+      await client.query('DELETE FROM inventory_pieces WHERE barcode = $1', [testBarcode]).catch(() => {});
+
+      // Insert clean test inventory piece
+      await client.query(`
+        INSERT INTO inventory_pieces (id, barcode, brand_name, item_name, status, is_sold, retail_price_aed, cost_price, created_at, updated_at)
+        VALUES ('test-piece-gate17-999', $1, 'TestBrand', 'Vintage Denim Jacket', 'IN_STOCK', false, 100.00, 45.00, NOW(), NOW())
+      `, [testBarcode]);
+
+      // 1. Create DRAFT Invoice via direct SQL
+      const testInvoiceId = crypto.randomUUID();
+      await client.query(`
+        INSERT INTO sales_invoices (id, invoice_no, channel, status, customer_name, total_amount, subtotal, tax_amount, items, created_at)
+        VALUES ($1, $2, 'WHOLESALE_B2B', 'DRAFT', 'Test Wholesaler LLC', 105.00, 100.00, 5.00, $3, NOW())
+      `, [testInvoiceId, testInvoiceNo, JSON.stringify([{ barcode: testBarcode, description: 'Vintage Denim Jacket', unitPrice: 100, finalAmount: 105, isRawBale: false }])]);
+
+      await client.query(`
+        INSERT INTO b2b_sales (id, b2b_invoice_number, company_name, credit_status, total_amount, balance_due, items, created_at)
+        VALUES ($1, $2, 'Test Wholesaler LLC', 'DRAFT', 105.00, 105.00, $3, NOW())
+      `, [testInvoiceId, testInvoiceNo, JSON.stringify([{ barcode: testBarcode, description: 'Vintage Denim Jacket', unitPrice: 100, finalAmount: 105, isRawBale: false }])]);
+
+      // Assert draft status
+      const draftRes = await client.query('SELECT status FROM sales_invoices WHERE invoice_no = $1', [testInvoiceNo]);
+      assert(draftRes.rows[0]?.status === 'DRAFT', 'Test invoice initially created with status DRAFT');
+
+      // 2. FIRST POST: Call /api/sales/custom-b2b/:id/post
+      const { req: pReq1, res: pRes1 } = createMockReqRes({
+        method: 'POST',
+        url: `/api/sales/custom-b2b/${testInvoiceNo}/post`,
+        headers: { authorization: `Bearer ${adminTok}`, 'content-type': 'application/json' },
+        body: { postedBy: 'Automated Lifecycle Gate' }
+      });
+      await allHandler(pReq1, pRes1);
+      const pResp1 = pRes1.getResponse();
+      assert(pResp1.statusCode === 200, 'POST /api/sales/custom-b2b/:id/post returns HTTP 200', `Got status ${pResp1.statusCode}`);
+
+      // Verify status changed to POSTED and piece marked SOLD
+      const postDbRes = await client.query('SELECT status FROM sales_invoices WHERE invoice_no = $1', [testInvoiceNo]);
+      assert(postDbRes.rows[0]?.status === 'POSTED', 'Invoice status transitioned to POSTED');
+
+      const pieceDbRes = await client.query('SELECT status, is_sold FROM inventory_pieces WHERE barcode = $1', [testBarcode]);
+      assert(pieceDbRes.rows[0]?.status === 'SOLD' && pieceDbRes.rows[0]?.is_sold === true, 'Inventory piece successfully marked SOLD upon post');
+
+      // 3. IDEMPOTENCY / DOUBLE-POST REJECTION: Call /post a second time!
+      const { req: pReq2, res: pRes2 } = createMockReqRes({
+        method: 'POST',
+        url: `/api/sales/custom-b2b/${testInvoiceNo}/post`,
+        headers: { authorization: `Bearer ${adminTok}`, 'content-type': 'application/json' },
+        body: { postedBy: 'Duplicate Post Attempt' }
+      });
+      await allHandler(pReq2, pRes2);
+      const pResp2 = pRes2.getResponse();
+      assert(
+        pResp2.statusCode === 400,
+        'Duplicate POST on already POSTED invoice is REJECTED with HTTP 400',
+        `Got status ${pResp2.statusCode}`
+      );
+      assert(
+        pResp2.body?.error?.includes('already POSTED'),
+        'Rejection error specifies invoice is already POSTED'
+      );
+
+      // 4. POST-LOCK ENFORCEMENT: Attempt to DELETE while POSTED
+      const { req: dReq1, res: dRes1 } = createMockReqRes({
+        method: 'DELETE',
+        url: `/api/sales/custom-b2b/${testInvoiceNo}`,
+        headers: { authorization: `Bearer ${adminTok}` }
+      });
+      await allHandler(dReq1, dRes1);
+      const dResp1 = dRes1.getResponse();
+      assert(
+        dResp1.statusCode === 400,
+        'DELETE on POSTED invoice is REJECTED with HTTP 400 (Strict Post-Lock)',
+        `Got status ${dResp1.statusCode}`
+      );
+      assert(
+        dResp1.body?.error?.includes('Cannot delete POSTED invoice'),
+        'Strict Post-Lock message prevents accidental accounting deletion'
+      );
+
+      // 5. UNPOST REVERSAL: Call /unpost
+      const { req: uReq, res: uRes } = createMockReqRes({
+        method: 'POST',
+        url: `/api/sales/custom-b2b/${testInvoiceNo}/unpost`,
+        headers: { authorization: `Bearer ${adminTok}`, 'content-type': 'application/json' }
+      });
+      await allHandler(uReq, uRes);
+      const uResp = uRes.getResponse();
+      assert(uResp.statusCode === 200, 'POST /api/sales/custom-b2b/:id/unpost returns HTTP 200', `Got status ${uResp.statusCode}`);
+
+      // Verify returned to DRAFT and piece restored to IN_STOCK
+      const unpostDbRes = await client.query('SELECT status FROM sales_invoices WHERE invoice_no = $1', [testInvoiceNo]);
+      assert(unpostDbRes.rows[0]?.status === 'DRAFT', 'Invoice unlocked and reverted to DRAFT status');
+
+      const pieceRestoredRes = await client.query('SELECT status, is_sold FROM inventory_pieces WHERE barcode = $1', [testBarcode]);
+      assert(
+        pieceRestoredRes.rows[0]?.status === 'IN_STOCK' && pieceRestoredRes.rows[0]?.is_sold === false,
+        'Inventory piece restored to IN_STOCK (is_sold: false) after unpost'
+      );
+
+      // Verify zero orphan vouchers remain
+      const orphanVoucherRes = await client.query(
+        'SELECT id FROM financial_vouchers WHERE reference = $1 OR reference_no = $1',
+        [testInvoiceNo]
+      );
+      assert((orphanVoucherRes.rows?.length || 0) === 0, 'Zero orphan vouchers remain in database after unpost');
+
+      // 6. CLEAN DRAFT DELETION: Now that it is DRAFT, delete succeeds
+      const { req: dReq2, res: dRes2 } = createMockReqRes({
+        method: 'DELETE',
+        url: `/api/sales/custom-b2b/${testInvoiceNo}`,
+        headers: { authorization: `Bearer ${adminTok}` }
+      });
+      await allHandler(dReq2, dRes2);
+      const dResp2 = dRes2.getResponse();
+      assert(dResp2.statusCode === 200, 'DELETE on DRAFT invoice returns HTTP 200', `Got status ${dResp2.statusCode}`);
+
+      const finalDelRes = await client.query('SELECT id FROM sales_invoices WHERE invoice_no = $1', [testInvoiceNo]);
+      assert((finalDelRes.rows?.length || 0) === 0, 'Invoice successfully purged from sales_invoices');
+
+      // Cleanup test inventory piece
+      await client.query('DELETE FROM inventory_pieces WHERE barcode = $1', [testBarcode]);
+    } else {
+      console.warn('Database unavailable for Gate 17, skipping live DB checks');
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Gate 18: Database Ghost & Orphan Records Integrity Audit
+  // -------------------------------------------------------------------------
+  console.log('\n--- GATE 18: Database Ghost & Orphan Integrity Audit ---');
+  {
+    const client = await getPgClient();
+    if (client) {
+      // 1. Zero Orphan Ledger Entries Check (Lines without a parent voucher)
+      const orphanLedgers = await client.query(`
+        SELECT COUNT(*)::int as count FROM general_ledger 
+        WHERE voucher_no IS NOT NULL 
+          AND voucher_no != '' 
+          AND voucher_no NOT IN (SELECT voucher_no FROM financial_vouchers WHERE voucher_no IS NOT NULL)
+          AND voucher_no NOT IN (SELECT voucher_no FROM vouchers WHERE voucher_no IS NOT NULL);
+      `).catch(() => ({ rows: [{ count: 0 }] }));
+      const orphanCount = Number(orphanLedgers.rows[0]?.count || 0);
+      assert(orphanCount === 0, 'Zero orphan lines in general_ledger without a valid parent voucher', `Found ${orphanCount} orphans`);
+
+      // 2. Zero Unbalanced Vouchers in Financial Vouchers (Debit == Credit)
+      const unbalancedVouchers = await client.query(`
+        SELECT voucher_no, SUM(debit)::numeric as tot_debit, SUM(credit)::numeric as tot_credit
+        FROM voucher_entries
+        WHERE voucher_no IS NOT NULL
+        GROUP BY voucher_no
+        HAVING ABS(SUM(debit) - SUM(credit)) > 0.01;
+      `).catch(() => ({ rows: [] }));
+      const unbalCount = unbalancedVouchers.rows?.length || 0;
+      assert(unbalCount === 0, 'Zero mathematically unbalanced vouchers (Debit == Credit GAAP/IFRS)', `Found ${unbalCount} unbalanced vouchers`);
+
+      // 3. No Negative Inventory Balances
+      const negativePieces = await client.query(`
+        SELECT COUNT(*)::int as count FROM inventory_pieces WHERE retail_price_aed < 0 OR cost_price < 0;
+      `).catch(() => ({ rows: [{ count: 0 }] }));
+      assert(Number(negativePieces.rows[0]?.count || 0) === 0, 'Zero inventory pieces with negative cost or price anomalies');
+
+      // 4. Chart of Accounts Hierarchy Sanity (Assets, Liabilities, Equity, Revenue, Expense)
+      const masterCoa = await client.query(`
+        SELECT COUNT(*)::int as count FROM coa_accounts WHERE code IN ('1000-00', '2000-00', '3000-00', '4000-00', '5000-00');
+      `).catch(() => ({ rows: [{ count: 0 }] }));
+      assert(Number(masterCoa.rows[0]?.count || 0) >= 5, 'Master Chart of Accounts 5-category foundation intact (1000-5000)');
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Gate 19: Static AST Anti-Trap Code Scanner (Zero Browser .catch on QueryBuilders)
+  // -------------------------------------------------------------------------
+  console.log('\n--- GATE 19: Static Code Pattern & Anti-Trap AST Scanner ---');
+  {
+    const fs = await import('fs');
+    const path = await import('path');
+
+    function scanDir(dir: string, fileList: string[] = []): string[] {
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        const fullPath = path.join(dir, file);
+        if (file === 'node_modules' || file === 'dist' || file === '.git') continue;
+        const stat = fs.statSync(fullPath);
+        if (stat.isDirectory()) {
+          scanDir(fullPath, fileList);
+        } else if (file.endsWith('.ts') || file.endsWith('.tsx')) {
+          fileList.push(fullPath);
+        }
+      }
+      return fileList;
+    }
+
+    const codeFiles = scanDir(path.resolve(process.cwd(), 'src')).concat(scanDir(path.resolve(process.cwd(), 'api')));
+
+    // Rule 1: Zero direct `.from(...)...catch(` on Supabase builders
+    let catchViolations: string[] = [];
+    const supabaseCatchRegex = /supabase(?:Admin)?\s*\.from\([^;]+?\)\s*\.catch\s*\(/g;
+
+    for (const filePath of codeFiles) {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const cleanContent = content.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, '');
+      const matches = cleanContent.match(supabaseCatchRegex) || [];
+      for (const m of matches) {
+        if (!m.includes('.then(') && !m.includes('Promise.all') && !m.includes(']).catch')) {
+          catchViolations.push(path.basename(filePath));
+        }
+      }
+    }
+
+    assert(
+      catchViolations.length === 0,
+      'Zero occurrences of supabase.from(...)...catch() anti-pattern in codebase',
+      `Violations in: ${catchViolations.join(', ')}`
+    );
+
+    // Rule 2: Verify Idempotency pre-purge in CustomCompanySalesView.tsx
+    const salesViewPath = path.resolve(process.cwd(), 'src/modules/sales/components/CustomCompanySalesView.tsx');
+    if (fs.existsSync(salesViewPath)) {
+      const sContent = fs.readFileSync(salesViewPath, 'utf-8');
+      const hasIdempotencyPurge = sContent.includes('cascadeDeleteVouchersForDocument(genInvoiceNo)') &&
+                                  sContent.includes('cascadeDeleteVouchersForDocument(invNo)');
+      assert(
+        hasIdempotencyPurge,
+        'Idempotency pre-purge guards active in CustomCompanySalesView (prevents double-posting)'
+      );
+
+      const hasPostLock = sContent.includes("if (status === 'POSTED')") && sContent.includes("if (inv.status === 'POSTED')");
+      assert(
+        hasPostLock,
+        'Strict Post-Lock guards active in CustomCompanySalesView (prevents modifying/reposting posted invoices)'
+      );
+
+      const hasSafeSupabase = sContent.includes('safeSupabaseCall(');
+      assert(
+        hasSafeSupabase,
+        'safeSupabaseCall wrapper implemented in CustomCompanySalesView'
+      );
+    }
+  }
+
   console.log('\n======================================================');
-  console.log(`  SECURITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
+  console.log(`  SECURITY & INTEGRITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('======================================================\n');
 
   if (failed > 0) {

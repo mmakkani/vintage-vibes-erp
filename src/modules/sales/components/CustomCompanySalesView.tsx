@@ -877,25 +877,26 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
       if (invoiceId) {
         // 1. Update existing b2b_sales record
-        await supabase
-          .from('b2b_sales')
-          .update({
-            b2b_invoice_number: genInvoiceNo,
-            company_name: selectedCustomer.name || 'Wholesale Client',
-            trn_number: selectedCustomer.trnNo || '',
-            contact_person: selectedCustomer.contactPerson || '',
-            phone: selectedCustomer.phone || '',
-            email: selectedCustomer.email || '',
-            items: items,
-            total_amount: grandTotal,
-            paid_amount: Number(advanceAmountPaid) || 0,
-            balance_due: creditAmountDue,
-            payment_terms: 'Net 30',
-            credit_status: 'DRAFT',
-            shipping_address: selectedCustomer.address || ''
-          })
-          .or(`id.eq.${invoiceId},b2b_invoice_number.eq.${genInvoiceNo}`)
-          .catch(() => {});
+        await safeSupabaseCall(
+          supabase
+            .from('b2b_sales')
+            .update({
+              b2b_invoice_number: genInvoiceNo,
+              company_name: selectedCustomer.name || 'Wholesale Client',
+              trn_number: selectedCustomer.trnNo || '',
+              contact_person: selectedCustomer.contactPerson || '',
+              phone: selectedCustomer.phone || '',
+              email: selectedCustomer.email || '',
+              items: items,
+              total_amount: grandTotal,
+              paid_amount: Number(advanceAmountPaid) || 0,
+              balance_due: creditAmountDue,
+              payment_terms: 'Net 30',
+              credit_status: 'DRAFT',
+              shipping_address: selectedCustomer.address || ''
+            })
+            .or(`id.eq.${invoiceId},b2b_invoice_number.eq.${genInvoiceNo}`)
+        );
 
         // 2. Update existing sales_invoices record
         await SalesService.updateSalesInvoice(invoiceId, {
