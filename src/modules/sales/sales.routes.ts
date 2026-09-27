@@ -334,6 +334,110 @@ salesRouter.get('/counter-sale/scan/:barcode', (req, res) => {
 });
 
 // B2B Custom Corporate Sales Endpoints
+salesRouter.get('/custom-b2b/invoices', async (req, res) => {
+  try {
+    const client = await getDbClient();
+    const [b2bRes, sinvRes] = await Promise.all([
+      client.query(`SELECT * FROM b2b_sales ORDER BY created_at DESC;`),
+      client.query(`SELECT * FROM sales_invoices WHERE channel = 'WHOLESALE_B2B' OR invoice_no ILIKE 'B2B-%' OR invoice_no ILIKE 'SLS-B2B%' ORDER BY created_at DESC;`)
+    ]);
+    await client.end().catch(() => {});
+
+    const mappedMap = new Map<string, any>();
+
+    // 1. Process sales_invoices
+    for (const row of (sinvRes.rows || [])) {
+      let parsedItems: any[] = [];
+      if (Array.isArray(row.items)) parsedItems = row.items;
+      else if (typeof row.items === 'string') {
+        try { parsedItems = JSON.parse(row.items); } catch (_) {}
+      }
+      const invNo = row.invoice_no || `B2B-${row.id}`;
+      const rawDate = row.invoice_date || (row.created_at ? String(row.created_at).slice(0, 10) : new Date().toISOString().slice(0, 10));
+      const subVal = Number(row.subtotal ?? row.total_amount ?? 0);
+      const vatVal = Number(row.tax_amount ?? row.vat_amount ?? 0);
+      const totalVal = Number(row.total_amount ?? (subVal + vatVal));
+
+      mappedMap.set(invNo, {
+        id: row.id,
+        invoiceNo: invNo,
+        clientId: row.client_id || '',
+        customerName: row.customer_name || 'Wholesale Client',
+        customerPhone: row.customer_phone || '',
+        customerTrn: row.trn_no || '',
+        invoiceDate: rawDate,
+        date: rawDate,
+        channel: 'WHOLESALE_B2B',
+        isB2BCustomSale: true,
+        paymentMethod: row.payment_method || 'CREDIT_ACCOUNT',
+        paymentStatus: row.payment_status || (row.status === 'POSTED' ? 'PAID' : 'DRAFT'),
+        subtotal: subVal,
+        taxAmount: vatVal,
+        vatAmount: vatVal,
+        totalAmount: totalVal,
+        grandTotalAED: totalVal,
+        creditAmountDue: totalVal,
+        status: String(row.status || 'DRAFT').toUpperCase(),
+        items: parsedItems,
+        shippingAddress: row.shipping_address || '',
+        createdAt: row.created_at
+      });
+    }
+
+    // 2. Overlay / add b2b_sales
+    for (const b of (b2bRes.rows || [])) {
+      const invNo = b.b2b_invoice_number || `B2B-${b.id}`;
+      let parsedItems: any[] = [];
+      if (Array.isArray(b.items)) parsedItems = b.items;
+      else if (typeof b.items === 'string') {
+        try { parsedItems = JSON.parse(b.items); } catch (_) {}
+      }
+      const rawDate = b.created_at ? String(b.created_at).slice(0, 10) : new Date().toISOString().slice(0, 10);
+      const totalVal = Number(b.total_amount || 0);
+      const paidVal = Number(b.paid_amount || 0);
+      const balVal = b.balance_due !== undefined ? Number(b.balance_due) : (totalVal - paidVal);
+      const bStatus = String(b.credit_status || 'DRAFT').toUpperCase();
+
+      if (mappedMap.has(invNo)) {
+        const existing = mappedMap.get(invNo);
+        existing.status = bStatus === 'POSTED' ? 'POSTED' : existing.status;
+        existing.creditAmountDue = balVal;
+        if (!existing.items || existing.items.length === 0) existing.items = parsedItems;
+      } else {
+        mappedMap.set(invNo, {
+          id: b.id,
+          invoiceNo: invNo,
+          clientId: '',
+          customerName: b.company_name || 'Wholesale Client',
+          customerPhone: b.phone || '',
+          customerTrn: b.trn_number || '',
+          invoiceDate: rawDate,
+          date: rawDate,
+          channel: 'WHOLESALE_B2B',
+          isB2BCustomSale: true,
+          paymentMethod: 'CREDIT_ACCOUNT',
+          paymentStatus: bStatus === 'POSTED' ? 'PAID' : 'DRAFT',
+          subtotal: totalVal / 1.05,
+          taxAmount: totalVal - (totalVal / 1.05),
+          vatAmount: totalVal - (totalVal / 1.05),
+          totalAmount: totalVal,
+          grandTotalAED: totalVal,
+          creditAmountDue: balVal,
+          status: bStatus,
+          items: parsedItems,
+          shippingAddress: b.shipping_address || '',
+          createdAt: b.created_at
+        });
+      }
+    }
+
+    return res.json(Array.from(mappedMap.values()));
+  } catch (err: any) {
+    console.error('Error fetching B2B invoices:', err);
+    return res.json(SalesController.getB2BSalesInvoices?.() || []);
+  }
+});
+
 salesRouter.get('/custom-b2b/available-bales', async (req, res) => {
   try {
     const client = await getDbClient();

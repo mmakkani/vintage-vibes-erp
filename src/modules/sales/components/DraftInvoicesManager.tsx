@@ -138,9 +138,16 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
   const [channelFilter, setChannelFilter] = useState<'ALL' | 'LIVE' | 'ECOMMERCE'>('ALL');
   const [showSettlementModal, setShowSettlementModal] = useState<boolean>(false);
 
-  // Filter only DRAFT invoices
+  // Filter only DRAFT invoices (Strictly LIVE Stream claims & E-Commerce, never B2B Wholesale or POS)
   const draftInvoices = useMemo(() => {
-    return invoices.filter(inv => inv.status === 'DRAFT');
+    return invoices.filter(inv => 
+      inv.status === 'DRAFT' &&
+      inv.channel !== 'WHOLESALE_B2B' &&
+      inv.channel !== 'POS' &&
+      !inv.isB2BCustomSale &&
+      !inv.invoiceNo?.startsWith('B2B-') &&
+      !inv.invoiceNo?.startsWith('SLS-B2B')
+    );
   }, [invoices]);
 
   // Selected invoice

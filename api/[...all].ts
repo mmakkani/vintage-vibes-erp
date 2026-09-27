@@ -10900,6 +10900,100 @@ RULES FOR YOUR RESPONSE:
         const client = await getPgClient();
         if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
         try {
+          if (pathname.includes('/custom-b2b/invoices') && method === 'GET') {
+            const [b2bRes, sinvRes] = await Promise.all([
+              client.query(`SELECT * FROM b2b_sales ORDER BY created_at DESC;`),
+              client.query(`SELECT * FROM sales_invoices WHERE channel = 'WHOLESALE_B2B' OR invoice_no ILIKE 'B2B-%' OR invoice_no ILIKE 'SLS-B2B%' ORDER BY created_at DESC;`)
+            ]);
+
+            const mappedMap = new Map<string, any>();
+            for (const row of (sinvRes.rows || [])) {
+              let parsedItems: any[] = [];
+              if (Array.isArray(row.items)) parsedItems = row.items;
+              else if (typeof row.items === 'string') {
+                try { parsedItems = JSON.parse(row.items); } catch (_) {}
+              }
+              const invNo = row.invoice_no || `B2B-${row.id}`;
+              const rawDate = row.invoice_date || (row.created_at ? String(row.created_at).slice(0, 10) : new Date().toISOString().slice(0, 10));
+              const subVal = Number(row.subtotal ?? row.total_amount ?? 0);
+              const vatVal = Number(row.tax_amount ?? row.vat_amount ?? 0);
+              const totalVal = Number(row.total_amount ?? (subVal + vatVal));
+
+              mappedMap.set(invNo, {
+                id: row.id,
+                invoiceNo: invNo,
+                clientId: row.client_id || '',
+                customerName: row.customer_name || 'Wholesale Client',
+                customerPhone: row.customer_phone || '',
+                customerTrn: row.trn_no || '',
+                invoiceDate: rawDate,
+                date: rawDate,
+                channel: 'WHOLESALE_B2B',
+                isB2BCustomSale: true,
+                paymentMethod: row.payment_method || 'CREDIT_ACCOUNT',
+                paymentStatus: row.payment_status || (row.status === 'POSTED' ? 'PAID' : 'DRAFT'),
+                subtotal: subVal,
+                taxAmount: vatVal,
+                vatAmount: vatVal,
+                totalAmount: totalVal,
+                grandTotalAED: totalVal,
+                creditAmountDue: totalVal,
+                status: String(row.status || 'DRAFT').toUpperCase(),
+                items: parsedItems,
+                shippingAddress: row.shipping_address || '',
+                createdAt: row.created_at
+              });
+            }
+
+            for (const b of (b2bRes.rows || [])) {
+              const invNo = b.b2b_invoice_number || `B2B-${b.id}`;
+              let parsedItems: any[] = [];
+              if (Array.isArray(b.items)) parsedItems = b.items;
+              else if (typeof b.items === 'string') {
+                try { parsedItems = JSON.parse(b.items); } catch (_) {}
+              }
+              const rawDate = b.created_at ? String(b.created_at).slice(0, 10) : new Date().toISOString().slice(0, 10);
+              const totalVal = Number(b.total_amount || 0);
+              const paidVal = Number(b.paid_amount || 0);
+              const balVal = b.balance_due !== undefined ? Number(b.balance_due) : (totalVal - paidVal);
+              const bStatus = String(b.credit_status || 'DRAFT').toUpperCase();
+
+              if (mappedMap.has(invNo)) {
+                const existing = mappedMap.get(invNo);
+                existing.status = bStatus === 'POSTED' ? 'POSTED' : existing.status;
+                existing.creditAmountDue = balVal;
+                if (!existing.items || existing.items.length === 0) existing.items = parsedItems;
+              } else {
+                mappedMap.set(invNo, {
+                  id: b.id,
+                  invoiceNo: invNo,
+                  clientId: '',
+                  customerName: b.company_name || 'Wholesale Client',
+                  customerPhone: b.phone || '',
+                  customerTrn: b.trn_number || '',
+                  invoiceDate: rawDate,
+                  date: rawDate,
+                  channel: 'WHOLESALE_B2B',
+                  isB2BCustomSale: true,
+                  paymentMethod: 'CREDIT_ACCOUNT',
+                  paymentStatus: bStatus === 'POSTED' ? 'PAID' : 'DRAFT',
+                  subtotal: totalVal / 1.05,
+                  taxAmount: totalVal - (totalVal / 1.05),
+                  vatAmount: totalVal - (totalVal / 1.05),
+                  totalAmount: totalVal,
+                  grandTotalAED: totalVal,
+                  creditAmountDue: balVal,
+                  status: bStatus,
+                  items: parsedItems,
+                  shippingAddress: b.shipping_address || '',
+                  createdAt: b.created_at
+                });
+              }
+            }
+
+            return res.status(200).json(Array.from(mappedMap.values()));
+          }
+
           const segments = pathname.split('/').filter(Boolean);
           const isPostAction = pathname.endsWith('/post');
           const isUnpostAction = pathname.endsWith('/unpost');
@@ -10908,6 +11002,43 @@ RULES FOR YOUR RESPONSE:
             targetId = segments[segments.length - 2];
           } else {
             targetId = segments[segments.length - 1];
+          }
+
+          if (isPostAction && method === 'POST') {
+            const [b2bRes, sinvRes] = await Promise.all([
+              client.query('SELECT id, b2b_invoice_number, credit_status, items FROM b2b_sales WHERE id::text = $1 OR b2b_invoice_number = $1 LIMIT 1', [targetId]),
+              client.query('SELECT id, invoice_no, status, items FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [targetId])
+            ]);
+            const b2bRow = b2bRes.rows[0];
+            const sinvRow = sinvRes.rows[0];
+            const invNo = b2bRow?.b2b_invoice_number || sinvRow?.invoice_no || targetId;
+            const invId = b2bRow?.id || sinvRow?.id || targetId;
+            const currentStatus = String(b2bRow?.credit_status || sinvRow?.status || '').toUpperCase();
+
+            if (currentStatus === 'POSTED') {
+              return res.status(400).json({ success: false, error: `Invoice ${invNo} is already POSTED.` });
+            }
+
+            let rawItems = b2bRow?.items || sinvRow?.items || [];
+            if (typeof rawItems === 'string') {
+              try { rawItems = JSON.parse(rawItems); } catch (_) {}
+            }
+            if (!Array.isArray(rawItems)) rawItems = [];
+            const pieceBarcodes = rawItems.filter((it: any) => !it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+            const baleCodes = rawItems.filter((it: any) => it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+
+            await client.query('UPDATE b2b_sales SET credit_status = $1 WHERE id::text = $2 OR b2b_invoice_number = $3', ['POSTED', invId, invNo]);
+            await client.query('UPDATE sales_invoices SET status = $1 WHERE id::text = $2 OR invoice_no = $3', ['POSTED', invId, invNo]);
+
+            if (pieceBarcodes.length > 0) {
+              await client.query('UPDATE inventory_pieces SET status = $1, is_sold = true, updated_at = NOW() WHERE barcode = ANY($2::text[])', ['SOLD', pieceBarcodes]);
+            }
+            if (baleCodes.length > 0) {
+              await client.query('UPDATE inward_gate_passes SET status = $1, sorting_status = $2, updated_at = NOW() WHERE bale_code = ANY($3::text[]) OR gate_pass_no = ANY($3::text[])', ['SOLD_AS_BALE', 'FULLY_SORTED', baleCodes]).catch(() => {});
+              await client.query('UPDATE raw_bales SET status = $1, updated_at = NOW() WHERE bale_code = ANY($2::text[])', ['PROCESSED', baleCodes]).catch(() => {});
+            }
+
+            return res.status(200).json({ success: true, message: `Invoice ${invNo} successfully POSTED & DISPATCHED.` });
           }
 
           if (isUnpostAction && method === 'POST') {

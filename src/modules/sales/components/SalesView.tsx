@@ -102,6 +102,8 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
         targetChannel = 'POS';
       } else if (subTab === 'masterLog' || subTab === 'liveSelling' || subTab === 'drafts') {
         targetChannel = 'LIVE';
+      } else if (subTab === 'customSale') {
+        targetChannel = 'WHOLESALE_B2B';
       }
 
       const res = await SalesService.getSalesInvoicesPaginated({
@@ -445,7 +447,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
             }`}
           >
             <ShoppingCart className="w-3.5 h-3.5 text-amber-700" />
-            <span>📦 Live Drafts & Dispatch Hub ({invoices.filter(i => i.status === 'DRAFT').length})</span>
+            <span>📦 Live Drafts & Dispatch Hub ({invoices.filter(i => i.status === 'DRAFT' && i.channel !== 'WHOLESALE_B2B' && !i.isB2BCustomSale && !i.invoiceNo?.startsWith('B2B-') && !i.invoiceNo?.startsWith('SLS-B2B')).length})</span>
           </button>
           <button
             id="subtab-sales-bounties"
@@ -469,7 +471,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
             }`}
           >
             <FileText className="w-3.5 h-3.5 text-slate-600" />
-            <span>📋 Dispatched Sales Log ({invoices.filter(i => i.status === 'POSTED').length})</span>
+            <span>📋 Dispatched Sales Log ({invoices.filter(i => i.status === 'POSTED' && i.channel !== 'WHOLESALE_B2B' && !i.isB2BCustomSale && !i.invoiceNo?.startsWith('B2B-') && !i.invoiceNo?.startsWith('SLS-B2B')).length})</span>
           </button>
           <button
             id="subtab-sales-returns"

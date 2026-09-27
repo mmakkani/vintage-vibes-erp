@@ -146,13 +146,6 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     } catch {}
   };
 
-  const loadInvoices = async () => {
-    try {
-      const data = await SalesService.getSalesInvoices();
-      if (Array.isArray(data)) setInternalInvoices(data);
-    } catch {}
-  };
-
   useEffect(() => {
     if (propClients && propClients.length > 0) {
       setInternalClients(propClients.filter(p => {
@@ -160,33 +153,72 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         return t === 'CLIENT' || t === 'CUSTOMER' || !t;
       }));
     }
-    // Always load all parties to populate courier/transporter list & load COA accounts
-    PartiesService.getParties().then(partiesData => {
-      if (Array.isArray(partiesData)) {
-        setCourierParties(partiesData.filter(p => {
-          const t = String(p.type || (p as any).party_type || '').toUpperCase();
-          return t === 'COURIER' || t === 'TRANSPORTER' || t === 'LOGISTICS' || t === 'FREIGHT';
-        }));
-        if (!propClients || propClients.length === 0) {
-          setInternalClients(partiesData.filter(p => {
-            const t = String(p.type || (p as any).party_type || '').toUpperCase();
-            return t === 'CLIENT' || t === 'CUSTOMER' || !t;
-          }));
-        }
-      }
-    }).catch(() => {});
-
-    FinanceService.getCoaAccounts().then(data => {
-      if (Array.isArray(data)) setCoaAccounts(data);
-    }).catch(() => {});
+    loadParties();
   }, [propClients]);
 
+  const loadInvoices = async () => {
+    try {
+      // 1. Try dedicated B2B endpoint
+      const res = await fetch('/api/sales/custom-b2b/invoices');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setInternalInvoices(data);
+          return;
+        }
+      }
+    } catch (_) {}
+
+    // 2. Fallback to Supabase b2b_sales & sales_invoices
+    try {
+      const [b2bRes, sinvRes] = await Promise.all([
+        supabase.from('b2b_sales').select('*').order('created_at', { ascending: false }),
+        supabase.from('sales_invoices').select('*').or('channel.eq.WHOLESALE_B2B,invoice_no.ilike.B2B-%,invoice_no.ilike.SLS-B2B%').order('created_at', { ascending: false })
+      ]);
+      const mappedMap = new Map<string, any>();
+      for (const row of (sinvRes.data || [])) {
+        const invNo = row.invoice_no || `B2B-${row.id}`;
+        mappedMap.set(invNo, {
+          ...row,
+          invoiceNo: invNo,
+          isB2BCustomSale: true,
+          status: String(row.status || 'DRAFT').toUpperCase()
+        });
+      }
+      for (const b of (b2bRes.data || [])) {
+        const invNo = b.b2b_invoice_number || `B2B-${b.id}`;
+        if (!mappedMap.has(invNo)) {
+          mappedMap.set(invNo, {
+            id: b.id,
+            invoiceNo: invNo,
+            customerName: b.company_name || 'Wholesale Client',
+            customerPhone: b.phone || '',
+            customerTrn: b.trn_number || '',
+            channel: 'WHOLESALE_B2B',
+            isB2BCustomSale: true,
+            totalAmount: Number(b.total_amount || 0),
+            creditAmountDue: Number(b.balance_due || b.total_amount || 0),
+            status: String(b.credit_status || 'DRAFT').toUpperCase(),
+            items: Array.isArray(b.items) ? b.items : [],
+            createdAt: b.created_at
+          });
+        }
+      }
+      if (mappedMap.size > 0) {
+        setInternalInvoices(Array.from(mappedMap.values()));
+        return;
+      }
+    } catch (_) {}
+
+    // 3. Fallback: general SalesService
+    try {
+      const data = await SalesService.getSalesInvoices();
+      if (Array.isArray(data)) setInternalInvoices(data);
+    } catch {}
+  };
+
   useEffect(() => {
-    if (propInvoices && propInvoices.length > 0) {
-      setInternalInvoices(propInvoices);
-    } else {
-      loadInvoices();
-    }
+    loadInvoices();
   }, [propInvoices]);
 
   // Load available raw bales
@@ -314,7 +346,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   // Filter B2B Custom Sales invoices from all invoices
   const b2bInvoices = useMemo(() => {
-    return internalInvoices.filter(i => i.isB2BCustomSale || i.invoiceNo?.startsWith('SLS-B2B') || i.invoiceNo?.startsWith('B2B-'));
+    return internalInvoices.filter(i => 
+      i.isB2BCustomSale || 
+      i.invoiceNo?.startsWith('SLS-B2B') || 
+      i.invoiceNo?.startsWith('B2B-') || 
+      (i as any).channel === 'WHOLESALE_B2B'
+    );
   }, [internalInvoices]);
 
   // Filtered Invoices for Log Table
@@ -1146,8 +1183,29 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       setInvoiceId(activeInvoiceId);
       showMsg(`Invoice ${genInvoiceNo} successfully POSTED & DISPATCHED! Inventory deducted, General Ledger JV posted.`);
       
-      // Auto-exit modal on Post per requirement ("jesay post karya us say bahir ajayen")
-      setIsInvoiceModalOpen(false);
+      // Update in-memory invoice state immediately so UI and outer table reflect POSTED status
+      setInternalInvoices(prev => {
+        const found = prev.some(p => p.id === activeInvoiceId || p.invoiceNo === genInvoiceNo);
+        if (found) {
+          return prev.map(p => (p.id === activeInvoiceId || p.invoiceNo === genInvoiceNo) ? { ...p, status: 'POSTED' } : p);
+        }
+        return [{
+          id: activeInvoiceId,
+          invoiceNo: genInvoiceNo,
+          customerName: selectedCustomer?.name || 'Wholesale Client',
+          customerPhone: selectedCustomer?.phone || '',
+          customerTrn: selectedCustomer?.trnNo || '',
+          invoiceDate: invoiceDate,
+          date: invoiceDate,
+          channel: 'WHOLESALE_B2B',
+          isB2BCustomSale: true,
+          totalAmount: grandTotal,
+          grandTotalAED: grandTotal,
+          creditAmountDue: creditAmountDue,
+          status: 'POSTED',
+          items: items
+        } as SalesInvoice, ...prev];
+      });
       refreshAllB2BData();
     } catch (err: any) {
       showMsg(err?.message || 'Post error.', 'error');
@@ -1252,6 +1310,66 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   };
 
   // Outer Table Level Actions (Post, Unpost, Delete)
+  const handlePostFromTable = async (inv: SalesInvoice) => {
+    const invNo = inv.invoiceNo;
+    const invId = inv.id;
+    const clientName = inv.customerName || 'Wholesale Client';
+    const totalVal = Number(inv.totalAmount || inv.grandTotalAED || 0);
+
+    const confirmPost = window.confirm(
+      `POST & DISPATCH Invoice ${invNo} directly from table?\n\n` +
+      `• Customer: ${clientName}\n` +
+      `• Billable Total: AED ${totalVal.toFixed(2)}\n` +
+      `• Deducts inventory & marks pieces SOLD\n` +
+      `• Dispatches double-entry Journal Voucher to General Ledger\n` +
+      `• Locks invoice against editing & deletion`
+    );
+    if (!confirmPost) return;
+
+    try {
+      const targetKey = invId || invNo;
+
+      // 1. Call backend post API
+      const res = await fetch(`/api/sales/custom-b2b/${encodeURIComponent(targetKey)}/post`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postedBy: 'Sales Table Direct' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || 'Failed to post invoice');
+      }
+
+      // 2. Mark pieces as sold in Supabase
+      const pieceBarcodes = (inv.items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
+      if (pieceBarcodes.length > 0) {
+        await supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('barcode', pieceBarcodes).catch(() => {});
+      }
+      const baleCodes = (inv.items || []).filter(i => i.isRawBale).map(i => i.barcode).filter(Boolean);
+      if (baleCodes.length > 0) {
+        await supabase.from('raw_bales').update({ status: 'PROCESSED' }).in('bale_code', baleCodes).catch(() => {});
+        await supabase.from('inward_gate_passes').update({ status: 'SOLD_AS_BALE', sorting_status: 'FULLY_SORTED' }).in('bale_code', baleCodes).catch(() => {});
+      }
+
+      // 3. Mark b2b_sales & sales_invoices POSTED
+      await supabase.from('b2b_sales').update({ credit_status: 'POSTED' }).or(`b2b_invoice_number.eq.${invNo},id.eq.${invId}`).catch(() => {});
+      await supabase.from('sales_invoices').update({ status: 'POSTED' }).or(`invoice_no.eq.${invNo},id.eq.${invId}`).catch(() => {});
+
+      // 4. Update UI in-memory state immediately so row button flips to [🔓 Unpost]
+      setInternalInvoices(prev => prev.map(item => {
+        if (item.id === invId || item.invoiceNo === invNo) {
+          return { ...item, status: 'POSTED' };
+        }
+        return item;
+      }));
+
+      showMsg(`Invoice ${invNo} successfully POSTED & DISPATCHED directly! Status is now locked.`);
+      refreshAllB2BData();
+    } catch (err: any) {
+      showMsg(err?.message || 'Post error.', 'error');
+    }
+  };
+
   const handleUnpostFromTable = async (inv: SalesInvoice) => {
     const invNo = inv.invoiceNo;
     const invId = inv.id;
@@ -1601,12 +1719,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                             </>
                           ) : (
                             <>
-                              {/* 🚀 POST BUTTON */}
+                              {/* 🚀 POST BUTTON (DIRECT 1-CLICK FROM TABLE) */}
                               <button
                                 type="button"
-                                onClick={() => handleOpenExistingInvoiceModal(inv)}
+                                onClick={() => handlePostFromTable(inv)}
                                 className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black transition flex items-center gap-1 shadow-2xs cursor-pointer ring-1 ring-emerald-400/50"
-                                title="Open & Post Invoice to General Ledger"
+                                title="Post & Lock Invoice Directly to General Ledger (Without Opening Modal)"
                               >
                                 <span>🚀 Post</span>
                               </button>
