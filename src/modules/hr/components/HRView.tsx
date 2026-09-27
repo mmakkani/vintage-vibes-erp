@@ -1446,7 +1446,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         alert("Error saving employee: " + errorMsg);
         showMsg("Error saving employee: " + errorMsg, 'error');
       } else {
-        alert("Employee registered successfully!");
+        alert(editingEmpId ? "Employee record updated successfully!" : "Employee registered successfully!");
         showMsg(editingEmpId ? 'Employee record updated & audit log registered!' : 'Employee registered successfully!');
         notifyMutation('HR', 'EMPLOYEES', editingEmpId ? 'EDIT' : 'CREATE', empForm.name);
 
@@ -1491,8 +1491,11 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     try {
       const res = await fetch(`/api/hr/employees/${id}/unpost`, { method: 'POST' });
       if (res.ok) {
-        showMsg('Employee record unposted.');
+        showMsg('Employee record unposted to DRAFT. Now editable.');
         HrService.clearEmployeeCache();
+        setEmployees(prev => prev.map(e => (e.id === id || e.empCode === id) ? { ...e, status: 'DRAFT' } : e));
+        setEmpForm(prev => ({ ...prev, status: 'DRAFT' }));
+        setIsViewOnlyModal(false);
         loadData();
       }
     } catch (err) {
@@ -2695,16 +2698,22 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                         <Eye className="w-3.5 h-3.5" />
                       </button>
 
-                      {/* 2. Edit Button (Strictly Disabled if status === 'POSTED') */}
+                      {/* 2. Edit Button */}
                       <button
                         type="button"
-                        disabled={emp.status === 'POSTED'}
-                        onClick={() => {
-                          if (emp.status === 'POSTED') {
-                            alert('This employee record is POSTED. Click Unpost first to make edits.');
-                            return;
+                        onClick={async () => {
+                          const isPosted = emp.status === 'POSTED';
+                          if (isPosted) {
+                            const wantUnpost = confirm('This employee record is POSTED. Would you like to Unpost it to DRAFT now to edit?');
+                            if (wantUnpost) {
+                              await handleUnpostEmployee(emp.id);
+                              setIsViewOnlyModal(false);
+                            } else {
+                              setIsViewOnlyModal(true);
+                            }
+                          } else {
+                            setIsViewOnlyModal(false);
                           }
-                          setIsViewOnlyModal(false);
                           setEditingEmpId(emp.id);
                           setEmpForm({
                             name: emp.name || emp.fullName || '',
@@ -2746,8 +2755,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                           });
                           setShowEmpModal(true);
                         }}
-                        className={`p-1 rounded transition-colors ${emp.status === 'POSTED' ? 'bg-slate-100 text-slate-300 cursor-not-allowed opacity-50' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
-                        title={emp.status === 'POSTED' ? 'Locked (POSTED). Click Unpost to edit.' : 'Edit Employee'}
+                        className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+                        title={emp.status === 'POSTED' ? 'POSTED employee. Click to edit (will prompt to unpost)' : 'Edit Employee'}
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
@@ -2842,6 +2851,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                               address: '',
                               notes: ''
                             });
+                            setIsViewOnlyModal(false);
+                            setEditingEmpId(null);
                             setRawDocImages({});
                             setShowEmpModal(true);
                           }}
@@ -3068,8 +3079,10 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
           hrAuditLogs={hrAuditLogs}
           onOpenOcrScanner={handleOpenOcrScanner}
           onOpenCreateEmpModal={() => {
+            setIsViewOnlyModal(false);
             setEditingEmpId(null);
             setEmpForm(defaultEmpForm);
+            setRawDocImages({});
             setShowEmpModal(true);
           }}
           onRefresh={loadData}
@@ -3104,7 +3117,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
 
             {/* Read-Only Mode Banner if isViewOnlyModal */}
             {isViewOnlyModal && (
-              <div className="mb-3 bg-amber-50 border border-amber-300 rounded-lg p-3 flex items-center justify-between gap-3 text-amber-900 shadow-2xs">
+              <div className="mb-3 bg-amber-50 border border-amber-300 rounded-lg p-3 flex flex-wrap items-center justify-between gap-3 text-amber-900 shadow-2xs">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0">
                     <Lock className="w-4 h-4" />
@@ -3117,10 +3130,24 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       </span>
                     </div>
                     <p className="text-[10px] text-amber-800">
-                      All inputs and document uploads are locked against modification. To edit or update this employee, please click <strong>Unpost</strong> in the employee table first.
+                      All inputs and document uploads are locked against modification. Click Unpost to enable editing and updating.
                     </p>
                   </div>
                 </div>
+                {editingEmpId && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await handleUnpostEmployee(editingEmpId);
+                      setIsViewOnlyModal(false);
+                    }}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                    title="Unpost this record to unlock editing"
+                  >
+                    <Unlock className="w-3.5 h-3.5" />
+                    <span>Unpost to Edit</span>
+                  </button>
+                )}
               </div>
             )}
 
@@ -3961,7 +3988,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   {isViewOnlyModal ? (
                     <span className="text-amber-800 font-medium flex items-center gap-1.5">
                       <Lock className="w-3.5 h-3.5 text-amber-600" />
-                      Locked (POSTED) — All fields read-only. Unpost from table to enable edits.
+                      Locked (POSTED) — All fields read-only. Click Unpost to enable edits.
                     </span>
                   ) : (
                     <span>All legal identifiers and photos are encrypted and synced to Document Vault.</span>
@@ -3990,7 +4017,26 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   >
                     {isViewOnlyModal ? 'Close' : 'Cancel'}
                   </button>
-                  {!isViewOnlyModal && (
+
+                  {isViewOnlyModal ? (
+                    editingEmpId ? (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const currentEmp = employees.find(e => e.id === editingEmpId || e.empCode === editingEmpId);
+                          if (currentEmp?.status === 'POSTED' || (empForm as any).status === 'POSTED') {
+                            await handleUnpostEmployee(editingEmpId);
+                          }
+                          setIsViewOnlyModal(false);
+                        }}
+                        className="px-5 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold uppercase tracking-wider text-[11px] shadow-md hover:shadow-lg transition-all flex items-center gap-1.5 cursor-pointer"
+                        title="Unpost to unlock editing and update record"
+                      >
+                        <Unlock className="w-3.5 h-3.5" />
+                        <span>Unpost to Update Record</span>
+                      </button>
+                    ) : null
+                  ) : (
                     <button
                       type="submit"
                       disabled={isSubmittingEmp}

@@ -41,7 +41,22 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showOnlineDropdown, setShowOnlineDropdown] = useState(false);
+  const [hasPwaUpdate, setHasPwaUpdate] = useState(false);
   const { isLiveConnected, activeClientsCount, onlineUsers, refreshPresence, lastSyncedAt, isSyncing, triggerGlobalSync } = useSync();
+
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistration().then(reg => {
+        if (reg?.waiting) {
+          setHasPwaUpdate(true);
+        }
+      }).catch(() => {});
+    }
+
+    const onUpdateAvailable = () => setHasPwaUpdate(true);
+    window.addEventListener('vv:pwa-update-available', onUpdateAvailable);
+    return () => window.removeEventListener('vv:pwa-update-available', onUpdateAvailable);
+  }, []);
 
   return (
     <header id="main-enterprise-header" className="relative z-50 w-full bg-gradient-to-r from-[#FDF9EE] via-[#F5ECCE] to-[#FAF4E6] text-slate-900 px-3 sm:px-5 lg:px-6 py-2 sm:py-2.5 border-b-2 border-amber-400/80 shadow-md flex flex-col xl:flex-row justify-between items-center gap-3">
@@ -224,14 +239,28 @@ export const Header: React.FC<HeaderProps> = ({
                       </span>
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={async () => {
+                          if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+                            try {
+                              const reg = await navigator.serviceWorker.getRegistration();
+                              if (reg) {
+                                await reg.update().catch(() => {});
+                                if (reg.waiting) {
+                                  setHasPwaUpdate(true);
+                                  window.dispatchEvent(new CustomEvent('vv:trigger-pwa-update'));
+                                  return;
+                                }
+                              }
+                            } catch (_) {}
+                          }
                           triggerGlobalSync();
                           refreshPresence?.();
                         }}
                         className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 cursor-pointer"
+                        title="Sync live data & check for latest software updates"
                       >
                         <RefreshCw className={`w-2.5 h-2.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                        <span>Refresh Now</span>
+                        <span>Refresh & Check Updates</span>
                       </button>
                     </div>
                   </div>
@@ -261,6 +290,20 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Bottom Row: WhatsApp Digest + Storefront + User Profile + Logout */}
           <div className="flex items-center gap-1.5 sm:gap-2 justify-end w-full sm:w-auto">
+            {/* Software Update Action Button (Pulsing Amber) */}
+            {hasPwaUpdate && (
+              <button
+                type="button"
+                id="btn-header-software-update"
+                onClick={() => window.dispatchEvent(new CustomEvent('vv:trigger-pwa-update'))}
+                title="New software version is available! Click to update and reload."
+                className="btn-3d h-7 px-2.5 text-[10.5px] font-black uppercase tracking-wider rounded-lg flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 shadow-md animate-pulse cursor-pointer border border-amber-400"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-slate-950 animate-spin" />
+                <span>Update App</span>
+              </button>
+            )}
+
             {/* WhatsApp Daily Summary Action */}
             <button
               id="btn-whatsapp-daily-summary"
@@ -359,7 +402,33 @@ export const Header: React.FC<HeaderProps> = ({
                       )}
                     </div>
 
-                    <div className="border-t border-amber-200 mt-1 pt-1">
+                    <div className="border-t border-amber-200 mt-1 pt-1 space-y-0.5">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setShowUserDropdown(false);
+                          if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+                            try {
+                              const reg = await navigator.serviceWorker.getRegistration();
+                              if (reg) {
+                                await reg.update();
+                                if (reg.waiting) {
+                                  setHasPwaUpdate(true);
+                                  window.dispatchEvent(new CustomEvent('vv:trigger-pwa-update'));
+                                  return;
+                                }
+                              }
+                            } catch (_) {}
+                          }
+                          window.location.reload();
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-amber-100 text-amber-950 font-bold transition-colors cursor-pointer"
+                        title="Check for newest build and refresh ERP"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                        <span>Check & Install Software Update</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => {

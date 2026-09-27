@@ -15,22 +15,40 @@ export const PWAUpdatePrompt: React.FC = () => {
     try {
       const updateSW = registerSW({
         onNeedRefresh() {
-          // Automated Enterprise Takeover: Activate new build silently without manual user clicking
-          console.log('[PWA] New version downloaded -> auto-activating new bundle.');
-          updateSW(true);
+          console.log('[PWA] New version downloaded -> displaying software update prompt.');
+          setNeedRefresh(true);
+          window.dispatchEvent(new CustomEvent('vv:pwa-update-available'));
         },
         onOfflineReady() {
           console.log('[PWA] Vintage Vibes is ready for offline operation.');
         },
         onRegisteredSW(swUrl, registration) {
           if (registration) {
-            // Check for service worker updates periodically every 30 minutes
+            // Check immediately if an update is already installed and waiting
+            if (registration.waiting) {
+              console.log('[PWA] Service worker in waiting state -> showing update prompt.');
+              setNeedRefresh(true);
+              window.dispatchEvent(new CustomEvent('vv:pwa-update-available'));
+            }
+
+            // Check for service worker updates periodically every 5 minutes
             const interval = setInterval(() => {
               registration.update().catch(err => console.warn('[PWA] Periodic update check failed:', err));
-            }, 30 * 60 * 1000);
+            }, 5 * 60 * 1000);
+
+            // Also check whenever user returns to the tab or refocuses
+            const handleFocus = () => {
+              if (document.visibilityState === 'visible') {
+                registration.update().catch(err => console.warn('[PWA] Focus update check failed:', err));
+              }
+            };
+            document.addEventListener('visibilitychange', handleFocus);
+            window.addEventListener('focus', handleFocus);
 
             return () => {
               clearInterval(interval);
+              document.removeEventListener('visibilitychange', handleFocus);
+              window.removeEventListener('focus', handleFocus);
             };
           }
         },
@@ -38,9 +56,21 @@ export const PWAUpdatePrompt: React.FC = () => {
 
       setUpdateFunction(() => updateSW);
 
+      // Listen for manual trigger from Header or User menu
+      const handleTriggerUpdate = () => {
+        if (updateSW) {
+          updateSW(true).then(() => {
+            setTimeout(() => window.location.reload(), 1000);
+          }).catch(() => {
+            window.location.reload();
+          });
+        } else {
+          window.location.reload();
+        }
+      };
+      window.addEventListener('vv:trigger-pwa-update', handleTriggerUpdate);
+
       // Guard against double reload: only reload if an existing controller is replaced by a newer worker.
-      // On fresh load or hard refresh (Ctrl+Shift+R), navigator.serviceWorker.controller is initially null,
-      // so the initial controllerchange event is just the initial claim and should NOT trigger a second reload.
       let refreshing = false;
       let hadPreviousController = Boolean(navigator.serviceWorker.controller);
 
@@ -58,6 +88,7 @@ export const PWAUpdatePrompt: React.FC = () => {
       navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
 
       return () => {
+        window.removeEventListener('vv:trigger-pwa-update', handleTriggerUpdate);
         navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
       };
     } catch (err) {
