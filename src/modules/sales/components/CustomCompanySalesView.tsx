@@ -32,6 +32,12 @@ import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
 import { COAAccount } from '../../finance/finance.types.ts';
 import { supabase } from '../../../supabaseClient.ts';
+import {
+  VINTAGE_VIBES_MONOGRAM_SVG,
+  openB2BTaxInvoiceA4PrintWindow,
+  openB2BPackingListA4PrintWindow,
+  B2BTaxInvoiceA4Data
+} from '../../../utils/printInvoiceA4.ts';
 
 interface AvailableRawBale {
   id: string;
@@ -406,6 +412,39 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     setTimeout(() => setActionMessage(null), 6000);
   };
 
+  const handlePrintDocument = () => {
+    const printPayload: B2BTaxInvoiceA4Data = {
+      invoiceNo: invoiceNo || 'DRAFT-INVOICE',
+      invoiceDate: invoiceDate || new Date().toISOString().slice(0, 10),
+      paymentMethod,
+      taxType,
+      exportCustomsDeclarationNo,
+      pdcChequeNo,
+      pdcChequeDate,
+      salespersonOrBroker,
+      customerName: selectedCustomer?.name || 'Walk-in Corporate Client',
+      customerAddress: selectedCustomer?.address || 'Industrial Area, Dubai, UAE',
+      customerPhone: selectedCustomer?.phone || 'N/A',
+      customerEmail: selectedCustomer?.email,
+      customerTrn: selectedCustomer?.trnNo || 'Not Registered / Freezone',
+      customerCoaCode: selectedCustomerCoaCode,
+      items: items || [],
+      itemsSubtotal,
+      otherCharges: otherCharges || [],
+      otherChargesTotal,
+      vatAmount,
+      grandTotal,
+      advanceAmountPaid,
+      packingListNotes
+    };
+
+    if (printModalType === 'TAX_INVOICE') {
+      openB2BTaxInvoiceA4PrintWindow(printPayload);
+    } else if (printModalType === 'PACKING_LIST') {
+      openB2BPackingListA4PrintWindow(printPayload);
+    }
+  };
+
   // Barcode Gun Scanning Hook (Active when popup editor is open)
   useBarcodeScanner({
     onScan: (code) => {
@@ -724,7 +763,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     setIsInvoiceModalOpen(true);
   };
 
-  // Save Draft
+  // Save Draft (No Ledgers, No Financial Vouchers, Reserve Stock)
   const handleSaveDraft = async () => {
     if (!selectedCustomerId) {
       showMsg('Please select a Customer / Company from Parties Khata first!', 'error');
@@ -739,7 +778,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     try {
       const genInvoiceNo = invoiceNo || `B2B-${Date.now().toString().slice(-6)}`;
       
-      // 1. Direct write to public.b2b_sales
+      // 1. Direct write to public.b2b_sales with credit_status: 'DRAFT'
       const b2bRecord = await SalesService.createB2bSale({
         b2b_invoice_number: genInvoiceNo,
         company_name: selectedCustomer.name || 'Wholesale Client',
@@ -752,12 +791,13 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         paid_amount: Number(advanceAmountPaid) || 0,
         balance_due: creditAmountDue,
         payment_terms: 'Net 30',
-        credit_status: creditAmountDue <= 0 ? 'PAID' : 'PENDING',
+        credit_status: 'DRAFT',
         shipping_address: selectedCustomer.address || ''
       });
 
-      // 2. Direct write to sales_invoices
+      // 2. Direct write to sales_invoices with status: 'DRAFT'
       await SalesService.createSalesInvoice({
+        id: invoiceId || undefined,
         invoiceNo: genInvoiceNo,
         clientId: selectedCustomer.id,
         customerName: selectedCustomer.name,
@@ -770,18 +810,19 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         taxAmount: vatAmount,
         totalAmount: grandTotal,
         status: 'DRAFT',
-        items: (items || []).map(i => ({
-          barcode: i.barcode,
-          description: i.description,
-          unitPrice: i.unitPrice,
-          weightKg: i.weightKg
-        }))
+        items: items
       }).catch(e => console.warn('B2B sales_invoices sync note:', e));
+
+      // 3. Mark piece barcodes as RESERVED (not SOLD, no ledger entries)
+      const pieceBarcodes = (items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
+      if (pieceBarcodes.length > 0) {
+        await supabase.from('inventory_pieces').update({ is_sold: false, status: 'RESERVED' }).in('barcode', pieceBarcodes).catch(() => {});
+      }
 
       setInvoiceId(b2bRecord.id || genInvoiceNo);
       setInvoiceNo(genInvoiceNo);
       setStatus('DRAFT');
-      showMsg(`Invoice ${genInvoiceNo} saved to cloud database.`);
+      showMsg(`Invoice ${genInvoiceNo} saved as DRAFT in cloud database.`);
       refreshAllB2BData();
     } catch (err: any) {
       showMsg(err?.message || 'Save draft error.', 'error');
@@ -790,7 +831,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     }
   };
 
-  // POST & Dispatch
+  // POST & Dispatch (Deduct Inventory, Create Double-Entry Journal Voucher)
   const handlePostInvoice = async () => {
     if (!invoiceId) {
       await handleSaveDraft();
@@ -798,33 +839,172 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
     const confirmPost = window.confirm(
       `Are you sure you want to POST & DISPATCH Invoice ${invoiceNo || invoiceId}?\n\n` +
-      `• Raw Bales (${items.filter(i => i.isRawBale).length}) will be deducted from 1140-00 Inventory to 5120-00 COGS\n` +
-      `• Garment Pieces (${items.filter(i => !i.isRawBale).length}) will be deducted from 1160-00 Inventory to 5110-00 COGS\n` +
-      `• General Ledger Journal Voucher will be dispatched.\n` +
-      `• Customer Khata will be debited AED ${grandTotal.toFixed(2)}.`
+      `• Raw Bales (${items.filter(i => i.isRawBale).length}) will be deducted from 1140-01 to 5120-00 COGS\n` +
+      `• Garment Pieces (${items.filter(i => !i.isRawBale).length}) will be deducted from 1160-01 to 5110-00 COGS\n` +
+      `• Double-Entry General Ledger Journal Voucher will be dispatched.\n` +
+      `• Customer Khata (${selectedCustomerCoaCode}) will be debited AED ${grandTotal.toFixed(2)}.`
     );
     if (!confirmPost) return;
 
     setIsSaving(true);
     try {
       const genInvoiceNo = invoiceNo || `B2B-${Date.now().toString().slice(-6)}`;
-      await SalesService.createB2bSale({
-        b2b_invoice_number: genInvoiceNo,
-        company_name: selectedCustomer?.name || 'Wholesale Client',
-        trn_number: selectedCustomer?.trnNo || '',
-        contact_person: selectedCustomer?.contactPerson || '',
-        phone: selectedCustomer?.phone || '',
-        email: selectedCustomer?.email || '',
-        items: items,
-        total_amount: grandTotal,
-        paid_amount: Number(advanceAmountPaid) || 0,
-        balance_due: creditAmountDue,
-        payment_terms: 'Net 30',
-        credit_status: 'POSTED',
-        shipping_address: selectedCustomer?.address || ''
+
+      // 1. Mark inventory pieces as SOLD
+      const pieceBarcodes = (items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
+      if (pieceBarcodes.length > 0) {
+        await supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('barcode', pieceBarcodes);
+      }
+      const baleCodes = (items || []).filter(i => i.isRawBale).map(i => i.barcode).filter(Boolean);
+      if (baleCodes.length > 0) {
+        await supabase.from('raw_bales').update({ status: 'PROCESSED' }).in('bale_code', baleCodes).catch(() => {});
+      }
+
+      // 2. Build GAAP/IFRS Double-Entry Journal Voucher Lines
+      const voucherLines: any[] = [];
+
+      // Line 1: Debit Customer Khata (Accounts Receivable)
+      voucherLines.push({
+        accountId: selectedCustomerCoaAccount?.id || selectedCustomerCoaCode,
+        accountCode: selectedCustomerCoaCode,
+        accountName: selectedCustomerCoaAccount?.name || `Accounts Receivable - ${selectedCustomer?.name || 'Client'}`,
+        partyId: selectedCustomer?.id,
+        partyName: selectedCustomer?.name,
+        debit: grandTotal,
+        credit: 0,
+        memo: `B2B Wholesale Invoice ${genInvoiceNo} - ${selectedCustomer?.name}`
       });
+
+      // Line 2: Credit Sales Revenue (Wholesale B2B Sales Revenue)
+      voucherLines.push({
+        accountId: '4110-00',
+        accountCode: '4110-00',
+        accountName: 'Wholesale B2B Sales Revenue',
+        debit: 0,
+        credit: itemsSubtotal,
+        memo: `Wholesale B2B Sales Revenue (${items.length} items): Invoice ${genInvoiceNo}`
+      });
+
+      // Line 3: Credit Other Charges (Freight/Delivery) if applicable
+      if (otherChargesTotal > 0) {
+        voucherLines.push({
+          accountId: '4310-00',
+          accountCode: '4310-00',
+          accountName: 'Delivery & Shipping Fee Revenue',
+          debit: 0,
+          credit: otherChargesTotal,
+          memo: `Delivery & Freight Revenue: Invoice ${genInvoiceNo}`
+        });
+      }
+
+      // Line 4: Credit UAE VAT Output Tax (5% FTA) if applicable
+      if (vatAmount > 0) {
+        voucherLines.push({
+          accountId: '2140-00',
+          accountCode: '2140-00',
+          accountName: 'UAE VAT Output Tax Payable (5% FTA)',
+          debit: 0,
+          credit: vatAmount,
+          memo: `UAE VAT 5% Output Tax (TRN: ${selectedCustomer?.trnNo || 'B2B'}): Invoice ${genInvoiceNo}`
+        });
+      }
+
+      // Line 5 & 6: COGS vs Inventory Relief for Garment Pieces
+      const pieceCogsTotal = Number(
+        (items || []).filter(i => !i.isRawBale).reduce((sum, i) => sum + (Number(i.calculatedCostPrice) || 0), 0).toFixed(2)
+      );
+      if (pieceCogsTotal > 0) {
+        voucherLines.push({
+          accountId: '5110-00',
+          accountCode: '5110-00',
+          accountName: 'Cost of Goods Sold (COGS) - Finished Garments',
+          debit: pieceCogsTotal,
+          credit: 0,
+          memo: `COGS for Sorted Garment Pieces Sold: Invoice ${genInvoiceNo}`
+        });
+        voucherLines.push({
+          accountId: '1160-01',
+          accountCode: '1160-01',
+          accountName: 'Inventory - Sorted & Tagged Garments',
+          debit: 0,
+          credit: pieceCogsTotal,
+          memo: `Inventory Relief for Finished Garments: Invoice ${genInvoiceNo}`
+        });
+      }
+
+      // Line 7 & 8: COGS vs Inventory Relief for Raw Bales (if any)
+      const baleCogsTotal = Number(
+        (items || []).filter(i => i.isRawBale).reduce((sum, i) => sum + (Number(i.calculatedCostPrice || (i as any).landedCostAed) || 0), 0).toFixed(2)
+      );
+      if (baleCogsTotal > 0) {
+        voucherLines.push({
+          accountId: '5120-00',
+          accountCode: '5120-00',
+          accountName: 'Cost of Goods Sold (COGS) - Bulk Bales Sold',
+          debit: baleCogsTotal,
+          credit: 0,
+          memo: `COGS for Bulk Bales Sold: Invoice ${genInvoiceNo}`
+        });
+        voucherLines.push({
+          accountId: '1140-01',
+          accountCode: '1140-01',
+          accountName: 'Inventory - Raw Bulk Bales',
+          debit: 0,
+          credit: baleCogsTotal,
+          memo: `Inventory Relief for Raw Bales: Invoice ${genInvoiceNo}`
+        });
+      }
+
+      // Line 9 & 10: Advance Payment Settlement (if advance paid)
+      const advPaid = Number(advanceAmountPaid) || 0;
+      if (advPaid > 0) {
+        const receiptAccCode = paymentMethod === 'BANK_TRANSFER' ? '1120-01' : '1110-01';
+        const receiptAccName = paymentMethod === 'BANK_TRANSFER' ? 'Emirates NBD Bank Account' : 'Main Cash in Hand';
+        voucherLines.push({
+          accountId: receiptAccCode,
+          accountCode: receiptAccCode,
+          accountName: receiptAccName,
+          partyId: selectedCustomer?.id,
+          partyName: selectedCustomer?.name,
+          debit: advPaid,
+          credit: 0,
+          memo: `Advance Payment Received on Invoice ${genInvoiceNo}`
+        });
+        voucherLines.push({
+          accountId: selectedCustomerCoaAccount?.id || selectedCustomerCoaCode,
+          accountCode: selectedCustomerCoaCode,
+          accountName: selectedCustomerCoaAccount?.name || `Accounts Receivable - ${selectedCustomer?.name || 'Client'}`,
+          partyId: selectedCustomer?.id,
+          partyName: selectedCustomer?.name,
+          debit: 0,
+          credit: advPaid,
+          memo: `Advance Payment Applied to Invoice ${genInvoiceNo}`
+        });
+      }
+
+      // 3. Dispatch Journal Voucher to Finance Module
+      const vDebitSum = Number(voucherLines.reduce((sum, l) => sum + (Number(l.debit) || 0), 0).toFixed(2));
+      const vCreditSum = Number(voucherLines.reduce((sum, l) => sum + (Number(l.credit) || 0), 0).toFixed(2));
+
+      await FinanceService.addVoucher({
+        date: invoiceDate,
+        type: 'JOURNAL',
+        reference: genInvoiceNo,
+        narration: `B2B Sales Invoice ${genInvoiceNo} - ${selectedCustomer?.name || 'Wholesale Client'}`,
+        createdBy: 'Sales Terminal',
+        isAuto: true,
+        is_auto: true,
+        totalDebit: vDebitSum,
+        totalCredit: vCreditSum,
+        lines: voucherLines
+      }).catch(e => console.warn('B2B Finance voucher dispatch note:', e));
+
+      // 4. Update b2b_sales & sales_invoices status to POSTED
+      await supabase.from('b2b_sales').update({ credit_status: 'POSTED' }).or(`b2b_invoice_number.eq.${genInvoiceNo},id.eq.${invoiceId}`).catch(() => {});
+      await supabase.from('sales_invoices').update({ status: 'POSTED' }).or(`invoice_no.eq.${genInvoiceNo},id.eq.${invoiceId}`).catch(() => {});
+
       setStatus('POSTED');
-      showMsg(`Invoice ${invoiceNo || genInvoiceNo} successfully POSTED & DISPATCHED! Inventory deducted, JV dispatched.`);
+      showMsg(`Invoice ${invoiceNo || genInvoiceNo} successfully POSTED & DISPATCHED! Inventory deducted, General Ledger JV posted.`);
       refreshAllB2BData();
     } catch (err: any) {
       showMsg(err?.message || 'Post error.', 'error');
@@ -835,19 +1015,42 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   // UNPOST Invoice
   const handleUnpostInvoice = async () => {
-    if (!invoiceId) return;
+    if (!invoiceId && !invoiceNo) return;
     const confirmUnpost = window.confirm(
       `UNPOST Invoice ${invoiceNo}?\n\n` +
-      `• Restores all Raw Bales to UNOPENED stock in warehouse\n` +
-      `• Restores all Garment Pieces to IN_STOCK\n` +
+      `• Restores all Raw Bales & Garment Pieces to stock\n` +
       `• Reverses General Ledger Journal Voucher\n` +
       `• Credits Customer Khata to reverse balance`
     );
     if (!confirmUnpost) return;
 
-    setStatus('DRAFT');
-    showMsg(`Invoice ${invoiceNo} unposted. Stock barcodes restored.`);
-    refreshAllB2BData();
+    setIsSaving(true);
+    try {
+      // 1. Cascade delete vouchers for this invoice
+      await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo).catch(e => console.warn('Voucher reversal note:', e));
+
+      // 2. Restore inventory pieces to RESERVED / IN_STOCK
+      const pieceBarcodes = (items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
+      if (pieceBarcodes.length > 0) {
+        await supabase.from('inventory_pieces').update({ is_sold: false, status: 'RESERVED' }).in('barcode', pieceBarcodes);
+      }
+      const baleCodes = (items || []).filter(i => i.isRawBale).map(i => i.barcode).filter(Boolean);
+      if (baleCodes.length > 0) {
+        await supabase.from('raw_bales').update({ status: 'UNOPENED' }).in('bale_code', baleCodes).catch(() => {});
+      }
+
+      // 3. Update status to DRAFT
+      await supabase.from('b2b_sales').update({ credit_status: 'DRAFT' }).or(`b2b_invoice_number.eq.${invoiceNo},id.eq.${invoiceId}`).catch(() => {});
+      await supabase.from('sales_invoices').update({ status: 'DRAFT' }).or(`invoice_no.eq.${invoiceNo},id.eq.${invoiceId}`).catch(() => {});
+
+      setStatus('DRAFT');
+      showMsg(`Invoice ${invoiceNo} unposted. Barcodes restored to stock, JV reversed.`);
+      refreshAllB2BData();
+    } catch (err: any) {
+      showMsg(err?.message || 'Unpost error.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Delete Draft Invoice
@@ -2077,7 +2280,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
       {/* ================= 6. DUAL PRINT MODALS (TAX INVOICE OR PACKING LIST) ================= */}
       {printModalType && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 print-container print:bg-white print:p-0">
           <div className="bg-white rounded-xl shadow-2xl border border-amber-300 w-full max-w-3xl max-h-[92vh] flex flex-col animate-in zoom-in-95 duration-150">
             <div className="p-3.5 bg-[#FAF4E6] border-b border-amber-200 text-slate-900 flex items-center justify-between rounded-t-xl print:hidden">
               <div className="flex items-center gap-2">
@@ -2089,8 +2292,8 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                  onClick={handlePrintDocument}
+                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span>Print Document</span>
@@ -2110,14 +2313,21 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
               {printModalType === 'TAX_INVOICE' ? (
                 /* OFFICIAL TAX INVOICE */
                 <div className="border border-slate-300 rounded p-6 space-y-4 text-xs">
-                  <div className="flex justify-between items-start border-b-2 border-slate-900 pb-3">
-                    <div>
-                      <h1 className="text-lg font-black text-slate-950 tracking-wide">
-                        VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C
-                      </h1>
-                      <p className="text-[11px] text-slate-600">House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE</p>
-                      <p className="text-[11px] font-mono font-bold text-slate-800">UAE TRN: 100482910300003</p>
-                      <p className="text-[11px] text-slate-600">Tel: +971 55 418 6086 | Email: sales@vintagevibesllcspc.com</p>
+                  <div className="flex justify-between items-start border-b-2 border-amber-600 pb-3 gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="shrink-0" dangerouslySetInnerHTML={{ __html: VINTAGE_VIBES_MONOGRAM_SVG }} />
+                      <div>
+                        <h1 className="text-base font-black text-amber-950 tracking-wide font-serif">
+                          VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C
+                        </h1>
+                        <p className="text-[10px] text-slate-600">House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE</p>
+                        <p className="text-[10px] font-mono font-bold text-slate-800">
+                          Dubai Economy & Tourism Lic: 1049281 &bull; Customs: AE-9281048
+                        </p>
+                        <p className="text-[10px] text-slate-600">
+                          UAE TRN: <span className="font-mono font-bold text-slate-900">100482910300003</span> &bull; Tel: +971 55 418 6086
+                        </p>
+                      </div>
                     </div>
                     <div className="text-right">
                       <span className="px-2 py-1 rounded bg-slate-900 text-white text-xs font-black uppercase tracking-wider inline-block mb-1">
@@ -2238,12 +2448,16 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
               ) : (
                 /* DETAILED WAREHOUSE PACKING LIST */
                 <div className="border border-slate-300 rounded p-6 space-y-4 text-xs">
-                  <div className="flex justify-between items-start border-b-2 border-slate-900 pb-3">
-                    <div>
-                      <h1 className="text-lg font-black text-slate-950 tracking-wide">
-                        VINTAGE VIBE LOGISTICS & WAREHOUSE
-                      </h1>
-                      <p className="text-[11px] text-slate-600">Outward Dispatch & Freight Terminal</p>
+                  <div className="flex justify-between items-start border-b-2 border-teal-700 pb-3 gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="shrink-0" dangerouslySetInnerHTML={{ __html: VINTAGE_VIBES_MONOGRAM_SVG }} />
+                      <div>
+                        <h1 className="text-base font-black text-slate-950 tracking-wide font-serif">
+                          VINTAGE VIBES LOGISTICS & WAREHOUSE
+                        </h1>
+                        <p className="text-[10px] text-slate-600">Outward Cargo Dispatch & Freight Terminal</p>
+                        <p className="text-[10px] text-slate-600">House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE</p>
+                      </div>
                     </div>
                     <div className="text-right">
                       <span className="px-2 py-1 rounded bg-teal-800 text-white text-xs font-black uppercase tracking-wider inline-block mb-1">
@@ -2331,8 +2545,8 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                  onClick={handlePrintDocument}
+                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span>Print Document</span>

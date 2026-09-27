@@ -1130,24 +1130,6 @@ export class SalesService {
       throw new Error(error.message);
     }
 
-    // Auto-record in ledgers if accounts receivable exists
-    try {
-      const ledgerId = generateLedgerUuid();
-      await supabase.from('ledgers').insert({
-        id: ledgerId,
-        voucher_id: 'VCH-' + invoiceNum,
-        date: new Date().toISOString().slice(0, 10),
-        account_code: '1200-00',
-        account_name: `Accounts Receivable - ${b2b.company_name}`,
-        debit: total,
-        credit: 0,
-        balance: total,
-        narration: `B2B Invoice ${invoiceNum} generated for ${b2b.company_name}`
-      });
-    } catch (e) {
-      console.warn('Auto-ledger entry note for B2B:', e);
-    }
-
     return data;
   }
 
