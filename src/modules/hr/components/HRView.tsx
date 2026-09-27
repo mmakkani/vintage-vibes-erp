@@ -4575,16 +4575,18 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     Debit Target (Expense / Advance Target)
                   </label>
                   <select
-                    value={loanForm.debitAccount || '5210-100'}
+                    value={loanForm.debitAccount || '1135-01'}
                     onChange={e => setLoanForm(prev => ({ ...prev, debitAccount: e.target.value }))}
                     className="w-full px-3 py-2 border border-slate-300 rounded font-semibold text-slate-800 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none text-xs"
                   >
-                    <option value="5210-100">5210-100 - SALARY EXPNSE (Salary Expense)</option>
                     <option value="1135-01">1135-01 - Staff Advance & Loan Receivables (Asset)</option>
+                    <option value="5210-100">5210-100 - SALARY EXPNSE (Salary Expense)</option>
                     {coaAccounts
                       .filter(a => {
                         const code = String(a.code || '');
-                        return (code.startsWith('52') || code.startsWith('1135')) && code !== '5210-100' && code !== '1135-01';
+                        // ONLY postable / transaction accounts (NOT folder/header accounts ending in -00)
+                        if (code.endsWith('-00') || a.isTransactional === false || a.is_transactional === false) return false;
+                        return (code.startsWith('52') || code.startsWith('1135')) && code !== '1135-01' && code !== '5210-100';
                       })
                       .map(a => (
                         <option key={a.id || a.code} value={a.code || a.id}>
@@ -4609,6 +4611,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       .filter(a => {
                         const c = String(a.code || '');
                         const n = String(a.name || '').toLowerCase();
+                        // ONLY postable / transaction accounts (NOT folder/header accounts ending in -00)
+                        if (c.endsWith('-00') || a.isTransactional === false || a.is_transactional === false) return false;
                         return (c.startsWith('111') || c.startsWith('112') || n.includes('bank') || n.includes('cash')) && c !== '1120-01' && c !== '1110-01' && c !== '1020-01' && c !== '1010-01';
                       })
                       .map(a => (
