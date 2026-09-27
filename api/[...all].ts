@@ -8047,6 +8047,50 @@ RULES FOR YOUR RESPONSE:
         }
       }
 
+      if (pathname.includes('/devices/counts') && method === 'GET') {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const countsRes = await client.query(`
+              SELECT 
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE bot_type != 'BAD_BOT' AND user_id IS NOT NULL AND user_id != 'guest') as staff,
+                COUNT(*) FILTER (WHERE bot_type = 'BAD_BOT' OR install_status = 'BLOCKED') as bad_bots,
+                COUNT(*) FILTER (WHERE bot_type = 'VERIFIED_BOT') as verified_bots,
+                COUNT(*) FILTER (WHERE bot_type = 'HUMAN' AND (user_id IS NULL OR user_id = 'guest')) as visitors
+              FROM device_installations;
+            `);
+            await client.end();
+            const row = countsRes.rows[0] || {};
+            return res.status(200).json({
+              total: Number(row.total || 0),
+              staff: Number(row.staff || 0),
+              badBots: Number(row.bad_bots || 0),
+              verifiedBots: Number(row.verified_bots || 0),
+              visitors: Number(row.visitors || 0)
+            });
+          } catch (e) { try { await client.end(); } catch (_) {} }
+        }
+        try {
+          const [allRes, staffRes, badRes, verifiedRes, visitorRes] = await Promise.all([
+            supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }),
+            supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).neq('bot_type', 'BAD_BOT').neq('username', 'Guest / Visitor').not('username', 'ilike', '[BAD BOT]%'),
+            supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).or('bot_type.eq.BAD_BOT,install_status.eq.BLOCKED'),
+            supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).eq('bot_type', 'VERIFIED_BOT'),
+            supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).or('username.eq.Guest / Visitor,username.is.null').neq('bot_type', 'BAD_BOT').neq('bot_type', 'VERIFIED_BOT')
+          ]);
+          return res.status(200).json({
+            total: allRes.count || 0,
+            staff: staffRes.count || 0,
+            badBots: badRes.count || 0,
+            verifiedBots: verifiedRes.count || 0,
+            visitors: visitorRes.count || 0
+          });
+        } catch (err: any) {
+          return res.status(500).json({ success: false, error: err?.message });
+        }
+      }
+
       if (pathname.includes('/devices/threat-logs') && method === 'GET') {
         const ipParam = parsedUrl.searchParams.get('ip') || req.query?.ip;
         const client = await getPgClient();
@@ -10845,6 +10889,139 @@ RULES FOR YOUR RESPONSE:
           }
           await client.query('DELETE FROM public.grail_bounties WHERE id = $1;', [bountyId]);
           return res.status(200).json({ success: true, message: `Bounty ${bountyId} deleted successfully` });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      if (pathname.includes('/sales/custom-b2b')) {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+        try {
+          const segments = pathname.split('/').filter(Boolean);
+          const isPostAction = pathname.endsWith('/post');
+          const isUnpostAction = pathname.endsWith('/unpost');
+          let targetId = '';
+          if (isPostAction || isUnpostAction) {
+            targetId = segments[segments.length - 2];
+          } else {
+            targetId = segments[segments.length - 1];
+          }
+
+          if (isUnpostAction && method === 'POST') {
+            const [b2bRes, sinvRes] = await Promise.all([
+              client.query('SELECT id, b2b_invoice_number, credit_status, items FROM b2b_sales WHERE id::text = $1 OR b2b_invoice_number = $1 LIMIT 1', [targetId]),
+              client.query('SELECT id, invoice_no, status, items FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [targetId])
+            ]);
+            const b2bRow = b2bRes.rows[0];
+            const sinvRow = sinvRes.rows[0];
+            const invNo = b2bRow?.b2b_invoice_number || sinvRow?.invoice_no || targetId;
+            const invId = b2bRow?.id || sinvRow?.id || targetId;
+
+            let rawItems = b2bRow?.items || sinvRow?.items || [];
+            if (typeof rawItems === 'string') {
+              try { rawItems = JSON.parse(rawItems); } catch (_) {}
+            }
+            if (!Array.isArray(rawItems)) rawItems = [];
+            const pieceBarcodes = rawItems.filter((it: any) => !it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+            const baleCodes = rawItems.filter((it: any) => it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+
+            await client.query('UPDATE b2b_sales SET credit_status = $1 WHERE id::text = $2 OR b2b_invoice_number = $3', ['DRAFT', invId, invNo]);
+            await client.query('UPDATE sales_invoices SET status = $1 WHERE id::text = $2 OR invoice_no = $3', ['DRAFT', invId, invNo]);
+
+            if (pieceBarcodes.length > 0) {
+              await client.query('UPDATE inventory_pieces SET status = $1, is_sold = false, updated_at = NOW() WHERE barcode = ANY($2::text[])', ['IN_STOCK', pieceBarcodes]);
+            }
+            if (baleCodes.length > 0) {
+              await client.query('UPDATE inward_gate_passes SET status = $1, sorting_status = $2, updated_at = NOW() WHERE bale_code = ANY($3::text[]) OR gate_pass_no = ANY($3::text[])', ['AVAILABLE', 'UNOPENED', baleCodes]).catch(() => {});
+              await client.query('UPDATE raw_bales SET status = $1, updated_at = NOW() WHERE bale_code = ANY($2::text[])', ['UNOPENED', baleCodes]).catch(() => {});
+            }
+
+            // Cascade vouchers
+            const vRes = await client.query(
+              `SELECT DISTINCT id, voucher_no FROM (
+                 SELECT id, voucher_no FROM financial_vouchers WHERE reference = $1 OR reference_no = $1 OR reference = $2 OR reference_no = $2 OR narration ILIKE $3
+                 UNION
+                 SELECT id, voucher_no FROM vouchers WHERE reference = $1 OR reference = $2 OR narration ILIKE $3
+               ) matched`,
+              [invNo, invId, `%${invNo}%`]
+            );
+            const vIds = (vRes.rows || []).map((r: any) => r.id).filter(Boolean);
+            const vNos = (vRes.rows || []).map((r: any) => r.voucher_no).filter(Boolean);
+            if (vIds.length > 0 || vNos.length > 0) {
+              await client.query('DELETE FROM voucher_entries WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])', [vIds, vNos]);
+              await client.query('DELETE FROM journal_entries WHERE voucher_id = ANY($1::text[])', [vIds]);
+              await client.query('DELETE FROM general_ledger WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])', [vIds, vNos]);
+              await client.query('DELETE FROM ledgers WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])', [vIds, vNos]);
+              await client.query('DELETE FROM financial_vouchers WHERE id = ANY($1::text[]) OR voucher_no = ANY($2::text[])', [vIds, vNos]);
+              await client.query('DELETE FROM vouchers WHERE id = ANY($1::text[]) OR voucher_no = ANY($2::text[])', [vIds, vNos]);
+            }
+            await client.query('DELETE FROM journal_entries WHERE description ILIKE $1', [`%${invNo}%`]);
+            await client.query('DELETE FROM general_ledger WHERE narration ILIKE $1', [`%${invNo}%`]);
+            await client.query('DELETE FROM ledgers WHERE narration ILIKE $1', [`%${invNo}%`]);
+
+            return res.status(200).json({ success: true, message: `Invoice ${invNo} unposted and unlocked.` });
+          } else if (method === 'DELETE') {
+            const [b2bRes, sinvRes] = await Promise.all([
+              client.query('SELECT id, b2b_invoice_number, credit_status, items FROM b2b_sales WHERE id::text = $1 OR b2b_invoice_number = $1 LIMIT 1', [targetId]),
+              client.query('SELECT id, invoice_no, status, items FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [targetId])
+            ]);
+            const b2bRow = b2bRes.rows[0];
+            const sinvRow = sinvRes.rows[0];
+            const invNo = b2bRow?.b2b_invoice_number || sinvRow?.invoice_no || targetId;
+            const invId = b2bRow?.id || sinvRow?.id || targetId;
+            const status = String(b2bRow?.credit_status || sinvRow?.status || '').toUpperCase();
+
+            if (status === 'POSTED') {
+              return res.status(400).json({ success: false, error: `Cannot delete POSTED invoice ${invNo}. Please UNPOST it first.` });
+            }
+
+            let rawItems = b2bRow?.items || sinvRow?.items || [];
+            if (typeof rawItems === 'string') {
+              try { rawItems = JSON.parse(rawItems); } catch (_) {}
+            }
+            if (!Array.isArray(rawItems)) rawItems = [];
+            const pieceBarcodes = rawItems.filter((it: any) => !it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+            const baleCodes = rawItems.filter((it: any) => it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+
+            if (pieceBarcodes.length > 0) {
+              await client.query('UPDATE inventory_pieces SET status = $1, is_sold = false, updated_at = NOW() WHERE barcode = ANY($2::text[])', ['IN_STOCK', pieceBarcodes]);
+            }
+            if (baleCodes.length > 0) {
+              await client.query('UPDATE inward_gate_passes SET status = $1, sorting_status = $2, updated_at = NOW() WHERE bale_code = ANY($3::text[]) OR gate_pass_no = ANY($3::text[])', ['AVAILABLE', 'UNOPENED', baleCodes]).catch(() => {});
+              await client.query('UPDATE raw_bales SET status = $1, updated_at = NOW() WHERE bale_code = ANY($2::text[])', ['UNOPENED', baleCodes]).catch(() => {});
+            }
+
+            await client.query('DELETE FROM b2b_sales WHERE id::text = $1 OR b2b_invoice_number = $2', [invId, invNo]);
+            await client.query('DELETE FROM sales_invoices WHERE id::text = $1 OR invoice_no = $2', [invId, invNo]);
+
+            // Cascade vouchers
+            const vRes = await client.query(
+              `SELECT DISTINCT id, voucher_no FROM (
+                 SELECT id, voucher_no FROM financial_vouchers WHERE reference = $1 OR reference_no = $1 OR reference = $2 OR reference_no = $2 OR narration ILIKE $3
+                 UNION
+                 SELECT id, voucher_no FROM vouchers WHERE reference = $1 OR reference = $2 OR narration ILIKE $3
+               ) matched`,
+              [invNo, invId, `%${invNo}%`]
+            );
+            const vIds = (vRes.rows || []).map((r: any) => r.id).filter(Boolean);
+            const vNos = (vRes.rows || []).map((r: any) => r.voucher_no).filter(Boolean);
+            if (vIds.length > 0 || vNos.length > 0) {
+              await client.query('DELETE FROM voucher_entries WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])', [vIds, vNos]);
+              await client.query('DELETE FROM journal_entries WHERE voucher_id = ANY($1::text[])', [vIds]);
+              await client.query('DELETE FROM general_ledger WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])', [vIds, vNos]);
+              await client.query('DELETE FROM ledgers WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])', [vIds, vNos]);
+              await client.query('DELETE FROM financial_vouchers WHERE id = ANY($1::text[]) OR voucher_no = ANY($2::text[])', [vIds, vNos]);
+              await client.query('DELETE FROM vouchers WHERE id = ANY($1::text[]) OR voucher_no = ANY($2::text[])', [vIds, vNos]);
+            }
+            await client.query('DELETE FROM journal_entries WHERE description ILIKE $1', [`%${invNo}%`]);
+            await client.query('DELETE FROM general_ledger WHERE narration ILIKE $1', [`%${invNo}%`]);
+            await client.query('DELETE FROM ledgers WHERE narration ILIKE $1', [`%${invNo}%`]);
+
+            return res.status(200).json({ success: true, message: `Draft invoice ${invNo} deleted.` });
+          }
         } catch (dbErr: any) {
           return res.status(500).json({ success: false, error: dbErr.message || String(dbErr) });
         } finally {

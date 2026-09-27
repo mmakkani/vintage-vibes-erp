@@ -317,6 +317,54 @@ export const DevicesController = {
     }
   },
 
+  async getDeviceCounts(req: any, res: any) {
+    const client = await getPgClient();
+    if (client) {
+      try {
+        const countsRes = await client.query(`
+          SELECT 
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE bot_type != 'BAD_BOT' AND user_id IS NOT NULL AND user_id != 'guest') as staff,
+            COUNT(*) FILTER (WHERE bot_type = 'BAD_BOT' OR install_status = 'BLOCKED') as bad_bots,
+            COUNT(*) FILTER (WHERE bot_type = 'VERIFIED_BOT') as verified_bots,
+            COUNT(*) FILTER (WHERE bot_type = 'HUMAN' AND (user_id IS NULL OR user_id = 'guest')) as visitors
+          FROM device_installations;
+        `);
+        await client.end();
+        const row = countsRes.rows[0] || {};
+        return res.status(200).json({
+          total: Number(row.total || 0),
+          staff: Number(row.staff || 0),
+          badBots: Number(row.bad_bots || 0),
+          verifiedBots: Number(row.verified_bots || 0),
+          visitors: Number(row.visitors || 0)
+        });
+      } catch (err: any) {
+        try { await client.end(); } catch (_) {}
+      }
+    }
+
+    try {
+      const [allRes, staffRes, badRes, verifiedRes, visitorRes] = await Promise.all([
+        supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }),
+        supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).neq('bot_type', 'BAD_BOT').neq('username', 'Guest / Visitor').not('username', 'ilike', '[BAD BOT]%'),
+        supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).or('bot_type.eq.BAD_BOT,install_status.eq.BLOCKED'),
+        supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).eq('bot_type', 'VERIFIED_BOT'),
+        supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).or('username.eq.Guest / Visitor,username.is.null').neq('bot_type', 'BAD_BOT').neq('bot_type', 'VERIFIED_BOT')
+      ]);
+
+      return res.status(200).json({
+        total: allRes.count || 0,
+        staff: staffRes.count || 0,
+        badBots: badRes.count || 0,
+        verifiedBots: verifiedRes.count || 0,
+        visitors: visitorRes.count || 0
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message });
+    }
+  },
+
   async listDevices(req: any, res: any) {
     const isPaginated = req.query.page !== undefined || req.query.pageSize !== undefined;
     const page = Math.max(1, Math.floor(Number(req.query.page) || 1));

@@ -282,7 +282,10 @@ export const DeviceManagementView: React.FC = () => {
 
         <button
           type="button"
-          onClick={fetchDevices}
+          onClick={() => {
+            fetchDevices(currentPage, pageSize, filterTab);
+            fetchSummaryCounts();
+          }}
           disabled={loading}
           className="px-4 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-xs uppercase tracking-wider transition flex items-center justify-center gap-2 cursor-pointer shrink-0 disabled:opacity-50"
         >

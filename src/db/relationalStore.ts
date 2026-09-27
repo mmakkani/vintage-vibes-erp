@@ -4228,10 +4228,10 @@ class RelationalStore {
       // Credit: Sales Revenue (Final Selling Price)
       // Debit: Cost of Goods Sold (Piece Gram-Weight Cost derived from source bale)
       // Credit: Inventory - Finished Goods (Piece Gram-Weight Cost)
-      const arAcc = this.getOrCreateAccount('1130', 'Accounts Receivable (Trade & Live Stream Claimants)', 'ASSET');
-      const revAcc = this.getOrCreateAccount('4120', 'Live Streaming Sales Revenue (TikTok / IG / FB Drops)', 'REVENUE');
-      const cogsAcc = this.getOrCreateAccount('5110', 'Cost of Goods Sold (COGS) - Finished Garments', 'EXPENSE');
-      const invAcc = this.getOrCreateAccount('1160', 'Inventory - Sorted & Tagged Garments (Retail & Live Stream Ready)', 'ASSET');
+      const arAcc = this.getOrCreateAccount('1130-00', 'Accounts Receivable (Trade & Live Stream Claimants)', 'ASSET');
+      const revAcc = this.getOrCreateAccount('4110-02', 'Live Streaming Sales Revenue (TikTok / IG / FB Drops)', 'REVENUE');
+      const cogsAcc = this.getOrCreateAccount('5100-02', 'Cost of Goods Sold - Finished Goods', 'EXPENSE');
+      const invAcc = this.getOrCreateAccount('1160-01', 'Finished Goods', 'ASSET');
 
       const voucherLines: VoucherLine[] = [
         {
@@ -4553,15 +4553,15 @@ class RelationalStore {
       // Credit: VAT Output Tax Payable (2140) -> (VAT Amount)
       // Debit: Cost of Goods Sold - Finished Garments (5110) -> (Total COGS)
       // Credit: Finished Garments Inventory (1140) -> (Total COGS)
-      const cashAcc = this.getOrCreateAccount('1110', 'Cash in Hand (Counter 1 POS Drawer)', 'ASSET');
-      const cardClearingAcc = this.getOrCreateAccount('1125', 'POS Terminal Card Clearing (Sunmi / PAX PED)', 'ASSET');
-      const bankAcc = this.getOrCreateAccount('1120', 'Primary Bank Account (Current Account)', 'ASSET');
-      const arAcc = this.getOrCreateAccount('1130', 'Accounts Receivable (Trade & Live Stream Claimants)', 'ASSET');
-      const revAcc = this.getOrCreateAccount('4110', 'Walk-in Counter POS Sales Revenue', 'REVENUE');
-      const giftRevAcc = this.getOrCreateAccount('4210', 'Luxury Packaging & Gift Box Revenue', 'REVENUE');
-      const vatAcc = this.getOrCreateAccount('2140', 'UAE VAT Output Tax Payable (5% FTA)', 'LIABILITY');
-      const cogsAcc = this.getOrCreateAccount('5110', 'Cost of Goods Sold (COGS) - Finished Garments', 'EXPENSE');
-      const invAcc = this.getOrCreateAccount('1160', 'Inventory - Sorted & Tagged Garments (Retail & Live Stream Ready)', 'ASSET');
+      const cashAcc = this.getOrCreateAccount('1110-01', 'Cash in Hand (Counter 1 POS Drawer)', 'ASSET');
+      const cardClearingAcc = this.getOrCreateAccount('1125-01', 'POS Terminal Card Clearing (Sunmi / PAX PED)', 'ASSET');
+      const bankAcc = this.getOrCreateAccount('1120-01', 'Primary Bank Account (Current Account)', 'ASSET');
+      const arAcc = this.getOrCreateAccount('1130-00', 'Accounts Receivable (Trade & Live Stream Claimants)', 'ASSET');
+      const revAcc = this.getOrCreateAccount('4110-01', 'Walk-in Counter POS Sales Revenue', 'REVENUE');
+      const giftRevAcc = this.getOrCreateAccount('4210-01', 'Luxury Packaging & Gift Box Revenue', 'REVENUE');
+      const vatAcc = this.getOrCreateAccount('2140-01', 'UAE VAT Output Tax (5%)', 'LIABILITY');
+      const cogsAcc = this.getOrCreateAccount('5100-02', 'Cost of Goods Sold - Finished Goods', 'EXPENSE');
+      const invAcc = this.getOrCreateAccount('1160-01', 'Finished Goods', 'ASSET');
 
       const voucherLines: VoucherLine[] = [];
       let lineCounter = 1;
@@ -5060,11 +5060,11 @@ class RelationalStore {
       ? this.getOrCreateAccount('4140', 'Wholesale B2B Bulk Sales Revenue', 'REVENUE')
       : this.getOrCreateAccount('4110', 'Walk-in Counter POS Sales Revenue', 'REVENUE');
 
-    const cogsAcc = this.getOrCreateAccount('5110', 'Cost of Goods Sold (COGS) - Finished Garments', 'EXPENSE');
-    const invAcc = this.getOrCreateAccount('1160', 'Inventory - Sorted & Tagged Garments (Retail & Live Stream Ready)', 'ASSET');
-    const vatAcc = this.getOrCreateAccount('2140', 'UAE VAT Output Tax Payable (5% FTA)', 'LIABILITY');
-    const shipExpAcc = this.getOrCreateAccount('5240', 'Courier Delivery & Last-Mile Shipping Expense', 'EXPENSE');
-    const courierPayAcc = this.getOrCreateAccount('2120', 'Accounts Payable - Courier & Logistics Partners', 'LIABILITY');
+    const cogsAcc = this.getOrCreateAccount('5100-02', 'Cost of Goods Sold - Finished Goods', 'EXPENSE');
+    const invAcc = this.getOrCreateAccount('1160-01', 'Finished Goods', 'ASSET');
+    const vatAcc = this.getOrCreateAccount('2140-01', 'UAE VAT Output Tax (5%)', 'LIABILITY');
+    const shipExpAcc = this.getOrCreateAccount('5140-01', 'Courier Delivery & Last-Mile Shipping Expense', 'EXPENSE');
+    const courierPayAcc = this.getOrCreateAccount('2120-00', 'Accounts Payable - Courier & Logistics Partners', 'LIABILITY');
 
     const voucherData = SalesEngine.generateComprehensiveCOASalesVoucher(
       invoice,
@@ -5346,14 +5346,14 @@ class RelationalStore {
       }
 
       // 3. Automated Dual-Entry COA Journal Voucher
-      const arAcc = this.getOrCreateAccount('1130', 'Accounts Receivable (Trade & Live Stream Claimants)', 'ASSET');
-      const b2bRevAcc = this.getOrCreateAccount('4140', 'Wholesale B2B Bulk Sales Revenue', 'REVENUE');
-      const otherChargesRevAcc = this.getOrCreateAccount('4310', 'Delivery & Shipping Fee Revenue', 'REVENUE');
-      const vatAcc = this.getOrCreateAccount('2140', 'UAE VAT Output Tax Payable (5% FTA)', 'LIABILITY');
-      const cogsBaleAcc = this.getOrCreateAccount('5120', 'Cost of Goods Sold (COGS) - Bulk Bales Sold', 'EXPENSE');
-      const cogsPieceAcc = this.getOrCreateAccount('5110', 'Cost of Goods Sold (COGS) - Finished Garments', 'EXPENSE');
-      const invBaleAcc = this.getOrCreateAccount('1140', 'Inventory - Raw Bulk Bales (Unopened Sacks & Containers)', 'ASSET');
-      const invPieceAcc = this.getOrCreateAccount('1160', 'Inventory - Sorted & Tagged Garments (Retail & Live Stream Ready)', 'ASSET');
+      const arAcc = this.getOrCreateAccount('1130-00', 'Accounts Receivable (Trade & Live Stream Claimants)', 'ASSET');
+      const b2bRevAcc = this.getOrCreateAccount('4110-05', 'B2B REVENUE', 'REVENUE');
+      const otherChargesRevAcc = this.getOrCreateAccount('4110-04', 'Delivery & Shipping Charges Collected', 'REVENUE');
+      const vatAcc = this.getOrCreateAccount('2140-01', 'UAE VAT Output Tax (5%)', 'LIABILITY');
+      const cogsBaleAcc = this.getOrCreateAccount('5100-01', 'Cost of Raw Bales Consumed', 'EXPENSE');
+      const cogsPieceAcc = this.getOrCreateAccount('5100-02', 'Cost of Goods Sold - Finished Goods', 'EXPENSE');
+      const invBaleAcc = this.getOrCreateAccount('1140-01', 'Raw Material Unsorted', 'ASSET');
+      const invPieceAcc = this.getOrCreateAccount('1160-01', 'Finished Goods', 'ASSET');
 
       const nextVchIdx = this.vouchers.length + 1;
       const voucherNo = `JV-B2B-${String(nextVchIdx).padStart(4, '0')}`;

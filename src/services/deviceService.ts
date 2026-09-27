@@ -215,6 +215,29 @@ export const DeviceService = {
     const filterTab = options?.filterTab || 'all';
     const search = options?.search?.trim() || '';
 
+    // Primary: Query Express / Serverless backend API which connects to PostgreSQL pool
+    try {
+      const q = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+        filterTab,
+        search
+      });
+      const res = await fetch(`/api/devices?${q.toString()}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json && Array.isArray(json.data)) {
+          return buildPaginatedResponse(json.data, json.total ?? json.data.length, json.page || page, json.pageSize || pageSize);
+        } else if (Array.isArray(json)) {
+          const from = (page - 1) * pageSize;
+          return buildPaginatedResponse(json.slice(from, from + pageSize), json.length, page, pageSize);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[DeviceService] Primary /api/devices error, trying Supabase fallback:', e?.message || e);
+    }
+
+    // Fallback to Supabase JS client
     try {
       let query = supabase
         .from('device_installations')
@@ -242,36 +265,11 @@ export const DeviceService = {
       });
 
       const { data, count, error } = await query;
-      if (!error && Array.isArray(data)) {
+      if (!error && Array.isArray(data) && data.length > 0) {
         return buildPaginatedResponse(data, count || 0, page, pageSize);
-      }
-      if (error) {
-        console.warn('[DeviceService] Supabase getDevicesPaginated notice:', error.message);
       }
     } catch (err: any) {
       console.warn('[DeviceService] Supabase getDevicesPaginated exception:', err?.message || err);
-    }
-
-    // Fallback to /api/devices with query params
-    try {
-      const q = new URLSearchParams({
-        page: String(page),
-        pageSize: String(pageSize),
-        filterTab,
-        search
-      });
-      const res = await fetch(`/api/devices?${q.toString()}`);
-      if (res.ok) {
-        const json = await res.json();
-        if (json && Array.isArray(json.data)) {
-          return buildPaginatedResponse(json.data, json.total ?? json.data.length, json.page || page, json.pageSize || pageSize);
-        } else if (Array.isArray(json)) {
-          const from = (page - 1) * pageSize;
-          return buildPaginatedResponse(json.slice(from, from + pageSize), json.length, page, pageSize);
-        }
-      }
-    } catch (e: any) {
-      console.error('[DeviceService] Fallback getDevicesPaginated error:', e?.message || e);
     }
 
     return buildPaginatedResponse([], 0, page, pageSize);
@@ -287,6 +285,26 @@ export const DeviceService = {
     verifiedBots: number;
     visitors: number;
   }> {
+    // Primary: Query backend /api/devices/counts
+    try {
+      const res = await fetch('/api/devices/counts');
+      if (res.ok) {
+        const json = await res.json();
+        if (json && typeof json.total === 'number') {
+          return {
+            total: json.total || 0,
+            staff: json.staff || 0,
+            badBots: json.badBots || 0,
+            verifiedBots: json.verifiedBots || 0,
+            visitors: json.visitors || 0
+          };
+        }
+      }
+    } catch (e: any) {
+      console.warn('[DeviceService] Primary /api/devices/counts error, trying Supabase fallback:', e?.message || e);
+    }
+
+    // Fallback: Supabase JS client
     try {
       const [allRes, staffRes, badRes, verifiedRes, visitorRes] = await Promise.all([
         supabase.from('device_installations').select('id', { count: 'exact', head: true }),

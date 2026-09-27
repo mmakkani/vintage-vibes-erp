@@ -4,6 +4,7 @@ import { DevicesController } from './devices.controller.ts';
 export const devicesRouter = Router();
 
 devicesRouter.post('/register', (req, res) => DevicesController.registerDevice(req, res));
+devicesRouter.get('/counts', (req, res) => DevicesController.getDeviceCounts(req, res));
 devicesRouter.get('/', (req, res) => DevicesController.listDevices(req, res));
 devicesRouter.get('/threat-logs', (req, res) => DevicesController.getThreatLogs(req, res));
 devicesRouter.post('/toggle-status', (req, res) => DevicesController.toggleDeviceStatus(req, res));

@@ -1134,10 +1134,20 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       await supabase.from('b2b_sales').update({ credit_status: 'POSTED' }).or(`b2b_invoice_number.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`).catch(() => {});
       await supabase.from('sales_invoices').update({ status: 'POSTED' }).or(`invoice_no.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`).catch(() => {});
 
+      // 5. Trigger backend SQL sync
+      fetch(`/api/sales/custom-b2b/${encodeURIComponent(activeInvoiceId || genInvoiceNo)}/post`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postedBy: 'Sales Lead' })
+      }).catch(e => console.warn('B2B backend post sync note:', e));
+
       setStatus('POSTED');
       setInvoiceNo(genInvoiceNo);
       setInvoiceId(activeInvoiceId);
       showMsg(`Invoice ${genInvoiceNo} successfully POSTED & DISPATCHED! Inventory deducted, General Ledger JV posted.`);
+      
+      // Auto-exit modal on Post per requirement ("jesay post karya us say bahir ajayen")
+      setIsInvoiceModalOpen(false);
       refreshAllB2BData();
     } catch (err: any) {
       showMsg(err?.message || 'Post error.', 'error');
@@ -1146,38 +1156,48 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     }
   };
 
-  // UNPOST Invoice
+  // UNPOST Invoice (Reverses JV, Restores Inventory, Unlocks Invoice)
   const handleUnpostInvoice = async () => {
     if (!invoiceId && !invoiceNo) return;
+    const targetNo = invoiceNo || invoiceId;
     const confirmUnpost = window.confirm(
-      `UNPOST Invoice ${invoiceNo}?\n\n` +
+      `UNPOST Invoice ${targetNo}?\n\n` +
       `• Restores all Raw Bales & Garment Pieces to stock\n` +
-      `• Reverses General Ledger Journal Voucher\n` +
-      `• Credits Customer Khata to reverse balance`
+      `• Reverses General Ledger Journal Voucher & Ledgers\n` +
+      `• Credits Customer Khata to reverse balance\n` +
+      `• Unlocks invoice for editing or deletion`
     );
     if (!confirmUnpost) return;
 
     setIsSaving(true);
     try {
-      // 1. Cascade delete vouchers for this invoice
+      // 1. Call backend unpost API (handles Postgres SQL transactions, balances, and cascades)
+      const targetKey = invoiceId || invoiceNo;
+      await fetch(`/api/sales/custom-b2b/${encodeURIComponent(targetKey)}/unpost`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(e => console.warn('Backend unpost notice:', e));
+
+      // 2. Cascade delete vouchers for this invoice via FinanceService as well
       await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo).catch(e => console.warn('Voucher reversal note:', e));
 
-      // 2. Restore inventory pieces to RESERVED / IN_STOCK
+      // 3. Restore inventory pieces to IN_STOCK
       const pieceBarcodes = (items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
       if (pieceBarcodes.length > 0) {
-        await supabase.from('inventory_pieces').update({ is_sold: false, status: 'RESERVED' }).in('barcode', pieceBarcodes);
+        await supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK' }).in('barcode', pieceBarcodes);
       }
       const baleCodes = (items || []).filter(i => i.isRawBale).map(i => i.barcode).filter(Boolean);
       if (baleCodes.length > 0) {
         await supabase.from('raw_bales').update({ status: 'UNOPENED' }).in('bale_code', baleCodes).catch(() => {});
+        await supabase.from('inward_gate_passes').update({ status: 'AVAILABLE', sorting_status: 'UNOPENED' }).in('bale_code', baleCodes).catch(() => {});
       }
 
-      // 3. Update status to DRAFT
+      // 4. Update status to DRAFT
       await supabase.from('b2b_sales').update({ credit_status: 'DRAFT' }).or(`b2b_invoice_number.eq.${invoiceNo},id.eq.${invoiceId}`).catch(() => {});
       await supabase.from('sales_invoices').update({ status: 'DRAFT' }).or(`invoice_no.eq.${invoiceNo},id.eq.${invoiceId}`).catch(() => {});
 
       setStatus('DRAFT');
-      showMsg(`Invoice ${invoiceNo} unposted. Barcodes restored to stock, JV reversed.`);
+      showMsg(`Invoice ${targetNo} unposted and unlocked. Status is now DRAFT (editing & deletion enabled).`);
       refreshAllB2BData();
     } catch (err: any) {
       showMsg(err?.message || 'Unpost error.', 'error');
@@ -1186,10 +1206,14 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     }
   };
 
-  // Delete Draft Invoice
+  // Delete Draft Invoice (Locked if POSTED)
   const handleDeleteDraft = async () => {
     if (!invoiceId && !invoiceNo) {
       setIsInvoiceModalOpen(false);
+      return;
+    }
+    if (status === 'POSTED') {
+      window.alert(`Invoice ${invoiceNo || invoiceId} is POSTED and locked.\n\nPlease click "🔄 UNPOST INVOICE" first to unlock and reverse accounting entries before deleting.`);
       return;
     }
     const targetNo = invoiceNo || invoiceId;
@@ -1197,6 +1221,16 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     if (!confirmDel) return;
 
     try {
+      const targetKey = invoiceId || invoiceNo;
+      // 1. Backend deletion with complete SQL voucher cascade
+      await fetch(`/api/sales/custom-b2b/${encodeURIComponent(targetKey)}`, {
+        method: 'DELETE'
+      }).catch(e => console.warn('Backend delete notice:', e));
+
+      // 2. Cascade delete vouchers for this invoice via FinanceService
+      await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo).catch(e => console.warn('Voucher cleanup note:', e));
+
+      // 3. Fallback direct cleanup
       if (invoiceId) {
         await SalesService.deleteSalesInvoice(invoiceId).catch(() => {});
       }
@@ -1214,6 +1248,86 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       refreshAllB2BData();
     } catch (err) {
       showMsg('Delete error', 'error');
+    }
+  };
+
+  // Outer Table Level Actions (Post, Unpost, Delete)
+  const handleUnpostFromTable = async (inv: SalesInvoice) => {
+    const invNo = inv.invoiceNo;
+    const invId = inv.id;
+    const confirmUnpost = window.confirm(
+      `UNPOST Invoice ${invNo}?\n\n` +
+      `• Restores all Raw Bales & Garment Pieces to stock\n` +
+      `• Reverses General Ledger Journal Voucher & Ledgers\n` +
+      `• Removes Customer Khata balance\n` +
+      `• Unlocks invoice for editing or deletion`
+    );
+    if (!confirmUnpost) return;
+
+    try {
+      const targetKey = invId || invNo;
+      await fetch(`/api/sales/custom-b2b/${encodeURIComponent(targetKey)}/unpost`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(e => console.warn('Backend unpost notice:', e));
+
+      await FinanceService.cascadeDeleteVouchersForDocument(invNo).catch(e => console.warn('Voucher reversal note:', e));
+
+      const pieceBarcodes = (inv.items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
+      if (pieceBarcodes.length > 0) {
+        await supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK' }).in('barcode', pieceBarcodes).catch(() => {});
+      }
+      const baleCodes = (inv.items || []).filter(i => i.isRawBale).map(i => i.barcode).filter(Boolean);
+      if (baleCodes.length > 0) {
+        await supabase.from('raw_bales').update({ status: 'UNOPENED' }).in('bale_code', baleCodes).catch(() => {});
+        await supabase.from('inward_gate_passes').update({ status: 'AVAILABLE', sorting_status: 'UNOPENED' }).in('bale_code', baleCodes).catch(() => {});
+      }
+
+      await supabase.from('b2b_sales').update({ credit_status: 'DRAFT' }).or(`b2b_invoice_number.eq.${invNo},id.eq.${invId}`).catch(() => {});
+      await supabase.from('sales_invoices').update({ status: 'DRAFT' }).or(`invoice_no.eq.${invNo},id.eq.${invId}`).catch(() => {});
+
+      showMsg(`Invoice ${invNo} successfully unposted and unlocked. Status is now DRAFT.`);
+      refreshAllB2BData();
+    } catch (err: any) {
+      showMsg(err?.message || 'Unpost error.', 'error');
+    }
+  };
+
+  const handleDeleteFromTable = async (inv: SalesInvoice) => {
+    const invNo = inv.invoiceNo;
+    const invId = inv.id;
+
+    if (inv.status === 'POSTED') {
+      window.alert(`Invoice ${invNo} is POSTED and locked.\n\nPlease click "🔓 Unpost" first to unlock and reverse accounting entries before deleting.`);
+      return;
+    }
+
+    const confirmDel = window.confirm(`Delete DRAFT Invoice ${invNo}? This cannot be undone.`);
+    if (!confirmDel) return;
+
+    try {
+      const targetKey = invId || invNo;
+      await fetch(`/api/sales/custom-b2b/${encodeURIComponent(targetKey)}`, {
+        method: 'DELETE'
+      }).catch(e => console.warn('Backend delete notice:', e));
+
+      await FinanceService.cascadeDeleteVouchersForDocument(invNo).catch(e => console.warn('Voucher cleanup note:', e));
+
+      if (invId) {
+        await SalesService.deleteSalesInvoice(invId).catch(() => {});
+      }
+      await supabase.from('b2b_sales').delete().or(`id.eq.${invId},b2b_invoice_number.eq.${invNo}`).catch(() => {});
+      await supabase.from('sales_invoices').delete().or(`id.eq.${invId},invoice_no.eq.${invNo}`).catch(() => {});
+
+      const pieceBarcodes = (inv.items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
+      if (pieceBarcodes.length > 0) {
+        await supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK' }).in('barcode', pieceBarcodes).catch(() => {});
+      }
+
+      showMsg(`Draft invoice ${invNo} deleted and inventory items restored to stock.`);
+      refreshAllB2BData();
+    } catch (err: any) {
+      showMsg(err?.message || 'Delete error.', 'error');
     }
   };
 
@@ -1429,25 +1543,108 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
                       {/* Actions */}
                       <td className="py-2.5 px-3 text-right" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenExistingInvoiceModal(inv)}
-                            className="px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-[11px] font-bold transition border border-indigo-200"
-                          >
-                            Open
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              handleOpenExistingInvoiceModal(inv);
-                              setPrintModalType('TAX_INVOICE');
-                            }}
-                            title="Print Tax Invoice"
-                            className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 transition"
-                          >
-                            <Printer className="w-3.5 h-3.5 text-teal-700" />
-                          </button>
+                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          {inv.status === 'POSTED' ? (
+                            <>
+                              {/* 🔓 UNPOST BUTTON */}
+                              <button
+                                type="button"
+                                onClick={() => handleUnpostFromTable(inv)}
+                                className="px-2 py-1 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-800 border border-amber-300 text-[11px] font-bold transition flex items-center gap-1 shadow-2xs cursor-pointer"
+                                title="Unpost & Unlock Invoice (Reverses JV and restores items to stock)"
+                              >
+                                <span>🔓 Unpost</span>
+                              </button>
+
+                              {/* 👁️ VIEW BUTTON */}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenExistingInvoiceModal(inv)}
+                                className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-bold transition border border-slate-300 cursor-pointer flex items-center gap-1"
+                                title="View Invoice Details"
+                              >
+                                👁️ View
+                              </button>
+
+                              {/* 🖨️ PRINT BUTTON */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleOpenExistingInvoiceModal(inv);
+                                  setPrintModalType('TAX_INVOICE');
+                                }}
+                                title="Print Tax Invoice"
+                                className="p-1 rounded bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 transition cursor-pointer"
+                              >
+                                <Printer className="w-3.5 h-3.5 text-teal-700" />
+                              </button>
+
+                              {/* DISABLED EDIT BUTTON (LOCKED) */}
+                              <button
+                                type="button"
+                                disabled
+                                className="px-2 py-1 rounded bg-slate-100 text-slate-400 border border-slate-200 text-[11px] font-semibold cursor-not-allowed opacity-50"
+                                title="Locked: Invoice is POSTED. Unpost first to edit."
+                              >
+                                ✎ Edit
+                              </button>
+
+                              {/* DISABLED DELETE BUTTON (LOCKED) */}
+                              <button
+                                type="button"
+                                disabled
+                                className="p-1 rounded bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-50"
+                                title="Locked: Invoice is POSTED. Unpost first to delete."
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {/* 🚀 POST BUTTON */}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenExistingInvoiceModal(inv)}
+                                className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black transition flex items-center gap-1 shadow-2xs cursor-pointer ring-1 ring-emerald-400/50"
+                                title="Open & Post Invoice to General Ledger"
+                              >
+                                <span>🚀 Post</span>
+                              </button>
+
+                              {/* ✎ EDIT BUTTON */}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenExistingInvoiceModal(inv)}
+                                className="px-2 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-[11px] font-bold transition border border-indigo-200 cursor-pointer flex items-center gap-1"
+                                title="Edit Draft Invoice"
+                              >
+                                ✎ Edit
+                              </button>
+
+                              {/* 🖨️ PRINT BUTTON */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleOpenExistingInvoiceModal(inv);
+                                  setPrintModalType('TAX_INVOICE');
+                                }}
+                                title="Print Proforma / Draft Invoice"
+                                className="p-1 rounded bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 transition cursor-pointer"
+                              >
+                                <Printer className="w-3.5 h-3.5 text-teal-700" />
+                              </button>
+
+                              {/* 🗑️ DELETE BUTTON (ENABLED) */}
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteFromTable(inv)}
+                                className="p-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-800 border border-rose-200 transition cursor-pointer"
+                                title="Delete Draft Invoice & Clear All Ledger Traces"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1535,6 +1732,28 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
             {/* Modal Body: Two-Column Form */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               
+              {/* POST LOCK ACTIVE WARNING & UNPOST TRIGGER */}
+              {status === 'POSTED' && (
+                <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl flex flex-wrap items-center justify-between gap-2 text-amber-900 text-xs shadow-xs">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                    <div>
+                      <span className="font-black text-amber-950 uppercase tracking-wide">🔒 POST LOCK ACTIVE: </span>
+                      This invoice is posted to the General Ledger and its inventory is dispatched. All editing and deletion are locked. To modify or delete this invoice, click <span className="font-bold underline">"Unpost & Unlock"</span>.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleUnpostInvoice}
+                    disabled={isSaving}
+                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-black text-xs uppercase tracking-wider transition cursor-pointer flex items-center gap-1.5 shadow-xs shrink-0"
+                  >
+                    {isSaving && <RefreshCw className="w-3 h-3 animate-spin" />}
+                    <span>🔓 Unpost & Unlock</span>
+                  </button>
+                </div>
+              )}
+
               {/* Credit Limit Alert */}
               {creditLimitExceeded && (
                 <div className="p-3 bg-amber-50 border-l-4 border-amber-500 rounded-r-lg text-amber-900 text-xs flex items-center justify-between shadow-xs">

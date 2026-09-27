@@ -3,6 +3,7 @@ import { Client } from 'pg';
 import { SalesController } from './sales.controller.ts';
 import { SalesService } from '../../services/salesService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
+import { withDb } from '../../db/pgPool.ts';
 import { executePessimisticClaim, executeReleaseLock } from '../liveStreaming/liveStreaming.routes.ts';
 
 export const salesRouter = Router();
@@ -461,77 +462,306 @@ salesRouter.post('/custom-b2b/save', async (req, res) => {
   return res.json(result);
 });
 
+async function cascadeDeleteInvoiceVouchersPg(client: any, invoiceNo: string, invoiceId?: string) {
+  if (!invoiceNo && !invoiceId) return;
+  const no = (invoiceNo || '').trim();
+  const id = (invoiceId || '').trim();
+
+  // Find all matching vouchers
+  const vRes = await client.query(
+    `SELECT DISTINCT id, voucher_no FROM (
+       SELECT id, voucher_no FROM financial_vouchers 
+       WHERE reference = $1 OR reference_no = $1 OR reference = $2 OR reference_no = $2 
+          OR narration ILIKE $3 OR narration ILIKE $4
+       UNION
+       SELECT id, voucher_no FROM vouchers 
+       WHERE reference = $1 OR reference = $2 
+          OR narration ILIKE $3 OR narration ILIKE $4
+     ) matched`,
+    [no, id, `%${no}%`, `%${id}%`]
+  );
+
+  const matched = vRes.rows || [];
+  const vIds = matched.map((r: any) => r.id).filter(Boolean);
+  const vNos = matched.map((r: any) => r.voucher_no).filter(Boolean);
+
+  // Find affected account codes before deleting
+  const accRes = await client.query(
+    `SELECT DISTINCT account_code FROM (
+       SELECT account_code FROM voucher_entries WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])
+       UNION
+       SELECT account_code FROM general_ledger WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[]) OR narration ILIKE $3
+       UNION
+       SELECT account_code FROM ledgers WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[]) OR narration ILIKE $3
+     ) sub WHERE account_code IS NOT NULL`,
+    [vIds, vNos, `%${no}%`]
+  );
+  const affectedCodes = (accRes.rows || []).map((r: any) => r.account_code).filter(Boolean);
+
+  // 1. Delete voucher entries
+  if (vIds.length > 0 || vNos.length > 0) {
+    await client.query(`DELETE FROM voucher_entries WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])`, [vIds, vNos]);
+    await client.query(`DELETE FROM journal_entries WHERE voucher_id = ANY($1::text[])`, [vIds]);
+    await client.query(`DELETE FROM general_ledger WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])`, [vIds, vNos]);
+    await client.query(`DELETE FROM ledgers WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])`, [vIds, vNos]);
+    await client.query(`DELETE FROM financial_vouchers WHERE id = ANY($1::text[]) OR voucher_no = ANY($2::text[])`, [vIds, vNos]);
+    await client.query(`DELETE FROM vouchers WHERE id = ANY($1::text[]) OR voucher_no = ANY($2::text[])`, [vIds, vNos]);
+  }
+
+  // 2. Extra safety: Purge any lingering ledger entries with narration mentioning invoiceNo
+  if (no) {
+    await client.query(`DELETE FROM journal_entries WHERE description ILIKE $1`, [`%${no}%`]);
+    await client.query(`DELETE FROM general_ledger WHERE narration ILIKE $1`, [`%${no}%`]);
+    await client.query(`DELETE FROM ledgers WHERE narration ILIKE $1`, [`%${no}%`]);
+  }
+
+  // 3. Recalculate balances for all affected accounts in coa_accounts and chart_of_accounts
+  if (affectedCodes.length > 0) {
+    for (const code of affectedCodes) {
+      const sumRes = await client.query(
+        `SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) as net FROM general_ledger WHERE account_code = $1`,
+        [code]
+      );
+      const net = Math.abs(Number(sumRes.rows[0]?.net || 0)).toFixed(2);
+      await client.query(`UPDATE coa_accounts SET current_balance = $1 WHERE code = $2`, [net, code]);
+      await client.query(`UPDATE chart_of_accounts SET current_balance = $1 WHERE code = $2`, [net, code]);
+    }
+  }
+}
+
 salesRouter.post('/custom-b2b/:id/post', async (req, res) => {
   const { id } = req.params;
   const { postedBy } = req.body;
-  const inv = relationalStore.getSalesInvoices().find(i => i.id === id);
-  const result = SalesController.postCustomB2BInvoice(id, postedBy || 'Sales Lead');
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
-  }
-  if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
-    const pieceBarcodes = inv.items.filter(it => !it.isRawBale).map(it => it.barcode).filter(Boolean);
-    if (pieceBarcodes.length > 0) {
-      try {
-        const client = await getDbClient();
+  try {
+    return await withDb(async (client) => {
+      // 1. Fetch invoice info
+      const [b2bRes, sinvRes] = await Promise.all([
+        client.query(`SELECT id, b2b_invoice_number, credit_status, items FROM b2b_sales WHERE id::text = $1 OR b2b_invoice_number = $1 LIMIT 1`, [id]),
+        client.query(`SELECT id, invoice_no, status, items FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1`, [id])
+      ]);
+
+      const b2bRow = b2bRes.rows[0];
+      const sinvRow = sinvRes.rows[0];
+      const invNo = b2bRow?.b2b_invoice_number || sinvRow?.invoice_no || id;
+      const invId = b2bRow?.id || sinvRow?.id || id;
+      const currentStatus = String(b2bRow?.credit_status || sinvRow?.status || '').toUpperCase();
+
+      if (currentStatus === 'POSTED') {
+        return res.status(400).json({ success: false, error: `Invoice ${invNo} is already POSTED.` });
+      }
+
+      const relInv = relationalStore.getSalesInvoices().find(i => i.id === id || i.invoiceNo === id || i.invoiceNo === invNo);
+
+      let rawItems = b2bRow?.items || sinvRow?.items || relInv?.items || [];
+      if (typeof rawItems === 'string') {
+        try { rawItems = JSON.parse(rawItems); } catch (_) {}
+      }
+      if (!Array.isArray(rawItems)) rawItems = [];
+
+      const pieceBarcodes = rawItems.filter((it: any) => !it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+      const baleCodes = rawItems.filter((it: any) => it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+
+      // 2. Mark status as POSTED in PostgreSQL
+      await client.query(`UPDATE b2b_sales SET credit_status = 'POSTED' WHERE id::text = $1 OR b2b_invoice_number = $2`, [invId, invNo]);
+      await client.query(`UPDATE sales_invoices SET status = 'POSTED' WHERE id::text = $1 OR invoice_no = $2`, [invId, invNo]);
+
+      // 3. Mark pieces as SOLD
+      if (pieceBarcodes.length > 0) {
         await client.query(`
           UPDATE inventory_pieces
           SET status = 'SOLD', is_sold = true, updated_at = NOW()
-          WHERE barcode = ANY($1)
+          WHERE barcode = ANY($1::text[])
         `, [pieceBarcodes]);
-        await client.end().catch(() => {});
-      } catch (_) {}
-    }
+      }
+
+      // 4. Mark bales as SOLD_AS_BALE
+      if (baleCodes.length > 0) {
+        await client.query(`
+          UPDATE inward_gate_passes
+          SET status = 'SOLD_AS_BALE', sorting_status = 'FULLY_SORTED', updated_at = NOW()
+          WHERE bale_code = ANY($1::text[]) OR gate_pass_no = ANY($1::text[])
+        `, [baleCodes]).catch(() => {});
+        await client.query(`
+          UPDATE raw_bales
+          SET status = 'PROCESSED', updated_at = NOW()
+          WHERE bale_code = ANY($1::text[])
+        `, [baleCodes]).catch(() => {});
+      }
+
+      // 5. Post in relationalStore
+      SalesController.postCustomB2BInvoice(invId, postedBy || 'Sales Lead');
+      if (relInv && relInv.id !== invId) {
+        SalesController.postCustomB2BInvoice(relInv.id, postedBy || 'Sales Lead');
+      }
+
+      return res.json({
+        success: true,
+        message: `Invoice ${invNo} successfully POSTED & DISPATCHED.`
+      });
+    });
+  } catch (err: any) {
+    console.error('[salesRouter POST /custom-b2b/:id/post] Error:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to post invoice' });
   }
-  return res.json(result);
 });
 
 salesRouter.post('/custom-b2b/:id/unpost', async (req, res) => {
   const { id } = req.params;
-  const inv = relationalStore.getSalesInvoices().find(i => i.id === id);
-  const result = SalesController.unpostCustomB2BInvoice(id);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
-  }
-  if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
-    const pieceBarcodes = inv.items.filter(it => !it.isRawBale).map(it => it.barcode).filter(Boolean);
-    if (pieceBarcodes.length > 0) {
-      try {
-        const client = await getDbClient();
+  try {
+    return await withDb(async (client) => {
+      // 1. Fetch invoice info from database
+      const [b2bRes, sinvRes] = await Promise.all([
+        client.query(`SELECT id, b2b_invoice_number, credit_status, items FROM b2b_sales WHERE id::text = $1 OR b2b_invoice_number = $1 LIMIT 1`, [id]),
+        client.query(`SELECT id, invoice_no, status, items FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1`, [id])
+      ]);
+
+      const b2bRow = b2bRes.rows[0];
+      const sinvRow = sinvRes.rows[0];
+      const invNo = b2bRow?.b2b_invoice_number || sinvRow?.invoice_no || id;
+      const invId = b2bRow?.id || sinvRow?.id || id;
+
+      const relInv = relationalStore.getSalesInvoices().find(i => i.id === id || i.invoiceNo === id || i.invoiceNo === invNo);
+
+      // Collect items to restore
+      let rawItems = b2bRow?.items || sinvRow?.items || relInv?.items || [];
+      if (typeof rawItems === 'string') {
+        try { rawItems = JSON.parse(rawItems); } catch (_) {}
+      }
+      if (!Array.isArray(rawItems)) rawItems = [];
+
+      const pieceBarcodes = rawItems.filter((it: any) => !it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+      const baleCodes = rawItems.filter((it: any) => it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+
+      // 1. Update status to DRAFT in PostgreSQL
+      await client.query(`UPDATE b2b_sales SET credit_status = 'DRAFT' WHERE id::text = $1 OR b2b_invoice_number = $2`, [invId, invNo]);
+      await client.query(`UPDATE sales_invoices SET status = 'DRAFT' WHERE id::text = $1 OR invoice_no = $2`, [invId, invNo]);
+
+      // 2. Restore piece barcodes to IN_STOCK (not SOLD)
+      if (pieceBarcodes.length > 0) {
         await client.query(`
           UPDATE inventory_pieces
           SET status = 'IN_STOCK', is_sold = false, updated_at = NOW()
-          WHERE barcode = ANY($1)
+          WHERE barcode = ANY($1::text[])
         `, [pieceBarcodes]);
-        await client.end().catch(() => {});
-      } catch (_) {}
-    }
+      }
+
+      // 3. Restore raw bales
+      if (baleCodes.length > 0) {
+        await client.query(`
+          UPDATE inward_gate_passes
+          SET status = 'AVAILABLE', sorting_status = 'UNOPENED', updated_at = NOW()
+          WHERE bale_code = ANY($1::text[]) OR gate_pass_no = ANY($1::text[])
+        `, [baleCodes]).catch(() => {});
+        await client.query(`
+          UPDATE raw_bales
+          SET status = 'UNOPENED', updated_at = NOW()
+          WHERE bale_code = ANY($1::text[])
+        `, [baleCodes]).catch(() => {});
+      }
+
+      // 4. Cascade delete vouchers / journal entries / ledger entries
+      await cascadeDeleteInvoiceVouchersPg(client, invNo, invId);
+
+      // 5. Update relationalStore
+      SalesController.unpostCustomB2BInvoice(invId);
+      if (relInv && relInv.id !== invId) {
+        SalesController.unpostCustomB2BInvoice(relInv.id);
+      }
+
+      return res.json({
+        success: true,
+        message: `Invoice ${invNo} successfully unposted. Stock restored and General Ledger JV reversed.`
+      });
+    });
+  } catch (err: any) {
+    console.error('[salesRouter POST /custom-b2b/:id/unpost] Error:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to unpost invoice' });
   }
-  return res.json(result);
 });
 
 salesRouter.delete('/custom-b2b/:id', async (req, res) => {
   const { id } = req.params;
-  const inv = relationalStore.getSalesInvoices().find(i => i.id === id);
-  const result = SalesController.deleteDraftCustomB2BInvoice(id);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
-  }
-  if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
-    const pieceBarcodes = inv.items.filter(it => !it.isRawBale).map(it => it.barcode).filter(Boolean);
-    if (pieceBarcodes.length > 0) {
-      try {
-        const client = await getDbClient();
+  try {
+    return await withDb(async (client) => {
+      // 1. Fetch invoice info from database
+      const [b2bRes, sinvRes] = await Promise.all([
+        client.query(`SELECT id, b2b_invoice_number, credit_status, items FROM b2b_sales WHERE id::text = $1 OR b2b_invoice_number = $1 LIMIT 1`, [id]),
+        client.query(`SELECT id, invoice_no, status, items FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1`, [id])
+      ]);
+
+      const b2bRow = b2bRes.rows[0];
+      const sinvRow = sinvRes.rows[0];
+      const invNo = b2bRow?.b2b_invoice_number || sinvRow?.invoice_no || id;
+      const invId = b2bRow?.id || sinvRow?.id || id;
+      const status = String(b2bRow?.credit_status || sinvRow?.status || '').toUpperCase();
+
+      // Check in relationalStore as well
+      const relInv = relationalStore.getSalesInvoices().find(i => i.id === id || i.invoiceNo === id || i.invoiceNo === invNo);
+      const relStatus = String(relInv?.status || '').toUpperCase();
+
+      // STRICT LOCK CHECK: Cannot delete a POSTED invoice
+      if (status === 'POSTED' || relStatus === 'POSTED') {
+        return res.status(400).json({
+          success: false,
+          error: `Cannot delete POSTED invoice ${invNo}. Please UNPOST it first to unlock and reverse accounting entries.`
+        });
+      }
+
+      // Collect items to restore
+      let rawItems = b2bRow?.items || sinvRow?.items || relInv?.items || [];
+      if (typeof rawItems === 'string') {
+        try { rawItems = JSON.parse(rawItems); } catch (_) {}
+      }
+      if (!Array.isArray(rawItems)) rawItems = [];
+
+      const pieceBarcodes = rawItems.filter((it: any) => !it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+      const baleCodes = rawItems.filter((it: any) => it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
+
+      // Restore piece barcodes to IN_STOCK
+      if (pieceBarcodes.length > 0) {
         await client.query(`
           UPDATE inventory_pieces
           SET status = 'IN_STOCK', is_sold = false, updated_at = NOW()
-          WHERE barcode = ANY($1)
+          WHERE barcode = ANY($1::text[])
         `, [pieceBarcodes]);
-        await client.end().catch(() => {});
-      } catch (_) {}
-    }
+      }
+
+      // Restore raw bales to AVAILABLE
+      if (baleCodes.length > 0) {
+        await client.query(`
+          UPDATE inward_gate_passes
+          SET status = 'AVAILABLE', sorting_status = 'UNOPENED', updated_at = NOW()
+          WHERE bale_code = ANY($1::text[]) OR gate_pass_no = ANY($1::text[])
+        `, [baleCodes]).catch(() => {});
+        await client.query(`
+          UPDATE raw_bales
+          SET status = 'UNOPENED', updated_at = NOW()
+          WHERE bale_code = ANY($1::text[])
+        `, [baleCodes]).catch(() => {});
+      }
+
+      // Delete from b2b_sales & sales_invoices
+      await client.query(`DELETE FROM b2b_sales WHERE id::text = $1 OR b2b_invoice_number = $2`, [invId, invNo]);
+      await client.query(`DELETE FROM sales_invoices WHERE id::text = $1 OR invoice_no = $2`, [invId, invNo]);
+
+      // Cascade delete any vouchers / general ledger entries associated with this invoice
+      await cascadeDeleteInvoiceVouchersPg(client, invNo, invId);
+
+      // Purge from relationalStore
+      SalesController.deleteDraftCustomB2BInvoice(invId);
+      if (relInv && relInv.id !== invId) {
+        SalesController.deleteDraftCustomB2BInvoice(relInv.id);
+      }
+
+      return res.json({
+        success: true,
+        message: `Draft invoice ${invNo} successfully deleted. Inventory items restored and accounting entries purged.`
+      });
+    });
+  } catch (err: any) {
+    console.error('[salesRouter DELETE /custom-b2b/:id] Error:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to delete invoice' });
   }
-  return res.json(result);
 });
 
 // ==========================================
