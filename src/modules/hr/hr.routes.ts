@@ -446,6 +446,12 @@ hrRouter.put('/employees/:id', async (req, res) => {
         addCol('transport_allowance', num);
       }
 
+      const otherAllow = emp.other_allow ?? emp.otherAllow;
+      if (otherAllow !== undefined) {
+        const num = Number(otherAllow);
+        addCol('other_allow', num);
+      }
+
       const totPkg = emp.total_package ?? emp.totalPackage;
       if (totPkg !== undefined) {
         const num = Number(totPkg);

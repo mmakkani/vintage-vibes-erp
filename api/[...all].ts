@@ -1882,6 +1882,12 @@ export default async function handler(req: any, res: any) {
             addCol('transport_allowance', num);
           }
 
+          const otherAllow = emp.other_allow ?? emp.otherAllow;
+          if (otherAllow !== undefined) {
+            const num = Number(otherAllow);
+            addCol('other_allow', num);
+          }
+
           const totPkg = emp.total_package ?? emp.totalPackage;
           if (totPkg !== undefined) {
             const num = Number(totPkg);
@@ -1889,20 +1895,111 @@ export default async function handler(req: any, res: any) {
             addCol('gross_salary', num);
           }
 
+          if (emp.workingHoursPerDay !== undefined || emp.working_hours_per_day !== undefined) {
+            addCol('working_hours_per_day', Number(emp.workingHoursPerDay || emp.working_hours_per_day || 8));
+          }
+
+          if (emp.isActive !== undefined || emp.is_active !== undefined) {
+            addCol('is_active', (emp.isActive ?? emp.is_active) !== false);
+          }
+
           if (emp.status !== undefined) addCol('status', emp.status);
           if (emp.nationality !== undefined) addCol('nationality', emp.nationality);
           if (emp.gender !== undefined) addCol('gender', emp.gender);
           if (emp.email !== undefined) addCol('email', cleanNullableUnique(emp.email));
+          if (emp.address !== undefined) addCol('address', emp.address);
+          if (emp.notes !== undefined) addCol('notes', emp.notes);
+
+          if (emp.joiningDate !== undefined || emp.joining_date !== undefined) {
+            const jd = cleanDate(emp.joiningDate || emp.joining_date);
+            addCol('joining_date', jd);
+            addCol('date_of_joining', jd);
+          }
+
+          if (emp.dob !== undefined || emp.date_of_birth !== undefined) {
+            const dob = cleanDate(emp.dob || emp.date_of_birth);
+            addCol('dob', dob);
+            addCol('date_of_birth', dob);
+          }
 
           if (emp.emiratesId !== undefined || emp.emirates_id !== undefined) {
             const eid = emp.emiratesId || emp.emirates_id;
             addCol('emirates_id', eid);
             addCol('emirates_id_no', eid);
           }
+          if (emp.idCardNo !== undefined || emp.id_card_no !== undefined) {
+            addCol('id_card_no', emp.idCardNo || emp.id_card_no);
+          }
+          if (emp.emiratesIdExpiry !== undefined || emp.emirates_id_expiry !== undefined) {
+            const eidExp = cleanDate(emp.emiratesIdExpiry || emp.emirates_id_expiry);
+            addCol('emirates_id_expiry', eidExp);
+          }
+
           if (emp.passportNo !== undefined || emp.passport_no !== undefined) {
             const pNo = emp.passportNo || emp.passport_no;
             addCol('passport_no', pNo);
             addCol('passport_number', pNo);
+          }
+          if (emp.passportCountry !== undefined || emp.passport_country !== undefined) {
+            addCol('passport_country', emp.passportCountry || emp.passport_country);
+          }
+          if (emp.passportIssueDate !== undefined || emp.passport_issue_date !== undefined) {
+            const pIssue = cleanDate(emp.passportIssueDate || emp.passport_issue_date);
+            addCol('passport_issue_date', pIssue);
+          }
+          if (emp.passportExpiry !== undefined || emp.passport_expiry !== undefined || emp.passportExpiryDate !== undefined || emp.passport_expiry_date !== undefined) {
+            const pExp = cleanDate(emp.passportExpiry || emp.passport_expiry || emp.passportExpiryDate || emp.passport_expiry_date);
+            addCol('passport_expiry', pExp);
+            addCol('passport_expiry_date', pExp);
+          }
+          if (emp.passportImageUrl !== undefined || emp.passport_image_url !== undefined) {
+            addCol('passport_image_url', emp.passportImageUrl || emp.passport_image_url);
+          }
+
+          if (emp.residencyCardNo !== undefined || emp.residency_card_no !== undefined || emp.residencyNo !== undefined || emp.residency_no !== undefined) {
+            const rNo = emp.residencyCardNo || emp.residency_card_no || emp.residencyNo || emp.residency_no;
+            addCol('residency_card_no', rNo);
+            addCol('residency_no', rNo);
+          }
+          if (emp.uidNo !== undefined || emp.uid_no !== undefined || emp.visaUid !== undefined || emp.visa_uid !== undefined) {
+            const uNo = emp.uidNo || emp.uid_no || emp.visaUid || emp.visa_uid;
+            addCol('uid_no', uNo);
+            addCol('visa_uid', uNo);
+          }
+          if (emp.residencySponsor !== undefined || emp.residency_sponsor !== undefined || emp.sponsor !== undefined) {
+            const sp = emp.residencySponsor || emp.residency_sponsor || emp.sponsor;
+            addCol('residency_sponsor', sp);
+            addCol('sponsor', sp);
+          }
+          if (emp.residencyProfession !== undefined || emp.residency_profession !== undefined || emp.professionOnVisa !== undefined || emp.profession_on_visa !== undefined) {
+            const pr = emp.residencyProfession || emp.residency_profession || emp.professionOnVisa || emp.profession_on_visa;
+            addCol('residency_profession', pr);
+            addCol('profession_on_visa', pr);
+          }
+          if (emp.residencyIssueDate !== undefined || emp.residency_issue_date !== undefined || emp.visaIssueDate !== undefined || emp.visa_issue_date !== undefined) {
+            const rIssue = cleanDate(emp.residencyIssueDate || emp.residency_issue_date || emp.visaIssueDate || emp.visa_issue_date);
+            addCol('residency_issue_date', rIssue);
+            addCol('visa_issue_date', rIssue);
+          }
+          if (emp.residencyExpiryDate !== undefined || emp.residency_expiry_date !== undefined || emp.visaExpiryDate !== undefined || emp.visa_expiry_date !== undefined) {
+            const rExp = cleanDate(emp.residencyExpiryDate || emp.residency_expiry_date || emp.visaExpiryDate || emp.visa_expiry_date);
+            addCol('residency_expiry_date', rExp);
+            addCol('visa_expiry_date', rExp);
+          }
+          if (emp.residencyImageUrl !== undefined || emp.residency_image_url !== undefined || emp.visaImageUrl !== undefined || emp.visa_image_url !== undefined) {
+            const rImg = emp.residencyImageUrl || emp.residency_image_url || emp.visaImageUrl || emp.visa_image_url;
+            addCol('residency_image_url', rImg);
+            addCol('visa_image_url', rImg);
+          }
+
+          if (emp.idFrontImageUrl !== undefined || emp.id_front_image_url !== undefined) {
+            addCol('id_front_image_url', emp.idFrontImageUrl || emp.id_front_image_url);
+          }
+          if (emp.idBackImageUrl !== undefined || emp.id_back_image_url !== undefined) {
+            addCol('id_back_image_url', emp.idBackImageUrl || emp.id_back_image_url);
+          }
+          if (emp.photoUrl !== undefined || emp.photo_url !== undefined) {
+            addCol('photo_url', emp.photoUrl || emp.photo_url);
           }
 
           sets.push('updated_at = NOW()');
