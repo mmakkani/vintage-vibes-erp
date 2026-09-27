@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Employee, AttendanceRecord, PayrollRecord, EmployeeLoan } from '../hr.types.ts';
+import { Employee, AttendanceRecord, PayrollRecord, EmployeeLoan, LoanInstallmentSchedule } from '../hr.types.ts';
 import { StatusBadge } from '../../../components/StatusBadge.tsx';
 import { NumericInput } from '../../../components/NumericInput.tsx';
 import { QuickAttendanceSummary } from './QuickAttendanceSummary.tsx';
@@ -15,7 +15,7 @@ import { HrService } from '../../../services/hrService.ts';
 import { PayrollService } from '../../../services/payrollService.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import { compressImage } from '../../../utils/imageCompressor.ts';
-import { printEmployeeProfileA4, printAttendanceSheetA4, printPayrollRegisterA4 } from '../../../utils/printHrA4.ts';
+import { printEmployeeProfileA4, printAttendanceSheetA4, printPayrollRegisterA4, printEmployeeLoanA4 } from '../../../utils/printHrA4.ts';
 import { cropFaceFromImage } from '../../../utils/geminiOcrService.ts';
 import { Pagination } from '../../../components/Pagination.tsx';
 import {
@@ -425,6 +425,10 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   const [totalLoanPages, setTotalLoanPages] = useState(1);
   const [paginatedLoans, setPaginatedLoans] = useState<EmployeeLoan[]>([]);
   const [isLoansLoading, setIsLoansLoading] = useState(false);
+  const [selectedLoanForView, setSelectedLoanForView] = useState<EmployeeLoan | null>(null);
+  const [loanScheduleData, setLoanScheduleData] = useState<{ schedule: LoanInstallmentSchedule[]; summary: any; employee?: any } | null>(null);
+  const [isScheduleLoading, setIsScheduleLoading] = useState(false);
+  const [isActionProcessing, setIsActionProcessing] = useState<string | null>(null);
 
   const fetchLoansPaginated = useCallback(async (
     targetPage = loanPage,
@@ -1294,18 +1298,123 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     }
   };
 
-  // Delete an active loan/advance
+  // View loan schedule & deductions
+  const handleViewLoan = async (loan: EmployeeLoan) => {
+    setSelectedLoanForView(loan);
+    setIsScheduleLoading(true);
+    try {
+      const res = await fetch(`/api/hr/loans/${loan.id}/schedule`);
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setLoanScheduleData({
+          schedule: data.schedule || [],
+          summary: data.summary || {},
+          employee: data.employee
+        });
+      } else {
+        setLoanScheduleData(null);
+      }
+    } catch (err) {
+      console.warn('[HRView] handleViewLoan error:', err);
+      setLoanScheduleData(null);
+    } finally {
+      setIsScheduleLoading(false);
+    }
+  };
+
+  // Post a draft loan to General Ledger
+  const handlePostLoan = async (loanId: string) => {
+    if (!confirm('Post this advance/loan to General Ledger? This will disburse funds and record financial vouchers.')) return;
+    setIsActionProcessing(loanId);
+    try {
+      const res = await fetch(`/api/hr/loans/${loanId}/post`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showMsg(data.error || 'Failed to post loan to General Ledger', 'error');
+      } else {
+        showMsg(data.message || 'Loan successfully posted to General Ledger.');
+        fetchLoansPaginated();
+        loadData();
+        onRefreshAll();
+        if (selectedLoanForView?.id === loanId) {
+          handleViewLoan({ ...selectedLoanForView, status: 'ACTIVE' });
+        }
+      }
+    } catch (err: any) {
+      showMsg('Failed to post loan to General Ledger', 'error');
+    } finally {
+      setIsActionProcessing(null);
+    }
+  };
+
+  // Unpost an active loan and reverse accounting entries to DRAFT
+  const handleUnpostLoan = async (loanId: string) => {
+    if (!confirm('Unpost this advance/loan? This will symmetrically reverse accounting vouchers and return the loan to DRAFT.')) return;
+    setIsActionProcessing(loanId);
+    try {
+      const res = await fetch(`/api/hr/loans/${loanId}/unpost`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showMsg(data.error || 'Failed to unpost loan', 'error');
+      } else {
+        showMsg(data.message || 'Loan unposted and restored to DRAFT.');
+        fetchLoansPaginated();
+        loadData();
+        onRefreshAll();
+        if (selectedLoanForView?.id === loanId) {
+          handleViewLoan({ ...selectedLoanForView, status: 'DRAFT' });
+        }
+      }
+    } catch (err: any) {
+      showMsg('Failed to unpost loan', 'error');
+    } finally {
+      setIsActionProcessing(null);
+    }
+  };
+
+  // Print official A4 Loan Agreement & Voucher
+  const handlePrintLoan = async (loan: EmployeeLoan) => {
+    try {
+      let sched = loanScheduleData?.schedule;
+      let emp = employees.find(e => String(e.id) === loan.employeeId || e.empCode === loan.empCode);
+
+      if (!sched || selectedLoanForView?.id !== loan.id) {
+        const res = await fetch(`/api/hr/loans/${loan.id}/schedule`);
+        const data = await res.json();
+        if (res.ok && data.success) {
+          sched = data.schedule;
+          if (data.employee) emp = data.employee;
+        }
+      }
+
+      printEmployeeLoanA4({
+        loan,
+        employee: emp,
+        schedule: sched
+      });
+    } catch (err) {
+      console.warn('[HRView] print error:', err);
+      printEmployeeLoanA4({ loan });
+    }
+  };
+
+  // Delete an active loan/advance with Strict Post-Lock handling
   const handleDeleteLoan = async (loanId: string) => {
     if (!confirm('Are you sure you want to delete this loan/advance record?')) return;
     try {
       const res = await fetch(`/api/hr/loans/${loanId}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        showMsg(data.error || 'Failed to delete loan', 'error');
+        showMsg(data.error || 'Failed to delete loan. Note: POSTED loans must be UNPOSTED first.', 'error');
       } else {
         showMsg('Loan record deleted.');
+        fetchLoansPaginated();
         loadData();
         onRefreshAll();
+        if (selectedLoanForView?.id === loanId) {
+          setSelectedLoanForView(null);
+          setLoanScheduleData(null);
+        }
       }
     } catch (err) {
       showMsg('Failed to delete loan', 'error');
@@ -3022,30 +3131,92 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                           AED {safeFormatAed(loan.remainingAmount)}
                         </td>
                         <td className="px-3 py-2.5 font-sans">
-                          {loan.status === 'PAID' ? (
+                          {loan.status === 'DRAFT' ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-700 border border-slate-300">
+                              Draft
+                            </span>
+                          ) : loan.status === 'PAID' ? (
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
                               Fully Repaid
                             </span>
                           ) : (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-200">
-                              Active Recovery
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-blue-50 text-blue-800 border border-blue-200">
+                              Posted / Active
                             </span>
                           )}
                         </td>
                         <td className="px-3 py-2.5 text-right font-sans">
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteLoan(loan.id)}
-                            disabled={loan.remainingAmount < loan.principalAmount}
-                            className={`p-1 rounded text-[11px] font-bold transition-colors ${
-                              loan.remainingAmount < loan.principalAmount
-                                ? 'text-slate-300 cursor-not-allowed'
-                                : 'text-rose-600 hover:bg-rose-50 hover:text-rose-800'
-                            }`}
-                            title={loan.remainingAmount < loan.principalAmount ? 'Cannot delete: deductions already applied' : 'Delete Loan'}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center justify-end gap-1">
+                            {/* Post / Unpost Buttons */}
+                            {loan.status === 'DRAFT' ? (
+                              <button
+                                type="button"
+                                onClick={() => handlePostLoan(loan.id)}
+                                disabled={isActionProcessing === loan.id}
+                                className="p-1 rounded text-[11px] font-bold text-emerald-600 hover:bg-emerald-50 hover:text-emerald-800 transition-colors"
+                                title="Post to General Ledger (Disburse Funds & Create Vouchers)"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleUnpostLoan(loan.id)}
+                                disabled={isActionProcessing === loan.id || loan.remainingAmount < loan.principalAmount}
+                                className={`p-1 rounded text-[11px] font-bold transition-colors ${
+                                  loan.remainingAmount < loan.principalAmount
+                                    ? 'text-slate-300 cursor-not-allowed'
+                                    : 'text-amber-600 hover:bg-amber-50 hover:text-amber-800'
+                                }`}
+                                title={
+                                  loan.remainingAmount < loan.principalAmount
+                                    ? 'Cannot unpost: Deductions already deducted in payroll'
+                                    : 'Unpost to DRAFT (Reverse Accounting Entries)'
+                                }
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+
+                            {/* View Button */}
+                            <button
+                              type="button"
+                              onClick={() => handleViewLoan(loan)}
+                              className="p-1 rounded text-[11px] font-bold text-blue-600 hover:bg-blue-50 hover:text-blue-800 transition-colors"
+                              title="View Details, Repayment Schedule & Salary Deductions"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Print A4 Button */}
+                            <button
+                              type="button"
+                              onClick={() => handlePrintLoan(loan)}
+                              className="p-1 rounded text-[11px] font-bold text-indigo-600 hover:bg-indigo-50 hover:text-indigo-800 transition-colors"
+                              title="Print Official A4 Agreement with Logo & Signatures"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Delete Button (Strict Post-Lock) */}
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteLoan(loan.id)}
+                              disabled={loan.status === 'POSTED' || loan.status === 'ACTIVE' || loan.remainingAmount < loan.principalAmount}
+                              className={`p-1 rounded text-[11px] font-bold transition-colors ${
+                                loan.status === 'POSTED' || loan.status === 'ACTIVE' || loan.remainingAmount < loan.principalAmount
+                                  ? 'text-slate-300 cursor-not-allowed'
+                                  : 'text-rose-600 hover:bg-rose-50 hover:text-rose-800'
+                              }`}
+                              title={
+                                loan.status === 'POSTED' || loan.status === 'ACTIVE'
+                                  ? 'Cannot delete a POSTED loan. Please UNPOST it first.'
+                                  : 'Delete Loan Record'
+                              }
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -4492,6 +4663,289 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== MODAL: VIEW ADVANCE & LOAN DETAILS, REPAYMENT SCHEDULE & DEDUCTIONS ===================== */}
+      {selectedLoanForView && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[92vh] flex flex-col border border-slate-200 overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <HandCoins className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="font-bold text-sm leading-tight flex items-center gap-2">
+                    <span>Advance / Loan Repayment & Deduction Schedule</span>
+                    {selectedLoanForView.status === 'PAID' ? (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 uppercase">
+                        Fully Repaid
+                      </span>
+                    ) : selectedLoanForView.status === 'DRAFT' ? (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-500/30 text-slate-300 border border-slate-400/40 uppercase">
+                        Draft
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-400/40 uppercase">
+                        Active Recovery
+                      </span>
+                    )}
+                  </h3>
+                  <div className="text-[11px] text-slate-400 mt-0.5">
+                    Emp: <strong className="text-white">{selectedLoanForView.employeeName}</strong> ({selectedLoanForView.empCode}) &bull; Loan ID: <span className="font-mono text-slate-300">{selectedLoanForView.id}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handlePrintLoan(selectedLoanForView)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider transition-colors"
+                  title="Print Official A4 Agreement"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Print A4</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedLoanForView(null);
+                    setLoanScheduleData(null);
+                  }}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                  title="Close Modal"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-4 text-xs">
+              {/* Financial KPI Summary Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">Total Principal Disbursed</span>
+                  <span className="text-base font-bold font-mono text-slate-900 mt-0.5 block">
+                    AED {safeFormatAed(selectedLoanForView.principalAmount)}
+                  </span>
+                </div>
+                <div className="bg-emerald-50/60 p-3 rounded-lg border border-emerald-200">
+                  <span className="text-[10px] uppercase font-bold text-emerald-700 block">Total Deducted (Paid)</span>
+                  <span className="text-base font-bold font-mono text-emerald-800 mt-0.5 block">
+                    AED {safeFormatAed(loanScheduleData?.summary?.totalPaid ?? Math.max(0, Number(selectedLoanForView.principalAmount) - Number(selectedLoanForView.remainingAmount)))}
+                  </span>
+                </div>
+                <div className="bg-rose-50/70 p-3 rounded-lg border border-rose-200">
+                  <span className="text-[10px] uppercase font-bold text-rose-700 block">Remaining Balance</span>
+                  <span className="text-base font-black font-mono text-rose-700 mt-0.5 block">
+                    AED {safeFormatAed(loanScheduleData?.summary?.remainingBalance ?? selectedLoanForView.remainingAmount)}
+                  </span>
+                </div>
+                <div className="bg-blue-50/60 p-3 rounded-lg border border-blue-200">
+                  <span className="text-[10px] uppercase font-bold text-blue-700 block">Monthly EMI Deduction</span>
+                  <span className="text-base font-bold font-mono text-blue-900 mt-0.5 block">
+                    AED {safeFormatAed(selectedLoanForView.emiAmount)}/mo
+                  </span>
+                </div>
+              </div>
+
+              {/* Progress Bar */}
+              {(() => {
+                const principal = Number(selectedLoanForView.principalAmount || 0);
+                const rem = Number(loanScheduleData?.summary?.remainingBalance ?? selectedLoanForView.remainingAmount ?? 0);
+                const paid = Math.max(0, principal - rem);
+                const pct = principal > 0 ? Math.min(100, Math.round((paid / principal) * 100)) : 0;
+                return (
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    <div className="flex justify-between items-center text-[11px] font-bold text-slate-700 mb-1.5">
+                      <span>Repayment Recovery Progress:</span>
+                      <span className="font-mono text-slate-900">{pct}% Settled ({safeFormatAed(paid)} / {safeFormatAed(principal)} AED)</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                      <div
+                        className={`h-2.5 rounded-full transition-all duration-500 ${pct >= 100 ? 'bg-emerald-600' : 'bg-blue-600'}`}
+                        style={{ width: `${pct}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Loan Meta & Disbursement Details */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200 text-[11px]">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">Financial Voucher Ref:</span>
+                  <span className="font-mono font-bold text-blue-900">
+                    {selectedLoanForView.voucherNo || (selectedLoanForView.notes?.match(/\[Voucher:\s*([A-Z0-9-]+)\]/i)?.[1]) || 'N/A (Draft)'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">Disbursement Account:</span>
+                  <span className="font-mono text-slate-800">
+                    {selectedLoanForView.disbursementAccount || (selectedLoanForView.disbursementMethod === 'CASH' ? '1010-01 (Cash in Hand)' : '1020-01 (Cash in Bank)')}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">Start Deduction Month:</span>
+                  <span className="font-mono font-bold text-slate-800">{selectedLoanForView.startMonth} ({selectedLoanForView.totalMonths} Installments)</span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">Created On:</span>
+                  <span className="text-slate-700">{new Date(selectedLoanForView.createdAt).toLocaleString()}</span>
+                </div>
+              </div>
+
+              {/* Installment Repayment Schedule Table */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-bold uppercase tracking-wider text-slate-800 text-[11px] flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Monthly Salary Deduction Schedule</span>
+                  </h4>
+                  {isScheduleLoading && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-blue-600 font-medium">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Loading schedule...
+                    </span>
+                  )}
+                </div>
+
+                <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  <table className="w-full text-left text-[11px] border-collapse">
+                    <thead className="bg-slate-100 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
+                      <tr>
+                        <th className="px-3 py-2 text-center w-12">#</th>
+                        <th className="px-3 py-2">Payroll Month</th>
+                        <th className="px-3 py-2 text-right">Scheduled EMI</th>
+                        <th className="px-3 py-2 text-right">Deducted in Payroll</th>
+                        <th className="px-3 py-2 text-center">Deduction Status</th>
+                        <th className="px-3 py-2">Payroll Reference</th>
+                        <th className="px-3 py-2 text-right">Balance After EMI</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {isScheduleLoading ? (
+                        <tr>
+                          <td colSpan={7} className="px-3 py-8 text-center text-slate-400 font-sans">
+                            <Loader2 className="w-5 h-5 animate-spin mx-auto mb-1 text-blue-500" />
+                            Calculating deduction status...
+                          </td>
+                        </tr>
+                      ) : (loanScheduleData?.schedule || []).length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="px-3 py-6 text-center text-slate-400 font-sans">
+                            No installment schedule generated.
+                          </td>
+                        </tr>
+                      ) : (
+                        (loanScheduleData?.schedule || []).map(item => (
+                          <tr key={item.installmentNo} className={`hover:bg-slate-50 font-sans transition-colors ${item.status === 'PAID' ? 'bg-emerald-50/20' : ''}`}>
+                            <td className="px-3 py-2 text-center font-mono font-bold text-slate-500">{item.installmentNo}</td>
+                            <td className="px-3 py-2 font-mono font-bold text-slate-800">{item.month}</td>
+                            <td className="px-3 py-2 text-right font-mono font-semibold text-slate-700">
+                              AED {safeFormatAed(item.emiAmount)}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono font-bold text-slate-900">
+                              {item.status === 'PAID' ? (
+                                <span className="text-emerald-700 font-bold">AED {safeFormatAed(item.deductedAmount)}</span>
+                              ) : (
+                                <span className="text-slate-400">-</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              {item.status === 'PAID' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                  <Check className="w-2.5 h-2.5" />
+                                  PAID
+                                </span>
+                              ) : item.status === 'SCHEDULED_IN_DRAFT' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-sky-100 text-sky-800 border border-sky-300">
+                                  DRAFT PAYROLL
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-300">
+                                  PENDING
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-[10px] text-slate-600">
+                              {item.payrollRef ? (
+                                <span className="text-blue-700 font-bold">{item.payrollRef}</span>
+                              ) : (
+                                <span className="text-slate-400 italic">Not Yet Deducted</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono font-bold text-rose-700">
+                              AED {safeFormatAed(item.remainingBalance)}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                {selectedLoanForView.status === 'DRAFT' ? (
+                  <button
+                    type="button"
+                    onClick={() => handlePostLoan(selectedLoanForView.id)}
+                    disabled={isActionProcessing === selectedLoanForView.id}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs transition-colors"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Post to General Ledger</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleUnpostLoan(selectedLoanForView.id)}
+                    disabled={isActionProcessing === selectedLoanForView.id || selectedLoanForView.remainingAmount < selectedLoanForView.principalAmount}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded font-bold text-xs uppercase tracking-wider transition-colors ${
+                      selectedLoanForView.remainingAmount < selectedLoanForView.principalAmount
+                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                        : 'bg-amber-600 hover:bg-amber-700 text-white shadow-xs'
+                    }`}
+                    title={
+                      selectedLoanForView.remainingAmount < selectedLoanForView.principalAmount
+                        ? 'Cannot unpost: Deductions already deducted in payroll'
+                        : 'Unpost to DRAFT'
+                    }
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Unpost to DRAFT</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handlePrintLoan(selectedLoanForView)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs transition-colors"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print A4 Agreement</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedLoanForView(null);
+                    setLoanScheduleData(null);
+                  }}
+                  className="px-4 py-1.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs uppercase tracking-wider transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

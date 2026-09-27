@@ -130,11 +130,23 @@ export interface EmployeeLoan {
   totalMonths: number;
   startMonth: string; // e.g. "2026-09"
   remainingAmount: number;
-  status: 'ACTIVE' | 'PAID' | 'CANCELLED';
+  status: 'DRAFT' | 'ACTIVE' | 'POSTED' | 'PAID' | 'CANCELLED';
   disbursementAccount?: string; // COA Bank or Cash
   disbursementMethod?: 'CASH' | 'BANK_TRANSFER';
   notes?: string;
+  voucherNo?: string;
   createdAt: string;
+}
+
+export interface LoanInstallmentSchedule {
+  installmentNo: number;
+  month: string;
+  emiAmount: number;
+  deductedAmount: number;
+  status: 'PAID' | 'PENDING' | 'SCHEDULED_IN_DRAFT';
+  payrollRef?: string;
+  deductedDate?: string;
+  remainingBalance: number;
 }
 
 export interface PayrollRecord {

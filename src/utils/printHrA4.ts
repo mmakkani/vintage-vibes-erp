@@ -1,4 +1,4 @@
-import { Employee, AttendanceRecord, PayrollRecord } from '../modules/hr/hr.types.ts';
+import { Employee, AttendanceRecord, PayrollRecord, EmployeeLoan, LoanInstallmentSchedule } from '../modules/hr/hr.types.ts';
 
 // Helper for formatting currency
 const formatAed = (val: any): string => {
@@ -784,6 +784,302 @@ export function printPayrollRegisterA4(options: {
         <div class="sign-space"></div>
         <div class="sign-role">[ Finance Director ]</div>
         <div class="sign-sub">Chief Financial Officer / Managing Director</div>
+        <div style="font-size: 8.5px; color: #94a3b8; margin-top: 2px;">Date: ____/____/2026</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.addEventListener('load', () => {
+      setTimeout(() => { window.print(); }, 400);
+    });
+  </script>
+</body>
+</html>`;
+
+  printWin.document.open();
+  printWin.document.write(html);
+  printWin.document.close();
+  return printWin;
+}
+
+export interface PrintEmployeeLoanA4Props {
+  loan: EmployeeLoan;
+  employee?: Employee;
+  schedule?: LoanInstallmentSchedule[];
+}
+
+export function printEmployeeLoanA4({ loan, employee, schedule }: PrintEmployeeLoanA4Props): Window | null {
+  const printWin = window.open('', '_blank', 'width=950,height=1000');
+  if (!printWin) {
+    alert('Please allow popups to print the loan agreement.');
+    return null;
+  }
+
+  const vchMatch = (loan.notes || '').match(/\[Voucher:\s*([A-Z0-9-]+)\]/i);
+  const voucherNo = loan.voucherNo || (vchMatch ? vchMatch[1] : 'AUTO-VOUCHER');
+  const totalPrincipal = Number(loan.principalAmount || 0);
+  const totalRemaining = Number(loan.remainingAmount || 0);
+  const totalPaid = Math.max(0, totalPrincipal - totalRemaining);
+
+  // Generate schedule if not provided
+  let computedSchedule: LoanInstallmentSchedule[] = schedule && schedule.length > 0 ? schedule : [];
+  if (computedSchedule.length === 0) {
+    const months = Math.max(1, Number(loan.totalMonths || 1));
+    const emi = Number(loan.emiAmount || (totalPrincipal / months).toFixed(2));
+    const [startYearStr, startMonthStr] = (loan.startMonth || new Date().toISOString().slice(0, 7)).split('-');
+    let currYear = parseInt(startYearStr, 10) || new Date().getFullYear();
+    let currMonth = parseInt(startMonthStr, 10) || (new Date().getMonth() + 1);
+
+    let accumPaid = totalPaid;
+    for (let i = 1; i <= months; i++) {
+      const monthStr = `${currYear}-${String(currMonth).padStart(2, '0')}`;
+      const isPaid = accumPaid >= emi && emi > 0;
+      const thisDeduction = isPaid ? emi : (accumPaid > 0 ? accumPaid : 0);
+      accumPaid = Math.max(0, accumPaid - emi);
+
+      computedSchedule.push({
+        installmentNo: i,
+        month: monthStr,
+        emiAmount: emi,
+        deductedAmount: thisDeduction,
+        status: isPaid ? 'PAID' : 'PENDING',
+        payrollRef: isPaid ? `JV-PAY-${monthStr}` : undefined,
+        remainingBalance: Math.max(0, totalPrincipal - (i * emi))
+      });
+
+      currMonth++;
+      if (currMonth > 12) {
+        currMonth = 1;
+        currYear++;
+      }
+    }
+  }
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Staff Loan & Advance Agreement - ${loan.employeeName} (${loan.empCode})</title>
+  <style>
+    ${getCommonA4Styles('Staff Loan & Advance Agreement')}
+    .badge-paid {
+      display: inline-block;
+      background: #dcfce7;
+      color: #15803d;
+      border: 1px solid #86efac;
+      font-weight: 800;
+      font-size: 9px;
+      padding: 2px 7px;
+      border-radius: 3px;
+      text-transform: uppercase;
+    }
+    .badge-pending {
+      display: inline-block;
+      background: #fef3c7;
+      color: #b45309;
+      border: 1px solid #fde68a;
+      font-weight: 700;
+      font-size: 9px;
+      padding: 2px 7px;
+      border-radius: 3px;
+      text-transform: uppercase;
+    }
+    .legal-clause {
+      margin-top: 14px;
+      padding: 10px 12px;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      font-size: 9.5px;
+      line-height: 1.45;
+      color: #334155;
+    }
+  </style>
+</head>
+<body>
+  <!-- Floating Print Toolbar -->
+  <div class="toolbar no-print">
+    <div>
+      <strong style="text-transform: uppercase; letter-spacing: 0.05em;">Staff Advance & Loan Agreement (A4)</strong>
+      <span style="font-size: 11px; opacity: 0.8; margin-left: 10px;">Employee: ${loan.employeeName} (${loan.empCode}) &bull; Ref: ${voucherNo}</span>
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <button class="toolbar-btn btn-print" onclick="window.print()">Print / Save PDF</button>
+      <button class="toolbar-btn btn-close" onclick="window.close()">Close Window</button>
+    </div>
+  </div>
+
+  <div class="a4-wrapper">
+    <!-- Company Header with Official Logo -->
+    <div class="company-header">
+      <img src="/vintage_logo_gold_seal_a4.png" alt="Vintage Vibes Logo" style="height: 52px; margin-bottom: 6px; display: inline-block;" onerror="this.onerror=null; this.src='/vintage_logo.svg';" />
+      <div class="company-name">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</div>
+      <div class="company-sub">Commercial License: 1049281 &bull; TRN (VAT): 100482910300003 &bull; Registered in Abu Dhabi & Dubai, UAE</div>
+      <div class="company-sub">House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, United Arab Emirates</div>
+      <div class="doc-badge">EMPLOYEE SALARY ADVANCE & LOAN DISBURSEMENT AGREEMENT</div>
+    </div>
+
+    <!-- Document Meta Bar -->
+    <table style="margin-bottom: 12px;">
+      <tbody>
+        <tr style="background: #f8fafc;">
+          <td style="width: 25%; font-weight: 700; text-transform: uppercase; color: #475569;">Document / Loan ID:</td>
+          <td style="width: 25%; font-family: monospace; font-weight: 700;">${loan.id}</td>
+          <td style="width: 25%; font-weight: 700; text-transform: uppercase; color: #475569;">Financial Voucher:</td>
+          <td style="width: 25%; font-family: monospace; font-weight: 800; color: #0056b3;">${voucherNo}</td>
+        </tr>
+        <tr>
+          <td style="font-weight: 700; text-transform: uppercase; color: #475569;">Issue / Disburse Date:</td>
+          <td>${new Date(loan.createdAt).toISOString().slice(0, 10)}</td>
+          <td style="font-weight: 700; text-transform: uppercase; color: #475569;">Agreement Status:</td>
+          <td>
+            <span style="font-weight: 800; text-transform: uppercase; color: ${loan.status === 'PAID' ? '#15803d' : '#0056b3'};">
+              ● ${loan.status === 'PAID' ? 'FULLY REPAID' : (loan.status === 'DRAFT' ? 'DRAFT AGREEMENT' : 'POSTED / ACTIVE RECOVERY')}
+            </span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Employee Information -->
+    <div class="section-title">1. Beneficiary Employee Particulars</div>
+    <table>
+      <tbody>
+        <tr>
+          <th style="width: 20%;">Employee Name</th>
+          <td style="width: 30%; font-weight: 700;">${loan.employeeName}</td>
+          <th style="width: 20%;">Employee Code</th>
+          <td style="width: 30%; font-family: monospace; font-weight: 800; color: #0056b3;">${loan.empCode}</td>
+        </tr>
+        <tr>
+          <th>Designation</th>
+          <td>${employee?.designation || 'Staff'}</td>
+          <th>Department</th>
+          <td>${employee?.department || 'Operations'}</td>
+        </tr>
+        <tr>
+          <th>Base Monthly Salary</th>
+          <td style="font-family: monospace; font-weight: 700;">AED ${formatAed(employee?.basicSalary || employee?.baseSalary || 0)}</td>
+          <th>Contact Mobile</th>
+          <td style="font-family: monospace;">${employee?.phone || employee?.mobile || 'N/A'}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Loan Financial Terms -->
+    <div class="section-title">2. Financial Advance / Loan Terms</div>
+    <table>
+      <tbody>
+        <tr>
+          <th style="width: 20%;">Advance / Loan Type</th>
+          <td style="width: 30%; font-weight: 700;">
+            ${loan.type === 'SALARY_ADVANCE' ? 'Salary Advance (Single Salary Cut)' : 'Installment Loan (EMI Repayment)'}
+          </td>
+          <th style="width: 20%;">Principal Amount</th>
+          <td style="width: 30%; font-family: monospace; font-weight: 900; font-size: 11.5px; color: #0f172a;">
+            AED ${formatAed(totalPrincipal)}
+          </td>
+        </tr>
+        <tr>
+          <th>Repayment Tenure</th>
+          <td style="font-weight: 700;">${loan.totalMonths} Month(s)</td>
+          <th>Monthly EMI Deduction</th>
+          <td style="font-family: monospace; font-weight: 800; color: #047857;">AED ${formatAed(loan.emiAmount)} / month</td>
+        </tr>
+        <tr>
+          <th>Disbursement Method</th>
+          <td>${loan.disbursementMethod === 'CASH' ? 'Cash in Hand (Counter Payment)' : 'Bank Transfer (Direct Remittance)'}</td>
+          <th>Disbursement Account</th>
+          <td style="font-family: monospace;">${loan.disbursementAccount || (loan.disbursementMethod === 'CASH' ? '1010-01 Cash in Hand' : '1020-01 Bank')}</td>
+        </tr>
+        <tr style="background: #fef2f2;">
+          <th style="color: #991b1b;">Total Repaid to Date</th>
+          <td style="font-family: monospace; font-weight: 800; color: #15803d;">AED ${formatAed(totalPaid)}</td>
+          <th style="color: #991b1b;">Remaining Outstanding</th>
+          <td style="font-family: monospace; font-weight: 900; color: #b91c1c; font-size: 11.5px;">AED ${formatAed(totalRemaining)}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Repayment Schedule -->
+    <div class="section-title">3. Monthly Installment Repayment Schedule & Salary Deduction Status</div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 6%; text-align: center;">#</th>
+          <th style="width: 14%;">Payroll Month</th>
+          <th style="width: 16%; text-align: right;">Scheduled EMI</th>
+          <th style="width: 18%; text-align: right;">Deducted in Payroll</th>
+          <th style="width: 14%; text-align: center;">Deduction Status</th>
+          <th style="width: 18%;">Payroll Voucher Ref</th>
+          <th style="width: 14%; text-align: right;">Balance After EMI</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${computedSchedule.map(s => `
+          <tr>
+            <td style="text-align: center; font-family: monospace; font-weight: 700;">${s.installmentNo}</td>
+            <td style="font-family: monospace; font-weight: 700;">${s.month}</td>
+            <td style="text-align: right; font-family: monospace; font-weight: 700;">AED ${formatAed(s.emiAmount)}</td>
+            <td style="text-align: right; font-family: monospace; font-weight: 700; color: ${s.status === 'PAID' ? '#15803d' : '#64748b'};">
+              AED ${formatAed(s.deductedAmount)}
+            </td>
+            <td style="text-align: center;">
+              ${s.status === 'PAID'
+                ? '<span class="badge-paid">● PAID</span>'
+                : '<span class="badge-pending">○ PENDING</span>'
+              }
+            </td>
+            <td style="font-family: monospace; font-size: 9.5px; color: #475569;">
+              ${s.payrollRef || '-'}
+            </td>
+            <td style="text-align: right; font-family: monospace; font-weight: 700; color: #991b1b;">
+              AED ${formatAed(s.remainingBalance)}
+            </td>
+          </tr>
+        `).join('')}
+        <tr class="table-summary-row">
+          <td colspan="2" style="text-align: right; text-transform: uppercase;">Totals:</td>
+          <td style="text-align: right; font-family: monospace; font-weight: 800;">AED ${formatAed(totalPrincipal)}</td>
+          <td style="text-align: right; font-family: monospace; font-weight: 900; color: #15803d;">AED ${formatAed(totalPaid)}</td>
+          <td colspan="2" style="text-align: right; text-transform: uppercase; color: #b91c1c;">Net Outstanding:</td>
+          <td style="text-align: right; font-family: monospace; font-weight: 900; color: #b91c1c; font-size: 11px;">AED ${formatAed(totalRemaining)}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Legal Terms and Payroll Deduction Authorization -->
+    <div class="legal-clause page-break-avoid">
+      <strong>ACKNOWLEDGMENT & SALARY DEDUCTION AUTHORIZATION (UAE LABOR COMPLIANCE):</strong><br/>
+      I, <strong>${loan.employeeName}</strong> (Emp Code: <strong>${loan.empCode}</strong>), hereby confirm that I have requested and received the advance / loan sum of <strong>AED ${formatAed(totalPrincipal)}</strong> from Vintage Vibes General Trading L.L.C - S.P.C via ${loan.disbursementMethod || 'BANK_TRANSFER'}. I unconditionally authorize the management to deduct the monthly installment of <strong>AED ${formatAed(loan.emiAmount)}</strong> directly from my monthly payroll starting from <strong>${loan.startMonth}</strong> until the balance is fully settled. In the event of resignation, termination, or separation of service prior to final liquidation, I authorize the company to deduct the full remaining outstanding balance from my end-of-service gratuity and final salary settlement.
+    </div>
+
+    <!-- Ruled Remarks -->
+    <div class="remarks-container page-break-avoid" style="margin-top: 12px;">
+      <div class="remarks-title">SPECIAL HR / FINANCE RECOVERY NOTES:</div>
+      <div class="ruled-line">${loan.notes ? '<span style="font-family: monospace; font-size: 9px; color: #475569;">' + loan.notes + '</span>' : ''}</div>
+      <div class="ruled-line"></div>
+    </div>
+
+    <!-- Authorized Signatures Grid -->
+    <div class="signatures-grid page-break-avoid" style="margin-top: 20px;">
+      <div class="sign-box">
+        <div class="sign-space"></div>
+        <div class="sign-role">[ Employee Signature ]</div>
+        <div class="sign-sub">${loan.employeeName}</div>
+        <div style="font-size: 8.5px; color: #94a3b8; margin-top: 2px;">Date: ____/____/2026</div>
+      </div>
+      <div class="sign-box">
+        <div class="sign-space"></div>
+        <div class="sign-role">[ HR & Payroll Officer ]</div>
+        <div class="sign-sub">Verified & Scheduled for Payroll</div>
+        <div style="font-size: 8.5px; color: #94a3b8; margin-top: 2px;">Date: ____/____/2026</div>
+      </div>
+      <div class="sign-box" style="position: relative;">
+        <div class="sign-space"></div>
+        <div class="sign-role">[ Managing Director / CFO ]</div>
+        <div class="sign-sub">Disbursement Approved & Posted</div>
         <div style="font-size: 8.5px; color: #94a3b8; margin-top: 2px;">Date: ____/____/2026</div>
       </div>
     </div>
