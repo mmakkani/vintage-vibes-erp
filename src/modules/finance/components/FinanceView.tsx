@@ -52,6 +52,30 @@ import { ModuleMaintenanceGuard } from '../../../components/ModuleMaintenanceGua
 import { Pagination } from '../../../components/Pagination.tsx';
 
 
+export function formatAccountingCurrency(
+  val: number | string | null | undefined,
+  currency: string = 'AED',
+  defaultClass: string = 'font-mono'
+) {
+  const num = Number(val || 0);
+  const formatted = Math.abs(num).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  if (num < -0.0001) {
+    return (
+      <span className="text-rose-600 font-bold font-mono">
+        ({currency} {formatted})
+      </span>
+    );
+  }
+  return (
+    <span className={defaultClass}>
+      {currency} {formatted}
+    </span>
+  );
+}
+
 interface COARowProps {
   acc: COAAccount;
   isDebitNormal: boolean;
@@ -117,10 +141,25 @@ const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, hasTrans
       </td>
       <td className="px-3.5 py-2.5 text-slate-700">{acc.currency || (acc as any).currency_code || 'AED'}</td>
       <td className="px-3.5 py-2.5 text-right font-bold text-slate-900">
-        AED {Number(currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-        <span className="text-[9px] text-slate-500 ml-1 font-sans">
-          ({isDebit ? 'Dr' : 'Cr'})
-        </span>
+        {currentBalance < -0.0001 ? (
+          <>
+            <span className="text-rose-600 font-bold font-mono">
+              (AED {Math.abs(currentBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+            </span>
+            <span className="text-[9px] text-rose-600 ml-1 font-sans font-bold">
+              ({isDebit ? 'Cr' : 'Dr'})
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="font-mono">
+              AED {Number(currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span className="text-[9px] text-slate-500 ml-1 font-sans">
+              ({isDebit ? 'Dr' : 'Cr'})
+            </span>
+          </>
+        )}
       </td>
       <td className="px-3.5 py-2.5 text-center">
         <div className="flex items-center justify-center gap-1.5">
@@ -2573,7 +2612,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <span>
                   {((reports as any)?.trialBalanceMeta?.isBalanced ?? true)
                     ? 'Verification: Debit and Credit columns equal. General Ledger balanced to zero discrepancy.'
-                    : `Discrepancy: Trial balance out of balance by AED ${Number((reports as any)?.trialBalanceMeta?.difference || 0).toFixed(2)}`}
+                    : <>Discrepancy: Trial balance out of balance by {formatAccountingCurrency((reports as any)?.trialBalanceMeta?.difference)}</>}
                 </span>
               </div>
               <button
@@ -2713,9 +2752,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               {/* Gross Profit Summary Bar */}
               <div className="p-3 rounded-lg bg-emerald-50/60 border border-emerald-300 flex items-center justify-between font-sans font-bold text-xs text-emerald-950">
                 <span className="uppercase tracking-wider">Gross Operating Profit (Revenue - COGS):</span>
-                <span className="font-mono font-black text-emerald-900 text-sm">
-                  AED {Number(reports?.incomeStatement?.grossProfit ?? ((reports?.incomeStatement?.revenue?.total || 0) - (reports?.incomeStatement?.cogs?.total || 0))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
+                {formatAccountingCurrency(reports?.incomeStatement?.grossProfit ?? ((reports?.incomeStatement?.revenue?.total || 0) - (reports?.incomeStatement?.cogs?.total || 0)), 'AED', 'font-mono font-black text-emerald-900 text-sm')}
               </div>
 
               {/* 3. Operating Expenses */}
@@ -2737,7 +2774,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     return opAccs.map((a: any, i: number) => (
                       <div key={i} className="py-1.5 flex justify-between hover:bg-rose-50/20">
                         <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                       </div>
                     ));
                   })()}
@@ -2751,11 +2788,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     <span className="uppercase tracking-wider text-base">Net Operating Profit / (Loss):</span>
                     <span className="font-sans text-[11px] font-normal text-slate-600">Operating Revenue &bull; COGS &bull; Overhead Expenses</span>
                   </div>
-                  <span className={`font-mono text-lg font-black ${
-                    Number(reports?.incomeStatement?.netProfit || 0) >= 0 ? 'text-emerald-900' : 'text-rose-900'
-                  }`}>
-                    AED {Number(reports?.incomeStatement?.netProfit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
+                  {formatAccountingCurrency(reports?.incomeStatement?.netProfit, 'AED', 'font-mono text-lg font-black text-emerald-900')}
                 </div>
               </div>
             </div>
@@ -2800,8 +2833,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               <div className="space-y-4">
                 <div className="bg-blue-50/80 p-2.5 rounded-lg font-bold text-blue-950 uppercase tracking-wider flex justify-between font-sans border border-blue-200">
                   <span>Total Assets</span>
-                  <span className="font-mono text-sm font-black text-blue-950">
-                    AED {Number(reports?.balanceSheet?.assets?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <span className="text-sm font-black text-blue-950">
+                    {formatAccountingCurrency(reports?.balanceSheet?.assets?.total, 'AED', 'font-mono text-sm font-black text-blue-950')}
                   </span>
                 </div>
 
@@ -2811,13 +2844,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                       <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
                         <span>Cash & Cash Equivalents</span>
-                        <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.cashAndBank?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        {formatAccountingCurrency(reports.balanceSheet.assets.categories.cashAndBank?.total)}
                       </div>
                       <div className="divide-y divide-slate-100 pl-2">
                         {(reports.balanceSheet.assets.categories.cashAndBank?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                           <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                             <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                            <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                           </div>
                         ))}
                       </div>
@@ -2827,13 +2860,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                       <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
                         <span>Payment & COD Clearing Accounts</span>
-                        <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.clearing?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        {formatAccountingCurrency(reports.balanceSheet.assets.categories.clearing?.total)}
                       </div>
                       <div className="divide-y divide-slate-100 pl-2">
                         {(reports.balanceSheet.assets.categories.clearing?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                           <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                             <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                            <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                           </div>
                         ))}
                       </div>
@@ -2843,13 +2876,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                       <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
                         <span>Trade & Customer Receivables</span>
-                        <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.receivables?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        {formatAccountingCurrency(reports.balanceSheet.assets.categories.receivables?.total)}
                       </div>
                       <div className="divide-y divide-slate-100 pl-2">
                         {(reports.balanceSheet.assets.categories.receivables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                           <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                             <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                            <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                           </div>
                         ))}
                       </div>
@@ -2859,13 +2892,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                       <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
                         <span>Inventories (Raw Bales, WIP Sorting & Finished Garments)</span>
-                        <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.inventory?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        {formatAccountingCurrency(reports.balanceSheet.assets.categories.inventory?.total)}
                       </div>
                       <div className="divide-y divide-slate-100 pl-2">
                         {(reports.balanceSheet.assets.categories.inventory?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                           <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                             <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                            <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                           </div>
                         ))}
                       </div>
@@ -2875,13 +2908,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                       <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
                         <span>Fixed & Non-Current Assets (Equipment & Deposits)</span>
-                        <span className="font-mono">AED {Number(reports.balanceSheet.assets.categories.fixedAssets?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        {formatAccountingCurrency(reports.balanceSheet.assets.categories.fixedAssets?.total)}
                       </div>
                       <div className="divide-y divide-slate-100 pl-2">
                         {(reports.balanceSheet.assets.categories.fixedAssets?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                           <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                             <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                            <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                           </div>
                         ))}
                       </div>
@@ -2892,7 +2925,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     {(reports?.balanceSheet?.assets?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                       <div key={i} className="py-2 flex justify-between">
                         <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
+                        <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                       </div>
                     ))}
                   </div>
@@ -2905,8 +2938,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <div className="space-y-3">
                   <div className="bg-rose-50/80 p-2.5 rounded-lg font-bold text-rose-950 uppercase tracking-wider flex justify-between font-sans border border-rose-200">
                     <span>Total Liabilities</span>
-                    <span className="font-mono text-sm font-black text-rose-950">
-                      AED {Number(reports?.balanceSheet?.liabilities?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <span className="text-sm font-black text-rose-950">
+                      {formatAccountingCurrency(reports?.balanceSheet?.liabilities?.total, 'AED', 'font-mono text-sm font-black text-rose-950')}
                     </span>
                   </div>
 
@@ -2916,13 +2949,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
                           <span>Trade & Logistics Payables</span>
-                          <span className="font-mono">AED {Number(reports.balanceSheet.liabilities.categories.payables?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          {formatAccountingCurrency(reports.balanceSheet.liabilities.categories.payables?.total)}
                         </div>
                         <div className="divide-y divide-slate-100 pl-2">
                           {(reports.balanceSheet.liabilities.categories.payables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                             <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                               <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                              <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                              <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                             </div>
                           ))}
                         </div>
@@ -2932,13 +2965,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
                           <span>Statutory & Tax Obligations</span>
-                          <span className="font-mono">AED {Number(reports.balanceSheet.liabilities.categories.taxPayables?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          {formatAccountingCurrency(reports.balanceSheet.liabilities.categories.taxPayables?.total)}
                         </div>
                         <div className="divide-y divide-slate-100 pl-2">
                           {(reports.balanceSheet.liabilities.categories.taxPayables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                             <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                               <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                              <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                              <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                             </div>
                           ))}
                         </div>
@@ -2948,13 +2981,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
                           <span>Accrued Payroll & Overheads</span>
-                          <span className="font-mono">AED {Number(reports.balanceSheet.liabilities.categories.accruedPayroll?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          {formatAccountingCurrency(reports.balanceSheet.liabilities.categories.accruedPayroll?.total)}
                         </div>
                         <div className="divide-y divide-slate-100 pl-2">
                           {(reports.balanceSheet.liabilities.categories.accruedPayroll?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                             <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                               <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                              <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                              <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                             </div>
                           ))}
                         </div>
@@ -2965,7 +2998,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       {(reports?.balanceSheet?.liabilities?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                         <div key={i} className="py-1.5 flex justify-between">
                           <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                          <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
+                          <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                         </div>
                       ))}
                     </div>
@@ -2976,8 +3009,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <div className="space-y-3 pt-2">
                   <div className="bg-purple-50/80 p-2.5 rounded-lg font-bold text-purple-950 uppercase tracking-wider flex justify-between font-sans border border-purple-200">
                     <span>Shareholders' Equity & Reserves</span>
-                    <span className="font-mono text-sm font-black text-purple-950">
-                      AED {Number(reports?.balanceSheet?.equity?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <span className="text-sm font-black">
+                      {formatAccountingCurrency(reports?.balanceSheet?.equity?.total, 'AED', 'font-mono text-sm font-black text-purple-950')}
                     </span>
                   </div>
 
@@ -2987,13 +3020,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
                           <span>Owner & Shareholder Capital</span>
-                          <span className="font-mono">AED {Number(reports.balanceSheet.equity.categories.capital?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          {formatAccountingCurrency(reports.balanceSheet.equity.categories.capital?.total)}
                         </div>
                         <div className="divide-y divide-slate-100 pl-2">
                           {(reports.balanceSheet.equity.categories.capital?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                             <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                               <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                              <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                              <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                             </div>
                           ))}
                         </div>
@@ -3003,13 +3036,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
                           <span>Retained Earnings & General Reserves</span>
-                          <span className="font-mono">AED {Number(reports.balanceSheet.equity.categories.retainedEarnings?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          {formatAccountingCurrency(reports.balanceSheet.equity.categories.retainedEarnings?.total)}
                         </div>
                         <div className="divide-y divide-slate-100 pl-2">
                           {(reports.balanceSheet.equity.categories.retainedEarnings?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                             <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
                               <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                              <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                              <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                             </div>
                           ))}
                         </div>
@@ -3019,13 +3052,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       <div className="bg-purple-100/50 p-2.5 rounded-lg border border-purple-300">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-purple-950">
                           <span>Current Year Net Operating Profit / (Loss) YTD</span>
-                          <span className={`font-mono font-black ${
-                            Number(reports.balanceSheet.equity.categories.currentNetProfit?.balance ?? (reports?.incomeStatement?.netProfit || 0)) >= 0
-                              ? 'text-emerald-900'
-                              : 'text-rose-900'
-                          }`}>
-                            AED {Number(reports.balanceSheet.equity.categories.currentNetProfit?.balance ?? (reports?.incomeStatement?.netProfit || 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                          </span>
+                          {formatAccountingCurrency(reports.balanceSheet.equity.categories.currentNetProfit?.balance ?? (reports?.incomeStatement?.netProfit || 0))}
                         </div>
                       </div>
                     </div>
@@ -3034,7 +3061,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       {(reports?.balanceSheet?.equity?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
                         <div key={i} className="py-1.5 flex justify-between">
                           <span className="font-sans text-slate-800">{a.code ? `${a.code} - ` : ''}{a.name}</span>
-                          <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toFixed(2)}</span>
+                          <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
                         </div>
                       ))}
                     </div>
@@ -3060,10 +3087,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   </span>
                 </div>
                 <div className="font-bold text-slate-900 text-xs">
-                  Total Assets (AED {Number(reports?.balanceSheet?.assets?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}) = Liabilities & Equity (AED {Number(reports?.balanceSheet?.totalLiabilitiesAndEquity ?? ((reports?.balanceSheet?.liabilities?.total || 0) + (reports?.balanceSheet?.equity?.total || 0))).toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                  Total Assets ({formatAccountingCurrency(reports?.balanceSheet?.assets?.total)}) = Liabilities & Equity ({formatAccountingCurrency(reports?.balanceSheet?.totalLiabilitiesAndEquity ?? ((reports?.balanceSheet?.liabilities?.total || 0) + (reports?.balanceSheet?.equity?.total || 0)))})
                   {!reports?.balanceSheet?.balanced && Number(reports?.balanceSheet?.difference || 0) !== 0 && (
                     <span className="text-rose-700 font-black ml-2 font-sans">
-                      [Discrepancy: AED {Number(reports?.balanceSheet?.difference || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}]
+                      [Discrepancy: {formatAccountingCurrency(reports?.balanceSheet?.difference)}]
                     </span>
                   )}
                 </div>

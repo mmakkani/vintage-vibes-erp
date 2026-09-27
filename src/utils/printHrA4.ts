@@ -991,7 +991,7 @@ export function printEmployeeLoanA4({ loan, employee, schedule }: PrintEmployeeL
           <th>Disbursement Method</th>
           <td>${loan.disbursementMethod === 'CASH' ? 'Cash in Hand (Counter Payment)' : 'Bank Transfer (Direct Remittance)'}</td>
           <th>Disbursement Account</th>
-          <td style="font-family: monospace;">${loan.disbursementAccount || (loan.disbursementMethod === 'CASH' ? '1010-01 Cash in Hand' : '1020-01 Bank')}</td>
+          <td style="font-family: monospace;">${loan.disbursementAccount || (loan.disbursementMethod === 'CASH' ? '1110-01 Cash in Hand' : '1120-01 Bank')}</td>
         </tr>
         <tr style="background: #fef2f2;">
           <th style="color: #991b1b;">Total Repaid to Date</th>

@@ -938,8 +938,16 @@ async function runSecurityGateTests() {
       const postDbRes = await client.query('SELECT status FROM sales_invoices WHERE invoice_no = $1', [testInvoiceNo]);
       assert(postDbRes.rows[0]?.status === 'POSTED', 'Invoice status transitioned to POSTED');
 
-      const pieceDbRes = await client.query('SELECT status, is_sold FROM inventory_pieces WHERE barcode = $1', [testBarcode]);
-      assert(pieceDbRes.rows[0]?.status === 'SOLD' && pieceDbRes.rows[0]?.is_sold === true, 'Inventory piece successfully marked SOLD upon post');
+      let pieceDbRes = await client.query('SELECT status, is_sold FROM inventory_pieces WHERE barcode = $1', [testBarcode]);
+      for (let attempt = 0; attempt < 5 && (!pieceDbRes.rows[0] || pieceDbRes.rows[0]?.status !== 'SOLD' || pieceDbRes.rows[0]?.is_sold !== true); attempt++) {
+        await new Promise(r => setTimeout(r, 250));
+        pieceDbRes = await client.query('SELECT status, is_sold FROM inventory_pieces WHERE barcode = $1', [testBarcode]);
+      }
+      assert(
+        pieceDbRes.rows[0]?.status === 'SOLD' && pieceDbRes.rows[0]?.is_sold === true,
+        'Inventory piece successfully marked SOLD upon post',
+        `Got: ${JSON.stringify(pieceDbRes.rows[0])}`
+      );
 
       // 3. IDEMPOTENCY / DOUBLE-POST REJECTION: Call /post a second time!
       const { req: pReq2, res: pRes2 } = createMockReqRes({

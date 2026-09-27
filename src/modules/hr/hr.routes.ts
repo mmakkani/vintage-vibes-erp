@@ -1475,17 +1475,17 @@ hrRouter.post('/loans', async (req, res) => {
       const debitCoa = debitCoaRes.rows[0] || null;
 
       // 3. Resolve Credit Account (Cash or Bank)
-      const creditTarget = disbursementAccount || (disbursementMethod === 'CASH' ? '1010-01' : '1020-01');
+      const creditTarget = disbursementAccount || (disbursementMethod === 'CASH' ? '1110-01' : '1120-01');
       let creditChartRes = await client.query(
         `SELECT id, code, name FROM chart_of_accounts WHERE code = $1 OR id::text = $1 LIMIT 1;`,
         [creditTarget]
       );
       if (!creditChartRes.rows[0]) {
         creditChartRes = await client.query(
-          `SELECT id, code, name FROM chart_of_accounts WHERE code = '1020-01' OR code = '1010-01' LIMIT 1;`
+          `SELECT id, code, name FROM chart_of_accounts WHERE code = '1120-01' OR code = '1110-01' LIMIT 1;`
         );
       }
-      const creditChart = creditChartRes.rows[0] || { id: null, code: '1020-01', name: 'Cash in Bank (AED)' };
+      const creditChart = creditChartRes.rows[0] || { id: null, code: '1120-01', name: 'Cash in Bank (AED)' };
       const creditCoaRes = await client.query(
         `SELECT id, code, name FROM coa_accounts WHERE code = $1 LIMIT 1;`,
         [creditChart.code]
@@ -1799,16 +1799,16 @@ hrRouter.post('/loans/:id/post', async (req, res) => {
       const voucherDate = new Date().toISOString().slice(0, 10);
       const narration = `Staff Loan/Advance of AED ${principal.toFixed(2)} issued to ${loan.employee_name} (${loan.emp_code})`;
 
-      // Resolve Debit Target (5210-100 or 1135-01)
-      let debitChartRes = await client.query(`SELECT id, code, name FROM chart_of_accounts WHERE code = '5210-100' OR code = '1135-01' LIMIT 1;`);
-      const debitChart = debitChartRes.rows[0] || { id: null, code: '5210-100', name: 'SALARY EXPNSE' };
+      // Resolve Debit Target (1135-01 Staff Advance & Loan Receivables)
+      let debitChartRes = await client.query(`SELECT id, code, name FROM chart_of_accounts WHERE code = '1135-01' OR code = '5210-100' LIMIT 1;`);
+      const debitChart = debitChartRes.rows[0] || { id: null, code: '1135-01', name: 'Staff Advance & Loan Receivables' };
       const debitCoaRes = await client.query(`SELECT id, code, name FROM coa_accounts WHERE code = $1 LIMIT 1;`, [debitChart.code]);
       const debitCoa = debitCoaRes.rows[0] || null;
 
       // Resolve Credit Target (Bank or Cash)
-      const creditCode = isCash ? '1010-01' : (loan.disbursement_account || '1020-01');
+      const creditCode = isCash ? '1110-01' : (loan.disbursement_account && loan.disbursement_account !== '1020-01' && loan.disbursement_account !== '1010-01' ? loan.disbursement_account : '1120-01');
       let creditChartRes = await client.query(`SELECT id, code, name FROM chart_of_accounts WHERE code = $1 LIMIT 1;`, [creditCode]);
-      const creditChart = creditChartRes.rows[0] || { id: null, code: creditCode, name: isCash ? 'Cash in Hand (AED)' : 'Cash in Bank (AED)' };
+      const creditChart = creditChartRes.rows[0] || { id: null, code: creditCode, name: isCash ? 'Cash in Hand (POS / Counter)' : 'Cash in Bank (AED)' };
       const creditCoaRes = await client.query(`SELECT id, code, name FROM coa_accounts WHERE code = $1 LIMIT 1;`, [creditChart.code]);
       const creditCoa = creditCoaRes.rows[0] || null;
 
