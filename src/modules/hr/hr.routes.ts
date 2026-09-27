@@ -1454,11 +1454,14 @@ hrRouter.post('/loans', async (req, res) => {
           total_debit, total_credit, total_amount, status, created_by, is_auto,
           currency, exchange_rate, base_currency, foreign_total_amount, voucher_date, voucher_type
         ) VALUES (
-          $1, $2, $3, 'PAYMENT', $4, $4, $5, $5,
-          $6, $6, $6, 'POSTED', 'HR & Payroll Auto-Engine', true,
-          'AED', 1.0, 'AED', $6, $3, $7
+          $1, $2, $3, 'PAYMENT', $4, $5, $6, $7,
+          $8, $9, $10, 'POSTED', 'HR & Payroll Auto-Engine', true,
+          'AED', 1.0, 'AED', $11, $12, $13
         );
-      `, [voucherId, voucherNo, voucherDate, voucherNo, narration, principal, isCash ? 'CPV' : 'BPV']);
+      `, [
+        voucherId, voucherNo, voucherDate, voucherNo, voucherNo, narration, narration,
+        principal, principal, principal, principal, voucherDate, isCash ? 'CPV' : 'BPV'
+      ]);
 
       // 6. Insert into financial_vouchers
       await client.query(`
@@ -1467,11 +1470,14 @@ hrRouter.post('/loans', async (req, res) => {
           narration, total_debit, total_credit, total_amount, currency, exchange_rate,
           base_currency, foreign_total_amount, status, created_by, is_auto
         ) VALUES (
-          $1, $2, $3, $3, 'PAYMENT', $4, $2, $2,
-          $5, $6, $6, $6, 'AED', 1.0,
-          'AED', $6, 'POSTED', 'HR & Payroll Auto-Engine', true
+          $1, $2, $3, $4, 'PAYMENT', $5, $6, $7,
+          $8, $9, $10, $11, 'AED', 1.0,
+          'AED', $12, 'POSTED', 'HR & Payroll Auto-Engine', true
         );
-      `, [voucherId, voucherNo, voucherDate, isCash ? 'CPV' : 'BPV', narration, principal]);
+      `, [
+        voucherId, voucherNo, voucherDate, voucherDate, isCash ? 'CPV' : 'BPV', voucherNo, voucherNo,
+        narration, principal, principal, principal, principal
+      ]);
 
       // 7. Insert Lines in voucher_entries (Double-Entry Debit & Credit)
       const entryId1 = `vche-${Date.now()}-1`;
@@ -1485,12 +1491,12 @@ hrRouter.post('/loans', async (req, res) => {
           currency, exchange_rate, foreign_debit, foreign_credit
         ) VALUES (
           $1, $2, $3, $4, $5, $6,
-          $7, 0, $8, $8, $8, $9, NOW(),
-          'AED', 1.0, $7, 0
+          $7, 0, $8, $9, $10, $11, NOW(),
+          'AED', 1.0, $12, 0
         );
       `, [
         entryId1, voucherId, voucherNo, debitChart.id ? String(debitChart.id) : null, debitChart.code, debitChart.name,
-        principal, narration, voucherDate
+        principal, narration, narration, narration, voucherDate, principal
       ]);
 
       // Line 2: Credit Bank/Cash Account
@@ -1501,12 +1507,12 @@ hrRouter.post('/loans', async (req, res) => {
           currency, exchange_rate, foreign_debit, foreign_credit
         ) VALUES (
           $1, $2, $3, $4, $5, $6,
-          0, $7, $8, $8, $8, $9, NOW(),
-          'AED', 1.0, 0, $7
+          0, $7, $8, $9, $10, $11, NOW(),
+          'AED', 1.0, 0, $12
         );
       `, [
         entryId2, voucherId, voucherNo, creditChart.id ? String(creditChart.id) : null, creditChart.code, creditChart.name,
-        principal, narration, voucherDate
+        principal, narration, narration, narration, voucherDate, principal
       ]);
 
       // 8. General Ledger posting
@@ -1519,11 +1525,13 @@ hrRouter.post('/loans', async (req, res) => {
           debit, credit, balance, running_balance, description, narration,
           currency, exchange_rate, foreign_debit, foreign_credit, created_at
         ) VALUES 
-        ($1, $2, $2, $3, $4, $5, $6, $7, $8, 0, $8, $8, $9, $9, 'AED', 1.0, $8, 0, NOW()),
-        ($10, $2, $2, $3, $4, $11, $12, $13, 0, $8, -$8, -$8, $9, $9, 'AED', 1.0, 0, $8, NOW());
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, $12, $13, 'AED', 1.0, $14, 0, NOW()),
+        ($15, $16, $17, $18, $19, $20, $21, $22, 0, $23, $24, $25, $26, $27, 'AED', 1.0, 0, $28, NOW());
       `, [
-        glId1, voucherDate, voucherId, voucherNo, debitChart.id ? String(debitChart.id) : null, debitChart.code, debitChart.name, principal, narration,
-        glId2, creditChart.id ? String(creditChart.id) : null, creditChart.code, creditChart.name
+        glId1, voucherDate, voucherDate, voucherId, voucherNo, debitChart.id ? String(debitChart.id) : null, debitChart.code, debitChart.name,
+        principal, principal, principal, narration, narration, principal,
+        glId2, voucherDate, voucherDate, voucherId, voucherNo, creditChart.id ? String(creditChart.id) : null, creditChart.code, creditChart.name,
+        principal, -principal, -principal, narration, narration, principal
       ]);
 
       // 9. Ledgers table posting (requires valid coa_accounts.id for foreign key ledgers_account_id_fkey)
@@ -1534,8 +1542,8 @@ hrRouter.post('/loans', async (req, res) => {
             id, entry_date, date, voucher_id, voucher_no, account_id, account_code, account_name,
             debit, credit, balance, running_balance, description, narration,
             currency, exchange_rate, foreign_debit, foreign_credit, created_at
-          ) VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, 0, $8, $8, $9, $9, 'AED', 1.0, $8, 0, NOW());
-        `, [ledId1, voucherDate, voucherId, voucherNo, String(debitCoa.id), debitChart.code, debitChart.name, principal, narration]);
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, $12, $13, 'AED', 1.0, $14, 0, NOW());
+        `, [ledId1, voucherDate, voucherDate, voucherId, voucherNo, String(debitCoa.id), debitChart.code, debitChart.name, principal, principal, principal, narration, narration, principal]);
       }
 
       if (creditCoa?.id) {
@@ -1545,8 +1553,8 @@ hrRouter.post('/loans', async (req, res) => {
             id, entry_date, date, voucher_id, voucher_no, account_id, account_code, account_name,
             debit, credit, balance, running_balance, description, narration,
             currency, exchange_rate, foreign_debit, foreign_credit, created_at
-          ) VALUES ($1, $2, $2, $3, $4, $5, $6, $7, 0, $8, -$8, -$8, $9, $9, 'AED', 1.0, 0, $8, NOW());
-        `, [ledId2, voucherDate, voucherId, voucherNo, String(creditCoa.id), creditChart.code, creditChart.name, principal, narration]);
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, $11, $12, $13, 'AED', 1.0, 0, $14, NOW());
+        `, [ledId2, voucherDate, voucherDate, voucherId, voucherNo, String(creditCoa.id), creditChart.code, creditChart.name, principal, -principal, -principal, narration, narration, principal]);
       }
 
       // 10. Synchronize Account Balances
