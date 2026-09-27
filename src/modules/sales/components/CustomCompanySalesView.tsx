@@ -966,6 +966,11 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   // POST & Dispatch (Deduct Inventory, Create Double-Entry Journal Voucher)
   const handlePostInvoice = async () => {
+    if (status === 'POSTED') {
+      showMsg(`Invoice ${invoiceNo} is already POSTED and locked.`, 'error');
+      return;
+    }
+
     let activeInvoiceId = invoiceId;
     let activeInvoiceNo = invoiceNo;
 
@@ -1150,9 +1155,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         });
       }
 
-      // 3. Dispatch Journal Voucher to Finance Module
+      // 3. Dispatch Journal Voucher to Finance Module (Ensure zero duplicate vouchers)
       const vDebitSum = Number(voucherLines.reduce((sum, l) => sum + (Number(l.debit) || 0), 0).toFixed(2));
       const vCreditSum = Number(voucherLines.reduce((sum, l) => sum + (Number(l.credit) || 0), 0).toFixed(2));
+
+      // Idempotency: Purge any pre-existing voucher for this document to prevent duplicate entries
+      await FinanceService.cascadeDeleteVouchersForDocument(genInvoiceNo).catch(() => {});
 
       await FinanceService.addVoucher({
         date: invoiceDate,
@@ -1316,6 +1324,11 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     const clientName = inv.customerName || 'Wholesale Client';
     const totalVal = Number(inv.totalAmount || inv.grandTotalAED || 0);
 
+    if (inv.status === 'POSTED') {
+      showMsg(`Invoice ${invNo} is already POSTED and locked.`, 'error');
+      return;
+    }
+
     const confirmPost = window.confirm(
       `POST & DISPATCH Invoice ${invNo} directly from table?\n\n` +
       `• Customer: ${clientName}\n` +
@@ -1328,6 +1341,9 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
     try {
       const targetKey = invId || invNo;
+
+      // Idempotency: Purge any pre-existing voucher for this document to prevent duplicate entries
+      await FinanceService.cascadeDeleteVouchersForDocument(invNo).catch(() => {});
 
       // 1. Call backend post API
       const res = await fetch(`/api/sales/custom-b2b/${encodeURIComponent(targetKey)}/post`, {
