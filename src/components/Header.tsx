@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CompanyProfile, CurrencyItem } from '../modules/setup/setup.types.ts';
 import { User } from '../modules/auth/auth.types.ts';
 import { MessageSquare, Shield, RefreshCw, Sparkles, Building2, MapPin, ReceiptText, LogOut, Users, Smartphone, Laptop, Tv } from 'lucide-react';
