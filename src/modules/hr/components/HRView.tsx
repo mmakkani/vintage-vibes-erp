@@ -5,6 +5,7 @@ import { NumericInput } from '../../../components/NumericInput.tsx';
 import { QuickAttendanceSummary } from './QuickAttendanceSummary.tsx';
 import { DocumentVault } from './DocumentVault.tsx';
 import { AIOcrScannerModal } from './AIOcrScannerModal.tsx';
+import { DocumentCropModal } from './DocumentCropModal.tsx';
 import { HROcrLogsView } from './HROcrLogsView.tsx';
 import { AttendanceModal } from './AttendanceModal.tsx';
 import { PayrollRow } from './PayrollRow.tsx';
@@ -55,6 +56,7 @@ import {
   Bell,
   AlertCircle,
   Search,
+  Crop,
   Loader2
 } from 'lucide-react';
 
@@ -194,6 +196,94 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     }
   };
 
+  // Precision Interactive Crop Modal State
+  const [cropModalState, setCropModalState] = useState<{
+    isOpen: boolean;
+    imageUrl: string;
+    docType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA';
+    fieldKey: keyof typeof defaultEmpForm;
+  }>({
+    isOpen: false,
+    imageUrl: '',
+    docType: 'EMIRATES_ID',
+    fieldKey: 'idFrontImageUrl'
+  });
+
+  const [isRescanningDoc, setIsRescanningDoc] = useState<{ [key: string]: boolean }>({});
+
+  const handleOpenCropModal = (fieldKey: keyof typeof defaultEmpForm, docType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA') => {
+    const img = empForm[fieldKey] as string;
+    if (!img) {
+      showMsg('Please upload a document image first to crop.', 'error');
+      return;
+    }
+    setCropModalState({
+      isOpen: true,
+      imageUrl: img,
+      docType,
+      fieldKey
+    });
+  };
+
+  const handleApplyCrop = (croppedUrl: string) => {
+    setEmpForm(prev => ({ ...prev, [cropModalState.fieldKey]: croppedUrl }));
+    setCropModalState(prev => ({ ...prev, isOpen: false }));
+    showMsg('Document cropped and updated successfully! Click "Re-Scan with AI" to refresh fields.');
+  };
+
+  const handleRescanDocument = async (fieldKey: keyof typeof defaultEmpForm, docType: 'EMIRATES_ID' | 'PASSPORT' | 'RESIDENCY_VISA') => {
+    const img = empForm[fieldKey] as string;
+    if (!img) {
+      showMsg('No document image found to scan.', 'error');
+      return;
+    }
+    setIsRescanningDoc(prev => ({ ...prev, [fieldKey]: true }));
+    try {
+      const { executeDocumentOcr } = await import('../../../utils/geminiOcrService.ts');
+      const res = await executeDocumentOcr({
+        documentType: docType,
+        imageBase64: img
+      });
+
+      if (docType === 'PASSPORT') {
+        setEmpForm(prev => ({
+          ...prev,
+          passportNo: res.passportNo || prev.passportNo,
+          passportCountry: res.passportCountry || prev.passportCountry,
+          passportIssueDate: res.passportIssueDate || prev.passportIssueDate,
+          passportExpiry: res.passportExpiry || prev.passportExpiry
+        }));
+        showMsg('Passport details extracted successfully from cropped image!');
+      } else if (docType === 'RESIDENCY_VISA') {
+        setEmpForm(prev => ({
+          ...prev,
+          residencyCardNo: res.residencyCardNo || prev.residencyCardNo,
+          uidNo: res.uidNo || prev.uidNo,
+          residencyIssueDate: res.residencyIssueDate || prev.residencyIssueDate,
+          residencyExpiryDate: res.residencyExpiryDate || prev.residencyExpiryDate,
+          residencyProfession: res.residencyProfession || prev.residencyProfession,
+          residencySponsor: res.residencySponsor || prev.residencySponsor
+        }));
+        showMsg('Residency Visa details extracted successfully from cropped image!');
+      } else if (docType === 'EMIRATES_ID') {
+        setEmpForm(prev => ({
+          ...prev,
+          name: res.name || prev.name,
+          nameArabic: res.nameArabic || prev.nameArabic,
+          emiratesId: res.emiratesId || prev.emiratesId,
+          idCardNo: res.idCardNo || prev.idCardNo,
+          emiratesIdExpiry: res.emiratesIdExpiry || prev.emiratesIdExpiry,
+          dob: res.dob || prev.dob,
+          nationality: res.nationality || prev.nationality
+        }));
+        showMsg('Emirates ID details extracted successfully from cropped image!');
+      }
+    } catch (err: any) {
+      showMsg(err?.message || 'OCR re-scan failed. Please ensure the cropped image is clear.', 'error');
+    } finally {
+      setIsRescanningDoc(prev => ({ ...prev, [fieldKey]: false }));
+    }
+  };
 
   // Month selector
   const [selectedMonth, setSelectedMonth] = useState('2026-09');
@@ -3152,11 +3242,22 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       <button
                         type="button"
                         onClick={() => frontIdRef.current?.click()}
-                        className="w-full py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1"
+                        className="flex-1 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer"
                       >
                         <Camera className="w-3 h-3" />
                         <span>{empForm.idFrontImageUrl ? 'Change Front Photo' : 'Upload Front Photo'}</span>
                       </button>
+                      {empForm.idFrontImageUrl && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenCropModal('idFrontImageUrl', 'EMIRATES_ID')}
+                          className="px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-[10px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                          title="Fine-tune Front ID Card crop"
+                        >
+                          <Crop className="w-3 h-3 text-blue-600" />
+                          <span>Crop</span>
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -3205,11 +3306,22 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       <button
                         type="button"
                         onClick={() => backIdRef.current?.click()}
-                        className="w-full py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1"
+                        className="flex-1 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer"
                       >
                         <Camera className="w-3 h-3" />
                         <span>{empForm.idBackImageUrl ? 'Change Back Photo' : 'Upload Back Photo'}</span>
                       </button>
+                      {empForm.idBackImageUrl && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenCropModal('idBackImageUrl', 'EMIRATES_ID')}
+                          className="px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-[10px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                          title="Fine-tune Back ID Card crop"
+                        >
+                          <Crop className="w-3 h-3 text-indigo-600" />
+                          <span>Crop</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -3290,51 +3402,95 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 </div>
 
                 {/* Passport Bio Photo Card */}
-                <div className="p-2.5 rounded-lg bg-white border border-slate-200 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-16 h-12 rounded bg-slate-900/5 border border-slate-300 overflow-hidden flex items-center justify-center shrink-0 relative">
-                      {empForm.passportImageUrl ? (
-                        <>
-                          <img src={empForm.passportImageUrl} alt="Passport" className="w-full h-full object-contain p-0.5" />
-                          <div className="absolute top-0.5 left-0.5 bg-emerald-600 text-white text-[7px] font-bold px-1 rounded">✓</div>
-                        </>
-                      ) : (
-                        <FileText className="w-5 h-5 text-slate-400" />
-                      )}
-                    </div>
-                    <div>
-                      <div className="font-bold text-[10px] text-slate-700 uppercase">Passport Bio Page Scan</div>
-                      <div className="text-[10px] text-slate-400">
-                        {empForm.passportImageUrl ? 'Document image attached' : 'No document image uploaded'}
+                <div className="p-3 rounded-lg bg-white border border-indigo-200/80 shadow-2xs space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-20 h-14 rounded-md bg-slate-900/5 border border-indigo-200 overflow-hidden flex items-center justify-center shrink-0 relative shadow-2xs">
+                        {empForm.passportImageUrl ? (
+                          <>
+                            <img src={empForm.passportImageUrl} alt="Passport Bio Page" className="w-full h-full object-contain p-0.5" />
+                            <div className="absolute top-0.5 left-0.5 bg-emerald-600 text-white text-[7px] font-bold px-1 rounded shadow-2xs">✓</div>
+                          </>
+                        ) : (
+                          <FileText className="w-6 h-6 text-indigo-300" />
+                        )}
+                      </div>
+                      <div>
+                        <div className="font-bold text-[11px] text-slate-800 uppercase flex items-center gap-1.5">
+                          <span>Passport Bio Page Scan</span>
+                          {empForm.passportImageUrl && (
+                            <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded border border-emerald-300">
+                              Attached
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {empForm.passportImageUrl 
+                            ? 'Crop to remove desk/borders and re-scan for accurate dates' 
+                            : 'Upload clear photo of passport bio page'}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-2">
-                    <input
-                      ref={passportDocRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={e => handlePhotoUpload(e, 'passportImageUrl')}
-                      className="hidden"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => passportDocRef.current?.click()}
-                      className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center gap-1"
-                    >
-                      <Upload className="w-3 h-3" />
-                      <span>{empForm.passportImageUrl ? 'Change Passport Image' : 'Upload Passport Image'}</span>
-                    </button>
-                    {empForm.passportImageUrl && (
+                    <div className="flex items-center flex-wrap gap-1.5">
+                      <input
+                        ref={passportDocRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={e => handlePhotoUpload(e, 'passportImageUrl')}
+                        className="hidden"
+                      />
                       <button
                         type="button"
-                        onClick={() => setEmpForm({ ...empForm, passportImageUrl: '' })}
-                        className="text-[10px] text-rose-600 hover:underline px-1"
+                        onClick={() => passportDocRef.current?.click()}
+                        className="px-2.5 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center gap-1 transition-colors cursor-pointer"
                       >
-                        Remove
+                        <Upload className="w-3 h-3 text-slate-600" />
+                        <span>{empForm.passportImageUrl ? 'Change Image' : 'Upload Image'}</span>
                       </button>
-                    )}
+
+                      {empForm.passportImageUrl && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCropModal('passportImageUrl', 'PASSPORT')}
+                            className="px-2.5 py-1.5 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-[10px] flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                            title="Fine-tune Passport crop to eliminate desk/borders"
+                          >
+                            <Crop className="w-3 h-3 text-indigo-600" />
+                            <span>Crop / Adjust</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRescanDocument('passportImageUrl', 'PASSPORT')}
+                            disabled={isRescanningDoc['passportImageUrl']}
+                            className="px-2.5 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] flex items-center gap-1 transition-colors cursor-pointer shadow-2xs disabled:opacity-50"
+                            title="Extract Passport Number, Country and Dates via AI OCR"
+                          >
+                            {isRescanningDoc['passportImageUrl'] ? (
+                              <>
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                <span>Scanning...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-3 h-3 text-amber-300" />
+                                <span>Re-Scan with AI</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setEmpForm({ ...empForm, passportImageUrl: '' })}
+                            className="text-[10px] text-rose-600 hover:underline px-1 cursor-pointer"
+                          >
+                            Remove
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3436,51 +3592,95 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 </div>
 
                 {/* Residency Document Photo Card */}
-                <div className="p-2.5 rounded-lg bg-white border border-slate-200 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-16 h-12 rounded bg-slate-900/5 border border-slate-300 overflow-hidden flex items-center justify-center shrink-0 relative">
-                      {empForm.residencyImageUrl ? (
-                        <>
-                          <img src={empForm.residencyImageUrl} alt="Residency" className="w-full h-full object-contain p-0.5" />
-                          <div className="absolute top-0.5 left-0.5 bg-emerald-600 text-white text-[7px] font-bold px-1 rounded">✓</div>
-                        </>
-                      ) : (
-                        <FileText className="w-5 h-5 text-slate-400" />
-                      )}
-                    </div>
-                    <div>
-                      <div className="font-bold text-[10px] text-slate-700 uppercase">Residency Visa / Card Document</div>
-                      <div className="text-[10px] text-slate-400">
-                        {empForm.residencyImageUrl ? 'Residency file attached' : 'No document image uploaded'}
+                <div className="p-3 rounded-lg bg-white border border-emerald-200/80 shadow-2xs space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-20 h-14 rounded-md bg-slate-900/5 border border-emerald-200 overflow-hidden flex items-center justify-center shrink-0 relative shadow-2xs">
+                        {empForm.residencyImageUrl ? (
+                          <>
+                            <img src={empForm.residencyImageUrl} alt="Residency Visa" className="w-full h-full object-contain p-0.5" />
+                            <div className="absolute top-0.5 left-0.5 bg-emerald-600 text-white text-[7px] font-bold px-1 rounded shadow-2xs">✓</div>
+                          </>
+                        ) : (
+                          <FileText className="w-6 h-6 text-emerald-300" />
+                        )}
+                      </div>
+                      <div>
+                        <div className="font-bold text-[11px] text-slate-800 uppercase flex items-center gap-1.5">
+                          <span>UAE Residency Visa / Unified Registry Scan</span>
+                          {empForm.residencyImageUrl && (
+                            <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded border border-emerald-300">
+                              Attached
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {empForm.residencyImageUrl 
+                            ? 'Crop to isolate visa sticker and re-scan for UID / File No' 
+                            : 'Upload photo of residency visa or unified number document'}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-2">
-                    <input
-                      ref={residencyDocRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={e => handlePhotoUpload(e, 'residencyImageUrl')}
-                      className="hidden"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => residencyDocRef.current?.click()}
-                      className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center gap-1"
-                    >
-                      <Upload className="w-3 h-3" />
-                      <span>{empForm.residencyImageUrl ? 'Change Visa Photo' : 'Upload Visa Photo'}</span>
-                    </button>
-                    {empForm.residencyImageUrl && (
+                    <div className="flex items-center flex-wrap gap-1.5">
+                      <input
+                        ref={residencyDocRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={e => handlePhotoUpload(e, 'residencyImageUrl')}
+                        className="hidden"
+                      />
                       <button
                         type="button"
-                        onClick={() => setEmpForm({ ...empForm, residencyImageUrl: '' })}
-                        className="text-[10px] text-rose-600 hover:underline px-1"
+                        onClick={() => residencyDocRef.current?.click()}
+                        className="px-2.5 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] flex items-center gap-1 transition-colors cursor-pointer"
                       >
-                        Remove
+                        <Upload className="w-3 h-3 text-slate-600" />
+                        <span>{empForm.residencyImageUrl ? 'Change Image' : 'Upload Image'}</span>
                       </button>
-                    )}
+
+                      {empForm.residencyImageUrl && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCropModal('residencyImageUrl', 'RESIDENCY_VISA')}
+                            className="px-2.5 py-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[10px] flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                            title="Fine-tune Visa crop to eliminate desk/borders"
+                          >
+                            <Crop className="w-3 h-3 text-emerald-600" />
+                            <span>Crop / Adjust</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRescanDocument('residencyImageUrl', 'RESIDENCY_VISA')}
+                            disabled={isRescanningDoc['residencyImageUrl']}
+                            className="px-2.5 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] flex items-center gap-1 transition-colors cursor-pointer shadow-2xs disabled:opacity-50"
+                            title="Extract Residency File No, UID and Dates via AI OCR"
+                          >
+                            {isRescanningDoc['residencyImageUrl'] ? (
+                              <>
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                <span>Scanning...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-3 h-3 text-amber-300" />
+                                <span>Re-Scan with AI</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setEmpForm({ ...empForm, residencyImageUrl: '' })}
+                            className="text-[10px] text-rose-600 hover:underline px-1 cursor-pointer"
+                          >
+                            Remove
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3599,6 +3799,17 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         onClose={() => setShowAIOcrModal(false)}
         onApplyData={handleApplyOcrData}
       />
+
+      {/* PRECISION INTERACTIVE DOCUMENT CROP MODAL */}
+      {cropModalState.isOpen && (
+        <DocumentCropModal
+          isOpen={cropModalState.isOpen}
+          onClose={() => setCropModalState(prev => ({ ...prev, isOpen: false }))}
+          imageUrl={cropModalState.imageUrl}
+          docType={cropModalState.docType}
+          onApplyCrop={handleApplyCrop}
+        />
+      )}
 
       {/* INDIVIDUAL PAYSLIP MODAL */}
       {selectedSlip && (
