@@ -1779,6 +1779,13 @@ export default async function handler(req: any, res: any) {
       const client = await getPgClient();
       if (client) {
         try {
+          const statusCheck = await client.query(`
+            SELECT status FROM public.employees WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1 LIMIT 1;
+          `, [id]);
+          if (statusCheck.rows[0]?.status === 'POSTED') {
+            return res.status(400).json({ success: false, error: 'Cannot delete a POSTED employee record. Unpost to DRAFT first.' });
+          }
+
           // Strict Soft Delete on public.employees using exact id (UUID)
           // Table Isolation: Absolutely DO NOT modify or delete records in:
           // public.employee_attendance, public.staff_attendance, public.employee_payroll, public.payroll_records, public.employee_documents, public.hr_attendance_sheets
@@ -1825,6 +1832,13 @@ export default async function handler(req: any, res: any) {
       const client = await getPgClient();
       if (client) {
         try {
+          const statusCheck = await client.query(`
+            SELECT status FROM public.employees WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1 LIMIT 1;
+          `, [id]);
+          if (statusCheck.rows[0]?.status === 'POSTED') {
+            return res.status(400).json({ success: false, error: 'Cannot modify a POSTED employee record. Unpost to DRAFT first to make changes.' });
+          }
+
           const sets: string[] = [];
           const values: any[] = [];
           let idx = 1;

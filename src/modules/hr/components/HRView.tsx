@@ -125,6 +125,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   const [showEmpModal, setShowEmpModal] = useState(false);
   const [editingEmpId, setEditingEmpId] = useState<string | null>(null);
   const [isSubmittingEmp, setIsSubmittingEmp] = useState(false);
+  const [isViewOnlyModal, setIsViewOnlyModal] = useState(false);
 
   // AI OCR Scanner Modal state
   const [showAIOcrModal, setShowAIOcrModal] = useState(false);
@@ -1500,6 +1501,11 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
   };
 
   const handleDeleteEmployee = async (id: string) => {
+    const target = employees.find(e => e.id === id || e.empCode === id);
+    if (target?.status === 'POSTED') {
+      alert('Cannot delete a POSTED employee record. Please Unpost to DRAFT first.');
+      return;
+    }
     if (!confirm('Are you sure you want to delete this employee record?')) return;
     try {
       // 1. Send exact public.employees.id (UUID) to the backend
@@ -1760,6 +1766,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
             <button
               id="btn-create-employee"
               onClick={() => {
+                setIsViewOnlyModal(false);
                 setEditingEmpId(null);
                 setEmpForm(defaultEmpForm);
                 setRawDocImages({});
@@ -2636,16 +2643,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                       >
                         <Printer className="w-3.5 h-3.5" />
                       </button>
+                      {/* 1. Eye View Button (Always accessible in Read-Only Mode) */}
                       <button
+                        type="button"
                         onClick={() => {
+                          setIsViewOnlyModal(true);
                           setEditingEmpId(emp.id);
                           setEmpForm({
-                            name: emp.name,
-                            nameArabic: emp.nameArabic || '',
-                            designation: emp.designation,
-                            department: emp.department,
+                            name: emp.name || emp.fullName || '',
+                            nameArabic: emp.nameArabic || (emp as any).name_arabic || (emp as any).arabic_name || '',
+                            designation: emp.designation || 'Staff',
+                            department: emp.department || 'Operations',
                             nationality: emp.nationality || 'United Arab Emirates',
-                            gender: emp.gender || 'MALE',
+                            gender: (emp.gender || 'MALE') as any,
                             dob: emp.dob || '1995-01-01',
                             baseSalary: emp.baseSalary,
                             housingAllow: emp.housingAllow,
@@ -2679,12 +2689,70 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                           });
                           setShowEmpModal(true);
                         }}
-                        className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
-                        title="Edit Employee"
+                        className="p-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors"
+                        title="View Employee Profile (Read-Only)"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* 2. Edit Button (Strictly Disabled if status === 'POSTED') */}
+                      <button
+                        type="button"
+                        disabled={emp.status === 'POSTED'}
+                        onClick={() => {
+                          if (emp.status === 'POSTED') {
+                            alert('This employee record is POSTED. Click Unpost first to make edits.');
+                            return;
+                          }
+                          setIsViewOnlyModal(false);
+                          setEditingEmpId(emp.id);
+                          setEmpForm({
+                            name: emp.name || emp.fullName || '',
+                            nameArabic: emp.nameArabic || (emp as any).name_arabic || (emp as any).arabic_name || '',
+                            designation: emp.designation || 'Staff',
+                            department: emp.department || 'Operations',
+                            nationality: emp.nationality || 'United Arab Emirates',
+                            gender: (emp.gender || 'MALE') as any,
+                            dob: emp.dob || '1995-01-01',
+                            baseSalary: emp.baseSalary,
+                            housingAllow: emp.housingAllow,
+                            transportAllow: emp.transportAllow,
+                            workingHoursPerDay: emp.workingHoursPerDay,
+                            joiningDate: emp.joiningDate,
+                            emiratesId: emp.emiratesId || '',
+                            idCardNo: emp.idCardNo || '',
+                            emiratesIdExpiry: emp.emiratesIdExpiry || '',
+                            idFrontImageUrl: emp.idFrontImageUrl || '',
+                            idBackImageUrl: emp.idBackImageUrl || '',
+                            passportNo: emp.passportNo || '',
+                            passportCountry: emp.passportCountry || emp.nationality || 'United Arab Emirates',
+                            passportIssueDate: emp.passportIssueDate || '',
+                            passportExpiry: emp.passportExpiry || '',
+                            passportImageUrl: emp.passportImageUrl || '',
+                            residencyCardNo: emp.residencyCardNo || '',
+                            uidNo: emp.uidNo || '',
+                            residencyProfession: emp.residencyProfession || emp.designation,
+                            residencySponsor: emp.residencySponsor || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+                            residencyIssueDate: emp.residencyIssueDate || '',
+                            residencyExpiryDate: emp.residencyExpiryDate || '',
+                            residencyImageUrl: emp.residencyImageUrl || '',
+                            photoUrl: emp.photoUrl || ''
+                          });
+                          setRawDocImages({
+                            idFrontImageUrl: emp.idFrontImageUrl || '',
+                            idBackImageUrl: emp.idBackImageUrl || '',
+                            passportImageUrl: emp.passportImageUrl || (emp as any).passport_image_url || '',
+                            residencyImageUrl: emp.residencyImageUrl || (emp as any).residency_image_url || ''
+                          });
+                          setShowEmpModal(true);
+                        }}
+                        className={`p-1 rounded transition-colors ${emp.status === 'POSTED' ? 'bg-slate-100 text-slate-300 cursor-not-allowed opacity-50' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                        title={emp.status === 'POSTED' ? 'Locked (POSTED). Click Unpost to edit.' : 'Edit Employee'}
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
 
+                      {/* 3. Post / Unpost Buttons */}
                       {emp.status !== 'POSTED' && (
                         <button
                           onClick={() => handlePostEmployee(emp.id)}
@@ -2703,10 +2771,19 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                         </button>
                       )}
 
+                      {/* 4. Delete Button (Strictly Disabled if status === 'POSTED') */}
                       <button
-                        onClick={() => handleDeleteEmployee(emp.id)}
-                        className="p-1 rounded bg-rose-100 hover:bg-rose-200 text-rose-700"
-                        title="Delete Employee"
+                        type="button"
+                        disabled={emp.status === 'POSTED'}
+                        onClick={() => {
+                          if (emp.status === 'POSTED') {
+                            alert('Cannot delete a POSTED employee. Unpost to DRAFT first.');
+                            return;
+                          }
+                          handleDeleteEmployee(emp.id);
+                        }}
+                        className={`p-1 rounded transition-colors ${emp.status === 'POSTED' ? 'bg-slate-100 text-slate-300 cursor-not-allowed opacity-50' : 'bg-rose-100 hover:bg-rose-200 text-rose-700'}`}
+                        title={emp.status === 'POSTED' ? 'Cannot delete a POSTED employee. Unpost first.' : 'Delete Employee'}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -3007,14 +3084,14 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-3 bg-white">
               <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-lg bg-[#0056b3] text-white flex items-center justify-center font-bold shadow-xs">
-                  <Shield className="w-5 h-5" />
+                <div className={`w-9 h-9 rounded-lg text-white flex items-center justify-center font-bold shadow-xs ${isViewOnlyModal ? 'bg-amber-600' : 'bg-[#0056b3]'}`}>
+                  {isViewOnlyModal ? <Lock className="w-5 h-5" /> : <Shield className="w-5 h-5" />}
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 tracking-wider flex items-center gap-2">
-                    <span>{editingEmpId ? 'Edit UAE Employee Legal Record' : 'Register New UAE Employee & Legal Documents'}</span>
-                    <span className="text-[10px] bg-blue-100 text-blue-800 font-semibold px-2 py-0.5 rounded border border-blue-200">
-                      UAE Standard Format
+                    <span>{isViewOnlyModal ? 'View UAE Employee Legal Profile' : (editingEmpId ? 'Edit UAE Employee Legal Record' : 'Register New UAE Employee & Legal Documents')}</span>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${isViewOnlyModal ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-blue-100 text-blue-800 border-blue-200'}`}>
+                      {isViewOnlyModal ? 'POSTED (Read-Only Mode)' : 'UAE Standard Format'}
                     </span>
                   </h3>
                   <p className="text-[10px] text-slate-500 uppercase">
@@ -3025,35 +3102,60 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
               <button onClick={() => !isSubmittingEmp && setShowEmpModal(false)} disabled={isSubmittingEmp} className="text-slate-400 hover:text-slate-700 font-bold p-1 disabled:opacity-50">✕</button>
             </div>
 
-            {/* AI OCR Scanner Quick Action Bar */}
-            <div className="mb-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-3 flex flex-wrap items-center justify-between gap-2.5">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0">
-                  <Scan className="w-4 h-4 animate-pulse" />
-                </div>
-                <div>
-                  <div className="font-bold text-blue-950 text-xs flex items-center gap-1.5">
-                    <span>AI OCR Live Document Scanner (Gemini Vision)</span>
-                    <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded border border-emerald-300">
-                      Active
-                    </span>
+            {/* Read-Only Mode Banner if isViewOnlyModal */}
+            {isViewOnlyModal && (
+              <div className="mb-3 bg-amber-50 border border-amber-300 rounded-lg p-3 flex items-center justify-between gap-3 text-amber-900 shadow-2xs">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0">
+                    <Lock className="w-4 h-4" />
                   </div>
-                  <p className="text-[10px] text-blue-700">
-                    Scan ID Front & Back photos, Passport or Residency card to auto-extract all fields.
-                  </p>
+                  <div>
+                    <div className="font-bold text-xs flex items-center gap-1.5">
+                      <span>Employee Record is POSTED & Locked</span>
+                      <span className="text-[9px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.2 rounded border border-amber-400">
+                        Read-Only View
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-amber-800">
+                      All inputs and document uploads are locked against modification. To edit or update this employee, please click <strong>Unpost</strong> in the employee table first.
+                    </p>
+                  </div>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={handleOpenOcrScanner}
-                className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold uppercase tracking-wider text-[11px] shadow-sm flex items-center gap-1.5 transition-all"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                <span>Scan ID / Documents with OCR</span>
-              </button>
-            </div>
+            )}
+
+            {/* AI OCR Scanner Quick Action Bar - Hidden in View-Only Mode */}
+            {!isViewOnlyModal && (
+              <div className="mb-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-3 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0">
+                    <Scan className="w-4 h-4 animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-blue-950 text-xs flex items-center gap-1.5">
+                      <span>AI OCR Live Document Scanner (Gemini Vision)</span>
+                      <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded border border-emerald-300">
+                        Active
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-blue-700">
+                      Scan ID Front & Back photos, Passport or Residency card to auto-extract all fields.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleOpenOcrScanner}
+                  className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold uppercase tracking-wider text-[11px] shadow-sm flex items-center gap-1.5 transition-all"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Scan ID / Documents with OCR</span>
+                </button>
+              </div>
+            )}
 
             <form onSubmit={handleSaveEmployee} className="space-y-4 overflow-y-auto flex-1 pr-1">
+              <fieldset disabled={isViewOnlyModal} className="space-y-4">
 
               {/* SECTION 1: PERSONAL PROFILE & EMPLOYMENT INFORMATION */}
               <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
@@ -3851,13 +3953,21 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   <span className="text-slate-400">Calculated strictly as per UAE Labour Law 30-day base calendar.</span>
                 </div>
               </div>
+              </fieldset>
 
               {/* Form Actions */}
               <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-3">
                 <div className="text-[10px] text-slate-500">
-                  All legal identifiers and photos are encrypted and synced to Document Vault.
+                  {isViewOnlyModal ? (
+                    <span className="text-amber-800 font-medium flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-amber-600" />
+                      Locked (POSTED) — All fields read-only. Unpost from table to enable edits.
+                    </span>
+                  ) : (
+                    <span>All legal identifiers and photos are encrypted and synced to Document Vault.</span>
+                  )}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
                   {editingEmpId && (
                     <button
                       type="button"
@@ -3878,22 +3988,24 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     disabled={isSubmittingEmp}
                     className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px] disabled:opacity-50"
                   >
-                    Cancel
+                    {isViewOnlyModal ? 'Close' : 'Cancel'}
                   </button>
-                  <button
-                    type="submit"
-                    disabled={isSubmittingEmp}
-                    className="px-5 py-2 rounded-lg bg-[#0056b3] hover:bg-[#004494] text-white font-bold uppercase tracking-wider text-[11px] shadow-md hover:shadow-lg transition-all disabled:opacity-50 flex items-center gap-2"
-                  >
-                    {isSubmittingEmp ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>{editingEmpId ? 'Updating...' : 'Saving...'}</span>
-                      </>
-                    ) : (
-                      <span>{editingEmpId ? 'Update Employee Record' : 'Save Employee & Legal IDs'}</span>
-                    )}
-                  </button>
+                  {!isViewOnlyModal && (
+                    <button
+                      type="submit"
+                      disabled={isSubmittingEmp}
+                      className="px-5 py-2 rounded-lg bg-[#0056b3] hover:bg-[#004494] text-white font-bold uppercase tracking-wider text-[11px] shadow-md hover:shadow-lg transition-all disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {isSubmittingEmp ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>{editingEmpId ? 'Updating...' : 'Saving...'}</span>
+                        </>
+                      ) : (
+                        <span>{editingEmpId ? 'Update Employee Record' : 'Save Employee & Legal IDs'}</span>
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
             </form>

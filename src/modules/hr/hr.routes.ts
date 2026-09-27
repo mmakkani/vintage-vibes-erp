@@ -389,6 +389,13 @@ hrRouter.put('/employees/:id', async (req, res) => {
   try {
     const emp = req.body;
     const updated = await withDb(async (client) => {
+      const statusCheck = await client.query(`
+        SELECT status FROM public.employees WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1 LIMIT 1;
+      `, [id]);
+      if (statusCheck.rows[0]?.status === 'POSTED') {
+        throw new Error('Cannot edit a POSTED employee record. Unpost to DRAFT first.');
+      }
+
       const sets: string[] = [];
       const values: any[] = [];
       let idx = 1;
@@ -651,6 +658,13 @@ hrRouter.delete('/employees/:id', async (req, res) => {
   const now = new Date().toISOString();
   try {
     await withDb(async (client) => {
+      const statusCheck = await client.query(`
+        SELECT status FROM public.employees WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1 LIMIT 1;
+      `, [id]);
+      if (statusCheck.rows[0]?.status === 'POSTED') {
+        throw new Error('Cannot delete a POSTED employee record. Unpost to DRAFT first.');
+      }
+
       // Strict Soft Delete on public.employees using exact id (UUID)
       // Table Isolation: Absolutely DO NOT modify or delete records in:
       // public.employee_attendance, public.staff_attendance, public.employee_payroll, public.payroll_records, public.employee_documents, public.hr_attendance_sheets
