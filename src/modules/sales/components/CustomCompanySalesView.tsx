@@ -57,6 +57,18 @@ interface CustomCompanySalesViewProps {
   invoices?: SalesInvoice[];
 }
 
+/**
+ * Safely awaits a Supabase PostgREST query builder without invoking unhandled `.catch is not a function`
+ * (Supabase PostgrestBuilder implements PromiseLike with .then, not native Promise .catch).
+ */
+const safeSupabaseCall = async (queryBuilder: any): Promise<void> => {
+  try {
+    await queryBuilder;
+  } catch (err) {
+    console.warn('Supabase query note:', err);
+  }
+};
+
 export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   clients: propClients,
   currentUserRole = 'ADMIN',
@@ -947,7 +959,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       // 3. Mark piece barcodes as RESERVED (not SOLD, no ledger entries)
       const pieceBarcodes = (items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
       if (pieceBarcodes.length > 0) {
-        await supabase.from('inventory_pieces').update({ is_sold: false, status: 'RESERVED' }).in('barcode', pieceBarcodes).catch(() => {});
+        await safeSupabaseCall(supabase.from('inventory_pieces').update({ is_sold: false, status: 'RESERVED' }).in('barcode', pieceBarcodes));
       }
 
       setInvoiceId(finalId);
@@ -1002,7 +1014,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       }
       const baleCodes = (items || []).filter(i => i.isRawBale).map(i => i.barcode).filter(Boolean);
       if (baleCodes.length > 0) {
-        await supabase.from('raw_bales').update({ status: 'PROCESSED' }).in('bale_code', baleCodes).catch(() => {});
+        await safeSupabaseCall(supabase.from('raw_bales').update({ status: 'PROCESSED' }).in('bale_code', baleCodes));
       }
 
       // 2. Build GAAP/IFRS Double-Entry Journal Voucher Lines
@@ -1176,8 +1188,8 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       }).catch(e => console.warn('B2B Finance voucher dispatch note:', e));
 
       // 4. Update b2b_sales & sales_invoices status to POSTED
-      await supabase.from('b2b_sales').update({ credit_status: 'POSTED' }).or(`b2b_invoice_number.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`).catch(() => {});
-      await supabase.from('sales_invoices').update({ status: 'POSTED' }).or(`invoice_no.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`).catch(() => {});
+      await safeSupabaseCall(supabase.from('b2b_sales').update({ credit_status: 'POSTED' }).or(`b2b_invoice_number.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`));
+      await safeSupabaseCall(supabase.from('sales_invoices').update({ status: 'POSTED' }).or(`invoice_no.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`));
 
       // 5. Trigger backend SQL sync
       fetch(`/api/sales/custom-b2b/${encodeURIComponent(activeInvoiceId || genInvoiceNo)}/post`, {
@@ -1254,13 +1266,13 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       }
       const baleCodes = (items || []).filter(i => i.isRawBale).map(i => i.barcode).filter(Boolean);
       if (baleCodes.length > 0) {
-        await supabase.from('raw_bales').update({ status: 'UNOPENED' }).in('bale_code', baleCodes).catch(() => {});
-        await supabase.from('inward_gate_passes').update({ status: 'AVAILABLE', sorting_status: 'UNOPENED' }).in('bale_code', baleCodes).catch(() => {});
+        await safeSupabaseCall(supabase.from('raw_bales').update({ status: 'UNOPENED' }).in('bale_code', baleCodes));
+        await safeSupabaseCall(supabase.from('inward_gate_passes').update({ status: 'AVAILABLE', sorting_status: 'UNOPENED' }).in('bale_code', baleCodes));
       }
 
       // 4. Update status to DRAFT
-      await supabase.from('b2b_sales').update({ credit_status: 'DRAFT' }).or(`b2b_invoice_number.eq.${invoiceNo},id.eq.${invoiceId}`).catch(() => {});
-      await supabase.from('sales_invoices').update({ status: 'DRAFT' }).or(`invoice_no.eq.${invoiceNo},id.eq.${invoiceId}`).catch(() => {});
+      await safeSupabaseCall(supabase.from('b2b_sales').update({ credit_status: 'DRAFT' }).or(`b2b_invoice_number.eq.${invoiceNo},id.eq.${invoiceId}`));
+      await safeSupabaseCall(supabase.from('sales_invoices').update({ status: 'DRAFT' }).or(`invoice_no.eq.${invoiceNo},id.eq.${invoiceId}`));
 
       setStatus('DRAFT');
       showMsg(`Invoice ${targetNo} unposted and unlocked. Status is now DRAFT (editing & deletion enabled).`);
@@ -1300,14 +1312,17 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       if (invoiceId) {
         await SalesService.deleteSalesInvoice(invoiceId).catch(() => {});
       }
-      await supabase.from('b2b_sales').delete().or(`id.eq.${invoiceId},b2b_invoice_number.eq.${invoiceNo}`).catch(() => {});
-      await supabase.from('sales_invoices').delete().or(`id.eq.${invoiceId},invoice_no.eq.${invoiceNo}`).catch(() => {});
+      await safeSupabaseCall(supabase.from('b2b_sales').delete().or(`id.eq.${invoiceId},b2b_invoice_number.eq.${invoiceNo}`));
+      await safeSupabaseCall(supabase.from('sales_invoices').delete().or(`id.eq.${invoiceId},invoice_no.eq.${invoiceNo}`));
 
       // Restore piece barcodes back to IN_STOCK (not RESERVED)
       const pieceBarcodes = (items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
       if (pieceBarcodes.length > 0) {
-        await supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK' }).in('barcode', pieceBarcodes).catch(() => {});
+        await safeSupabaseCall(supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK' }).in('barcode', pieceBarcodes));
       }
+
+      // Update in-memory state immediately removing deleted invoice
+      setInternalInvoices(prev => prev.filter(item => item.id !== invoiceId && item.invoiceNo !== targetNo));
 
       showMsg(`Draft invoice ${targetNo} deleted and inventory items restored to stock.`);
       setIsInvoiceModalOpen(false);
@@ -1359,17 +1374,17 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       // 2. Mark pieces as sold in Supabase
       const pieceBarcodes = (inv.items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
       if (pieceBarcodes.length > 0) {
-        await supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('barcode', pieceBarcodes).catch(() => {});
+        await safeSupabaseCall(supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('barcode', pieceBarcodes));
       }
       const baleCodes = (inv.items || []).filter(i => i.isRawBale).map(i => i.barcode).filter(Boolean);
       if (baleCodes.length > 0) {
-        await supabase.from('raw_bales').update({ status: 'PROCESSED' }).in('bale_code', baleCodes).catch(() => {});
-        await supabase.from('inward_gate_passes').update({ status: 'SOLD_AS_BALE', sorting_status: 'FULLY_SORTED' }).in('bale_code', baleCodes).catch(() => {});
+        await safeSupabaseCall(supabase.from('raw_bales').update({ status: 'PROCESSED' }).in('bale_code', baleCodes));
+        await safeSupabaseCall(supabase.from('inward_gate_passes').update({ status: 'SOLD_AS_BALE', sorting_status: 'FULLY_SORTED' }).in('bale_code', baleCodes));
       }
 
       // 3. Mark b2b_sales & sales_invoices POSTED
-      await supabase.from('b2b_sales').update({ credit_status: 'POSTED' }).or(`b2b_invoice_number.eq.${invNo},id.eq.${invId}`).catch(() => {});
-      await supabase.from('sales_invoices').update({ status: 'POSTED' }).or(`invoice_no.eq.${invNo},id.eq.${invId}`).catch(() => {});
+      await safeSupabaseCall(supabase.from('b2b_sales').update({ credit_status: 'POSTED' }).or(`b2b_invoice_number.eq.${invNo},id.eq.${invId}`));
+      await safeSupabaseCall(supabase.from('sales_invoices').update({ status: 'POSTED' }).or(`invoice_no.eq.${invNo},id.eq.${invId}`));
 
       // 4. Update UI in-memory state immediately so row button flips to [🔓 Unpost]
       setInternalInvoices(prev => prev.map(item => {
@@ -1409,16 +1424,24 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
       const pieceBarcodes = (inv.items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
       if (pieceBarcodes.length > 0) {
-        await supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK' }).in('barcode', pieceBarcodes).catch(() => {});
+        await safeSupabaseCall(supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK' }).in('barcode', pieceBarcodes));
       }
       const baleCodes = (inv.items || []).filter(i => i.isRawBale).map(i => i.barcode).filter(Boolean);
       if (baleCodes.length > 0) {
-        await supabase.from('raw_bales').update({ status: 'UNOPENED' }).in('bale_code', baleCodes).catch(() => {});
-        await supabase.from('inward_gate_passes').update({ status: 'AVAILABLE', sorting_status: 'UNOPENED' }).in('bale_code', baleCodes).catch(() => {});
+        await safeSupabaseCall(supabase.from('raw_bales').update({ status: 'UNOPENED' }).in('bale_code', baleCodes));
+        await safeSupabaseCall(supabase.from('inward_gate_passes').update({ status: 'AVAILABLE', sorting_status: 'UNOPENED' }).in('bale_code', baleCodes));
       }
 
-      await supabase.from('b2b_sales').update({ credit_status: 'DRAFT' }).or(`b2b_invoice_number.eq.${invNo},id.eq.${invId}`).catch(() => {});
-      await supabase.from('sales_invoices').update({ status: 'DRAFT' }).or(`invoice_no.eq.${invNo},id.eq.${invId}`).catch(() => {});
+      await safeSupabaseCall(supabase.from('b2b_sales').update({ credit_status: 'DRAFT' }).or(`b2b_invoice_number.eq.${invNo},id.eq.${invId}`));
+      await safeSupabaseCall(supabase.from('sales_invoices').update({ status: 'DRAFT' }).or(`invoice_no.eq.${invNo},id.eq.${invId}`));
+
+      // Update UI in-memory state immediately so row button flips to [Post] and [Delete] enabled
+      setInternalInvoices(prev => prev.map(item => {
+        if (item.id === invId || item.invoiceNo === invNo) {
+          return { ...item, status: 'DRAFT' };
+        }
+        return item;
+      }));
 
       showMsg(`Invoice ${invNo} successfully unposted and unlocked. Status is now DRAFT.`);
       refreshAllB2BData();
@@ -1441,22 +1464,29 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
     try {
       const targetKey = invId || invNo;
-      await fetch(`/api/sales/custom-b2b/${encodeURIComponent(targetKey)}`, {
+      const res = await fetch(`/api/sales/custom-b2b/${encodeURIComponent(targetKey)}`, {
         method: 'DELETE'
-      }).catch(e => console.warn('Backend delete notice:', e));
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || 'Failed to delete invoice');
+      }
 
       await FinanceService.cascadeDeleteVouchersForDocument(invNo).catch(e => console.warn('Voucher cleanup note:', e));
 
       if (invId) {
         await SalesService.deleteSalesInvoice(invId).catch(() => {});
       }
-      await supabase.from('b2b_sales').delete().or(`id.eq.${invId},b2b_invoice_number.eq.${invNo}`).catch(() => {});
-      await supabase.from('sales_invoices').delete().or(`id.eq.${invId},invoice_no.eq.${invNo}`).catch(() => {});
+      await safeSupabaseCall(supabase.from('b2b_sales').delete().or(`id.eq.${invId},b2b_invoice_number.eq.${invNo}`));
+      await safeSupabaseCall(supabase.from('sales_invoices').delete().or(`id.eq.${invId},invoice_no.eq.${invNo}`));
 
       const pieceBarcodes = (inv.items || []).filter(i => !i.isRawBale).map(i => i.barcode).filter(Boolean);
       if (pieceBarcodes.length > 0) {
-        await supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK' }).in('barcode', pieceBarcodes).catch(() => {});
+        await safeSupabaseCall(supabase.from('inventory_pieces').update({ is_sold: false, status: 'IN_STOCK' }).in('barcode', pieceBarcodes));
       }
+
+      // Update in-memory state immediately removing deleted invoice
+      setInternalInvoices(prev => prev.filter(item => item.id !== invId && item.invoiceNo !== invNo));
 
       showMsg(`Draft invoice ${invNo} deleted and inventory items restored to stock.`);
       refreshAllB2BData();
