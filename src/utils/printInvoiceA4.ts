@@ -727,6 +727,11 @@ export interface B2BTaxInvoiceA4Data {
   customerTrn?: string;
   customerCoaCode?: string;
 
+  // Logistics & Courier
+  courierName?: string;
+  waybillNo?: string;
+  courierCoaCode?: string;
+
   // Items
   items: Array<{
     id?: string;
@@ -1170,6 +1175,8 @@ export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Windo
         <div class="card-desc">
           <strong>Buyer UAE TRN:</strong> <span style="font-family: monospace; font-weight: 700; color: #0f172a;">${data.customerTrn || 'Not Registered / Freezone'}</span><br>
           <strong>Tax Treatment:</strong> ${isMainland ? 'Standard Mainland 5% VAT' : 'Export 0% Zero-Rated'}<br>
+          ${data.courierName ? `<strong>Courier / Transporter:</strong> <span style="font-weight: 700; color: #0f172a;">${data.courierName}</span> ${data.courierCoaCode ? `<span style="font-family: monospace; color: #3730a3; font-size: 8.5px;">(${data.courierCoaCode})</span>` : ''}<br>` : ''}
+          ${data.waybillNo ? `<strong>Waybill / Tracking #:</strong> <span style="font-family: monospace; font-weight: 700; color: #b45309;">${data.waybillNo}</span><br>` : ''}
           ${data.exportCustomsDeclarationNo ? `<strong>Customs Dec #:</strong> <span style="font-family: monospace; font-weight: 700;">${data.exportCustomsDeclarationNo}</span><br>` : ''}
           ${data.pdcChequeNo ? `<strong>PDC Cheque #:</strong> <span style="font-family: monospace; font-weight: 700;">${data.pdcChequeNo}</span> (Due: ${data.pdcChequeDate || 'N/A'})<br>` : ''}
           ${data.salespersonOrBroker ? `<strong>Representative / Broker:</strong> ${data.salespersonOrBroker}` : ''}
@@ -1572,6 +1579,7 @@ export function openB2BPackingListA4PrintWindow(data: B2BTaxInvoiceA4Data): Wind
         <div style="font-size: 9px; text-transform: uppercase; font-weight: 800; color: #0f766e;">Consignee / Destination:</div>
         <div style="font-size: 13px; font-weight: 800; color: #0f172a;">${data.customerName || 'Wholesale Buyer'}</div>
         <div style="font-size: 9.5px; color: #475569;">${data.customerAddress || 'UAE Domestic Cargo'}</div>
+        ${data.courierName ? `<div style="font-size: 9.5px; margin-top: 3px; color: #0f172a;"><strong>Assigned Courier:</strong> ${data.courierName} ${data.waybillNo ? `&bull; <strong>Waybill / Tracking #:</strong> <span style="font-family: monospace; font-weight: 700; color: #0f766e;">${data.waybillNo}</span>` : ''}</div>` : ''}
       </div>
       <div style="text-align: right; display: flex; gap: 16px;">
         <div>

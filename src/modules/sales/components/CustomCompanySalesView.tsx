@@ -25,7 +25,8 @@ import {
   Layers,
   CheckCircle2,
   Clock,
-  ExternalLink
+  ExternalLink,
+  Truck
 } from 'lucide-react';
 import { SalesService } from '../../../services/salesService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
@@ -84,6 +85,9 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   const [invoiceId, setInvoiceId] = useState<string>('');
   const [invoiceNo, setInvoiceNo] = useState<string>('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+  const [courierParties, setCourierParties] = useState<Party[]>([]);
+  const [selectedCourierId, setSelectedCourierId] = useState<string>('');
+  const [waybillNo, setWaybillNo] = useState<string>('');
   const [invoiceDate, setInvoiceDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [status, setStatus] = useState<'DRAFT' | 'POSTED'>('DRAFT');
   const [taxType, setTaxType] = useState<'MAINLAND_5_VAT' | 'EXPORT_ZERO_RATED'>('MAINLAND_5_VAT');
@@ -131,6 +135,10 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           const t = String(p.type || (p as any).party_type || '').toUpperCase();
           return t === 'CLIENT' || t === 'CUSTOMER' || !t;
         }));
+        setCourierParties(partiesData.filter(p => {
+          const t = String(p.type || (p as any).party_type || '').toUpperCase();
+          return t === 'COURIER' || t === 'TRANSPORTER' || t === 'LOGISTICS' || t === 'FREIGHT';
+        }));
       }
       if (Array.isArray(coaData)) {
         setCoaAccounts(coaData);
@@ -151,12 +159,26 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         const t = String(p.type || (p as any).party_type || '').toUpperCase();
         return t === 'CLIENT' || t === 'CUSTOMER' || !t;
       }));
-      FinanceService.getCoaAccounts().then(data => {
-        if (Array.isArray(data)) setCoaAccounts(data);
-      }).catch(() => {});
-    } else {
-      loadParties();
     }
+    // Always load all parties to populate courier/transporter list & load COA accounts
+    PartiesService.getParties().then(partiesData => {
+      if (Array.isArray(partiesData)) {
+        setCourierParties(partiesData.filter(p => {
+          const t = String(p.type || (p as any).party_type || '').toUpperCase();
+          return t === 'COURIER' || t === 'TRANSPORTER' || t === 'LOGISTICS' || t === 'FREIGHT';
+        }));
+        if (!propClients || propClients.length === 0) {
+          setInternalClients(partiesData.filter(p => {
+            const t = String(p.type || (p as any).party_type || '').toUpperCase();
+            return t === 'CLIENT' || t === 'CUSTOMER' || !t;
+          }));
+        }
+      }
+    }).catch(() => {});
+
+    FinanceService.getCoaAccounts().then(data => {
+      if (Array.isArray(data)) setCoaAccounts(data);
+    }).catch(() => {});
   }, [propClients]);
 
   useEffect(() => {
@@ -347,6 +369,24 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     return selectedCustomer?.coaAccountId || (selectedCustomer as any)?.coa_account_id || (selectedCustomer?.code ? `1130-${(selectedCustomer.code).replace(/[^A-Za-z0-9]/g, '')}` : '1130-00');
   }, [selectedCustomer, selectedCustomerCoaAccount]);
 
+  // Selected courier object for active editor
+  const selectedCourier = useMemo(() => {
+    return (Array.isArray(courierParties) ? courierParties : []).find(c => c?.id === selectedCourierId) || null;
+  }, [courierParties, selectedCourierId]);
+
+  // Linked Chart of Accounts (COA) Account & Code for the selected courier
+  const selectedCourierCoaAccount = useMemo(() => {
+    if (!selectedCourier) return null;
+    const targetCodeOrId = selectedCourier.coaAccountId || (selectedCourier as any).coa_account_id || selectedCourier.accountMap?.courierPayableAccountId || selectedCourier.accountMap?.payableAccountId || (selectedCourier as any).linked_account_id;
+    if (!targetCodeOrId) return null;
+    return (coaAccounts || []).find(a => a.id === targetCodeOrId || a.code === targetCodeOrId || (a as any).account_code === targetCodeOrId) || null;
+  }, [selectedCourier, coaAccounts]);
+
+  const selectedCourierCoaCode = useMemo(() => {
+    if (selectedCourierCoaAccount) return selectedCourierCoaAccount.code || (selectedCourierCoaAccount as any).account_code;
+    return selectedCourier?.coaAccountId || (selectedCourier as any)?.coa_account_id || (selectedCourier?.code ? `2120-${(selectedCourier.code).replace(/[^A-Za-z0-9]/g, '')}` : '2120-00');
+  }, [selectedCourier, selectedCourierCoaAccount]);
+
   // Totals calculations for active editor
   const itemsSubtotal = useMemo(() => {
     const safeItems = Array.isArray(items) ? items : [];
@@ -428,6 +468,9 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       customerEmail: selectedCustomer?.email,
       customerTrn: selectedCustomer?.trnNo || 'Not Registered / Freezone',
       customerCoaCode: selectedCustomerCoaCode,
+      courierName: selectedCourier?.name,
+      waybillNo: waybillNo,
+      courierCoaCode: selectedCourierCoaCode,
       items: items || [],
       itemsSubtotal,
       otherCharges: otherCharges || [],
@@ -722,6 +765,8 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     setInvoiceId('');
     setInvoiceNo('');
     setSelectedCustomerId('');
+    setSelectedCourierId('');
+    setWaybillNo('');
     setInvoiceDate(new Date().toISOString().slice(0, 10));
     setStatus('DRAFT');
     setTaxType('MAINLAND_5_VAT');
@@ -747,6 +792,8 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     const targetCustId = inv.customerId || inv.clientId || '';
     const matched = customerClients.find(c => c.id === targetCustId || (inv.customerName && c.name?.trim().toLowerCase() === inv.customerName.trim().toLowerCase()));
     setSelectedCustomerId(matched ? matched.id : targetCustId);
+    setSelectedCourierId((inv as any).courierId || (inv as any).courier_id || '');
+    setWaybillNo((inv as any).waybillNo || (inv as any).waybill_no || (inv as any).trackingNo || '');
     setInvoiceDate(inv.date);
     setStatus(inv.status as any || 'DRAFT');
     setTaxType(inv.taxType || 'MAINLAND_5_VAT');
@@ -875,34 +922,50 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         memo: `B2B Wholesale Invoice ${genInvoiceNo} - ${selectedCustomer?.name}`
       });
 
-      // Line 2: Credit Sales Revenue (Wholesale B2B Sales Revenue)
+      // Line 2: Credit B2B Sales Revenue (Tier 3 Transaction Account 4110-05)
+      const b2bRevAccount = (coaAccounts || []).find(a => a.code === '4110-05');
       voucherLines.push({
-        accountId: '4110-00',
-        accountCode: '4110-00',
-        accountName: 'Wholesale B2B Sales Revenue',
+        accountId: b2bRevAccount?.id || '4110-05',
+        accountCode: '4110-05',
+        accountName: b2bRevAccount?.name || 'B2B REVENUE',
         debit: 0,
         credit: itemsSubtotal,
         memo: `Wholesale B2B Sales Revenue (${items.length} items): Invoice ${genInvoiceNo}`
       });
 
-      // Line 3: Credit Other Charges (Freight/Delivery) if applicable
+      // Line 3: Credit Other Charges (Freight/Delivery) -> Assigned Courier Khata (2120-xx) or Shipping Revenue (4110-04)
       if (otherChargesTotal > 0) {
-        voucherLines.push({
-          accountId: '4310-00',
-          accountCode: '4310-00',
-          accountName: 'Delivery & Shipping Fee Revenue',
-          debit: 0,
-          credit: otherChargesTotal,
-          memo: `Delivery & Freight Revenue: Invoice ${genInvoiceNo}`
-        });
+        if (selectedCourier) {
+          voucherLines.push({
+            accountId: selectedCourierCoaAccount?.id || selectedCourierCoaCode,
+            accountCode: selectedCourierCoaCode,
+            accountName: selectedCourierCoaAccount?.name || `Accounts Payable - ${selectedCourier.name} (Courier)`,
+            partyId: selectedCourier.id,
+            partyName: selectedCourier.name,
+            debit: 0,
+            credit: otherChargesTotal,
+            memo: `Delivery & Freight Payable to Courier: ${selectedCourier.name} (Waybill: ${waybillNo || 'N/A'}) - Invoice ${genInvoiceNo}`
+          });
+        } else {
+          const delivRevAccount = (coaAccounts || []).find(a => a.code === '4110-04');
+          voucherLines.push({
+            accountId: delivRevAccount?.id || '4110-04',
+            accountCode: '4110-04',
+            accountName: delivRevAccount?.name || 'Delivery & Shipping Charges Collected',
+            debit: 0,
+            credit: otherChargesTotal,
+            memo: `Delivery & Freight Revenue: Invoice ${genInvoiceNo}`
+          });
+        }
       }
 
-      // Line 4: Credit UAE VAT Output Tax (5% FTA) if applicable
+      // Line 4: Credit UAE VAT Output Tax 5% (Tier 3 Transaction Account 2140-01) if applicable
       if (vatAmount > 0) {
+        const vatAccount = (coaAccounts || []).find(a => a.code === '2140-01');
         voucherLines.push({
-          accountId: '2140-00',
-          accountCode: '2140-00',
-          accountName: 'UAE VAT Output Tax Payable (5% FTA)',
+          accountId: vatAccount?.id || '2140-01',
+          accountCode: '2140-01',
+          accountName: vatAccount?.name || 'UAE VAT Output Tax (5%)',
           debit: 0,
           credit: vatAmount,
           memo: `UAE VAT 5% Output Tax (TRN: ${selectedCustomer?.trnNo || 'B2B'}): Invoice ${genInvoiceNo}`
@@ -1523,6 +1586,87 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                         Please select a company from Parties Khata to display TRN, COA ledger link, delivery address, and credit parameters.
                       </div>
                     )}
+
+                    {/* Assigned Courier & Logistics Partner (کوریئر کمپنی / لاجسٹکس کھاتہ) */}
+                    <div className="bg-[#FAF4E6]/40 rounded-xl p-3 border border-amber-300/80 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-xs font-black uppercase text-amber-950">
+                          <Truck className="w-3.5 h-3.5 text-amber-700" />
+                          <span>Assigned Courier / Logistics Partner (لاجسٹکس کھاتہ)</span>
+                        </div>
+                        {selectedCourierCoaCode && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                            COA: {selectedCourierCoaCode}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1">Select Courier Company:</label>
+                          <select
+                            value={selectedCourierId}
+                            onChange={e => setSelectedCourierId(e.target.value)}
+                            disabled={status === 'POSTED'}
+                            className="w-full bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:border-amber-600 transition"
+                          >
+                            <option value="">-- No Courier (Direct Customer Pickup) --</option>
+                            {(courierParties || []).map(cp => {
+                              const coaCode = cp.coaAccountId || (cp as any).coa_account_id;
+                              return (
+                                <option key={cp.id} value={cp.id}>
+                                  {cp.code ? `[${cp.code}] ` : ''}{cp.name} {coaCode ? `(COA: ${coaCode})` : ''} {cp.phone ? `— ${cp.phone}` : ''}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1">Waybill / Tracking / Consignment #:</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. AWB-982348102"
+                            value={waybillNo}
+                            onChange={e => setWaybillNo(e.target.value)}
+                            disabled={status === 'POSTED'}
+                            className="w-full bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
+                          />
+                        </div>
+                      </div>
+
+                      {selectedCourier ? (
+                        <div className="bg-white/95 rounded-lg p-2.5 border border-amber-300/80 shadow-2xs space-y-1.5 text-xs">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                              <Building2 className="w-3.5 h-3.5 text-amber-700" />
+                              Courier Payable Ledger (COA):
+                            </span>
+                            <span className="font-mono font-bold text-amber-900 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-[11px]">
+                              {selectedCourierCoaCode}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px] text-slate-600">
+                            <span className="text-slate-500 font-medium">Transporter Khata:</span>
+                            <span className="font-bold text-slate-900">{selectedCourier.name}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] text-slate-500 border-t border-slate-100 pt-1">
+                            <span>Parent Control Account:</span>
+                            <span className="font-mono text-slate-600">2120-00 (Accounts Payable - Courier & Freight)</span>
+                          </div>
+                          {otherChargesTotal > 0 && (
+                            <div className="flex items-center justify-between text-[11px] font-bold bg-amber-50/80 p-1.5 rounded border border-amber-200 text-amber-950">
+                              <span>Freight Credited to Courier Khata:</span>
+                              <span className="font-mono text-emerald-700">AED {otherChargesTotal.toFixed(2)}</span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-slate-500 italic bg-amber-50/40 p-1.5 rounded border border-dashed border-amber-200">
+                          ℹ️ Agar koi courier select nahi hoga to delivery charges general account <strong>4110-04 (Delivery & Shipping Charges Collected)</strong> par credit honge.
+                        </div>
+                      )}
+                    </div>
 
                     {/* Date & Tax Policy Switcher */}
                     <div className="grid grid-cols-2 gap-2 pt-1">
