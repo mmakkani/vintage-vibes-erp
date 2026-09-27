@@ -6943,7 +6943,7 @@ RULES FOR YOUR RESPONSE:
         return res.status(200).json([]);
       }
 
-      if ((pathname.endsWith('/invoices') || pathname === '/api/sales' || pathname === '/sales') && method === 'GET') {
+      if ((pathname.endsWith('/invoices') || pathname === '/api/sales' || pathname === '/sales') && !pathname.includes('/custom-b2b') && method === 'GET') {
         let client: any = null;
         try {
           client = await borrowClient();
