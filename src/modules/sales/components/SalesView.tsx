@@ -20,6 +20,7 @@ import { SalesService } from '../../../services/salesService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { Pagination } from '../../../components/Pagination.tsx';
+import { VINTAGE_VIBES_GOLD_SEAL_POS_BASE64 } from '../../../assets/vintageGoldSeal.ts';
 
 import {
   ShoppingCart,
@@ -957,7 +958,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
 
       {/* NEW SALES GATE PASS MODAL */}
       {showNewGatePassModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
           <div className="bg-white rounded max-w-md w-full p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
             <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">Create New Sales Gate Pass</h3>
             <form onSubmit={handleCreateGatePass} className="space-y-3 text-xs">
@@ -997,16 +998,23 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
 
       {/* ITEMIZED CUSTOMER RECEIPT MODAL */}
       {selectedInvoiceForReceipt && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded max-w-lg w-full p-5 shadow-2xl border border-slate-200 text-xs animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 mb-3">
-              <div>
-                <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</h3>
-                <p className="text-[10px] text-slate-500">Al Jimi, Al Ain, Abu Dhabi, UAE • TRN-100482910300003</p>
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 text-xs animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-3">
+              <div className="flex items-center gap-3">
+                <img
+                  src={VINTAGE_VIBES_GOLD_SEAL_POS_BASE64}
+                  alt="Vintage Vibes Official Seal"
+                  className="w-12 h-12 rounded-full object-contain shrink-0 shadow-sm"
+                />
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</h3>
+                  <p className="text-[10px] text-slate-500">Al Jimi, Al Ain, Abu Dhabi, UAE • TRN-100482910300003</p>
+                </div>
               </div>
               <button
                 onClick={() => setSelectedInvoiceForReceipt(null)}
-                className="text-slate-400 hover:text-slate-700 font-bold text-sm"
+                className="text-slate-400 hover:text-slate-700 font-bold text-sm p-1 rounded hover:bg-slate-100"
               >
                 ✕
               </button>

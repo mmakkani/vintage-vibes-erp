@@ -41,62 +41,9 @@ export interface InvoiceA4PrintData {
   notes?: string;
 }
 
-export const VINTAGE_VIBES_MONOGRAM_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="76" height="76" style="flex-shrink: 0;">
-  <defs>
-    <radialGradient id="outerBevel" cx="40%" cy="35%" r="65%">
-      <stop offset="0%" stop-color="#fff5cc" />
-      <stop offset="25%" stop-color="#dfb15b" />
-      <stop offset="50%" stop-color="#9a6e18" />
-      <stop offset="75%" stop-color="#d4af37" />
-      <stop offset="100%" stop-color="#4a3508" />
-    </radialGradient>
-    <linearGradient id="goldLinear" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#fcedb3" />
-      <stop offset="30%" stop-color="#d4af37" />
-      <stop offset="60%" stop-color="#aa7c11" />
-      <stop offset="85%" stop-color="#fdf3cd" />
-      <stop offset="100%" stop-color="#8b6508" />
-    </linearGradient>
-    <linearGradient id="silverLinear" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ffffff" />
-      <stop offset="40%" stop-color="#d1d5db" />
-      <stop offset="70%" stop-color="#9ca3af" />
-      <stop offset="100%" stop-color="#4b5563" />
-    </linearGradient>
-    <radialGradient id="globeSphere" cx="35%" cy="30%" r="70%">
-      <stop offset="0%" stop-color="#ffffff" />
-      <stop offset="45%" stop-color="#e5e7eb" />
-      <stop offset="80%" stop-color="#cbd5e1" />
-      <stop offset="100%" stop-color="#94a3b8" />
-    </radialGradient>
-  </defs>
-  <circle cx="250" cy="250" r="242" fill="url(#outerBevel)" stroke="#3d2a07" stroke-width="4" />
-  <circle cx="250" cy="250" r="236" fill="none" stroke="#ffe89e" stroke-width="2" />
-  <circle cx="250" cy="250" r="226" fill="none" stroke="#684a0c" stroke-width="3" />
-  <circle cx="250" cy="250" r="220" fill="#faf7ee" stroke="#b38927" stroke-width="3" />
-  <path id="textArcTop" d="M 58 250 A 192 192 0 1 1 442 250" fill="none" />
-  <path id="textArcBottom" d="M 442 250 A 192 192 0 1 1 58 250" fill="none" />
-  <text font-family="'Times New Roman', Georgia, serif" font-weight="900" font-size="34" fill="url(#goldLinear)" letter-spacing="9">
-    <textPath href="#textArcTop" startOffset="50%" text-anchor="middle">VINTAGE VIBES</textPath>
-  </text>
-  <text font-family="'Times New Roman', serif" font-weight="800" font-size="18" fill="url(#goldLinear)" letter-spacing="4">
-    <textPath href="#textArcBottom" startOffset="50%" text-anchor="middle">GENERAL TRADING - L.L.C - S.P.C</textPath>
-  </text>
-  <circle cx="250" cy="250" r="148" fill="url(#silverLinear)" stroke="#4b5563" stroke-width="4" />
-  <circle cx="250" cy="250" r="142" fill="none" stroke="#ffffff" stroke-width="2" />
-  <circle cx="250" cy="250" r="136" fill="#1b2430" stroke="#9ca3af" stroke-width="3" />
-  <circle cx="250" cy="250" r="132" fill="url(#globeSphere)" />
-  <ellipse cx="250" cy="250" rx="132" ry="132" fill="none" stroke="#94a3b8" stroke-width="2.5" />
-  <ellipse cx="250" cy="250" rx="95" ry="132" fill="none" stroke="#64748b" stroke-width="2.5" />
-  <ellipse cx="250" cy="250" rx="50" ry="132" fill="none" stroke="#64748b" stroke-width="2.5" />
-  <line x1="250" y1="118" x2="250" y2="382" stroke="#475569" stroke-width="3.5" />
-  <line x1="118" y1="250" x2="382" y2="250" stroke="#475569" stroke-width="3.5" />
-  <circle cx="250" cy="250" r="95" fill="none" stroke="url(#goldLinear)" stroke-width="12" />
-  <g id="vvMonogram">
-    <path d="M 152 216 L 218 216 L 250 318 L 282 216 L 348 216 L 272 352 L 228 352 Z" fill="url(#goldLinear)" stroke="#593f05" stroke-width="2" />
-    <path d="M 184 228 L 226 228 L 250 298 L 274 228 L 316 228 L 264 324 L 236 324 Z" fill="url(#goldLinear)" stroke="#ffe58f" stroke-width="1.5" />
-  </g>
-</svg>`;
+import { VINTAGE_VIBES_GOLD_SEAL_A4_BASE64 } from '../assets/vintageGoldSeal';
+
+export const VINTAGE_VIBES_MONOGRAM_SVG = `<img src="${VINTAGE_VIBES_GOLD_SEAL_A4_BASE64}" alt="Vintage Vibes Official Seal" class="vintage-vibes-seal-img" style="width: 76px; height: 76px; object-fit: contain; flex-shrink: 0; display: block; border-radius: 50%; filter: drop-shadow(0 2px 5px rgba(0,0,0,0.18));" />`;
 
 export function openCommercialInvoiceA4PrintWindow(data: InvoiceA4PrintData): Window | null {
   const printWin = window.open('', '_blank', 'width=950,height=1150,menubar=no,toolbar=no,location=no,status=no');
@@ -656,11 +603,40 @@ export function openCommercialInvoiceA4PrintWindow(data: InvoiceA4PrintData): Wi
   </div>
 
   <script>
-    window.onload = function() {
-      setTimeout(function() {
-        window.print();
-      }, 350);
-    };
+    (function() {
+      var printed = false;
+      function doPrint() {
+        if (printed) return;
+        printed = true;
+        try {
+          window.focus();
+          window.print();
+        } catch(e) {
+          console.warn('[A4 Print] Window print failed:', e);
+        }
+      }
+      function prepareAndPrint() {
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(function() {
+            requestAnimationFrame(function() {
+              setTimeout(doPrint, 40);
+            });
+          }).catch(function() {
+            setTimeout(doPrint, 50);
+          });
+        } else {
+          requestAnimationFrame(function() {
+            setTimeout(doPrint, 50);
+          });
+        }
+      }
+      if (document.readyState === 'complete') {
+        prepareAndPrint();
+      } else {
+        window.addEventListener('load', prepareAndPrint);
+        setTimeout(doPrint, 300);
+      }
+    })();
   </script>
 </body>
 </html>`;
@@ -1307,11 +1283,40 @@ export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Windo
   </div>
 
   <script>
-    window.onload = function() {
-      setTimeout(function() {
-        window.print();
-      }, 350);
-    };
+    (function() {
+      var printed = false;
+      function doPrint() {
+        if (printed) return;
+        printed = true;
+        try {
+          window.focus();
+          window.print();
+        } catch(e) {
+          console.warn('[A4 Print] Window print failed:', e);
+        }
+      }
+      function prepareAndPrint() {
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(function() {
+            requestAnimationFrame(function() {
+              setTimeout(doPrint, 40);
+            });
+          }).catch(function() {
+            setTimeout(doPrint, 50);
+          });
+        } else {
+          requestAnimationFrame(function() {
+            setTimeout(doPrint, 50);
+          });
+        }
+      }
+      if (document.readyState === 'complete') {
+        prepareAndPrint();
+      } else {
+        window.addEventListener('load', prepareAndPrint);
+        setTimeout(doPrint, 300);
+      }
+    })();
   </script>
 </body>
 </html>`;
@@ -1635,11 +1640,40 @@ export function openB2BPackingListA4PrintWindow(data: B2BTaxInvoiceA4Data): Wind
   </div>
 
   <script>
-    window.onload = function() {
-      setTimeout(function() {
-        window.print();
-      }, 350);
-    };
+    (function() {
+      var printed = false;
+      function doPrint() {
+        if (printed) return;
+        printed = true;
+        try {
+          window.focus();
+          window.print();
+        } catch(e) {
+          console.warn('[A4 Print] Window print failed:', e);
+        }
+      }
+      function prepareAndPrint() {
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(function() {
+            requestAnimationFrame(function() {
+              setTimeout(doPrint, 40);
+            });
+          }).catch(function() {
+            setTimeout(doPrint, 50);
+          });
+        } else {
+          requestAnimationFrame(function() {
+            setTimeout(doPrint, 50);
+          });
+        }
+      }
+      if (document.readyState === 'complete') {
+        prepareAndPrint();
+      } else {
+        window.addEventListener('load', prepareAndPrint);
+        setTimeout(doPrint, 300);
+      }
+    })();
   </script>
 </body>
 </html>`;

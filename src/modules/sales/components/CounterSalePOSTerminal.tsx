@@ -2363,7 +2363,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       {/* 3. MULTI-MODE PAYMENT POPUP MODAL */}
       {showPaymentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-3 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 animate-in fade-in duration-200">
           <div className={`border w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-colors ${
             posTheme === 'light'
               ? 'bg-white border-slate-200 text-slate-800'
@@ -2814,7 +2814,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       {/* 4. POST-CHECKOUT SUCCESS MODAL */}
       {checkoutSuccessData && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-3 animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 animate-in zoom-in-95 duration-200">
           <div className={`w-full max-w-md rounded-2xl shadow-2xl p-6 text-center space-y-4 border ${
             posTheme === 'light'
               ? 'bg-white border-slate-200 text-slate-800'
@@ -2948,7 +2948,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       {/* 5. PARKED CARTS MODAL */}
       {showParkedModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-3 animate-in fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 animate-in fade-in">
           <div className={`border w-full max-w-lg rounded-2xl p-4 space-y-3 shadow-2xl ${
             posTheme === 'light'
               ? 'bg-white border-slate-200 text-slate-800'
@@ -3014,7 +3014,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       {/* 6. PHOTO LIGHTBOX MODAL */}
       {previewPhoto && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-3 cursor-pointer"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-3 cursor-pointer"
           onClick={() => setPreviewPhoto(null)}
         >
           <div className="relative max-w-md max-h-[85vh] bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden p-2">
@@ -3032,7 +3032,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       {/* 7. DISCOUNT OVERRIDE MODAL */}
       {showDiscountModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-3 animate-in fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 animate-in fade-in">
           <div className={`border w-full max-w-sm rounded-2xl p-4 space-y-3 shadow-2xl ${
             posTheme === 'light'
               ? 'bg-white border-slate-200 text-slate-800'
@@ -3104,7 +3104,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       {/* 8. AI VISITING CARD SCANNER MODAL (GEMINI VISION) */}
       {showAiCardModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 animate-in fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 animate-in fade-in">
           <div className={`w-full max-w-lg rounded-2xl border shadow-2xl p-5 space-y-4 max-h-[92vh] overflow-y-auto ${
             posTheme === 'light'
               ? 'bg-white border-slate-200 text-slate-900'

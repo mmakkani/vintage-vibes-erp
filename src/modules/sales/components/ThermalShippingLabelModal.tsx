@@ -62,7 +62,7 @@ export const ThermalShippingLabelModal: React.FC<ThermalShippingLabelModalProps>
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 print:p-0 print:bg-white print:static">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4 print:p-0 print:bg-white print:static">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden print:shadow-none print:border-none print:w-auto">
         {/* Modal Top Bar - Hidden when printing */}
         <div className="print:hidden bg-slate-900 text-white px-5 py-3.5 flex items-center justify-between border-b border-slate-800">

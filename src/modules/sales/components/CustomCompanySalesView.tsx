@@ -1823,7 +1823,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
       {/* ================= 4. POPUP WINDOW: NEW INVOICE & INVOICE EDITOR ================= */}
       {isInvoiceModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
           <div className="bg-[#FAF4E6] rounded-2xl shadow-2xl border border-amber-300 w-full max-w-7xl max-h-[96vh] flex flex-col animate-in zoom-in-95 duration-150 overflow-hidden">
             
             {/* Modal Window Top Header Bar (Web Theme) */}
@@ -2746,7 +2746,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
       {/* ================= 5. BULK BALES SELECTOR MODAL ================= */}
       {showBulkModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl border border-amber-300 w-full max-w-3xl max-h-[85vh] flex flex-col animate-in zoom-in-95 duration-150">
             <div className="p-3.5 bg-[#FAF4E6] border-b border-amber-200 text-slate-900 flex items-center justify-between rounded-t-xl">
               <div className="flex items-center gap-2">
@@ -2890,7 +2890,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
       {/* ================= 6. DUAL PRINT MODALS (TAX INVOICE OR PACKING LIST) ================= */}
       {printModalType && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 print-container print:bg-white print:p-0">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4 print-container print:bg-white print:p-0">
           <div className="bg-white rounded-xl shadow-2xl border border-amber-300 w-full max-w-3xl max-h-[92vh] flex flex-col animate-in zoom-in-95 duration-150">
             <div className="p-3.5 bg-[#FAF4E6] border-b border-amber-200 text-slate-900 flex items-center justify-between rounded-t-xl print:hidden">
               <div className="flex items-center gap-2">

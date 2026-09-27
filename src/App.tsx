@@ -96,7 +96,15 @@ const GUEST_OPERATOR: User = {
 };
 
 export default function App() {
-  const [showSplash, setShowSplash] = useState<boolean>(true);
+  const [showSplash, setShowSplash] = useState<boolean>(() => {
+    try {
+      if (sessionStorage.getItem('vintage_splash_shown')) {
+        return false;
+      }
+      sessionStorage.setItem('vintage_splash_shown', '1');
+    } catch {}
+    return true;
+  });
   const [activeTab, setActiveTabState] = useState<ActiveTab>(() => {
     try {
       // 1. Check URL query param ?tab=
