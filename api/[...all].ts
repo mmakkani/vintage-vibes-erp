@@ -2982,6 +2982,348 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json([]);
     }
 
+    // 11b. POST /api/hr/loans - Create new employee loan / advance with automated double-entry voucher
+    if ((pathname === '/api/hr/loans' || pathname.endsWith('/hr/loans')) && method === 'POST') {
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) {}
+      if (!client) {
+        try { client = await getPgClient(); } catch (_) {}
+      }
+
+      if (client) {
+        try {
+          const {
+            employeeId,
+            type,
+            principalAmount,
+            totalMonths,
+            startMonth,
+            disbursementAccount,
+            disbursementMethod,
+            debitAccount,
+            notes
+          } = body || {};
+
+          const principal = Math.max(0, Number(principalAmount || 0));
+          if (principal <= 0) {
+            return res.status(400).json({ success: false, error: 'Principal amount must be greater than zero.' });
+          }
+
+          // 1. Resolve employee
+          const empRes = await client.query(`SELECT * FROM employees WHERE id::text = $1 OR emp_code = $1;`, [employeeId]);
+          const emp = empRes.rows[0];
+          const empName = emp ? (emp.full_name || emp.name) : 'Staff Member';
+          const empCode = emp ? (emp.emp_code || emp.employee_code) : '';
+          const months = Math.max(1, Number(totalMonths || 1));
+          const calculatedEmi = type === 'SALARY_ADVANCE' ? principal : Number((principal / months).toFixed(2));
+
+          // 2. Resolve Debit Account (Salary Expense or Advance Asset)
+          const debitTarget = debitAccount || '5210-100';
+          let debitChartRes = await client.query(
+            `SELECT id, code, name FROM chart_of_accounts WHERE code = $1 OR id::text = $1 LIMIT 1;`,
+            [debitTarget]
+          );
+          if (!debitChartRes.rows[0]) {
+            debitChartRes = await client.query(
+              `SELECT id, code, name FROM chart_of_accounts WHERE code = '5210-100' OR code = '5210-01' OR code = '1135-01' LIMIT 1;`
+            );
+          }
+          const debitChart = debitChartRes.rows[0] || { id: null, code: '5210-100', name: 'SALARY EXPNSE' };
+          const debitCoaRes = await client.query(
+            `SELECT id, code, name FROM coa_accounts WHERE code = $1 LIMIT 1;`,
+            [debitChart.code]
+          );
+          const debitCoa = debitCoaRes.rows[0] || null;
+
+          // 3. Resolve Credit Account (Cash or Bank)
+          const creditTarget = disbursementAccount || (disbursementMethod === 'CASH' ? '1010-01' : '1020-01');
+          let creditChartRes = await client.query(
+            `SELECT id, code, name FROM chart_of_accounts WHERE code = $1 OR id::text = $1 LIMIT 1;`,
+            [creditTarget]
+          );
+          if (!creditChartRes.rows[0]) {
+            creditChartRes = await client.query(
+              `SELECT id, code, name FROM chart_of_accounts WHERE code = '1020-01' OR code = '1010-01' LIMIT 1;`
+            );
+          }
+          const creditChart = creditChartRes.rows[0] || { id: null, code: '1020-01', name: 'Cash in Bank (AED)' };
+          const creditCoaRes = await client.query(
+            `SELECT id, code, name FROM coa_accounts WHERE code = $1 LIMIT 1;`,
+            [creditChart.code]
+          );
+          const creditCoa = creditCoaRes.rows[0] || null;
+
+          // 4. Generate Voucher Number & Details
+          const isCash = creditChart.code.startsWith('1010') || creditChart.code.startsWith('1110') || creditChart.code.startsWith('1115') || creditChart.name.toLowerCase().includes('cash') || disbursementMethod === 'CASH';
+          const now = new Date();
+          const dateStr = startMonth && startMonth.length >= 7 ? startMonth.replace('-', '') : `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+          const prefix = isCash ? `CPV-ADV-${dateStr}` : `BPV-ADV-${dateStr}`;
+
+          const vchNumRes = await client.query(
+            `SELECT voucher_no FROM financial_vouchers WHERE voucher_no LIKE $1 ORDER BY voucher_no DESC LIMIT 20;`,
+            [`${prefix}-%`]
+          );
+          let maxSeq = 0;
+          for (const row of vchNumRes.rows) {
+            const match = String(row.voucher_no).match(/(\d+)$/);
+            if (match) {
+              const num = parseInt(match[1], 10);
+              if (!isNaN(num) && num > maxSeq) maxSeq = num;
+            }
+          }
+          const voucherNo = `${prefix}-${String(maxSeq + 1).padStart(4, '0')}`;
+          const voucherId = `vch-adv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          const voucherDate = now.toISOString().slice(0, 10);
+          const narration = `${type === 'SALARY_ADVANCE' ? 'Salary Advance' : 'Staff Loan'} of AED ${principal.toFixed(2)} issued to ${empName} (${empCode || 'Staff'}) disbursed via ${creditChart.name}`;
+
+          // 5. Insert into vouchers
+          await client.query(`
+            INSERT INTO vouchers (
+              id, voucher_no, date, type, reference, reference_no, narration, description,
+              total_debit, total_credit, total_amount, status, created_by, is_auto,
+              currency, exchange_rate, base_currency, foreign_total_amount, voucher_date, voucher_type
+            ) VALUES (
+              $1, $2, $3, 'PAYMENT', $4, $4, $5, $5,
+              $6, $6, $6, 'POSTED', 'HR & Payroll Auto-Engine', true,
+              'AED', 1.0, 'AED', $6, $3, $7
+            );
+          `, [voucherId, voucherNo, voucherDate, voucherNo, narration, principal, isCash ? 'CPV' : 'BPV']);
+
+          // 6. Insert into financial_vouchers
+          await client.query(`
+            INSERT INTO financial_vouchers (
+              id, voucher_no, date, voucher_date, type, voucher_type, reference, reference_no,
+              narration, total_debit, total_credit, total_amount, currency, exchange_rate,
+              base_currency, foreign_total_amount, status, created_by, is_auto
+            ) VALUES (
+              $1, $2, $3, $3, 'PAYMENT', $4, $2, $2,
+              $5, $6, $6, $6, 'AED', 1.0,
+              'AED', $6, 'POSTED', 'HR & Payroll Auto-Engine', true
+            );
+          `, [voucherId, voucherNo, voucherDate, isCash ? 'CPV' : 'BPV', narration, principal]);
+
+          // 7. Insert Lines in voucher_entries (Double-Entry Debit & Credit)
+          const entryId1 = `vche-${Date.now()}-1`;
+          const entryId2 = `vche-${Date.now()}-2`;
+
+          // Line 1: Debit Target Account
+          await client.query(`
+            INSERT INTO voucher_entries (
+              id, voucher_id, voucher_no, account_id, account_code, account_name,
+              debit, credit, particulars, memo, narration, date, created_at,
+              currency, exchange_rate, foreign_debit, foreign_credit
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6,
+              $7, 0, $8, $8, $8, $9, NOW(),
+              'AED', 1.0, $7, 0
+            );
+          `, [
+            entryId1, voucherId, voucherNo, debitChart.id ? String(debitChart.id) : null, debitChart.code, debitChart.name,
+            principal, narration, voucherDate
+          ]);
+
+          // Line 2: Credit Bank/Cash Account
+          await client.query(`
+            INSERT INTO voucher_entries (
+              id, voucher_id, voucher_no, account_id, account_code, account_name,
+              debit, credit, particulars, memo, narration, date, created_at,
+              currency, exchange_rate, foreign_debit, foreign_credit
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6,
+              0, $7, $8, $8, $8, $9, NOW(),
+              'AED', 1.0, 0, $7
+            );
+          `, [
+            entryId2, voucherId, voucherNo, creditChart.id ? String(creditChart.id) : null, creditChart.code, creditChart.name,
+            principal, narration, voucherDate
+          ]);
+
+          // 8. General Ledger posting
+          const glId1 = `gl-${Date.now()}-1`;
+          const glId2 = `gl-${Date.now()}-2`;
+
+          await client.query(`
+            INSERT INTO general_ledger (
+              id, entry_date, date, voucher_id, voucher_no, account_id, account_code, account_name,
+              debit, credit, balance, running_balance, description, narration,
+              currency, exchange_rate, foreign_debit, foreign_credit, created_at
+            ) VALUES 
+            ($1, $2, $2, $3, $4, $5, $6, $7, $8, 0, $8, $8, $9, $9, 'AED', 1.0, $8, 0, NOW()),
+            ($10, $2, $2, $3, $4, $11, $12, $13, 0, $8, -$8, -$8, $9, $9, 'AED', 1.0, 0, $8, NOW());
+          `, [
+            glId1, voucherDate, voucherId, voucherNo, debitChart.id ? String(debitChart.id) : null, debitChart.code, debitChart.name, principal, narration,
+            glId2, creditChart.id ? String(creditChart.id) : null, creditChart.code, creditChart.name
+          ]);
+
+          // 9. Ledgers table posting (requires valid coa_accounts.id for foreign key ledgers_account_id_fkey)
+          if (debitCoa?.id) {
+            const ledId1 = `led-${Date.now()}-1`;
+            await client.query(`
+              INSERT INTO ledgers (
+                id, entry_date, date, voucher_id, voucher_no, account_id, account_code, account_name,
+                debit, credit, balance, running_balance, description, narration,
+                currency, exchange_rate, foreign_debit, foreign_credit, created_at
+              ) VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, 0, $8, $8, $9, $9, 'AED', 1.0, $8, 0, NOW());
+            `, [ledId1, voucherDate, voucherId, voucherNo, String(debitCoa.id), debitChart.code, debitChart.name, principal, narration]);
+          }
+
+          if (creditCoa?.id) {
+            const ledId2 = `led-${Date.now()}-2`;
+            await client.query(`
+              INSERT INTO ledgers (
+                id, entry_date, date, voucher_id, voucher_no, account_id, account_code, account_name,
+                debit, credit, balance, running_balance, description, narration,
+                currency, exchange_rate, foreign_debit, foreign_credit, created_at
+              ) VALUES ($1, $2, $2, $3, $4, $5, $6, $7, 0, $8, -$8, -$8, $9, $9, 'AED', 1.0, 0, $8, NOW());
+            `, [ledId2, voucherDate, voucherId, voucherNo, String(creditCoa.id), creditChart.code, creditChart.name, principal, narration]);
+          }
+
+          // 10. Synchronize Account Balances
+          if (debitChart.id) {
+            await client.query(`UPDATE chart_of_accounts SET current_balance = COALESCE(current_balance, 0) + $1 WHERE id = $2;`, [principal, debitChart.id]);
+          }
+          await client.query(`UPDATE coa_accounts SET current_balance = COALESCE(current_balance, 0) + $1 WHERE code = $2;`, [principal, debitChart.code]);
+
+          if (creditChart.id) {
+            await client.query(`UPDATE chart_of_accounts SET current_balance = COALESCE(current_balance, 0) - $1 WHERE id = $2;`, [principal, creditChart.id]);
+          }
+          await client.query(`UPDATE coa_accounts SET current_balance = COALESCE(current_balance, 0) - $1 WHERE code = $2;`, [principal, creditChart.code]);
+
+          // 11. Insert loan into employee_loans with voucher link in notes
+          const recordedNotes = [notes, `[Voucher: ${voucherNo}]`].filter(Boolean).join(' | ');
+          const loanId = `loan-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          const result = await client.query(`
+            INSERT INTO employee_loans (
+              id, employee_id, employee_name, emp_code, type, principal_amount, emi_amount,
+              total_months, start_month, remaining_amount, status, disbursement_account,
+              disbursement_method, notes, created_at
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'ACTIVE', $11, $12, $13, NOW()
+            ) RETURNING *;
+          `, [
+            loanId,
+            emp ? String(emp.id) : employeeId,
+            empName,
+            empCode,
+            type || 'LOAN',
+            principal,
+            calculatedEmi,
+            months,
+            startMonth || new Date().toISOString().slice(0, 7),
+            principal,
+            creditChart.code,
+            disbursementMethod || 'BANK_TRANSFER',
+            recordedNotes
+          ]);
+
+          const savedRow = result.rows[0];
+          return res.status(200).json({
+            success: true,
+            loan: {
+              id: String(savedRow.id),
+              employeeId: String(savedRow.employee_id),
+              employeeName: savedRow.employee_name || '',
+              empCode: savedRow.emp_code || '',
+              type: savedRow.type || 'LOAN',
+              principalAmount: Number(savedRow.principal_amount || 0),
+              emiAmount: Number(savedRow.emi_amount || 0),
+              totalMonths: Number(savedRow.total_months || 0),
+              startMonth: savedRow.start_month || '',
+              remainingAmount: Number(savedRow.remaining_amount || 0),
+              status: savedRow.status || 'ACTIVE',
+              disbursementAccount: savedRow.disbursement_account || '',
+              disbursementMethod: savedRow.disbursement_method || 'BANK_TRANSFER',
+              notes: savedRow.notes || '',
+              createdAt: savedRow.created_at ? new Date(savedRow.created_at).toISOString() : new Date().toISOString(),
+              voucherNo,
+              voucherId
+            }
+          });
+        } catch (dbErr: any) {
+          console.error('[Serverless HR] Create loan error:', dbErr?.message);
+          return res.status(400).json({ success: false, error: dbErr?.message || 'Failed to issue loan/advance' });
+        } finally {
+          try {
+            if (typeof client.release === 'function') client.release();
+            else if (typeof client.end === 'function') await client.end();
+          } catch (_) {}
+        }
+      }
+      return res.status(500).json({ success: false, error: 'Database unavailable' });
+    }
+
+    // 11c. DELETE /api/hr/loans/:id - Delete employee loan and reverse voucher
+    if ((pathname.startsWith('/api/hr/loans/') || pathname.includes('/hr/loans/')) && method === 'DELETE') {
+      const parts = pathname.split('/');
+      const loansIdx = parts.indexOf('loans');
+      const loanId = loansIdx !== -1 ? parts[loansIdx + 1] : '';
+
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) {}
+      if (!client) {
+        try { client = await getPgClient(); } catch (_) {}
+      }
+
+      if (client) {
+        try {
+          const loanRes = await client.query(`SELECT * FROM employee_loans WHERE id = $1;`, [loanId]);
+          const loan = loanRes.rows[0];
+
+          if (loan) {
+            const notesStr = String(loan.notes || '');
+            const vchMatch = notesStr.match(/\[Voucher:\s*([A-Z0-9-]+)\]/i);
+
+            if (vchMatch && vchMatch[1]) {
+              const linkedVoucherNo = vchMatch[1];
+
+              const entriesRes = await client.query(
+                `SELECT account_id, account_code, debit, credit FROM voucher_entries WHERE voucher_no = $1;`,
+                [linkedVoucherNo]
+              );
+
+              for (const ent of entriesRes.rows) {
+                const d = Number(ent.debit || 0);
+                const c = Number(ent.credit || 0);
+
+                if (d > 0) {
+                  if (ent.account_id) {
+                    await client.query(`UPDATE chart_of_accounts SET current_balance = COALESCE(current_balance, 0) - $1 WHERE id::text = $2;`, [d, ent.account_id]);
+                  }
+                  await client.query(`UPDATE coa_accounts SET current_balance = COALESCE(current_balance, 0) - $1 WHERE code = $2;`, [d, ent.account_code]);
+                }
+
+                if (c > 0) {
+                  if (ent.account_id) {
+                    await client.query(`UPDATE chart_of_accounts SET current_balance = COALESCE(current_balance, 0) + $1 WHERE id::text = $2;`, [c, ent.account_id]);
+                  }
+                  await client.query(`UPDATE coa_accounts SET current_balance = COALESCE(current_balance, 0) + $1 WHERE code = $2;`, [c, ent.account_code]);
+                }
+              }
+
+              await client.query(`DELETE FROM ledgers WHERE voucher_no = $1;`, [linkedVoucherNo]);
+              await client.query(`DELETE FROM general_ledger WHERE voucher_no = $1;`, [linkedVoucherNo]);
+              await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1;`, [linkedVoucherNo]);
+              await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1;`, [linkedVoucherNo]);
+              await client.query(`DELETE FROM vouchers WHERE voucher_no = $1;`, [linkedVoucherNo]);
+            }
+
+            await client.query(`DELETE FROM employee_loans WHERE id = $1;`, [loanId]);
+          }
+
+          return res.status(200).json({ success: true });
+        } catch (dbErr: any) {
+          console.error('[Serverless HR] Delete loan error:', dbErr?.message);
+          return res.status(400).json({ success: false, error: dbErr?.message || 'Failed to delete loan' });
+        } finally {
+          try {
+            if (typeof client.release === 'function') client.release();
+            else if (typeof client.end === 'function') await client.end();
+          } catch (_) {}
+        }
+      }
+      return res.status(500).json({ success: false, error: 'Database unavailable' });
+    }
+
     // 12. GET /api/hr/ocr/logs
     if (pathname.includes('/api/hr/ocr/logs') && method === 'GET') {
       const token = extractAuthToken(req);

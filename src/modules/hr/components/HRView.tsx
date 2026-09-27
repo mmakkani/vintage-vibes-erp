@@ -351,7 +351,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     totalMonths: 3,
     startMonth: '2026-09',
     disbursementMethod: 'BANK_TRANSFER' as 'CASH' | 'BANK_TRANSFER',
-    disbursementAccount: '',
+    disbursementAccount: '1020-01',
+    debitAccount: '5210-100',
     notes: ''
   });
 
@@ -1281,7 +1282,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
           totalMonths: 3,
           startMonth: selectedMonth,
           disbursementMethod: 'BANK_TRANSFER',
-          disbursementAccount: '',
+          disbursementAccount: '1020-01',
+          debitAccount: '5210-100',
           notes: ''
         });
         loadData();
@@ -1753,7 +1755,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   totalMonths: 3,
                   startMonth: selectedMonth,
                   disbursementMethod: 'BANK_TRANSFER',
-                  disbursementAccount: '',
+                  disbursementAccount: '1020-01',
+                  debitAccount: '5210-100',
                   notes: ''
                 });
                 setShowLoanModal(true);
@@ -2950,7 +2953,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     totalMonths: 3,
                     startMonth: selectedMonth,
                     disbursementMethod: 'BANK_TRANSFER',
-                    disbursementAccount: '',
+                    disbursementAccount: '1020-01',
+                    debitAccount: '5210-100',
                     notes: ''
                   });
                   setShowLoanModal(true);
@@ -4350,7 +4354,8 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   </label>
                   <NumericInput
                     min={1}
-                    step={50}
+                    step="any"
+                    allowDecimals={true}
                     value={loanForm.principalAmount}
                     onChange={val => setLoanForm(prev => ({ ...prev, principalAmount: val === '' ? ('' as any) : Number(val) }))}
                     onBlurCommit={val => setLoanForm(prev => ({ ...prev, principalAmount: val }))}
@@ -4392,24 +4397,69 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                  Disbursement Account (Cash or Corporate Bank)
-                </label>
-                <select
-                  value={loanForm.disbursementAccount}
-                  onChange={e => setLoanForm(prev => ({ ...prev, disbursementAccount: e.target.value }))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded font-semibold text-slate-800 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                >
-                  <option value="">Default Operating Bank / Main Cash</option>
-                  {coaAccounts
-                    .filter(a => a.classification === 'ASSET' && (a.code.startsWith('111') || a.code.startsWith('112') || a.name.toLowerCase().includes('bank')))
-                    .map(a => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} - {a.name}
-                      </option>
-                    ))}
-                </select>
+              {/* Accounting Double-Entry Selectors */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Debit Target (Expense / Advance Target)
+                  </label>
+                  <select
+                    value={loanForm.debitAccount || '5210-100'}
+                    onChange={e => setLoanForm(prev => ({ ...prev, debitAccount: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded font-semibold text-slate-800 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none text-xs"
+                  >
+                    <option value="5210-100">5210-100 - SALARY EXPNSE (Salary Expense)</option>
+                    <option value="1135-01">1135-01 - Staff Advance & Loan Receivables (Asset)</option>
+                    {coaAccounts
+                      .filter(a => {
+                        const code = String(a.code || '');
+                        return (code.startsWith('52') || code.startsWith('1135')) && code !== '5210-100' && code !== '1135-01';
+                      })
+                      .map(a => (
+                        <option key={a.id || a.code} value={a.code || a.id}>
+                          {a.code} - {a.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Disbursement Credit (Bank / Cash)
+                  </label>
+                  <select
+                    value={loanForm.disbursementAccount || '1020-01'}
+                    onChange={e => setLoanForm(prev => ({ ...prev, disbursementAccount: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded font-semibold text-slate-800 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none text-xs"
+                  >
+                    <option value="1020-01">1020-01 - Cash in Bank (AED)</option>
+                    <option value="1010-01">1010-01 - Cash in Hand (POS / Counter)</option>
+                    {coaAccounts
+                      .filter(a => {
+                        const c = String(a.code || '');
+                        const n = String(a.name || '').toLowerCase();
+                        return (c.startsWith('10') || c.startsWith('111') || c.startsWith('112') || n.includes('bank') || n.includes('cash')) && c !== '1020-01' && c !== '1010-01';
+                      })
+                      .map(a => (
+                        <option key={a.id || a.code} value={a.code || a.id}>
+                          {a.code} - {a.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Automatic Double Entry Voucher Preview */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded p-2.5 text-xs text-emerald-900 flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-[11px] uppercase tracking-wider text-emerald-800">Auto-Voucher Engine: </span>
+                  <span className="text-[11px]">
+                    DR: <strong className="font-mono font-bold text-emerald-950">{loanForm.debitAccount || '5210-100'}</strong> &nbsp;|&nbsp; CR: <strong className="font-mono font-bold text-emerald-950">{loanForm.disbursementAccount || '1020-01'}</strong>
+                  </span>
+                </div>
+                <span className="font-mono font-bold text-emerald-700 bg-white px-2 py-0.5 rounded border border-emerald-200">
+                  AED {safeFormatNum(loanForm.principalAmount)}
+                </span>
               </div>
 
               <div>
