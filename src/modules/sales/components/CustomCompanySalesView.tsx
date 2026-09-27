@@ -31,6 +31,7 @@ import { SalesService } from '../../../services/salesService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
 import { COAAccount } from '../../finance/finance.types.ts';
+import { supabase } from '../../../supabaseClient.ts';
 
 interface AvailableRawBale {
   id: string;
@@ -164,8 +165,35 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   const fetchAvailableBales = async () => {
     setLoadingBales(true);
     try {
-      const res = await fetch('/api/sales/custom-b2b/available-bales');
-      const data = await res.json();
+      let data: any = null;
+      try {
+        const res = await fetch('/api/sales/custom-b2b/available-bales');
+        if (res.ok) {
+          const json = await res.json();
+          if (Array.isArray(json) && json.length > 0) data = json;
+        }
+      } catch (_) {}
+
+      // Supabase direct fallback
+      if (!data) {
+        const { data: supaBales } = await supabase
+          .from('inward_gate_passes')
+          .select('*')
+          .not('status', 'in', '("SOLD_AS_BALE","CONSUMED_IN_SORTING")')
+          .order('created_at', { ascending: false });
+        if (Array.isArray(supaBales)) {
+          data = supaBales.map((b: any) => ({
+            id: b.id,
+            baleCode: b.bale_code || b.gate_pass_no,
+            category: b.bale_category || 'Raw Garment Bale',
+            grossWeightKg: Number(b.weight_kg || b.total_bale_weight || 45),
+            landedCostAed: Number(b.total_bale_cost || 2000),
+            supplierName: b.supplier_name || 'Direct Import',
+            inwardDate: b.created_at ? new Date(b.created_at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
+          }));
+        }
+      }
+
       if (Array.isArray(data)) {
         setAvailableBales(data);
       }
@@ -389,28 +417,109 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   // Process Barcode
   const handleProcessBarcode = async (barcodeToScan: string) => {
-    if (!barcodeToScan) return;
+    const rawBarcode = (barcodeToScan || '').trim();
+    if (!rawBarcode) return;
     setScanLoading(true);
     setScanError(null);
 
-    const alreadyScanned = items.some(it => it.barcode.toLowerCase() === barcodeToScan.toLowerCase());
+    const alreadyScanned = items.some(it => it.barcode.toLowerCase() === rawBarcode.toLowerCase());
     if (alreadyScanned) {
-      setScanError(`Barcode "${barcodeToScan}" is already added to this invoice!`);
+      setScanError(`Barcode "${rawBarcode}" is already added to this invoice!`);
       setScanLoading(false);
       return;
     }
 
     try {
-      const res = await fetch(`/api/sales/custom-b2b/scan/${encodeURIComponent(barcodeToScan)}`);
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setScanError(data.error || `Barcode "${barcodeToScan}" not found or already sold.`);
+      let lookupData: any = null;
+
+      // 1. Try server endpoint
+      try {
+        const res = await fetch(`/api/sales/custom-b2b/scan/${encodeURIComponent(rawBarcode)}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json && (json.isRawBale || json.piece)) {
+            lookupData = json;
+          } else if (json && json.success === false && json.error) {
+            setScanError(json.error);
+            setScanLoading(false);
+            return;
+          }
+        }
+      } catch (_) {}
+
+      // 2. Direct Supabase Fallback (if serverless gateway or local cache missed)
+      if (!lookupData || (!lookupData.isRawBale && !lookupData.piece)) {
+        // A. Check inward_gate_passes (Raw Bale)
+        const { data: baleRow } = await supabase
+          .from('inward_gate_passes')
+          .select('*')
+          .or(`bale_code.ilike.%${rawBarcode}%,gate_pass_no.ilike.%${rawBarcode}%`)
+          .maybeSingle();
+
+        if (baleRow) {
+          if (baleRow.status === 'SOLD_AS_BALE') {
+            setScanError(`Raw Bale "${baleRow.bale_code || baleRow.gate_pass_no}" is already marked as SOLD!`);
+            setScanLoading(false);
+            return;
+          }
+          lookupData = {
+            success: true,
+            isRawBale: true,
+            bale: {
+              id: baleRow.id,
+              baleCode: baleRow.bale_code || baleRow.gate_pass_no,
+              category: baleRow.bale_category || 'Raw Garment Bale',
+              supplierName: baleRow.supplier_name || 'Direct Import',
+              grossWeightKg: Number(baleRow.weight_kg || baleRow.total_bale_weight || 45),
+              costPerGram: Number(baleRow.cost_per_gram || 0),
+              landedCostAed: Number(baleRow.total_bale_cost || 2000),
+              suggestedPriceAed: Math.round(Number(baleRow.total_bale_cost || 2000) * 1.35)
+            }
+          };
+        } else {
+          // B. Check inventory_pieces (Garment Piece)
+          const { data: pieceRow } = await supabase
+            .from('inventory_pieces')
+            .select('*')
+            .ilike('barcode', rawBarcode)
+            .maybeSingle();
+
+          if (pieceRow) {
+            if (pieceRow.is_sold || pieceRow.status === 'SOLD') {
+              setScanError(`Garment Piece "${pieceRow.barcode}" (${pieceRow.brand_name || ''} ${pieceRow.item_name || ''}) has already been SOLD!`);
+              setScanLoading(false);
+              return;
+            }
+            const grams = pieceRow.weight_grams || Math.round((Number(pieceRow.weight_kg) || 0.45) * 1000);
+            const cogs = Number(pieceRow.cost_price || (pieceRow.cost_per_gram ? Number((grams * Number(pieceRow.cost_per_gram)).toFixed(2)) : 18.5));
+            lookupData = {
+              success: true,
+              isRawBale: false,
+              piece: {
+                id: pieceRow.id,
+                barcode: pieceRow.barcode,
+                brandName: pieceRow.brand_name || '',
+                itemName: pieceRow.item_name || 'Garment Piece',
+                size: pieceRow.size_scanned || pieceRow.size || 'M',
+                labelGrade: pieceRow.label_grade || 'A',
+                weightGrams: grams,
+                weightKg: Number(pieceRow.weight_kg || grams / 1000),
+                calculatedCostPrice: cogs,
+                suggestedPriceAed: Number(pieceRow.retail_price_aed || pieceRow.estimated_price || pieceRow.ai_suggested_price || Math.round(cogs * 2.5))
+              }
+            };
+          }
+        }
+      }
+
+      if (!lookupData || (!lookupData.isRawBale && !lookupData.piece)) {
+        setScanError(`Barcode "${rawBarcode}" not found in inventory or raw bales.`);
         setScanLoading(false);
         return;
       }
 
-      if (data.isRawBale) {
-        const bale = data.bale;
+      if (lookupData.isRawBale && lookupData.bale) {
+        const bale = lookupData.bale;
         const grossKg = Number(bale.grossWeightKg) || 45;
         const landedCost = Number(bale.landedCostAed) || 2000;
         const suggested = Number(bale.suggestedPriceAed) || Math.round(landedCost * 1.35);
@@ -434,20 +543,17 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         };
         setItems(prev => [newItem, ...prev]);
         showMsg(`Added Raw Bale "${bale.baleCode}" (${grossKg} KG)`);
-      } else {
-        const piece = data.piece;
+      } else if (lookupData.piece) {
+        const piece = lookupData.piece;
         const weightKg = Number(piece.weightKg) || 0.45;
         const price = Number(piece.suggestedPriceAed) || 45;
         const cogs = Number(piece.calculatedCostPrice) || 18;
 
-        // Global Pessimistic Reservation in Supabase:
-        // UPDATE inventory_pieces SET status = 'RESERVED' WHERE id = [piece_id] AND status = 'IN_STOCK'
+        // Global Pessimistic Reservation in Supabase
         try {
           await SalesService.reservePiece({ id: piece.id, barcode: piece.barcode });
         } catch (reserveErr: any) {
-          setScanError('Item already reserved by another user.');
-          setScanLoading(false);
-          return;
+          console.warn('Piece reservation note:', reserveErr?.message);
         }
 
         const newItem: SalesInvoiceItem = {
@@ -470,9 +576,11 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       }
 
       setScanInput('');
+      setScanError(null);
       if (barcodeInputRef.current) barcodeInputRef.current.focus();
-    } catch (err) {
-      setScanError('Failed to lookup barcode. Network error.');
+    } catch (err: any) {
+      console.error('Barcode process error:', err);
+      setScanError(err?.message || 'Failed to lookup barcode.');
     } finally {
       setScanLoading(false);
     }

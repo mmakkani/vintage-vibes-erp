@@ -333,15 +333,108 @@ salesRouter.get('/counter-sale/scan/:barcode', (req, res) => {
 });
 
 // B2B Custom Corporate Sales Endpoints
-salesRouter.get('/custom-b2b/available-bales', (req, res) => {
+salesRouter.get('/custom-b2b/available-bales', async (req, res) => {
+  try {
+    const client = await getDbClient();
+    const balesRes = await client.query(`
+      SELECT * FROM inward_gate_passes 
+      WHERE status NOT IN ('SOLD_AS_BALE', 'CONSUMED_IN_SORTING')
+      ORDER BY created_at DESC;
+    `);
+    await client.end().catch(() => {});
+    if (balesRes.rows && balesRes.rows.length > 0) {
+      const list = balesRes.rows.map(b => ({
+        id: b.id,
+        baleCode: b.bale_code || b.gate_pass_no,
+        category: b.bale_category || 'Raw Garment Bale',
+        grossWeightKg: Number(b.weight_kg || b.total_bale_weight || 45),
+        landedCostAed: Number(b.total_bale_cost || 2000),
+        supplierName: b.supplier_name || 'Direct Import',
+        inwardDate: b.created_at ? new Date(b.created_at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
+      }));
+      return res.json(list);
+    }
+  } catch (_) {}
   return res.json(SalesController.getAvailableRawBales());
 });
 
-salesRouter.get('/custom-b2b/scan/:barcode', (req, res) => {
+salesRouter.get('/custom-b2b/scan/:barcode', async (req, res) => {
   const { barcode } = req.params;
+  const norm = (barcode || '').trim();
+
+  // 1. Direct PostgreSQL check
+  try {
+    const client = await getDbClient();
+    // Check raw bale first
+    const baleRes = await client.query(`
+      SELECT * FROM inward_gate_passes 
+      WHERE (bale_code ILIKE $1 OR gate_pass_no ILIKE $1 OR id::text = $1)
+      LIMIT 1;
+    `, [norm]);
+
+    if (baleRes.rows && baleRes.rows.length > 0) {
+      const b = baleRes.rows[0];
+      await client.end().catch(() => {});
+      if (b.status === 'SOLD_AS_BALE') {
+        return res.status(400).json({ success: false, error: `Raw Bale "${b.bale_code || b.gate_pass_no}" is already marked as SOLD!` });
+      }
+      return res.json({
+        success: true,
+        isRawBale: true,
+        bale: {
+          id: b.id,
+          baleCode: b.bale_code || b.gate_pass_no,
+          category: b.bale_category || 'Raw Garment Bale',
+          supplierName: b.supplier_name || 'Direct Import',
+          grossWeightKg: Number(b.weight_kg || b.total_bale_weight || 45),
+          costPerGram: Number(b.cost_per_gram || 0),
+          landedCostAed: Number(b.total_bale_cost || 2000),
+          suggestedPriceAed: Math.round(Number(b.total_bale_cost || 2000) * 1.35)
+        }
+      });
+    }
+
+    // Check sorted garment piece
+    const pieceRes = await client.query(`
+      SELECT * FROM inventory_pieces 
+      WHERE barcode ILIKE $1 OR id::text = $1
+      LIMIT 1;
+    `, [norm]);
+
+    if (pieceRes.rows && pieceRes.rows.length > 0) {
+      const p = pieceRes.rows[0];
+      await client.end().catch(() => {});
+      if (p.is_sold || p.status === 'SOLD') {
+        return res.status(400).json({ success: false, error: `Garment Piece "${p.barcode}" (${p.brand_name || ''} ${p.item_name || ''}) has already been SOLD!` });
+      }
+      const grams = p.weight_grams || Math.round((Number(p.weight_kg) || 0.45) * 1000);
+      const cogs = Number(p.cost_price || (p.cost_per_gram ? Number((grams * Number(p.cost_per_gram)).toFixed(2)) : 18.5));
+      return res.json({
+        success: true,
+        isRawBale: false,
+        piece: {
+          id: p.id,
+          barcode: p.barcode,
+          brandName: p.brand_name || '',
+          itemName: p.item_name || 'Garment Piece',
+          size: p.size_scanned || p.size || 'M',
+          labelGrade: p.label_grade || 'A',
+          weightGrams: grams,
+          weightKg: Number(p.weight_kg || grams / 1000),
+          calculatedCostPrice: cogs,
+          suggestedPriceAed: Number(p.retail_price_aed || p.estimated_price || p.ai_suggested_price || Math.round(cogs * 2.5))
+        }
+      });
+    }
+    await client.end().catch(() => {});
+  } catch (err: any) {
+    console.warn('DB lookup error in /custom-b2b/scan:', err?.message);
+  }
+
+  // 2. RelationalStore fallback
   const result = SalesController.lookupB2BBarcode(barcode);
   if (!result.success) {
-    return res.status(404).json({ error: result.error });
+    return res.status(404).json({ success: false, error: result.error });
   }
   return res.json(result);
 });

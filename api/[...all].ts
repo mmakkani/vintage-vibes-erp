@@ -6754,6 +6754,195 @@ RULES FOR YOUR RESPONSE:
         return res.status(200).json([]);
       }
 
+      // Sub-route: GET /api/sales/custom-b2b/scan/:barcode (Dual Gun Scan for Raw Bales & Garment Pieces)
+      if (pathname.includes('/custom-b2b/scan/') && method === 'GET') {
+        const rawBarcode = pathname.split('/custom-b2b/scan/')[1] || '';
+        const barcode = decodeURIComponent(rawBarcode).trim();
+        if (!barcode) {
+          return res.status(400).json({ success: false, error: 'Barcode parameter is required' });
+        }
+
+        let client: any = null;
+        try {
+          client = await borrowClient();
+          // 1. Check Raw Bales first in inward_gate_passes
+          const baleRes = await client.query(`
+            SELECT * FROM inward_gate_passes 
+            WHERE (bale_code ILIKE $1 OR gate_pass_no ILIKE $1 OR id::text = $1)
+            LIMIT 1;
+          `, [barcode]);
+
+          if (baleRes.rows && baleRes.rows.length > 0) {
+            const b = baleRes.rows[0];
+            if (b.status === 'SOLD_AS_BALE') {
+              return res.status(400).json({ success: false, error: `Raw Bale "${b.bale_code || b.gate_pass_no}" is already marked as SOLD!` });
+            }
+            return res.status(200).json({
+              success: true,
+              isRawBale: true,
+              bale: {
+                id: b.id,
+                baleCode: b.bale_code || b.gate_pass_no,
+                category: b.bale_category || 'Raw Garment Bale',
+                supplierName: b.supplier_name || 'Direct Import',
+                grossWeightKg: Number(b.weight_kg || b.total_bale_weight || 45),
+                costPerGram: Number(b.cost_per_gram || 0),
+                landedCostAed: Number(b.total_bale_cost || 2000),
+                suggestedPriceAed: Math.round(Number(b.total_bale_cost || 2000) * 1.35)
+              }
+            });
+          }
+
+          // 2. Check Garment Pieces in inventory_pieces
+          const pieceRes = await client.query(`
+            SELECT * FROM inventory_pieces 
+            WHERE barcode ILIKE $1 OR id::text = $1
+            LIMIT 1;
+          `, [barcode]);
+
+          if (pieceRes.rows && pieceRes.rows.length > 0) {
+            const p = pieceRes.rows[0];
+            if (p.is_sold || p.status === 'SOLD') {
+              return res.status(400).json({ success: false, error: `Garment Piece "${p.barcode}" (${p.brand_name || ''} ${p.item_name || ''}) has already been SOLD!` });
+            }
+            const grams = p.weight_grams || Math.round((Number(p.weight_kg) || 0.45) * 1000);
+            const cogs = Number(p.cost_price || (p.cost_per_gram ? Number((grams * Number(p.cost_per_gram)).toFixed(2)) : 18.5));
+            return res.status(200).json({
+              success: true,
+              isRawBale: false,
+              piece: {
+                id: p.id,
+                barcode: p.barcode,
+                brandName: p.brand_name || '',
+                itemName: p.item_name || 'Garment Piece',
+                size: p.size_scanned || p.size || 'M',
+                labelGrade: p.label_grade || 'A',
+                weightGrams: grams,
+                weightKg: Number(p.weight_kg || grams / 1000),
+                calculatedCostPrice: cogs,
+                suggestedPriceAed: Number(p.retail_price_aed || p.estimated_price || p.ai_suggested_price || Math.round(cogs * 2.5))
+              }
+            });
+          }
+        } catch (dbErr: any) {
+          console.warn('[Serverless B2B Scan] DB error:', dbErr?.message);
+        } finally {
+          if (client && typeof client.release === 'function') {
+            try { client.release(); } catch (_) {}
+          }
+        }
+
+        // Supabase Admin fallback
+        try {
+          const { data: baleData } = await supabaseAdmin
+            .from('inward_gate_passes')
+            .select('*')
+            .or(`bale_code.ilike.%${barcode}%,gate_pass_no.ilike.%${barcode}%`)
+            .maybeSingle();
+
+          if (baleData) {
+            if (baleData.status === 'SOLD_AS_BALE') {
+              return res.status(400).json({ success: false, error: `Raw Bale "${baleData.bale_code || baleData.gate_pass_no}" is already marked as SOLD!` });
+            }
+            return res.status(200).json({
+              success: true,
+              isRawBale: true,
+              bale: {
+                id: baleData.id,
+                baleCode: baleData.bale_code || baleData.gate_pass_no,
+                category: baleData.bale_category || 'Raw Garment Bale',
+                supplierName: baleData.supplier_name || 'Direct Import',
+                grossWeightKg: Number(baleData.weight_kg || baleData.total_bale_weight || 45),
+                costPerGram: Number(baleData.cost_per_gram || 0),
+                landedCostAed: Number(baleData.total_bale_cost || 2000),
+                suggestedPriceAed: Math.round(Number(baleData.total_bale_cost || 2000) * 1.35)
+              }
+            });
+          }
+
+          const { data: pieceData } = await supabaseAdmin
+            .from('inventory_pieces')
+            .select('*')
+            .ilike('barcode', barcode)
+            .maybeSingle();
+
+          if (pieceData) {
+            if (pieceData.is_sold || pieceData.status === 'SOLD') {
+              return res.status(400).json({ success: false, error: `Garment Piece "${pieceData.barcode}" has already been SOLD!` });
+            }
+            const grams = pieceData.weight_grams || Math.round((Number(pieceData.weight_kg) || 0.45) * 1000);
+            const cogs = Number(pieceData.cost_price || 18.5);
+            return res.status(200).json({
+              success: true,
+              isRawBale: false,
+              piece: {
+                id: pieceData.id,
+                barcode: pieceData.barcode,
+                brandName: pieceData.brand_name || '',
+                itemName: pieceData.item_name || 'Garment Piece',
+                size: pieceData.size_scanned || pieceData.size || 'M',
+                labelGrade: pieceData.label_grade || 'A',
+                weightGrams: grams,
+                weightKg: Number(pieceData.weight_kg || grams / 1000),
+                calculatedCostPrice: cogs,
+                suggestedPriceAed: Number(pieceData.retail_price_aed || pieceData.estimated_price || pieceData.ai_suggested_price || 35)
+              }
+            });
+          }
+        } catch (_) {}
+
+        return res.status(404).json({ success: false, error: `Barcode "${barcode}" not found in inventory or raw bales.` });
+      }
+
+      // Sub-route: GET /api/sales/custom-b2b/available-bales
+      if (pathname.includes('/custom-b2b/available-bales') && method === 'GET') {
+        let client: any = null;
+        try {
+          client = await borrowClient();
+          const balesRes = await client.query(`
+            SELECT * FROM inward_gate_passes 
+            WHERE status NOT IN ('SOLD_AS_BALE', 'CONSUMED_IN_SORTING')
+            ORDER BY created_at DESC;
+          `);
+          if (balesRes.rows && balesRes.rows.length > 0) {
+            return res.status(200).json(balesRes.rows.map(b => ({
+              id: b.id,
+              baleCode: b.bale_code || b.gate_pass_no,
+              category: b.bale_category || 'Raw Garment Bale',
+              grossWeightKg: Number(b.weight_kg || b.total_bale_weight || 45),
+              landedCostAed: Number(b.total_bale_cost || 2000),
+              supplierName: b.supplier_name || 'Direct Import',
+              inwardDate: b.created_at ? new Date(b.created_at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
+            })));
+          }
+        } catch (_) {} finally {
+          if (client && typeof client.release === 'function') {
+            try { client.release(); } catch (_) {}
+          }
+        }
+
+        try {
+          const { data } = await supabaseAdmin
+            .from('inward_gate_passes')
+            .select('*')
+            .not('status', 'in', '("SOLD_AS_BALE","CONSUMED_IN_SORTING")')
+            .order('created_at', { ascending: false });
+          if (data && data.length > 0) {
+            return res.status(200).json(data.map(b => ({
+              id: b.id,
+              baleCode: b.bale_code || b.gate_pass_no,
+              category: b.bale_category || 'Raw Garment Bale',
+              grossWeightKg: Number(b.weight_kg || b.total_bale_weight || 45),
+              landedCostAed: Number(b.total_bale_cost || 2000),
+              supplierName: b.supplier_name || 'Direct Import',
+              inwardDate: b.created_at ? new Date(b.created_at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
+            })));
+          }
+        } catch (_) {}
+
+        return res.status(200).json([]);
+      }
+
       if ((pathname.endsWith('/invoices') || pathname === '/api/sales' || pathname === '/sales') && method === 'GET') {
         let client: any = null;
         try {
