@@ -39,9 +39,9 @@ export const BankQrModal: React.FC<BankQrModalProps> = ({
   );
   const amount = customTotal || (computedSubtotal > 0 ? computedSubtotal : 295);
 
-  const iban = companyProfile.bankIban || 'AE24 0331 2345 6789 0123 456';
-  const bankName = companyProfile.bankName || 'Emirates NBD - Dubai Business Bay';
-  const accountTitle = companyProfile.bankAccountTitle || companyProfile.companyName || 'Vintage Vibes LLC SPC';
+  const iban = companyProfile.bankIban || 'AE76 0400 0001 4365 6279 001';
+  const bankName = companyProfile.bankName || 'RAKBANK';
+  const accountTitle = companyProfile.bankAccountTitle || companyProfile.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C-S.P.C';
 
   const barcodesRef = activeItems.map(i => i.barcode).filter(Boolean).join(',');
 

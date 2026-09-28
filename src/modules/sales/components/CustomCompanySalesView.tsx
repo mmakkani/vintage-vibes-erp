@@ -31,6 +31,8 @@ import {
 import { SalesService } from '../../../services/salesService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
+import { CompanyProfileService } from '../../../services/companyProfileService.ts';
+import { CompanyProfile } from '../../setup/setup.types.ts';
 import { COAAccount } from '../../finance/finance.types.ts';
 import { supabase } from '../../../supabaseClient.ts';
 import {
@@ -78,6 +80,18 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   const [internalClients, setInternalClients] = useState<Party[]>(propClients || []);
   const [internalInvoices, setInternalInvoices] = useState<SalesInvoice[]>(propInvoices || []);
   const [coaAccounts, setCoaAccounts] = useState<COAAccount[]>([]);
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
+
+  useEffect(() => {
+    CompanyProfileService.getCompanyProfile().then(p => {
+      if (p) setCompanyProfile(p);
+    }).catch(() => {});
+  }, []);
+
+  const primaryBank = useMemo(() => {
+    const accounts = companyProfile?.bankAccounts || [];
+    return accounts.find(b => b.isPrimary) || accounts[0] || null;
+  }, [companyProfile]);
 
   // Screen Search & Filters for the Invoices Log
   const [logSearch, setLogSearch] = useState('');
@@ -1144,8 +1158,8 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       // Line 9 & 10: Advance Payment Settlement (if advance paid)
       const advPaid = Number(advanceAmountPaid) || 0;
       if (advPaid > 0) {
-        const receiptAccCode = paymentMethod === 'BANK_TRANSFER' ? '1120-01' : '1110-01';
-        const receiptAccName = paymentMethod === 'BANK_TRANSFER' ? 'Emirates NBD Bank Account' : 'Main Cash in Hand';
+        const receiptAccCode = paymentMethod === 'BANK_TRANSFER' ? (primaryBank?.coaAccountCode || companyProfile?.bankAccountCode || '1120-02') : '1110-01';
+        const receiptAccName = paymentMethod === 'BANK_TRANSFER' ? `${primaryBank?.bankName || companyProfile?.bankName || 'Corporate Bank'} Account` : 'Main Cash in Hand';
         voucherLines.push({
           accountId: receiptAccCode,
           accountCode: receiptAccCode,
@@ -3020,11 +3034,19 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
                   <div className="flex justify-between items-start pt-2">
                     <div className="w-1/2 space-y-1 text-[11px] text-slate-600">
-                      <div className="font-bold text-slate-800">Bank Details for Wire Transfer:</div>
-                      <div>Bank: Emirates NBD, Al Quoz Branch</div>
-                      <div>Account Name: Vintage Vibe Used Clothing Trading LLC</div>
-                      <div className="font-mono">IBAN: AE28 0260 0010 4928 1900 003</div>
-                      <div className="font-mono">SWIFT: EBILAEAD</div>
+                      <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Bank Details for Wire Transfer:</span>
+                      </div>
+                      <div>Bank: <strong>{primaryBank?.bankName || companyProfile?.bankName || 'RAKBANK'}</strong> {primaryBank?.branchName ? `(${primaryBank.branchName} Branch)` : ''}</div>
+                      <div>Account Name: {primaryBank?.accountTitle || companyProfile?.bankAccountTitle || companyProfile?.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C-S.P.C'}</div>
+                      <div className="font-mono font-bold text-slate-900">IBAN: {primaryBank?.iban || companyProfile?.bankIban || 'AE76 0400 0001 4365 6279 001'}</div>
+                      {primaryBank?.swiftBic && <div className="font-mono">SWIFT: {primaryBank.swiftBic}</div>}
+                      {primaryBank?.accountNumber && <div className="font-mono text-[10px]">Account No: {primaryBank.accountNumber}</div>}
+                      <div className="text-[10px] text-emerald-700 font-bold flex items-center gap-1">
+                        <CheckCircle className="w-3 h-3" />
+                        <span>COA Asset Link: {primaryBank?.coaAccountCode || companyProfile?.bankAccountCode || '1120-02'}</span>
+                      </div>
                     </div>
 
                     <div className="w-1/2 max-w-[280px] space-y-1 text-xs">

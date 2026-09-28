@@ -39,7 +39,7 @@ import {
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
 import { Party } from '../../parties/parties.types.ts';
 import { CompanyProfile } from '../../setup/setup.types.ts';
-import { POSTerminalConfig } from '../../setup/hardware.types.ts';
+import { POSTerminalConfig, POSTerminalDevice } from '../../setup/hardware.types.ts';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { SalesService } from '../../../services/salesService.ts';
 import { SequenceService } from '../../../services/sequenceService.ts';
@@ -261,19 +261,21 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   // Cash payment state
   const [cashTendered, setCashTendered] = useState<string>('');
 
-  // POS Card Machine State
+  // POS Card Machine State & Multi-Device Fleet Support (1 to 5 Devices)
   const posConfig: POSTerminalConfig = useMemo(() => {
     return activeProfile?.posTerminalConfig || {
       id: 'pos-default-01',
-      terminalName: 'Counter 1 - Sunmi Smart PED',
-      model: 'SUNMI_P2',
-      connectionType: 'LAN_ETHERNET',
+      terminalName: 'Counter 1 - Main Desk PED',
+      model: 'PAX_A920',
+      connectionType: 'IP_ETHERNET',
       ipAddress: '192.168.1.150',
       port: 8080,
-      terminalId: 'TID-DXB-9921',
-      merchantId: 'MID-VV-DUBAI-88',
+      terminalId: 'TID-DXB-001',
+      merchantId: 'MID-VV-9881',
       status: 'ONLINE',
-      clearingAccountId: 'acc-1125',
+      clearingAccountId: '1125-00',
+      settlementCoaAccountCode: '1120-02',
+      linkedBankName: 'RAKBANK',
       autoPrintCustomerReceipt: true,
       autoPrintMerchantSlip: false,
       allowApplePayNfc: true,
@@ -282,6 +284,43 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       currency: 'AED'
     };
   }, [activeProfile?.posTerminalConfig]);
+
+  const posFleet: POSTerminalDevice[] = useMemo(() => {
+    if (Array.isArray(posConfig?.fleet) && posConfig.fleet.length > 0) {
+      return posConfig.fleet;
+    }
+    return [
+      {
+        id: 'pos-dev-01',
+        name: posConfig.terminalName || 'Counter 1 - Main Desk PED',
+        model: (posConfig.terminalModel || posConfig.model || 'PAX_A920') as any,
+        connectionType: (posConfig.connectionType || 'IP_ETHERNET') as any,
+        ipAddress: posConfig.ipAddress || posConfig.terminalIp || '192.168.1.150',
+        port: posConfig.port || 8080,
+        terminalId: posConfig.terminalId || 'TID-DXB-001',
+        merchantId: posConfig.merchantId || 'MID-VV-9881',
+        isActive: true,
+        status: 'ONLINE',
+        location: 'Main Cash Counter'
+      }
+    ];
+  }, [posConfig]);
+
+  const activeFleet = useMemo(() => {
+    return posFleet.filter(dev => dev.isActive !== false);
+  }, [posFleet]);
+
+  const [selectedTerminalId, setSelectedTerminalId] = useState<string>('');
+
+  useEffect(() => {
+    if (activeFleet.length > 0 && (!selectedTerminalId || !activeFleet.some(d => d.id === selectedTerminalId))) {
+      setSelectedTerminalId(activeFleet[0].id);
+    }
+  }, [activeFleet, selectedTerminalId]);
+
+  const activeDevice = useMemo(() => {
+    return activeFleet.find(d => d.id === selectedTerminalId) || activeFleet[0] || null;
+  }, [activeFleet, selectedTerminalId]);
 
   const [posMachineStage, setPosMachineStage] = useState<'IDLE' | 'AWAITING_TAP' | 'APPROVED' | 'FAILED'>('IDLE');
   const [posAuthCode, setPosAuthCode] = useState<string>('');
@@ -906,8 +945,11 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       }
     } catch {}
 
-    const terminalIp = posConfig.ipAddress || posConfig.terminalIp || '192.168.1.150';
-    const terminalPort = posConfig.port || 8080;
+    const targetDeviceName = activeDevice?.name || posConfig.terminalName || 'POS Machine';
+    const terminalIp = activeDevice?.ipAddress || posConfig.ipAddress || posConfig.terminalIp || '192.168.1.150';
+    const terminalPort = activeDevice?.port || posConfig.port || 8080;
+    const terminalId = activeDevice?.terminalId || posConfig.terminalId || 'TID-DXB-001';
+    const merchantId = activeDevice?.merchantId || posConfig.merchantId || 'MID-VV-9881';
     const totalDue = grandTotal;
 
     const controller = new AbortController();
@@ -921,8 +963,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         body: JSON.stringify({
           amount: totalDue,
           currency: posConfig.currency || 'AED',
-          terminalId: posConfig.terminalId,
-          merchantId: posConfig.merchantId
+          terminalId,
+          merchantId
         }),
         signal: controller.signal
       });
@@ -942,7 +984,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       luxuryAudio.playCashChime();
     } catch (error: any) {
       clearTimeout(timeoutId);
-      const displayMsg = `Connection Failed: POS Machine not found at IP ${terminalIp}. Please check network or use Manual Entry.`;
+      const displayMsg = `Connection Failed: ${targetDeviceName} not found at IP ${terminalIp}. Please check network or use Manual Entry.`;
       console.warn(`[POS Hardware Bridge] ${displayMsg}`, error);
       setPosMachineStage('FAILED');
       setPosErrorMessage(displayMsg);
@@ -1551,7 +1593,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               </h2>
               <span className="text-[10px] bg-emerald-50 text-emerald-700 font-mono px-2 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1 font-bold">
                 <Wifi className="w-3 h-3 animate-pulse" />
-                {posConfig.terminalName} • ONLINE
+                {activeDevice?.name || posConfig.terminalName || 'Main Counter POS'} • {activeFleet.length > 0 ? `${activeFleet.length} Active in Fleet` : 'OFFLINE'}
               </span>
               {pendingOfflineCount > 0 && (
                 <button
@@ -2566,12 +2608,53 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                     <CreditCard className="w-8 h-8 animate-pulse" />
                   </div>
 
+                  {/* Multi-Device Fleet Selector */}
+                  {activeFleet.length > 1 && (
+                    <div className="w-full max-w-md mx-auto bg-slate-50 dark:bg-slate-900/60 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1.5">
+                      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between px-1">
+                        <span>Select Target POS Terminal ({activeFleet.length} Active in Fleet):</span>
+                        <span className="text-emerald-600 font-mono">1 to 5 Fleet Hub</span>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-center gap-1.5">
+                        {activeFleet.map(dev => {
+                          const isSelected = (selectedTerminalId === dev.id) || (!selectedTerminalId && activeFleet[0]?.id === dev.id);
+                          return (
+                            <button
+                              key={dev.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedTerminalId(dev.id);
+                                setPosMachineStage('IDLE');
+                                setPosErrorMessage(null);
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border flex items-center gap-1.5 cursor-pointer ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm ring-2 ring-indigo-300 dark:ring-indigo-700'
+                                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100'
+                              }`}
+                            >
+                              <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500'}`}></span>
+                              <span>{dev.name}</span>
+                              <span className="text-[10px] opacity-75 font-mono">({dev.model})</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeFleet.length === 0 && (
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold text-center">
+                      ⚠️ All POS card terminals are currently set to INACTIVE in Global Setup. Please activate a device or use Manual Card / Bank QR.
+                    </div>
+                  )}
+
                   <div>
                     <h4 className={`text-sm font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-white'}`}>
-                      Linked Terminal: {posConfig.terminalName}
+                      Linked Terminal: {activeDevice?.name || posConfig.terminalName || 'Main Counter POS'}
                     </h4>
                     <p className={`text-xs ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
-                      Terminal ID: <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-indigo-600' : 'text-indigo-300'}`}>{posConfig.terminalId}</span> • IP: <span className="font-mono">{posConfig.ipAddress || '192.168.1.150'}</span>
+                      Terminal ID: <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-indigo-600' : 'text-indigo-300'}`}>{activeDevice?.terminalId || posConfig.terminalId}</span> • IP: <span className="font-mono">{activeDevice?.ipAddress || posConfig.ipAddress || '192.168.1.150'}</span>
                     </p>
                   </div>
 
@@ -2582,7 +2665,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                         : 'bg-amber-950/40 border-amber-500/50 text-amber-300'
                     }`}>
                       <Radio className="w-4 h-4 animate-ping text-indigo-500" />
-                      <span>Transmitting AED {grandTotal.toFixed(2)} to POS Machine ({posConfig.ipAddress || '192.168.1.150'})... Customer Tap Card / Apple Pay now.</span>
+                      <span>Transmitting AED {grandTotal.toFixed(2)} to {activeDevice?.name || 'POS Machine'} ({activeDevice?.ipAddress || posConfig.ipAddress || '192.168.1.150'})... Customer Tap Card / Apple Pay now.</span>
                     </div>
                   )}
 
@@ -2605,7 +2688,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                         <span>HARDWARE CONNECTION ERROR</span>
                       </div>
                       <p className="text-[12px] font-mono text-rose-700">
-                        {posErrorMessage || `Connection Failed: POS Machine not found at IP ${posConfig.ipAddress || '192.168.1.150'}. Please check network or use Manual Entry.`}
+                        {posErrorMessage || `Connection Failed: Terminal not found at IP ${activeDevice?.ipAddress || posConfig.ipAddress || '192.168.1.150'}. Please check network or use Manual Entry.`}
                       </p>
                     </div>
                   )}
@@ -2614,18 +2697,18 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                     <button
                       type="button"
                       onClick={handleInitiatePosMachineTap}
-                      disabled={posMachineStage === 'AWAITING_TAP'}
+                      disabled={posMachineStage === 'AWAITING_TAP' || activeFleet.length === 0}
                       className="w-full max-w-sm px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md"
                     >
                       {posMachineStage === 'AWAITING_TAP' ? (
                         <>
                           <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Connecting to Terminal ({posConfig.ipAddress || '192.168.1.150'})...</span>
+                          <span>Connecting to Terminal ({activeDevice?.ipAddress || posConfig.ipAddress || '192.168.1.150'})...</span>
                         </>
                       ) : (
                         <>
                           <Radio className="w-4 h-4" />
-                          <span>Send to Machine</span>
+                          <span>Send to {activeDevice?.name || 'Machine'}</span>
                         </>
                       )}
                     </button>

@@ -69,30 +69,48 @@ export interface BarcodeScanTestEvent {
   prefixMatched?: boolean;
 }
 
-export interface POSTerminalConfig {
+export interface POSTerminalDevice {
   id: string;
-  terminalName: string;
-  model: 'SUNMI_P2' | 'PAX_A920' | 'INGENICO_MOVE5000' | 'VERIFONE_V240M' | 'STRIPE_TERMINAL' | 'NETWORK_IP_PED' | 'UNIVERSAL_SIMULATOR';
-  connectionType: 'LAN_ETHERNET' | 'WIFI_IP' | 'USB_SERIAL' | 'BLUETOOTH' | 'CLOUD_BRIDGE' | 'SIMULATOR';
+  name: string;
+  model: 'SUNMI_P2' | 'PAX_A920' | 'INGENICO' | 'VERIFONE' | 'SIMULATOR';
+  connectionType: 'IP_ETHERNET' | 'WIFI_IP' | 'BLUETOOTH' | 'USB_SERIAL' | 'CLOUD_API';
   ipAddress?: string;
   port?: number;
   terminalId: string; // TID
   merchantId: string; // MID
-  status: 'ONLINE' | 'OFFLINE' | 'BUSY';
-  clearingAccountId: string; // e.g. acc-1125 POS Card Clearing
+  isActive: boolean; // active/inactive toggle
+  status: 'ONLINE' | 'STANDBY' | 'OFFLINE';
+  location?: string;
+  lastPingAt?: string;
+}
+
+export interface POSTerminalConfig {
+  id?: string;
+  terminalName?: string;
+  model?: 'SUNMI_P2' | 'PAX_A920' | 'INGENICO_MOVE5000' | 'VERIFONE_V240M' | 'STRIPE_TERMINAL' | 'NETWORK_IP_PED' | 'UNIVERSAL_SIMULATOR' | string;
+  connectionType?: 'LAN_ETHERNET' | 'WIFI_IP' | 'USB_SERIAL' | 'BLUETOOTH' | 'CLOUD_BRIDGE' | 'SIMULATOR' | 'IP_ETHERNET' | string;
+  ipAddress?: string;
+  port?: number;
+  terminalId?: string; // TID
+  merchantId?: string; // MID
+  status?: 'ONLINE' | 'OFFLINE' | 'BUSY' | 'STANDBY';
+  clearingAccountId?: string; // e.g. acc-1125 POS Card Clearing
   linkedBankAccountId?: string; // Linked Bank Account ID for Card Settlement
   linkedBankName?: string; // e.g. Emirates NBD
   settlementCoaAccountCode?: string; // e.g. 1120-00
-  autoPrintCustomerReceipt: boolean;
-  autoPrintMerchantSlip: boolean;
-  allowApplePayNfc: boolean;
-  allowGooglePayNfc: boolean;
-  allowContactlessChip: boolean;
-  currency: string;
+  defaultSettlementBankId?: string;
+  autoPrintCustomerReceipt?: boolean;
+  autoPrintMerchantSlip?: boolean;
+  allowApplePayNfc?: boolean;
+  allowGooglePayNfc?: boolean;
+  allowContactlessChip?: boolean;
+  currency?: string;
   lastPingAt?: string;
   terminalModel?: string;
   terminalIp?: string;
   autoConfirmToCOA?: boolean;
   simulateMachine?: boolean;
+  fleet?: POSTerminalDevice[];
 }
+
 

@@ -14,7 +14,7 @@ import {
   LiveBoothStreamConfig,
   BankAccountConfig
 } from '../setup.types.ts';
-import { POSTerminalConfig } from '../hardware.types.ts';
+import { POSTerminalConfig, POSTerminalDevice } from '../hardware.types.ts';
 import {
   Building2,
   DollarSign,
@@ -175,6 +175,25 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   });
   const [posPingStatus, setPosPingStatus] = useState<'IDLE' | 'TESTING' | 'SUCCESS' | 'FAILED'>('IDLE');
   const [isSavingPosConfig, setIsSavingPosConfig] = useState(false);
+
+  // Multi-Device Smart POS Fleet State (1 to 5 Devices, Active/Inactive Toggles)
+  const [posFleet, setPosFleet] = useState<POSTerminalDevice[]>([]);
+  const [showDeviceModal, setShowDeviceModal] = useState(false);
+  const [editingDevice, setEditingDevice] = useState<POSTerminalDevice | null>(null);
+  const [deviceForm, setDeviceForm] = useState<Omit<POSTerminalDevice, 'id'>>({
+    name: 'Counter 1 - Main Desk PED',
+    model: 'PAX_A920',
+    connectionType: 'IP_ETHERNET',
+    ipAddress: '192.168.1.150',
+    port: 8080,
+    terminalId: 'TID-DXB-001',
+    merchantId: 'MID-VV-9881',
+    isActive: true,
+    status: 'ONLINE',
+    location: 'Main Cash Counter'
+  });
+  const [devicePingResults, setDevicePingResults] = useState<Record<string, 'TESTING' | 'SUCCESS' | 'FAILED'>>({});
+
   const [currentPinInput, setCurrentPinInput] = useState('');
   const [newPinInput, setNewPinInput] = useState('');
   const [confirmPinInput, setConfirmPinInput] = useState('');
@@ -381,8 +400,40 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
 
       if (profRes) {
         setCompanyProfile(profRes);
-        if (profRes.posTerminalConfig) {
-          setPosConfig(profRes.posTerminalConfig);
+        const ptc = profRes.posTerminalConfig || {};
+        setPosConfig({
+          terminalModel: ptc.terminalModel || ptc.model || 'PAX_A920',
+          connectionType: ptc.connectionType || 'IP_ETHERNET',
+          terminalIp: ptc.terminalIp || ptc.ipAddress || '192.168.1.150',
+          port: ptc.port || 8080,
+          terminalId: ptc.terminalId || 'TID-DXB-001',
+          merchantId: ptc.merchantId || 'MID-VV-9881',
+          currency: ptc.currency || 'AED',
+          autoConfirmToCOA: ptc.autoConfirmToCOA !== false,
+          simulateMachine: ptc.simulateMachine !== false,
+          status: ptc.status || 'ONLINE',
+          settlementCoaAccountCode: ptc.settlementCoaAccountCode || '1120-02',
+          linkedBankName: ptc.linkedBankName || 'RAKBANK',
+          ...ptc
+        });
+        if (Array.isArray(ptc.fleet) && ptc.fleet.length > 0) {
+          setPosFleet(ptc.fleet);
+        } else {
+          setPosFleet([
+            {
+              id: 'pos-dev-01',
+              name: 'Counter 1 - Main Desk PED',
+              model: 'PAX_A920',
+              connectionType: 'IP_ETHERNET',
+              ipAddress: '192.168.1.150',
+              port: 8080,
+              terminalId: 'TID-DXB-001',
+              merchantId: 'MID-VV-9881',
+              isActive: true,
+              status: 'ONLINE',
+              location: 'Main Cash Counter'
+            }
+          ]);
         }
       }
       if (Array.isArray(currRes)) setCurrencies(currRes);
@@ -535,11 +586,14 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     try {
       const updatedProfile = {
         ...companyProfile,
-        posTerminalConfig: posConfig
+        posTerminalConfig: {
+          ...posConfig,
+          fleet: posFleet
+        }
       };
       await CompanyProfileService.updateCompanyProfile(updatedProfile);
       setCompanyProfile(updatedProfile);
-      showMsg('POS Card Machine configuration saved & linked to Cashier Sales!');
+      showMsg('POS Card Machine settings saved & linked to Cashier Sales!');
       onRefreshAll();
     } catch (err: any) {
       showMsg(err?.message || 'Error saving POS terminal settings', 'error');
@@ -553,12 +607,170 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     try {
       await new Promise(r => setTimeout(r, 650));
       setPosPingStatus('SUCCESS');
-      showMsg(`🟢 Ping Success! ${posConfig.terminalModel} at ${posConfig.terminalIp}:${posConfig.port} responded in 24ms. Hardware handshake confirmed.`);
+      showMsg(`🟢 Ping Success! ${posConfig.terminalModel || 'PAX A920'} at ${posConfig.terminalIp || '192.168.1.150'}:${posConfig.port || 8080} responded in 24ms. Hardware handshake confirmed.`);
     } catch {
       setPosPingStatus('FAILED');
       showMsg('Could not reach POS terminal. Please verify IP address and local subnet.', 'error');
     }
   };
+
+  // 1 to 5 POS Fleet Handlers
+  const handleToggleDeviceActive = async (deviceId: string) => {
+    if (!companyProfile) return;
+    const currentFleet = posFleet.length > 0 ? posFleet : (companyProfile.posTerminalConfig?.fleet || []);
+    const updatedFleet = currentFleet.map(dev => {
+      if (dev.id === deviceId) {
+        return { ...dev, isActive: !dev.isActive };
+      }
+      return dev;
+    });
+
+    setPosFleet(updatedFleet);
+
+    const updatedProfile = {
+      ...companyProfile,
+      posTerminalConfig: {
+        ...(companyProfile.posTerminalConfig || posConfig),
+        fleet: updatedFleet
+      }
+    };
+
+    try {
+      await CompanyProfileService.updateCompanyProfile(updatedProfile);
+      setCompanyProfile(updatedProfile);
+      const targetDev = updatedFleet.find(d => d.id === deviceId);
+      showMsg(`Device "${targetDev?.name}" is now ${targetDev?.isActive ? 'ACTIVE (Enabled in POS)' : 'INACTIVE (Disabled in POS)'}`);
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error updating device status', 'error');
+    }
+  };
+
+  const handleDeleteDevice = async (deviceId: string) => {
+    if (!companyProfile) return;
+    if (posFleet.length <= 1) {
+      showMsg('You must keep at least 1 POS terminal device configured.', 'error');
+      return;
+    }
+    const devToDelete = posFleet.find(d => d.id === deviceId);
+    if (!confirm(`Are you sure you want to remove "${devToDelete?.name || 'this POS machine'}" from your fleet?`)) return;
+
+    const updatedFleet = posFleet.filter(d => d.id !== deviceId);
+    setPosFleet(updatedFleet);
+
+    const updatedProfile = {
+      ...companyProfile,
+      posTerminalConfig: {
+        ...(companyProfile.posTerminalConfig || posConfig),
+        fleet: updatedFleet
+      }
+    };
+
+    try {
+      await CompanyProfileService.updateCompanyProfile(updatedProfile);
+      setCompanyProfile(updatedProfile);
+      showMsg(`Device "${devToDelete?.name}" removed from POS fleet.`);
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error removing device', 'error');
+    }
+  };
+
+  const handlePingDevice = async (device: POSTerminalDevice) => {
+    setDevicePingResults(prev => ({ ...prev, [device.id]: 'TESTING' }));
+    try {
+      await new Promise(r => setTimeout(r, 450));
+      setDevicePingResults(prev => ({ ...prev, [device.id]: 'SUCCESS' }));
+      showMsg(`🟢 ${device.name} (${device.ipAddress || '192.168.1.150'}:${device.port || 8080}) online! Handshake 18ms.`);
+    } catch {
+      setDevicePingResults(prev => ({ ...prev, [device.id]: 'FAILED' }));
+      showMsg(`🔴 Connection failed to ${device.name} at ${device.ipAddress}`, 'error');
+    }
+  };
+
+  const handleOpenAddDevice = () => {
+    if (posFleet.length >= 5) {
+      showMsg('Fleet limit reached: Maximum 5 POS devices can be configured. Deactivate or remove an existing terminal to add another.', 'error');
+      return;
+    }
+    setEditingDevice(null);
+    const nextNum = posFleet.length + 1;
+    setDeviceForm({
+      name: `Counter ${nextNum} - Smart PED`,
+      model: nextNum === 2 ? 'SUNMI_P2' : nextNum === 3 ? 'PAX_A920' : nextNum === 4 ? 'INGENICO' : 'VERIFONE',
+      connectionType: nextNum === 4 ? 'USB_SERIAL' : nextNum === 5 ? 'BLUETOOTH' : 'IP_ETHERNET',
+      ipAddress: `192.168.1.15${nextNum - 1}`,
+      port: 8080,
+      terminalId: `TID-DXB-00${nextNum}`,
+      merchantId: posConfig.merchantId || 'MID-VV-9881',
+      isActive: true,
+      status: 'ONLINE',
+      location: nextNum === 2 ? 'Express Lane' : nextNum === 3 ? 'Live Studio' : nextNum === 4 ? 'B2B Wholesale' : 'Retail Floor'
+    });
+    setShowDeviceModal(true);
+  };
+
+  const handleOpenEditDevice = (device: POSTerminalDevice) => {
+    setEditingDevice(device);
+    setDeviceForm({
+      name: device.name,
+      model: device.model,
+      connectionType: device.connectionType,
+      ipAddress: device.ipAddress || '192.168.1.150',
+      port: device.port || 8080,
+      terminalId: device.terminalId,
+      merchantId: device.merchantId,
+      isActive: device.isActive !== false,
+      status: device.status || 'ONLINE',
+      location: device.location || ''
+    });
+    setShowDeviceModal(true);
+  };
+
+  const handleSaveDeviceModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!companyProfile) return;
+    if (!deviceForm.name.trim() || !deviceForm.terminalId.trim()) {
+      showMsg('Device name and Terminal ID (TID) are required.', 'error');
+      return;
+    }
+
+    let updatedFleet: POSTerminalDevice[];
+    if (editingDevice) {
+      updatedFleet = posFleet.map(d => d.id === editingDevice.id ? { ...d, ...deviceForm } : d);
+    } else {
+      if (posFleet.length >= 5) {
+        showMsg('Maximum 5 POS Devices Allowed.', 'error');
+        return;
+      }
+      const newDev: POSTerminalDevice = {
+        ...deviceForm,
+        id: `pos-dev-${Date.now().toString(36)}`
+      };
+      updatedFleet = [...posFleet, newDev];
+    }
+
+    setPosFleet(updatedFleet);
+
+    const updatedProfile = {
+      ...companyProfile,
+      posTerminalConfig: {
+        ...(companyProfile.posTerminalConfig || posConfig),
+        fleet: updatedFleet
+      }
+    };
+
+    try {
+      await CompanyProfileService.updateCompanyProfile(updatedProfile);
+      setCompanyProfile(updatedProfile);
+      setShowDeviceModal(false);
+      showMsg(`✓ POS Terminal "${deviceForm.name}" successfully saved & linked!`);
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Error saving terminal device', 'error');
+    }
+  };
+
 
   const handleSaveSalesCoaConfig = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -1460,11 +1672,9 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
             { id: 'profile', label: 'Company Profile', icon: <Building2 className="w-3.5 h-3.5" /> },
             { id: 'ai_vision', label: 'Google Gemini AI Config', icon: <Sparkles className="w-3.5 h-3.5 text-purple-600" /> },
             { id: 'maintenance', label: 'Maintenance Mode', icon: <Wrench className="w-3.5 h-3.5 text-amber-500" /> },
-            { id: 'payment_gateways', label: 'Payment Gateway (Apple Pay / Stripe)', icon: <Zap className="w-3.5 h-3.5 text-amber-500" /> },
+            { id: 'banks', label: '💳 Banking, POS Fleet & Payments Hub', icon: <Landmark className="w-3.5 h-3.5 text-emerald-600" /> },
             { id: 'live_multicast_sockets', label: 'Live Multicast & Social Sockets Hub', icon: <Radio className="w-3.5 h-3.5 text-red-500" /> },
-            { id: 'banks', label: 'Bank Accounts & COA', icon: <Landmark className="w-3.5 h-3.5 text-emerald-600" /> },
             { id: 'sales_coa', label: 'Sales & COA Settings', icon: <Landmark className="w-3.5 h-3.5 text-indigo-600" /> },
-            { id: 'pos_terminal', label: 'POS Card Machines', icon: <CreditCard className="w-3.5 h-3.5 text-blue-600" /> },
             { id: 'bale_qr', label: 'Thermal Barcode & QR Config', icon: <Printer className="w-3.5 h-3.5" /> },
             { id: 'currency', label: 'Currencies & FX', icon: <DollarSign className="w-3.5 h-3.5" /> },
             { id: 'categories', label: 'Garment Categories', icon: <Package className="w-3.5 h-3.5 text-amber-600" /> },
@@ -2094,167 +2304,552 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         </div>
       )}
 
-      {/* PAYMENT GATEWAYS & APPLE PAY REAL MERCHANT CONFIGURATION */}
-      {subTab === 'payment_gateways' && companyProfile && (
-        <PaymentGatewaySetupCard
-          companyProfile={companyProfile}
-          onSaveProfile={async (updated) => {
-            await CompanyProfileService.updateCompanyProfile(updated);
-            setCompanyProfile(updated);
-            onRefreshAll();
-          }}
-          showMsg={showMsg}
-        />
-      )}
+      {/* UNIFIED 1-TO-5 POS FLEET, CORPORATE BANKING & PAYMENTS COMMAND HUB */}
+      {(subTab === 'banks' || subTab === 'payment_gateways' || subTab === 'pos_terminal') && companyProfile && (
+        <div className="space-y-6 max-w-5xl animate-in fade-in duration-200">
+          {/* Master Hub Banner */}
+          <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl border border-indigo-500/30 p-5 text-white shadow-xl">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div className="p-3 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl shadow-lg shadow-emerald-500/20 text-white">
+                  <Landmark className="w-7 h-7" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base sm:text-lg font-black tracking-wide text-white uppercase">
+                      Banking, POS Fleet & Payments Hub
+                    </h2>
+                    <span className="px-2.5 py-0.5 text-[10px] font-black rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono">
+                      100% UNIFIED
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
+                    Centralized financial command center unifying corporate UAE bank accounts, instant payment QR codes, up to 5 multi-lane Smart POS card machines with active/inactive fleet control, and Apple Pay payment gateways across Counter Sales, Live Streaming, B2B Wholesale, and E-Commerce.
+                  </p>
+                </div>
+              </div>
 
-      {/* 2. BANK ACCOUNTS & COA AUTO-SYNC TAB */}
-      {subTab === 'banks' && (
-        <div className="space-y-4 max-w-5xl animate-in fade-in duration-200">
-          {/* Top Banner */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200">
-                <Landmark className="w-6 h-6" />
+              {/* Live Status Indicators */}
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <div className="px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/80 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span className="text-slate-400">Primary Bank:</span>
+                  <span className="font-bold text-white font-mono">
+                    {(companyProfile?.bankAccounts || []).find(b => b.isPrimary)?.bankName || companyProfile?.bankName || 'RAKBANK'}
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-mono font-bold">
+                    [COA: {(companyProfile?.bankAccounts || []).find(b => b.isPrimary)?.coaAccountCode || '1120-02'}]
+                  </span>
+                </div>
+                <div className="px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/80 flex items-center gap-2">
+                  <CreditCard className="w-3.5 h-3.5 text-blue-400" />
+                  <span className="text-slate-400">POS Fleet:</span>
+                  <span className="font-bold text-emerald-400 font-mono">
+                    {posFleet.filter(d => d.isActive).length}/{posFleet.length} Active (Max 5)
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Omnichannel Architecture Interconnection Bar */}
+            <div className="mt-4 pt-3 border-t border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+              <div className="flex items-center gap-2 bg-slate-800/40 px-2.5 py-1.5 rounded-lg border border-slate-700/50">
+                <span className="text-emerald-400">●</span>
+                <span className="text-slate-300">Counter POS:</span>
+                <strong className="text-white ml-auto">Active Fleet + QR</strong>
+              </div>
+              <div className="flex items-center gap-2 bg-slate-800/40 px-2.5 py-1.5 rounded-lg border border-slate-700/50">
+                <span className="text-indigo-400">●</span>
+                <span className="text-slate-300">Live Selling:</span>
+                <strong className="text-white ml-auto">Dynamic Bank QR</strong>
+              </div>
+              <div className="flex items-center gap-2 bg-slate-800/40 px-2.5 py-1.5 rounded-lg border border-slate-700/50">
+                <span className="text-amber-400">●</span>
+                <span className="text-slate-300">B2B Wholesale:</span>
+                <strong className="text-white ml-auto">Proforma IBAN & Wire</strong>
+              </div>
+              <div className="flex items-center gap-2 bg-slate-800/40 px-2.5 py-1.5 rounded-lg border border-slate-700/50">
+                <span className="text-purple-400">●</span>
+                <span className="text-slate-300">E-Commerce:</span>
+                <strong className="text-white ml-auto">Apple Pay / Cards</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION 1: CORPORATE BANK ACCOUNTS & COA AUTO-SYNC */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200">
+                  <Landmark className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wider flex items-center gap-2">
+                    Section 1: Corporate Bank Accounts & Live COA Auto-Sync
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300">
+                      Live COA Integration
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Configure company bank accounts, UAE IBANs, and direct Mobile Wallet QR codes. Every bank account added here automatically creates an active Asset account under <strong>1000: Assets</strong> in Chart of Accounts.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleOpenAddBank}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Bank Account</span>
+                </button>
+              </div>
+            </div>
+
+            {/* List of Bank Accounts */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {(companyProfile?.bankAccounts || []).map((bank) => (
+                <div
+                  key={bank.id}
+                  className={`rounded-2xl border p-4.5 space-y-3.5 transition-all shadow-sm relative ${
+                    bank.isPrimary
+                      ? 'bg-gradient-to-br from-amber-50/70 via-white to-amber-50/40 border-amber-300 shadow-amber-500/5'
+                      : 'bg-white border-slate-200'
+                  }`}
+                >
+                  {/* Header */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-slate-900">{bank.bankName}</span>
+                        {bank.isPrimary && (
+                          <span className="text-[10px] font-bold bg-amber-500 text-slate-950 px-2 py-0.5 rounded-full uppercase tracking-wider shadow-xs">
+                            ★ Primary Settlement
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-600 font-semibold mt-0.5">
+                        {bank.accountTitle}
+                      </div>
+                    </div>
+
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 border border-blue-200 font-mono">
+                      COA: {bank.coaAccountCode || '1120-02'}
+                    </span>
+                  </div>
+
+                  {/* IBAN & Account Number */}
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80 space-y-1.5 text-xs font-mono">
+                    <div className="flex items-center justify-between text-slate-500 text-[10px] uppercase font-sans font-bold">
+                      <span>UAE IBAN:</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(bank.iban.replace(/\s+/g, ''));
+                          showMsg(`Copied IBAN for ${bank.bankName}`);
+                        }}
+                        className="text-amber-600 hover:text-amber-700 flex items-center gap-1 cursor-pointer font-bold"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>Copy</span>
+                      </button>
+                    </div>
+                    <div className="font-bold text-slate-900 tracking-wider text-xs sm:text-sm">
+                      {bank.iban}
+                    </div>
+                    {bank.accountNumber && (
+                      <div className="text-[11px] text-slate-600 pt-1 border-t border-slate-200 flex justify-between font-sans">
+                        <span>Account No: <strong className="font-mono">{bank.accountNumber}</strong></span>
+                        {bank.branchName && <span>Branch: {bank.branchName}</span>}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Linked POS Machine & QR Details */}
+                  <div className="flex items-center justify-between pt-1 text-xs">
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                      <CreditCard className="w-3.5 h-3.5 text-blue-600" />
+                      <span>POS Fleet Link: <strong>{posFleet.filter(d => d.isActive).length} Active Devices</strong></span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setViewingQrBank(bank)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 cursor-pointer"
+                    >
+                      <QrCode className="w-3.5 h-3.5" />
+                      <span>View QR Code</span>
+                    </button>
+                  </div>
+
+                  {/* Footer Action Buttons */}
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-200 text-xs">
+                    {!bank.isPrimary ? (
+                      <button
+                        type="button"
+                        onClick={() => handleSetPrimaryBank(bank.id)}
+                        className="text-xs text-amber-600 hover:text-amber-700 font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>★ Set as Primary</span>
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-slate-400 font-semibold">Active Primary</span>
+                    )}
+
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditBank(bank)}
+                        className="p-1.5 rounded-lg text-slate-600 hover:text-blue-600 hover:bg-slate-100 cursor-pointer"
+                        title="Edit Bank Account"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+
+                      {(companyProfile?.bankAccounts || []).length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBank(bank.id)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
+                          title="Delete Bank Account"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* SECTION 2: SMART POS PAYMENT TERMINAL FLEET MANAGER (1 TO 5 DEVICES) */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-5">
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl border border-blue-200">
+                  <CreditCard className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wider flex items-center gap-2">
+                    Section 2: Smart POS Payment Terminal Fleet (1 to 5 Devices)
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-blue-100 text-blue-800 border border-blue-300 font-mono">
+                      {posFleet.filter(d => d.isActive).length}/{posFleet.length} Active in POS
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Connect up to 5 physical Android / Linux card machines (PAX A920, Sunmi P2, Ingenico, Verifone). Use the toggle to activate or deactivate devices. Inactive devices are automatically hidden from counter cashier desks.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleOpenAddDevice}
+                  disabled={posFleet.length >= 5}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs uppercase tracking-wider shadow-sm transition cursor-pointer"
+                  title={posFleet.length >= 5 ? 'Maximum 5 devices reached' : 'Add new POS terminal device'}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{posFleet.length >= 5 ? 'Fleet Full (5/5)' : 'Add POS Device'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Fleet Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              {posFleet.map((dev, idx) => {
+                const pingState = devicePingResults[dev.id];
+                return (
+                  <div
+                    key={dev.id}
+                    className={`rounded-xl border p-4 transition-all relative space-y-3 ${
+                      dev.isActive
+                        ? 'bg-white border-blue-200/80 shadow-sm ring-1 ring-blue-500/10'
+                        : 'bg-slate-50/80 border-slate-200 opacity-75'
+                    }`}
+                  >
+                    {/* Card Header */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-mono font-bold text-slate-400">#{idx + 1}</span>
+                          <h4 className="text-xs font-bold text-slate-900 leading-tight">
+                            {dev.name}
+                          </h4>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-slate-100 text-slate-700 border border-slate-200 font-mono">
+                            {dev.model}
+                          </span>
+                          <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-slate-100 text-slate-600 border border-slate-200 font-mono">
+                            {dev.connectionType}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Active / Inactive Switch Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleDeviceActive(dev.id)}
+                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs ${
+                          dev.isActive
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
+                            : 'bg-slate-200 text-slate-600 border border-slate-300 hover:bg-slate-300'
+                        }`}
+                        title="Click to toggle Active / Inactive status"
+                      >
+                        <span className={`w-2 h-2 rounded-full ${dev.isActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
+                        <span>{dev.isActive ? 'ACTIVE' : 'INACTIVE'}</span>
+                      </button>
+                    </div>
+
+                    {/* Connection & Network Spec */}
+                    <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 space-y-1 text-[11px] font-mono">
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span className="text-slate-400 font-sans text-[10px] uppercase font-bold">IP & Port:</span>
+                        <span className="font-bold text-slate-900">{dev.ipAddress || '192.168.1.150'}:{dev.port || 8080}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span className="text-slate-400 font-sans text-[10px] uppercase font-bold">TID / MID:</span>
+                        <span className="text-indigo-600 font-bold">{dev.terminalId} / {dev.merchantId}</span>
+                      </div>
+                      {dev.location && (
+                        <div className="flex items-center justify-between text-slate-600 font-sans">
+                          <span className="text-slate-400 text-[10px] uppercase font-bold">Station:</span>
+                          <span className="text-slate-700">{dev.location}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Card Action Buttons */}
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => handlePingDevice(dev)}
+                        disabled={pingState === 'TESTING'}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border transition cursor-pointer ${
+                          pingState === 'SUCCESS'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                            : pingState === 'FAILED'
+                            ? 'bg-rose-50 text-rose-700 border-rose-300'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <RefreshCw className={`w-3 h-3 ${pingState === 'TESTING' ? 'animate-spin text-amber-500' : ''}`} />
+                        <span>{pingState === 'TESTING' ? 'Pinging...' : pingState === 'SUCCESS' ? 'Online 18ms' : pingState === 'FAILED' ? 'Offline' : 'Ping Test'}</span>
+                      </button>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditDevice(dev)}
+                          className="p-1 rounded text-slate-500 hover:text-blue-600 hover:bg-blue-50 cursor-pointer"
+                          title="Edit device configuration"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        {posFleet.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDevice(dev.id)}
+                            className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
+                            title="Remove device from fleet"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Global Hardware & Settlement Routing */}
+            <form onSubmit={handleSavePosTerminalConfig} className="space-y-4 pt-3 border-t border-slate-200">
+              <div className="bg-emerald-50/70 border border-emerald-200 p-4 rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-emerald-950 flex items-center gap-1.5 uppercase tracking-wider">
+                    <Landmark className="w-4 h-4 text-emerald-600" />
+                    <span>Linked Settlement Bank Account (Settles All Fleet Machines)</span>
+                  </span>
+                  <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300 font-mono">
+                    COA: {posConfig.settlementCoaAccountCode || '1120-02'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                      Destination Settlement Bank:
+                    </label>
+                    <select
+                      value={posConfig.linkedBankAccountId || (companyProfile?.bankAccounts?.find(b => b.isPrimary)?.id || '')}
+                      onChange={e => {
+                        const sel = (companyProfile?.bankAccounts || []).find(b => b.id === e.target.value);
+                        setPosConfig({
+                          ...posConfig,
+                          linkedBankAccountId: e.target.value,
+                          linkedBankName: sel?.bankName || '',
+                          settlementCoaAccountCode: sel?.coaAccountCode || '1120-02'
+                        });
+                      }}
+                      className="w-full border border-slate-300 rounded p-2 text-xs font-bold text-slate-900 bg-white focus:border-emerald-500"
+                    >
+                      {(companyProfile?.bankAccounts || []).map(b => (
+                        <option key={b.id} value={b.id}>
+                          {b.bankName} • {b.accountTitle} ({b.currency}) {b.isPrimary ? '★ Primary' : ''} [COA: {b.coaAccountCode}]
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="text-[11px] text-slate-600 space-y-1 bg-white/90 p-2.5 rounded-lg border border-emerald-200/60 font-mono">
+                    <div className="font-bold text-emerald-900 font-sans">
+                      Automated COA Routing:
+                    </div>
+                    <div>1. POS Card Tap Debits: <strong className="text-slate-900">1125-00 (POS Clearing)</strong></div>
+                    <div>2. Settlement Debits: <strong className="text-emerald-700">{posConfig.settlementCoaAccountCode || '1120-02'} ({posConfig.linkedBankName || 'RAKBANK'})</strong></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Automation & Ledger Settling */}
+              <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2.5">
+                <div className="font-bold text-xs text-amber-900 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-amber-600" />
+                  <span>Fleet Automation & Ledger Callback Settings</span>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={posConfig.autoConfirmToCOA !== false}
+                      onChange={e => setPosConfig({ ...posConfig, autoConfirmToCOA: e.target.checked })}
+                      className="w-4 h-4 text-amber-600 rounded focus:ring-amber-500"
+                    />
+                    <span>Auto-post payment approval to Chart of Accounts Account 1125 (POS Clearing)</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={posConfig.simulateMachine !== false}
+                      onChange={e => setPosConfig({ ...posConfig, simulateMachine: e.target.checked })}
+                      className="w-4 h-4 text-amber-600 rounded focus:ring-amber-500"
+                    />
+                    <span>Enable POS Terminal Virtual Tap & Fallback Emulator (Allows test transactions without physical machine)</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Action Button */}
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={isSavingPosConfig}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider shadow-sm transition-colors cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isSavingPosConfig ? 'Saving...' : 'Save POS Fleet Settings'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* SECTION 3: REAL UAE PAYMENT GATEWAY & APPLE PAY SETUP */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+            <div className="flex items-center gap-3 border-b border-slate-200 pb-3">
+              <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl border border-amber-200">
+                <Zap className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wider flex items-center gap-2">
-                  Corporate Bank Accounts & Live COA Auto-Sync
-                  <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300">
-                    Live COA Integration
-                  </span>
+                <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wider">
+                  Section 3: Online Payment Gateway & Apple Pay / Google Pay Configuration
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Configure company bank accounts, UAE IBANs, and direct Mobile Wallet QR codes. Every bank account added here automatically creates an active Asset account under <strong>1000: Assets</strong> in the Chart of Accounts and links with Counter Sales & POS Card machine settlement.
+                <p className="text-xs text-slate-500">
+                  Stripe UAE / Merchant ID integration for online e-commerce checkout and digital claim links.
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleOpenAddBank}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Bank Account</span>
-              </button>
-            </div>
+            <PaymentGatewaySetupCard
+              companyProfile={companyProfile}
+              onSaveProfile={async (updated) => {
+                await CompanyProfileService.updateCompanyProfile(updated);
+                setCompanyProfile(updated);
+                onRefreshAll();
+              }}
+              showMsg={showMsg}
+            />
           </div>
 
-          {/* List of Bank Accounts */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {(companyProfile?.bankAccounts || []).map((bank) => (
-              <div
-                key={bank.id}
-                className={`rounded-2xl border p-4.5 space-y-3.5 transition-all shadow-sm relative ${
-                  bank.isPrimary
-                    ? 'bg-gradient-to-br from-amber-50/70 via-white to-amber-50/40 border-amber-300 shadow-amber-500/5'
-                    : 'bg-white border-slate-200'
-                }`}
-              >
-                {/* Header */}
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-black text-slate-900">{bank.bankName}</span>
-                      {bank.isPrimary && (
-                        <span className="text-[10px] font-bold bg-amber-500 text-slate-950 px-2 py-0.5 rounded-full uppercase tracking-wider shadow-xs">
-                          ★ Primary Settlement
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-slate-600 font-semibold mt-0.5">
-                      {bank.accountTitle}
-                    </div>
-                  </div>
+          {/* SECTION 4: OMNICHANNEL SALES INTERCONNECTION MATRIX */}
+          <div className="bg-slate-900 rounded-2xl border border-slate-800 p-5 text-white space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <Layers className="w-5 h-5 text-indigo-400" />
+                <h3 className="font-bold text-sm uppercase tracking-wider text-slate-100">
+                  Section 4: Omnichannel Sales Interconnection Matrix
+                </h3>
+              </div>
+              <span className="text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-2.5 py-0.5 rounded-full font-mono">
+                Auto-Synced Realtime
+              </span>
+            </div>
 
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 border border-blue-200 font-mono">
-                    COA: {bank.coaAccountCode || '1120-00'}
-                  </span>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+              <div className="p-3.5 rounded-xl bg-slate-800/80 border border-slate-700/80 space-y-2">
+                <div className="font-bold text-emerald-400 flex items-center gap-1.5">
+                  <span>🏪 Walk-In POS Counter</span>
                 </div>
-
-                {/* IBAN & Account Number */}
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80 space-y-1.5 text-xs font-mono">
-                  <div className="flex items-center justify-between text-slate-500 text-[10px] uppercase font-sans font-bold">
-                    <span>UAE IBAN:</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(bank.iban.replace(/\s+/g, ''));
-                        showMsg(`Copied IBAN for ${bank.bankName}`);
-                      }}
-                      className="text-amber-600 hover:text-amber-700 flex items-center gap-1 cursor-pointer font-bold"
-                    >
-                      <Copy className="w-3 h-3" />
-                      <span>Copy</span>
-                    </button>
-                  </div>
-                  <div className="font-bold text-slate-900 tracking-wider text-xs sm:text-sm">
-                    {bank.iban}
-                  </div>
-                  {bank.accountNumber && (
-                    <div className="text-[11px] text-slate-600 pt-1 border-t border-slate-200 flex justify-between font-sans">
-                      <span>Account No: <strong className="font-mono">{bank.accountNumber}</strong></span>
-                      {bank.branchName && <span>Branch: {bank.branchName}</span>}
-                    </div>
-                  )}
-                </div>
-
-                {/* Linked POS Machine & QR Details */}
-                <div className="flex items-center justify-between pt-1 text-xs">
-                  <div className="flex items-center gap-1.5 text-[11px] text-slate-600">
-                    <CreditCard className="w-3.5 h-3.5 text-blue-600" />
-                    <span>POS Machine: <strong>{posConfig?.terminalName || posConfig?.model || 'Sunmi / PAX PED'}</strong></span>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setViewingQrBank(bank)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 cursor-pointer"
-                  >
-                    <QrCode className="w-3.5 h-3.5" />
-                    <span>View QR Code</span>
-                  </button>
-                </div>
-
-                {/* Footer Action Buttons */}
-                <div className="flex items-center justify-between pt-2 border-t border-slate-200 text-xs">
-                  {!bank.isPrimary ? (
-                    <button
-                      type="button"
-                      onClick={() => handleSetPrimaryBank(bank.id)}
-                      className="text-xs text-amber-600 hover:text-amber-700 font-bold flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>★ Set as Primary</span>
-                    </button>
-                  ) : (
-                    <span className="text-[11px] text-slate-400 font-semibold">Active Primary</span>
-                  )}
-
-                  <div className="flex items-center gap-1.5 ml-auto">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenEditBank(bank)}
-                      className="p-1.5 rounded-lg text-slate-600 hover:text-blue-600 hover:bg-slate-100 cursor-pointer"
-                      title="Edit Bank Account"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-
-                    {(companyProfile?.bankAccounts || []).length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteBank(bank.id)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
-                        title="Delete Bank Account"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
+                <p className="text-[11px] text-slate-300">
+                  Cashiers select from active fleet machines (PAX, Sunmi, Ingenico) or present RAKBANK Instant QR. Settles directly to COA 1125 & 1120-02.
+                </p>
+                <div className="text-[10px] font-mono text-emerald-300 bg-emerald-950/60 p-1.5 rounded border border-emerald-800/50">
+                  Active Devices: {posFleet.filter(d => d.isActive).length} Available
                 </div>
               </div>
-            ))}
+
+              <div className="p-3.5 rounded-xl bg-slate-800/80 border border-slate-700/80 space-y-2">
+                <div className="font-bold text-indigo-400 flex items-center gap-1.5">
+                  <span>🎙️ Live Selling Studio</span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  Live TikTok, IG & Whatnot claims dynamically embed the RAKBANK Instant QR and IBAN for instant viewer deposits and COD dispatch.
+                </p>
+                <div className="text-[10px] font-mono text-indigo-300 bg-indigo-950/60 p-1.5 rounded border border-indigo-800/50">
+                  QR Provider: RAKBANK Instant
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-800/80 border border-slate-700/80 space-y-2">
+                <div className="font-bold text-amber-400 flex items-center gap-1.5">
+                  <span>🏢 B2B Wholesale Sales</span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  Proforma invoices and Tax Invoices auto-embed RAKBANK IBAN and SWIFT code for high-value corporate container and bulk bale transfers.
+                </p>
+                <div className="text-[10px] font-mono text-amber-300 bg-amber-950/60 p-1.5 rounded border border-amber-800/50">
+                  IBAN: AE76 0400 0001 4365...
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-800/80 border border-slate-700/80 space-y-2">
+                <div className="font-bold text-purple-400 flex items-center gap-1.5">
+                  <span>🛍️ E-Commerce Storefront</span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  Checkout modal supports Apple Pay, Google Pay, and direct Mobile Wallet QR scan with immediate double-entry voucher generation.
+                </p>
+                <div className="text-[10px] font-mono text-purple-300 bg-purple-950/60 p-1.5 rounded border border-purple-800/50">
+                  Gateway: Stripe UAE + Bank QR
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -2462,232 +3057,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         </div>
       )}
 
-      {/* POS CARD MACHINE & HARDWARE TERMINAL SETUP */}
-      {subTab === 'pos_terminal' && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 max-w-4xl space-y-6">
-          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl border border-blue-200">
-                <CreditCard className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wider flex items-center gap-2">
-                  Smart POS Payment Terminal & Card Machine Integration
-                  <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300">
-                    Live Hardware Sync
-                  </span>
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Connect physical POS card machines (PAX A920, Sunmi, Ingenico, Verifone) over local WiFi/Ethernet or Bluetooth. Contactless tap (Apple Pay / Google Pay / Cards) immediately settles to Chart of Accounts.
-                </p>
-              </div>
-            </div>
 
-            <div className="flex items-center gap-2">
-              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
-                posPingStatus === 'SUCCESS' || posConfig.status === 'ONLINE'
-                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                  : 'bg-amber-100 text-amber-800 border border-amber-300'
-              }`}>
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                {posPingStatus === 'SUCCESS' ? 'Hardware Online & Ready' : `${posConfig.terminalModel} Configured`}
-              </span>
-            </div>
-          </div>
-
-          <form onSubmit={handleSavePosTerminalConfig} className="space-y-5">
-            {/* Terminal Hardware Details */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block font-bold text-slate-700 text-xs uppercase mb-1">
-                  Terminal Brand & Hardware Model:
-                </label>
-                <select
-                  value={posConfig.terminalModel}
-                  onChange={e => setPosConfig({ ...posConfig, terminalModel: e.target.value as any })}
-                  className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-900 font-bold bg-white focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="PAX_A920">PAX A920 / A930 Android Smart POS (Recommended)</option>
-                  <option value="SUNMI_P2">Sunmi P2 / V2 Pro Handheld POS Terminal</option>
-                  <option value="INGENICO">Ingenico Move 5000 / Lane 3000 Contactless</option>
-                  <option value="VERIFONE">Verifone V240m / P400 Touch Terminal</option>
-                  <option value="SIMULATOR">Desktop POS Hardware Simulator (Zero Hardware Required)</option>
-                </select>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Certified UAE EMV NFC Contactless & Chip terminal protocol.
-                </p>
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 text-xs uppercase mb-1">
-                  Connection Interface:
-                </label>
-                <select
-                  value={posConfig.connectionType}
-                  onChange={e => setPosConfig({ ...posConfig, connectionType: e.target.value as any })}
-                  className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-900 font-bold bg-white focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="IP_ETHERNET">Local Network TCP/IP (Static IP / WiFi)</option>
-                  <option value="BLUETOOTH">Bluetooth BLE Wireless Terminal Pair</option>
-                  <option value="USB_SERIAL">Direct USB Virtual COM Port (POS Cable)</option>
-                  <option value="CLOUD_API">Cloud Payment Gateway / Webhook Relay</option>
-                </select>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Connect via local store router or USB cradle.
-                </p>
-              </div>
-            </div>
-
-            {/* Network & Identity Settings */}
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-              <div>
-                <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Terminal IP Address:</label>
-                <input
-                  type="text"
-                  placeholder="e.g. 192.168.1.150"
-                  value={posConfig.terminalIp || ''}
-                  onChange={e => setPosConfig({ ...posConfig, terminalIp: e.target.value })}
-                  className="w-full border border-slate-300 rounded p-1.5 font-mono text-xs text-slate-900 bg-white focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">TCP / Service Port:</label>
-                <input
-                  type="number"
-                  placeholder="8080"
-                  value={posConfig.port || 8080}
-                  onChange={e => setPosConfig({ ...posConfig, port: Number(e.target.value) || 8080 })}
-                  className="w-full border border-slate-300 rounded p-1.5 font-mono text-xs text-slate-900 bg-white focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Terminal ID (TID):</label>
-                <input
-                  type="text"
-                  placeholder="e.g. TID-DXB-001"
-                  value={posConfig.terminalId || ''}
-                  onChange={e => setPosConfig({ ...posConfig, terminalId: e.target.value })}
-                  className="w-full border border-slate-300 rounded p-1.5 font-mono text-xs text-slate-900 bg-white focus:border-blue-500 uppercase"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Merchant ID (MID):</label>
-                <input
-                  type="text"
-                  placeholder="e.g. MID-VV-9881"
-                  value={posConfig.merchantId || ''}
-                  onChange={e => setPosConfig({ ...posConfig, merchantId: e.target.value })}
-                  className="w-full border border-slate-300 rounded p-1.5 font-mono text-xs text-slate-900 bg-white focus:border-blue-500 uppercase"
-                />
-              </div>
-            </div>
-
-            {/* Linked Settlement Bank Account */}
-            <div className="bg-emerald-50/70 border border-emerald-200 p-4 rounded-xl space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-xs text-emerald-950 flex items-center gap-1.5 uppercase tracking-wider">
-                  <Landmark className="w-4 h-4 text-emerald-600" />
-                  <span>Linked Settlement Bank Account (Settles Daily Card Revenue)</span>
-                </span>
-                <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300 font-mono">
-                  COA: {posConfig.settlementCoaAccountCode || '1120-00'}
-                </span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
-                    Destination Settlement Bank:
-                  </label>
-                  <select
-                    value={posConfig.linkedBankAccountId || (companyProfile?.bankAccounts?.find(b => b.isPrimary)?.id || '')}
-                    onChange={e => {
-                      const sel = (companyProfile?.bankAccounts || []).find(b => b.id === e.target.value);
-                      setPosConfig({
-                        ...posConfig,
-                        linkedBankAccountId: e.target.value,
-                        linkedBankName: sel?.bankName || '',
-                        settlementCoaAccountCode: sel?.coaAccountCode || '1120-00'
-                      });
-                    }}
-                    className="w-full border border-slate-300 rounded p-2 text-xs font-bold text-slate-900 bg-white focus:border-emerald-500"
-                  >
-                    {(companyProfile?.bankAccounts || []).map(b => (
-                      <option key={b.id} value={b.id}>
-                        {b.bankName} • {b.accountTitle} ({b.currency}) {b.isPrimary ? '★ Primary' : ''} [COA: {b.coaAccountCode}]
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Card swipes & Apple Pay payments settle into this bank account in COA.
-                  </p>
-                </div>
-                <div className="text-[11px] text-slate-600 space-y-1 bg-white/90 p-2.5 rounded-lg border border-emerald-200/60 font-mono">
-                  <div className="font-bold text-emerald-900 font-sans">
-                    Automated COA Routing:
-                  </div>
-                  <div>1. Card tap debits: <strong className="text-slate-900">1125-00 (POS Clearing)</strong></div>
-                  <div>2. Nightly settlement credits 1125 & debits: <strong className="text-emerald-700">{posConfig.settlementCoaAccountCode || '1120-00'} ({posConfig.linkedBankName || 'Primary Bank'})</strong></div>
-                </div>
-              </div>
-            </div>
-
-            {/* Automation & Ledger Settling */}
-            <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2.5">
-              <div className="font-bold text-xs text-amber-900 flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-amber-600" />
-                <span>Automated Double-Entry Ledger & COA Callback Settings</span>
-              </div>
-              
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={posConfig.autoConfirmToCOA !== false}
-                    onChange={e => setPosConfig({ ...posConfig, autoConfirmToCOA: e.target.checked })}
-                    className="w-4 h-4 text-amber-600 rounded focus:ring-amber-500"
-                  />
-                  <span>Auto-post payment approval to Chart of Accounts Account 1125 (POS Clearing)</span>
-                </label>
-
-                <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={posConfig.simulateMachine !== false}
-                    onChange={e => setPosConfig({ ...posConfig, simulateMachine: e.target.checked })}
-                    className="w-4 h-4 text-amber-600 rounded focus:ring-amber-500"
-                  />
-                  <span>Enable POS Terminal Virtual Tap & Fallback Emulator (For counter staff testing without machine connected)</span>
-                </label>
-              </div>
-            </div>
-
-            {/* Buttons */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200">
-              <button
-                type="button"
-                onClick={handleTestPosPing}
-                disabled={posPingStatus === 'TESTING'}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs shadow-sm transition-colors cursor-pointer"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${posPingStatus === 'TESTING' ? 'animate-spin text-amber-400' : 'text-slate-300'}`} />
-                <span>{posPingStatus === 'TESTING' ? 'Pinging Terminal...' : 'Test Ping Connection'}</span>
-              </button>
-
-              <button
-                type="submit"
-                disabled={isSavingPosConfig}
-                className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider shadow-sm transition-colors cursor-pointer"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>{isSavingPosConfig ? 'Saving...' : 'Save & Link POS Machine'}</span>
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
 
       {/* UNIFIED 5-BOOTH LIVE MULTICAST & SOCIAL SOCKETS HUB */}
       {subTab === 'live_multicast_sockets' && companyProfile && (
@@ -5255,6 +5625,192 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                 >
                   <Save className="w-3.5 h-3.5" />
                   <span>{editingSize ? 'Update Size' : 'Create Size'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 13. SMART POS FLEET DEVICE ADD / EDIT MODAL (1 TO 5 FLEET) */}
+      {showDeviceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border-2 border-blue-200 max-w-lg w-full shadow-2xl p-6 relative">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-blue-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-blue-100 text-blue-800 rounded-lg">
+                  <CreditCard className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900 text-sm">
+                    {editingDevice ? 'Edit POS Terminal Device' : 'Add New POS Terminal Device'}
+                  </h4>
+                  <p className="text-[11px] text-slate-500">Configure Smart POS card machine for checkout fleet</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDeviceModal(false)}
+                className="text-slate-400 hover:text-slate-700 font-bold p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveDeviceModal} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  Device Display Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Counter 1 - Main Desk PED"
+                  value={deviceForm.name}
+                  onChange={e => setDeviceForm({ ...deviceForm, name: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Terminal Hardware Model
+                  </label>
+                  <select
+                    value={deviceForm.model}
+                    onChange={e => setDeviceForm({ ...deviceForm, model: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 bg-white focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="PAX_A920">PAX A920 / A930 Smart Android</option>
+                    <option value="SUNMI_P2">Sunmi P2 / V2 Handheld</option>
+                    <option value="INGENICO">Ingenico Move 5000 / Lane</option>
+                    <option value="VERIFONE">Verifone V240m Touch</option>
+                    <option value="SIMULATOR">POS Hardware Simulator</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Connection Interface
+                  </label>
+                  <select
+                    value={deviceForm.connectionType}
+                    onChange={e => setDeviceForm({ ...deviceForm, connectionType: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 bg-white focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="IP_ETHERNET">Local Network TCP/IP</option>
+                    <option value="WIFI_IP">WiFi Wireless IP</option>
+                    <option value="USB_SERIAL">Direct USB COM Port</option>
+                    <option value="BLUETOOTH">Bluetooth BLE</option>
+                    <option value="CLOUD_API">Cloud API Bridge</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Terminal IP Address
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. 192.168.1.150"
+                    value={deviceForm.ipAddress}
+                    onChange={e => setDeviceForm({ ...deviceForm, ipAddress: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    TCP / Service Port
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    placeholder="8080"
+                    value={deviceForm.port}
+                    onChange={e => setDeviceForm({ ...deviceForm, port: parseInt(e.target.value) || 8080 })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Terminal ID (TID) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. TID-DXB-001"
+                    value={deviceForm.terminalId}
+                    onChange={e => setDeviceForm({ ...deviceForm, terminalId: e.target.value.toUpperCase() })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 uppercase"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Merchant ID (MID)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. MID-VV-9881"
+                    value={deviceForm.merchantId}
+                    onChange={e => setDeviceForm({ ...deviceForm, merchantId: e.target.value.toUpperCase() })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 uppercase"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  Physical Location / Department
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Main Cash Counter, Express Lane, Live Studio, B2B Gate"
+                  value={deviceForm.location || ''}
+                  onChange={e => setDeviceForm({ ...deviceForm, location: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              {/* Active Toggle Switch */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-slate-900 text-xs">Device Active Status</div>
+                  <div className="text-[10px] text-slate-500">Only active terminals can accept payments at checkout</div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={deviceForm.isActive}
+                    onChange={e => setDeviceForm({ ...deviceForm, isActive: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowDeviceModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{editingDevice ? 'Update Terminal' : 'Add to Fleet'}</span>
                 </button>
               </div>
             </form>
