@@ -161,9 +161,9 @@ salesRouter.post('/live-draft-invoice', async (req, res) => {
     return res.status(400).json({ error: result.error });
   }
   const barcode = (req.body.pieceBarcode || req.body.barcode || '').trim();
-  if (barcode) {
-    try {
-      const client = await getDbClient();
+  try {
+    const client = await getDbClient();
+    if (barcode) {
       await client.query(`
         UPDATE inventory_pieces
         SET status = 'RESERVED',
@@ -175,9 +175,44 @@ salesRouter.post('/live-draft-invoice', async (req, res) => {
           AND (status = 'IN_STOCK' OR status IS NULL OR status = 'AVAILABLE')
           AND (is_sold = false OR is_sold IS NULL)
       `, [req.body.buyerHandle || 'Live Stream Buyer', req.body.boothId || 'Booth 1', barcode]);
-      await client.end().catch(() => {});
-    } catch (_) {}
-  }
+    }
+    if (result.invoice) {
+      const inv = result.invoice;
+      await client.query(`
+        INSERT INTO sales_invoices (
+          id, invoice_no, customer_name, customer_phone, invoice_date,
+          channel, payment_method, payment_status, shipping_address,
+          subtotal, discount_amount, tax_amount, total_amount, status,
+          items, shipping_fee, shipping_bearer, courier_partner_id,
+          tracking_number, created_at
+        ) VALUES (
+          $1, $2, $3, $4, CURRENT_DATE,
+          'LIVE_STREAM', $5, $6, $7,
+          $8, 0, $9, $10, 'DRAFT',
+          $11::jsonb, $12, $13, $14,
+          $15, NOW()
+        ) ON CONFLICT (id) DO UPDATE
+        SET status = 'DRAFT', items = EXCLUDED.items, total_amount = EXCLUDED.total_amount;
+      `, [
+        inv.id,
+        inv.invoiceNo,
+        inv.customerName,
+        inv.customerPhone,
+        inv.paymentMethod || 'COD',
+        inv.paymentStatus || 'UNPAID_PENDING_COD',
+        inv.shippingAddress || 'Dubai, UAE Delivery',
+        inv.subTotal,
+        inv.vatAmount,
+        inv.totalAmount,
+        JSON.stringify(inv.items),
+        inv.shippingFeeAed || 0,
+        inv.shippingBearer || 'CUSTOMER',
+        inv.courierPartnerId || null,
+        inv.trackingNumber || ''
+      ]);
+    }
+    await client.end().catch(() => {});
+  } catch (_) {}
   return res.json(result);
 });
 
@@ -275,6 +310,11 @@ salesRouter.post('/invoices/:id/post', async (req, res) => {
         SET status = 'SOLD', is_sold = true, updated_at = NOW()
         WHERE barcode = ANY($1)
       `, [barcodes]);
+      await client.query(`
+        UPDATE sales_invoices
+        SET status = 'POSTED'
+        WHERE id = $1 OR invoice_no = $1;
+      `, [id]);
       await client.end().catch(() => {});
     } catch (_) {}
   }
@@ -297,6 +337,11 @@ salesRouter.post('/invoices/:id/unpost', async (req, res) => {
         SET status = 'IN_STOCK', is_sold = false, updated_at = NOW()
         WHERE barcode = ANY($1)
       `, [barcodes]);
+      await client.query(`
+        UPDATE sales_invoices
+        SET status = 'DRAFT'
+        WHERE id = $1 OR invoice_no = $1;
+      `, [id]);
       await client.end().catch(() => {});
     } catch (_) {}
   }

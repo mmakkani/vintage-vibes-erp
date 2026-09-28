@@ -136,7 +136,7 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
   };
 
   const [shippingFeeAed, setShippingFeeAed] = useState<number>(
-    invoice.shippingFeeAed !== undefined ? invoice.shippingFeeAed : (invoice.shippingCharge !== undefined ? invoice.shippingCharge : 25)
+    invoice.shippingFeeAed !== undefined ? invoice.shippingFeeAed : (invoice.shippingCharge !== undefined ? invoice.shippingCharge : 0)
   );
   const [shippingBearer, setShippingBearer] = useState<'CUSTOMER' | 'COMPANY'>(
     invoice.shippingBearer || 'CUSTOMER'
@@ -197,18 +197,6 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
   const effectiveShipping = shippingBearer === 'CUSTOMER' ? Number(shippingFeeAed || 0) : 0;
   const vatAmount = Number((garmentSubTotal * 0.05).toFixed(2));
   const calculatedGrandTotal = Number((garmentSubTotal + vatAmount + effectiveShipping).toFixed(2));
-
-  // Fast Barcode Generator / Scanner simulation
-  const handleGenerateTracking = () => {
-    let prefix = 'DHL-';
-    if (courierPartner.includes('Emirates')) prefix = 'EP-';
-    else if (courierPartner.includes('Aramex')) prefix = 'ARX-';
-    else if (courierPartner.includes('Fetchr')) prefix = 'FCH-';
-    else if (courierPartner.includes('Rider') || courierPartner.includes('Local')) prefix = 'LOC-';
-
-    const randomNum = Math.floor(100000000 + Math.random() * 900000000);
-    setTrackingNumber(`${prefix}${randomNum}`);
-  };
 
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -387,19 +375,9 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
 
               {/* Tracking / Parcel Waybill # with Scanner Icon */}
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-[11px] font-bold text-slate-700">
-                    Tracking / Parcel Waybill # *
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleGenerateTracking}
-                    className="text-[10px] text-amber-700 hover:text-amber-800 font-bold flex items-center gap-1 cursor-pointer"
-                  >
-                    <Sparkles className="w-3 h-3" />
-                    Auto-Generate
-                  </button>
-                </div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Tracking / Parcel Waybill #
+                </label>
                 <div className="relative">
                   <input
                     type="text"

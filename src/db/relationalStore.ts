@@ -3923,7 +3923,7 @@ class RelationalStore {
     }>();
 
     for (const p of this.inventoryPieces) {
-      if (p.status === 'CLAIMED_PENDING' && p.lockedByBuyer) {
+      if ((p.status === 'CLAIMED_PENDING' || p.status === 'RESERVED') && p.lockedByBuyer) {
         // Filter by booth if requested
         if (boothId && p.lockedByBooth && p.lockedByBooth !== boothId) {
           continue;
@@ -4007,38 +4007,44 @@ class RelationalStore {
         customerName: params.buyerHandle,
         customerPhone: params.customerPhone || '+971 50 892 4110',
         date: new Date().toISOString().slice(0, 10),
-        status: 'POSTED',
+        status: 'DRAFT',
         currency: 'AED',
         exchangeRate: 1.0,
         subTotal: pool.subTotalAed,
         discountAmount: 0,
         vatAmount: pool.vatAed,
         totalAmount: pool.grandTotalAed,
-        items: pool.items.map((it, idx) => ({
-          id: `sii-live-${Date.now()}-${idx}`,
-          barcode: it.barcode,
-          description: `${it.brandName} ${it.itemName} (${it.sizeScanned || 'M'})`,
-          weightKg: it.weightKg || 0.45,
-          unitPrice: it.lockedPrice || it.estimatedPrice || it.retailPriceAed || 120,
-          discount: 0,
-          finalAmount: it.lockedPrice || it.estimatedPrice || it.retailPriceAed || 120,
-          lineTotal: it.lockedPrice || it.estimatedPrice || it.retailPriceAed || 120
-        })),
-        postedAt: new Date().toISOString(),
-        postedBy: `Live Auction Host (${pool.channel})`,
+        items: pool.items.map((it, idx) => {
+          const itemCost = Number(it.calculatedCostPrice || it.costPrice || (it.weightGrams && it.costPerGram ? Number((it.weightGrams * it.costPerGram).toFixed(2)) : 0));
+          const unitPrice = Number(it.lockedPrice || it.retailPriceAed || it.estimatedPrice || 0);
+          return {
+            id: `sii-live-${Date.now()}-${idx}`,
+            barcode: it.barcode,
+            description: `${it.brandName} ${it.itemName} (${it.sizeScanned || 'M'})`,
+            weightKg: it.weightKg || (it.weightGrams ? it.weightGrams / 1000 : 0.45),
+            weightGrams: it.weightGrams || Math.round((it.weightKg || 0.45) * 1000),
+            costPrice: itemCost,
+            calculatedCostPrice: itemCost,
+            costPerGram: it.costPerGram || (it.weightGrams && itemCost ? itemCost / it.weightGrams : 0),
+            unitPrice,
+            discount: 0,
+            finalAmount: unitPrice,
+            lineTotal: unitPrice,
+            quantity: 1
+          };
+        }),
         paymentMethod: params.paymentMethod
       };
 
-      // Mark pieces as SOLD
+      // Keep pieces as RESERVED linked to draft invoice
       for (const item of pool.items) {
         const piece = this.inventoryPieces.find(p => p.barcode.toLowerCase() === item.barcode.toLowerCase());
         if (piece) {
-          piece.isSold = true;
-          piece.status = 'SOLD';
+          piece.isSold = false;
+          piece.status = 'RESERVED';
           piece.soldInvoiceId = invoice.id;
-          piece.soldPriceAed = item.lockedPrice || item.estimatedPrice || item.retailPriceAed || 120;
-          piece.lockedByBuyer = undefined;
-          piece.lockExpiresAt = undefined;
+          piece.soldPriceAed = item.lockedPrice || item.retailPriceAed || item.estimatedPrice || 0;
+          piece.lockedByBuyer = params.buyerHandle;
         }
       }
 
@@ -5883,19 +5889,21 @@ class RelationalStore {
       const customerShippingFee = shippingBearer === 'CUSTOMER' ? shippingCharge : 0;
       const totalAmount = Number((salePrice + vatAmount + customerShippingFee).toFixed(2));
 
-      const courierPartner = params.courierPartner || 'DHL Express';
-      const trackingNumber = params.trackingNumber || `DHL-${Math.floor(100000000 + Math.random() * 900000000)}`;
+      const courierPartner = params.courierPartner || '';
+      const trackingNumber = params.trackingNumber || '';
       const paymentMethod = params.paymentMethod || 'COD';
       const paymentStatus = params.paymentStatus || (paymentMethod === 'COD' ? 'UNPAID_PENDING_COD' : 'PREPAID_VERIFIED');
 
+      const pieceCost = Number(piece.calculatedCostPrice || piece.costPrice || (piece.weightGrams && piece.costPerGram ? Number((piece.weightGrams * piece.costPerGram).toFixed(2)) : 0));
       const invoiceItem: SalesInvoice['items'][0] = {
         id: `sii-${Date.now()}`,
         barcode: piece.barcode,
         description: `${piece.brandName} ${piece.itemName} (${piece.sizeScanned || 'M'})`,
-        weightKg: piece.weightKg || 0.4,
+        weightKg: piece.weightKg || (piece.weightGrams ? piece.weightGrams / 1000 : 0.4),
         weightGrams: piece.weightGrams || Math.round((piece.weightKg || 0.4) * 1000),
-        costPerGram: piece.costPerGram || 0.05,
-        calculatedCostPrice: piece.calculatedCostPrice || piece.costPrice || 20,
+        costPerGram: piece.costPerGram || (piece.weightGrams && pieceCost ? pieceCost / piece.weightGrams : 0),
+        costPrice: pieceCost,
+        calculatedCostPrice: pieceCost,
         unitPrice: salePrice,
         discount: 0,
         finalAmount: salePrice,
@@ -5937,8 +5945,8 @@ class RelationalStore {
         courierPartner,
         courierPartnerId: params.courierPartnerId,
         courierPartyId: params.courierPartyId || (typeof params.courierPartnerId === 'string' ? params.courierPartnerId : undefined),
-        grossProfitAed: Number((salePrice - (invoiceItem.calculatedCostPrice || 20)).toFixed(2)),
-        grossProfitPercent: salePrice > 0 ? Math.round(((salePrice - (invoiceItem.calculatedCostPrice || 20)) / salePrice) * 100) : 0,
+        grossProfitAed: Number((salePrice - pieceCost).toFixed(2)),
+        grossProfitPercent: salePrice > 0 ? Math.round(((salePrice - pieceCost) / salePrice) * 100) : 0,
         expiresAt: params.expiresAt,
         postedAt: shouldPost ? new Date().toISOString() : undefined,
         postedBy: shouldPost ? (params.createdBy || `Live Streamer (${params.boothId || 'Booth 1'})`) : undefined

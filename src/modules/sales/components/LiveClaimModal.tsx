@@ -53,10 +53,8 @@ export const LiveClaimModal: React.FC<LiveClaimModalProps> = ({
   // Dynamic Courier Registry State
   const [couriers, setCouriers] = useState<CourierOption[]>(DEFAULT_COURIERS);
   const [selectedCourierKey, setSelectedCourierKey] = useState<string>('DHL Express UAE');
-  const [newTrackingNumber, setNewTrackingNumber] = useState<string>(
-    `DHL-${Math.floor(100000000 + Math.random() * 900000000)}`
-  );
-  const [newShippingFee, setNewShippingFee] = useState<number>(25);
+  const [newTrackingNumber, setNewTrackingNumber] = useState<string>('');
+  const [newShippingFee, setNewShippingFee] = useState<number>(0);
   const [newShippingBearer, setNewShippingBearer] = useState<'CUSTOMER' | 'COMPANY'>('CUSTOMER');
   const [newPaymentMode, setNewPaymentMode] = useState<'COD' | 'BANK_TRANSFER' | 'CARD_POS' | 'CASH'>('COD');
   const [newPaymentStatus, setNewPaymentStatus] = useState<'UNPAID_PENDING_COD' | 'PREPAID_VERIFIED'>('UNPAID_PENDING_COD');
@@ -140,19 +138,8 @@ export const LiveClaimModal: React.FC<LiveClaimModalProps> = ({
     return couriers.find(c => c.name === selectedCourierKey) || couriers[0] || DEFAULT_COURIERS[0];
   }, [couriers, selectedCourierKey]);
 
-  // Helper to generate tracking prefix
-  const autoGenTracking = (courierName: string) => {
-    let prefix = 'TRK';
-    if (/DHL/i.test(courierName)) prefix = 'DHL';
-    else if (/ARAMEX/i.test(courierName)) prefix = 'ARX';
-    else if (/SMSA/i.test(courierName)) prefix = 'SMSA';
-    else if (/POST/i.test(courierName)) prefix = 'EMP';
-    setNewTrackingNumber(`${prefix}-${Math.floor(100000000 + Math.random() * 900000000)}`);
-  };
-
   const handleCourierChange = (courierName: string) => {
     setSelectedCourierKey(courierName);
-    autoGenTracking(courierName);
   };
 
   const handleCreateDraft = async (e: React.FormEvent) => {
@@ -207,7 +194,7 @@ export const LiveClaimModal: React.FC<LiveClaimModalProps> = ({
         setNewCustomerPhone('');
         setNewShippingAddress('');
         setNewPriceOverride('');
-        autoGenTracking(activeCourier.name);
+        setNewTrackingNumber('');
 
         onDraftCreated(createdInv);
         setTimeout(() => {
@@ -402,23 +389,14 @@ export const LiveClaimModal: React.FC<LiveClaimModalProps> = ({
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-[11px] font-semibold text-slate-700">
-                    Tracking / Waybill #
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => autoGenTracking(activeCourier.name)}
-                    className="text-[10px] text-amber-700 hover:text-amber-900 underline font-semibold cursor-pointer"
-                  >
-                    Auto-Gen
-                  </button>
-                </div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Tracking / Waybill #
+                </label>
                 <input
                   type="text"
                   value={newTrackingNumber}
                   onChange={e => setNewTrackingNumber(e.target.value)}
-                  placeholder="e.g. DHL-982184910"
+                  placeholder="Scan or enter AWB # from Courier flyer"
                   className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-mono font-bold text-indigo-700 focus:outline-none"
                 />
               </div>

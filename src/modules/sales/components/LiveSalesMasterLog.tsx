@@ -183,9 +183,9 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
         cogs.toFixed(2),
         grossProfit.toFixed(2),
         `${margin}%`,
-        (Number(inv?.shippingFeeAed || 25)).toFixed(2),
+        (Number(inv?.shippingFeeAed ?? inv?.shippingCharge ?? 0)).toFixed(2),
         inv.shippingBearer || 'CUSTOMER',
-        inv.courierPartner || 'DHL',
+        inv.courierPartner || 'Unassigned',
         inv.trackingNumber || '',
         inv.paymentStatus || 'UNPAID_PENDING_COD',
         inv.status,
@@ -470,7 +470,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           <div className="font-mono text-slate-700">
-                            AED {(inv.shippingFeeAed || 25).toFixed(2)}
+                            AED {(Number(inv.shippingFeeAed ?? inv.shippingCharge ?? 0)).toFixed(2)}
                           </div>
                           <div className="text-[10px] text-slate-400 font-normal">
                             {inv.shippingBearer === 'CUSTOMER' ? 'Customer Borne' : 'Company Absorbed'}
@@ -478,10 +478,10 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap font-mono">
                           <div className="font-semibold text-slate-800">
-                            {inv.courierPartner || 'DHL'}
+                            {inv.courierPartner || 'Unassigned'}
                           </div>
                           <div className="text-[10px] text-indigo-600 font-normal">
-                            {inv.trackingNumber || 'DHL-AE-982104'}
+                            {inv.trackingNumber ? inv.trackingNumber : <span className="text-slate-400 italic">No AWB #</span>}
                           </div>
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">

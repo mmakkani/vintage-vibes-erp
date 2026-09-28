@@ -8009,13 +8009,20 @@ RULES FOR YOUR RESPONSE:
               return res.status(400).json({ success: false, error: `Piece "${barcodeToBundle}" is already bundled in this invoice.` });
             }
 
-            const price = Number(p.retail_price_aed || 120);
+            const price = Number(p.retail_price_aed || p.cost_price || 0);
+            const itemCost = Number(p.cost_price || (p.weight_grams && p.cost_per_gram ? Number((p.weight_grams * p.cost_per_gram).toFixed(2)) : 0) || 0);
+            const weightG = Number(p.weight_grams || (p.weight_kg ? p.weight_kg * 1000 : 0));
+            const costPerG = Number(p.cost_per_gram || (weightG && itemCost ? itemCost / weightG : 0));
+
             const newItem = {
               id: `sii-bundle-${Date.now()}-${currentItems.length}`,
               barcode: p.barcode || p.sku,
               description: `${p.brand_name || 'Vintage'} ${p.item_name || 'Garment'} (${p.size_scanned || 'M'})`,
-              weightKg: Number(p.weight_kg || 0.45),
-              weightGrams: Number(p.weight_grams || 450),
+              weightKg: Number(p.weight_kg || (weightG / 1000) || 0.45),
+              weightGrams: weightG || 450,
+              costPrice: itemCost,
+              calculatedCostPrice: itemCost,
+              costPerGram: costPerG,
               unitPrice: price,
               discount: 0,
               finalAmount: price,
@@ -8194,9 +8201,14 @@ RULES FOR YOUR RESPONSE:
               `SELECT COALESCE(SUM(cost_price), 0) as total_cogs FROM inventory_pieces WHERE barcode = ANY($1::text[]);`,
               [barcodes]
             );
-            totalCOGS = Number(cogsRes.rows[0]?.total_cogs || items.length * 25);
+            const dbCogs = Number(cogsRes.rows[0]?.total_cogs || 0);
+            if (dbCogs > 0) {
+              totalCOGS = dbCogs;
+            } else {
+              totalCOGS = items.reduce((sum: number, it: any) => sum + Number(it.calculatedCostPrice ?? it.costPrice ?? 0), 0);
+            }
           } else {
-            totalCOGS = items.length * 25;
+            totalCOGS = items.reduce((sum: number, it: any) => sum + Number(it.calculatedCostPrice ?? it.costPrice ?? 0), 0);
           }
 
           const voucherId = crypto.randomUUID();

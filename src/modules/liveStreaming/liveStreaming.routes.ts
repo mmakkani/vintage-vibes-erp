@@ -1195,8 +1195,53 @@ export async function executeReleaseLock(params: {
   return relationalStore.releasePieceLock(cleanId, params.boothId);
 }
 
-liveStreamingRouter.get('/pool', (req, res) => {
+liveStreamingRouter.get('/pool', async (req, res) => {
   const boothId = req.query.boothId as string | undefined;
+  const client = await getPgClient();
+  if (client) {
+    try {
+      const q = await client.query(`
+        SELECT * FROM inventory_pieces
+        WHERE (status = 'RESERVED' OR status = 'CLAIMED_PENDING')
+          AND locked_by_buyer IS NOT NULL
+          AND (is_sold = false OR is_sold IS NULL)
+        ORDER BY created_at ASC;
+      `);
+      for (const row of q.rows) {
+        const p = relationalStore.getInventoryPieces().find(x => x.barcode.toLowerCase() === (row.barcode || '').toLowerCase());
+        if (p) {
+          p.status = 'RESERVED';
+          p.lockedByBuyer = row.locked_by_buyer;
+          p.lockedByBooth = row.locked_by_booth || 'booth-1';
+          p.lockedChannel = row.locked_channel || 'Live Stream';
+          p.lockedPrice = Number(row.retail_price_aed || row.cost_price || 0);
+          p.isSold = false;
+        } else {
+          relationalStore.getInventoryPieces().push({
+            id: row.id,
+            barcode: row.barcode,
+            itemName: row.item_name || 'Garment',
+            brandName: row.brand_name || 'Vintage',
+            brandTier: row.brand_tier || 'STANDARD',
+            category: row.category || 'Tops',
+            status: 'RESERVED',
+            isSold: false,
+            weightKg: Number(row.weight_kg || 0.45),
+            weightGrams: Number(row.weight_grams || 450),
+            costPrice: Number(row.cost_price || 0),
+            retailPriceAed: Number(row.retail_price_aed || 0),
+            lockedPrice: Number(row.retail_price_aed || row.cost_price || 0),
+            lockedByBuyer: row.locked_by_buyer,
+            lockedByBooth: row.locked_by_booth || 'booth-1',
+            lockedChannel: row.locked_channel || 'Live Stream',
+            costPerGram: Number(row.cost_per_gram || 0)
+          } as any);
+        }
+      }
+    } catch (_) {} finally {
+      await client.end().catch(() => {});
+    }
+  }
   const pool = relationalStore.getLiveClaimedPool(boothId);
   return res.json(pool);
 });
@@ -1476,7 +1521,7 @@ liveStreamingRouter.post('/sweep-reservations', (req, res) => {
 });
 
 // Finalize live session per buyer
-liveStreamingRouter.post('/finalize-session', (req, res) => {
+liveStreamingRouter.post('/finalize-session', async (req, res) => {
   const { buyerHandle, customerPhone, paymentMethod, shippingAddress, boothId } = req.body;
   if (!buyerHandle) {
     return res.status(400).json({ error: 'buyerHandle is required' });
@@ -1491,6 +1536,43 @@ liveStreamingRouter.post('/finalize-session', (req, res) => {
 
   if (!result.success) {
     return res.status(400).json({ error: result.error });
+  }
+
+  // Persist draft invoice to PostgreSQL sales_invoices
+  const client = await getPgClient();
+  if (client && result.invoice) {
+    try {
+      const inv = result.invoice;
+      await client.query(`
+        INSERT INTO sales_invoices (
+          id, invoice_no, customer_name, customer_phone, invoice_date,
+          channel, payment_method, payment_status, shipping_address,
+          subtotal, discount_amount, tax_amount, total_amount, status,
+          items, shipping_fee, shipping_bearer, created_at
+        ) VALUES (
+          $1, $2, $3, $4, CURRENT_DATE,
+          'LIVE_STREAM', $5, 'PENDING_COD', $6,
+          $7, 0, $8, $9, 'DRAFT',
+          $10::jsonb, 0, 'Customer Bears', NOW()
+        ) ON CONFLICT (id) DO UPDATE
+        SET status = 'DRAFT', items = EXCLUDED.items, total_amount = EXCLUDED.total_amount;
+      `, [
+        inv.id,
+        inv.invoiceNo,
+        inv.customerName,
+        inv.customerPhone,
+        inv.paymentMethod || 'COD',
+        shippingAddress || 'Dubai, UAE Delivery',
+        inv.subTotal,
+        inv.vatAmount,
+        inv.totalAmount,
+        JSON.stringify(inv.items)
+      ]);
+    } catch (e) {
+      console.warn('Postgres persist note in finalize-session:', e);
+    } finally {
+      await client.end().catch(() => {});
+    }
   }
 
   eventHub.broadcast({
