@@ -62,6 +62,14 @@ export const getPgClient = (): pg.Pool => {
       console.warn('[pgPool] Idle client notice:', err?.message || err);
     });
 
+    pool.on('connect', (client: any) => {
+      if (client && typeof client.on === 'function') {
+        client.on('error', (err: any) => {
+          console.warn('[pgPool] Client socket notice:', err?.message || err);
+        });
+      }
+    });
+
     // Intercept client.end() so legacy callers in route handlers do not drain the shared global pool
     const origEnd = pool.end.bind(pool);
     pool.end = (async () => {}) as any;
@@ -73,7 +81,13 @@ export const getPgClient = (): pg.Pool => {
 export const borrowClient = async (): Promise<pg.PoolClient> => {
   const p = getPgClient();
   try {
-    return await p.connect();
+    const cl = await p.connect();
+    if (cl && typeof cl.on === 'function') {
+      cl.on('error', (err: any) => {
+        console.warn('[pgPool] Borrowed client notice:', err?.message || err);
+      });
+    }
+    return cl;
   } catch (connErr: any) {
     console.error('[pgPool] Primary pool connect failed, trying fallback pool:', connErr?.message);
     try {
@@ -86,9 +100,22 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
       fallbackPool.on('error', (err: any) => {
         console.warn('[pgPool] Idle fallback client notice:', err?.message || err);
       });
+      fallbackPool.on('connect', (client: any) => {
+        if (client && typeof client.on === 'function') {
+          client.on('error', (err: any) => {
+            console.warn('[pgPool] Fallback client socket notice:', err?.message || err);
+          });
+        }
+      });
       fallbackPool.end = (async () => {}) as any;
       pool = fallbackPool;
-      return await fallbackPool.connect();
+      const fbClient = await fallbackPool.connect();
+      if (fbClient && typeof fbClient.on === 'function') {
+        fbClient.on('error', (err: any) => {
+          console.warn('[pgPool] Fallback borrowed client notice:', err?.message || err);
+        });
+      }
+      return fbClient;
     } catch (fbErr: any) {
       console.error('[pgPool] Fallback pool connect also failed:', fbErr?.message);
       throw connErr;

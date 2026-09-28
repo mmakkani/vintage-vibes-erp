@@ -32,6 +32,9 @@ async function getClient() {
       ssl: { rejectUnauthorized: false },
       connectionTimeoutMillis: 5000
     });
+    pool.on('error', (err: any) => {
+      console.warn('[health pool idle client notice]:', err?.message || err);
+    });
   }
 
   try {

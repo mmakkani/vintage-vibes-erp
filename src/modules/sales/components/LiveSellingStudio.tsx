@@ -1090,10 +1090,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       `📦 *CLAIMED GARMENTS (${pool.itemsCount} Pieces):*\n` +
       `${itemsList}\n\n` +
       `━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `💵 *Subtotal:* AED ${pool.subTotalAed.toFixed(2)}\n` +
-      `🧾 *UAE VAT (5%):* AED ${pool.vatAed.toFixed(2)}\n` +
-      `🚚 *Courier Delivery:* ${pool.shippingAed === 0 ? 'FREE (Orders over AED 500)' : `AED ${pool.shippingAed.toFixed(2)}`}\n` +
-      `⭐ *TOTAL PAYABLE: AED ${pool.grandTotalAed.toFixed(2)}*\n\n` +
+      `💵 *Subtotal:* AED ${Number(pool.subTotalAed || 0).toFixed(2)}\n` +
+      `🧾 *UAE VAT (5%):* AED ${Number(pool.vatAed || 0).toFixed(2)}\n` +
+      `🚚 *Courier Delivery:* ${Number(pool.shippingAed || 0) === 0 ? 'FREE (Orders over AED 500)' : `AED ${Number(pool.shippingAed || 0).toFixed(2)}`}\n` +
+      `⭐ *TOTAL PAYABLE: AED ${Number(pool.grandTotalAed || 0).toFixed(2)}*\n\n` +
       `💳 *PAYMENT INSTRUCTIONS:*\n` +
       `• Bank Transfer: Emirates NBD\n` +
       `  IBAN: AE07 0260 0012 3456 7890 123\n` +
@@ -2333,7 +2333,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
                     <div className="text-[11px] text-stone-600 flex items-center justify-between">
                       <span>Weight: {pool.totalWeightKg} KG</span>
-                      <span>VAT (5%): AED {pool.vatAed.toFixed(2)}</span>
+                      <span>VAT (5%): AED {Number(pool.vatAed || 0).toFixed(2)}</span>
                     </div>
 
                     {/* Show Claimed Garments Breakdown with Pictures & Station attribution */}
@@ -2390,7 +2390,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
                       <div>
                         <div className="text-[9px] text-stone-400 uppercase font-semibold">Total</div>
-                        <div className="font-black text-stone-900 text-sm">AED {pool.grandTotalAed.toFixed(2)}</div>
+                        <div className="font-black text-stone-900 text-sm">AED {Number(pool.grandTotalAed || 0).toFixed(2)}</div>
                       </div>
 
                       <div className="flex items-center gap-1 flex-wrap">
@@ -2647,13 +2647,13 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                             <div>
                               <div className="text-[9px] text-stone-500 uppercase font-semibold">Live Floor Price</div>
                               <div className="font-mono font-black text-amber-400 text-sm">
-                                AED {price.toFixed(2)}
+                                AED {Number(price || 0).toFixed(2)}
                               </div>
                             </div>
                             <div className="text-right">
                               <div className="text-[9px] text-stone-500 uppercase font-semibold">Cost</div>
                               <div className="font-mono text-stone-400 text-xs">
-                                AED {cogs.toFixed(2)}
+                                AED {Number(cogs || 0).toFixed(2)}
                               </div>
                             </div>
                           </div>
@@ -3023,7 +3023,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 >
                   {(buyerPools || []).map(p => (
                     <option key={p.buyerHandle} value={p.buyerHandle}>
-                      {p.buyerHandle} ({p.itemsCount} Garments • AED {p.grandTotalAed.toFixed(2)})
+                      {p.buyerHandle} ({p.itemsCount} Garments • AED {Number(p.grandTotalAed || 0).toFixed(2)})
                     </option>
                   ))}
                 </select>

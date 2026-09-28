@@ -1068,11 +1068,15 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
 
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-slate-400">
-                    Shipping ({selectedInvoice.courierPartner || 'ARAMEX'} &bull;{' '}
-                    {selectedInvoice.shippingBearer === 'CUSTOMER' ? 'Customer Borne' : 'Company Borne'}):
+                    Shipping ({selectedInvoice.courierPartner || 'Banana Express'} &bull;{' '}
+                    {selectedInvoice.shippingBearer === 'COMPANY' ? 'Company Borne / Free' : 'Customer Borne'}):
                   </span>
                   <span className="font-mono text-slate-300">
-                    AED {(selectedInvoice.shippingFeeAed || 25).toFixed(2)}
+                    {selectedInvoice.shippingBearer === 'COMPANY' ? (
+                      <span className="text-emerald-400 font-bold">AED 0.00 <span className="text-[10px] text-slate-400 font-normal">(Absorbed: AED {(selectedInvoice.shippingFeeAed || 17).toFixed(2)})</span></span>
+                    ) : (
+                      `AED ${(selectedInvoice.shippingFeeAed || 17).toFixed(2)}`
+                    )}
                   </span>
                 </div>
 

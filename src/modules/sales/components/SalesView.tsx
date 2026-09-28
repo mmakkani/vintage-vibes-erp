@@ -692,14 +692,14 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                 <div className="bg-white p-3 rounded border border-slate-200 shadow-sm">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Pieces & Weight</div>
                   <div className="text-lg font-mono font-bold text-blue-900 mt-0.5">
-                    {activeGatePass.totalPieces} pcs <span className="text-xs text-slate-500 font-normal">({activeGatePass.totalWeight.toFixed(2)} KG)</span>
+                    {activeGatePass.totalPieces} pcs <span className="text-xs text-slate-500 font-normal">({Number(activeGatePass.totalWeight || 0).toFixed(2)} KG)</span>
                   </div>
                 </div>
 
                 <div className="bg-white p-3 rounded border border-slate-200 shadow-sm">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Estimated Subtotal</div>
                   <div className="text-lg font-mono font-black text-emerald-700 mt-0.5">
-                    AED {activeGatePass.estimatedAmount.toLocaleString()}
+                    AED {Number(activeGatePass.estimatedAmount || 0).toLocaleString()}
                   </div>
                 </div>
               </div>
@@ -1049,11 +1049,11 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                   {(selectedInvoiceForReceipt?.items || []).map((it, idx) => (
                     <tr key={idx}>
                       <td className="py-1 font-sans">
-                        <div className="font-bold text-slate-900 text-xs">{it.description}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">{it.barcode} ({it.weightKg} KG)</div>
+                        <div className="font-bold text-slate-900 text-xs">{it.description || (it as any).itemName || 'Curated Garment'}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">{it.barcode} ({Number(it.weightKg || (it as any).weight_kg || 0).toFixed(2)} KG)</div>
                       </td>
-                      <td className="py-1 text-right">AED {it.unitPrice}</td>
-                      <td className="py-1 text-right font-bold text-slate-800">AED {it.finalAmount}</td>
+                      <td className="py-1 text-right">AED {Number(it.unitPrice || (it as any).unit_price || 0).toFixed(2)}</td>
+                      <td className="py-1 text-right font-bold text-slate-800">AED {Number(it.finalAmount || (it as any).final_amount || it.unitPrice || 0).toFixed(2)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1067,28 +1067,28 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                     sealText="PAID & VERIFIED"
                     subText="DUBAI TRN VALIDATED"
                     size="sm"
-                    date={selectedInvoiceForReceipt.date}
+                    date={selectedInvoiceForReceipt.date || new Date().toISOString().split('T')[0]}
                     approver="SALES DESK"
                   />
                 </div>
 
                 <div className="flex justify-between">
                   <span>Subtotal:</span>
-                  <span>AED {selectedInvoiceForReceipt.subTotal.toFixed(2)}</span>
+                  <span>AED {Number(selectedInvoiceForReceipt.subTotal ?? (selectedInvoiceForReceipt as any).subtotal ?? 0).toFixed(2)}</span>
                 </div>
-                {selectedInvoiceForReceipt.discountAmount > 0 && (
+                {Number(selectedInvoiceForReceipt.discountAmount ?? (selectedInvoiceForReceipt as any).discount_amount ?? 0) > 0 && (
                   <div className="flex justify-between text-emerald-700">
                     <span>Discount:</span>
-                    <span>- AED {selectedInvoiceForReceipt.discountAmount.toFixed(2)}</span>
+                    <span>- AED {Number(selectedInvoiceForReceipt.discountAmount ?? (selectedInvoiceForReceipt as any).discount_amount ?? 0).toFixed(2)}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-slate-600">
                   <span>5% UAE VAT:</span>
-                  <span>AED {selectedInvoiceForReceipt.vatAmount.toFixed(2)}</span>
+                  <span>AED {Number(selectedInvoiceForReceipt.vatAmount ?? (selectedInvoiceForReceipt as any).tax_amount ?? (selectedInvoiceForReceipt as any).vat_amount ?? 0).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-sm font-black text-slate-900 pt-1 border-t border-dashed border-slate-300">
                   <span>TOTAL BILLABLE:</span>
-                  <span>AED {selectedInvoiceForReceipt.totalAmount.toFixed(2)}</span>
+                  <span>AED {Number(selectedInvoiceForReceipt.totalAmount ?? (selectedInvoiceForReceipt as any).total_amount ?? 0).toFixed(2)}</span>
                 </div>
               </div>
             </div>

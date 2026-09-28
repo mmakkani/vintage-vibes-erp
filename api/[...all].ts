@@ -54,10 +54,10 @@ function getSessionSecret(): string {
     );
   }
 
-  if (!devEphemeralSecret) {
-    devEphemeralSecret = crypto.randomBytes(32).toString('hex');
+  if (!(globalThis as any).__vv_dev_secret) {
+    (globalThis as any).__vv_dev_secret = crypto.randomBytes(32).toString('hex');
   }
-  return devEphemeralSecret;
+  return (globalThis as any).__vv_dev_secret;
 }
 
 function computeSignature(payload: string): string {
@@ -377,6 +377,16 @@ export const getPgClient = async (): Promise<any> => {
         ssl: { rejectUnauthorized: false },
         connectionTimeoutMillis: 5000
       });
+      rawPool.on('error', (err: any) => {
+        console.warn('[Serverless PG Pool Notice]:', err?.message || err);
+      });
+      rawPool.on('connect', (client: any) => {
+        if (client && typeof client.on === 'function') {
+          client.on('error', (err: any) => {
+            console.warn('[Serverless PG Client Socket Notice]:', err?.message || err);
+          });
+        }
+      });
       // Safety: intercept client.end() so legacy callers in route handlers do not drain the shared global pool
       rawPool._originalEnd = rawPool.end.bind(rawPool);
       rawPool.end = async () => {};
@@ -391,6 +401,16 @@ export const getPgClient = async (): Promise<any> => {
           max: 5,
           ssl: { rejectUnauthorized: false },
           connectionTimeoutMillis: 5000
+        });
+        fallbackPool.on('error', (err: any) => {
+          console.warn('[Serverless Fallback Pool Notice]:', err?.message || err);
+        });
+        fallbackPool.on('connect', (client: any) => {
+          if (client && typeof client.on === 'function') {
+            client.on('error', (err: any) => {
+              console.warn('[Serverless Fallback PG Client Socket Notice]:', err?.message || err);
+            });
+          }
         });
         fallbackPool.end = async () => {};
         pool = fallbackPool;
@@ -409,6 +429,11 @@ export const borrowClient = async (): Promise<any> => {
   if (p) {
     try {
       const client = await p.connect();
+      if (client && typeof client.on === 'function') {
+        client.on('error', (err: any) => {
+          console.warn('[Serverless Borrowed Client Notice]:', err?.message || err);
+        });
+      }
       return client;
     } catch (connErr: any) {
       console.error('[Serverless PG] Primary pool connect failed, trying fallback pool:', connErr?.message);
@@ -420,9 +445,18 @@ export const borrowClient = async (): Promise<any> => {
             ssl: { rejectUnauthorized: false },
             connectionTimeoutMillis: 5000
           });
+          fallbackPool.on('error', (err: any) => {
+            console.warn('[Serverless Fallback Pool Notice]:', err?.message || err);
+          });
           fallbackPool.end = async () => {};
           pool = fallbackPool;
-          return await fallbackPool.connect();
+          const fbClient = await fallbackPool.connect();
+          if (fbClient && typeof fbClient.on === 'function') {
+            fbClient.on('error', (err: any) => {
+              console.warn('[Serverless Fallback Borrowed Client Notice]:', err?.message || err);
+            });
+          }
+          return fbClient;
         } catch (fbErr: any) {
           console.error('[Serverless PG] Fallback pool connect also failed:', fbErr?.message);
         }
@@ -8061,24 +8095,26 @@ RULES FOR YOUR RESPONSE:
             );
           }
 
-          // Recalculate financial totals
-          const subtotal = Number(currentItems.reduce((sum: number, it: any) => sum + (Number(it.finalAmount) || Number(it.unitPrice) || 0), 0).toFixed(2));
-          const vatAmount = Number((subtotal * 0.05).toFixed(2));
-          const shippingFee = body.shippingFeeAed !== undefined || body.shippingCharge !== undefined || body.shipping_fee !== undefined
-            ? Number(body.shippingFeeAed ?? body.shippingCharge ?? body.shipping_fee)
-            : Number(invRow.shipping_fee ?? (subtotal >= 500 ? 0 : 25));
-          const grandTotal = Number((subtotal + vatAmount + shippingFee).toFixed(2));
-
           // Logistics & Header fields update
           const courierPartnerId = body.courierPartnerId !== undefined ? Number(body.courierPartnerId) : invRow.courier_partner_id;
           const trackingNumber = body.trackingNumber ?? invRow.tracking_number;
-          const shippingBearer = body.shippingBearer ?? invRow.shipping_bearer;
+          const shippingBearer = body.shippingBearer ?? invRow.shipping_bearer ?? 'CUSTOMER';
+          const isCompanyBorne = shippingBearer.toString().toUpperCase().includes('COMPANY');
           const paymentStatus = body.paymentStatus ?? invRow.payment_status;
           const paymentMethod = body.paymentMethod ?? invRow.payment_method;
           const paymentReference = body.paymentReference ?? invRow.payment_reference;
           const shippingAddress = body.shippingAddress ?? invRow.shipping_address;
           const customerPhone = body.customerPhone ?? invRow.customer_phone;
           const customerName = body.customerName ?? body.buyerHandle ?? invRow.customer_name;
+
+          // Recalculate financial totals
+          const subtotal = Number(currentItems.reduce((sum: number, it: any) => sum + (Number(it.finalAmount) || Number(it.unitPrice) || 0), 0).toFixed(2));
+          const vatAmount = Number((subtotal * 0.05).toFixed(2));
+          const shippingFee = body.shippingFeeAed !== undefined || body.shippingCharge !== undefined || body.shipping_fee !== undefined
+            ? Number(body.shippingFeeAed ?? body.shippingCharge ?? body.shipping_fee)
+            : Number(invRow.shipping_fee ?? (subtotal >= 500 ? 0 : 25));
+          const customerShippingCharge = isCompanyBorne ? 0 : shippingFee;
+          const grandTotal = Number((subtotal + vatAmount + customerShippingCharge).toFixed(2));
 
           const updateRes = await client.query(
             `UPDATE sales_invoices
@@ -8185,14 +8221,31 @@ RULES FOR YOUR RESPONSE:
           const subtotal = Number(invRow.subtotal || 0);
           const shippingFee = Number(invRow.shipping_fee || 0);
 
-          // Resolve courier COA code
+          // Resolve courier COA code dynamically from parties registry
           const courierId = invRow.courier_partner_id;
           let courierCoaCode = '2120-00';
-          if (courierId === 70) courierCoaCode = '2120-01';
-          else if (courierId === 71) courierCoaCode = '2120-02';
-          else if (courierId === 72) courierCoaCode = '2120-03';
-          else if (courierId === 73) courierCoaCode = '2120-04';
-          else if (courierId === 74) courierCoaCode = '2120-05';
+          if (courierId) {
+            try {
+              const partyRes = await client.query(
+                `SELECT account_map FROM parties WHERE party_id::text = $1::text OR id::text = $1::text LIMIT 1;`,
+                [courierId]
+              );
+              if (partyRes.rowCount > 0 && partyRes.rows[0].account_map) {
+                const accMap = typeof partyRes.rows[0].account_map === 'string'
+                  ? JSON.parse(partyRes.rows[0].account_map)
+                  : partyRes.rows[0].account_map;
+                courierCoaCode = accMap.payableAccountId || accMap.courierPayableAccountId || accMap.coaCode || courierCoaCode;
+              }
+            } catch (_) {}
+          }
+          if (courierCoaCode === '2120-00') {
+            if (courierId === 70) courierCoaCode = '2120-01';
+            else if (courierId === 71) courierCoaCode = '2120-02';
+            else if (courierId === 72) courierCoaCode = '2120-03';
+            else if (courierId === 73) courierCoaCode = '2120-04';
+            else if (courierId === 74) courierCoaCode = '2120-05';
+            else if (courierId === 75) courierCoaCode = '2120-06';
+          }
 
           // Get COGS total
           let totalCOGS = 0;
@@ -8211,10 +8264,42 @@ RULES FOR YOUR RESPONSE:
             totalCOGS = items.reduce((sum: number, it: any) => sum + Number(it.calculatedCostPrice ?? it.costPrice ?? 0), 0);
           }
 
+          const isCompanyBorne = (invRow.shipping_bearer || 'CUSTOMER').toString().toUpperCase().includes('COMPANY');
+          const vatAmount = Number(invRow.tax_amount || (subtotal * 0.05).toFixed(2));
+          const lines: any[] = [];
+
+          if (isCompanyBorne) {
+            // Company pays shipping as an operating expense, customer only pays order subtotal + vat
+            lines.push({ code: '1128-01', debit: totalAmount, credit: 0, desc: 'Courier COD Clearing / Customer Receivable' });
+            if (shippingFee > 0) {
+              lines.push({ code: '5140-01', debit: shippingFee, credit: 0, desc: 'Courier & Freight Delivery Expense (Company Absorbed)' });
+              lines.push({ code: courierCoaCode, debit: 0, credit: shippingFee, desc: 'Courier Partner Payable' });
+            }
+            lines.push({ code: '4120-01', debit: 0, credit: subtotal, desc: 'Live Stream Sales Revenue' });
+            if (vatAmount > 0) {
+              lines.push({ code: '2140-01', debit: 0, credit: vatAmount, desc: 'VAT Output Tax Payable (5%)' });
+            }
+          } else {
+            // Customer bears shipping: Courier collects full amount at doorstep
+            lines.push({ code: '1128-01', debit: totalAmount, credit: 0, desc: 'Courier COD Clearing / Total Collectible' });
+            if (shippingFee > 0) {
+              lines.push({ code: courierCoaCode, debit: 0, credit: shippingFee, desc: 'Courier Partner Payable' });
+            }
+            lines.push({ code: '4120-01', debit: 0, credit: subtotal, desc: 'Live Stream Sales Revenue' });
+            if (vatAmount > 0) {
+              lines.push({ code: '2140-01', debit: 0, credit: vatAmount, desc: 'VAT Output Tax Payable (5%)' });
+            }
+          }
+
+          if (totalCOGS > 0) {
+            lines.push({ code: '5100-02', debit: totalCOGS, credit: 0, desc: 'Cost of Goods Sold - Finished Goods' });
+            lines.push({ code: '1160-01', debit: 0, credit: totalCOGS, desc: 'Finished Goods Inventory Asset Relief' });
+          }
+
           const voucherId = crypto.randomUUID();
           const vNo = `JV-SLS-${invRow.invoice_no || invRow.id}`;
-          const totalDebit = Number((totalAmount + totalCOGS).toFixed(2));
-          const totalCredit = totalDebit;
+          const totalDebit = Number(lines.reduce((s, l) => s + (Number(l.debit) || 0), 0).toFixed(2));
+          const totalCredit = Number(lines.reduce((s, l) => s + (Number(l.credit) || 0), 0).toFixed(2));
 
           await client.query(`
             INSERT INTO financial_vouchers (
@@ -8234,15 +8319,6 @@ RULES FOR YOUR RESPONSE:
             totalDebit,
             totalCredit
           ]);
-
-          // Insert voucher lines
-          const lines = [
-            { code: '1128-01', debit: totalAmount, credit: 0, desc: 'Courier COD Clearing / Receivable' },
-            { code: courierCoaCode, debit: 0, credit: shippingFee, desc: 'Courier Partner Payable' },
-            { code: '4120-01', debit: 0, credit: subtotal, desc: 'Live Stream Sales Revenue' },
-            { code: '5100-02', debit: totalCOGS, credit: 0, desc: 'Cost of Goods Sold - Finished Goods' },
-            { code: '1160-01', debit: 0, credit: totalCOGS, desc: 'Finished Goods Inventory Asset Relief' }
-          ];
 
           for (const ln of lines) {
             await client.query(`
@@ -11299,7 +11375,7 @@ RULES FOR YOUR RESPONSE:
             `SELECT id, barcode, sku, item_name, brand_name, cost_price, 
                     COALESCE(retail_price_aed, cost_price, 120) as retail_price_aed,
                     status, locked_by_station, locked_by_buyer, locked_by_booth, locked_at, lock_expires_at, reserved_until,
-                    weight_kg, weight_grams, size_scanned, label_grade, style
+                    weight_kg, weight_grams, size_scanned, label_grade, style, front_image_url
              FROM inventory_pieces
              WHERE (status = 'RESERVED' OR status = 'CLAIMED_PENDING')
                AND (is_sold = false OR is_sold IS NULL)
@@ -11333,6 +11409,8 @@ RULES FOR YOUR RESPONSE:
               weightKg: itemWeight,
               weightGrams: r.weight_grams || Math.round(itemWeight * 1000),
               status: r.status,
+              frontImageUrl: r.front_image_url || null,
+              front_image_url: r.front_image_url || null,
               lockedByStation: r.locked_by_station || 'Station 1',
               locked_by_station: r.locked_by_station || 'Station 1',
               lockedByBuyer: buyer,
@@ -11796,6 +11874,11 @@ RULES FOR YOUR RESPONSE:
               invoiceNo: createdInv.invoice_no,
               customerName: createdInv.customer_name,
               totalAmount: Number(createdInv.total_amount),
+              subTotal: Number(createdInv.subtotal || subTotal || 0),
+              discountAmount: Number(createdInv.discount_amount || 0),
+              vatAmount: Number(createdInv.tax_amount || vatAmount || 0),
+              date: createdInv.invoice_date || new Date().toISOString().split('T')[0],
+              status: createdInv.status || 'DRAFT',
               items: invoiceItems
             },
             whatsAppMessage: whatsAppText,
@@ -11827,7 +11910,7 @@ RULES FOR YOUR RESPONSE:
 
         try {
           const pieceRes = await client.query(
-            `SELECT id, barcode, sku, item_name, brand_name, cost_price, cost_per_gram, calculated_cost_price,
+            `SELECT id, barcode, sku, item_name, brand_name, cost_price, cost_per_gram,
                     COALESCE(retail_price_aed, estimated_price, cost_price, 0) as retail_price_aed,
                     weight_kg, weight_grams, size_scanned, is_sold, status
              FROM inventory_pieces
@@ -11852,7 +11935,7 @@ RULES FOR YOUR RESPONSE:
           const grandTotal = Number((subTotal + vatAmount).toFixed(2));
           const weightG = Number(p.weight_grams || (p.weight_kg ? p.weight_kg * 1000 : 0));
           const costPerG = Number(p.cost_per_gram || 0);
-          const itemCost = Number(p.cost_price || p.calculated_cost_price || (weightG && costPerG ? Number((weightG * costPerG).toFixed(2)) : 0) || 0);
+          const itemCost = Number(p.cost_price || (weightG && costPerG ? Number((weightG * costPerG).toFixed(2)) : 0) || 0);
           const cogs = itemCost;
 
           const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -11931,6 +12014,10 @@ RULES FOR YOUR RESPONSE:
               invoiceNo,
               customerName: buyerHandle,
               totalAmount: grandTotal,
+              subTotal: subTotal,
+              discountAmount: 0,
+              vatAmount: vatAmount,
+              date: new Date().toISOString().split('T')[0],
               status: 'DRAFT',
               items: [itemObj]
             },
@@ -12059,6 +12146,11 @@ RULES FOR YOUR RESPONSE:
               invoiceNo,
               customerName: buyerHandle,
               totalAmount: grandTotal,
+              subTotal: subTotal,
+              discountAmount: 0,
+              vatAmount: vatAmount,
+              date: new Date().toISOString().split('T')[0],
+              status: 'DRAFT',
               items: [itemObj]
             },
             piece: {

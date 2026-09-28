@@ -5,6 +5,15 @@ import healthHandler from '../api/health.ts';
 import { createSessionToken, verifyAuthToken, revokeSessionToken, isOriginAllowed } from '../src/server/authValidator.ts';
 import { isAllowedApiDestination } from '../src/utils/fetchUtils.ts';
 
+process.on('uncaughtException', (err: any) => {
+  if (err?.message?.includes('Connection terminated unexpectedly') || err?.message?.includes('connection timeout')) {
+    console.warn('[Security Gate Notice]: Remote Supabase pooler connection terminated, handled gracefully.');
+    return;
+  }
+  console.error('Uncaught Exception:', err);
+  process.exit(1);
+});
+
 interface MockResponse {
   statusCode: number;
   headers: Record<string, string>;

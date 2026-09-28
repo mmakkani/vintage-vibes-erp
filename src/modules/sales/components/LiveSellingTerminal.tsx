@@ -447,7 +447,7 @@ export const LiveSellingTerminal: React.FC<LiveSellingTerminalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {filteredStock.map(piece => {
                   const inBasket = basket.some(b => b.barcode.toLowerCase() === piece.barcode.toLowerCase());
-                  const price = piece.retailPriceAed || piece.estimatedPrice || piece.costPrice || 0;
+                  const price = Number(piece.retailPriceAed || piece.estimatedPrice || piece.costPrice || 0);
 
                   return (
                     <div
@@ -645,9 +645,9 @@ export const LiveSellingTerminal: React.FC<LiveSellingTerminalProps> = ({
 
                     <div className="flex items-center gap-2">
                       <div className="text-right">
-                        <div className="font-black text-stone-900">AED {item.finalAmount.toFixed(2)}</div>
+                        <div className="font-black text-stone-900">AED {Number(item.finalAmount || 0).toFixed(2)}</div>
                         {item.discount > 0 && (
-                          <div className="text-[9px] text-emerald-600 line-through">AED {item.unitPrice.toFixed(2)}</div>
+                          <div className="text-[9px] text-emerald-600 line-through">AED {Number(item.unitPrice || 0).toFixed(2)}</div>
                         )}
                       </div>
                       <button

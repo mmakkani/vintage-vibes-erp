@@ -50,10 +50,10 @@ function getSessionSecret(): string {
     );
   }
 
-  if (!devEphemeralSecret) {
-    devEphemeralSecret = crypto.randomBytes(32).toString('hex');
+  if (!(globalThis as any).__vv_dev_secret) {
+    (globalThis as any).__vv_dev_secret = crypto.randomBytes(32).toString('hex');
   }
-  return devEphemeralSecret;
+  return (globalThis as any).__vv_dev_secret;
 }
 
 function computeSignature(payload: string): string {
@@ -219,6 +219,9 @@ export default async function handler(req: any, res: any) {
             max: 3,
             ssl: { rejectUnauthorized: false },
             connectionTimeoutMillis: 5000
+          });
+          loginPool.on('error', (err: any) => {
+            console.warn('[loginPool idle client notice]:', err?.message || err);
           });
         }
         const result = await loginPool.query(
