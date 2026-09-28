@@ -44,56 +44,123 @@ export class PaymobService {
     }
 
     try {
-      // 1. Paymob UAE Intention / POS Push endpoint
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 seconds for cloud handshake
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-      const authHeader = effectiveApiKey.startsWith('are_sk_') || effectiveApiKey.startsWith('egy_sk_') || effectiveApiKey.startsWith('om_sk_') || effectiveApiKey.startsWith('sk_')
-        ? `Bearer ${effectiveApiKey}`
-        : (effectiveApiKey.startsWith('Bearer ') || effectiveApiKey.startsWith('Token ') ? effectiveApiKey : `Token ${effectiveApiKey}`);
+      // Step 1: Obtain Auth Token from Paymob UAE
+      const tokenRes = await fetch('https://uae.paymob.com/api/auth/tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: effectiveApiKey }),
+        signal: controller.signal
+      });
 
-      const response = await fetch('https://uae.paymob.com/api/acceptance/payments/pay', {
+      if (!tokenRes.ok) {
+        const errJson = await tokenRes.json().catch(() => null);
+        throw new Error(errJson?.detail || errJson?.message || `Paymob Auth Failed (HTTP ${tokenRes.status})`);
+      }
+      const tokenData = await tokenRes.json();
+      const authToken = tokenData.token;
+
+      // Step 2: Register Order on Paymob
+      const orderRes = await fetch('https://uae.paymob.com/api/ecommerce/orders', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': authHeader
+          'Authorization': `Bearer ${authToken}`
         },
         body: JSON.stringify({
-          source: {
-            identifier: req.terminalId,
-            subtype: 'TERMINAL'
-          },
           amount_cents: amountInCents,
           currency: effectiveCurrency,
-          payment_token: req.integrationId || undefined,
-          merchant_order_id: req.invoiceNo || `POS-${Date.now().toString().slice(-6)}`
+          merchant_order_id: req.invoiceNo || `POS-${Date.now().toString().slice(-6)}`,
+          items: [{ name: req.invoiceNo || 'POS Counter Sale', amount_cents: amountInCents, quantity: 1 }]
+        }),
+        signal: controller.signal
+      });
+
+      if (!orderRes.ok) {
+        const errJson = await orderRes.json().catch(() => null);
+        throw new Error(errJson?.detail || errJson?.message || `Paymob Order Creation Failed (HTTP ${orderRes.status})`);
+      }
+      const orderData = await orderRes.json();
+
+      // Step 3: Generate Payment Key for POS Terminal Integration (99482)
+      const targetIntegrationId = Number(req.integrationId || 99482);
+      const pKeyRes = await fetch('https://uae.paymob.com/api/acceptance/payment_keys', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          amount_cents: amountInCents,
+          currency: effectiveCurrency,
+          order_id: orderData.id,
+          integration_id: targetIntegrationId,
+          billing_data: {
+            first_name: 'Counter',
+            last_name: 'Customer',
+            email: 'customer@vintagevibe.ae',
+            phone_number: '+971501234567',
+            apartment: 'NA',
+            floor: 'NA',
+            street: 'Main Store Counter',
+            building: 'NA',
+            postal_code: '00000',
+            city: 'Dubai',
+            country: 'ARE',
+            state: 'Dubai'
+          }
+        }),
+        signal: controller.signal
+      });
+
+      if (!pKeyRes.ok) {
+        const errJson = await pKeyRes.json().catch(() => null);
+        throw new Error(errJson?.detail || errJson?.message || `Paymob Payment Key Failed (HTTP ${pKeyRes.status})`);
+      }
+      const pKeyData = await pKeyRes.json();
+      const paymentToken = pKeyData.token;
+
+      // Step 4: Dispatch push request directly to physical terminal
+      const targetTerminalId = String(req.terminalId || '12857001').trim();
+      const payRes = await fetch('https://uae.paymob.com/api/acceptance/payments/pay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: {
+            identifier: targetTerminalId,
+            subtype: 'TERMINAL'
+          },
+          payment_token: paymentToken
         }),
         signal: controller.signal
       });
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        // Try fallback intention endpoint
-        const errJson = await response.json().catch(() => null);
-        const errMsg = errJson?.message || errJson?.detail || `Paymob Gateway HTTP ${response.status}`;
-        throw new Error(errMsg);
+      if (!payRes.ok) {
+        const errJson = await payRes.json().catch(() => null);
+        throw new Error(errJson?.detail || errJson?.message || `Paymob Terminal Push Failed (HTTP ${payRes.status})`);
       }
 
-      const data = await response.json();
-      const isApproved = data?.success === true || data?.is_standalone === true || data?.pending === false;
-      const auth = data?.data?.auth_code || data?.auth_code || data?.approval_code || ('AUTH-' + Math.floor(100000 + Math.random() * 900000));
+      const data = await payRes.json();
+      const isApproved = data?.success === true;
+      const isPending = data?.pending === true || data?.data?.message?.includes('Payment sent to terminal');
+      const auth = data?.data?.auth_code || data?.auth_code || data?.approval_code || '';
       const rrn = data?.data?.rrn || data?.rrn || String(data?.id || '');
       const brand = data?.data?.card_brand || data?.card_brand || 'VISA CONTACTLESS';
 
       return {
         success: true,
-        status: isApproved ? 'APPROVED' : 'AWAITING_TAP',
-        authCode: String(auth),
+        status: isApproved ? 'APPROVED' : (isPending ? 'AWAITING_TAP' : 'SIMULATED'),
+        authCode: auth ? String(auth) : undefined,
         rrn: rrn ? String(rrn) : undefined,
         transactionId: data?.id ? String(data.id) : undefined,
         cardBrand: brand,
-        message: isApproved ? 'Payment approved on PAX A960' : 'Payment sent to PAX A960 screen. Awaiting customer card tap.',
+        message: isApproved 
+          ? 'Payment approved on PAX A960' 
+          : 'Payment amount sent to PAX A960 screen in Dubai! Awaiting customer card tap.',
         rawResponse: data
       };
     } catch (err: any) {
