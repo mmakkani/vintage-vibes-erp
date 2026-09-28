@@ -787,9 +787,26 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-medium">
                       {(selectedInvoice?.items || []).map((item, idx) => {
-                        const cost = item.calculatedCostPrice || 25;
-                        const price = item.finalAmount || item.unitPrice || 0;
+                        const matchingPiece = (stockPieces || []).find(
+                          p => p.barcode?.toLowerCase() === item.barcode?.toLowerCase()
+                        );
+                        const cost = Number(
+                          item.calculatedCostPrice ??
+                          item.costPrice ??
+                          matchingPiece?.calculatedCostPrice ??
+                          matchingPiece?.costPrice ??
+                          matchingPiece?.cost_price ??
+                          (item.weightGrams && item.costPerGram ? item.weightGrams * item.costPerGram : 0) ??
+                          0
+                        );
+                        const price = Number(item.finalAmount || item.unitPrice || 0);
                         const profit = price - cost;
+                        const costPerGram = Number(
+                          item.costPerGram ||
+                          matchingPiece?.costPerGram ||
+                          matchingPiece?.cost_per_gram ||
+                          (item.weightGrams && cost > 0 ? cost / item.weightGrams : 0)
+                        );
 
                         return (
                           <tr key={item.id || idx} className="hover:bg-slate-50/50">
@@ -800,7 +817,7 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                               {item.description}
                               {item.weightGrams && (
                                 <span className="text-[10px] text-slate-400 block">
-                                  {item.weightGrams} g (AED {item.costPerGram ? item.costPerGram.toFixed(4) : '0.08'}/g)
+                                  {item.weightGrams} g {costPerGram > 0 ? `(AED ${costPerGram.toFixed(4)}/g)` : ''}
                                 </span>
                               )}
                             </td>
@@ -810,8 +827,8 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                             <td className="px-3 py-2.5 font-mono font-bold text-emerald-600">
                               AED {price.toFixed(2)}
                             </td>
-                            <td className="px-3 py-2.5 font-mono font-semibold text-slate-800">
-                              +AED {profit.toFixed(2)}
+                            <td className={`px-3 py-2.5 font-mono font-semibold ${profit >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                              {profit >= 0 ? `+AED ${profit.toFixed(2)}` : `-AED ${Math.abs(profit).toFixed(2)}`}
                             </td>
                             <td className="px-3 py-2.5 text-right">
                               <button
@@ -876,7 +893,7 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                         type="text"
                         value={selectedInvoice.trackingNumber || ''}
                         onChange={e => handleUpdateLogistics('trackingNumber', e.target.value)}
-                        placeholder="e.g. ARX-AE-982104"
+                        placeholder="Scan or enter AWB # from Courier flyer"
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:outline-none font-bold text-slate-800"
                       />
                     </div>
@@ -890,7 +907,7 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                       type="number"
                       min={0}
                       step={5}
-                      value={selectedInvoice.shippingFeeAed || 25}
+                      value={selectedInvoice.shippingFeeAed !== undefined ? selectedInvoice.shippingFeeAed : 0}
                       onChange={e => handleUpdateLogistics('shippingFeeAed', Number(e.target.value))}
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:outline-none"
                     />
@@ -1017,10 +1034,14 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
 
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-slate-400">Total Calculated COGS (Stock Cost):</span>
-                  <span className="font-mono text-rose-400 font-semibold">
+                  <span className="font-mono text-amber-300 font-semibold">
                     AED{' '}
                     {(Array.isArray(selectedInvoice?.items)
-                      ? selectedInvoice.items.reduce((s, it) => s + (Number(it?.calculatedCostPrice) || 25), 0)
+                      ? selectedInvoice.items.reduce((s, it) => {
+                          const mPiece = (stockPieces || []).find(p => p.barcode?.toLowerCase() === it.barcode?.toLowerCase());
+                          const itCost = Number(it?.calculatedCostPrice ?? it?.costPrice ?? mPiece?.calculatedCostPrice ?? mPiece?.costPrice ?? mPiece?.cost_price ?? 0);
+                          return s + itCost;
+                        }, 0)
                       : 0
                     ).toFixed(2)}
                   </span>
@@ -1029,8 +1050,19 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-emerald-400 font-semibold">Gross Profit Margin:</span>
                   <span className="font-mono font-bold text-emerald-400">
-                    AED {(selectedInvoice.grossProfitAed || (selectedInvoice.subTotal * 0.65)).toFixed(2)} (
-                    {selectedInvoice.grossProfitPercent || 65}%)
+                    {(() => {
+                      const totalCogs = Array.isArray(selectedInvoice?.items)
+                        ? selectedInvoice.items.reduce((s, it) => {
+                            const mPiece = (stockPieces || []).find(p => p.barcode?.toLowerCase() === it.barcode?.toLowerCase());
+                            const itCost = Number(it?.calculatedCostPrice ?? it?.costPrice ?? mPiece?.calculatedCostPrice ?? mPiece?.costPrice ?? mPiece?.cost_price ?? 0);
+                            return s + itCost;
+                          }, 0)
+                        : 0;
+                      const sub = Number(selectedInvoice.subTotal || 0);
+                      const grossProfit = sub - totalCogs;
+                      const marginPct = sub > 0 ? Math.round((grossProfit / sub) * 100) : 0;
+                      return `AED ${grossProfit.toFixed(2)} (${marginPct}%)`;
+                    })()}
                   </span>
                 </div>
 

@@ -11838,7 +11838,10 @@ RULES FOR YOUR RESPONSE:
           const subTotal = Number(price.toFixed(2));
           const vatAmount = Number((subTotal * vatRate).toFixed(2));
           const grandTotal = Number((subTotal + vatAmount).toFixed(2));
-          const cogs = Number(p.cost_price || (Number(p.weight_kg || 0.45) * 20) || 20);
+          const itemCost = Number(p.cost_price || (p.weight_grams && p.cost_per_gram ? Number((p.weight_grams * p.cost_per_gram).toFixed(2)) : 0) || 0);
+          const weightG = Number(p.weight_grams || (p.weight_kg ? p.weight_kg * 1000 : 0));
+          const costPerG = Number(p.cost_per_gram || (weightG && itemCost ? itemCost / weightG : 0));
+          const cogs = itemCost;
 
           const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
           const randSuffix = Math.floor(1000 + Math.random() * 9000);
@@ -11849,8 +11852,11 @@ RULES FOR YOUR RESPONSE:
             id: `sii-live-${Date.now()}-0`,
             barcode: p.barcode || p.sku,
             description: `${p.brand_name || 'Vintage'} ${p.item_name || 'Garment'} (${p.size_scanned || 'M'})`,
-            weightKg: Number(p.weight_kg || 0.45),
-            weightGrams: Number(p.weight_grams || 450),
+            weightKg: Number(p.weight_kg || (weightG / 1000) || 0.45),
+            weightGrams: weightG,
+            costPrice: itemCost,
+            calculatedCostPrice: itemCost,
+            costPerGram: costPerG,
             unitPrice: subTotal,
             discount: 0,
             finalAmount: subTotal,
@@ -11962,10 +11968,14 @@ RULES FOR YOUR RESPONSE:
             return res.status(400).json({ success: false, error: `Piece "${barcode}" is already SOLD.` });
           }
 
-          const price = Number(offeredPrice || p.retail_price_aed || 120);
+          const price = Number(offeredPrice || p.retail_price_aed || p.estimated_price || 0);
           const subTotal = price;
           const vatAmount = Number((subTotal * 0.05).toFixed(2));
-          const grandTotal = Number((subTotal + vatAmount + 25).toFixed(2));
+          const grandTotal = Number((subTotal + vatAmount).toFixed(2));
+
+          const itemCost = Number(p.cost_price || (p.weight_grams && p.cost_per_gram ? Number((p.weight_grams * p.cost_per_gram).toFixed(2)) : 0) || 0);
+          const weightG = Number(p.weight_grams || (p.weight_kg ? p.weight_kg * 1000 : 0));
+          const costPerG = Number(p.cost_per_gram || (weightG && itemCost ? itemCost / weightG : 0));
 
           const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
           const randSuffix = Math.floor(1000 + Math.random() * 9000);
@@ -11976,8 +11986,11 @@ RULES FOR YOUR RESPONSE:
             id: `sii-live-${Date.now()}-0`,
             barcode: p.barcode || p.sku,
             description: `${p.brand_name || 'Vintage'} ${p.item_name || 'Garment'} (${p.size_scanned || 'M'})`,
-            weightKg: Number(p.weight_kg || 0.45),
-            weightGrams: Number(p.weight_grams || 450),
+            weightKg: Number(p.weight_kg || (weightG / 1000) || 0.45),
+            weightGrams: weightG,
+            costPrice: itemCost,
+            calculatedCostPrice: itemCost,
+            costPerGram: costPerG,
             unitPrice: price,
             discount: 0,
             finalAmount: price,
@@ -11995,7 +12008,7 @@ RULES FOR YOUR RESPONSE:
                $1, $2, $3, $4, CURRENT_DATE,
                'LIVE_STREAM', 'COD', 'PENDING_COD', 'Dubai, UAE Delivery',
                $5, 0, $6, $7, 'DRAFT',
-               $8::jsonb, 25, 'Customer Bears', NOW()
+               $8::jsonb, 0, 'Customer Bears', NOW()
              ) RETURNING *;`,
             [
               invId,

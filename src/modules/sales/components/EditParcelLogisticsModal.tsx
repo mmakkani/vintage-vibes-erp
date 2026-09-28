@@ -59,7 +59,7 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
     invoice.courierPartyId
   );
   const [trackingNumber, setTrackingNumber] = useState<string>(
-    invoice.trackingNumber || `DHL-${Math.floor(100000000 + Math.random() * 900000000)}`
+    invoice.trackingNumber || ''
   );
 
   // Fetch active couriers dynamically from Registry
@@ -403,10 +403,9 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
                 <div className="relative">
                   <input
                     type="text"
-                    required
                     value={trackingNumber}
                     onChange={e => setTrackingNumber(e.target.value)}
-                    placeholder="e.g. DHL-984810294"
+                    placeholder="Scan or enter AWB # from Courier flyer"
                     className="w-full pl-9 pr-8 py-2 bg-white border border-slate-300 rounded-lg font-mono font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 focus:outline-none"
                   />
                   <Barcode className="w-4 h-4 text-amber-600 absolute left-3 top-2.5" />

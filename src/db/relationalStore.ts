@@ -4812,15 +4812,15 @@ class RelationalStore {
       }
 
       const piece = lockRes.piece;
-      const price = params.offeredPrice || piece.lockedPrice || piece.retailPriceAed || 120;
+      const price = Number(params.offeredPrice || piece.lockedPrice || piece.retailPriceAed || piece.costPrice || 0);
       const nextIdx = this.salesInvoices.length + 1;
       const invoiceNo = `SLS-DRAFT-LIVE-${String(nextIdx).padStart(4, '0')}`;
 
-      const pieceCost = piece.calculatedCostPrice || piece.costPrice || (piece.weightGrams && piece.costPerGram ? Number((piece.weightGrams * piece.costPerGram).toFixed(2)) : 25);
+      const pieceCost = Number(piece.calculatedCostPrice || piece.costPrice || (piece.weightGrams && piece.costPerGram ? Number((piece.weightGrams * piece.costPerGram).toFixed(2)) : 0));
       const grossProfitAed = Number((price - pieceCost).toFixed(2));
       const grossProfitPercent = price > 0 ? Math.round((grossProfitAed / price) * 100) : 0;
-      const shippingFee = 25;
-      const trackingNumber = `DHL-AE-${Math.floor(10000000 + Math.random() * 90000000)}`;
+      const shippingFee = 0;
+      const trackingNumber = '';
 
       const draftInvoice: SalesInvoice = {
         id: `sls-draft-${Date.now()}`,
@@ -4857,8 +4857,9 @@ class RelationalStore {
           description: `${piece.brandName} ${piece.itemName} (${piece.sizeScanned || 'M'})`,
           weightKg: piece.weightKg || 0.45,
           weightGrams: piece.weightGrams || Math.round((piece.weightKg || 0.45) * 1000),
-          costPerGram: piece.costPerGram || 0.085,
+          costPerGram: piece.costPerGram || (piece.weightGrams ? Number((pieceCost / piece.weightGrams).toFixed(4)) : 0),
           calculatedCostPrice: pieceCost,
+          costPrice: pieceCost,
           unitPrice: price,
           discount: 0,
           finalAmount: price,
