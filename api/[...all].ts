@@ -11842,9 +11842,9 @@ RULES FOR YOUR RESPONSE:
           const isUnpostAction = pathname.endsWith('/unpost');
           let targetId = '';
           if (isPostAction || isUnpostAction) {
-            targetId = segments[segments.length - 2];
+            targetId = decodeURIComponent(segments[segments.length - 2] || '');
           } else {
-            targetId = segments[segments.length - 1];
+            targetId = decodeURIComponent(segments[segments.length - 1] || '');
           }
 
           if (isPostAction && method === 'POST') {

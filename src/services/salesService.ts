@@ -671,15 +671,30 @@ export class SalesService {
         }
       } catch (_) {}
 
-      // Retain customer details for CRM retail customer metrics rollback
-      const customerPhone = invoice?.customer_phone || posSale?.customer_phone || '';
-      const customerName = invoice?.customer_name || posSale?.customer_name || '';
+      // Also query b2b_sales to gather pieces and fallback if sales_invoices/pos wasn't found
+      let b2bSale: any = null;
+      try {
+        const { data: bs } = await supabase
+          .from('b2b_sales')
+          .select('*')
+          .or(`b2b_invoice_number.eq.${invoiceNo},b2b_invoice_number.eq.${cleanId},id.eq.${cleanId}`)
+          .maybeSingle();
+        b2bSale = bs;
+        if (!invoice && !posSale && b2bSale) {
+          invoiceNo = b2bSale.b2b_invoice_number || cleanId;
+        }
+      } catch (_) {}
 
-      if (!invoice && !posSale) {
-        throw new Error('Invoice or POS sale not found for deletion');
+      // Retain customer details for CRM retail customer metrics rollback
+      const customerPhone = invoice?.customer_phone || posSale?.customer_phone || b2bSale?.phone || '';
+      const customerName = invoice?.customer_name || posSale?.customer_name || b2bSale?.company_name || '';
+
+      if (!invoice && !posSale && !b2bSale) {
+        console.info(`[SalesService] Invoice ${cleanId} already deleted or does not exist.`);
+        return;
       }
 
-      // STEP 2: Extract barcodes safely from both sales_invoices and pos_sales
+      // STEP 2: Extract barcodes safely from sales_invoices, pos_sales, and b2b_sales
       let items1 = invoice?.items || [];
       if (typeof items1 === 'string') {
         try { items1 = JSON.parse(items1); } catch {}
@@ -692,7 +707,13 @@ export class SalesService {
       }
       if (!Array.isArray(items2)) items2 = [];
 
-      const combinedItems = [...items1, ...items2];
+      let items3 = b2bSale?.items || [];
+      if (typeof items3 === 'string') {
+        try { items3 = JSON.parse(items3); } catch {}
+      }
+      if (!Array.isArray(items3)) items3 = [];
+
+      const combinedItems = [...items1, ...items2, ...items3];
       const barcodesToRevert = Array.from(new Set(combinedItems.map((item: any) => item.barcode).filter(Boolean)));
       const pieceIdsToRevert = Array.from(new Set(combinedItems.map((item: any) => item.pieceId || item.piece_id || item.id).filter(Boolean)));
 
@@ -756,6 +777,10 @@ export class SalesService {
 
       try {
         await supabase.from('pos_sales').delete().or(`invoice_number.eq.${invoiceNo},invoice_number.eq.${cleanId},id.eq.${cleanId}`);
+      } catch (_) {}
+
+      try {
+        await supabase.from('b2b_sales').delete().or(`b2b_invoice_number.eq.${invoiceNo},b2b_invoice_number.eq.${cleanId},id.eq.${cleanId}`);
       } catch (_) {}
 
       // STEP 5: Delete the Invoice itself

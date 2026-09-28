@@ -1188,16 +1188,25 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         lines: voucherLines
       }).catch(e => console.warn('B2B Finance voucher dispatch note:', e));
 
-      // 4. Update b2b_sales & sales_invoices status to POSTED
+      // 4. Trigger backend SQL sync first
+      const postTargetKey = activeInvoiceId || genInvoiceNo;
+      try {
+        const postRes = await fetch(`/api/sales/custom-b2b/${encodeURIComponent(postTargetKey)}/post`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ postedBy: 'Sales Lead' })
+        });
+        const postData = await postRes.json().catch(() => ({}));
+        if (!postRes.ok && postData?.error && !postData.error.toLowerCase().includes('already posted')) {
+          console.warn('B2B backend post sync note:', postData.error);
+        }
+      } catch (e) {
+        console.warn('B2B backend post sync note:', e);
+      }
+
+      // 5. Update b2b_sales & sales_invoices status to POSTED
       await safeSupabaseCall(supabase.from('b2b_sales').update({ credit_status: 'POSTED' }).or(`b2b_invoice_number.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`));
       await safeSupabaseCall(supabase.from('sales_invoices').update({ status: 'POSTED' }).or(`invoice_no.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`));
-
-      // 5. Trigger backend SQL sync
-      fetch(`/api/sales/custom-b2b/${encodeURIComponent(activeInvoiceId || genInvoiceNo)}/post`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postedBy: 'Sales Lead' })
-      }).catch(e => console.warn('B2B backend post sync note:', e));
 
       setStatus('POSTED');
       setInvoiceNo(genInvoiceNo);
@@ -1309,10 +1318,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       // 2. Cascade delete vouchers for this invoice via FinanceService
       await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo).catch(e => console.warn('Voucher cleanup note:', e));
 
-      // 3. Fallback direct cleanup
-      if (invoiceId) {
-        await SalesService.deleteSalesInvoice(invoiceId).catch(() => {});
-      }
+      // 3. Direct table cleanup
       await safeSupabaseCall(supabase.from('b2b_sales').delete().or(`id.eq.${invoiceId},b2b_invoice_number.eq.${invoiceNo}`));
       await safeSupabaseCall(supabase.from('sales_invoices').delete().or(`id.eq.${invoiceId},invoice_no.eq.${invoiceNo}`));
 
@@ -1369,7 +1375,9 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.success === false) {
-        throw new Error(data.error || 'Failed to post invoice');
+        if (!data?.error?.toLowerCase().includes('already posted')) {
+          throw new Error(data.error || 'Failed to post invoice');
+        }
       }
 
       // 2. Mark pieces as sold in Supabase
@@ -1475,9 +1483,6 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
       await FinanceService.cascadeDeleteVouchersForDocument(invNo).catch(e => console.warn('Voucher cleanup note:', e));
 
-      if (invId) {
-        await SalesService.deleteSalesInvoice(invId).catch(() => {});
-      }
       await safeSupabaseCall(supabase.from('b2b_sales').delete().or(`id.eq.${invId},b2b_invoice_number.eq.${invNo}`));
       await safeSupabaseCall(supabase.from('sales_invoices').delete().or(`id.eq.${invId},invoice_no.eq.${invNo}`));
 
