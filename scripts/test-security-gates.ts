@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import fs from 'fs';
+import path from 'path';
 import allHandler, { getPgClient } from '../api/[...all].ts';
 import loginHandler from '../api/auth/login.ts';
 import healthHandler from '../api/health.ts';
@@ -1248,6 +1250,54 @@ async function runSecurityGateTests() {
         'Emirates ID Front and Back cards contain fine-tune Crop buttons'
       );
     }
+  }
+
+  // ========================================================================
+  // GATE 21: Purchase & Bale Inward Data Contract & Normalization Gate
+  // ========================================================================
+  console.log('\n--- GATE 21: Purchase & Bale Inward Data Contract & Normalization Gate ---');
+  {
+    // 1. Verify PurchaseService.normalizeInwardGatePass exists and transforms snake_case DB row
+    const purchaseServicePath = path.resolve(process.cwd(), 'src/services/purchaseService.ts');
+    assert(fs.existsSync(purchaseServicePath), 'src/services/purchaseService.ts exists');
+
+    const purchaseContent = fs.readFileSync(purchaseServicePath, 'utf-8');
+    assert(
+      purchaseContent.includes('normalizeInwardGatePass'),
+      'PurchaseService defines normalizeInwardGatePass method'
+    );
+    assert(
+      purchaseContent.includes('normalizeInwardGatePass(r)') || purchaseContent.includes('normalizeInwardGatePass(row'),
+      'PurchaseService routes raw API & DB rows through normalizeInwardGatePass'
+    );
+
+    // 2. Verify getBaleDerivedState handles snake_case weights without 0.00 KG regression
+    const baleLogPath = path.resolve(process.cwd(), 'src/modules/purchase/components/BaleSortingExecutionLog.tsx');
+    assert(fs.existsSync(baleLogPath), 'BaleSortingExecutionLog.tsx exists');
+    const baleLogContent = fs.readFileSync(baleLogPath, 'utf-8');
+
+    assert(
+      baleLogContent.includes('total_bale_weight') && baleLogContent.includes('totalBaleWeight'),
+      'BaleSortingExecutionLog.tsx supports both camelCase and snake_case weight fields'
+    );
+    assert(
+      baleLogContent.includes('bale.bale_code') || baleLogContent.includes('(bale as any).bale_code'),
+      'BaleSortingExecutionLog.tsx supports snake_case bale_code fallback'
+    );
+    assert(
+      baleLogContent.includes('bale.purchase_invoice_no') || baleLogContent.includes('(bale as any).purchase_invoice_no'),
+      'BaleSortingExecutionLog.tsx supports snake_case purchase_invoice_no fallback'
+    );
+
+    // 3. Verify serverless endpoint in api/[...all].ts returns normalized camelCase DTOs
+    const apiAllPath = path.resolve(process.cwd(), 'api/[...all].ts');
+    assert(fs.existsSync(apiAllPath), 'api/[...all].ts exists');
+    const apiAllContent = fs.readFileSync(apiAllPath, 'utf-8');
+
+    assert(
+      apiAllContent.includes('gate-passes') && apiAllContent.includes('baleCode:') && apiAllContent.includes('totalBaleWeight:'),
+      'api/[...all].ts gate-passes endpoint maps rows to normalized camelCase DTO fields'
+    );
   }
 
   console.log('\n======================================================');

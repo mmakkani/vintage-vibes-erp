@@ -107,8 +107,8 @@ export const THERMAL_DESIGN_STYLES: ThermalStyleDefinition[] = [
     styleNumber: 1,
     title: 'Modern Minimalist',
     category: 'Retail',
-    tagline: 'Clean sans-serif, hairline accents, compact QR, bold price badge',
-    highlights: ['Hairline Accents', 'Compact QR', 'Solid Price Badge', 'Swiss Sans-Serif']
+    tagline: 'Clean sans-serif, official brand logo medallion, hairline accents, compact QR, bold price badge',
+    highlights: ['Brand Logo Medallion', 'Hairline Accents', 'Compact QR', 'Solid Price Badge']
   },
   {
     id: 'boutique_luxury',
@@ -273,7 +273,7 @@ export interface ThermalEngineConfig {
 
 export const DEFAULT_THERMAL_ENGINE_CONFIG: ThermalEngineConfig = {
   companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
-  logoUrl: '',
+  logoUrl: '/vintage_logo_gold_seal_pos.png',
   phone: '+971 55 418 6086',
   trn: '100482910300003',
 

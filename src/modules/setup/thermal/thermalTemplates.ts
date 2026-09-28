@@ -1,4 +1,5 @@
 import { ThermalEngineConfig, ThermalStyleId } from './thermalTypes.ts';
+import { VINTAGE_VIBES_GOLD_SEAL_POS_BASE64 } from '../../../assets/vintageGoldSeal.ts';
 
 interface TemplateRenderParams {
   config: ThermalEngineConfig;
@@ -48,32 +49,37 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
   const currentDate = new Date().toISOString().split('T')[0];
   const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-  // Optional logo rendering
-  const logoHtml = config.logoUrl
-    ? `<img src="${config.logoUrl}" alt="Logo" style="max-height:20px;max-width:80px;object-fit:contain;margin-bottom:2px;" />`
-    : `<div style="font-weight:900;font-size:8px;letter-spacing:1px;text-transform:uppercase;">★ VINTAGE VIBES ★</div>`;
+  // Effective logo rendering (falls back to Vintage Vibes Gold Seal base64 if no custom logo provided)
+  const effectiveLogoSrc = (config.logoUrl && config.logoUrl.trim() !== '')
+    ? config.logoUrl
+    : VINTAGE_VIBES_GOLD_SEAL_POS_BASE64;
+
+  const logoHtml = `<img src="${effectiveLogoSrc}" alt="Logo" style="max-height:22px;max-width:80px;object-fit:contain;margin-bottom:2px;" />`;
 
   switch (styleId) {
-    // 1. Modern Minimalist: Clean sans-serif, hairline accents, compact QR, bold price badge
+    // 1. Modern Minimalist: Clean sans-serif, hairline accents, brand logo medallion, compact QR, bold price badge
     case 'modern_minimalist':
       return `
-        <div class="label-box" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display:flex; flex-direction:column; justify-content:space-between; height:100%; border:0.75px solid #000; padding:2.5mm; box-sizing:border-box;">
+        <div class="label-box" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display:flex; flex-direction:column; justify-content:space-between; height:100%; border:0.75px solid #000; padding:2mm; box-sizing:border-box;">
           <div>
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom:0.75px solid #000; padding-bottom:1.5mm; margin-bottom:1.5mm;">
-              <div>
-                <div style="font-weight:900; font-size:10px; text-transform:uppercase; letter-spacing:0.4px;">${companyName}</div>
-                <div style="font-size:7px; color:#333; font-family:monospace;">TRN: ${trn} &bull; TEL: ${phone}</div>
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:0.75px solid #000; padding-bottom:1.5mm; margin-bottom:1.5mm; gap:5px;">
+              <div style="display:flex; align-items:center; gap:5px; flex:1; min-width:0;">
+                <img src="${effectiveLogoSrc}" alt="Logo" style="width:26px; height:26px; min-width:26px; max-width:26px; max-height:26px; object-fit:contain; border-radius:50%; flex-shrink:0; display:inline-block;" />
+                <div style="flex:1; min-width:0;">
+                  <div style="font-weight:900; font-size:9.5px; text-transform:uppercase; letter-spacing:0.3px; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${companyName}</div>
+                  <div style="font-size:6.5px; color:#333; font-family:monospace; margin-top:0.5px;">TRN: ${trn} &bull; TEL: ${phone}</div>
+                </div>
               </div>
-              <div style="font-size:7.5px; font-family:monospace; font-weight:bold; border:0.75px solid #000; padding:1px 4px; border-radius:2px;">
+              <div style="font-size:7.5px; font-family:monospace; font-weight:bold; border:0.75px solid #000; padding:1px 4px; border-radius:2px; flex-shrink:0; white-space:nowrap;">
                 ${invoiceNo}
               </div>
             </div>
             <div style="font-size:8px; text-transform:uppercase; font-weight:bold; color:#555; letter-spacing:0.5px;">${brandName} &bull; ${category}</div>
-            <div style="font-size:12px; font-weight:900; text-transform:uppercase; line-height:1.2; margin:2px 0 3px 0;">${itemName}</div>
+            <div style="font-size:12px; font-weight:900; text-transform:uppercase; line-height:1.2; margin:2px 0 3px 0; overflow:hidden; text-overflow:ellipsis;">${itemName}</div>
           </div>
 
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; border-top:0.5px dashed #000; padding-top:2mm; margin-top:1mm;">
-            <div style="flex:1;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; border-top:0.5px dashed #000; padding-top:1.5mm; margin-top:1mm;">
+            <div style="flex:1; min-width:0;">
               <div style="font-family:monospace; font-size:8px; font-weight:bold;">SKU: ${skuBarcode}</div>
               <div style="font-size:7.5px; color:#444;">WT: ${formattedWeight} &bull; SIZE: ${size}</div>
               <div style="font-size:6.5px; color:#666; font-family:monospace;">DATE: ${currentDate}</div>

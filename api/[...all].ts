@@ -7548,11 +7548,46 @@ RULES FOR YOUR RESPONSE:
       }
 
       if ((pathname.endsWith('/gate-passes') || pathname.includes('/inward-gate-passes')) && method === 'GET') {
+        const mapRow = (row: any) => {
+          const passNo = row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`;
+          const baleCode = row.bale_code || row.bale_tag_no || `BAL-${String(row.id).slice(-6)}`;
+          const grossKg = Number(row.total_bale_weight ?? row.weight_kg ?? 0);
+          return {
+            id: String(row.id),
+            passNo,
+            gatePassNo: passNo,
+            baleCode,
+            baleTagNo: baleCode,
+            baleCategory: row.bale_category || 'Vintage Mixed Bales',
+            purchaseInvoiceId: row.purchase_invoice_id || '',
+            purchaseInvoiceNo: row.purchase_invoice_no || '',
+            supplierName: row.supplier_name || 'Trade Supplier',
+            date: (row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString()).slice(0, 10),
+            status: row.status || 'UNOPENED',
+            sortingStatus: (row.status === 'COMPLETED' || row.status === 'POSTED') ? 'FULLY_SORTED' : (row.status === 'PARTIAL' || row.status === 'IN_PROGRESS' ? 'PARTIALLY_SORTED' : 'UNOPENED'),
+            totalBaleCost: Number(row.total_bale_cost ?? row.cost_price ?? 0),
+            totalBaleWeight: grossKg,
+            weightKg: grossKg,
+            costPerGram: Number(row.cost_per_gram ?? (grossKg > 0 ? (Number(row.total_bale_cost || 0) / (grossKg * 1000)) : 0)),
+            brokenDownWeight: Number(row.broken_down_weight ?? 0),
+            remainingWeight: Math.max(0, Number(grossKg - Number(row.broken_down_weight ?? 0))),
+            pieceCount: Number(row.piece_count ?? 0),
+            pieces: Array.isArray(row.pieces) ? row.pieces : [],
+            createdAt: row.created_at,
+            gate_pass_no: passNo,
+            bale_code: baleCode,
+            purchase_invoice_no: row.purchase_invoice_no || '',
+            supplier_name: row.supplier_name || 'Trade Supplier',
+            bale_category: row.bale_category || 'Vintage Mixed Bales',
+            total_bale_weight: grossKg
+          };
+        };
+
         let client: any = null;
         try {
           client = await borrowClient();
           const balesRes = await client.query(`SELECT * FROM inward_gate_passes ORDER BY created_at DESC;`);
-          return res.status(200).json(balesRes.rows || []);
+          return res.status(200).json((balesRes.rows || []).map(mapRow));
         } catch (err: any) {
           console.warn('[Serverless Purchase] Gate passes error:', err?.message);
         } finally {
@@ -7562,8 +7597,8 @@ RULES FOR YOUR RESPONSE:
         }
 
         try {
-          const { data } = await supabaseAdmin.from('inward_gate_passes').select('*');
-          return res.status(200).json(data || []);
+          const { data } = await supabaseAdmin.from('inward_gate_passes').select('*').order('created_at', { ascending: false });
+          return res.status(200).json((data || []).map(mapRow));
         } catch (_) {}
 
         return res.status(200).json([]);

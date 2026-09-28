@@ -1060,6 +1060,59 @@ export class PurchaseService {
   }
 
   // --- Inward Gate Passes (Bales / Consignments) ---
+  public static normalizeInwardGatePass(row: any, sess?: any): InwardGatePass {
+    if (!row) return row;
+    const grossKg = Number(row.totalBaleWeight ?? row.total_bale_weight ?? row.weightKg ?? row.weight_kg ?? (row as any).gross_kg ?? 0);
+    const passNo = row.gatePassNo || row.gate_pass_no || row.passNo || row.pass_no || `IGP-${String(row.id || '').slice(-6)}`;
+    const baleCode = row.baleCode || row.bale_code || row.baleTagNo || row.bale_tag_no || (passNo ? `BAL-${passNo.replace(/^IGP-/, '')}` : `BAL-${String(row.id || '').slice(-6)}`);
+    const rawStatus = String(row.status || '').toUpperCase();
+    const isSessionCompleted = sess?.status === 'COMPLETED';
+
+    const effectiveStatus = (rawStatus === 'COMPLETED' || rawStatus === 'POSTED' || isSessionCompleted)
+      ? (rawStatus === 'POSTED' ? 'POSTED' : 'COMPLETED')
+      : (row.status || (sess?.total_pieces > 0 ? 'PARTIAL' : 'UNOPENED'));
+
+    const piecesList = Array.isArray(row.pieces) ? row.pieces : [];
+    const pieceCount = Number(
+      row.pieceCount ?? row.piece_count ?? row.piecesCount ?? row.pieces_count ?? sess?.total_pieces ?? piecesList.length ?? 0
+    );
+    const brokenDownKg = Number(
+      row.brokenDownWeight ?? row.broken_down_weight ?? (sess?.sorted_grams ? Number((sess.sorted_grams / 1000).toFixed(3)) : (effectiveStatus === 'COMPLETED' ? grossKg : 0))
+    );
+    const totalCost = Number(row.totalBaleCost ?? row.total_bale_cost ?? row.costPrice ?? row.cost_price ?? 0);
+    const costPerGram = Number(row.costPerGram ?? row.cost_per_gram ?? (grossKg > 0 ? (totalCost / (grossKg * 1000)) : 0));
+
+    return {
+      id: String(row.id),
+      passNo,
+      gatePassNo: passNo,
+      baleCode,
+      baleTagNo: baleCode,
+      baleCategory: row.baleCategory || row.bale_category || 'Vintage Mixed Bales',
+      purchaseInvoiceId: row.purchaseInvoiceId || row.purchase_invoice_id || '',
+      purchaseInvoiceNo: row.purchaseInvoiceNo || row.purchase_invoice_no || '',
+      supplierName: row.supplierName || row.supplier_name || 'Trade Supplier',
+      date: (row.createdAt || row.created_at || row.date || new Date().toISOString()).slice(0, 10),
+      status: effectiveStatus as any,
+      sortingStatus: (effectiveStatus === 'COMPLETED' || effectiveStatus === 'POSTED') ? 'FULLY_SORTED' : (effectiveStatus === 'PARTIAL' || effectiveStatus === 'IN_PROGRESS' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any,
+      totalBaleCost: totalCost,
+      totalBaleWeight: grossKg,
+      weightKg: grossKg,
+      costPerGram,
+      brokenDownWeight: brokenDownKg,
+      remainingWeight: Math.max(0, Number((grossKg - brokenDownKg).toFixed(3))),
+      pieceCount,
+      pieces: piecesList,
+      createdAt: row.createdAt || row.created_at || new Date().toISOString(),
+      gate_pass_no: passNo,
+      bale_code: baleCode,
+      purchase_invoice_no: row.purchaseInvoiceNo || row.purchase_invoice_no || '',
+      supplier_name: row.supplierName || row.supplier_name || 'Trade Supplier',
+      bale_category: row.baleCategory || row.bale_category || 'Vintage Mixed Bales',
+      total_bale_weight: grossKg
+    } as InwardGatePass;
+  }
+
   public static async getInwardGatePasses(force = false): Promise<InwardGatePass[]> {
     if (!force && PurchaseService._gatePassesCache && (Date.now() - PurchaseService._gatePassesCache.timestamp < 30000)) {
       return PurchaseService._gatePassesCache.data;
@@ -1075,8 +1128,9 @@ export class PurchaseService {
         if (apiRes && apiRes.ok) {
           const list = await apiRes.json();
           if (Array.isArray(list)) {
-            PurchaseService._gatePassesCache = { data: list, timestamp: Date.now() };
-            return list;
+            const mapped = list.map((r: any) => PurchaseService.normalizeInwardGatePass(r));
+            PurchaseService._gatePassesCache = { data: mapped, timestamp: Date.now() };
+            return mapped;
           }
         }
       } catch (_) {}
@@ -1131,59 +1185,26 @@ export class PurchaseService {
     }
 
     const mappedPasses = rawData.map((row: any) => {
-      const grossKg = Number(row.total_bale_weight ?? row.weight_kg ?? 0);
       const sess = sessionMap.get(String(row.id));
+      const normalized = PurchaseService.normalizeInwardGatePass(row, sess);
+
       const rawStatus = String(row.status || '').toUpperCase();
       const isSessionCompleted = sess?.status === 'COMPLETED';
-
-      const effectiveStatus = (rawStatus === 'COMPLETED' || rawStatus === 'POSTED' || isSessionCompleted)
-        ? (rawStatus === 'POSTED' ? 'POSTED' : 'COMPLETED')
-        : (row.status || (sess?.total_pieces > 0 ? 'PARTIAL' : 'UNOPENED'));
-
-      const piecesList = Array.isArray(row.pieces) ? row.pieces : [];
-      const pieceCount = Number(
-        row.piece_count ?? row.pieces_count ?? sess?.total_pieces ?? piecesList.length ?? 0
-      );
-      const brokenDownKg = Number(
-        row.broken_down_weight ?? (sess?.sorted_grams ? Number((sess.sorted_grams / 1000).toFixed(3)) : (effectiveStatus === 'COMPLETED' ? grossKg : 0))
-      );
-      const totalCost = Number(row.total_bale_cost ?? row.cost_price ?? 0);
-      const costPerGram = Number(row.cost_per_gram ?? (grossKg > 0 ? (totalCost / (grossKg * 1000)) : 0));
 
       if (isSessionCompleted && rawStatus !== 'COMPLETED' && rawStatus !== 'POSTED') {
         supabase
           .from('inward_gate_passes')
           .update({
             status: 'COMPLETED',
-            piece_count: pieceCount,
-            broken_down_weight: brokenDownKg > 0 ? brokenDownKg : grossKg
+            piece_count: normalized.pieceCount,
+            broken_down_weight: normalized.brokenDownWeight > 0 ? normalized.brokenDownWeight : normalized.totalBaleWeight
           })
           .eq('id', row.id)
           .then(() => {})
           .catch(() => {});
       }
 
-      return {
-        id: String(row.id),
-        passNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
-        gatePassNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
-        baleCode: row.bale_code || row.bale_tag_no || `BAL-${String(row.id).slice(-6)}`,
-        baleCategory: row.bale_category || 'Vintage Mixed Bales',
-        purchaseInvoiceId: row.purchase_invoice_id || row.purchaseInvoiceId || '',
-        purchaseInvoiceNo: row.purchase_invoice_no || row.purchaseInvoiceNo || '',
-        supplierName: row.supplier_name || row.supplierName || 'Trade Supplier',
-        date: (row.created_at || new Date().toISOString()).slice(0, 10),
-        status: effectiveStatus as any,
-        sortingStatus: (effectiveStatus === 'COMPLETED' || effectiveStatus === 'POSTED') ? 'FULLY_SORTED' : (effectiveStatus === 'PARTIAL' || effectiveStatus === 'IN_PROGRESS' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any,
-        totalBaleCost: totalCost,
-        totalBaleWeight: grossKg,
-        costPerGram,
-        brokenDownWeight: brokenDownKg,
-        remainingWeight: Math.max(0, Number((grossKg - brokenDownKg).toFixed(3))),
-        pieceCount,
-        pieces: piecesList,
-        createdAt: row.created_at
-      } as InwardGatePass;
+      return normalized;
     });
 
     PurchaseService._gatePassesCache = { data: mappedPasses, timestamp: Date.now() };
@@ -1253,59 +1274,26 @@ export class PurchaseService {
     }
 
     const mappedPasses = rawData.map((row: any) => {
-      const grossKg = Number(row.total_bale_weight ?? row.weight_kg ?? 0);
       const sess = sessionMap.get(String(row.id));
+      const normalized = PurchaseService.normalizeInwardGatePass(row, sess);
+
       const rawStatus = String(row.status || '').toUpperCase();
       const isSessionCompleted = sess?.status === 'COMPLETED';
-
-      const effectiveStatus = (rawStatus === 'COMPLETED' || rawStatus === 'POSTED' || isSessionCompleted)
-        ? (rawStatus === 'POSTED' ? 'POSTED' : 'COMPLETED')
-        : (row.status || (sess?.total_pieces > 0 ? 'PARTIAL' : 'UNOPENED'));
-
-      const piecesList = Array.isArray(row.pieces) ? row.pieces : [];
-      const pieceCount = Number(
-        row.piece_count ?? row.pieces_count ?? sess?.total_pieces ?? piecesList.length ?? 0
-      );
-      const brokenDownKg = Number(
-        row.broken_down_weight ?? (sess?.sorted_grams ? Number((sess.sorted_grams / 1000).toFixed(3)) : (effectiveStatus === 'COMPLETED' ? grossKg : 0))
-      );
-      const totalCost = Number(row.total_bale_cost ?? row.cost_price ?? 0);
-      const costPerGram = Number(row.cost_per_gram ?? (grossKg > 0 ? (totalCost / (grossKg * 1000)) : 0));
 
       if (isSessionCompleted && rawStatus !== 'COMPLETED' && rawStatus !== 'POSTED') {
         supabase
           .from('inward_gate_passes')
           .update({
             status: 'COMPLETED',
-            piece_count: pieceCount,
-            broken_down_weight: brokenDownKg > 0 ? brokenDownKg : grossKg
+            piece_count: normalized.pieceCount,
+            broken_down_weight: normalized.brokenDownWeight > 0 ? normalized.brokenDownWeight : normalized.totalBaleWeight
           })
           .eq('id', row.id)
           .then(() => {})
           .catch(() => {});
       }
 
-      return {
-        id: String(row.id),
-        passNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
-        gatePassNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
-        baleCode: row.bale_code || row.bale_tag_no || `BAL-${String(row.id).slice(-6)}`,
-        baleCategory: row.bale_category || 'Vintage Mixed Bales',
-        purchaseInvoiceId: row.purchase_invoice_id || row.purchaseInvoiceId || '',
-        purchaseInvoiceNo: row.purchase_invoice_no || row.purchaseInvoiceNo || '',
-        supplierName: row.supplier_name || row.supplierName || 'Trade Supplier',
-        date: (row.created_at || new Date().toISOString()).slice(0, 10),
-        status: effectiveStatus as any,
-        sortingStatus: (effectiveStatus === 'COMPLETED' || effectiveStatus === 'POSTED') ? 'FULLY_SORTED' : (effectiveStatus === 'PARTIAL' || effectiveStatus === 'IN_PROGRESS' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any,
-        totalBaleCost: totalCost,
-        totalBaleWeight: grossKg,
-        costPerGram,
-        brokenDownWeight: brokenDownKg,
-        remainingWeight: Math.max(0, Number((grossKg - brokenDownKg).toFixed(3))),
-        pieceCount,
-        pieces: piecesList,
-        createdAt: row.created_at
-      } as InwardGatePass;
+      return normalized;
     });
 
     return buildPaginatedResponse(mappedPasses, count || 0, page, pageSize);

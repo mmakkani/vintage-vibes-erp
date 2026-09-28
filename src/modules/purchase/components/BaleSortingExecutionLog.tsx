@@ -44,14 +44,14 @@ interface BaleSortingExecutionLogProps {
 }
 
 export const getBaleDerivedState = (bale: any) => {
-  const grossKg = Number(bale.totalBaleWeight) || 0;
+  const grossKg = Number(bale?.totalBaleWeight ?? bale?.total_bale_weight ?? bale?.weightKg ?? bale?.weight_kg ?? bale?.gross_kg ?? 0);
   const grossGrams = Math.round(grossKg * 1000);
-  const sortedKg = Number(bale.brokenDownWeight ?? (bale as any).broken_down_weight ?? ((bale as any).grams_sorted ? (bale as any).grams_sorted / 1000 : 0));
-  const sortedGrams = Math.round(Number((bale as any).sorted_grams ?? (bale as any).grams_sorted ?? (sortedKg * 1000)));
-  const piecesCount = Number(bale.pieceCount ?? (bale as any).piece_count ?? (bale as any).pieces_count ?? bale.pieces?.length ?? 0);
+  const sortedKg = Number(bale?.brokenDownWeight ?? bale?.broken_down_weight ?? (bale?.grams_sorted ? bale.grams_sorted / 1000 : 0));
+  const sortedGrams = Math.round(Number(bale?.sorted_grams ?? bale?.sortedGrams ?? bale?.grams_sorted ?? (sortedKg * 1000)));
+  const piecesCount = Number(bale?.pieceCount ?? bale?.piece_count ?? bale?.pieces_count ?? bale?.piecesCount ?? bale?.pieces?.length ?? 0);
   const percent = grossGrams > 0 ? Math.min(100, Math.round((sortedGrams / grossGrams) * 100)) : 0;
   
-  const isCompleted = percent === 100 || bale.status === 'COMPLETED' || bale.status === 'POSTED' || bale.sortingStatus === 'FULLY_SORTED' || (bale.sortingStatus as any) === 'COMPLETED';
+  const isCompleted = percent === 100 || bale?.status === 'COMPLETED' || bale?.status === 'POSTED' || bale?.sortingStatus === 'FULLY_SORTED' || (bale?.sortingStatus as any) === 'COMPLETED';
   const isInProgress = !isCompleted && (piecesCount > 0 || sortedGrams > 0);
   const isUnopened = !isCompleted && !isInProgress;
   
@@ -80,7 +80,7 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
       e.preventDefault();
       e.stopPropagation();
     }
-    const baleTitle = bale.baleCode || bale.gatePassNo || bale.id;
+    const baleTitle = bale.baleCode || (bale as any).bale_code || bale.gatePassNo || (bale as any).gate_pass_no || bale.id;
     if (!window.confirm(`Are you sure you want to delete Bale "${baleTitle}"?\n\nThis will remove the Inward Pass and unlock the associated Commercial Invoice for unposting.`)) {
       return;
     }
@@ -103,14 +103,14 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
   // Factory-wide Sorting KPIs
   const kpis = useMemo(() => {
     const totalBales = bales.length;
-    const totalGrossKg = bales.reduce((sum, b) => sum + (Number(b.totalBaleWeight) || 0), 0);
+    const totalGrossKg = bales.reduce((sum, b) => sum + (Number(b.totalBaleWeight ?? (b as any).total_bale_weight ?? (b as any).weightKg ?? (b as any).weight_kg ?? 0) || 0), 0);
     const totalGrossGrams = Math.round(totalGrossKg * 1000);
 
-    const totalSortedKg = bales.reduce((sum, b) => sum + (Number(b.brokenDownWeight) || 0), 0);
+    const totalSortedKg = bales.reduce((sum, b) => sum + (Number(b.brokenDownWeight ?? (b as any).broken_down_weight ?? 0) || 0), 0);
     const totalSortedGrams = Math.round(totalSortedKg * 1000);
 
     const totalRemainingGrams = Math.max(0, totalGrossGrams - totalSortedGrams);
-    const totalPieces = bales.reduce((sum, b) => sum + (b.pieces?.length || b.pieceCount || 0), 0);
+    const totalPieces = bales.reduce((sum, b) => sum + (b.pieces?.length || b.pieceCount || (b as any).piece_count || 0), 0);
 
     const overallProgressPercent = totalGrossGrams > 0
       ? Math.min(100, Math.round((totalSortedGrams / totalGrossGrams) * 100))
@@ -153,11 +153,16 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
   const filteredBales = useMemo(() => {
     return bales.filter(bale => {
       const term = searchTerm.toLowerCase().trim();
-      const codeMatch = (bale.baleCode || '').toLowerCase().includes(term) ||
-                        (bale.gatePassNo || '').toLowerCase().includes(term);
-      const invMatch = (bale.purchaseInvoiceNo || '').toLowerCase().includes(term);
-      const supMatch = (bale.supplierName || '').toLowerCase().includes(term);
-      const catMatch = (bale.baleCategory || '').toLowerCase().includes(term);
+      const bCode = (bale.baleCode || (bale as any).bale_code || '').toLowerCase();
+      const gpNo = (bale.gatePassNo || (bale as any).gate_pass_no || (bale as any).pass_no || '').toLowerCase();
+      const invNo = (bale.purchaseInvoiceNo || (bale as any).purchase_invoice_no || '').toLowerCase();
+      const sup = (bale.supplierName || (bale as any).supplier_name || '').toLowerCase();
+      const cat = (bale.baleCategory || (bale as any).bale_category || '').toLowerCase();
+
+      const codeMatch = bCode.includes(term) || gpNo.includes(term);
+      const invMatch = invNo.includes(term);
+      const supMatch = sup.includes(term);
+      const catMatch = cat.includes(term);
 
       if (term && !codeMatch && !invMatch && !supMatch && !catMatch) {
         return false;
@@ -178,15 +183,15 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
     if (filteredBales.length === 0) return;
     luxuryAudio.playMechanicalClick();
     const tags = filteredBales.map((b, idx) => ({
-      baleCode: b.baleCode || b.gatePassNo,
-      gatePassNo: b.gatePassNo,
-      category: b.baleCategory || 'Vintage Mix',
-      grossWeightKg: b.totalBaleWeight || 0,
-      totalCostAed: b.totalBaleCost || 0,
-      costPerGram: b.costPerGram || 0,
-      purchaseInvoiceNo: b.purchaseInvoiceNo,
-      supplierName: b.supplierName,
-      status: b.sortingStatus || 'Ready for Sorting',
+      baleCode: b.baleCode || (b as any).bale_code || b.gatePassNo || (b as any).gate_pass_no,
+      gatePassNo: b.gatePassNo || (b as any).gate_pass_no || (b as any).pass_no,
+      category: b.baleCategory || (b as any).bale_category || 'Vintage Mix',
+      grossWeightKg: Number(b.totalBaleWeight ?? (b as any).total_bale_weight ?? (b as any).weightKg ?? (b as any).weight_kg ?? 0),
+      totalCostAed: Number(b.totalBaleCost ?? (b as any).total_bale_cost ?? 0),
+      costPerGram: Number(b.costPerGram ?? (b as any).cost_per_gram ?? 0),
+      purchaseInvoiceNo: b.purchaseInvoiceNo || (b as any).purchase_invoice_no,
+      supplierName: b.supplierName || (b as any).supplier_name,
+      status: b.sortingStatus || (b as any).sorting_status || 'Ready for Sorting',
       timestamp: new Date().toLocaleString(),
       index: idx + 1,
       totalCount: filteredBales.length
@@ -417,6 +422,12 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                   const remainingGrams = Math.max(0, grossGrams - sortedGrams);
                   const isDeletable = piecesCount === 0;
 
+                  const baleCode = bale.baleCode || (bale as any).bale_code || bale.baleTagNo || (bale as any).bale_tag_no || bale.gatePassNo || (bale as any).gate_pass_no || (bale as any).pass_no || bale.id;
+                  const gatePassNo = bale.gatePassNo || (bale as any).gate_pass_no || (bale as any).pass_no || bale.id;
+                  const invoiceNo = bale.purchaseInvoiceNo || (bale as any).purchase_invoice_no || '';
+                  const supplierName = bale.supplierName || (bale as any).supplier_name || 'International Factory Shipper';
+                  const baleCategory = bale.baleCategory || (bale as any).bale_category || 'Vintage Mix';
+
                   return (
                     <tr
                       key={bale.id}
@@ -431,10 +442,10 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                           </div>
                           <div>
                             <span className="font-bold font-mono text-slate-900 group-hover:text-indigo-600 transition-colors block">
-                              {bale.baleCode || bale.gatePassNo}
+                              {baleCode}
                             </span>
                             <span className="text-[10px] font-mono text-slate-400">
-                              {bale.gatePassNo}
+                              {gatePassNo}
                             </span>
                           </div>
                         </div>
@@ -444,10 +455,10 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                       <td className="py-3.5 px-4">
                         <div className="space-y-0.5">
                           <span className="font-mono font-semibold text-slate-800 text-[11px] block">
-                            {bale.purchaseInvoiceNo}
+                            {invoiceNo || 'DIRECT-INWARD'}
                           </span>
                           <span className="text-[11px] text-slate-500 truncate max-w-[180px] block">
-                            {bale.supplierName || 'International Factory Shipper'}
+                            {supplierName}
                           </span>
                         </div>
                       </td>
@@ -456,7 +467,7 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
                       <td className="py-3.5 px-4">
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
                           <Layers className="w-3 h-3 text-slate-500" />
-                          <span>{bale.baleCategory || 'Vintage Mix'}</span>
+                          <span>{baleCategory}</span>
                         </span>
                       </td>
 

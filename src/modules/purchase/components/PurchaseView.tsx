@@ -155,12 +155,16 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
       ]);
 
       if (Array.isArray(balesRes)) {
-        setBales(prev => {
-          if (prev.length === 0) return balesRes;
-          const resIds = new Set(balesRes.map(b => String(b.id)));
-          const recentBales = prev.filter(b => !resIds.has(String(b.id)) && (Date.now() - new Date(b.createdAt || 0).getTime() < 30000));
-          return [...recentBales, ...balesRes];
-        });
+        if (force) {
+          setBales(balesRes);
+        } else {
+          setBales(prev => {
+            if (prev.length === 0) return balesRes;
+            const resIds = new Set(balesRes.map(b => String(b.id)));
+            const recentBales = prev.filter(b => !resIds.has(String(b.id)) && (Date.now() - new Date(b.createdAt || (b as any).created_at || 0).getTime() < 15000));
+            return [...recentBales, ...balesRes];
+          });
+        }
       }
       if (Array.isArray(invRes)) {
         setInvoices(invRes);
