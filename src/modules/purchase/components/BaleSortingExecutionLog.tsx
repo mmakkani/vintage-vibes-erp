@@ -39,7 +39,7 @@ interface BaleSortingExecutionLogProps {
   labels: LabelGrade[];
   shops: ShopMaster[];
   onOpenSortingTerminal: (baleId?: string) => void;
-  onRefresh: () => void;
+  onRefresh: (force?: boolean) => void;
   onDeleteBale?: (deletedBaleId: string) => void;
 }
 
@@ -92,7 +92,7 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
         onDeleteBale(bale.id);
       }
       alert(`Bale "${baleTitle}" deleted successfully. Associated Commercial Invoice is now unlocked.`);
-      if (onRefresh) onRefresh();
+      if (onRefresh) onRefresh(true);
     } catch (err: any) {
       alert(`Failed to delete bale: ${err?.message || 'Error'}`);
     } finally {

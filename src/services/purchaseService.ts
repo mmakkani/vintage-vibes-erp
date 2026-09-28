@@ -1381,6 +1381,16 @@ export class PurchaseService {
     const grossSubtotalAed = currency === 'AED' ? linesGrossSubtotal : Number((linesGrossSubtotal * exchangeRate).toFixed(2));
     const prorateRatio = (grossSubtotalAed > 0 && invoiceTotalAed > 0) ? (invoiceTotalAed / grossSubtotalAed) : 1;
 
+    const totalPackages = lines.reduce((acc: number, item: any) => {
+      return acc + Math.max(1, Number(item.package_count || item.quantity || 1));
+    }, 0);
+
+    const passNumbers = await SequenceService.getNextNumbers('IGP', totalPackages, invoice.invoice_date);
+
+    let seqIdx = 0;
+    const gatePassPayloads: any[] = [];
+    const sessionPayloads: any[] = [];
+
     for (const item of lines) {
       const packageCount = Math.max(1, Number(item.package_count || item.quantity || 1));
       const totalWeightKg = Number(item.total_weight || item.total_kg || 0) || (packageCount * 45);
@@ -1393,9 +1403,10 @@ export class PurchaseService {
       const costPerGram = weightPerBale > 0 ? Number((costPerBale / (weightPerBale * 1000)).toFixed(6)) : 0;
 
       for (let p = 0; p < packageCount; p++) {
-        const passNo = await SequenceService.getNextNumber('IGP', invoice.invoice_date);
+        const passNo = passNumbers[seqIdx++] || `IGP-${Date.now()}-${baleSeq}`;
         const baleCode = `BAL-${passNo.replace(/^IGP-/, '')}`;
-        const baleId = `igp-${Date.now()}-${baleSeq}-${Math.random().toString(36).slice(2, 6)}`;
+        const baleId = `igp-${Date.now()}-${baleSeq++}-${Math.random().toString(36).slice(2, 6)}`;
+        const nowIso = new Date().toISOString();
 
         const gatePassPayload = {
           id: baleId,
@@ -1414,34 +1425,18 @@ export class PurchaseService {
           broken_down_weight: 0,
           piece_count: 0,
           status: 'UNOPENED',
-          created_at: new Date().toISOString()
+          created_at: nowIso
         };
 
-        const { error: igpErr } = await supabase
-          .from('inward_gate_passes')
-          .insert([gatePassPayload]);
-
-        if (igpErr) {
-          console.error('Error inserting inward_gate_passes:', igpErr);
-          if (igpErr.code === '23505' || igpErr.message?.includes('duplicate key') || igpErr.message?.includes('already exists')) {
-            throw new Error(`Inward Gate Pass (${passNo}) already exists. Duplicate generation is prevented.`);
-          }
-          throw new Error(`Failed to create inward gate pass: ${igpErr.message}`);
-        }
-
-        // Initialize session in bale_sessions
-        try {
-          await supabase.from('bale_sessions').insert([{
-            bale_id: baleId,
-            status: 'UNOPENED',
-            total_grams: Math.round(weightPerBale * 1000),
-            remaining_grams: Math.round(weightPerBale * 1000),
-            sorted_grams: 0,
-            total_pieces: 0
-          }]);
-        } catch (sessErr) {
-          console.warn('bale_sessions notice:', sessErr);
-        }
+        gatePassPayloads.push(gatePassPayload);
+        sessionPayloads.push({
+          bale_id: baleId,
+          status: 'UNOPENED',
+          total_grams: Math.round(weightPerBale * 1000),
+          remaining_grams: Math.round(weightPerBale * 1000),
+          sorted_grams: 0,
+          total_pieces: 0
+        });
 
         createdPasses.push({
           id: baleId,
@@ -1451,7 +1446,7 @@ export class PurchaseService {
           purchaseInvoiceId: invoice.id,
           purchaseInvoiceNo: invoiceNo,
           supplierName: supplierName,
-          date: new Date().toISOString().slice(0, 10),
+          date: nowIso.slice(0, 10),
           status: 'UNOPENED',
           totalBaleCost: costPerBale,
           totalBaleWeight: weightPerBale,
@@ -1460,10 +1455,31 @@ export class PurchaseService {
           remainingWeight: weightPerBale,
           pieceCount: 0,
           pieces: [],
-          createdAt: new Date().toISOString()
+          sortingStatus: 'UNOPENED',
+          createdAt: nowIso
         } as InwardGatePass);
+      }
+    }
 
-        baleSeq++;
+    // Single Batch Insert for all inward_gate_passes
+    if (gatePassPayloads.length > 0) {
+      const { error: igpErr } = await supabase
+        .from('inward_gate_passes')
+        .insert(gatePassPayloads);
+
+      if (igpErr) {
+        console.error('Error inserting inward_gate_passes:', igpErr);
+        if (igpErr.code === '23505' || igpErr.message?.includes('duplicate key') || igpErr.message?.includes('already exists')) {
+          throw new Error(`Inward Gate Pass already exists. Duplicate generation is prevented.`);
+        }
+        throw new Error(`Failed to create inward gate pass: ${igpErr.message}`);
+      }
+
+      // Single Batch Insert for all bale_sessions
+      try {
+        await supabase.from('bale_sessions').insert(sessionPayloads);
+      } catch (sessErr) {
+        console.warn('bale_sessions batch notice:', sessErr);
       }
     }
 
@@ -1498,19 +1514,20 @@ export class PurchaseService {
         console.log(`Inward transfer voucher already exists for ${invoiceNo}: ${existingInwTransfer[0].voucher_no}. Skipping duplicate voucher creation.`);
         createdInwardVoucher = existingInwTransfer[0];
       } else {
-        // Look up dynamic UUID for Tier 3 Account 1150-01 strictly read-only
+        // Look up dynamic UUID for Tier 3 Account 1150-01 and Raw Material Unsorted 1140-01 strictly read-only
         let wipAccountId: string | undefined = undefined;
         let wipAccountName = 'WIP (Work in Progress)';
+        let rawInvAccountId: string | undefined = undefined;
+        let rawInvAccountName = 'Raw Material Unsorted';
 
-        const { data: wipChart } = await supabase
-          .from('chart_of_accounts')
-          .select('id, name')
-          .eq('code', '1150-01')
-          .maybeSingle();
+        const [wipChartRes, rawChartRes] = await Promise.all([
+          supabase.from('chart_of_accounts').select('id, name').eq('code', '1150-01').maybeSingle(),
+          supabase.from('chart_of_accounts').select('id, name').eq('code', '1140-01').maybeSingle()
+        ]);
 
-        if (wipChart?.id) {
-          wipAccountId = String(wipChart.id);
-          if (wipChart.name) wipAccountName = wipChart.name;
+        if (wipChartRes.data?.id) {
+          wipAccountId = String(wipChartRes.data.id);
+          if (wipChartRes.data.name) wipAccountName = wipChartRes.data.name;
         } else {
           const { data: wipCoa } = await supabase
             .from('coa_accounts')
@@ -1523,19 +1540,9 @@ export class PurchaseService {
           }
         }
 
-        // Look up dynamic UUID for Raw Material Unsorted account 1140-01
-        let rawInvAccountId: string | undefined = undefined;
-        let rawInvAccountName = 'Raw Material Unsorted';
-
-        const { data: rawChart } = await supabase
-          .from('chart_of_accounts')
-          .select('id, name')
-          .eq('code', '1140-01')
-          .maybeSingle();
-
-        if (rawChart?.id) {
-          rawInvAccountId = String(rawChart.id);
-          if (rawChart.name) rawInvAccountName = rawChart.name;
+        if (rawChartRes.data?.id) {
+          rawInvAccountId = String(rawChartRes.data.id);
+          if (rawChartRes.data.name) rawInvAccountName = rawChartRes.data.name;
         } else {
           const { data: rawCoa } = await supabase
             .from('coa_accounts')
@@ -1598,6 +1605,8 @@ export class PurchaseService {
       .eq('id', invoiceId);
 
     PurchaseService.invalidateInvoicesCache();
+    PurchaseService.invalidateGatePassesCache();
+    PurchaseService.invalidatePiecesCache();
     if (typeof window !== 'undefined') {
       try {
         window.dispatchEvent(new CustomEvent('vv:entity-mutated', {

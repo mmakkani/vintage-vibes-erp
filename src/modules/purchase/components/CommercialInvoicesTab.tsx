@@ -37,9 +37,10 @@ interface CommercialInvoicesTabProps {
   items?: ItemMaster[];
   balePresets?: any[];
   bales?: InwardGatePass[];
-  onRefresh: () => void;
+  onRefresh: (force?: boolean) => void;
   onInvoiceCreated: (inv: PurchaseInvoice) => void;
   onDeleteInvoice?: (id: string) => void;
+  onBalesCreated?: (newBales: InwardGatePass[]) => void;
 }
 
 export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
@@ -50,7 +51,8 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
   bales = [],
   onRefresh,
   onInvoiceCreated,
-  onDeleteInvoice
+  onDeleteInvoice,
+  onBalesCreated
 }) => {
   const { notifyMutation, lastDelta } = useSync('purchase');
   // State-Based Row Glow Animation (UX Enhancement across all devices)
@@ -459,7 +461,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       // 3. Broadcast confirmed delta payload
       notifyMutation('finance', 'vouchers', 'POSTED', cleanId, { voucher: createdVoucher });
       notifyMutation('purchase', 'purchase_invoices', 'POSTED', cleanId);
-      onRefresh();
+      onRefresh(true);
     } catch (e: any) {
       console.warn('Error posting invoice:', e);
       alert("Failed to post invoice: " + (e?.message || 'Error'));
@@ -499,7 +501,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       // 3. Broadcast confirmed unpost delta
       notifyMutation('finance', 'vouchers', 'UNPOSTED', invId, { invoiceNo, invoiceId: invId });
       notifyMutation('purchase', 'purchase_invoices', 'UNPOSTED', invId);
-      onRefresh();
+      onRefresh(true);
     } catch (e: any) {
       alert("Failed to unpost invoice: " + (e?.message || 'Error'));
     } finally {
@@ -516,10 +518,13 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       // Immediately reflect convertedToInward in local state so UI updates without waiting
       setInvoicesList(prev => prev.map(item => String(item.id) === String(invId) ? { ...item, convertedToInward: true, status: 'POSTED' } : item));
       triggerRowGlow(invId);
+      if (onBalesCreated) {
+        onBalesCreated(createdBales);
+      }
       notifyMutation('finance', 'vouchers', 'INWARD_POSTED', invId);
       notifyMutation('purchase', 'inward_gate_passes', 'CREATED', invId, { bales: createdBales, invoiceId: invId });
       setToastMessage(`✓ Inward Gate Pass Created: ${createdBales.length} bale(s) generated & ready for sorting in Terminal!`);
-      onRefresh();
+      onRefresh(true);
     } catch (e: any) {
       console.warn('Error converting to inward:', e);
       alert(`Failed to create inward gate pass: ${e.message || 'Unknown error'}`);
@@ -710,7 +715,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       } catch {}
 
       fetchPaginatedInvoices(page, pageSize, searchTerm);
-      onRefresh();
+      onRefresh(true);
     } catch (e: any) {
       console.error("Error deleting invoice:", e);
       alert(e.message || "Failed to delete purchase invoice");

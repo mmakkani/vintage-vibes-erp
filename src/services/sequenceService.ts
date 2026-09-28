@@ -113,6 +113,111 @@ export class SequenceService {
   }
 
   /**
+   * Generates a batch of contiguous enterprise sequential document numbers in a single database operation:
+   * e.g. ['IGP-09-2026-0001', 'IGP-09-2026-0002', ...]
+   */
+  public static async getNextNumbers(
+    prefix: string,
+    count: number,
+    dateInput?: string | Date
+  ): Promise<string[]> {
+    if (count <= 0) return [];
+    if (count === 1) {
+      const single = await this.getNextNumber(prefix, dateInput);
+      return [single];
+    }
+
+    const cleanPrefix = String(prefix || 'DOC').trim().toUpperCase();
+    const dateObj = dateInput ? new Date(dateInput) : new Date();
+    const safeDate = isNaN(dateObj.getTime()) ? new Date() : dateObj;
+
+    const mm = String(safeDate.getMonth() + 1).padStart(2, '0');
+    const yyyy = String(safeDate.getFullYear());
+    const prefixWithDate = `${cleanPrefix}-${mm}-${yyyy}`;
+
+    let maxSeq = 0;
+
+    try {
+      if (cleanPrefix === 'PUR') {
+        const { data } = await supabase
+          .from('purchase_invoices')
+          .select('invoice_no')
+          .like('invoice_no', `${prefixWithDate}-%`);
+
+        if (Array.isArray(data)) {
+          for (const row of data) {
+            const seq = SequenceService.extractSequence(row.invoice_no, prefixWithDate);
+            if (seq > maxSeq) maxSeq = seq;
+          }
+        }
+      } else if (cleanPrefix === 'SAL') {
+        const { data } = await supabase
+          .from('sales_invoices')
+          .select('invoice_no')
+          .like('invoice_no', `${prefixWithDate}-%`);
+
+        if (Array.isArray(data)) {
+          for (const row of data) {
+            const seq = SequenceService.extractSequence(row.invoice_no, prefixWithDate);
+            if (seq > maxSeq) maxSeq = seq;
+          }
+        }
+      } else if (cleanPrefix === 'POS') {
+        const { data: posData } = await supabase
+          .from('pos_sales')
+          .select('invoice_number')
+          .like('invoice_number', `${prefixWithDate}-%`);
+
+        if (Array.isArray(posData)) {
+          for (const row of posData) {
+            const seq = SequenceService.extractSequence(row.invoice_number, prefixWithDate);
+            if (seq > maxSeq) maxSeq = seq;
+          }
+        }
+      } else if (cleanPrefix === 'IGP') {
+        const { data } = await supabase
+          .from('inward_gate_passes')
+          .select('gate_pass_no, pass_no')
+          .or(`gate_pass_no.like.${prefixWithDate}-%,pass_no.like.${prefixWithDate}-%`);
+
+        if (Array.isArray(data)) {
+          for (const row of data) {
+            const seq1 = SequenceService.extractSequence(row.gate_pass_no, prefixWithDate);
+            const seq2 = SequenceService.extractSequence(row.pass_no, prefixWithDate);
+            if (seq1 > maxSeq) maxSeq = seq1;
+            if (seq2 > maxSeq) maxSeq = seq2;
+          }
+        }
+      } else {
+        const { data } = await supabase
+          .from('financial_vouchers')
+          .select('voucher_no')
+          .like('voucher_no', `${prefixWithDate}-%`);
+
+        if (Array.isArray(data)) {
+          for (const row of data) {
+            const seq = SequenceService.extractSequence(row.voucher_no, prefixWithDate);
+            if (seq > maxSeq) maxSeq = seq;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[SequenceService] Error fetching max sequence for batch ${prefixWithDate}:`, err);
+    }
+
+    const currentCached = SequenceService._lastAssignedSequences.get(prefixWithDate) || 0;
+    const startSeq = Math.max(maxSeq, currentCached) + 1;
+    const endSeq = startSeq + count - 1;
+    SequenceService._lastAssignedSequences.set(prefixWithDate, endSeq);
+
+    const results: string[] = [];
+    for (let s = startSeq; s <= endSeq; s++) {
+      results.push(`${prefixWithDate}-${String(s).padStart(4, '0')}`);
+    }
+    return results;
+  }
+
+  /**
    * Helper to extract numeric sequence from document reference like 'PUR-09-2026-0005'
    */
   private static extractSequence(docRef: string | null | undefined, prefixPattern: string): number {

@@ -3,6 +3,7 @@ import { PurchaseController } from './purchase.controller.ts';
 import { PurchaseService } from '../../services/purchaseService.ts';
 import { atomicUnpostPurchaseInvoice, atomicDeletePurchaseInvoice } from './purchaseCascadeBackend.ts';
 import { classifyGarmentPhotosWithGemini } from '../../utils/geminiBulkClassifier.ts';
+import { withDb } from '../../db/pgPool.ts';
 
 export const purchaseRouter = Router();
 
@@ -132,15 +133,10 @@ purchaseRouter.post(['/invoices/:id/convert-inward', '/invoices/:id/convert-to-g
 
 purchaseRouter.get(['/gate-passes', '/bales', '/'], async (req, res) => {
   try {
-    const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
-    if (dbUrl && !dbUrl.includes('placeholder')) {
-      const { Client } = await import('pg');
-      const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-      await client.connect();
+    const list = await withDb(async (client) => {
       const q = await client.query('SELECT * FROM inward_gate_passes ORDER BY created_at DESC;');
-      await client.end();
       if (q.rows && q.rows.length > 0) {
-        const mapped = q.rows.map((row: any) => ({
+        return q.rows.map((row: any) => ({
           id: String(row.id),
           passNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
           gatePassNo: row.gate_pass_no || row.pass_no || `IGP-${String(row.id).slice(-6)}`,
@@ -160,11 +156,12 @@ purchaseRouter.get(['/gate-passes', '/bales', '/'], async (req, res) => {
           pieceCount: Number(row.piece_count ?? 0),
           pieces: Array.isArray(row.pieces) ? row.pieces : []
         }));
-        return res.json(mapped);
       }
-    }
+      return null;
+    });
+    if (list && list.length > 0) return res.json(list);
   } catch (err: any) {
-    console.warn('Postgres direct query notice on /gate-passes:', err?.message);
+    console.warn('withDb query notice on /gate-passes:', err?.message);
   }
 
   try {
@@ -177,15 +174,10 @@ purchaseRouter.get(['/gate-passes', '/bales', '/'], async (req, res) => {
 
 purchaseRouter.get(['/bale-presets', '/presets'], async (req, res) => {
   try {
-    const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
-    if (dbUrl && !dbUrl.includes('placeholder')) {
-      const { Client } = await import('pg');
-      const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-      await client.connect();
+    const list = await withDb(async (client) => {
       const q = await client.query('SELECT * FROM bale_presets ORDER BY name ASC;');
-      await client.end();
       if (q.rows && q.rows.length > 0) {
-        const mapped = q.rows.map((r: any) => ({
+        return q.rows.map((r: any) => ({
           id: String(r.id),
           code: r.item_code || r.code || `BALE-${r.id}`,
           name: r.name,
@@ -199,11 +191,12 @@ purchaseRouter.get(['/bale-presets', '/presets'], async (req, res) => {
           status: 'POSTED',
           isActive: true
         }));
-        return res.json(mapped);
       }
-    }
+      return null;
+    });
+    if (list && list.length > 0) return res.json(list);
   } catch (err: any) {
-    console.warn('Postgres direct query notice on /bale-presets:', err?.message);
+    console.warn('withDb query notice on /bale-presets:', err?.message);
   }
 
   try {
@@ -230,34 +223,22 @@ purchaseRouter.post(['/gate-passes/bale-inward', '/bales/inward', '/bales', '/ga
 purchaseRouter.delete(['/gate-passes/:id', '/bales/:id'], async (req, res) => {
   const { id } = req.params;
   try {
-    const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
-    if (dbUrl && !dbUrl.includes('placeholder')) {
-      const { Client } = await import('pg');
-      const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-      await client.connect();
-      try {
-        const checkQ = await client.query(
-          `SELECT 
-             (SELECT COUNT(*) FROM bale_sorted_pieces WHERE bale_id = $1) as sorted_cnt,
-             (SELECT COUNT(*) FROM inventory_pieces WHERE gate_pass_id = $1) as inv_cnt,
-             (SELECT total_pieces FROM bale_sessions WHERE bale_id = $1 LIMIT 1) as sess_pieces;`,
-          [id]
-        );
-        const sortedCnt = Number(checkQ.rows[0]?.sorted_cnt || 0);
-        const invCnt = Number(checkQ.rows[0]?.inv_cnt || 0);
-        const sessPieces = Number(checkQ.rows[0]?.sess_pieces || 0);
-        const actualPieces = Math.max(sortedCnt, invCnt, sessPieces);
-        if (actualPieces > 0) {
-          await client.end();
-          return res.status(400).json({
-            success: false,
-            error: `Cannot delete bale: This bale contains ${actualPieces} sorted pieces. Unsafe bale deletion is locked. Delete all pieces first.`
-          });
-        }
-      } finally {
-        try { await client.end(); } catch (_) {}
+    await withDb(async (client) => {
+      const checkQ = await client.query(
+        `SELECT 
+           (SELECT COUNT(*) FROM bale_sorted_pieces WHERE bale_id = $1) as sorted_cnt,
+           (SELECT COUNT(*) FROM inventory_pieces WHERE gate_pass_id = $1) as inv_cnt,
+           (SELECT total_pieces FROM bale_sessions WHERE bale_id = $1 LIMIT 1) as sess_pieces;`,
+        [id]
+      );
+      const sortedCnt = Number(checkQ.rows[0]?.sorted_cnt || 0);
+      const invCnt = Number(checkQ.rows[0]?.inv_cnt || 0);
+      const sessPieces = Number(checkQ.rows[0]?.sess_pieces || 0);
+      const actualPieces = Math.max(sortedCnt, invCnt, sessPieces);
+      if (actualPieces > 0) {
+        throw new Error(`Cannot delete bale: This bale contains ${actualPieces} sorted pieces. Unsafe bale deletion is locked. Delete all pieces first.`);
       }
-    }
+    });
 
     await PurchaseService.deleteInwardGatePass(id);
     return res.json({ success: true, message: 'Bale / Gate pass deleted successfully', id });

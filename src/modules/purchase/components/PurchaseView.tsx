@@ -137,15 +137,15 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
 
   const isFetchingRef = useRef(false);
 
-  const fetchPurchaseData = useCallback(async () => {
+  const fetchPurchaseData = useCallback(async (force = false) => {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
     setIsLoading(true);
     try {
       const [balesRes, invRes, piecesRes, partiesRes, presetsRes] = await Promise.all([
-        PurchaseService.getInwardGatePasses().catch((err) => { console.warn('Gate pass sync warning:', err); return []; }),
-        PurchaseService.getPurchaseInvoices().catch((err) => { console.warn('Purchase invoice sync warning:', err); return []; }),
-        PurchaseService.getInventoryPieces().catch((err) => { console.warn('Inventory pieces sync warning:', err); return []; }),
+        PurchaseService.getInwardGatePasses(force).catch((err) => { console.warn('Gate pass sync warning:', err); return []; }),
+        PurchaseService.getPurchaseInvoices(force).catch((err) => { console.warn('Purchase invoice sync warning:', err); return []; }),
+        PurchaseService.getInventoryPieces(1000, force).catch((err) => { console.warn('Inventory pieces sync warning:', err); return []; }),
         PartiesService.getParties().catch((err) => { console.warn('Parties sync warning:', err); return []; }),
         PurchaseService.getBalePresets().catch((err) => { console.warn('Presets sync warning:', err); return []; })
       ]);
@@ -264,6 +264,15 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
     PurchaseService.invalidateGatePassesCache();
     PurchaseService.invalidatePiecesCache();
   };
+
+  // Handle inward passes created: immediately merge newly generated bales into React state
+  const handleBalesCreated = useCallback((newBales: InwardGatePass[]) => {
+    setBales(prev => {
+      const newIds = new Set(newBales.map(b => String(b.id)));
+      return [...newBales, ...prev.filter(b => !newIds.has(String(b.id)))];
+    });
+    PurchaseService.invalidateGatePassesCache();
+  }, []);
 
   // Handle save partial / reopen
   const handleSavePartial = async (baleId: string, e?: React.MouseEvent) => {
@@ -409,7 +418,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
             labels={labels}
             shops={shops}
             onOpenSortingTerminal={handleOpenSortingTerminal}
-            onRefresh={fetchPurchaseData}
+            onRefresh={(force = true) => fetchPurchaseData(force)}
             onDeleteBale={handleDeleteBale}
           />
         </ModuleMaintenanceGuard>
@@ -455,7 +464,8 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
             items={items}
             balePresets={balePresets}
             bales={bales}
-            onRefresh={fetchPurchaseData}
+            onBalesCreated={handleBalesCreated}
+            onRefresh={(force = true) => fetchPurchaseData(force)}
             onInvoiceCreated={inv => {
               setInvoices(prev => {
                 const next = [inv, ...prev.filter(i => i.id !== inv.id)];
