@@ -1,4 +1,4 @@
-export type ThermalPresetId = '2x1' | '2.25x1.25' | '3x2' | '4x2' | '4x4' | '4x6' | 'custom';
+export type ThermalPresetId = '2x1' | '2.25x1.25' | '3x2' | '4x2' | '4x4' | '4x6' | 'custom' | string;
 
 export interface ThermalPreset {
   id: ThermalPresetId;
@@ -9,6 +9,7 @@ export interface ThermalPreset {
   heightMm: number;
   description: string;
   badge: string;
+  isCustom?: boolean;
 }
 
 export const THERMAL_PRESETS: ThermalPreset[] = [
@@ -255,16 +256,19 @@ export interface ThermalEngineConfig {
 
   // Paper Dimensions
   presetId: ThermalPresetId;
+  defaultPresetId?: ThermalPresetId;
   widthIn: number;
   heightIn: number;
   widthMm: number;
   heightMm: number;
+  customPresets?: ThermalPreset[];
 
   // Automation
   autoPrint: boolean;
 
   // Selected Style
   styleId: ThermalStyleId;
+  defaultStyleId?: ThermalStyleId;
 }
 
 export const DEFAULT_THERMAL_ENGINE_CONFIG: ThermalEngineConfig = {
@@ -294,12 +298,15 @@ export const DEFAULT_THERMAL_ENGINE_CONFIG: ThermalEngineConfig = {
   isCod: true,
   codAmount: 245.00,
 
-  presetId: '4x2',
-  widthIn: 4.0,
-  heightIn: 2.0,
-  widthMm: 100,
-  heightMm: 50,
+  presetId: '2.25x1.25',
+  defaultPresetId: '2.25x1.25',
+  widthIn: 2.25,
+  heightIn: 1.25,
+  widthMm: 57,
+  heightMm: 32,
+  customPresets: [],
 
-  autoPrint: true,
-  styleId: 'modern_minimalist'
+  autoPrint: false,
+  styleId: 'modern_minimalist',
+  defaultStyleId: 'modern_minimalist'
 };

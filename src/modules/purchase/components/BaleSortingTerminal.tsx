@@ -361,8 +361,16 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const [lengthInches, setLengthInches] = useState<string>('');
   const [activeGrailAlert, setActiveGrailAlert] = useState<ExtractedTagData | null>(null);
 
-  // Auto print toggle
-  const [autoPrintThermalOnAdd, setAutoPrintThermalOnAdd] = useState(true);
+  // Auto print toggle with local persistence
+  const [autoPrintThermalOnAdd, setAutoPrintThermalOnAdd] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('vintage_bale_auto_print_thermal');
+      if (saved !== null) {
+        return saved === 'true';
+      }
+    } catch {}
+    return true;
+  });
 
   // New Piece High-Speed Input Row Fields (Clean Defaults - No Dummy Values)
   const [bundleQuantity, setBundleQuantity] = useState<number>(1);
@@ -2215,14 +2223,24 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer select-none">
+                  <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none bg-indigo-950/70 border border-indigo-800/80 px-2.5 py-1 rounded-lg hover:border-amber-400/60 transition-colors">
                     <input
                       type="checkbox"
                       checked={autoPrintThermalOnAdd}
-                      onChange={e => setAutoPrintThermalOnAdd(e.target.checked)}
-                      className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500"
+                      onChange={e => {
+                        setAutoPrintThermalOnAdd(e.target.checked);
+                        try {
+                          localStorage.setItem('vintage_bale_auto_print_thermal', String(e.target.checked));
+                        } catch {}
+                      }}
+                      className="rounded border-slate-700 text-amber-500 focus:ring-amber-400"
                     />
-                    <span>Auto-Print 4"x2" Thermal Label on Add</span>
+                    <span className="flex items-center gap-1.5 text-slate-200">
+                      <span>⚡ Auto-Preview Thermal Label on Add</span>
+                      <span className="text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30">
+                        Enter ↵ to Print
+                      </span>
+                    </span>
                   </label>
                 </div>
               </div>

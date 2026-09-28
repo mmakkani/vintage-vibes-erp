@@ -57,9 +57,34 @@ export function openThermalLabelPrintWindow(data: ThermalLabelData): Window | nu
       const rawWeightKg = Number(data.weightKg || 0);
       const weightGrams = rawWeightKg > 0 ? Math.round(rawWeightKg * 1000) : 340;
       const cleanBarcode = (data.itemCode || '').replace(/\s*\[.*\]$/, '').trim();
+      // Resolve default style or active style
+      const targetStyleId = (engineConfig.defaultStyleId || engineConfig.styleId || DEFAULT_THERMAL_ENGINE_CONFIG.styleId) as any;
+
+      // Resolve custom or default preset dimensions
+      const activePresetId = engineConfig.defaultPresetId || engineConfig.presetId;
+      let targetWidthIn = engineConfig.widthIn;
+      let targetHeightIn = engineConfig.heightIn;
+      let targetWidthMm = engineConfig.widthMm;
+      let targetHeightMm = engineConfig.heightMm;
+
+      if (Array.isArray(engineConfig.customPresets)) {
+        const foundCustom = engineConfig.customPresets.find((p: any) => p.id === activePresetId);
+        if (foundCustom) {
+          targetWidthIn = foundCustom.widthIn;
+          targetHeightIn = foundCustom.heightIn;
+          targetWidthMm = foundCustom.widthMm;
+          targetHeightMm = foundCustom.heightMm;
+        }
+      }
+
       const mergedConfig: ThermalEngineConfig = {
         ...DEFAULT_THERMAL_ENGINE_CONFIG,
         ...engineConfig,
+        styleId: targetStyleId,
+        widthIn: targetWidthIn,
+        heightIn: targetHeightIn,
+        widthMm: targetWidthMm,
+        heightMm: targetHeightMm,
         skuBarcode: cleanBarcode || engineConfig.skuBarcode,
         itemName: data.description || cleanBarcode || engineConfig.itemName,
         brandName: data.brand || engineConfig.brandName || '',
@@ -70,7 +95,7 @@ export function openThermalLabelPrintWindow(data: ThermalLabelData): Window | nu
         weightUnit: 'g',
         batchNo: data.batchNo || engineConfig.batchNo || ''
       };
-      return openThermalPrintPopup(mergedConfig, mergedConfig.styleId);
+      return openThermalPrintPopup(mergedConfig, targetStyleId);
     }
   } catch (err) {
     console.warn('[ThermalPrinter] Global thermal config notice:', err);

@@ -27,7 +27,10 @@ import {
   ShieldCheck,
   Leaf,
   Eye,
-  Zap
+  Zap,
+  Plus,
+  Trash2,
+  Star
 } from 'lucide-react';
 import {
   ThermalEngineConfig,
@@ -123,6 +126,7 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
   const [activeCategoryFilter, setActiveCategoryFilter] = useState<string>('All');
   const [copiedNotification, setCopiedNotification] = useState<string | null>(null);
   const [previewScale, setPreviewScale] = useState<'fit' | '100%'>('fit');
+  const [newCustomPresetName, setNewCustomPresetName] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const notify = (msg: string) => {
@@ -130,9 +134,14 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
     setTimeout(() => setCopiedNotification(null), 3000);
   };
 
+  // Combine standard and custom presets
+  const allPresets = useMemo(() => {
+    return [...THERMAL_PRESETS, ...(config.customPresets || [])];
+  }, [config.customPresets]);
+
   // Preset Selection Handler
   const handleSelectPreset = (presetId: ThermalPresetId) => {
-    const preset = THERMAL_PRESETS.find(p => p.id === presetId);
+    const preset = allPresets.find(p => p.id === presetId);
     if (preset) {
       setConfig(prev => ({
         ...prev,
@@ -143,6 +152,75 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
         heightMm: preset.heightMm
       }));
     }
+  };
+
+  // Add Custom Dimension Preset Handler
+  const handleAddCustomPreset = () => {
+    const trimmed = newCustomPresetName.trim();
+    if (!trimmed) {
+      notify('Please enter a name for your custom preset (e.g. "Jewelry 1.5x1")');
+      return;
+    }
+    const newId = `custom_${Date.now()}`;
+    const newPreset = {
+      id: newId,
+      name: trimmed,
+      widthIn: config.widthIn,
+      heightIn: config.heightIn,
+      widthMm: config.widthMm,
+      heightMm: config.heightMm,
+      description: `Custom Preset: ${config.widthIn}" × ${config.heightIn}" (${config.widthMm}×${config.heightMm} mm)`,
+      badge: 'Custom Sizing',
+      isCustom: true
+    };
+    setConfig(prev => ({
+      ...prev,
+      presetId: newId,
+      customPresets: [...(prev.customPresets || []), newPreset]
+    }));
+    setNewCustomPresetName('');
+    notify(`Saved custom size preset: "${trimmed}"`);
+  };
+
+  // Remove Custom Dimension Preset Handler
+  const handleRemoveCustomPreset = (presetId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = (config.customPresets || []).filter(p => p.id !== presetId);
+    const nextPresetId = config.presetId === presetId ? '2.25x1.25' : config.presetId;
+    const nextDefaultPresetId = config.defaultPresetId === presetId ? '2.25x1.25' : config.defaultPresetId;
+    const fallbackPreset = THERMAL_PRESETS.find(p => p.id === nextPresetId) || THERMAL_PRESETS[1];
+    setConfig(prev => ({
+      ...prev,
+      presetId: nextPresetId,
+      defaultPresetId: nextDefaultPresetId,
+      widthIn: config.presetId === presetId ? fallbackPreset.widthIn : prev.widthIn,
+      heightIn: config.presetId === presetId ? fallbackPreset.heightIn : prev.heightIn,
+      widthMm: config.presetId === presetId ? fallbackPreset.widthMm : prev.widthMm,
+      heightMm: config.presetId === presetId ? fallbackPreset.heightMm : prev.heightMm,
+      customPresets: updated
+    }));
+    notify('Custom preset removed successfully');
+  };
+
+  // Set Global Default Paper Preset Handler
+  const handleSetDefaultPreset = (presetId: ThermalPresetId, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfig(prev => ({
+      ...prev,
+      defaultPresetId: presetId
+    }));
+    notify(`Set default paper preset: ${presetId}`);
+  };
+
+  // Set Global Default Style Handler
+  const handleSetDefaultStyle = (styleId: ThermalStyleId, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfig(prev => ({
+      ...prev,
+      defaultStyleId: styleId
+    }));
+    const found = THERMAL_DESIGN_STYLES.find(s => s.id === styleId);
+    notify(`Set default style to: ${found?.title || styleId}`);
   };
 
   // Custom Dimensions Handler (Inches <-> MM auto-conversion)
@@ -311,6 +389,7 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
     : THERMAL_DESIGN_STYLES.filter(s => s.category === activeCategoryFilter);
 
   const selectedStyleDef = THERMAL_DESIGN_STYLES.find(s => s.id === config.styleId) || THERMAL_DESIGN_STYLES[0];
+  const defaultStyleDef = THERMAL_DESIGN_STYLES.find(s => s.id === (config.defaultStyleId || 'modern_minimalist')) || THERMAL_DESIGN_STYLES[0];
 
   // REAL-TIME LIVE INLINE PREVIEW GENERATION
   const barcodeSvg = useMemo(() => generateBarcodeSvgString(config.skuBarcode), [config.skuBarcode]);
@@ -386,15 +465,18 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
               {config.widthIn}" &times; {config.heightIn}" ({config.widthMm} &times; {config.heightMm} mm)
             </span>
             <span className="font-bold text-amber-300 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800/50">
-              Style #{selectedStyleDef.styleNumber}: {selectedStyleDef.title}
+              Active Style: #{selectedStyleDef.styleNumber}
+            </span>
+            <span className="font-bold text-amber-300 bg-amber-900/40 px-2 py-0.5 rounded border border-amber-600/50 flex items-center gap-1">
+              <Star className="w-3 h-3 fill-amber-400 text-amber-400" /> Default Style: #{defaultStyleDef.styleNumber} ({defaultStyleDef.title})
             </span>
             {config.autoPrint ? (
               <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-700/50 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> Auto-Print on Window Open
+                <CheckCircle2 className="w-3 h-3" /> Auto-Print on Open
               </span>
             ) : (
               <span className="text-[10px] text-slate-400 bg-slate-800/60 px-2 py-0.5 rounded border border-slate-700">
-                Manual Print on Open
+                ↵ Press Enter to Print
               </span>
             )}
           </div>
@@ -933,32 +1015,42 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
 
           {/* SECTION 3: PAPER DIMENSIONS (INCHES & MM) */}
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
-            <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-100">
+            <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-100 flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <Maximize2 className="w-4 h-4 text-purple-600" />
                 <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider">
-                  3. Paper Dimensions (Inches & MM)
+                  3. Paper Dimensions & Custom Presets
                 </h3>
               </div>
-              <span className="text-[10px] font-mono text-purple-700 font-bold bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
-                {config.widthIn}" &times; {config.heightIn}" ({config.widthMm}&times;{config.heightMm}mm)
-              </span>
+              <div className="flex items-center gap-2">
+                {config.defaultPresetId && (
+                  <span className="text-[10px] font-mono text-amber-800 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-300 flex items-center gap-1 shadow-2xs">
+                    <Star className="w-3 h-3 fill-amber-500 text-amber-500" /> Default: {config.defaultPresetId}
+                  </span>
+                )}
+                <span className="text-[10px] font-mono text-purple-700 font-bold bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                  {config.widthIn}" &times; {config.heightIn}" ({config.widthMm}&times;{config.heightMm}mm)
+                </span>
+              </div>
             </div>
 
-            {/* Default Presets (6 Buttons/Cards) */}
+            {/* Standard Presets */}
             <div className="space-y-2">
-              <label className="block font-bold text-slate-600 text-[10px] uppercase tracking-wider">
-                Default Dimension Presets:
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="block font-bold text-slate-600 text-[10px] uppercase tracking-wider">
+                  Standard Dimension Presets:
+                </label>
+                <span className="text-[10px] text-slate-400">Click to select &bull; ★ to set as default</span>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {THERMAL_PRESETS.map(preset => {
                   const isSelected = config.presetId === preset.id;
+                  const isDefault = (config.defaultPresetId || '2.25x1.25') === preset.id;
                   return (
-                    <button
+                    <div
                       key={preset.id}
-                      type="button"
                       onClick={() => handleSelectPreset(preset.id)}
-                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer relative group ${
                         isSelected
                           ? 'border-purple-600 bg-purple-50/80 ring-2 ring-purple-200 shadow-xs'
                           : 'border-slate-200 bg-slate-50/70 hover:bg-slate-100 hover:border-slate-300'
@@ -966,25 +1058,105 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-xs text-slate-900 font-mono">{preset.name}</span>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-purple-600" />}
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => handleSetDefaultPreset(preset.id, e)}
+                            className={`p-0.5 rounded hover:bg-purple-100 transition-colors ${isDefault ? 'text-amber-500' : 'text-slate-300 group-hover:text-slate-500'}`}
+                            title={isDefault ? 'Current default paper size' : 'Click to set as global default'}
+                          >
+                            <Star className={`w-3.5 h-3.5 ${isDefault ? 'fill-amber-400 text-amber-500' : ''}`} />
+                          </button>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-purple-600" />}
+                        </div>
                       </div>
                       <div className="text-[10px] text-slate-500 mt-0.5 truncate">
                         {preset.widthMm}&times;{preset.heightMm} mm
                       </div>
-                      <div className="text-[9px] font-semibold text-purple-800 uppercase tracking-tight mt-1 truncate">
-                        {preset.badge}
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-[9px] font-semibold text-purple-800 uppercase tracking-tight truncate">
+                          {preset.badge}
+                        </span>
+                        {isDefault && (
+                          <span className="text-[8px] font-black bg-amber-100 text-amber-900 px-1 py-0.2 rounded font-mono border border-amber-300">
+                            DEFAULT
+                          </span>
+                        )}
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
             </div>
 
-            {/* Custom Size Option with Real-Time Two-Way Auto-Conversion */}
+            {/* Custom Saved Presets (if any) */}
+            {config.customPresets && config.customPresets.length > 0 && (
+              <div className="mt-3.5 pt-3 border-t border-slate-100 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block font-bold text-indigo-700 text-[10px] uppercase tracking-wider flex items-center gap-1">
+                    <span>Your Custom Presets ({config.customPresets.length}):</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400">Custom user-defined labels</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {config.customPresets.map(custom => {
+                    const isSelected = config.presetId === custom.id;
+                    const isDefault = config.defaultPresetId === custom.id;
+                    return (
+                      <div
+                        key={custom.id}
+                        onClick={() => handleSelectPreset(custom.id)}
+                        className={`p-2 rounded-lg border text-left transition-all cursor-pointer relative group flex flex-col justify-between ${
+                          isSelected
+                            ? 'border-indigo-600 bg-indigo-50/80 ring-2 ring-indigo-200 shadow-xs'
+                            : 'border-slate-200 bg-slate-50/70 hover:bg-slate-100 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-xs text-slate-900 font-mono truncate mr-1">
+                            {custom.name}
+                          </span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={(e) => handleSetDefaultPreset(custom.id, e)}
+                              className={`p-0.5 rounded hover:bg-amber-100 transition-colors ${isDefault ? 'text-amber-500' : 'text-slate-300 group-hover:text-slate-500'}`}
+                              title={isDefault ? 'Current default paper size' : 'Click to set as global default'}
+                            >
+                              <Star className={`w-3.5 h-3.5 ${isDefault ? 'fill-amber-400 text-amber-500' : ''}`} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => handleRemoveCustomPreset(custom.id, e)}
+                              className="p-0.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                              title="Delete custom preset"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600" />}
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-1 flex items-center justify-between">
+                          <span>{custom.widthIn}" &times; {custom.heightIn}" ({custom.widthMm}&times;{custom.heightMm} mm)</span>
+                          {isDefault && (
+                            <span className="text-[8px] font-black bg-amber-100 text-amber-900 px-1 py-0.2 rounded font-mono border border-amber-300">
+                              DEFAULT
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Custom Sizing Form & Save Option */}
             <div className="mt-3.5 pt-3 border-t border-slate-100">
               <div className="flex items-center justify-between mb-2">
-                <label className="font-bold text-slate-700 text-[11px] uppercase">
-                  Custom Sizing Option
+                <label className="font-bold text-slate-700 text-[11px] uppercase flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5 text-purple-600" />
+                  <span>Custom Dimension Adjuster & Save Preset</span>
                 </label>
                 {config.presetId === 'custom' && (
                   <span className="text-[10px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded">
@@ -993,73 +1165,95 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                {/* Width Inputs */}
-                <div>
-                  <span className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                    Width:
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <div className="relative flex-1">
-                      <input
-                        type="number"
-                        step="0.05"
-                        min="0.5"
-                        max="12"
-                        value={config.widthIn}
-                        onChange={e => handleWidthInChange(parseFloat(e.target.value))}
-                        className="w-full px-2 py-1 pr-5 rounded border border-slate-300 font-mono text-xs font-bold bg-white text-slate-900"
-                      />
-                      <span className="absolute right-1.5 top-1 text-[10px] font-bold text-slate-400">in</span>
+              <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 space-y-2.5">
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Width Inputs */}
+                  <div>
+                    <span className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                      Width:
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <div className="relative flex-1">
+                        <input
+                          type="number"
+                          step="0.05"
+                          min="0.5"
+                          max="12"
+                          value={config.widthIn}
+                          onChange={e => handleWidthInChange(parseFloat(e.target.value))}
+                          className="w-full px-2 py-1 pr-5 rounded border border-slate-300 font-mono text-xs font-bold bg-white text-slate-900"
+                        />
+                        <span className="absolute right-1.5 top-1 text-[10px] font-bold text-slate-400">in</span>
+                      </div>
+                      <span className="text-slate-400 font-bold">&harr;</span>
+                      <div className="relative flex-1">
+                        <input
+                          type="number"
+                          step="1"
+                          min="12"
+                          max="300"
+                          value={config.widthMm}
+                          onChange={e => handleWidthMmChange(parseInt(e.target.value, 10))}
+                          className="w-full px-2 py-1 pr-6 rounded border border-slate-300 font-mono text-xs font-bold bg-white text-slate-900"
+                        />
+                        <span className="absolute right-1 top-1 text-[9px] font-bold text-slate-400">mm</span>
+                      </div>
                     </div>
-                    <span className="text-slate-400 font-bold">&harr;</span>
-                    <div className="relative flex-1">
-                      <input
-                        type="number"
-                        step="1"
-                        min="12"
-                        max="300"
-                        value={config.widthMm}
-                        onChange={e => handleWidthMmChange(parseInt(e.target.value, 10))}
-                        className="w-full px-2 py-1 pr-6 rounded border border-slate-300 font-mono text-xs font-bold bg-white text-slate-900"
-                      />
-                      <span className="absolute right-1 top-1 text-[9px] font-bold text-slate-400">mm</span>
+                  </div>
+
+                  {/* Height Inputs */}
+                  <div>
+                    <span className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                      Height:
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <div className="relative flex-1">
+                        <input
+                          type="number"
+                          step="0.05"
+                          min="0.5"
+                          max="12"
+                          value={config.heightIn}
+                          onChange={e => handleHeightInChange(parseFloat(e.target.value))}
+                          className="w-full px-2 py-1 pr-5 rounded border border-slate-300 font-mono text-xs font-bold bg-white text-slate-900"
+                        />
+                        <span className="absolute right-1.5 top-1 text-[10px] font-bold text-slate-400">in</span>
+                      </div>
+                      <span className="text-slate-400 font-bold">&harr;</span>
+                      <div className="relative flex-1">
+                        <input
+                          type="number"
+                          step="1"
+                          min="12"
+                          max="300"
+                          value={config.heightMm}
+                          onChange={e => handleHeightMmChange(parseInt(e.target.value, 10))}
+                          className="w-full px-2 py-1 pr-6 rounded border border-slate-300 font-mono text-xs font-bold bg-white text-slate-900"
+                        />
+                        <span className="absolute right-1 top-1 text-[9px] font-bold text-slate-400">mm</span>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Height Inputs */}
-                <div>
-                  <span className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                    Height:
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <div className="relative flex-1">
-                      <input
-                        type="number"
-                        step="0.05"
-                        min="0.5"
-                        max="12"
-                        value={config.heightIn}
-                        onChange={e => handleHeightInChange(parseFloat(e.target.value))}
-                        className="w-full px-2 py-1 pr-5 rounded border border-slate-300 font-mono text-xs font-bold bg-white text-slate-900"
-                      />
-                      <span className="absolute right-1.5 top-1 text-[10px] font-bold text-slate-400">in</span>
-                    </div>
-                    <span className="text-slate-400 font-bold">&harr;</span>
-                    <div className="relative flex-1">
-                      <input
-                        type="number"
-                        step="1"
-                        min="12"
-                        max="300"
-                        value={config.heightMm}
-                        onChange={e => handleHeightMmChange(parseInt(e.target.value, 10))}
-                        className="w-full px-2 py-1 pr-6 rounded border border-slate-300 font-mono text-xs font-bold bg-white text-slate-900"
-                      />
-                      <span className="absolute right-1 top-1 text-[9px] font-bold text-slate-400">mm</span>
-                    </div>
-                  </div>
+                {/* Save as Custom Preset Action */}
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
+                  <input
+                    type="text"
+                    placeholder="Enter Preset Name (e.g. 50x25 Jewelry, 3x1 Tag)"
+                    value={newCustomPresetName}
+                    onChange={e => setNewCustomPresetName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleAddCustomPreset(); }}
+                    className="flex-1 px-2.5 py-1.5 rounded border border-slate-300 text-xs font-semibold bg-white text-slate-900 focus:ring-1 focus:ring-purple-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddCustomPreset}
+                    className="px-3 py-1.5 rounded bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold flex items-center gap-1 shadow-xs cursor-pointer shrink-0 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Save Preset</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1138,6 +1332,7 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[620px] overflow-y-auto pr-1">
               {filteredStyles.map(style => {
                 const isSelected = config.styleId === style.id;
+                const isDefault = (config.defaultStyleId || 'modern_minimalist') === style.id;
                 return (
                   <div
                     key={style.id}
@@ -1152,8 +1347,8 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
                     }`}
                   >
                     <div>
-                      {/* Top Bar: Number, Category & Selection Check */}
-                      <div className="flex items-center justify-between mb-1.5">
+                      {/* Top Bar: Number, Category & Badges */}
+                      <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
                         <div className="flex items-center gap-1.5">
                           <span className={`w-5 h-5 rounded-full font-mono font-bold text-[10px] flex items-center justify-center ${
                             isSelected ? 'bg-blue-600 text-white' : 'bg-slate-900 text-white'
@@ -1165,15 +1360,18 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
                           </span>
                         </div>
 
-                        {isSelected ? (
-                          <span className="flex items-center gap-1 text-[10px] font-black text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
-                            <Check className="w-3 h-3" /> Selected Live
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-slate-400 group-hover:text-slate-600 font-semibold">
-                            Click to preview
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {isDefault && (
+                            <span className="flex items-center gap-1 text-[10px] font-black text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full">
+                              <Star className="w-3 h-3 fill-amber-500 text-amber-500" /> Default Style
+                            </span>
+                          )}
+                          {isSelected && (
+                            <span className="flex items-center gap-1 text-[10px] font-black text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
+                              <Check className="w-3 h-3" /> Selected Live
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       {/* Title */}
@@ -1201,23 +1399,38 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
                     </div>
 
                     {/* Bottom Action Footer for Card */}
-                    <div className="mt-3 pt-2 border-t border-slate-200/70 flex items-center justify-between">
-                      <span className="text-[10px] font-mono text-slate-400">
-                        {config.widthIn}" &times; {config.heightIn}"
-                      </span>
-
+                    <div className="mt-3 pt-2 border-t border-slate-200/70 flex items-center justify-between gap-1 flex-wrap">
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setConfig(prev => ({ ...prev, styleId: style.id }));
-                          handleLaunchPrintPopup(style.id);
-                        }}
-                        className="px-2.5 py-1 rounded bg-slate-900 hover:bg-blue-600 text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
+                        onClick={(e) => handleSetDefaultStyle(style.id, e)}
+                        className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer ${
+                          isDefault
+                            ? 'bg-amber-100 text-amber-900 border border-amber-300 font-extrabold shadow-2xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-amber-50 hover:text-amber-700 border border-slate-200'
+                        }`}
+                        title="Set as global default label style for entire ERP"
                       >
-                        <Printer className="w-3 h-3" />
-                        <span>Open Window</span>
+                        <Star className={`w-3 h-3 ${isDefault ? 'fill-amber-500 text-amber-500' : ''}`} />
+                        <span>{isDefault ? '★ Default Style' : 'Set as Default'}</span>
                       </button>
+
+                      <div className="flex items-center gap-1.5 ml-auto">
+                        <span className="text-[10px] font-mono text-slate-400">
+                          {config.widthIn}" &times; {config.heightIn}"
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfig(prev => ({ ...prev, styleId: style.id }));
+                            handleLaunchPrintPopup(style.id);
+                          }}
+                          className="px-2.5 py-1 rounded bg-slate-900 hover:bg-blue-600 text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
+                        >
+                          <Printer className="w-3 h-3" />
+                          <span>Open Window</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -1226,24 +1439,43 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
 
             {/* Bottom Execution Bar */}
             <div className="mt-4 pt-3 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-50 p-3 rounded-lg">
-              <div>
-                <span className="text-xs text-slate-600 block">
-                  Active Style: <strong className="text-slate-900">Style #{selectedStyleDef.styleNumber}: {selectedStyleDef.title}</strong>
-                </span>
-                <span className="text-[10px] text-slate-400 font-mono">
-                  Opens dedicated popup window (width=520,height=700) with auto-print capability.
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-slate-600">
+                    Active Style: <strong className="text-slate-900">Style #{selectedStyleDef.styleNumber}: {selectedStyleDef.title}</strong>
+                  </span>
+                  <span className="text-xs font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300 flex items-center gap-1 shadow-2xs">
+                    <Star className="w-3 h-3 fill-amber-500 text-amber-500" /> Default Style: Style #{defaultStyleDef.styleNumber}: {defaultStyleDef.title}
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-500 font-mono block">
+                  Dedicated popup window (width=520,height=700) with 1-touch Enter-to-Print.
                 </span>
               </div>
 
-              <button
-                type="button"
-                onClick={() => handleLaunchPrintPopup()}
-                className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer self-stretch sm:self-auto"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Launch Print Window</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                {config.styleId !== (config.defaultStyleId || 'modern_minimalist') && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleSetDefaultStyle(config.styleId, e)}
+                    className="px-3.5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs uppercase tracking-wider shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="Make currently previewed style the global default style"
+                  >
+                    <Star className="w-3.5 h-3.5 fill-slate-950" />
+                    <span>Set Active as Default</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => handleLaunchPrintPopup()}
+                  className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer self-stretch sm:self-auto"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Launch Print Window</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
         </div>

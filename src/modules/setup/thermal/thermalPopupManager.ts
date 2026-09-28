@@ -274,11 +274,12 @@ export function openThermalPrintPopup(config: ThermalEngineConfig, styleId: Ther
       </div>
     </div>
     <div class="button-group">
-      <button class="btn btn-print" onclick="fitToCanvas(); window.print()">
+      <span class="badge-pill" style="background:#0284c7; color:#fff; font-weight:bold; font-size:10px; padding:3px 8px;">↵ Press Enter to Print</span>
+      <button class="btn btn-print" id="btnThermalPrint" onclick="fitToCanvas(); window.print()">
         🖨️ Print Now
       </button>
-      <button class="btn btn-close" onclick="window.close()">
-        ✕ Close Window
+      <button class="btn btn-close" onclick="window.close()" title="Esc to close">
+        ✕ Close (Esc)
       </button>
     </div>
   </div>
@@ -358,6 +359,28 @@ export function openThermalPrintPopup(config: ThermalEngineConfig, styleId: Ther
       window.onbeforeprint = fitToCanvas;
       setTimeout(fitToCanvas, 60);
       setTimeout(fitToCanvas, 200);
+
+      // Auto-focus print button & bind Enter key for 1-touch printing
+      function bindKeysAndFocus() {
+        var printBtn = document.getElementById('btnThermalPrint') || document.querySelector('.btn-print');
+        if (printBtn) {
+          try { printBtn.focus(); } catch(_) {}
+        }
+      }
+
+      window.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          fitToCanvas();
+          window.print();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          window.close();
+        }
+      });
+
+      bindKeysAndFocus();
+      setTimeout(bindKeysAndFocus, 100);
 
       var autoPrint = ${config.autoPrint ? 'true' : 'false'};
       if (autoPrint) {
