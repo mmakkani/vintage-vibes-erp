@@ -91,7 +91,7 @@ export const LiveOBSOverlayView: React.FC = () => {
     return () => clearInterval(tickerInterval);
   }, [claims]);
 
-  const priceAed = activePiece?.retailPriceAed || activePiece?.estimatedPrice || activePiece?.costPrice || 120;
+  const priceAed = activePiece?.retailPriceAed ?? activePiece?.estimatedPrice ?? activePiece?.costPrice ?? 0;
   const priceUsd = Math.round(Number(priceAed) * 0.272);
 
   return (

@@ -11827,8 +11827,8 @@ RULES FOR YOUR RESPONSE:
 
         try {
           const pieceRes = await client.query(
-            `SELECT id, barcode, sku, item_name, brand_name, cost_price,
-                    COALESCE(retail_price_aed, cost_price, 120) as retail_price_aed,
+            `SELECT id, barcode, sku, item_name, brand_name, cost_price, cost_per_gram, calculated_cost_price,
+                    COALESCE(retail_price_aed, estimated_price, cost_price, 0) as retail_price_aed,
                     weight_kg, weight_grams, size_scanned, is_sold, status
              FROM inventory_pieces
              WHERE (LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1)
@@ -11845,14 +11845,14 @@ RULES FOR YOUR RESPONSE:
             return res.status(400).json({ success: false, error: `Piece "${barcode}" is already marked as SOLD.` });
           }
 
-          const price = Number(finalSellingPrice || p.retail_price_aed || 120);
+          const price = Number(finalSellingPrice || p.retail_price_aed || p.cost_price || 0);
           const vatRate = 0.05;
           const subTotal = Number(price.toFixed(2));
           const vatAmount = Number((subTotal * vatRate).toFixed(2));
           const grandTotal = Number((subTotal + vatAmount).toFixed(2));
-          const itemCost = Number(p.cost_price || (p.weight_grams && p.cost_per_gram ? Number((p.weight_grams * p.cost_per_gram).toFixed(2)) : 0) || 0);
           const weightG = Number(p.weight_grams || (p.weight_kg ? p.weight_kg * 1000 : 0));
-          const costPerG = Number(p.cost_per_gram || (weightG && itemCost ? itemCost / weightG : 0));
+          const costPerG = Number(p.cost_per_gram || 0);
+          const itemCost = Number(p.cost_price || p.calculated_cost_price || (weightG && costPerG ? Number((weightG * costPerG).toFixed(2)) : 0) || 0);
           const cogs = itemCost;
 
           const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');

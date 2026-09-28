@@ -157,7 +157,7 @@ export const LiveSellingTerminal: React.FC<LiveSellingTerminalProps> = ({
       return;
     }
 
-    const price = piece.estimatedPrice || piece.retailPriceAed || 120;
+    const price = piece.retailPriceAed || piece.estimatedPrice || piece.costPrice || 0;
     const discount = (price * globalDiscountPct) / 100;
     const finalAmount = Math.max(0, price - discount);
 
@@ -447,7 +447,7 @@ export const LiveSellingTerminal: React.FC<LiveSellingTerminalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {filteredStock.map(piece => {
                   const inBasket = basket.some(b => b.barcode.toLowerCase() === piece.barcode.toLowerCase());
-                  const price = piece.estimatedPrice || piece.retailPriceAed || 120;
+                  const price = piece.retailPriceAed || piece.estimatedPrice || piece.costPrice || 0;
 
                   return (
                     <div

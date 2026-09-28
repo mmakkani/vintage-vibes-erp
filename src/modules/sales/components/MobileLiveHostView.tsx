@@ -212,7 +212,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       const found = stockPieces.find(p => p.barcode.toLowerCase() === trimmed.toLowerCase());
       if (found) {
         setSelectedPiece(found);
-        setSellingPrice(found.lockedPrice || found.estimatedPrice || found.retailPriceAed || 120);
+        setSellingPrice(found.retailPriceAed || (found as any).retail_price_aed || found.lockedPrice || found.estimatedPrice || found.costPrice || 0);
         setSaleResultBanner({
           type: 'success',
           title: 'Laser Scanner Locked SKU',
@@ -268,10 +268,10 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               const brand = p.brand_name || p.brandName || 'Vintage';
               const name = p.item_name || p.itemName || 'Garment';
               const size = p.size_scanned || p.sizeScanned || p.size || 'M';
-              const price = Number(p.retail_price_aed ?? p.retailPriceAed ?? p.lockedPrice ?? p.estimatedPrice ?? 120);
+              const price = Number(p.retail_price_aed ?? p.retailPriceAed ?? p.lockedPrice ?? p.estimatedPrice ?? p.cost_price ?? p.costPrice ?? 0);
               const weight = Number(p.weight_kg ?? p.weightKg ?? (p.weight_grams ? p.weight_grams / 1000 : 0.45));
               const grams = Number(p.weight_grams ?? p.weightGrams ?? Math.round(weight * 1000));
-              const cost = Number(p.cost_price ?? p.costPrice ?? (weight * 20));
+              const cost = Number(p.cost_price ?? p.costPrice ?? p.calculated_cost_price ?? p.calculatedCostPrice ?? (p.cost_per_gram ? Number((grams * p.cost_per_gram).toFixed(2)) : 0));
               const frontImg = p.front_image_url || p.frontImageUrl || p.front_image || (p.raw_data && (p.raw_data.front_image_url || p.raw_data.front_image)) || '';
               const backImg = p.back_image_url || p.backImageUrl || p.back_image || (p.raw_data && (p.raw_data.back_image_url || p.raw_data.back_image)) || '';
               const tagImg = p.tag_image_url || p.tagImageUrl || p.tag_image || (p.raw_data && (p.raw_data.tag_image_url || p.raw_data.tag_image)) || '';
@@ -322,7 +322,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             setSellingPrice(prev => {
               if (prev && prev > 0) return prev;
               const p0 = available[0];
-              return Number(p0.lockedPrice || p0.estimatedPrice || p0.retailPriceAed || 120);
+              return Number(p0.retailPriceAed || (p0 as any).retail_price_aed || p0.lockedPrice || p0.estimatedPrice || p0.costPrice || 0);
             });
           }
         }
@@ -583,7 +583,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         setStockPieces(remaining);
         if (remaining.length > 0) {
           setSelectedPiece(remaining[0]);
-          setSellingPrice(remaining[0].lockedPrice || remaining[0].estimatedPrice || remaining[0].retailPriceAed || 120);
+          setSellingPrice(remaining[0].retailPriceAed || (remaining[0] as any).retail_price_aed || remaining[0].lockedPrice || remaining[0].estimatedPrice || remaining[0].costPrice || 0);
         } else {
           setSelectedPiece(null);
         }
@@ -668,7 +668,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         setStockPieces(remaining);
         if (remaining.length > 0) {
           setSelectedPiece(remaining[0]);
-          setSellingPrice(remaining[0].lockedPrice || remaining[0].estimatedPrice || remaining[0].retailPriceAed || 120);
+          setSellingPrice(remaining[0].retailPriceAed || (remaining[0] as any).retail_price_aed || remaining[0].lockedPrice || remaining[0].estimatedPrice || remaining[0].costPrice || 0);
         } else {
           setSelectedPiece(null);
         }
@@ -1895,7 +1895,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                       key={piece.id}
                       onClick={() => {
                         setSelectedPiece(piece);
-                        const price = Number(piece.lockedPrice || piece.estimatedPrice || piece.retailPriceAed || (piece as any).retail_price_aed || 120);
+                        const price = Number(piece.retailPriceAed || (piece as any).retail_price_aed || piece.lockedPrice || piece.estimatedPrice || piece.costPrice || 0);
                         setSellingPrice(price);
                         setShowSkuPicker(false);
                       }}
@@ -1936,10 +1936,10 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                       </div>
                       <div className="text-right">
                         <span className="block font-bold text-amber-400 text-sm">
-                          AED {piece.lockedPrice || piece.estimatedPrice || piece.retailPriceAed || (piece as any).retail_price_aed || 120}
+                          AED {piece.retailPriceAed || (piece as any).retail_price_aed || piece.lockedPrice || piece.estimatedPrice || piece.costPrice || 0}
                         </span>
                         <span className="text-[10px] text-slate-400">
-                          COGS: AED {piece.costPrice || (piece as any).cost_price || (piece.weightKg ? (piece.weightKg * 20).toFixed(2) : '20.00')}
+                          COGS: AED {piece.costPrice || (piece as any).cost_price || piece.calculatedCostPrice || (piece as any).calculated_cost_price || (piece.costPerGram && piece.weightGrams ? (piece.costPerGram * piece.weightGrams).toFixed(2) : '0.00')}
                         </span>
                       </div>
                     </div>

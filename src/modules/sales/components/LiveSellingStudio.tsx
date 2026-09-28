@@ -274,6 +274,42 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     return stockPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
   }, [stockPieces]);
 
+  // Visual Live Studio Floor Rack State
+  const [showRackDrawer, setShowRackDrawer] = useState<boolean>(false);
+  const [rackSearchQuery, setRackSearchQuery] = useState<string>('');
+  const [rackCategoryFilter, setRackCategoryFilter] = useState<string>('ALL');
+
+  const rackCategories = useMemo(() => {
+    const cats = new Set<string>();
+    availablePieces.forEach(p => {
+      const c = p.parentCategoryName || (p as any).category || (p.itemName ? p.itemName.split(' ')[0] : 'Vintage');
+      if (c) cats.add(c);
+    });
+    return ['ALL', ...Array.from(cats).slice(0, 8)];
+  }, [availablePieces]);
+
+  const filteredRackPieces = useMemo(() => {
+    let list = availablePieces;
+    if (rackCategoryFilter !== 'ALL') {
+      list = list.filter(p =>
+        p.parentCategoryName === rackCategoryFilter ||
+        (p as any).category === rackCategoryFilter ||
+        p.itemName?.toLowerCase().includes(rackCategoryFilter.toLowerCase())
+      );
+    }
+    if (rackSearchQuery.trim()) {
+      const q = rackSearchQuery.trim().toLowerCase();
+      list = list.filter(p =>
+        p.barcode.toLowerCase().includes(q) ||
+        p.brandName.toLowerCase().includes(q) ||
+        p.itemName.toLowerCase().includes(q) ||
+        (p.sizeScanned && p.sizeScanned.toLowerCase().includes(q)) ||
+        (p.labelGrade && p.labelGrade.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [availablePieces, rackCategoryFilter, rackSearchQuery]);
+
   // Dynamic Browser Session Pairing URL for Dedicated Mobile Streamer App
   const dynamicPairUrl = useMemo(() => {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vintagevibe.ae';
@@ -735,6 +771,30 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
   };
 
+  // 1-Click Spotlight Piece on Stream (Syncs HUD & OBS Overlay)
+  const handleSpotlightPiece = useCallback(async (piece: PieceBreakdownItem) => {
+    setLastClaimedPiece(piece);
+    const price = piece.retailPriceAed || piece.estimatedPrice || piece.costPrice || 0;
+    try {
+      await LiveStreamService.updateBooth(selectedBoothId, {
+        active_product_sku: piece.barcode,
+        current_deal_price: price
+      });
+      setClaimFeedback({
+        text: `✨ SPOTLIGHT: Showing ${piece.brandName} ${piece.itemName} (${piece.barcode}) on live stream & OBS overlay!`,
+        type: 'success'
+      });
+    } catch (e) {
+      console.warn('Could not sync spotlight to Supabase live_booths:', e);
+    }
+  }, [selectedBoothId]);
+
+  // 1-Click Fast Claim from Studio Rack Shelf
+  const handleClaimFromRack = useCallback(async (piece: PieceBreakdownItem) => {
+    setBarcodeInput(piece.barcode);
+    await handleClaimSku(piece.barcode, activeBuyerHandle);
+  }, [activeBuyerHandle, handleClaimSku]);
+
   // Fast Drop & Re-Auction Action with Station Attribution
   const handleFastDropPiece = async (barcode: string) => {
     try {
@@ -1149,6 +1209,17 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
             >
               <Monitor className="w-3.5 h-3.5" />
               <span>{viewMode === 'SUPERVISOR' ? 'Return to Booth Studio' : 'Master Admin Overview (10 Booths)'}</span>
+            </button>
+
+            {/* Visual Garment Rack Modal Button */}
+            <button
+              type="button"
+              onClick={() => setShowRackDrawer(true)}
+              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 font-black text-stone-950 flex items-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95"
+              title="Open Live Floor Rack to view clothes, pictures, sizes and 1-click claim"
+            >
+              <ShoppingBag className="w-3.5 h-3.5 text-stone-950" />
+              <span>Studio Rack & Photos ({availablePieces.length} Pcs)</span>
             </button>
 
             {/* Dedicated Streamer Mobile App Launcher */}
@@ -1785,17 +1856,36 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   <div className="w-1.5 bg-red-500 rounded-t transition-all duration-75" style={{ height: `${Math.max(10, audioMeter - 35)}%` }}></div>
                 </div>
 
-                {/* Active garment piece pinned card HUD */}
+                {/* Active garment piece pinned card HUD with Authentic Photo & Valuation */}
                 {lastClaimedPiece && (
-                  <div className="absolute bottom-2 left-2 right-14 bg-stone-950/90 backdrop-blur-md p-2 rounded-xl border border-amber-500/40 text-white text-xs z-10 shadow-lg">
-                    <div className="flex items-center justify-between text-[9px] text-amber-400 font-bold uppercase tracking-tight">
-                      <span>ON AUCTION FLOOR</span>
-                      <span className="font-mono bg-amber-950/80 px-1 rounded border border-amber-500/30">
-                        {lastClaimedPiece.barcode}
-                      </span>
-                    </div>
-                    <div className="font-black text-stone-100 truncate text-[11px] mt-0.5">
-                      {lastClaimedPiece.brandName} • {lastClaimedPiece.itemName}
+                  <div className="absolute bottom-2 left-2 right-14 bg-stone-950/95 backdrop-blur-md p-2 rounded-xl border border-amber-500/50 text-white text-xs z-10 shadow-xl flex items-center gap-2.5">
+                    {lastClaimedPiece.frontImageUrl || (lastClaimedPiece as any).front_image_url ? (
+                      <img
+                        src={lastClaimedPiece.frontImageUrl || (lastClaimedPiece as any).front_image_url}
+                        alt={lastClaimedPiece.itemName}
+                        className="w-10 h-10 rounded-lg object-cover border border-amber-400/40 shrink-0 bg-stone-900"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0">
+                        <ShoppingBag className="w-5 h-5 text-amber-400" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between text-[9px] text-amber-400 font-bold uppercase tracking-tight">
+                        <span>ON AUCTION FLOOR</span>
+                        <span className="font-mono bg-amber-950/80 px-1 rounded border border-amber-500/30">
+                          {lastClaimedPiece.barcode}
+                        </span>
+                      </div>
+                      <div className="font-black text-stone-100 truncate text-[11px] mt-0.5">
+                        {lastClaimedPiece.brandName} • {lastClaimedPiece.itemName}
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-amber-300 font-extrabold mt-0.5">
+                        <span>Size: {lastClaimedPiece.sizeScanned || (lastClaimedPiece as any).size || 'M'}</span>
+                        <span className="text-emerald-400 font-mono font-black">
+                          AED {((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0).toFixed(2)}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -2062,9 +2152,20 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   <Scan className="w-4 h-4 text-amber-700" />
                   <span>Fast Barcode Claim ({((activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.boothName || 'Booth 01').split('-')[0].trim()})</span>
                 </span>
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-100 text-amber-950">
-                  AUTO-FOCUSED ⚡
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowRackDrawer(true)}
+                    className="px-2 py-0.5 rounded bg-stone-900 hover:bg-stone-800 text-amber-400 font-extrabold text-[10px] flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
+                    title="Browse garments and pictures on the live floor rack"
+                  >
+                    <ShoppingBag className="w-3 h-3 text-amber-400" />
+                    <span>Rack ({availablePieces.length})</span>
+                  </button>
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-100 text-amber-950">
+                    AUTO-FOCUSED ⚡
+                  </span>
+                </div>
               </div>
 
               {/* Active Buyer Selection */}
@@ -2142,27 +2243,39 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   </span>
                 </div>
 
-                <div className="text-xs">
-                  <div className="font-extrabold text-white truncate">
-                    {lastClaimedPiece.brandName} • {lastClaimedPiece.itemName}
-                  </div>
-                  <div className="text-[11px] text-stone-300 flex items-center justify-between mt-1">
-                    <span>SKU: <strong className="font-mono text-amber-300">{lastClaimedPiece.barcode}</strong></span>
-                    <span>Buyer: <strong className="text-emerald-400">{lastClaimedPiece.lockedByBuyer}</strong></span>
-                  </div>
-                  <div className="text-[10px] text-amber-200/90 flex items-center justify-between mt-1 pt-1 border-t border-stone-800">
-                    <span className="flex items-center gap-1 font-bold">
-                      <Zap className="w-3 h-3 text-amber-400" />
-                      Station: <strong className="font-mono bg-stone-800 px-1 py-0.5 rounded text-amber-300">{(lastClaimedPiece as any).locked_by_station || (lastClaimedPiece as any).lockedByStation || activeStation}</strong>
-                    </span>
-                    <span className="font-mono text-[9px] text-stone-400">Pessimistic Hold: ACTIVE</span>
+                <div className="flex items-center gap-2.5">
+                  {lastClaimedPiece.frontImageUrl || (lastClaimedPiece as any).front_image_url ? (
+                    <img
+                      src={lastClaimedPiece.frontImageUrl || (lastClaimedPiece as any).front_image_url}
+                      alt={lastClaimedPiece.itemName}
+                      className="w-12 h-12 rounded-lg object-cover border border-amber-400/40 shrink-0 bg-stone-950"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0">
+                      <ShoppingBag className="w-6 h-6 text-amber-400" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1 text-xs">
+                    <div className="font-extrabold text-white truncate">
+                      {lastClaimedPiece.brandName} • {lastClaimedPiece.itemName}
+                    </div>
+                    <div className="text-[11px] text-stone-300 flex items-center justify-between mt-0.5">
+                      <span>SKU: <strong className="font-mono text-amber-300">{lastClaimedPiece.barcode}</strong></span>
+                      <span>Buyer: <strong className="text-emerald-400">{lastClaimedPiece.lockedByBuyer}</strong></span>
+                    </div>
+                    <div className="text-[10px] text-amber-200/90 flex items-center justify-between mt-1 pt-1 border-t border-stone-800">
+                      <span className="flex items-center gap-1 font-bold">
+                        <Zap className="w-3 h-3 text-amber-400" />
+                        Station: <strong className="font-mono bg-stone-800 px-1 py-0.5 rounded text-amber-300">{(lastClaimedPiece as any).locked_by_station || (lastClaimedPiece as any).lockedByStation || activeStation}</strong>
+                      </span>
+                      <span className="font-mono text-[9px] text-stone-400">Pessimistic Hold: ACTIVE</span>
+                    </div>
                   </div>
                 </div>
 
-
                 <div className="pt-2 border-t border-stone-800 flex items-center justify-between gap-2">
-                  <span className="text-xs font-black text-amber-400">
-                    AED {(lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || 120).toFixed(2)}
+                  <span className="text-xs font-black text-amber-400 font-mono">
+                    AED {((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0).toFixed(2)}
                   </span>
 
                   {/* Fast Drop & Re-Auction Action Button */}
@@ -2223,19 +2336,53 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       <span>VAT (5%): AED {pool.vatAed.toFixed(2)}</span>
                     </div>
 
-                    {/* Show Station attribution tag for claimed garments */}
+                    {/* Show Claimed Garments Breakdown with Pictures & Station attribution */}
                     {pool.items && pool.items.length > 0 && (
-                      <div className="flex flex-wrap gap-1 items-center pt-1 text-[10px]">
-                        <span className="text-stone-400 font-mono text-[9px]">Claimed:</span>
-                        {pool.items.slice(0, 3).map((it, idx) => (
-                          <span key={it.barcode || idx} className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 font-mono text-[9px] text-stone-700 flex items-center gap-1">
-                            <span className="font-bold">{it.barcode}</span>
-                            <span className="text-amber-800 font-black">⚡ {(it as any).locked_by_station || (it as any).lockedByStation || 'Station 1'}</span>
-                          </span>
-                        ))}
-                        {pool.items.length > 3 && (
-                          <span className="text-stone-400 text-[9px]">+{pool.items.length - 3} more</span>
-                        )}
+                      <div className="space-y-1.5 pt-1.5 border-t border-stone-100">
+                        <div className="text-[10px] text-stone-500 font-bold uppercase tracking-tight flex items-center justify-between">
+                          <span>Claimed Pieces ({pool.items.length}):</span>
+                        </div>
+                        <div className="space-y-1 max-h-36 overflow-y-auto pr-0.5">
+                          {pool.items.map((it, idx) => (
+                            <div
+                              key={it.barcode || idx}
+                              className="p-1.5 rounded-lg bg-white border border-stone-200/90 flex items-center justify-between gap-2 text-[11px]"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {it.frontImageUrl || (it as any).front_image_url ? (
+                                  <img
+                                    src={it.frontImageUrl || (it as any).front_image_url}
+                                    alt=""
+                                    className="w-7 h-7 rounded object-cover border border-stone-200 shrink-0 bg-stone-100"
+                                  />
+                                ) : (
+                                  <div className="w-7 h-7 rounded bg-amber-50 border border-amber-200 flex items-center justify-center shrink-0">
+                                    <ShoppingBag className="w-3.5 h-3.5 text-amber-600" />
+                                  </div>
+                                )}
+                                <div className="min-w-0">
+                                  <div className="font-mono font-bold text-stone-900 truncate flex items-center gap-1">
+                                    <span>{it.barcode}</span>
+                                    <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 text-amber-900 font-bold">
+                                      {it.sizeScanned || (it as any).size || 'M'}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-stone-500 truncate">
+                                    {it.brandName} • {it.itemName}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <span className="font-mono font-bold text-amber-900 block text-xs">
+                                  AED {(it.lockedPrice || it.retailPriceAed || (it as any).retail_price_aed || it.costPrice || 0).toFixed(2)}
+                                </span>
+                                <span className="text-[8px] font-black text-amber-700 bg-amber-50 px-1 rounded">
+                                  ⚡ {(it as any).locked_by_station || (it as any).lockedByStation || 'Station 1'}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
 
@@ -2322,6 +2469,241 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ===================== MODAL: LIVE STUDIO GARMENT FLOOR RACK & PHOTOS ==== */}
+      {/* ========================================================================= */}
+      {showRackDrawer && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 z-50 animate-in fade-in duration-200">
+          <div className="bg-stone-900 border border-amber-500/40 rounded-2xl max-w-6xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Rack Header */}
+            <div className="px-5 py-4 bg-stone-950 border-b border-stone-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-400">
+                  <ShoppingBag className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-white text-base uppercase tracking-tight">
+                      Live Studio Garment Floor Rack
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 font-mono font-black text-xs border border-amber-400/30">
+                      {availablePieces.length} In Stock
+                    </span>
+                  </div>
+                  <p className="text-stone-400 text-xs mt-0.5">
+                    Visual rack inventory ready for broadcasting: view photos, sizes, grades, authentic prices and 1-click stream spotlight.
+                  </p>
+                </div>
+              </div>
+
+              {/* Close Button */}
+              <button
+                type="button"
+                onClick={() => setShowRackDrawer(false)}
+                className="w-8 h-8 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
+                title="Close Rack Drawer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Filter Bar & Search */}
+            <div className="px-5 py-3 bg-stone-900/90 border-b border-stone-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              {/* Search by Barcode / Brand / Name */}
+              <div className="relative flex-1 min-w-[240px]">
+                <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={rackSearchQuery}
+                  onChange={e => setRackSearchQuery(e.target.value)}
+                  placeholder="Search live rack by barcode (e.g. VV-BAL), brand (Levi's, Carhartt), size, or grade..."
+                  className="w-full pl-9 pr-8 py-2 bg-stone-950 border border-stone-700 rounded-xl text-stone-100 text-xs placeholder:text-stone-500 focus:outline-none focus:border-amber-400"
+                />
+                {rackSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setRackSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-200 text-xs"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Category Pills */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {rackCategories.map(cat => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setRackCategoryFilter(cat)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      rackCategoryFilter === cat
+                        ? 'bg-amber-500 text-stone-950 font-black shadow-sm'
+                        : 'bg-stone-800 hover:bg-stone-750 text-stone-300 border border-stone-700'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Rack Garments Grid */}
+            <div className="p-5 overflow-y-auto flex-1">
+              {filteredRackPieces.length === 0 ? (
+                <div className="p-12 text-center text-stone-400 space-y-2">
+                  <div className="w-12 h-12 rounded-full bg-stone-800 flex items-center justify-center mx-auto text-stone-500">
+                    <ShoppingBag className="w-6 h-6" />
+                  </div>
+                  <div className="font-bold text-sm text-stone-300">No matching garments found on the floor rack</div>
+                  <p className="text-xs text-stone-500 max-w-sm mx-auto">
+                    Try clearing your search query or switching category filters. All in-stock pieces from unsealed bales automatically appear here.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {filteredRackPieces.map(piece => {
+                    const price = piece.retailPriceAed || (piece as any).retail_price_aed || piece.lockedPrice || piece.estimatedPrice || piece.costPrice || 0;
+                    const cogs = piece.calculatedCostPrice || piece.costPrice || (piece.costPerGram && piece.weightGrams ? Number((piece.costPerGram * piece.weightGrams).toFixed(2)) : 0);
+                    const photo = piece.frontImageUrl || (piece as any).front_image_url || piece.tagImageUrl || piece.backImageUrl;
+                    const isSpotlighted = lastClaimedPiece?.barcode === piece.barcode;
+
+                    return (
+                      <div
+                        key={piece.id}
+                        className={`bg-stone-950 rounded-xl border overflow-hidden flex flex-col justify-between transition-all duration-150 ${
+                          isSpotlighted
+                            ? 'border-amber-400 ring-2 ring-amber-400/50 shadow-lg shadow-amber-500/10'
+                            : 'border-stone-800 hover:border-stone-600 shadow-md'
+                        }`}
+                      >
+                        {/* Image Canvas with Badges */}
+                        <div className="relative aspect-[4/3] bg-stone-900 overflow-hidden flex items-center justify-center">
+                          {photo ? (
+                            <img
+                              src={photo}
+                              alt={piece.itemName}
+                              className="w-full h-full object-cover transition-transform duration-300 hover:scale-105"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex flex-col items-center justify-center text-stone-600 gap-1.5 p-4 text-center">
+                              <ShoppingBag className="w-10 h-10 text-stone-700" />
+                              <span className="text-[10px] text-stone-500">No photo uploaded yet</span>
+                            </div>
+                          )}
+
+                          {/* Size & Grade Overlay */}
+                          <div className="absolute top-2 left-2 flex items-center gap-1">
+                            <span className="px-2 py-0.5 rounded bg-black/80 backdrop-blur-xs text-amber-300 font-black text-[10px] border border-amber-500/40">
+                              {piece.sizeScanned || (piece as any).size || 'M'}
+                            </span>
+                            {piece.labelGrade && (
+                              <span className="px-1.5 py-0.5 rounded bg-purple-950/80 backdrop-blur-xs text-purple-200 font-bold text-[9px] border border-purple-500/40">
+                                {piece.labelGrade}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Weight Badge */}
+                          <div className="absolute top-2 right-2">
+                            <span className="px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-xs text-stone-300 font-mono text-[9px] border border-stone-700">
+                              {piece.weightKg || (piece.weightGrams ? (piece.weightGrams / 1000).toFixed(2) : '0.45')} KG
+                            </span>
+                          </div>
+
+                          {/* Active Spotlight Indicator */}
+                          {isSpotlighted && (
+                            <div className="absolute bottom-2 left-2 right-2 px-2 py-1 rounded bg-amber-500/90 text-stone-950 font-black text-[10px] uppercase tracking-wider text-center flex items-center justify-center gap-1 shadow-md">
+                              <Sparkles className="w-3 h-3 fill-current" />
+                              <span>ON STREAM HUD</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Garment Details */}
+                        <div className="p-3.5 space-y-2.5 flex-1 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center justify-between text-[10px] text-stone-400 font-mono">
+                              <span className="text-amber-400 font-bold">{piece.barcode}</span>
+                              <span>{piece.baleCode || (piece.barcode ? piece.barcode.split('-').slice(0, 3).join('-') : 'VV-BAL')}</span>
+                            </div>
+                            <h4 className="font-black text-white text-xs mt-1 truncate" title={`${piece.brandName} ${piece.itemName}`}>
+                              {piece.brandName} • {piece.itemName}
+                            </h4>
+                            <div className="text-[10px] text-stone-400 truncate mt-0.5">
+                              {piece.style || piece.countryOfOrigin || 'Vintage Curated Item'}
+                            </div>
+                          </div>
+
+                          {/* Authentic Valuation & Costing */}
+                          <div className="pt-2 border-t border-stone-850 flex items-center justify-between">
+                            <div>
+                              <div className="text-[9px] text-stone-500 uppercase font-semibold">Live Floor Price</div>
+                              <div className="font-mono font-black text-amber-400 text-sm">
+                                AED {price.toFixed(2)}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-[9px] text-stone-500 uppercase font-semibold">Cost</div>
+                              <div className="font-mono text-stone-400 text-xs">
+                                AED {cogs.toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Action Buttons: Spotlight & Claim */}
+                          <div className="grid grid-cols-2 gap-1.5 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => handleSpotlightPiece(piece)}
+                              className="px-2 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-750 text-amber-300 font-bold text-[10px] flex items-center justify-center gap-1 border border-stone-700 cursor-pointer transition-colors"
+                              title="Show this piece on stream camera HUD and OBS overlay"
+                            >
+                              <Sparkles className="w-3 h-3 text-amber-400" />
+                              <span>Spotlight</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleClaimFromRack(piece);
+                                setShowRackDrawer(false);
+                              }}
+                              className="px-2 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-[10px] flex items-center justify-center gap-1 shadow-xs cursor-pointer transition-colors"
+                              title={`Claim piece immediately for ${activeBuyerHandle}`}
+                            >
+                              <Zap className="w-3 h-3 fill-current" />
+                              <span>Claim Now</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Rack Footer */}
+            <div className="px-5 py-3 bg-stone-950 border-t border-stone-800 flex items-center justify-between text-xs text-stone-400 shrink-0">
+              <div className="flex items-center gap-2">
+                <span>Showing <strong>{filteredRackPieces.length}</strong> of <strong>{availablePieces.length}</strong> in-stock garments</span>
+                <span className="text-stone-600">•</span>
+                <span>Active Buyer: <strong className="text-amber-300">{activeBuyerHandle}</strong></span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRackDrawer(false)}
+                className="px-3 py-1 rounded-lg bg-stone-800 hover:bg-stone-750 text-stone-200 font-bold text-xs cursor-pointer"
+              >
+                Close Rack
+              </button>
             </div>
           </div>
         </div>
@@ -2933,7 +3315,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           description: `${st.brandName} ${st.itemName} [${st.size}]`,
                           category: 'Live Auction Won',
                           brand: st.brandName,
-                          retailPriceAed: 120,
+                          retailPriceAed: (st as any).retailPriceAed || (st as any).priceAed || 0,
                           companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
                           trn: '100482910300003'
                         });

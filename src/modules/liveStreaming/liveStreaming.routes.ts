@@ -811,7 +811,7 @@ liveStreamingRouter.post('/confirm-sale', (req, res) => {
     buyerHandle,
     buyerPhone,
     boothId: bId,
-    finalSellingPrice: Number(finalSellingPrice) || 120,
+    finalSellingPrice: Number(finalSellingPrice) || 0,
     channel: channel || 'Multistream Live',
     shippingAddress,
     paymentMethod: paymentMethod || 'CASH'
@@ -821,7 +821,7 @@ liveStreamingRouter.post('/confirm-sale', (req, res) => {
     return res.status(400).json({ error: result.error });
   }
 
-  const priceAed = Number(finalSellingPrice) || 120;
+  const priceAed = result.piece?.soldPriceAed || Number(finalSellingPrice) || result.invoice?.totalAmount || 0;
   const whatsAppPayload = {
     customerPhone: buyerPhone || '+971 50 000 0000',
     buyerHandle,
@@ -864,7 +864,7 @@ liveStreamingRouter.post('/booths/:boothId/confirm-sale', (req, res) => {
     buyerHandle,
     buyerPhone,
     boothId,
-    finalSellingPrice: Number(finalSellingPrice) || 120,
+    finalSellingPrice: Number(finalSellingPrice) || 0,
     channel: channel || 'Multistream Live',
     shippingAddress,
     paymentMethod: paymentMethod || 'CASH'
@@ -874,7 +874,7 @@ liveStreamingRouter.post('/booths/:boothId/confirm-sale', (req, res) => {
     return res.status(400).json({ error: result.error });
   }
 
-  const priceAed = Number(finalSellingPrice) || 120;
+  const priceAed = result.piece?.soldPriceAed || Number(finalSellingPrice) || result.invoice?.totalAmount || 0;
   const whatsAppPayload = {
     customerPhone: buyerPhone || '+971 50 000 0000',
     buyerHandle,

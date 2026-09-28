@@ -4092,7 +4092,9 @@ class RelationalStore {
         buyerHandle: params.buyerHandle,
         invoiceNo: invoice.invoiceNo,
         packageSequence: `${idx + 1}/${pool.items.length}`,
-        totalWeightKg: it.weightKg || 0.45
+        totalWeightKg: it.weightKg || 0.45,
+        retailPriceAed: it.lockedPrice || it.retailPriceAed || it.costPrice || 0,
+        priceAed: it.lockedPrice || it.retailPriceAed || it.costPrice || 0
       }));
 
       return {
@@ -4155,7 +4157,7 @@ class RelationalStore {
       }
 
       // Mark piece as SOLD
-      const sellingPrice = Number(params.finalSellingPrice) || piece.retailPriceAed || 120;
+      const sellingPrice = Number(params.finalSellingPrice) || piece.retailPriceAed || piece.estimatedPrice || piece.costPrice || 0;
       piece.isSold = true;
       piece.status = 'SOLD';
       piece.soldPriceAed = sellingPrice;
@@ -4167,7 +4169,7 @@ class RelationalStore {
 
       // Derived Gram-weight cost from source bale
       const grams = piece.weightGrams || Math.round((piece.weightKg || 0.45) * 1000);
-      const cogsCost = piece.calculatedCostPrice || piece.costPrice || (piece.costPerGram && grams ? Number((grams * piece.costPerGram).toFixed(2)) : (piece.weightKg ? Number((piece.weightKg * 20).toFixed(2)) : 18.50));
+      const cogsCost = piece.calculatedCostPrice || piece.costPrice || (piece.costPerGram && grams ? Number((grams * piece.costPerGram).toFixed(2)) : 0);
 
       // Customer account resolution
       let customer = this.parties.find(p => p.name.toLowerCase() === params.buyerHandle.toLowerCase() || p.code.toLowerCase() === params.buyerHandle.toLowerCase());
@@ -4444,13 +4446,13 @@ class RelationalStore {
         // Selling price override (preserves 0 for complimentary/promotional gift pieces)
         const sellingPrice = (item.unitPrice !== undefined && item.unitPrice !== null)
           ? Number(item.unitPrice)
-          : (piece.retailPriceAed || piece.estimatedPrice || 120);
+          : (piece.retailPriceAed || piece.estimatedPrice || piece.costPrice || 0);
 
         // Cumulative Piece COGS calculation derived from garment gram-weight and source bale cost-per-gram
         const grams = piece.weightGrams || Math.round((piece.weightKg || 0.45) * 1000);
         const cogsCost = piece.calculatedCostPrice ||
           piece.costPrice ||
-          (piece.costPerGram && grams ? Number((grams * piece.costPerGram).toFixed(2)) : (piece.weightKg ? Number((piece.weightKg * 20).toFixed(2)) : 18.50));
+          (piece.costPerGram && grams ? Number((grams * piece.costPerGram).toFixed(2)) : 0);
 
         matchedPieces.push({ piece, sellingPrice, cogsCost });
       }
@@ -4935,15 +4937,16 @@ class RelationalStore {
         if (invoice.items.some(it => it.barcode.toLowerCase() === barcodeToBundle.toLowerCase())) {
           return { success: false, error: `Barcode ${barcodeToBundle} already included in this invoice` };
         }
-        const itemPrice = piece.estimatedPrice || piece.retailPriceAed || 120;
-        const itemCost = piece.calculatedCostPrice || piece.costPrice || 25;
+        const itemPrice = piece.retailPriceAed || piece.estimatedPrice || piece.costPrice || 0;
+        const grams = piece.weightGrams || Math.round((piece.weightKg || 0.45) * 1000);
+        const itemCost = piece.calculatedCostPrice || piece.costPrice || (piece.costPerGram && grams ? Number((grams * piece.costPerGram).toFixed(2)) : 0);
         const newItem: SalesInvoiceItem = {
           id: `sii-bundle-${Date.now()}`,
           barcode: piece.barcode,
           description: `${piece.brandName} ${piece.itemName} (${piece.sizeScanned || 'M'})`,
           weightKg: piece.weightKg || 0.45,
-          weightGrams: piece.weightGrams || Math.round((piece.weightKg || 0.45) * 1000),
-          costPerGram: piece.costPerGram || 0.085,
+          weightGrams: grams,
+          costPerGram: piece.costPerGram || (grams && itemCost ? itemCost / grams : 0),
           calculatedCostPrice: itemCost,
           unitPrice: itemPrice,
           discount: 0,
@@ -5036,10 +5039,11 @@ class RelationalStore {
         piece.status = 'SOLD';
         piece.soldInvoiceId = invoice.id;
         piece.soldPriceAed = item.finalAmount || item.unitPrice;
-        const itemCost = piece.calculatedCostPrice || piece.costPrice || (piece.weightGrams && piece.costPerGram ? Number((piece.weightGrams * piece.costPerGram).toFixed(2)) : (item.weightKg ? Number((item.weightKg * 20).toFixed(2)) : 15));
+        const grams = piece.weightGrams || Math.round((piece.weightKg || 0.45) * 1000);
+        const itemCost = piece.calculatedCostPrice || piece.costPrice || (piece.costPerGram && grams ? Number((grams * piece.costPerGram).toFixed(2)) : (item.calculatedCostPrice || item.costPrice || 0));
         totalCOGS += itemCost;
       } else {
-        const itemCost = item.calculatedCostPrice || (item.weightKg ? Number((item.weightKg * 20).toFixed(2)) : 15);
+        const itemCost = item.calculatedCostPrice || item.costPrice || (item.weightGrams && item.costPerGram ? Number((item.weightGrams * item.costPerGram).toFixed(2)) : 0);
         totalCOGS += itemCost;
       }
     });
