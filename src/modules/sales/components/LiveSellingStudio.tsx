@@ -57,6 +57,7 @@ import {
   Settings,
   ShieldCheck,
   ArrowUpRight,
+  ArrowRight,
   EyeOff,
   MapPin,
   Phone,
@@ -68,6 +69,7 @@ interface LiveSellingStudioProps {
   clients: Party[];
   onRefreshAll: () => void;
   onInvoiceCreated: (inv: SalesInvoice) => void;
+  onNavigateToDrafts?: (invoiceId?: string) => void;
 }
 
 interface BuyerPool {
@@ -110,7 +112,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   stockPieces,
   clients,
   onRefreshAll,
-  onInvoiceCreated
+  onInvoiceCreated,
+  onNavigateToDrafts
 }) => {
   const { syncVersion, notifyMutation } = useSync();
 
@@ -864,6 +867,33 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
   };
 
+  // Instant Manual Force Release of ALL Stuck Locks
+  const handleForceReleaseAllLocks = async () => {
+    if (!confirm('Are you sure you want to release ALL locked and reserved live-stream pieces back to IN_STOCK?')) {
+      return;
+    }
+    try {
+      soundEffects.playMechanicalClick();
+      const res = await fetch('/api/sales/release-stuck-pieces', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        soundEffects.playAuctionGavel();
+        setClaimFeedback({
+          text: `🔓 UNLOCKED: Force-released ${data.count || 0} stuck piece(s) back to active stock!`,
+          type: 'warning'
+        });
+        setLastClaimedPiece(null);
+        loadPoolData();
+        loadBoothsOverview();
+        onRefreshAll();
+      } else {
+        setClaimFeedback({ text: data.error || 'Failed to release locks', type: 'error' });
+      }
+    } catch (err: any) {
+      setClaimFeedback({ text: `Error releasing locks: ${err?.message || 'Network error'}`, type: 'error' });
+    }
+  };
+
   // Save UAE Multicast Settings (TikTok, Instagram, Facebook, YouTube, Snapchat / Custom RTMP) & Persist to localStorage
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1144,6 +1174,30 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               <Timer className="w-3.5 h-3.5 text-amber-400" />
               <span>Sweep Holds ({(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.reservationTimeoutMinutes || 120}m)</span>
             </button>
+
+            {/* Force Release All Stuck Locks Button */}
+            <button
+              type="button"
+              onClick={handleForceReleaseAllLocks}
+              className="px-3 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-500/50 text-red-200 font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+              title="Force release ALL locked and reserved pieces immediately back to stock"
+            >
+              <Unlock className="w-3.5 h-3.5 text-red-400" />
+              <span>Force Release All</span>
+            </button>
+
+            {/* Direct Shortcut to Live Draft Orders & Bundling */}
+            {onNavigateToDrafts && (
+              <button
+                type="button"
+                onClick={() => onNavigateToDrafts()}
+                className="px-3 py-1.5 rounded-lg bg-indigo-900/90 hover:bg-indigo-800 border border-indigo-400/60 text-indigo-100 font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+                title="Go to Live Draft Invoices & Logistics Bundling"
+              >
+                <ShoppingBag className="w-3.5 h-3.5 text-indigo-300" />
+                <span>Live Draft Orders</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -2894,14 +2948,32 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               </div>
             </div>
 
-            <div className="pt-2 border-t border-stone-200 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowFinalizeModal(false)}
-                className="px-5 py-2 rounded-xl bg-stone-900 text-white font-bold text-xs hover:bg-stone-800 cursor-pointer"
-              >
-                Close & Return to Studio
-              </button>
+            <div className="pt-2 border-t border-stone-200 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs text-stone-500">
+                Created Draft Order: <strong className="font-mono text-stone-900">{finalizedResult.invoice?.invoiceNo}</strong>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowFinalizeModal(false)}
+                  className="px-4 py-2 rounded-xl bg-stone-100 text-stone-700 font-bold text-xs hover:bg-stone-200 cursor-pointer"
+                >
+                  Close & Return to Studio
+                </button>
+                {onNavigateToDrafts && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowFinalizeModal(false);
+                      onNavigateToDrafts(finalizedResult.invoice?.id);
+                    }}
+                    className="px-5 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700 flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  >
+                    <span>Manage in Draft Invoices</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

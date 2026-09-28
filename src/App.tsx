@@ -496,6 +496,11 @@ export default function App() {
               window.history.pushState({}, '', '/');
               setLiveHostState({ isHostMode: false, boothId: 'booth-01' });
             }}
+            onNavigateToDrafts={() => {
+              window.history.pushState({}, '', '/');
+              setLiveHostState({ isHostMode: false, boothId: 'booth-01' });
+              setActiveTabState('sales');
+            }}
           />
         </Suspense>
       );

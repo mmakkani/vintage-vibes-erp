@@ -101,13 +101,13 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   };
 
   const handleReleaseAllReservations = async () => {
-    const reservedItems = effectivePieces.filter(p => !p.isSold && (p.status === 'RESERVED' || (p as any).status === 'CLAIMED_PENDING'));
-    if (reservedItems.length === 0) {
-      alert('No stuck or locked cart reservations currently in database.');
-      return;
-    }
+    const reservedItems = effectivePieces.filter(p => !p.isSold && (p.status === 'RESERVED' || (p as any).status === 'CLAIMED_PENDING' || (p as any).status === 'LOCKED' || (p as any).locked_by_buyer));
 
-    if (!confirm(`Are you sure you want to release all ${reservedItems.length} stuck cart reservations back to IN_STOCK? This will empty open unbilled carts across all POS terminals.`)) {
+    const promptMsg = reservedItems.length > 0
+      ? `Are you sure you want to release all ${reservedItems.length} stuck cart reservations back to IN_STOCK? This will clear all unbilled locks across POS and live selling.`
+      : `Force-release all stuck or locked cart reservations across the entire database back to IN_STOCK?`;
+
+    if (!confirm(promptMsg)) {
       return;
     }
 
@@ -124,7 +124,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
       });
       setDeltaUpdates(prev => ({ ...prev, ...newDeltas }));
 
-      alert(`Successfully released ${result.count || reservedItems.length} stuck cart reservations back to active IN_STOCK status.`);
+      alert(`Successfully released ${result.count ?? reservedItems.length} stuck cart reservations back to active IN_STOCK status.`);
       if (onRefresh) onRefresh();
     } catch (err: any) {
       alert(`Failed to release stuck reservations: ${err?.message || 'Database error'}`);

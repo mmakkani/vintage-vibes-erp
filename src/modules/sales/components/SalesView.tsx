@@ -566,6 +566,10 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
             setInvoices(prev => [newInv, ...prev]);
             setSelectedInvoiceForReceipt(newInv);
           }}
+          onNavigateToDrafts={(invId) => {
+            loadData();
+            setSubTab('drafts');
+          }}
         />
       )}
 

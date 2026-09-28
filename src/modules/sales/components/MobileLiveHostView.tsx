@@ -56,11 +56,13 @@ import {
 interface MobileLiveHostViewProps {
   initialBoothId?: string;
   onExitToERP?: () => void;
+  onNavigateToDrafts?: () => void;
 }
 
 export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   initialBoothId = 'booth-01',
-  onExitToERP
+  onExitToERP,
+  onNavigateToDrafts
 }) => {
   const { syncVersion, notifyMutation } = useSync();
   const [currentBoothId, setCurrentBoothId] = useState<string>(initialBoothId);
@@ -140,6 +142,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [buyerPhone, setBuyerPhone] = useState<string>('+971 50 892 4110');
   const [sellingPrice, setSellingPrice] = useState<number>(180);
   const [isProcessingSale, setIsProcessingSale] = useState<boolean>(false);
+  const [isProcessingLock, setIsProcessingLock] = useState<boolean>(false);
   const [saleResultBanner, setSaleResultBanner] = useState<{
     type: 'success' | 'error';
     title: string;
@@ -238,13 +241,61 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       }
 
       if (piecesRes.ok) {
-        const pieces = await piecesRes.json();
-        if (Array.isArray(pieces)) {
-          const available = pieces.filter((p: PieceBreakdownItem) => !p.isSold && p.status === 'IN_STOCK');
+        const rawPieces = await piecesRes.json();
+        if (Array.isArray(rawPieces)) {
+          const available: PieceBreakdownItem[] = rawPieces
+            .filter((p: any) => !p.is_sold && !p.isSold && p.status === 'IN_STOCK')
+            .map((p: any) => {
+              const brand = p.brand_name || p.brandName || 'Vintage';
+              const name = p.item_name || p.itemName || 'Garment';
+              const size = p.size_scanned || p.sizeScanned || p.size || 'M';
+              const price = Number(p.retail_price_aed ?? p.retailPriceAed ?? p.lockedPrice ?? p.estimatedPrice ?? 120);
+              const weight = Number(p.weight_kg ?? p.weightKg ?? (p.weight_grams ? p.weight_grams / 1000 : 0.45));
+              const grams = Number(p.weight_grams ?? p.weightGrams ?? Math.round(weight * 1000));
+              const cost = Number(p.cost_price ?? p.costPrice ?? (weight * 20));
+
+              return {
+                id: p.id,
+                barcode: p.barcode || p.sku,
+                sku: p.sku || p.barcode,
+                itemName: name,
+                brandName: brand,
+                brand_name: brand,
+                item_name: name,
+                category: p.category || 'Apparel',
+                sizeScanned: size,
+                size_scanned: size,
+                weightKg: weight,
+                weight_kg: weight,
+                weightGrams: grams,
+                weight_grams: grams,
+                costPrice: cost,
+                cost_price: cost,
+                calculatedCostPrice: cost,
+                retailPriceAed: price,
+                retail_price_aed: price,
+                estimatedPrice: price,
+                lockedPrice: price,
+                status: p.status || 'IN_STOCK',
+                isSold: Boolean(p.is_sold || p.isSold),
+                ready_for_ecommerce: p.ready_for_ecommerce,
+                bale_id: p.bale_id,
+                raw_data: p
+              } as PieceBreakdownItem;
+            });
+
           setStockPieces(available);
-          if (!selectedPiece && available.length > 0) {
-            setSelectedPiece(available[0]);
-            setSellingPrice(available[0].lockedPrice || available[0].estimatedPrice || available[0].retailPriceAed || 120);
+          if (available.length > 0) {
+            setSelectedPiece(prev => {
+              if (!prev) return available[0];
+              const match = available.find(p => p.barcode === prev.barcode || p.id === prev.id);
+              return match || available[0];
+            });
+            setSellingPrice(prev => {
+              if (prev && prev > 0) return prev;
+              const p0 = available[0];
+              return Number(p0.lockedPrice || p0.estimatedPrice || p0.retailPriceAed || 120);
+            });
           }
         }
       }
@@ -258,7 +309,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     } catch (err) {
       console.warn('Error fetching live booth data:', err);
     }
-  }, [currentBoothId, selectedPiece]);
+  }, [currentBoothId]);
 
   useEffect(() => {
     loadBoothData();
@@ -366,18 +417,17 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   // Calculate Derived Cost (COGS) from piece source bale gram weight
   const activePieceGrams = useMemo(() => {
     if (!selectedPiece) return 450;
-    return selectedPiece.weightGrams || Math.round((selectedPiece.weightKg || 0.45) * 1000);
+    return selectedPiece.weightGrams || (selectedPiece as any).weight_grams || Math.round(((selectedPiece.weightKg ?? (selectedPiece as any).weight_kg) || 0.45) * 1000);
   }, [selectedPiece]);
 
   const derivedCogsCost = useMemo(() => {
-    if (!selectedPiece) return 22.50;
-    if (selectedPiece.calculatedCostPrice) return selectedPiece.calculatedCostPrice;
-    if (selectedPiece.costPrice) return selectedPiece.costPrice;
-    if (selectedPiece.costPerGram && activePieceGrams) {
-      return Number((activePieceGrams * selectedPiece.costPerGram).toFixed(2));
-    }
-    return Number(((selectedPiece.weightKg || 0.45) * 20).toFixed(2));
-  }, [selectedPiece, activePieceGrams]);
+    if (!selectedPiece) return 20.00;
+    if (selectedPiece.calculatedCostPrice) return Number(selectedPiece.calculatedCostPrice);
+    if (selectedPiece.costPrice) return Number(selectedPiece.costPrice);
+    if ((selectedPiece as any).cost_price) return Number((selectedPiece as any).cost_price);
+    const weight = selectedPiece.weightKg ?? (selectedPiece as any).weight_kg ?? 0.45;
+    return Number((weight * 20).toFixed(2));
+  }, [selectedPiece]);
 
   // Format Uptime
   const formattedUptime = useMemo(() => {
@@ -445,6 +495,82 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         title: 'Network Error',
         message: 'Could not communicate with live server.'
       });
+    }
+  };
+
+  // Fast Manual Lock & Draft from Bottom Control Strip
+  const handleManualLockDraft = async () => {
+    if (!selectedPiece) {
+      setSaleResultBanner({
+        type: 'error',
+        title: 'Select a SKU',
+        message: 'Scan or select an item SKU before claiming.'
+      });
+      return;
+    }
+
+    if (!buyerHandle.trim()) {
+      setSaleResultBanner({
+        type: 'error',
+        title: 'Buyer Handle Required',
+        message: 'Please provide the buyer username (@handle) to reserve this piece.'
+      });
+      return;
+    }
+
+    setIsProcessingLock(true);
+    try {
+      const res = await fetch('/api/live/lock-and-draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          barcode: selectedPiece.barcode,
+          buyerHandle: buyerHandle.trim(),
+          buyerPhone,
+          boothId: currentBoothId,
+          offeredPrice: Number(sellingPrice),
+          channel: 'LIVE_CLAIM'
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setSaleResultBanner({
+          type: 'error',
+          title: 'Lock Conflict',
+          message: data.error || 'SKU could not be locked.'
+        });
+      } else {
+        playSaleChime();
+        setSaleResultBanner({
+          type: 'success',
+          title: 'GARMENT RESERVED & DRAFT CREATED!',
+          message: `Locked ${selectedPiece.barcode} for ${buyerHandle.trim()}. Draft Invoice: ${data.draftInvoice?.invoiceNo}`,
+          invoiceNo: data.draftInvoice?.invoiceNo,
+          details: `Piece is now RESERVED. Visible under Live Draft Invoices.`
+        });
+
+        // Advance to next piece if available
+        const remaining = stockPieces.filter(p => p.barcode !== selectedPiece.barcode);
+        setStockPieces(remaining);
+        if (remaining.length > 0) {
+          setSelectedPiece(remaining[0]);
+          setSellingPrice(remaining[0].lockedPrice || remaining[0].estimatedPrice || remaining[0].retailPriceAed || 120);
+        } else {
+          setSelectedPiece(null);
+        }
+
+        notifyMutation('SALES', 'LIVE_CLAIM', 'CREATE', selectedPiece.barcode);
+        loadBoothData();
+      }
+    } catch (e) {
+      setSaleResultBanner({
+        type: 'error',
+        title: 'Network Error',
+        message: 'Could not communicate with live server.'
+      });
+    } finally {
+      setIsProcessingLock(false);
     }
   };
 
@@ -1103,21 +1229,28 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             <ChevronDown className="absolute right-2 top-2.5 w-3.5 h-3.5 pointer-events-none text-amber-400" />
           </div>
 
-          {/* Connection Status Pill */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-red-600/90 text-white font-black text-[11px] rounded-full tracking-wider animate-pulse shadow-md">
-            <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-            LIVE
-          </div>
+          {/* Connection Status Pill - ONLY SHOW LIVE IF ACTUALLY STREAMING */}
+          {isHeadlessLive || socialChannels.some(c => c.stream_status === 'LIVE') ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-red-600/90 text-white font-black text-[11px] rounded-full tracking-wider animate-pulse shadow-md">
+              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+              LIVE
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/90 text-slate-300 border border-white/20 font-bold text-[11px] rounded-full tracking-wider shadow-md">
+              <span className="w-2 h-2 rounded-full bg-slate-500" />
+              STANDBY
+            </div>
+          )}
         </div>
 
         {/* Center: Live Stats HUD */}
         <div className="flex items-center gap-3 bg-black/65 backdrop-blur-md border border-white/10 px-3 py-1 rounded-full text-[11px] font-mono">
           <span className="flex items-center gap-1 text-slate-300 font-semibold" title="Concurrent Live Viewers">
-            <Eye className="w-3.5 h-3.5 text-amber-400" /> {liveViewers.toLocaleString()}
+            <Eye className="w-3.5 h-3.5 text-amber-400" /> {isHeadlessLive ? liveViewers.toLocaleString() : '0'}
           </span>
           <span className="text-white/30">•</span>
-          <span className="text-emerald-400 font-bold" title="Live Video Bitrate">
-            {liveBitrate}k
+          <span className={`${isCameraLive || isHeadlessLive ? 'text-emerald-400 font-bold' : 'text-slate-500'}`} title="Live Video Bitrate">
+            {isCameraLive || isHeadlessLive ? `${liveBitrate}k` : 'Offline'}
           </span>
           <span className="text-white/30">•</span>
           <span className="text-slate-300" title="Stream Uptime">
@@ -1164,7 +1297,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   ? 'bg-emerald-400 animate-ping'
                   : socialChannels.some(c => c.auth_status === 'LOGGED_IN')
                   ? 'bg-emerald-500'
-                  : 'bg-amber-500'
+                  : 'bg-slate-600'
               }`}
             />
           </button>
@@ -1179,7 +1312,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             className="text-[10px] font-bold text-amber-400 uppercase tracking-widest flex items-center gap-1.5 hover:underline cursor-pointer"
           >
             <Radio className={`w-3 h-3 ${isHeadlessLive ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
-            Channels ({socialChannels.filter(c => c.auth_status === 'LOGGED_IN').length}/{socialChannels.length || 4}):
+            Channels ({socialChannels.filter(c => c.auth_status === 'LOGGED_IN').length}/{socialChannels.length || 0}):
           </button>
 
           {/* Dynamic Social Channel Badges */}
@@ -1214,31 +1347,14 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                     }`}
                   />
                   <span className="capitalize font-bold">{ch.platform}</span>
-                  <span className="text-[9px] opacity-75">
-                    {isWaitingOtp ? '2FA OTP' : ch.account_username || 'Standby'}
+                  <span className="text-[9px] opacity-75 font-mono">
+                    {isWaitingOtp ? '2FA OTP' : isLoggedIn ? (ch.account_username || 'Connected') : 'Disconnected'}
                   </span>
                 </button>
               );
             })
           ) : (
-            <>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 border border-cyan-400/40 text-cyan-300 font-mono">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                TikTok
-              </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 border border-blue-500/40 text-blue-300 font-mono">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                Facebook
-              </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 border border-pink-500/40 text-pink-300 font-mono">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                Instagram
-              </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 border border-red-500/40 text-red-300 font-mono">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                YouTube
-              </span>
-            </>
+            <span className="text-[10px] text-slate-500 italic">No social broadcast channels configured</span>
           )}
         </div>
 
@@ -1279,6 +1395,26 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   <p className="text-[10px] font-mono mt-1 text-emerald-300 bg-black/40 p-1.5 rounded">
                     {saleResultBanner.details}
                   </p>
+                )}
+                {saleResultBanner.type === 'success' && (
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
+                    {onNavigateToDrafts && (
+                      <button
+                        onClick={onNavigateToDrafts}
+                        className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/50 rounded-lg text-[10px] font-bold tracking-wider uppercase cursor-pointer transition-all active:scale-95"
+                      >
+                        Open Live Drafts
+                      </button>
+                    )}
+                    {onExitToERP && (
+                      <button
+                        onClick={onExitToERP}
+                        className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-slate-200 border border-white/20 rounded-lg text-[10px] font-bold tracking-wider uppercase cursor-pointer transition-all active:scale-95"
+                      >
+                        Return to ERP
+                      </button>
+                    )}
+                  </div>
                 )}
                 {activeWhatsAppPayload && saleResultBanner.type === 'success' && (
                   <div className="mt-2 pt-2 border-t border-emerald-400/30 flex items-center justify-between gap-2">
@@ -1377,39 +1513,11 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               })
             )}
           </div>
-
-          {/* Quick Simulation Input Strip (To test comment stream live) */}
-          <div className="mt-1.5 flex items-center gap-1">
-            <select
-              value={manualCommentPlatform}
-              onChange={e => setManualCommentPlatform(e.target.value as any)}
-              className="bg-black/75 border border-white/20 rounded-lg px-2 py-1 text-[10px] text-amber-300 font-bold focus:outline-hidden"
-            >
-              <option value="tiktok">TikTok</option>
-              <option value="facebook">FB Live</option>
-              <option value="instagram">Instagram</option>
-              <option value="youtube">YouTube</option>
-            </select>
-            <input
-              type="text"
-              placeholder="Test live comment (e.g. MINE 180)..."
-              value={manualCommentInput}
-              onChange={e => setManualCommentInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handlePostComment()}
-              className="flex-1 bg-black/70 border border-white/20 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-400 focus:outline-hidden focus:border-amber-400"
-            />
-            <button
-              onClick={handlePostComment}
-              className="px-2.5 py-1 bg-white/20 hover:bg-white/30 text-white rounded-lg text-xs font-bold transition-all cursor-pointer"
-            >
-              <Send className="w-3.5 h-3.5" />
-            </button>
-          </div>
         </div>
       </div>
 
       {/* ================= FAST SALE CONTROL STRIP (FIXED MOBILE BOTTOM DOCK) ================= */}
-      <footer className="relative z-20 w-full bg-slate-950/95 backdrop-blur-2xl border-t border-amber-500/30 px-3 pt-2.5 pb-3 flex flex-col gap-2 shadow-2xl">
+      <footer className="relative z-20 w-full shrink-0 bg-slate-950/95 backdrop-blur-2xl border-t border-amber-500/30 px-3 pt-2.5 pb-3 flex flex-col gap-2 shadow-2xl">
         {/* Row 1: Active Vintage SKU Summary & Gate Pass Cost Tag */}
         <div className="flex items-center justify-between gap-2">
           {/* SKU Pill & Switcher */}
@@ -1427,13 +1535,13 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 </span>
                 {selectedPiece && (
                   <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-500/30 text-amber-200">
-                    {selectedPiece.sizeScanned || 'M'}
+                    {selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || (selectedPiece as any).size || 'M'}
                   </span>
                 )}
               </div>
               <p className="text-[11px] text-slate-300 truncate font-medium">
                 {selectedPiece
-                  ? `${selectedPiece.brandName} • ${selectedPiece.itemName}`
+                  ? `${selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage'} • ${selectedPiece.itemName || (selectedPiece as any).item_name || 'Garment'}`
                   : 'Tap to pick garment from inventory'}
               </p>
             </div>
@@ -1501,7 +1609,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           </button>
         </div>
 
-        {/* Row 3: Buyer Handle & Primary 'CONFIRM SALE' Button */}
+        {/* Row 3: Buyer Handle & Fast Action Buttons */}
         <div className="flex items-center gap-2">
           {/* Buyer Handle Input */}
           <div className="flex-1 relative">
@@ -1514,24 +1622,42 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             />
           </div>
 
+          {/* Quick Lock & Draft Button */}
+          <button
+            onClick={handleManualLockDraft}
+            disabled={isProcessingLock || isProcessingSale || !selectedPiece}
+            className={`py-2 px-3 rounded-xl font-bold text-xs tracking-wider uppercase transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer shrink-0 ${
+              isProcessingLock || isProcessingSale || !selectedPiece
+                ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/50 active:scale-95'
+            }`}
+          >
+            {isProcessingLock ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Lock className="w-3.5 h-3.5" />
+            )}
+            <span>Lock / Draft</span>
+          </button>
+
           {/* Primary CONFIRM SALE Button with Haptic feedback & instant ERP posting */}
           <button
             onClick={handleConfirmSale}
-            disabled={isProcessingSale || !selectedPiece}
-            className={`flex-2 py-2.5 px-4 rounded-xl font-black text-sm tracking-wider uppercase transition-all shadow-xl flex items-center justify-center gap-2 cursor-pointer ${
-              isProcessingSale || !selectedPiece
+            disabled={isProcessingSale || isProcessingLock || !selectedPiece}
+            className={`py-2 px-3.5 rounded-xl font-black text-xs tracking-wider uppercase transition-all shadow-xl flex items-center justify-center gap-1.5 cursor-pointer shrink-0 ${
+              isProcessingSale || isProcessingLock || !selectedPiece
                 ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                 : 'bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 text-slate-950 active:scale-98 hover:brightness-110 shadow-amber-500/25 border border-amber-300'
             }`}
           >
             {isProcessingSale ? (
               <>
-                <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
-                Posting Sale...
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" />
+                Posting...
               </>
             ) : (
               <>
-                <Zap className="w-4 h-4 fill-slate-950" />
+                <Zap className="w-3.5 h-3.5 fill-slate-950" />
                 Confirm Sale (AED {sellingPrice})
               </>
             )}
@@ -1571,13 +1697,12 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 .filter(p => {
                   if (!skuSearchInput) return true;
                   const q = skuSearchInput.toLowerCase();
-                  return (
-                    p.barcode.toLowerCase().includes(q) ||
-                    p.brandName.toLowerCase().includes(q) ||
-                    p.itemName.toLowerCase().includes(q)
-                  );
+                  const bCode = (p.barcode || p.sku || '').toLowerCase();
+                  const bName = (p.brandName || (p as any).brand_name || '').toLowerCase();
+                  const iName = (p.itemName || (p as any).item_name || '').toLowerCase();
+                  return bCode.includes(q) || bName.includes(q) || iName.includes(q);
                 })
-                .slice(0, 30)
+                .slice(0, 50)
                 .map(piece => {
                   const isCur = selectedPiece?.barcode === piece.barcode;
                   return (
@@ -1585,7 +1710,8 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                       key={piece.id}
                       onClick={() => {
                         setSelectedPiece(piece);
-                        setSellingPrice(piece.lockedPrice || piece.estimatedPrice || piece.retailPriceAed || 120);
+                        const price = Number(piece.lockedPrice || piece.estimatedPrice || piece.retailPriceAed || (piece as any).retail_price_aed || 120);
+                        setSellingPrice(price);
                         setShowSkuPicker(false);
                       }}
                       className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 cursor-pointer transition-all ${
@@ -1600,22 +1726,22 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                             {piece.barcode}
                           </span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 font-bold">
-                            {piece.sizeScanned || 'M'}
+                            {piece.sizeScanned || (piece as any).size_scanned || (piece as any).size || 'M'}
                           </span>
                         </div>
                         <p className="text-xs font-medium text-slate-300 mt-0.5">
-                          {piece.brandName} • {piece.itemName}
+                          {piece.brandName || (piece as any).brand_name || 'Vintage'} • {piece.itemName || (piece as any).item_name || 'Garment'}
                         </p>
                         <p className="text-[10px] text-slate-400 font-mono">
-                          Bale: {piece.barcode.split('-').slice(0, 3).join('-') || 'VV-BAL-001'} | Weight: {piece.weightKg || 0.45}kg
+                          Bale: {(piece.bale_id || (piece as any).gate_pass_id || piece.barcode || '').split('-').slice(0, 3).join('-') || 'VV-BAL-001'} | Weight: {piece.weightKg || (piece as any).weight_kg || 0.45}kg
                         </p>
                       </div>
                       <div className="text-right">
                         <span className="block font-bold text-amber-400 text-sm">
-                          AED {piece.lockedPrice || piece.estimatedPrice || piece.retailPriceAed || 120}
+                          AED {piece.lockedPrice || piece.estimatedPrice || piece.retailPriceAed || (piece as any).retail_price_aed || 120}
                         </span>
                         <span className="text-[10px] text-slate-400">
-                          COGS: AED {piece.costPrice || (piece.weightKg ? (piece.weightKg * 20).toFixed(2) : '20.00')}
+                          COGS: AED {piece.costPrice || (piece as any).cost_price || (piece.weightKg ? (piece.weightKg * 20).toFixed(2) : '20.00')}
                         </span>
                       </div>
                     </div>
@@ -1756,7 +1882,13 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                               : 'bg-slate-500'
                           }`}
                         />
-                        {ch.auth_status}
+                        {isLoggedIn
+                          ? 'CONNECTED'
+                          : isWaitingOtp
+                          ? 'WAITING OTP'
+                          : ch.auth_status === 'AUTHENTICATING'
+                          ? 'AUTHENTICATING'
+                          : 'DISCONNECTED'}
                       </span>
                     </div>
 

@@ -7540,6 +7540,48 @@ RULES FOR YOUR RESPONSE:
     // SALES MODULE ENDPOINTS
     // ========================================================================
     if (pathname.startsWith('/api/sales') || pathname.startsWith('/sales')) {
+      // Sub-route: POST /api/sales/release-stuck-pieces or /api/sales/release-all (Direct DB unlock)
+      if ((pathname.includes('/release-stuck-pieces') || pathname.includes('/release-all')) && method === 'POST') {
+        const client = await getPgClient();
+        if (!client) {
+          return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        }
+        try {
+          const updateRes = await client.query(`
+            UPDATE inventory_pieces
+            SET status = 'IN_STOCK',
+                locked_by_buyer = NULL,
+                locked_by_booth = NULL,
+                locked_by_station = NULL,
+                lock_expires_at = NULL,
+                reserved_until = NULL,
+                is_sold = false,
+                updated_at = NOW()
+            WHERE (status IN ('RESERVED', 'CLAIMED_PENDING', 'LOCKED')
+                   OR locked_by_buyer IS NOT NULL
+                   OR lock_expires_at IS NOT NULL
+                   OR reserved_until IS NOT NULL)
+              AND (is_sold IS FALSE OR is_sold IS NULL)
+            RETURNING id, barcode, item_name, brand_name, status;
+          `);
+
+          try {
+            await client.query("UPDATE cart_reservations SET is_active = false WHERE is_active = true;");
+          } catch (_) {}
+
+          return res.status(200).json({
+            success: true,
+            count: updateRes.rowCount || 0,
+            pieces: updateRes.rows || [],
+            message: `Successfully released ${updateRes.rowCount || 0} stuck piece(s) back to IN_STOCK.`
+          });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || 'Failed to release stuck pieces' });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
       // Sub-route: GET /api/sales/customer-history (Customer statement & POS invoices)
       if (pathname.includes('/customer-history') && method === 'GET') {
         const partyId = parsedUrl.searchParams.get('partyId') || (req.query?.partyId as string) || '';
@@ -11548,7 +11590,7 @@ RULES FOR YOUR RESPONSE:
                  reserved_until = NULL,
                  updated_at = NOW()
              WHERE (LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1)
-               AND (status = 'RESERVED' OR status = 'CLAIMED_PENDING')
+               AND (is_sold IS FALSE OR is_sold IS NULL)
              RETURNING *;`,
             [barcode]
           );
@@ -11560,6 +11602,49 @@ RULES FOR YOUR RESPONSE:
           });
         } catch (dbErr: any) {
           return res.status(500).json({ success: false, error: dbErr.message || 'Failed to release lock' });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      // 13-B2. Live Selling Release All Endpoint
+      if ((pathname.includes('/live-stream/release-all') || pathname.includes('/live/release-all')) && method === 'POST') {
+        const client = await getPgClient();
+        if (!client) {
+          return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        }
+        try {
+          const resAll = await client.query(
+            `UPDATE inventory_pieces
+             SET status = 'IN_STOCK',
+                 locked_by_station = NULL,
+                 locked_at = NULL,
+                 locked_by_buyer = NULL,
+                 locked_by_booth = NULL,
+                 lock_expires_at = NULL,
+                 reserved_until = NULL,
+                 is_sold = false,
+                 updated_at = NOW()
+             WHERE (status IN ('RESERVED', 'CLAIMED_PENDING', 'LOCKED')
+                    OR locked_by_buyer IS NOT NULL
+                    OR lock_expires_at IS NOT NULL
+                    OR reserved_until IS NOT NULL)
+               AND (is_sold IS FALSE OR is_sold IS NULL)
+             RETURNING id, barcode, item_name, brand_name, status;`
+          );
+
+          try {
+            await client.query("UPDATE cart_reservations SET is_active = false WHERE is_active = true;");
+          } catch (_) {}
+
+          return res.status(200).json({
+            success: true,
+            count: resAll.rowCount || 0,
+            pieces: resAll.rows || [],
+            message: `Successfully released ${resAll.rowCount || 0} pieces back to IN_STOCK.`
+          });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || 'Failed to release all locks' });
         } finally {
           try { await client.end(); } catch (_) {}
         }
@@ -11713,6 +11798,249 @@ RULES FOR YOUR RESPONSE:
         } catch (finalizeErr: any) {
           console.error('[Live Stream Finalize Error]', finalizeErr);
           return res.status(500).json({ success: false, error: finalizeErr.message || 'Failed to finalize live session' });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      // 13-E. Live Stream Confirm Sale (/api/live-stream/confirm-sale or /api/live/confirm-sale)
+      if ((pathname.includes('/live-stream/confirm-sale') || pathname.includes('/live/confirm-sale')) && method === 'POST') {
+        const { barcode, buyerHandle, buyerPhone, finalSellingPrice, paymentMethod, channel, shippingAddress } = body || {};
+        if (!barcode || !buyerHandle) {
+          return res.status(400).json({ success: false, error: 'barcode and buyerHandle are required' });
+        }
+
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+
+        try {
+          const pieceRes = await client.query(
+            `SELECT id, barcode, sku, item_name, brand_name, cost_price,
+                    COALESCE(retail_price_aed, cost_price, 120) as retail_price_aed,
+                    weight_kg, weight_grams, size_scanned, is_sold, status
+             FROM inventory_pieces
+             WHERE (LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1)
+             LIMIT 1;`,
+            [barcode]
+          );
+
+          if (pieceRes.rowCount === 0) {
+            return res.status(404).json({ success: false, error: `Piece "${barcode}" not found in inventory.` });
+          }
+
+          const p = pieceRes.rows[0];
+          if (p.is_sold || p.status === 'SOLD') {
+            return res.status(400).json({ success: false, error: `Piece "${barcode}" is already marked as SOLD.` });
+          }
+
+          const price = Number(finalSellingPrice || p.retail_price_aed || 120);
+          const vatRate = 0.05;
+          const subTotal = Number(price.toFixed(2));
+          const vatAmount = Number((subTotal * vatRate).toFixed(2));
+          const grandTotal = Number((subTotal + vatAmount).toFixed(2));
+          const cogs = Number(p.cost_price || (Number(p.weight_kg || 0.45) * 20) || 20);
+
+          const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+          const randSuffix = Math.floor(1000 + Math.random() * 9000);
+          const invoiceNo = `LIVE-${dateStr}-${randSuffix}`;
+          const invId = `sls-live-${Date.now()}`;
+
+          const itemObj = {
+            id: `sii-live-${Date.now()}-0`,
+            barcode: p.barcode || p.sku,
+            description: `${p.brand_name || 'Vintage'} ${p.item_name || 'Garment'} (${p.size_scanned || 'M'})`,
+            weightKg: Number(p.weight_kg || 0.45),
+            weightGrams: Number(p.weight_grams || 450),
+            unitPrice: subTotal,
+            discount: 0,
+            finalAmount: subTotal,
+            lineTotal: subTotal
+          };
+
+          // Insert into sales_invoices as POSTED
+          const insertRes = await client.query(
+            `INSERT INTO sales_invoices (
+               id, invoice_no, customer_name, customer_phone, invoice_date,
+               channel, payment_method, payment_status, shipping_address,
+               subtotal, discount_amount, tax_amount, total_amount, status,
+               items, shipping_fee, shipping_bearer, created_at
+             ) VALUES (
+               $1, $2, $3, $4, CURRENT_DATE,
+               'LIVE_STREAM', $5, 'PAID', $6,
+               $7, 0, $8, $9, 'POSTED',
+               $10::jsonb, 0, 'Company Bears', NOW()
+             ) RETURNING *;`,
+            [
+              invId,
+              invoiceNo,
+              buyerHandle,
+              buyerPhone || '+971 50 000 0000',
+              paymentMethod || 'CASH',
+              shippingAddress || 'Storefront / Handover',
+              subTotal,
+              vatAmount,
+              grandTotal,
+              JSON.stringify([itemObj])
+            ]
+          );
+
+          // Mark piece as SOLD
+          await client.query(
+            `UPDATE inventory_pieces
+             SET status = 'SOLD',
+                 is_sold = true,
+                 locked_by_buyer = $1,
+                 updated_at = NOW()
+             WHERE id = $2;`,
+            [buyerHandle, p.id]
+          );
+
+          const whatsAppPayload = {
+            customerPhone: buyerPhone || '+971 50 000 0000',
+            buyerHandle,
+            invoiceNo,
+            barcode: p.barcode || p.sku,
+            priceAed: grandTotal,
+            message: `🎉 *ORDER CONFIRMED - VINTAGE VIBES DUBAI*\n\nHello @${buyerHandle}! Your claim for piece *${p.barcode || barcode}* has been confirmed.\n\n💵 *Total:* AED ${grandTotal.toFixed(2)}\n🧾 *Invoice:* ${invoiceNo}\n\nThank you for shopping with Vintage Vibes!`
+          };
+
+          return res.status(200).json({
+            success: true,
+            invoice: {
+              ...insertRes.rows[0],
+              invoiceNo,
+              customerName: buyerHandle,
+              totalAmount: grandTotal,
+              items: [itemObj]
+            },
+            accountingEntry: {
+              arDebit: grandTotal,
+              salesCredit: subTotal,
+              vatCredit: vatAmount,
+              cogsDebit: cogs,
+              inventoryCredit: cogs
+            },
+            whatsAppPayload
+          });
+        } catch (err: any) {
+          return res.status(500).json({ success: false, error: err.message || 'Failed to confirm live sale' });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      // 13-F. Live Stream Lock and Draft (/api/live-stream/lock-and-draft or /api/live/lock-and-draft)
+      if ((pathname.includes('/live-stream/lock-and-draft') || pathname.includes('/live/lock-and-draft')) && method === 'POST') {
+        const { barcode, buyerHandle, buyerPhone, offeredPrice, channel } = body || {};
+        if (!barcode || !buyerHandle) {
+          return res.status(400).json({ success: false, error: 'barcode and buyerHandle are required' });
+        }
+
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+
+        try {
+          const pieceRes = await client.query(
+            `SELECT id, barcode, sku, item_name, brand_name, cost_price,
+                    COALESCE(retail_price_aed, cost_price, 120) as retail_price_aed,
+                    weight_kg, weight_grams, size_scanned, is_sold, status
+             FROM inventory_pieces
+             WHERE (LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1)
+             LIMIT 1;`,
+            [barcode]
+          );
+
+          if (pieceRes.rowCount === 0) {
+            return res.status(404).json({ success: false, error: `Piece "${barcode}" not found in inventory.` });
+          }
+
+          const p = pieceRes.rows[0];
+          if (p.is_sold || p.status === 'SOLD') {
+            return res.status(400).json({ success: false, error: `Piece "${barcode}" is already SOLD.` });
+          }
+
+          const price = Number(offeredPrice || p.retail_price_aed || 120);
+          const subTotal = price;
+          const vatAmount = Number((subTotal * 0.05).toFixed(2));
+          const grandTotal = Number((subTotal + vatAmount + 25).toFixed(2));
+
+          const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+          const randSuffix = Math.floor(1000 + Math.random() * 9000);
+          const invoiceNo = `LIVE-${dateStr}-${randSuffix}`;
+          const invId = `sls-live-${Date.now()}`;
+
+          const itemObj = {
+            id: `sii-live-${Date.now()}-0`,
+            barcode: p.barcode || p.sku,
+            description: `${p.brand_name || 'Vintage'} ${p.item_name || 'Garment'} (${p.size_scanned || 'M'})`,
+            weightKg: Number(p.weight_kg || 0.45),
+            weightGrams: Number(p.weight_grams || 450),
+            unitPrice: price,
+            discount: 0,
+            finalAmount: price,
+            lineTotal: price
+          };
+
+          // Insert into sales_invoices as DRAFT
+          const insertRes = await client.query(
+            `INSERT INTO sales_invoices (
+               id, invoice_no, customer_name, customer_phone, invoice_date,
+               channel, payment_method, payment_status, shipping_address,
+               subtotal, discount_amount, tax_amount, total_amount, status,
+               items, shipping_fee, shipping_bearer, created_at
+             ) VALUES (
+               $1, $2, $3, $4, CURRENT_DATE,
+               'LIVE_STREAM', 'COD', 'PENDING_COD', 'Dubai, UAE Delivery',
+               $5, 0, $6, $7, 'DRAFT',
+               $8::jsonb, 25, 'Customer Bears', NOW()
+             ) RETURNING *;`,
+            [
+              invId,
+              invoiceNo,
+              buyerHandle,
+              buyerPhone || '+971 50 000 0000',
+              subTotal,
+              vatAmount,
+              grandTotal,
+              JSON.stringify([itemObj])
+            ]
+          );
+
+          // Lock piece in inventory_pieces as RESERVED
+          await client.query(
+            `UPDATE inventory_pieces
+             SET status = 'RESERVED',
+                 locked_by_buyer = $1,
+                 locked_at = NOW(),
+                 lock_expires_at = $2,
+                 reserved_until = $3,
+                 updated_at = NOW()
+             WHERE id = $4;`,
+            [
+              buyerHandle,
+              String(Date.now() + 180 * 1000),
+              String(Date.now() + 120 * 60 * 1000),
+              p.id
+            ]
+          );
+
+          return res.status(200).json({
+            success: true,
+            draftInvoice: {
+              ...insertRes.rows[0],
+              invoiceNo,
+              customerName: buyerHandle,
+              totalAmount: grandTotal,
+              items: [itemObj]
+            },
+            piece: {
+              ...p,
+              lockedByBuyer: buyerHandle,
+              lockedPrice: price
+            }
+          });
+        } catch (err: any) {
+          return res.status(500).json({ success: false, error: err.message || 'Failed to lock and draft order' });
         } finally {
           try { await client.end(); } catch (_) {}
         }

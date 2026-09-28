@@ -109,12 +109,54 @@ export class SalesService {
 
     const isUuid = (val?: string) => Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim()));
 
+    // 1. Try serverless backend unlock endpoint first
+    if (barcode) {
+      try {
+        const apiRes = await fetch('/api/live-stream/release-lock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ barcode })
+        });
+        if (apiRes.ok) {
+          const apiJson = await apiRes.json();
+          if (apiJson.success && apiJson.piece) {
+            const p = apiJson.piece;
+            if (typeof window !== 'undefined') {
+              try {
+                window.dispatchEvent(new CustomEvent('vv:realtime-record', {
+                  detail: { table: 'inventory_pieces', eventType: 'UPDATE', new: p }
+                }));
+                window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+                  detail: { module: 'inventory', entity: 'inventory_pieces', action: 'UPDATE', documentRef: p.barcode || barcode }
+                }));
+                window.dispatchEvent(new CustomEvent('vv:cart-force-cleared', {
+                  detail: { count: 1, pieces: [p] }
+                }));
+              } catch (_) {}
+            }
+            return p;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 2. Direct Supabase Fallback with thorough lock clearance
     let data: any[] | null = null;
+    const updatePayload = {
+      status: 'IN_STOCK',
+      is_sold: false,
+      locked_by_buyer: null,
+      locked_by_booth: null,
+      locked_by_station: null,
+      lock_expires_at: null,
+      reserved_until: null,
+      updated_at: new Date().toISOString()
+    };
 
     if (pieceId && isUuid(pieceId)) {
       const res = await supabase
         .from('inventory_pieces')
-        .update({ status: 'IN_STOCK', is_sold: false, updated_at: new Date().toISOString() })
+        .update(updatePayload)
         .eq('id', pieceId.trim())
         .select();
       data = res.data;
@@ -123,7 +165,7 @@ export class SalesService {
     if ((!data || data.length === 0) && barcode) {
       const res = await supabase
         .from('inventory_pieces')
-        .update({ status: 'IN_STOCK', is_sold: false, updated_at: new Date().toISOString() })
+        .update(updatePayload)
         .eq('barcode', barcode.trim())
         .select();
       data = res.data;
@@ -153,14 +195,56 @@ export class SalesService {
 
   /**
    * Force release all stuck / orphaned cart reservations back to IN_STOCK.
-   * Strictly targets unbilled pieces: status = 'RESERVED' AND is_sold = false AND (sold_invoice_id IS NULL)
+   * Cleans up all locks in PostgreSQL and clears active cart reservations.
    */
   public static async releaseAllStuckReservations(): Promise<{ success: boolean; count: number; pieces: any[] }> {
     try {
+      // 1. Try serverless backend endpoint first for atomic PostgreSQL execution
+      try {
+        const res = await fetch('/api/sales/release-stuck-pieces', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success) {
+            const releasedPieces = json.pieces || [];
+            if (typeof window !== 'undefined') {
+              try {
+                window.dispatchEvent(new CustomEvent('vv:cart-force-cleared', {
+                  detail: { count: json.count || releasedPieces.length, pieces: releasedPieces }
+                }));
+                window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
+                  detail: { module: 'inventory', entity: 'inventory_pieces', action: 'RELEASE_ALL_RESERVATIONS', count: json.count || releasedPieces.length }
+                }));
+                if ('BroadcastChannel' in window) {
+                  const bc = new BroadcastChannel('vv_pos_sync');
+                  bc.postMessage({ type: 'CART_FORCE_CLEARED', count: json.count || releasedPieces.length, pieces: releasedPieces });
+                  bc.close();
+                }
+              } catch (_) {}
+            }
+            return { success: true, count: json.count || releasedPieces.length, pieces: releasedPieces };
+          }
+        }
+      } catch (_) {
+        // Fall back to direct Supabase
+      }
+
+      // 2. Direct Supabase Fallback with thorough lock clearance
       const { data, error } = await supabase
         .from('inventory_pieces')
-        .update({ status: 'IN_STOCK', is_sold: false, updated_at: new Date().toISOString() })
-        .eq('status', 'RESERVED')
+        .update({
+          status: 'IN_STOCK',
+          is_sold: false,
+          locked_by_buyer: null,
+          locked_by_booth: null,
+          locked_by_station: null,
+          lock_expires_at: null,
+          reserved_until: null,
+          updated_at: new Date().toISOString()
+        })
+        .in('status', ['RESERVED', 'CLAIMED_PENDING', 'LOCKED'])
         .eq('is_sold', false)
         .select('id, barcode, item_name, brand_name, status');
 

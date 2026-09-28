@@ -1112,9 +1112,9 @@ export async function executePessimisticClaim(params: {
 
     // 2. Row count was 0: query current state to diagnose concurrency collision
     const checkRes = await pool.query(
-      `SELECT id, barcode, sku, item_name, brand_name, status, locked_by_station, locked_by_buyer, is_sold, sold_invoice_id
+      `SELECT id, barcode, sku, item_name, brand_name, status, locked_by_station, locked_by_buyer, is_sold
        FROM inventory_pieces
-       WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id = $1
+       WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1
        LIMIT 1;`,
       [cleanId]
     );
@@ -1131,7 +1131,7 @@ export async function executePessimisticClaim(params: {
     if (row.is_sold || row.status === 'SOLD') {
       return {
         success: false,
-        error: `Already Sold: SKU "${cleanId}" has already been sold on invoice ${row.sold_invoice_id || 'PREV'}.`,
+        error: `Already Sold: SKU "${cleanId}" has already been sold.`,
         statusCode: 409
       };
     }
@@ -1176,8 +1176,8 @@ export async function executeReleaseLock(params: {
              lock_expires_at = NULL,
              reserved_until = NULL,
              updated_at = NOW()
-         WHERE (LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id = $1)
-           AND (status = 'RESERVED' OR status = 'CLAIMED_PENDING')
+         WHERE (LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1)
+           AND (is_sold IS FALSE OR is_sold IS NULL)
          RETURNING *;`,
         [cleanId]
       );
