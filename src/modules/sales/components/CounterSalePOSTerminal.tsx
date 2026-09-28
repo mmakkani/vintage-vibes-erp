@@ -966,10 +966,11 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     setIsPushingPaymobCloud(true);
     setPaymobCloudMessage(null);
     try {
-      const tid = activeDevice?.paymobTid || activeDevice?.terminalId || '12857001';
-      const mid = activeDevice?.paymobMid || activeDevice?.merchantId || '85283';
-      const apiKey = activeDevice?.paymobApiKey || '';
-      const integrationId = activeDevice?.paymobIntegrationId || '';
+      const fallbackFleetDevice = activeProfile?.bankAccounts?.flatMap((b: any) => b.posFleet || [])?.find((d: any) => d?.paymobApiKey);
+      const tid = activeDevice?.paymobTid || activeDevice?.terminalId || fallbackFleetDevice?.terminalId || '12857001';
+      const mid = activeDevice?.paymobMid || activeDevice?.merchantId || fallbackFleetDevice?.merchantId || '85283';
+      const apiKey = activeDevice?.paymobApiKey || fallbackFleetDevice?.paymobApiKey || '';
+      const integrationId = activeDevice?.paymobIntegrationId || fallbackFleetDevice?.paymobIntegrationId || '';
 
       const res = await PaymobService.pushAmountToTerminal({
         terminalId: tid,

@@ -19,6 +19,7 @@ import {
 
 import { COAAccount } from '../finance.types.ts';
 import { FinanceService } from '../../../services/financeService.ts';
+import { SalesService } from '../../../services/salesService.ts';
 
 interface CourierCODReconciliationProps {
   onRefreshAll?: () => void;
@@ -103,13 +104,18 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
   const loadCODInvoices = async () => {
     try {
       setLoading(true);
-      const data = await safeFetchJson<SalesInvoice[]>('/api/sales/invoices', undefined, 3, 300);
+      let data = await safeFetchJson<SalesInvoice[]>('/api/sales/invoices', undefined, 3, 300);
+      if (!Array.isArray(data) || data.length === 0) {
+        try {
+          data = await SalesService.getSalesInvoices({ limit: 100 });
+        } catch (_) {}
+      }
       if (Array.isArray(data)) {
         // Filter for COD orders (COD payment method, UNPAID_PENDING_COD, or orders with couriers assigned)
         const codOrders = data.filter(inv => {
           const pm = (inv.paymentMethod || '').toUpperCase();
           const ps = (inv.paymentStatus || '').toUpperCase();
-          return pm === 'COD' || pm === 'CASH_ON_DELIVERY' || ps === 'UNPAID_PENDING_COD' || ps === 'PENDING' || inv.courierPartner || inv.trackingNumber;
+          return pm === 'COD' || pm === 'CASH_ON_DELIVERY' || ps === 'UNPAID_PENDING_COD' || ps === 'PENDING' || Boolean(inv.courierPartner) || Boolean(inv.trackingNumber);
         });
         setInvoices(codOrders);
       }

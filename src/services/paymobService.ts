@@ -48,11 +48,15 @@ export class PaymobService {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 seconds for cloud handshake
 
+      const authHeader = effectiveApiKey.startsWith('are_sk_') || effectiveApiKey.startsWith('egy_sk_') || effectiveApiKey.startsWith('om_sk_') || effectiveApiKey.startsWith('sk_')
+        ? `Bearer ${effectiveApiKey}`
+        : (effectiveApiKey.startsWith('Bearer ') || effectiveApiKey.startsWith('Token ') ? effectiveApiKey : `Token ${effectiveApiKey}`);
+
       const response = await fetch('https://uae.paymob.com/api/acceptance/payments/pay', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Token ${effectiveApiKey}`
+          'Authorization': authHeader
         },
         body: JSON.stringify({
           source: {

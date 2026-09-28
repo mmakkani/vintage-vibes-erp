@@ -11,6 +11,20 @@ export const setupRouter = Router();
 setupRouter.get(['/company', '/company-profile'], async (req, res) => {
   try {
     const data = await CompanyProfileService.getCompanyProfile();
+    const localProfile = SetupController.getCompanyProfile();
+    if (!data.bankAccounts || data.bankAccounts.length === 0) {
+      data.bankAccounts = localProfile.bankAccounts || [];
+    } else if (localProfile.bankAccounts && localProfile.bankAccounts.length > 0) {
+      // Ensure each bank account has its posFleet populated if missing
+      data.bankAccounts.forEach(b => {
+        if (!b.posFleet || b.posFleet.length === 0) {
+          const matchLocal = localProfile.bankAccounts?.find(lb => lb.id === b.id || lb.bankName === b.bankName);
+          if (matchLocal && matchLocal.posFleet) {
+            b.posFleet = matchLocal.posFleet;
+          }
+        }
+      });
+    }
     return res.json(data);
   } catch (_) {
     return res.json(SetupController.getCompanyProfile());

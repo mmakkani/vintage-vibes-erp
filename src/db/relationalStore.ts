@@ -742,20 +742,71 @@ class RelationalStore {
       this.companyProfile.bankAccounts = [
         {
           id: 'bnk-primary',
-          bankName: this.companyProfile.bankName || 'Emirates NBD',
+          bankName: this.companyProfile.bankName || 'RAK BANK',
           accountTitle: this.companyProfile.bankAccountTitle || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
           iban: this.companyProfile.bankIban || 'AE24 0331 2345 6789 0123 456',
           accountNumber: this.companyProfile.bankAccountNumber || '1048291029301',
-          branchName: 'Business Bay / Downtown Dubai',
+          branchName: 'Dubai Downtown / Al Quoz',
           swiftBic: 'EBILAEADXXX',
           currency: 'AED',
-          qrCodeUrl: this.companyProfile.bankQrCodeUrl || 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBE%20LLC%26bank%3DEMIRATES%20NBD',
+          qrCodeUrl: this.companyProfile.bankQrCodeUrl || 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBE%20LLC%26bank%3DRAK%20BANK',
           isPrimary: true,
-          linkedPosTerminalId: posConfig?.id || 'pos-default-01',
+          linkedPosTerminalId: '12857001',
           coaAccountCode: '1120-00',
-          status: 'ACTIVE'
+          status: 'ACTIVE',
+          posFleet: [
+            {
+              id: 'pos-pax-a960-01',
+              name: 'Counter 1 - PAX A960 4G Smart Terminal',
+              model: 'PAX_A960',
+              connectionType: 'CELLULAR_SIM',
+              terminalId: '12857001',
+              merchantId: '85283',
+              serialNumber: '1180511614',
+              simCarrier: 'DU',
+              paymobTid: '12857001',
+              paymobMid: '85283',
+              paymobApiKey: (typeof process !== 'undefined' && (process.env.PAYMOB_API_KEY || process.env.VITE_PAYMOB_API_KEY)) || '',
+              paymobIntegrationId: '',
+              cloudPushEnabled: true,
+              isActive: true,
+              status: 'ONLINE',
+              location: 'Main Cash Counter',
+              bankId: 'bnk-primary',
+              bankName: 'RAK BANK',
+              bankCoaCode: '1120-00'
+            }
+          ]
         }
       ];
+    } else {
+      const primaryBank = this.companyProfile.bankAccounts[0];
+      if (primaryBank && (!primaryBank.posFleet || primaryBank.posFleet.length === 0)) {
+        primaryBank.linkedPosTerminalId = '12857001';
+        primaryBank.posFleet = [
+          {
+            id: 'pos-pax-a960-01',
+            name: 'Counter 1 - PAX A960 4G Smart Terminal',
+            model: 'PAX_A960',
+            connectionType: 'CELLULAR_SIM',
+            terminalId: '12857001',
+            merchantId: '85283',
+            serialNumber: '1180511614',
+            simCarrier: 'DU',
+            paymobTid: '12857001',
+            paymobMid: '85283',
+            paymobApiKey: (typeof process !== 'undefined' && (process.env.PAYMOB_API_KEY || process.env.VITE_PAYMOB_API_KEY)) || '',
+            paymobIntegrationId: '',
+            cloudPushEnabled: true,
+            isActive: true,
+            status: 'ONLINE',
+            location: 'Main Cash Counter',
+            bankId: primaryBank.id,
+            bankName: primaryBank.bankName,
+            bankCoaCode: primaryBank.coaAccountCode || '1120-00'
+          }
+        ];
+      }
     }
 
     // Sync each bank to COA
@@ -5145,13 +5196,15 @@ class RelationalStore {
   }
 
   public unpostSalesInvoice(invoiceId: string): { success: boolean; error?: string } {
-    const invoice = this.salesInvoices.find(i => i.id === invoiceId);
+    const invoice = this.salesInvoices.find(
+      i => i.id === invoiceId || i.invoiceNo === invoiceId || String(i.id) === String(invoiceId)
+    );
     if (!invoice) return { success: false, error: 'Invoice not found' };
 
     invoice.status = 'DRAFT';
 
     // 1. Restore piece inventory
-    invoice.items.forEach(item => {
+    invoice.items?.forEach(item => {
       const piece = this.inventoryPieces.find(p => p.barcode === item.barcode);
       if (piece) {
         piece.isSold = false;
@@ -5187,6 +5240,58 @@ class RelationalStore {
     this.auditLogs.unshift(
       AuditEngine.createLogEntry('SALES', 'UNPOST', invoice.invoiceNo, 'DRAFT', 'Accounts Lead', `Unposted Sales Invoice ${invoice.invoiceNo}, restored pieces to stock, and deleted financial impact`)
     );
+
+    this.saveToDisk();
+
+    return { success: true };
+  }
+
+  public deleteSalesInvoice(invoiceId: string): { success: boolean; error?: string } {
+    const invoice = this.salesInvoices.find(
+      i => i.id === invoiceId || i.invoiceNo === invoiceId || String(i.id) === String(invoiceId)
+    );
+    if (!invoice) return { success: false, error: 'Invoice not found' };
+
+    // STRICT POST-LOCK GUARD: Cannot delete a POSTED invoice
+    if (invoice.status === 'POSTED') {
+      return {
+        success: false,
+        error: `Strict Post-Lock: Invoice ${invoice.invoiceNo} is finalized and POSTED. You must UNPOST it to DRAFT before deleting.`
+      };
+    }
+
+    // 1. Restore piece inventory if reserved/held
+    invoice.items?.forEach(item => {
+      const piece = this.inventoryPieces.find(p => p.barcode === item.barcode);
+      if (piece) {
+        piece.isSold = false;
+        piece.status = 'IN_STOCK';
+        piece.soldInvoiceId = undefined;
+        piece.lockedByBuyer = undefined;
+        piece.lockedByBooth = undefined;
+        piece.lockExpiresAt = undefined;
+        piece.reservedUntil = undefined;
+      }
+    });
+
+    // 2. Cascade delete any associated vouchers/khata
+    const voucher = this.vouchers.find(v => v.documentRef === invoice.invoiceNo || v.referenceNo === invoice.invoiceNo || v.id === `vch-sal-${invoice.id}`);
+    if (voucher) {
+      this.vouchers = this.vouchers.filter(v => v.id !== voucher.id);
+      this.voucherEntries = this.voucherEntries.filter(e => e.voucherId !== voucher.id);
+    }
+    this.journalEntries = this.journalEntries.filter(j => j.reference !== invoice.invoiceNo && (!voucher || j.voucherId !== voucher.id));
+
+    // 3. Remove invoice from salesInvoices array
+    this.salesInvoices = this.salesInvoices.filter(
+      i => i.id !== invoice.id && i.invoiceNo !== invoice.invoiceNo
+    );
+
+    this.auditLogs.unshift(
+      AuditEngine.createLogEntry('SALES', 'DELETE', invoice.invoiceNo, 'CANCELLED', 'Accounts Lead', `Deleted Draft Sales Invoice ${invoice.invoiceNo} and released inventory to stock`)
+    );
+
+    this.saveToDisk();
 
     return { success: true };
   }

@@ -133,10 +133,27 @@ salesRouter.get('/invoices', async (req, res) => {
         createdAt: row.created_at
       };
     });
+    // CRITICAL: Also merge in-memory/relationalStore sales invoices so live sales, drafts, and local POS invoices are never missing!
+    const storeInvoices = SalesController.getInvoices();
+    const existingNos = new Set(mapped.map(m => m.invoiceNo));
+    const existingIds = new Set(mapped.map(m => String(m.id)));
+    for (const sinv of storeInvoices) {
+      if (!existingNos.has(sinv.invoiceNo) && !existingIds.has(String(sinv.id))) {
+        mapped.push(sinv);
+      }
+    }
     return res.json(mapped);
   } catch (err) {
     try {
       const list = await SalesService.getSalesInvoices();
+      const storeInvoices = SalesController.getInvoices();
+      const existingNos = new Set(list.map(m => m.invoiceNo));
+      const existingIds = new Set(list.map(m => String(m.id)));
+      for (const sinv of storeInvoices) {
+        if (!existingNos.has(sinv.invoiceNo) && !existingIds.has(String(sinv.id))) {
+          list.push(sinv);
+        }
+      }
       return res.json(list);
     } catch (_) {
       return res.json(SalesController.getInvoices());
@@ -434,27 +451,35 @@ salesRouter.post('/invoices/:id/unpost', async (req, res) => {
   const { id } = req.params;
   let client: Client | null = null;
   try {
-    client = await getDbClient();
-    const invRes = await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id]);
-    if (invRes.rowCount > 0) {
-      const row = invRes.rows[0];
-      const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
-      const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
-      if (barcodes.length > 0) {
-        await client.query(`UPDATE inventory_pieces SET status = 'RESERVED', is_sold = false, updated_at = NOW() WHERE barcode = ANY($1)`, [barcodes]);
+    try {
+      client = await getDbClient();
+      const invRes = await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id]);
+      if (invRes.rowCount > 0) {
+        const row = invRes.rows[0];
+        const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
+        const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
+        if (barcodes.length > 0) {
+          await client.query(`UPDATE inventory_pieces SET status = 'IN_STOCK', is_sold = false, updated_at = NOW() WHERE barcode = ANY($1)`, [barcodes]);
+        }
+        await client.query(`UPDATE sales_invoices SET status = 'DRAFT' WHERE id = $1`, [row.id]);
+        const vNo = `JV-SLS-${row.invoice_no || row.id}`;
+        await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
+        await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
       }
-      await client.query(`UPDATE sales_invoices SET status = 'DRAFT' WHERE id = $1`, [row.id]);
-      const vNo = `JV-SLS-${row.invoice_no || row.id}`;
-      await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
-      await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
+    } catch (dbErr) {
+      console.warn('[salesRouter POST /invoices/:id/unpost] PostgreSQL notice:', dbErr);
+    } finally {
+      if (client) await client.end().catch(() => {});
     }
-    SalesController.unpostInvoice(id);
+
+    const unpostResult = SalesController.unpostInvoice(id);
+    if (!unpostResult.success) {
+      return res.status(400).json({ success: false, error: unpostResult.error || 'Failed to unpost invoice' });
+    }
     return res.json({ success: true, message: 'Sales invoice successfully unposted to DRAFT' });
   } catch (err: any) {
-    console.error('Error during sales invoice unpost in DB:', err);
-    return res.status(500).json({ success: false, error: err.message || 'Failed to unpost invoice' });
-  } finally {
-    if (client) await client.end().catch(() => {});
+    console.error('Error during sales invoice unpost:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to unpost invoice' });
   }
 });
 
@@ -462,29 +487,55 @@ salesRouter.delete('/invoices/:id', async (req, res) => {
   const { id } = req.params;
   let client: Client | null = null;
   try {
-    client = await getDbClient();
-    const invRes = await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id]);
-    if (invRes.rowCount > 0) {
-      const row = invRes.rows[0];
-      const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
-      const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
-      if (barcodes.length > 0) {
-        await client.query(`
-          UPDATE inventory_pieces
-          SET status = 'IN_STOCK', locked_by_buyer = NULL, locked_by_booth = NULL, lock_expires_at = NULL, reserved_until = NULL, is_sold = false, updated_at = NOW()
-          WHERE barcode = ANY($1)
-        `, [barcodes]);
-      }
-      const vNo = `JV-SLS-${row.invoice_no || row.id}`;
-      await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
-      await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
-      await client.query('DELETE FROM sales_invoices WHERE id = $1', [row.id]);
+    // 1. STRICT POST-LOCK CHECK: Verify in relationalStore
+    const relInv = relationalStore.getSalesInvoices().find(
+      i => i.id === id || i.invoiceNo === id || String(i.id) === String(id)
+    );
+    if (relInv && relInv.status === 'POSTED') {
+      return res.status(400).json({
+        success: false,
+        error: `Strict Post-Lock: Invoice ${relInv.invoiceNo} is finalized and POSTED. You must UNPOST it to DRAFT before deleting.`
+      });
     }
-    return res.json({ success: true, message: 'Invoice deleted and inventory released to stock' });
+
+    // 2. STRICT POST-LOCK CHECK: Verify in PostgreSQL
+    try {
+      client = await getDbClient();
+      const invRes = await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id]);
+      if (invRes.rowCount > 0) {
+        const row = invRes.rows[0];
+        if (row.status === 'POSTED') {
+          return res.status(400).json({
+            success: false,
+            error: `Strict Post-Lock: Invoice ${row.invoice_no || id} is finalized and POSTED. You must UNPOST it to DRAFT before deleting.`
+          });
+        }
+        const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
+        const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
+        if (barcodes.length > 0) {
+          await client.query(`
+            UPDATE inventory_pieces
+            SET status = 'IN_STOCK', locked_by_buyer = NULL, locked_by_booth = NULL, lock_expires_at = NULL, reserved_until = NULL, is_sold = false, updated_at = NOW()
+            WHERE barcode = ANY($1)
+          `, [barcodes]);
+        }
+        const vNo = `JV-SLS-${row.invoice_no || row.id}`;
+        await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
+        await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
+        await client.query('DELETE FROM sales_invoices WHERE id = $1', [row.id]);
+      }
+    } catch (dbErr) {
+      console.warn('[salesRouter DELETE /invoices/:id] PostgreSQL notice:', dbErr);
+    } finally {
+      if (client) await client.end().catch(() => {});
+    }
+
+    // 3. Purge from relationalStore
+    SalesController.deleteInvoice(id);
+
+    return res.json({ success: true, message: 'Draft invoice deleted and inventory released to stock' });
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message || 'Failed to delete invoice' });
-  } finally {
-    if (client) await client.end().catch(() => {});
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to delete invoice' });
   }
 });
 
@@ -492,29 +543,55 @@ salesRouter.post('/invoices/:id/delete', async (req, res) => {
   const { id } = req.params;
   let client: Client | null = null;
   try {
-    client = await getDbClient();
-    const invRes = await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id]);
-    if (invRes.rowCount > 0) {
-      const row = invRes.rows[0];
-      const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
-      const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
-      if (barcodes.length > 0) {
-        await client.query(`
-          UPDATE inventory_pieces
-          SET status = 'IN_STOCK', locked_by_buyer = NULL, locked_by_booth = NULL, lock_expires_at = NULL, reserved_until = NULL, is_sold = false, updated_at = NOW()
-          WHERE barcode = ANY($1)
-        `, [barcodes]);
-      }
-      const vNo = `JV-SLS-${row.invoice_no || row.id}`;
-      await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
-      await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
-      await client.query('DELETE FROM sales_invoices WHERE id = $1', [row.id]);
+    // 1. STRICT POST-LOCK CHECK: Verify in relationalStore
+    const relInv = relationalStore.getSalesInvoices().find(
+      i => i.id === id || i.invoiceNo === id || String(i.id) === String(id)
+    );
+    if (relInv && relInv.status === 'POSTED') {
+      return res.status(400).json({
+        success: false,
+        error: `Strict Post-Lock: Invoice ${relInv.invoiceNo} is finalized and POSTED. You must UNPOST it to DRAFT before deleting.`
+      });
     }
-    return res.json({ success: true, message: 'Invoice deleted and inventory released to stock' });
+
+    // 2. STRICT POST-LOCK CHECK: Verify in PostgreSQL
+    try {
+      client = await getDbClient();
+      const invRes = await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id]);
+      if (invRes.rowCount > 0) {
+        const row = invRes.rows[0];
+        if (row.status === 'POSTED') {
+          return res.status(400).json({
+            success: false,
+            error: `Strict Post-Lock: Invoice ${row.invoice_no || id} is finalized and POSTED. You must UNPOST it to DRAFT before deleting.`
+          });
+        }
+        const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
+        const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
+        if (barcodes.length > 0) {
+          await client.query(`
+            UPDATE inventory_pieces
+            SET status = 'IN_STOCK', locked_by_buyer = NULL, locked_by_booth = NULL, lock_expires_at = NULL, reserved_until = NULL, is_sold = false, updated_at = NOW()
+            WHERE barcode = ANY($1)
+          `, [barcodes]);
+        }
+        const vNo = `JV-SLS-${row.invoice_no || row.id}`;
+        await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
+        await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
+        await client.query('DELETE FROM sales_invoices WHERE id = $1', [row.id]);
+      }
+    } catch (dbErr) {
+      console.warn('[salesRouter POST /invoices/:id/delete] PostgreSQL notice:', dbErr);
+    } finally {
+      if (client) await client.end().catch(() => {});
+    }
+
+    // 3. Purge from relationalStore
+    SalesController.deleteInvoice(id);
+
+    return res.json({ success: true, message: 'Draft invoice deleted and inventory released to stock' });
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message || 'Failed to delete invoice' });
-  } finally {
-    if (client) await client.end().catch(() => {});
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to delete invoice' });
   }
 });
 

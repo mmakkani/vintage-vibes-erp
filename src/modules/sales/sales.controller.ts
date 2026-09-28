@@ -78,6 +78,10 @@ export class SalesController {
     return relationalStore.unpostSalesInvoice(invoiceId);
   }
 
+  public static deleteInvoice(invoiceId: string): { success: boolean; error?: string } {
+    return relationalStore.deleteSalesInvoice(invoiceId);
+  }
+
   public static confirmCounterSale(data: any) {
     return relationalStore.confirmMultiItemCounterSaleAndPostCOA(data);
   }
