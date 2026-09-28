@@ -11857,7 +11857,7 @@ RULES FOR YOUR RESPONSE:
             lineTotal: subTotal
           };
 
-          // Insert into sales_invoices as POSTED
+          // Insert into sales_invoices as DRAFT (Queued in Live Drafts Hub for courier processing)
           const insertRes = await client.query(
             `INSERT INTO sales_invoices (
                id, invoice_no, customer_name, customer_phone, invoice_date,
@@ -11866,8 +11866,8 @@ RULES FOR YOUR RESPONSE:
                items, shipping_fee, shipping_bearer, created_at
              ) VALUES (
                $1, $2, $3, $4, CURRENT_DATE,
-               'LIVE_STREAM', $5, 'PAID', $6,
-               $7, 0, $8, $9, 'POSTED',
+               'LIVE_STREAM', $5, 'PENDING_COD', $6,
+               $7, 0, $8, $9, 'DRAFT',
                $10::jsonb, 0, 'Company Bears', NOW()
              ) RETURNING *;`,
             [
@@ -11875,7 +11875,7 @@ RULES FOR YOUR RESPONSE:
               invoiceNo,
               buyerHandle,
               buyerPhone || '+971 50 000 0000',
-              paymentMethod || 'CASH',
+              paymentMethod || 'COD',
               shippingAddress || 'Storefront / Handover',
               subTotal,
               vatAmount,
@@ -11884,12 +11884,13 @@ RULES FOR YOUR RESPONSE:
             ]
           );
 
-          // Mark piece as SOLD
+          // Reserve piece in inventory_pieces (RESERVED until courier dispatch)
           await client.query(
             `UPDATE inventory_pieces
-             SET status = 'SOLD',
-                 is_sold = true,
+             SET status = 'RESERVED',
+                 is_sold = false,
                  locked_by_buyer = $1,
+                 locked_at = NOW(),
                  updated_at = NOW()
              WHERE id = $2;`,
             [buyerHandle, p.id]
@@ -11901,16 +11902,18 @@ RULES FOR YOUR RESPONSE:
             invoiceNo,
             barcode: p.barcode || p.sku,
             priceAed: grandTotal,
-            message: `🎉 *ORDER CONFIRMED - VINTAGE VIBES DUBAI*\n\nHello @${buyerHandle}! Your claim for piece *${p.barcode || barcode}* has been confirmed.\n\n💵 *Total:* AED ${grandTotal.toFixed(2)}\n🧾 *Invoice:* ${invoiceNo}\n\nThank you for shopping with Vintage Vibes!`
+            message: `🎉 *ORDER RESERVED - VINTAGE VIBES DUBAI*\n\nHello @${buyerHandle}! Your claim for piece *${p.barcode || barcode}* has been reserved.\n\n💵 *Total:* AED ${grandTotal.toFixed(2)}\n🧾 *Draft Invoice:* ${invoiceNo}\n\nOur dispatch team will assign your courier tracking number shortly!`
           };
 
           return res.status(200).json({
             success: true,
+            isDraft: true,
             invoice: {
               ...insertRes.rows[0],
               invoiceNo,
               customerName: buyerHandle,
               totalAmount: grandTotal,
+              status: 'DRAFT',
               items: [itemObj]
             },
             accountingEntry: {

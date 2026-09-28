@@ -12,6 +12,7 @@ import {
   Wifi,
   Zap,
   CheckCircle2,
+  CheckCircle,
   AlertCircle,
   X,
   ChevronDown,
@@ -47,6 +48,8 @@ import {
   QrCode,
   Clock,
   Sparkles,
+  Maximize2,
+  Minimize2,
   RotateCcw,
   PowerOff,
   XCircle,
@@ -136,6 +139,22 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [selectedPiece, setSelectedPiece] = useState<PieceBreakdownItem | null>(null);
   const [skuSearchInput, setSkuSearchInput] = useState<string>('');
   const [showSkuPicker, setShowSkuPicker] = useState<boolean>(false);
+
+  // Garment Studio Photos & Lightbox Showcase
+  const [activePhotoTab, setActivePhotoTab] = useState<'front' | 'back' | 'tag'>('front');
+  const [isGarmentCardMinimized, setIsGarmentCardMinimized] = useState<boolean>(false);
+  const [showPhotoLightbox, setShowPhotoLightbox] = useState<boolean>(false);
+
+  const currentSelectedPhotoUrl = useMemo(() => {
+    if (!selectedPiece) return '';
+    const front = selectedPiece.frontImageUrl || (selectedPiece as any).front_image_url || (selectedPiece as any).front_image || '';
+    const back = selectedPiece.backImageUrl || (selectedPiece as any).back_image_url || (selectedPiece as any).back_image || front;
+    const tag = selectedPiece.tagImageUrl || (selectedPiece as any).tag_image_url || (selectedPiece as any).tag_image || front;
+    if (activePhotoTab === 'front') return front;
+    if (activePhotoTab === 'back') return back;
+    if (activePhotoTab === 'tag') return tag;
+    return front;
+  }, [selectedPiece, activePhotoTab]);
 
   // Sale Fields
   const [buyerHandle, setBuyerHandle] = useState<string>('@collector_dubai');
@@ -253,6 +272,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               const weight = Number(p.weight_kg ?? p.weightKg ?? (p.weight_grams ? p.weight_grams / 1000 : 0.45));
               const grams = Number(p.weight_grams ?? p.weightGrams ?? Math.round(weight * 1000));
               const cost = Number(p.cost_price ?? p.costPrice ?? (weight * 20));
+              const frontImg = p.front_image_url || p.frontImageUrl || p.front_image || (p.raw_data && (p.raw_data.front_image_url || p.raw_data.front_image)) || '';
+              const backImg = p.back_image_url || p.backImageUrl || p.back_image || (p.raw_data && (p.raw_data.back_image_url || p.raw_data.back_image)) || '';
+              const tagImg = p.tag_image_url || p.tagImageUrl || p.tag_image || (p.raw_data && (p.raw_data.tag_image_url || p.raw_data.tag_image)) || '';
 
               return {
                 id: p.id,
@@ -276,6 +298,12 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 retail_price_aed: price,
                 estimatedPrice: price,
                 lockedPrice: price,
+                frontImageUrl: frontImg,
+                front_image_url: frontImg,
+                backImageUrl: backImg,
+                back_image_url: backImg,
+                tagImageUrl: tagImg,
+                tag_image_url: tagImg,
                 status: p.status || 'IN_STOCK',
                 isSold: Boolean(p.is_sold || p.isSold),
                 ready_for_ecommerce: p.ready_for_ecommerce,
@@ -624,11 +652,15 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         }
         setSaleResultBanner({
           type: 'success',
-          title: 'SOLD & POSTED TO GENERAL LEDGER!',
-          message: `Invoice ${data.invoice?.invoiceNo} posted for ${buyerHandle}. Concurrency lock preserved.`,
-          invoiceNo: data.invoice?.invoiceNo,
+          title: data.invoice?.status === 'POSTED' ? 'SOLD & POSTED TO GENERAL LEDGER!' : 'GARMENT RESERVED & QUEUED IN LIVE DRAFTS!',
+          message: data.invoice?.status === 'POSTED'
+            ? `Invoice ${data.invoice?.invoiceNo} posted for ${buyerHandle}. Concurrency lock preserved.`
+            : `Draft Invoice ${data.invoice?.invoiceNo || data.draftInvoice?.invoiceNo} queued for @${buyerHandle.trim()} in Live Drafts!`,
+          invoiceNo: data.invoice?.invoiceNo || data.draftInvoice?.invoiceNo,
           voucherNo: data.voucher?.voucherNo,
-          details: `Debit AR: AED ${data.accountingEntry?.arDebit} | Credit Revenue: AED ${data.accountingEntry?.salesCredit} | Debit COGS: AED ${data.accountingEntry?.cogsDebit} | Credit Inventory: AED ${data.accountingEntry?.inventoryCredit}`
+          details: data.invoice?.status === 'POSTED'
+            ? `Debit AR: AED ${data.accountingEntry?.arDebit} | Credit Revenue: AED ${data.accountingEntry?.salesCredit} | Debit COGS: AED ${data.accountingEntry?.cogsDebit} | Credit Inventory: AED ${data.accountingEntry?.inventoryCredit}`
+            : 'Piece is RESERVED. Open Live Drafts & Dispatch Hub to select courier partner, enter tracking, and dispatch.'
         });
 
         // Advance to next piece if available
@@ -1443,8 +1475,153 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         </div>
       )}
 
-      {/* ================= MAIN MIDDLE AREA: UNIFIED LIVE CHAT OVERLAY ================= */}
+      {/* ================= MAIN MIDDLE AREA: UNIFIED LIVE CHAT OVERLAY & GARMENT SHOWCASE ================= */}
       <div className="relative z-10 flex-1 px-3 py-2 flex flex-col justify-end overflow-hidden pointer-events-none">
+        {/* Floating Active Garment Picture Card (PiP Live Showcase) */}
+        {selectedPiece && (
+          <div className="absolute top-2 right-3 z-30 pointer-events-auto">
+            {isGarmentCardMinimized ? (
+              // Minimized Floating Pill
+              <button
+                onClick={() => setIsGarmentCardMinimized(false)}
+                className="flex items-center gap-2 p-1.5 bg-black/85 backdrop-blur-xl border border-amber-400/50 rounded-2xl shadow-2xl cursor-pointer hover:border-amber-400 transition-all active:scale-95"
+                title="Expand Garment Photo"
+              >
+                {selectedPiece.frontImageUrl || (selectedPiece as any).front_image_url ? (
+                  <img
+                    src={selectedPiece.frontImageUrl || (selectedPiece as any).front_image_url}
+                    alt=""
+                    className="w-11 h-11 rounded-xl object-cover border border-amber-400/50 shadow-md"
+                  />
+                ) : (
+                  <div className="w-11 h-11 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center">
+                    <Tag className="w-5 h-5 text-amber-400" />
+                  </div>
+                )}
+                <div className="pr-2 text-left">
+                  <span className="text-[10px] font-bold text-amber-300 block font-mono">
+                    {selectedPiece.barcode}
+                  </span>
+                  <span className="text-[10px] text-slate-200 font-bold block truncate max-w-[95px]">
+                    {selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage'}
+                  </span>
+                  <span className="text-[9px] text-emerald-400 font-bold font-mono block">
+                    AED {sellingPrice}
+                  </span>
+                </div>
+                <Maximize2 className="w-4 h-4 text-amber-400 mr-1" />
+              </button>
+            ) : (
+              // Expanded Floating Product Card with Photo Carousel
+              <div className="w-48 sm:w-56 bg-slate-950/90 backdrop-blur-2xl border border-amber-400/60 rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all">
+                {/* Header */}
+                <div className="px-2.5 py-1.5 bg-black/70 border-b border-white/10 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span className="text-[10px] font-black text-amber-300 uppercase tracking-wider truncate">
+                      Garment Live
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setShowPhotoLightbox(true)}
+                      className="p-1 hover:bg-white/10 rounded text-slate-300 hover:text-white cursor-pointer"
+                      title="Full Screen Photo"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setIsGarmentCardMinimized(true)}
+                      className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white cursor-pointer"
+                      title="Minimize"
+                    >
+                      <Minimize2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Main Image Showcase */}
+                <div
+                  className="relative w-full aspect-square bg-black/90 flex items-center justify-center overflow-hidden cursor-pointer group"
+                  onClick={() => setShowPhotoLightbox(true)}
+                >
+                  {currentSelectedPhotoUrl ? (
+                    <img
+                      src={currentSelectedPhotoUrl}
+                      alt={selectedPiece.itemName}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-3 text-center text-slate-500">
+                      <ShoppingBag className="w-8 h-8 mb-1 text-slate-600" />
+                      <span className="text-[10px]">No Photo Available</span>
+                    </div>
+                  )}
+
+                  {/* Price Tag Pill */}
+                  <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-lg bg-black/85 backdrop-blur-md border border-amber-400/60 font-mono font-bold text-amber-300 text-[11px] shadow-lg">
+                    AED {sellingPrice}
+                  </div>
+
+                  {/* Size Pill */}
+                  <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded-md bg-amber-500 text-slate-950 font-black text-[10px] shadow-md">
+                    {selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || 'M'}
+                  </div>
+
+                  {/* Enlarge Hint */}
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold gap-1 pointer-events-none">
+                    <Search className="w-3.5 h-3.5" /> Tap to Enlarge
+                  </div>
+                </div>
+
+                {/* Angle Selector Tabs */}
+                <div className="grid grid-cols-3 gap-0.5 p-1 bg-black/80 border-t border-white/10 text-[9px] font-bold">
+                  <button
+                    onClick={() => setActivePhotoTab('front')}
+                    className={`py-1 rounded text-center transition-all cursor-pointer ${
+                      activePhotoTab === 'front'
+                        ? 'bg-amber-500 text-slate-950 font-black'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Front
+                  </button>
+                  <button
+                    onClick={() => setActivePhotoTab('back')}
+                    className={`py-1 rounded text-center transition-all cursor-pointer ${
+                      activePhotoTab === 'back'
+                        ? 'bg-amber-500 text-slate-950 font-black'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={() => setActivePhotoTab('tag')}
+                    className={`py-1 rounded text-center transition-all cursor-pointer ${
+                      activePhotoTab === 'tag'
+                        ? 'bg-amber-500 text-slate-950 font-black'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Tag
+                  </button>
+                </div>
+
+                {/* Garment Details Footer */}
+                <div className="px-2.5 py-1.5 bg-slate-900/90 border-t border-white/10">
+                  <p className="text-[10px] font-mono text-amber-300 font-bold truncate">
+                    {selectedPiece.barcode}
+                  </p>
+                  <p className="text-[11px] font-bold text-white truncate">
+                    {selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage'} • {selectedPiece.itemName || (selectedPiece as any).item_name || 'Garment'}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Floating Unified Comments Feed */}
         <div
           className={`w-full max-w-md transition-all duration-300 flex flex-col justify-end pointer-events-auto ${
@@ -1525,9 +1702,17 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             onClick={() => setShowSkuPicker(true)}
             className="flex-1 min-w-0 flex items-center gap-2 p-1.5 bg-black/60 border border-white/15 rounded-xl hover:border-amber-400/50 transition-all text-left cursor-pointer"
           >
-            <div className="w-9 h-9 rounded-lg bg-amber-500/20 border border-amber-400/40 flex items-center justify-center shrink-0">
-              <Barcode className="w-5 h-5 text-amber-400" />
-            </div>
+            {selectedPiece?.frontImageUrl || (selectedPiece as any)?.front_image_url ? (
+              <img
+                src={selectedPiece.frontImageUrl || (selectedPiece as any).front_image_url}
+                alt=""
+                className="w-10 h-10 rounded-lg object-cover border border-amber-400/60 shadow-md shrink-0"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-lg bg-amber-500/20 border border-amber-400/40 flex items-center justify-center shrink-0">
+                <Barcode className="w-5 h-5 text-amber-400" />
+              </div>
+            )}
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
                 <span className="font-mono font-bold text-amber-300 text-xs truncate">
@@ -1658,7 +1843,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             ) : (
               <>
                 <Zap className="w-3.5 h-3.5 fill-slate-950" />
-                Confirm Sale (AED {sellingPrice})
+                Reserve & Draft (AED {sellingPrice})
               </>
             )}
           </button>
@@ -1720,21 +1905,34 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                           : 'bg-black/40 border-white/10 hover:border-white/30 text-slate-200'
                       }`}
                     >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-amber-300 text-xs">
-                            {piece.barcode}
-                          </span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 font-bold">
-                            {piece.sizeScanned || (piece as any).size_scanned || (piece as any).size || 'M'}
-                          </span>
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {piece.frontImageUrl || (piece as any).front_image_url ? (
+                          <img
+                            src={piece.frontImageUrl || (piece as any).front_image_url}
+                            alt=""
+                            className="w-11 h-11 rounded-lg object-cover border border-white/20 shrink-0"
+                          />
+                        ) : (
+                          <div className="w-11 h-11 rounded-lg bg-amber-500/20 border border-amber-400/30 flex items-center justify-center shrink-0">
+                            <ShoppingBag className="w-5 h-5 text-amber-400" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-amber-300 text-xs">
+                              {piece.barcode}
+                            </span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 font-bold">
+                              {piece.sizeScanned || (piece as any).size_scanned || (piece as any).size || 'M'}
+                            </span>
+                          </div>
+                          <p className="text-xs font-medium text-slate-300 mt-0.5 truncate">
+                            {piece.brandName || (piece as any).brand_name || 'Vintage'} • {piece.itemName || (piece as any).item_name || 'Garment'}
+                          </p>
+                          <p className="text-[10px] text-slate-400 font-mono">
+                            Bale: {(piece.bale_id || (piece as any).gate_pass_id || piece.barcode || '').split('-').slice(0, 3).join('-') || 'VV-BAL-001'} | Weight: {piece.weightKg || (piece as any).weight_kg || 0.45}kg
+                          </p>
                         </div>
-                        <p className="text-xs font-medium text-slate-300 mt-0.5">
-                          {piece.brandName || (piece as any).brand_name || 'Vintage'} • {piece.itemName || (piece as any).item_name || 'Garment'}
-                        </p>
-                        <p className="text-[10px] text-slate-400 font-mono">
-                          Bale: {(piece.bale_id || (piece as any).gate_pass_id || piece.barcode || '').split('-').slice(0, 3).join('-') || 'VV-BAL-001'} | Weight: {piece.weightKg || (piece as any).weight_kg || 0.45}kg
-                        </p>
                       </div>
                       <div className="text-right">
                         <span className="block font-bold text-amber-400 text-sm">
@@ -2397,6 +2595,70 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= FULL HD GARMENT PHOTO LIGHTBOX MODAL ================= */}
+      {showPhotoLightbox && selectedPiece && (
+        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-xl flex flex-col justify-between p-3 sm:p-5 animate-in fade-in">
+          {/* Header */}
+          <div className="flex items-center justify-between pb-3 border-b border-white/15">
+            <div>
+              <span className="text-xs font-mono font-bold text-amber-400">
+                {selectedPiece.barcode} • Size: {selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || 'M'}
+              </span>
+              <h3 className="text-base font-bold text-white">
+                {selectedPiece.brandName || (selectedPiece as any).brand_name} {selectedPiece.itemName || (selectedPiece as any).item_name}
+              </h3>
+            </div>
+            <button
+              onClick={() => setShowPhotoLightbox(false)}
+              className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Center Main View */}
+          <div className="flex-1 flex items-center justify-center p-2 overflow-hidden">
+            {currentSelectedPhotoUrl ? (
+              <img
+                src={currentSelectedPhotoUrl}
+                alt=""
+                className="max-h-[65vh] max-w-full rounded-2xl object-contain border border-white/20 shadow-2xl"
+              />
+            ) : (
+              <p className="text-slate-400 italic">No studio photo available for this angle</p>
+            )}
+          </div>
+
+          {/* Footer Thumbnails & Angle Selector */}
+          <div className="pt-3 border-t border-white/15 flex items-center justify-center gap-3">
+            {[
+              { key: 'front' as const, label: 'Front Angle', url: selectedPiece.frontImageUrl || (selectedPiece as any).front_image_url },
+              { key: 'back' as const, label: 'Back Angle', url: selectedPiece.backImageUrl || (selectedPiece as any).back_image_url },
+              { key: 'tag' as const, label: 'Care Tag', url: selectedPiece.tagImageUrl || (selectedPiece as any).tag_image_url }
+            ].map(photo => (
+              <button
+                key={photo.key}
+                onClick={() => setActivePhotoTab(photo.key)}
+                className={`flex flex-col items-center gap-1 p-1.5 rounded-xl border transition-all cursor-pointer ${
+                  activePhotoTab === photo.key
+                    ? 'border-amber-400 bg-amber-500/20 ring-2 ring-amber-400/50'
+                    : 'border-white/10 bg-black/40 hover:border-white/30'
+                }`}
+              >
+                {photo.url ? (
+                  <img src={photo.url} alt="" className="w-14 h-14 rounded-lg object-cover" />
+                ) : (
+                  <div className="w-14 h-14 rounded-lg bg-slate-800 flex items-center justify-center text-[10px] text-slate-500">
+                    No Img
+                  </div>
+                )}
+                <span className="text-[10px] font-bold text-slate-300">{photo.label}</span>
+              </button>
+            ))}
           </div>
         </div>
       )}

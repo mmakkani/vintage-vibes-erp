@@ -51,6 +51,8 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
   const isStrictlyLive = (inv: SalesInvoice) => {
     const channel = String(inv?.channel || '').toUpperCase();
     const invNo = String(inv?.invoiceNo || '').toUpperCase();
+    if (invNo.startsWith('LIVE-') || invNo.startsWith('SLS-DRAFT-LIVE-') || invNo.startsWith('SLS-LIVE-')) return true;
+    if (channel === 'LIVE' || channel === 'LIVE_STREAM' || channel === 'TIKTOK_LIVE' || channel === 'INSTAGRAM_LIVE') return true;
     if (channel === 'POS' || channel === 'POS_COUNTER') return false;
     if (invNo.startsWith('POS-') || invNo.startsWith('INV-POS-') || invNo.startsWith('SLS-POS-')) return false;
     if (inv?.paymentMethod === 'CARD_POS') return false;

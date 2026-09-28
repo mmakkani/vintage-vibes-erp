@@ -6,7 +6,7 @@ import { SequenceService } from './sequenceService.ts';
 import { CrmService } from './crmService.ts';
 
 export class SalesService {
-  public static readonly SALES_INVOICE_GRID_COLUMNS = 'id, invoice_no, client_id, customer_name, customer_phone, subtotal, tax_amount, total_amount, status, payment_method, invoice_date, created_at, items';
+  public static readonly SALES_INVOICE_GRID_COLUMNS = 'id, invoice_no, client_id, customer_name, customer_phone, subtotal, tax_amount, total_amount, status, payment_method, invoice_date, created_at, items, channel, tracking_number, courier_partner_id, shipping_fee, shipping_bearer, order_id, payment_status, payment_reference, shipping_address, city, discount_amount';
 
   /**
    * CRITICAL GLOBAL INVENTORY RESERVATION (Prevent Double-Selling)
@@ -381,15 +381,18 @@ export class SalesService {
         invoiceDate: rawDate,
         date: rawDate,
         time: row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '14:30',
-        channel: row.channel || 'POS_COUNTER',
+        channel: row.channel || (row.invoice_no?.startsWith('LIVE-') || row.invoice_no?.startsWith('SLS-DRAFT-LIVE-') ? 'LIVE_STREAM' : 'POS_COUNTER'),
         paymentMethod: row.payment_method || row.paymentMethod || 'CASH',
         paymentStatus: row.payment_status || row.paymentStatus || (row.status === 'PAID' ? 'PAID' : 'UNPAID_PENDING_COD'),
         paymentReference: row.payment_reference || row.paymentReference || '',
         shippingAddress: row.shipping_address || row.shippingAddress || '',
         city: row.city || '',
         courierPartyId: row.courier_party_id || row.courierPartyId || row.courier_partner_id,
-        trackingNumber: row.tracking_number || row.trackingNumber,
-        buyerHandle: row.buyer_handle || row.buyerHandle,
+        courierPartnerId: row.courier_partner_id || row.courierPartnerId,
+        trackingNumber: row.tracking_number || row.trackingNumber || '',
+        shippingFeeAed: Number(row.shipping_fee ?? row.shippingFeeAed ?? 0),
+        shippingBearer: row.shipping_bearer || row.shippingBearer || 'CUSTOMER',
+        buyerHandle: row.buyer_handle || row.buyerHandle || (row.customer_name?.startsWith('@') ? row.customer_name : undefined),
         boothId: row.booth_id || row.boothId,
         expiresAt: row.expires_at || row.expiresAt,
         orderId: row.order_id || row.orderId,
@@ -470,15 +473,18 @@ export class SalesService {
         invoiceDate: rawDate,
         date: rawDate,
         time: row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '14:30',
-        channel: row.channel || 'POS_COUNTER',
+        channel: row.channel || (row.invoice_no?.startsWith('LIVE-') || row.invoice_no?.startsWith('SLS-DRAFT-LIVE-') ? 'LIVE_STREAM' : 'POS_COUNTER'),
         paymentMethod: row.payment_method || row.paymentMethod || 'CASH',
         paymentStatus: row.payment_status || row.paymentStatus || (row.status === 'PAID' ? 'PAID' : 'UNPAID_PENDING_COD'),
         paymentReference: row.payment_reference || row.paymentReference || '',
         shippingAddress: row.shipping_address || row.shippingAddress || '',
         city: row.city || '',
         courierPartyId: row.courier_party_id || row.courierPartyId || row.courier_partner_id,
-        trackingNumber: row.tracking_number || row.trackingNumber,
-        buyerHandle: row.buyer_handle || row.buyerHandle,
+        courierPartnerId: row.courier_partner_id || row.courierPartnerId,
+        trackingNumber: row.tracking_number || row.trackingNumber || '',
+        shippingFeeAed: Number(row.shipping_fee ?? row.shippingFeeAed ?? 0),
+        shippingBearer: row.shipping_bearer || row.shippingBearer || 'CUSTOMER',
+        buyerHandle: row.buyer_handle || row.buyerHandle || (row.customer_name?.startsWith('@') ? row.customer_name : undefined),
         boothId: row.booth_id || row.boothId,
         expiresAt: row.expires_at || row.expiresAt,
         orderId: row.order_id || row.orderId,
