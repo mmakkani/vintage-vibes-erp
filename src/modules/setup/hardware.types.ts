@@ -83,6 +83,9 @@ export interface POSTerminalDevice {
   simCarrier?: 'DU' | 'ETISALAT' | 'OTHER' | string; // Telecom SIM card carrier
   paymobTid?: string; // Paymob specific Terminal ID
   paymobMid?: string; // Paymob specific Merchant ID
+  paymobApiKey?: string; // Paymob Secret API Key from uae.paymob.com portal (e.g. sec_live_...)
+  paymobIntegrationId?: string; // Paymob POS Terminal Integration ID
+  cloudPushEnabled?: boolean; // Enable auto-pushing amounts to PAX screen via Paymob Cloud
   isActive: boolean; // active/inactive toggle
   status: 'ONLINE' | 'STANDBY' | 'OFFLINE';
   location?: string;
@@ -101,6 +104,9 @@ export interface POSTerminalConfig {
   port?: number;
   terminalId?: string; // TID
   merchantId?: string; // MID
+  paymobApiKey?: string;
+  paymobIntegrationId?: string;
+  cloudPushEnabled?: boolean;
   status?: 'ONLINE' | 'OFFLINE' | 'BUSY' | 'STANDBY';
   clearingAccountId?: string; // e.g. acc-1125 POS Card Clearing
   linkedBankAccountId?: string; // Linked Bank Account ID for Card Settlement

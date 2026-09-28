@@ -15,3 +15,4 @@ export * from './presenceService.ts';
 export * from './attendanceService.ts';
 export * from './payrollService.ts';
 export * from './crmService.ts';
+export * from './paymobService.ts';

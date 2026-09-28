@@ -34,7 +34,8 @@ import {
   Gift,
   ChevronDown,
   UserPlus,
-  Loader2
+  Loader2,
+  Zap
 } from 'lucide-react';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
 import { Party } from '../../parties/parties.types.ts';
@@ -52,6 +53,7 @@ import { useBarcodeScanner } from '../../../hooks/useBarcodeScanner.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { supabase } from '../../../lib/supabase.ts';
 import { offlineQueue } from '../../../services/offlineQueueService.ts';
+import { PaymobService } from '../../../services/paymobService.ts';
 
 /**
  * Builds a professionally formatted WhatsApp receipt link with items, VAT, and store details.
@@ -348,6 +350,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   const [posRrn, setPosRrn] = useState<string>('');
   const [posCardBrand, setPosCardBrand] = useState<string>('VISA');
   const [posErrorMessage, setPosErrorMessage] = useState<string | null>(null);
+  const [isPushingPaymobCloud, setIsPushingPaymobCloud] = useState<boolean>(false);
+  const [paymobCloudMessage, setPaymobCloudMessage] = useState<{ text: string; type: 'info' | 'success' | 'warning' | 'error' } | null>(null);
 
   // Split payment state
   const [splitCash, setSplitCash] = useState<string>('');
@@ -957,6 +961,65 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     loadInventoryAndParties();
   };
 
+  // Push amount directly to PAX A960 terminal via Paymob 4G Cellular Cloud API
+  const handlePushAmountToPaymobCloud = async () => {
+    setIsPushingPaymobCloud(true);
+    setPaymobCloudMessage(null);
+    try {
+      const tid = activeDevice?.paymobTid || activeDevice?.terminalId || '12857001';
+      const mid = activeDevice?.paymobMid || activeDevice?.merchantId || '85283';
+      const apiKey = activeDevice?.paymobApiKey || '';
+      const integrationId = activeDevice?.paymobIntegrationId || '';
+
+      const res = await PaymobService.pushAmountToTerminal({
+        terminalId: tid,
+        amount: grandTotal,
+        currency: posConfig.currency || 'AED',
+        invoiceNo: `POS-${Date.now().toString().slice(-6)}`,
+        apiKey,
+        integrationId,
+        merchantId: mid
+      });
+
+      if (res.status === 'KEY_REQUIRED') {
+        setPaymobCloudMessage({
+          type: 'warning',
+          text: '💡 Paymob Secret API Key is not yet entered in Global Setup > Bank & POS Fleet. You can use 1-Click Fast Auto-Approve, or enter your key from uae.paymob.com.'
+        });
+      } else if (res.status === 'APPROVED') {
+        if (res.authCode) setPosAuthCode(res.authCode);
+        if (res.rrn) setPosRrn(res.rrn);
+        if (res.cardBrand) setPosCardBrand(res.cardBrand);
+        setPosMachineStage('APPROVED');
+        setPaymobCloudMessage({
+          type: 'success',
+          text: `✅ Payment AED ${grandTotal.toFixed(2)} approved on PAX A960! Auth #${res.authCode}`
+        });
+        luxuryAudio.playCashChime();
+      } else if (res.status === 'AWAITING_TAP') {
+        setPosMachineStage('AWAITING_TAP');
+        if (res.authCode) setPosAuthCode(res.authCode);
+        if (res.rrn) setPosRrn(res.rrn);
+        setPaymobCloudMessage({
+          type: 'info',
+          text: `📡 Amount AED ${grandTotal.toFixed(2)} sent to PAX A960 screen! Customer can now tap / insert card.`
+        });
+      } else {
+        setPaymobCloudMessage({
+          type: 'error',
+          text: res.message || 'Unable to push to terminal.'
+        });
+      }
+    } catch (err: any) {
+      setPaymobCloudMessage({
+        type: 'error',
+        text: err?.message || 'Error communicating with Paymob Cloud.'
+      });
+    } finally {
+      setIsPushingPaymobCloud(false);
+    }
+  };
+
   // Trigger NFC / Smart POS Machine Real TCP/IP Hardware Bridge Request
   const handleInitiatePosMachineTap = async () => {
     setPosMachineStage('AWAITING_TAP');
@@ -969,6 +1032,10 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
     const isCellular = activeDevice?.connectionType === 'CELLULAR_SIM' || activeDevice?.model === 'PAX_A960';
     if (isCellular) {
+      if (activeDevice?.cloudPushEnabled && activeDevice?.paymobApiKey) {
+        await handlePushAmountToPaymobCloud();
+        return;
+      }
       // Standalone 4G Cellular SIM Terminal (Paymob / Bank Wireless)
       // Communicates directly over 4G data - no local LAN IP required
       const generatedAuth = posAuthCode.trim() || ('AUTH-' + Math.floor(100000 + Math.random() * 900000));
@@ -1038,6 +1105,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     setPosAuthCode('');
     setPosRrn('');
     setPosErrorMessage(null);
+    setPaymobCloudMessage(null);
+    setIsPushingPaymobCloud(false);
     setShowPaymentModal(true);
   };
 
@@ -2729,9 +2798,38 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                           </span>
                         </div>
                         <p className="text-[11px] opacity-90">
-                          Customer inserts chip or taps card / Apple Pay on PAX A960 terminal. Then enter the Auth Code from paper receipt (or click Fast Approve).
+                          Customer inserts chip or taps card / Apple Pay on PAX A960 terminal. Push amount automatically via Cloud API, or enter the Auth Code from paper receipt.
                         </p>
                       </div>
+
+                      {/* Paymob Cloud Push Action Button */}
+                      <button
+                        type="button"
+                        onClick={handlePushAmountToPaymobCloud}
+                        disabled={isPushingPaymobCloud || isSubmitting}
+                        className="w-full px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                      >
+                        {isPushingPaymobCloud ? <Loader2 className="w-4 h-4 animate-spin" /> : <Radio className="w-4 h-4" />}
+                        <span>📡 Push AED {grandTotal.toFixed(2)} to PAX A960 Screen</span>
+                      </button>
+
+                      {/* Paymob Cloud Feedback Alert */}
+                      {paymobCloudMessage && (
+                        <div className={`p-2.5 rounded-xl text-xs flex items-start gap-2 animate-in fade-in-50 ${
+                          paymobCloudMessage.type === 'success'
+                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                            : paymobCloudMessage.type === 'warning'
+                            ? 'bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300'
+                            : paymobCloudMessage.type === 'error'
+                            ? 'bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+                            : 'bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-300 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300'
+                        }`}>
+                          <span className="shrink-0 mt-0.5 font-bold">
+                            {paymobCloudMessage.type === 'success' ? '✅' : paymobCloudMessage.type === 'warning' ? '💡' : paymobCloudMessage.type === 'error' ? '⚠️' : '📡'}
+                          </span>
+                          <span className="text-[11px] leading-relaxed font-medium">{paymobCloudMessage.text}</span>
+                        </div>
+                      )}
 
                       {/* Slip details inputs */}
                       <div className="grid grid-cols-2 gap-2 text-left">

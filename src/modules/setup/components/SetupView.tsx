@@ -5562,6 +5562,64 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                                 className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono text-slate-900 bg-white"
                               />
                             </div>
+
+                            <div className="sm:col-span-2 pt-2 border-t border-slate-200">
+                              <div className="text-[11px] font-bold text-slate-800 uppercase flex items-center justify-between mb-1.5">
+                                <span className="flex items-center gap-1.5 text-purple-800">
+                                  <Radio className="w-3.5 h-3.5 text-purple-600 animate-pulse" />
+                                  <span>Paymob Cloud API Push Configuration (Optional)</span>
+                                </span>
+                                <a
+                                  href="https://uae.paymob.com/portal/"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[10px] text-purple-600 hover:underline font-mono"
+                                >
+                                  uae.paymob.com ↗
+                                </a>
+                              </div>
+                              <p className="text-[10px] text-slate-500 mb-2">
+                                Enter your Secret Key from Paymob Portal (Developers &gt; API Keys) to automatically transmit amounts from Counter POS to the PAX A960 screen via 4G.
+                              </p>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                                    Paymob Secret API Key
+                                  </label>
+                                  <input
+                                    type="password"
+                                    value={bankDeviceForm.paymobApiKey || ''}
+                                    onChange={e => setBankDeviceForm({ ...bankDeviceForm, paymobApiKey: e.target.value })}
+                                    placeholder="sec_live_... or Bearer Token"
+                                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono text-slate-900 bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                                    Terminal Integration ID (Optional)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={bankDeviceForm.paymobIntegrationId || ''}
+                                    onChange={e => setBankDeviceForm({ ...bankDeviceForm, paymobIntegrationId: e.target.value })}
+                                    placeholder="e.g. 456123"
+                                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono text-slate-900 bg-white"
+                                  />
+                                </div>
+                              </div>
+                              <div className="mt-2 flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  id="bankCloudPush"
+                                  checked={bankDeviceForm.cloudPushEnabled !== false}
+                                  onChange={e => setBankDeviceForm({ ...bankDeviceForm, cloudPushEnabled: e.target.checked })}
+                                  className="w-3.5 h-3.5 text-purple-600 rounded"
+                                />
+                                <label htmlFor="bankCloudPush" className="text-[11px] font-bold text-slate-700 cursor-pointer">
+                                  Enable Direct Cloud Push button at Counter POS
+                                </label>
+                              </div>
+                            </div>
                           </>
                         ) : (
                           <div>
@@ -6604,6 +6662,64 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                         onChange={e => setDeviceForm({ ...deviceForm, paymobTid: e.target.value })}
                         className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono text-slate-900 focus:ring-2 focus:ring-blue-500"
                       />
+                    </div>
+
+                    <div className="col-span-2 pt-2 border-t border-slate-200">
+                      <div className="text-[11px] font-bold text-slate-800 uppercase flex items-center justify-between mb-1.5">
+                        <span className="flex items-center gap-1.5 text-purple-800">
+                          <Radio className="w-3.5 h-3.5 text-purple-600 animate-pulse" />
+                          <span>Paymob Cloud API Push Configuration (Optional)</span>
+                        </span>
+                        <a
+                          href="https://uae.paymob.com/portal/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-purple-600 hover:underline font-mono"
+                        >
+                          uae.paymob.com ↗
+                        </a>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mb-2">
+                        Enter your Secret Key from Paymob Portal (Developers &gt; API Keys) to automatically transmit amounts from Counter POS to the PAX A960 screen via 4G.
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                            Paymob Secret API Key
+                          </label>
+                          <input
+                            type="password"
+                            value={deviceForm.paymobApiKey || ''}
+                            onChange={e => setDeviceForm({ ...deviceForm, paymobApiKey: e.target.value })}
+                            placeholder="sec_live_... or Bearer Token"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono text-slate-900 bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                            Terminal Integration ID (Optional)
+                          </label>
+                          <input
+                            type="text"
+                            value={deviceForm.paymobIntegrationId || ''}
+                            onChange={e => setDeviceForm({ ...deviceForm, paymobIntegrationId: e.target.value })}
+                            placeholder="e.g. 456123"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono text-slate-900 bg-white"
+                          />
+                        </div>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="deviceCloudPush"
+                          checked={deviceForm.cloudPushEnabled !== false}
+                          onChange={e => setDeviceForm({ ...deviceForm, cloudPushEnabled: e.target.checked })}
+                          className="w-3.5 h-3.5 text-purple-600 rounded"
+                        />
+                        <label htmlFor="deviceCloudPush" className="text-[11px] font-bold text-slate-700 cursor-pointer">
+                          Enable Direct Cloud Push button at Counter POS
+                        </label>
+                      </div>
                     </div>
                   </div>
                 </div>
