@@ -72,12 +72,17 @@ export interface BarcodeScanTestEvent {
 export interface POSTerminalDevice {
   id: string;
   name: string;
-  model: 'SUNMI_P2' | 'PAX_A920' | 'INGENICO' | 'VERIFONE' | 'SIMULATOR';
-  connectionType: 'IP_ETHERNET' | 'WIFI_IP' | 'BLUETOOTH' | 'USB_SERIAL' | 'CLOUD_API';
+  model: 'PAX_A960' | 'PAX_A920' | 'SUNMI_P2' | 'INGENICO' | 'VERIFONE' | 'SIMULATOR' | string;
+  connectionType: 'CELLULAR_SIM' | 'IP_ETHERNET' | 'WIFI_IP' | 'BLUETOOTH' | 'USB_SERIAL' | 'CLOUD_API' | string;
   ipAddress?: string;
   port?: number;
   terminalId: string; // TID
   merchantId: string; // MID
+  serialNumber?: string; // S/N from back of terminal (e.g. 1180511614)
+  imei?: string; // 4G Cellular IMEI (e.g. 350814987795465)
+  simCarrier?: 'DU' | 'ETISALAT' | 'OTHER' | string; // Telecom SIM card carrier
+  paymobTid?: string; // Paymob specific Terminal ID
+  paymobMid?: string; // Paymob specific Merchant ID
   isActive: boolean; // active/inactive toggle
   status: 'ONLINE' | 'STANDBY' | 'OFFLINE';
   location?: string;

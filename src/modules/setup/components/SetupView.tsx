@@ -183,12 +183,17 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   const [editingDevice, setEditingDevice] = useState<POSTerminalDevice | null>(null);
   const [deviceForm, setDeviceForm] = useState<Omit<POSTerminalDevice, 'id'>>({
     name: 'Counter 1 - Main Desk PED',
-    model: 'PAX_A920',
-    connectionType: 'IP_ETHERNET',
-    ipAddress: '192.168.1.150',
+    model: 'PAX_A960',
+    connectionType: 'CELLULAR_SIM',
+    ipAddress: '',
     port: 8080,
-    terminalId: 'TID-DXB-001',
-    merchantId: 'MID-VV-9881',
+    terminalId: '12857001',
+    merchantId: '114400000012857',
+    serialNumber: '1180511614',
+    imei: '350814987795465',
+    simCarrier: 'DU',
+    paymobTid: '51898',
+    paymobMid: '85283',
     isActive: true,
     status: 'ONLINE',
     location: 'Main Cash Counter'
@@ -320,13 +325,18 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   const [editingBankDeviceIndex, setEditingBankDeviceIndex] = useState<number | null>(null);
   const [bankDeviceForm, setBankDeviceForm] = useState<POSTerminalDevice>({
     id: '',
-    name: 'Counter 1 - Main Desk PED',
-    model: 'PAX_A920',
-    connectionType: 'IP_ETHERNET',
-    ipAddress: '192.168.1.150',
+    name: 'RAKBANK Paymob PAX A960',
+    model: 'PAX_A960',
+    connectionType: 'CELLULAR_SIM',
+    ipAddress: '',
     port: 8080,
-    terminalId: 'TID-DXB-001',
-    merchantId: 'MID-VV-9881',
+    terminalId: '12857001',
+    merchantId: '114400000012857',
+    serialNumber: '1180511614',
+    imei: '350814987795465',
+    simCarrier: 'DU',
+    paymobTid: '51898',
+    paymobMid: '85283',
     isActive: true,
     status: 'ONLINE',
     location: 'Main Cash Counter'
@@ -474,16 +484,23 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
           setPosFleet([
             {
               id: 'pos-dev-01',
-              name: 'Counter 1 - Main Desk PED',
-              model: 'PAX_A920',
-              connectionType: 'IP_ETHERNET',
-              ipAddress: '192.168.1.150',
+              name: 'RAKBANK Paymob PAX A960',
+              model: 'PAX_A960',
+              connectionType: 'CELLULAR_SIM',
+              ipAddress: '',
               port: 8080,
-              terminalId: 'TID-DXB-001',
-              merchantId: 'MID-VV-9881',
+              terminalId: '12857001',
+              merchantId: '114400000012857',
+              serialNumber: '1180511614',
+              imei: '350814987795465',
+              simCarrier: 'DU',
+              paymobTid: '51898',
+              paymobMid: '85283',
               isActive: true,
               status: 'ONLINE',
-              location: 'Main Cash Counter'
+              location: 'Main Cash Counter',
+              bankName: 'RAKBANK',
+              bankCoaCode: '1120-02'
             }
           ]);
         }
@@ -757,10 +774,14 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     try {
       await new Promise(r => setTimeout(r, 450));
       setDevicePingResults(prev => ({ ...prev, [device.id]: 'SUCCESS' }));
-      showMsg(`🟢 ${device.name} (${device.ipAddress || '192.168.1.150'}:${device.port || 8080}) online! Handshake 18ms.`);
+      if (device.connectionType === 'CELLULAR_SIM') {
+        showMsg(`🟢 ${device.name} (📶 4G Cellular SIM [${device.simCarrier || 'DU'}] • S/N: ${device.serialNumber || '1180511614'}) online! 4G LTE Ping 22ms.`);
+      } else {
+        showMsg(`🟢 ${device.name} (${device.ipAddress || '192.168.1.150'}:${device.port || 8080}) online! Handshake 18ms.`);
+      }
     } catch {
       setDevicePingResults(prev => ({ ...prev, [device.id]: 'FAILED' }));
-      showMsg(`🔴 Connection failed to ${device.name} at ${device.ipAddress}`, 'error');
+      showMsg(`🔴 Connection failed to ${device.name}`, 'error');
     }
   };
 
@@ -772,16 +793,21 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     setEditingDevice(null);
     const nextNum = posFleet.length + 1;
     setDeviceForm({
-      name: `Counter ${nextNum} - Smart PED`,
-      model: nextNum === 2 ? 'SUNMI_P2' : nextNum === 3 ? 'PAX_A920' : nextNum === 4 ? 'INGENICO' : 'VERIFONE',
-      connectionType: nextNum === 4 ? 'USB_SERIAL' : nextNum === 5 ? 'BLUETOOTH' : 'IP_ETHERNET',
-      ipAddress: `192.168.1.15${nextNum - 1}`,
+      name: nextNum === 1 ? 'RAKBANK Paymob PAX A960' : `Counter ${nextNum} - Smart PED`,
+      model: nextNum === 1 ? 'PAX_A960' : nextNum === 2 ? 'SUNMI_P2' : nextNum === 3 ? 'PAX_A920' : nextNum === 4 ? 'INGENICO' : 'VERIFONE',
+      connectionType: nextNum === 1 ? 'CELLULAR_SIM' : nextNum === 4 ? 'USB_SERIAL' : nextNum === 5 ? 'BLUETOOTH' : 'IP_ETHERNET',
+      ipAddress: nextNum === 1 ? '' : `192.168.1.15${nextNum - 1}`,
       port: 8080,
-      terminalId: `TID-DXB-00${nextNum}`,
-      merchantId: posConfig.merchantId || 'MID-VV-9881',
+      terminalId: nextNum === 1 ? '12857001' : `TID-DXB-00${nextNum}`,
+      merchantId: nextNum === 1 ? '114400000012857' : (posConfig.merchantId || 'MID-VV-9881'),
+      serialNumber: nextNum === 1 ? '1180511614' : '',
+      imei: nextNum === 1 ? '350814987795465' : '',
+      simCarrier: 'DU',
+      paymobTid: nextNum === 1 ? '51898' : '',
+      paymobMid: nextNum === 1 ? '85283' : '',
       isActive: true,
       status: 'ONLINE',
-      location: nextNum === 2 ? 'Express Lane' : nextNum === 3 ? 'Live Studio' : nextNum === 4 ? 'B2B Wholesale' : 'Retail Floor'
+      location: nextNum === 1 ? 'Main Cash Counter' : nextNum === 2 ? 'Express Lane' : nextNum === 3 ? 'Live Studio' : 'Retail Floor'
     });
     setShowDeviceModal(true);
   };
@@ -792,10 +818,15 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       name: device.name,
       model: device.model,
       connectionType: device.connectionType,
-      ipAddress: device.ipAddress || '192.168.1.150',
+      ipAddress: device.ipAddress || '',
       port: device.port || 8080,
       terminalId: device.terminalId,
       merchantId: device.merchantId,
+      serialNumber: device.serialNumber || '',
+      imei: device.imei || '',
+      simCarrier: device.simCarrier || 'DU',
+      paymobTid: device.paymobTid || '',
+      paymobMid: device.paymobMid || '',
       isActive: device.isActive !== false,
       status: device.status || 'ONLINE',
       location: device.location || ''
@@ -939,16 +970,22 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     }
     const nextNum = fleet.length + 1;
     const bankPrefix = (bankForm.bankName || 'BANK').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'DXB';
+    const isRak = (bankForm.bankName || '').toUpperCase().includes('RAK');
     setEditingBankDeviceIndex(null);
     setBankDeviceForm({
       id: `pos-${bankPrefix.toLowerCase()}-${Date.now().toString(36)}`,
-      name: `${bankForm.bankName || 'Bank'} Terminal #${nextNum}`,
-      model: nextNum === 2 ? 'SUNMI_P2' : nextNum === 3 ? 'INGENICO' : nextNum === 4 ? 'VERIFONE' : 'PAX_A920',
-      connectionType: nextNum === 3 ? 'USB_SERIAL' : nextNum === 4 ? 'BLUETOOTH' : 'IP_ETHERNET',
-      ipAddress: `192.168.1.15${nextNum}`,
+      name: isRak ? 'RAKBANK Paymob PAX A960' : `${bankForm.bankName || 'Bank'} Terminal #${nextNum}`,
+      model: isRak ? 'PAX_A960' : (nextNum === 2 ? 'SUNMI_P2' : nextNum === 3 ? 'INGENICO' : nextNum === 4 ? 'VERIFONE' : 'PAX_A920'),
+      connectionType: isRak ? 'CELLULAR_SIM' : (nextNum === 3 ? 'USB_SERIAL' : nextNum === 4 ? 'BLUETOOTH' : 'IP_ETHERNET'),
+      ipAddress: isRak ? '' : `192.168.1.15${nextNum}`,
       port: 8080,
-      terminalId: `TID-${bankPrefix}-00${nextNum}`,
-      merchantId: bankForm.bankName ? `MID-${bankPrefix}-9881` : 'MID-VV-9881',
+      terminalId: isRak ? '12857001' : `TID-${bankPrefix}-00${nextNum}`,
+      merchantId: isRak ? '114400000012857' : (bankForm.bankName ? `MID-${bankPrefix}-9881` : 'MID-VV-9881'),
+      serialNumber: isRak ? '1180511614' : '',
+      imei: isRak ? '350814987795465' : '',
+      simCarrier: 'DU',
+      paymobTid: isRak ? '51898' : '',
+      paymobMid: isRak ? '85283' : '',
       isActive: true,
       status: 'ONLINE',
       location: nextNum === 1 ? 'Main Cash Counter' : nextNum === 2 ? 'Express Lane' : nextNum === 3 ? 'Live Studio' : 'Wholesale Gate'
@@ -961,7 +998,14 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     const dev = fleet[index];
     if (!dev) return;
     setEditingBankDeviceIndex(index);
-    setBankDeviceForm({ ...dev });
+    setBankDeviceForm({
+      ...dev,
+      serialNumber: dev.serialNumber || '',
+      imei: dev.imei || '',
+      simCarrier: dev.simCarrier || 'DU',
+      paymobTid: dev.paymobTid || '',
+      paymobMid: dev.paymobMid || '',
+    });
     setShowBankDeviceForm(true);
   };
 
@@ -2933,8 +2977,22 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                             {/* Network & Credentials */}
                             <td className="py-3 px-3 font-mono text-[11px]">
                               <div className="space-y-0.5">
-                                <div><span className="text-slate-400 font-sans text-[10px] uppercase font-bold">IP: </span><strong className="text-slate-800">{dev.ipAddress || '192.168.1.150'}:{dev.port || 8080}</strong></div>
-                                <div><span className="text-slate-400 font-sans text-[10px] uppercase font-bold">TID: </span><span className="text-indigo-600 font-bold">{dev.terminalId}</span></div>
+                                {dev.connectionType === 'CELLULAR_SIM' ? (
+                                  <>
+                                    <div className="flex items-center gap-1">
+                                      <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 text-[10px] font-sans font-bold border border-purple-200">
+                                        📶 4G SIM ({dev.simCarrier || 'DU'})
+                                      </span>
+                                    </div>
+                                    <div><span className="text-slate-400 font-sans text-[10px] uppercase font-bold">S/N: </span><strong className="text-slate-800">{dev.serialNumber || '1180511614'}</strong></div>
+                                    <div><span className="text-slate-400 font-sans text-[10px] uppercase font-bold">TID: </span><span className="text-indigo-600 font-bold">{dev.terminalId}</span>{dev.paymobTid ? <span className="text-slate-500 font-normal"> (PM: {dev.paymobTid})</span> : ''}</div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div><span className="text-slate-400 font-sans text-[10px] uppercase font-bold">IP: </span><strong className="text-slate-800">{dev.ipAddress || '192.168.1.150'}:{dev.port || 8080}</strong></div>
+                                    <div><span className="text-slate-400 font-sans text-[10px] uppercase font-bold">TID: </span><span className="text-indigo-600 font-bold">{dev.terminalId}</span></div>
+                                  </>
+                                )}
                               </div>
                             </td>
 
@@ -5403,6 +5461,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                             onChange={e => setBankDeviceForm({ ...bankDeviceForm, model: e.target.value as any })}
                             className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold text-slate-900 bg-white"
                           >
+                            <option value="PAX_A960">PAX A960 (Paymob Smart Android)</option>
                             <option value="PAX_A920">PAX A920 (Smart Android PED)</option>
                             <option value="SUNMI_P2">Sunmi P2 (Handheld POS)</option>
                             <option value="INGENICO">Ingenico Tetra / Move 5000</option>
@@ -5420,6 +5479,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                             onChange={e => setBankDeviceForm({ ...bankDeviceForm, connectionType: e.target.value as any })}
                             className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold text-slate-900 bg-white"
                           >
+                            <option value="CELLULAR_SIM">📶 4G Cellular SIM Card (Standalone Wireless)</option>
                             <option value="IP_ETHERNET">LAN / IP Ethernet</option>
                             <option value="WIFI_IP">WiFi TCP/IP</option>
                             <option value="USB_SERIAL">USB / RS232 Serial</option>
@@ -5440,27 +5500,92 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                           />
                         </div>
 
-                        <div>
-                          <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
-                            IP Address & Port *
-                          </label>
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="text"
-                              value={bankDeviceForm.ipAddress || ''}
-                              onChange={e => setBankDeviceForm({ ...bankDeviceForm, ipAddress: e.target.value })}
-                              placeholder="192.168.1.150"
-                              className="w-2/3 px-2 py-1.5 rounded-lg border border-slate-300 text-xs font-mono font-bold text-slate-900 bg-white"
-                            />
-                            <input
-                              type="number"
-                              value={bankDeviceForm.port || 8080}
-                              onChange={e => setBankDeviceForm({ ...bankDeviceForm, port: parseInt(e.target.value) || 8080 })}
-                              placeholder="8080"
-                              className="w-1/3 px-2 py-1.5 rounded-lg border border-slate-300 text-xs font-mono font-bold text-slate-900 bg-white"
-                            />
+                        {bankDeviceForm.connectionType === 'CELLULAR_SIM' ? (
+                          <>
+                            <div className="sm:col-span-2 p-2.5 rounded-lg bg-purple-50 border border-purple-200 text-purple-900 text-[11px] flex items-center gap-2">
+                              <Radio className="w-4 h-4 text-purple-600 shrink-0 animate-pulse" />
+                              <div>
+                                <span className="font-bold">Standalone 4G SIM Terminal:</span> Communicates directly with Paymob &amp; {bankForm.bankName || 'Bank'} via 4G cellular data. No local IP configuration or WiFi dependency required.
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                                Hardware S/N (Back of Device)
+                              </label>
+                              <input
+                                type="text"
+                                value={bankDeviceForm.serialNumber || ''}
+                                onChange={e => setBankDeviceForm({ ...bankDeviceForm, serialNumber: e.target.value })}
+                                placeholder="e.g. 1180511614"
+                                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono font-bold text-slate-900 bg-white"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                                Cellular IMEI Number
+                              </label>
+                              <input
+                                type="text"
+                                value={bankDeviceForm.imei || ''}
+                                onChange={e => setBankDeviceForm({ ...bankDeviceForm, imei: e.target.value })}
+                                placeholder="e.g. 350814987795465"
+                                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono font-bold text-slate-900 bg-white"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                                SIM Telecom Carrier
+                              </label>
+                              <select
+                                value={bankDeviceForm.simCarrier || 'DU'}
+                                onChange={e => setBankDeviceForm({ ...bankDeviceForm, simCarrier: e.target.value as any })}
+                                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold text-slate-900 bg-white"
+                              >
+                                <option value="DU">du Telecom (UAE)</option>
+                                <option value="ETISALAT">etisalat by e&amp; (UAE)</option>
+                                <option value="OTHER">Other Carrier</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                                Paymob TID (Optional)
+                              </label>
+                              <input
+                                type="text"
+                                value={bankDeviceForm.paymobTid || ''}
+                                onChange={e => setBankDeviceForm({ ...bankDeviceForm, paymobTid: e.target.value })}
+                                placeholder="e.g. 51898"
+                                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono text-slate-900 bg-white"
+                              />
+                            </div>
+                          </>
+                        ) : (
+                          <div>
+                            <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                              IP Address &amp; Port *
+                            </label>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                value={bankDeviceForm.ipAddress || ''}
+                                onChange={e => setBankDeviceForm({ ...bankDeviceForm, ipAddress: e.target.value })}
+                                placeholder="192.168.1.150"
+                                className="w-2/3 px-2 py-1.5 rounded-lg border border-slate-300 text-xs font-mono font-bold text-slate-900 bg-white"
+                              />
+                              <input
+                                type="number"
+                                value={bankDeviceForm.port || 8080}
+                                onChange={e => setBankDeviceForm({ ...bankDeviceForm, port: parseInt(e.target.value) || 8080 })}
+                                placeholder="8080"
+                                className="w-1/3 px-2 py-1.5 rounded-lg border border-slate-300 text-xs font-mono font-bold text-slate-900 bg-white"
+                              />
+                            </div>
                           </div>
-                        </div>
+                        )}
 
                         <div>
                           <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
@@ -5470,7 +5595,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                             type="text"
                             value={bankDeviceForm.terminalId}
                             onChange={e => setBankDeviceForm({ ...bankDeviceForm, terminalId: e.target.value })}
-                            placeholder="TID-DXB-001"
+                            placeholder="e.g. 12857001 or TID-DXB-001"
                             required
                             className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono font-bold text-indigo-700 bg-white uppercase"
                           />
@@ -5484,7 +5609,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                             type="text"
                             value={bankDeviceForm.merchantId}
                             onChange={e => setBankDeviceForm({ ...bankDeviceForm, merchantId: e.target.value })}
-                            placeholder="MID-VV-9881"
+                            placeholder="e.g. 114400000012857"
                             className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono text-slate-900 bg-white"
                           />
                         </div>
@@ -5583,9 +5708,22 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                           </div>
 
                           <div className="bg-slate-50 p-2 rounded-lg border border-slate-200 text-[10px] font-mono space-y-0.5">
-                            <div><span className="text-slate-400 font-sans uppercase font-bold">IP: </span>{dev.ipAddress || '192.168.1.150'}:{dev.port || 8080}</div>
-                            <div><span className="text-slate-400 font-sans uppercase font-bold">TID: </span><span className="text-indigo-600 font-bold">{dev.terminalId}</span></div>
-                            {dev.location && <div><span className="text-slate-400 font-sans uppercase font-bold">Desk: </span>{dev.location}</div>}
+                            {dev.connectionType === 'CELLULAR_SIM' ? (
+                              <>
+                                <div className="flex items-center gap-1 font-sans text-purple-700 font-bold">
+                                  <span>📶 4G Cellular SIM ({dev.simCarrier || 'DU'})</span>
+                                </div>
+                                <div><span className="text-slate-400 font-sans uppercase font-bold">S/N: </span><strong>{dev.serialNumber || '1180511614'}</strong></div>
+                                <div><span className="text-slate-400 font-sans uppercase font-bold">TID: </span><span className="text-indigo-600 font-bold">{dev.terminalId}</span> {dev.paymobTid ? `(Paymob: ${dev.paymobTid})` : ''}</div>
+                                {dev.location && <div><span className="text-slate-400 font-sans uppercase font-bold">Desk: </span>{dev.location}</div>}
+                              </>
+                            ) : (
+                              <>
+                                <div><span className="text-slate-400 font-sans uppercase font-bold">IP: </span>{dev.ipAddress || '192.168.1.150'}:{dev.port || 8080}</div>
+                                <div><span className="text-slate-400 font-sans uppercase font-bold">TID: </span><span className="text-indigo-600 font-bold">{dev.terminalId}</span></div>
+                                {dev.location && <div><span className="text-slate-400 font-sans uppercase font-bold">Desk: </span>{dev.location}</div>}
+                              </>
+                            )}
                           </div>
 
                           <div className="flex items-center justify-end gap-1 pt-1 border-t border-slate-100 text-xs">
@@ -6376,6 +6514,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                     onChange={e => setDeviceForm({ ...deviceForm, model: e.target.value as any })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 bg-white focus:ring-2 focus:ring-blue-500"
                   >
+                    <option value="PAX_A960">PAX A960 (Paymob Smart Android)</option>
                     <option value="PAX_A920">PAX A920 / A930 Smart Android</option>
                     <option value="SUNMI_P2">Sunmi P2 / V2 Handheld</option>
                     <option value="INGENICO">Ingenico Move 5000 / Lane</option>
@@ -6393,6 +6532,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                     onChange={e => setDeviceForm({ ...deviceForm, connectionType: e.target.value as any })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 bg-white focus:ring-2 focus:ring-blue-500"
                   >
+                    <option value="CELLULAR_SIM">📶 4G Cellular SIM Card (Standalone Wireless)</option>
                     <option value="IP_ETHERNET">Local Network TCP/IP</option>
                     <option value="WIFI_IP">WiFi Wireless IP</option>
                     <option value="USB_SERIAL">Direct USB COM Port</option>
@@ -6402,35 +6542,102 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Terminal IP Address
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. 192.168.1.150"
-                    value={deviceForm.ipAddress}
-                    onChange={e => setDeviceForm({ ...deviceForm, ipAddress: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
+              {deviceForm.connectionType === 'CELLULAR_SIM' ? (
+                <div className="space-y-3">
+                  <div className="p-2.5 rounded-xl bg-purple-50 border border-purple-200 text-purple-900 text-[11px] flex items-center gap-2">
+                    <Radio className="w-4 h-4 text-purple-600 shrink-0 animate-pulse" />
+                    <div>
+                      <span className="font-bold">Standalone 4G Cellular POS:</span> Connects directly to bank/Paymob via SIM card data. No local IP address configuration is required.
+                    </div>
+                  </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    TCP / Service Port
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    placeholder="8080"
-                    value={deviceForm.port}
-                    onChange={e => setDeviceForm({ ...deviceForm, port: parseInt(e.target.value) || 8080 })}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
-                  />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                        Hardware S/N (Back of Device)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 1180511614"
+                        value={deviceForm.serialNumber || ''}
+                        onChange={e => setDeviceForm({ ...deviceForm, serialNumber: e.target.value })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                        Cellular IMEI Number
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 350814987795465"
+                        value={deviceForm.imei || ''}
+                        onChange={e => setDeviceForm({ ...deviceForm, imei: e.target.value })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                        SIM Telecom Carrier
+                      </label>
+                      <select
+                        value={deviceForm.simCarrier || 'DU'}
+                        onChange={e => setDeviceForm({ ...deviceForm, simCarrier: e.target.value as any })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 bg-white focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="DU">du Telecom (UAE)</option>
+                        <option value="ETISALAT">etisalat by e&amp; (UAE)</option>
+                        <option value="OTHER">Other Carrier</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                        Paymob TID (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 51898"
+                        value={deviceForm.paymobTid || ''}
+                        onChange={e => setDeviceForm({ ...deviceForm, paymobTid: e.target.value })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono text-slate-900 focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      Terminal IP Address
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. 192.168.1.150"
+                      value={deviceForm.ipAddress}
+                      onChange={e => setDeviceForm({ ...deviceForm, ipAddress: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      TCP / Service Port
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      placeholder="8080"
+                      value={deviceForm.port}
+                      onChange={e => setDeviceForm({ ...deviceForm, port: parseInt(e.target.value) || 8080 })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>

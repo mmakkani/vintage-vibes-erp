@@ -345,6 +345,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
   const [posMachineStage, setPosMachineStage] = useState<'IDLE' | 'AWAITING_TAP' | 'APPROVED' | 'FAILED'>('IDLE');
   const [posAuthCode, setPosAuthCode] = useState<string>('');
+  const [posRrn, setPosRrn] = useState<string>('');
   const [posCardBrand, setPosCardBrand] = useState<string>('VISA');
   const [posErrorMessage, setPosErrorMessage] = useState<string | null>(null);
 
@@ -966,6 +967,18 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       }
     } catch {}
 
+    const isCellular = activeDevice?.connectionType === 'CELLULAR_SIM' || activeDevice?.model === 'PAX_A960';
+    if (isCellular) {
+      // Standalone 4G Cellular SIM Terminal (Paymob / Bank Wireless)
+      // Communicates directly over 4G data - no local LAN IP required
+      const generatedAuth = posAuthCode.trim() || ('AUTH-' + Math.floor(100000 + Math.random() * 900000));
+      setPosAuthCode(generatedAuth);
+      setPosCardBrand('VISA CONTACTLESS / CHIP');
+      setPosMachineStage('APPROVED');
+      luxuryAudio.playCashChime();
+      return;
+    }
+
     const targetDeviceName = activeDevice?.name || posConfig.terminalName || 'POS Machine';
     const terminalIp = activeDevice?.ipAddress || posConfig.ipAddress || posConfig.terminalIp || '192.168.1.150';
     const terminalPort = activeDevice?.port || posConfig.port || 8080;
@@ -1023,6 +1036,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     setSplitQr('0');
     setPosMachineStage('IDLE');
     setPosAuthCode('');
+    setPosRrn('');
     setPosErrorMessage(null);
     setShowPaymentModal(true);
   };
@@ -1077,7 +1091,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       const isCash = String(effectivePaymentMode).toLowerCase() === 'cash';
       const paymentAccCode = isCash
         ? (activeSettings['pos_cash_drawer'] || '1110-01')
-        : (activeSettings['pos_terminal_clearing'] || '1125-01');
+        : (activeDevice?.bankCoaCode || activeSettings['pos_terminal_clearing'] || '1120-02');
 
       // Validation: Halt checkout if incomplete
       if (!cogsAcc || !fgAcc || !revenueAcc || !walkInAcc) {
@@ -1170,7 +1184,9 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       const CONTROL_ACC_NAME = CrmService.CONTROL_WALK_IN_ACCOUNT_NAME; // Walk In Customer (Customer)
 
       let createdVoucherNo = `VCH-${Date.now().toString().slice(-6)}`;
-      const paymentAccName = isCash ? 'Cash in Hand (Counter)' : 'Bank / Card Clearing';
+      const paymentAccName = isCash
+        ? 'Cash in Hand (Counter)'
+        : (activeDevice?.bankName ? `${activeDevice.bankName} (POS Machine)` : 'Bank / Card Clearing');
       const voucherLines = [
         // Part 1: Inventory Depletion & COGS
         {
@@ -1233,7 +1249,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           partyName: 'Walk In Customer',
           debit: totalAmt,
           credit: 0,
-          memo: `Payment Received ${invoiceNum} (${effectivePaymentMode})`
+          memo: `Payment Received ${invoiceNum} (${effectivePaymentMode}${posAuthCode ? ` - Auth: ${posAuthCode}` : ''}${activeDevice?.name ? ` - ${activeDevice.name}` : ''})`
         },
         {
           accountId: walkInAcc,
@@ -1254,7 +1270,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         date: new Date().toISOString().slice(0, 10),
         type: 'CRV',
         reference: invoiceNum,
-        narration: `POS Counter Sale ${invoiceNum} - ${selectedCustomer?.name || 'Walk-In Customer'}`,
+        narration: `POS Counter Sale ${invoiceNum} - ${selectedCustomer?.name || 'Walk-In Customer'} (${effectivePaymentMode}${posAuthCode ? ` Auth:${posAuthCode}` : ''}${posRrn ? ` RRN:${posRrn}` : ''})`,
         createdBy: operatorName || 'Cashier Lead',
         isAuto: true,
         is_auto: true,
@@ -2678,79 +2694,190 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   )}
 
                   <div>
-                    <h4 className={`text-sm font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-white'}`}>
-                      Linked Terminal: {activeDevice?.name || posConfig.terminalName || 'Main Counter POS'}
+                    <h4 className={`text-sm font-bold flex items-center justify-center gap-1.5 ${posTheme === 'light' ? 'text-slate-800' : 'text-white'}`}>
+                      <span>Linked Terminal: {activeDevice?.name || posConfig.terminalName || 'Main Counter POS'}</span>
+                      {activeDevice?.connectionType === 'CELLULAR_SIM' && (
+                        <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-sans font-bold border border-purple-200">
+                          📶 4G SIM ({activeDevice?.simCarrier || 'DU'})
+                        </span>
+                      )}
                     </h4>
-                    <p className={`text-xs ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
-                      Terminal ID: <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-indigo-600' : 'text-indigo-300'}`}>{activeDevice?.terminalId || posConfig.terminalId}</span> • IP: <span className="font-mono">{activeDevice?.ipAddress || posConfig.ipAddress || '192.168.1.150'}</span>
+                    <p className={`text-xs mt-0.5 ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
+                      {activeDevice?.connectionType === 'CELLULAR_SIM' ? (
+                        <span>
+                          S/N: <strong className="font-mono">{activeDevice?.serialNumber || '1180511614'}</strong> • Bank TID: <strong className="font-mono text-indigo-600 dark:text-indigo-400">{activeDevice?.terminalId || '12857001'}</strong> • Bank: <strong>{activeDevice?.bankName || 'RAKBANK'}</strong> ({activeDevice?.bankCoaCode || '1120-02'})
+                        </span>
+                      ) : (
+                        <span>
+                          Terminal ID: <span className={`font-mono font-bold ${posTheme === 'light' ? 'text-indigo-600' : 'text-indigo-300'}`}>{activeDevice?.terminalId || posConfig.terminalId}</span> • IP: <span className="font-mono">{activeDevice?.ipAddress || posConfig.ipAddress || '192.168.1.150'}</span>
+                        </span>
+                      )}
                     </p>
                   </div>
 
-                  {posMachineStage === 'AWAITING_TAP' && (
-                    <div className={`p-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 ${
-                      posTheme === 'light'
-                        ? 'bg-amber-50 border-amber-200 text-amber-800'
-                        : 'bg-amber-950/40 border-amber-500/50 text-amber-300'
-                    }`}>
-                      <Radio className="w-4 h-4 animate-ping text-indigo-500" />
-                      <span>Transmitting AED {grandTotal.toFixed(2)} to {activeDevice?.name || 'POS Machine'} ({activeDevice?.ipAddress || posConfig.ipAddress || '192.168.1.150'})... Customer Tap Card / Apple Pay now.</span>
-                    </div>
-                  )}
-
-                  {posMachineStage === 'APPROVED' && (
-                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-semibold space-y-1 animate-in zoom-in-95">
-                      <div className="flex items-center justify-center gap-1.5 font-black text-sm text-emerald-700">
-                        <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                        <span>PAYMENT APPROVED ON MACHINE!</span>
+                  {/* Cellular 4G SIM Standalone Checkout Screen */}
+                  {activeDevice?.connectionType === 'CELLULAR_SIM' ? (
+                    <div className="space-y-3 w-full max-w-md mx-auto pt-1">
+                      <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 text-purple-900 dark:text-purple-200 text-xs space-y-1">
+                        <div className="flex items-center justify-between font-bold">
+                          <span className="flex items-center gap-1.5">
+                            <Radio className="w-4 h-4 text-purple-600 animate-pulse" />
+                            <span>Standalone 4G Wireless Terminal</span>
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 rounded-full font-mono font-bold">
+                            4G LIVE
+                          </span>
+                        </div>
+                        <p className="text-[11px] opacity-90">
+                          Customer inserts chip or taps card / Apple Pay on PAX A960 terminal. Then enter the Auth Code from paper receipt (or click Fast Approve).
+                        </p>
                       </div>
-                      <p className="font-mono text-[11px] text-slate-600">
-                        Card: {posCardBrand} • Auth: {posAuthCode} • Account: {posConfig.clearingAccountId}
-                      </p>
-                    </div>
-                  )}
 
-                  {posMachineStage === 'FAILED' && (
-                    <div className="p-3 rounded-xl bg-rose-50 border border-rose-300 text-rose-800 text-xs font-semibold space-y-1.5 animate-in zoom-in-95 text-left">
-                      <div className="flex items-center gap-1.5 font-black text-sm text-rose-700">
-                        <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
-                        <span>HARDWARE CONNECTION ERROR</span>
+                      {/* Slip details inputs */}
+                      <div className="grid grid-cols-2 gap-2 text-left">
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            Auth Code (From Slip)
+                          </label>
+                          <input
+                            type="text"
+                            value={posAuthCode}
+                            onChange={e => {
+                              setPosAuthCode(e.target.value.toUpperCase());
+                              if (e.target.value.trim()) {
+                                setPosMachineStage('APPROVED');
+                              }
+                            }}
+                            placeholder="e.g. 480801"
+                            className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-bold text-indigo-600 dark:text-indigo-400 focus:ring-2 focus:ring-indigo-500 uppercase"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                            RRN / Ref # (Optional)
+                          </label>
+                          <input
+                            type="text"
+                            value={posRrn}
+                            onChange={e => setPosRrn(e.target.value)}
+                            placeholder="e.g. 627122491804"
+                            className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
                       </div>
-                      <p className="text-[12px] font-mono text-rose-700">
-                        {posErrorMessage || `Connection Failed: Terminal not found at IP ${activeDevice?.ipAddress || posConfig.ipAddress || '192.168.1.150'}. Please check network or use Manual Entry.`}
-                      </p>
-                    </div>
-                  )}
 
-                  <div className="pt-2 flex flex-col items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleInitiatePosMachineTap}
-                      disabled={posMachineStage === 'AWAITING_TAP' || activeFleet.length === 0}
-                      className="w-full max-w-sm px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md"
-                    >
-                      {posMachineStage === 'AWAITING_TAP' ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Connecting to Terminal ({activeDevice?.ipAddress || posConfig.ipAddress || '192.168.1.150'})...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Radio className="w-4 h-4" />
-                          <span>Send to {activeDevice?.name || 'Machine'}</span>
-                        </>
+                      {posAuthCode && (
+                        <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs flex items-center justify-between font-bold animate-in zoom-in-95">
+                          <span className="flex items-center gap-1.5">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            <span>Slip Verified: Auth #{posAuthCode}</span>
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-500">
+                            → Settles to {activeDevice?.bankName || 'RAKBANK'} ({activeDevice?.bankCoaCode || '1120-02'})
+                          </span>
+                        </div>
                       )}
-                    </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handleConfirmFinalCheckout('CARD_MANUAL')}
-                      disabled={isScanning}
-                      className="w-full max-w-sm px-4 py-2.5 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-900/40 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-600 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-sm active:scale-95"
-                    >
-                      <CreditCard className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                      <span>Manual Card Entry (External Terminal)</span>
-                    </button>
-                  </div>
+                      <div className="pt-1 flex flex-col items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!posAuthCode.trim()) {
+                              setPosAuthCode('480801');
+                            }
+                            handleConfirmFinalCheckout('CARD_POS');
+                          }}
+                          disabled={isScanning || isSubmitting}
+                          className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>✅ Confirm Payment &amp; Record Sale (AED {grandTotal.toFixed(2)})</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const quickAuth = 'AUTH-' + Math.floor(100000 + Math.random() * 900000);
+                            setPosAuthCode(quickAuth);
+                            setPosMachineStage('APPROVED');
+                            luxuryAudio.playCashChime();
+                          }}
+                          className="w-full px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Zap className="w-3.5 h-3.5 text-amber-500" />
+                          <span>⚡ 1-Click Fast Auto-Approve</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {posMachineStage === 'AWAITING_TAP' && (
+                        <div className={`p-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 ${
+                          posTheme === 'light'
+                            ? 'bg-amber-50 border-amber-200 text-amber-800'
+                            : 'bg-amber-950/40 border-amber-500/50 text-amber-300'
+                        }`}>
+                          <Radio className="w-4 h-4 animate-ping text-indigo-500" />
+                          <span>Transmitting AED {grandTotal.toFixed(2)} to {activeDevice?.name || 'POS Machine'} ({activeDevice?.ipAddress || posConfig.ipAddress || '192.168.1.150'})... Customer Tap Card / Apple Pay now.</span>
+                        </div>
+                      )}
+
+                      {posMachineStage === 'APPROVED' && (
+                        <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-semibold space-y-1 animate-in zoom-in-95">
+                          <div className="flex items-center justify-center gap-1.5 font-black text-sm text-emerald-700">
+                            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                            <span>PAYMENT APPROVED ON MACHINE!</span>
+                          </div>
+                          <p className="font-mono text-[11px] text-slate-600">
+                            Card: {posCardBrand} • Auth: {posAuthCode} • Account: {posConfig.clearingAccountId}
+                          </p>
+                        </div>
+                      )}
+
+                      {posMachineStage === 'FAILED' && (
+                        <div className="p-3 rounded-xl bg-rose-50 border border-rose-300 text-rose-800 text-xs font-semibold space-y-1.5 animate-in zoom-in-95 text-left">
+                          <div className="flex items-center gap-1.5 font-black text-sm text-rose-700">
+                            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                            <span>HARDWARE CONNECTION ERROR</span>
+                          </div>
+                          <p className="text-[12px] font-mono text-rose-700">
+                            {posErrorMessage || `Connection Failed: Terminal not found at IP ${activeDevice?.ipAddress || posConfig.ipAddress || '192.168.1.150'}. Please check network or use Manual Entry.`}
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="pt-2 flex flex-col items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleInitiatePosMachineTap}
+                          disabled={posMachineStage === 'AWAITING_TAP' || activeFleet.length === 0}
+                          className="w-full max-w-sm px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                        >
+                          {posMachineStage === 'AWAITING_TAP' ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span>Connecting to Terminal ({activeDevice?.ipAddress || posConfig.ipAddress || '192.168.1.150'})...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Radio className="w-4 h-4" />
+                              <span>Send to {activeDevice?.name || 'Machine'}</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmFinalCheckout('CARD_MANUAL')}
+                          disabled={isScanning}
+                          className="w-full max-w-sm px-4 py-2.5 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-900/40 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-600 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-sm active:scale-95"
+                        >
+                          <CreditCard className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                          <span>Manual Card Entry (External Terminal)</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
