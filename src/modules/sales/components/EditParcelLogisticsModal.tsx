@@ -26,10 +26,11 @@ interface CourierOption {
 }
 
 const DEFAULT_COURIERS: CourierOption[] = [
-  { partyId: 23, id: '813f3f28-d541-4e4d-ad3e-ca6ca2824b21', name: 'DHL Express UAE', accountCode: '2120-01' },
-  { partyId: 24, id: '9b1e1713-39d2-4309-8488-81203f5ad602', name: 'Aramex Logistics UAE', accountCode: '2120-02' },
-  { partyId: 25, id: 'a8291f04-89f1-46bb-ba22-81203f5ad603', name: 'SMSA Express GCC', accountCode: '2120-03' },
-  { partyId: 26, id: 'c5713e89-11ba-47ee-99aa-81203f5ad604', name: 'Emirates Post Premium', accountCode: '2120-04' }
+  { partyId: 70, id: '404b940f-1c3b-4c59-9aa0-223b26d99b0d', name: 'DHL Express UAE', accountCode: '2120-01' },
+  { partyId: 71, id: '5a81bbcc-dd51-437e-aaae-de817b59a221', name: 'Aramex Logistics UAE', accountCode: '2120-02' },
+  { partyId: 72, id: '086bbab8-ee4d-483c-9e50-622a341c8408', name: 'SMSA Express GCC', accountCode: '2120-03' },
+  { partyId: 73, id: '5122c6ad-770f-4000-8f5f-6ce43324abc8', name: 'Emirates Post Premium', accountCode: '2120-04' },
+  { partyId: 74, id: 'd41e94e5-61cf-4fbc-aaf0-ba1400971567', name: 'iMile Delivery UAE', accountCode: '2120-05' }
 ];
 
 interface EditParcelLogisticsModalProps {
@@ -88,11 +89,22 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
               );
             })
             .map((p: any): CourierOption => {
+              const codeMap: Record<string, string> = {
+                'COUR-01': '2120-01',
+                'COUR-02': '2120-02',
+                'COUR-03': '2120-03',
+                'COUR-04': '2120-04',
+                'COUR-05': '2120-05'
+              };
               const accountCode =
                 p.account_map?.payableAccountId ||
                 p.account_map?.payable_account_id ||
-                p.coa_account_id ||
-                '2120-00';
+                codeMap[p.code] ||
+                (p.name?.includes('DHL') ? '2120-01' :
+                 p.name?.includes('Aramex') ? '2120-02' :
+                 p.name?.includes('SMSA') ? '2120-03' :
+                 p.name?.includes('Emirates') ? '2120-04' :
+                 p.name?.includes('iMile') ? '2120-05' : '2120-00');
               return {
                 partyId: p.party_id,
                 id: p.id,

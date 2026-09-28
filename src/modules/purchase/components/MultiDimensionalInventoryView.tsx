@@ -79,7 +79,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
       // 2. Database update: UPDATE inventory_pieces SET status = 'IN_STOCK' WHERE barcode/id
       await SalesService.releasePiece({ id: piece.id, barcode: piece.barcode });
 
-      luxuryAudio.playCashRegisterSound();
+      luxuryAudio.playCashChime();
 
       // 3. Notify parent components
       if (onPieceUpdated) {
@@ -115,7 +115,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
     try {
       luxuryAudio.playMechanicalClick();
       const result = await SalesService.releaseAllStuckReservations();
-      luxuryAudio.playCashRegisterSound();
+      luxuryAudio.playCashChime();
       
       // Update local delta cache for all released items
       const newDeltas: Record<string, Partial<PieceBreakdownItem>> = {};

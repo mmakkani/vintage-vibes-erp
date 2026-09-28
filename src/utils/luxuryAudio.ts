@@ -243,6 +243,10 @@ class LuxuryAudioManager {
     this.playGoldChime();
   }
 
+  public playCashRegisterSound() {
+    this.playGoldChime();
+  }
+
   // Automatically attach sound listeners to ALL buttons across the entire app
   private attachGlobalListeners() {
     if (typeof window === 'undefined') return;

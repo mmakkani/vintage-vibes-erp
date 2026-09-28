@@ -162,7 +162,6 @@ export class SalesService {
         .update({ status: 'IN_STOCK', is_sold: false, updated_at: new Date().toISOString() })
         .eq('status', 'RESERVED')
         .eq('is_sold', false)
-        .is('sold_invoice_id', null)
         .select('id, barcode, item_name, brand_name, status');
 
       if (error) {
