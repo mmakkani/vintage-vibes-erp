@@ -1,5 +1,5 @@
 import { CurrencyCode, PackagingUOM, WeightUOM } from '../../types/common.types.ts';
-import { POSTerminalConfig } from './hardware.types.ts';
+import { POSTerminalConfig, POSTerminalDevice } from './hardware.types.ts';
 
 export interface BankAccountConfig {
   id: string;
@@ -16,6 +16,7 @@ export interface BankAccountConfig {
   coaAccountCode?: string; // e.g. 1120-00, 1121-00
   coaAccountId?: string; // Linked COA Account ID
   status: 'ACTIVE' | 'INACTIVE';
+  posFleet?: POSTerminalDevice[]; // Up to 5 Smart POS machines configured for this specific bank
 }
 
 export interface PaymentGatewayConfig {

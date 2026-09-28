@@ -57,7 +57,8 @@ import {
   Video,
   FolderTree,
   Calendar,
-  ChevronRight
+  ChevronRight,
+  Activity
 } from 'lucide-react';
 import { BulkDataImportModal } from '../../../components/BulkDataImportModal.tsx';
 import { QRCodeCanvas } from 'qrcode.react';
@@ -293,8 +294,9 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   const [bales, setBales] = useState<any[]>([]);
   const [selectedBatchIds, setSelectedBatchIds] = useState<string[]>([]);
 
-  // Bank Accounts Management State (Auto-synced to COA)
+  // Bank Accounts Management State (Auto-synced to COA & Bank-Wise POS Fleets)
   const [showBankModal, setShowBankModal] = useState(false);
+  const [bankModalTab, setBankModalTab] = useState<'details' | 'pos_fleet'>('details');
   const [editingBank, setEditingBank] = useState<BankAccountConfig | null>(null);
   const [viewingQrBank, setViewingQrBank] = useState<BankAccountConfig | null>(null);
   const [bankForm, setBankForm] = useState<Omit<BankAccountConfig, 'id'>>({
@@ -309,8 +311,30 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     isPrimary: false,
     linkedPosTerminalId: '',
     coaAccountCode: '1120-00',
-    status: 'ACTIVE'
+    status: 'ACTIVE',
+    posFleet: []
   });
+
+  // State for adding / editing a machine inside the Bank Modal (1 to 5 devices per bank)
+  const [showBankDeviceForm, setShowBankDeviceForm] = useState(false);
+  const [editingBankDeviceIndex, setEditingBankDeviceIndex] = useState<number | null>(null);
+  const [bankDeviceForm, setBankDeviceForm] = useState<POSTerminalDevice>({
+    id: '',
+    name: 'Counter 1 - Main Desk PED',
+    model: 'PAX_A920',
+    connectionType: 'IP_ETHERNET',
+    ipAddress: '192.168.1.150',
+    port: 8080,
+    terminalId: 'TID-DXB-001',
+    merchantId: 'MID-VV-9881',
+    isActive: true,
+    status: 'ONLINE',
+    location: 'Main Cash Counter'
+  });
+
+  // Filter states for Section 2: Live Status Logs
+  const [fleetLogFilter, setFleetLogFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
+  const [fleetLogBankFilter, setFleetLogBankFilter] = useState<string>('ALL');
 
 
   // Live Stream Multicast Configuration
@@ -416,8 +440,36 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
           linkedBankName: ptc.linkedBankName || 'RAKBANK',
           ...ptc
         });
-        if (Array.isArray(ptc.fleet) && ptc.fleet.length > 0) {
-          setPosFleet(ptc.fleet);
+        let currentBanks: BankAccountConfig[] = profRes.bankAccounts || [];
+        const ptcFleet = Array.isArray(ptc.fleet) ? ptc.fleet : [];
+
+        // Migration: If banks exist, but no bank has posFleet yet, attach ptcFleet to primary bank
+        const hasAnyBankFleet = currentBanks.some(b => Array.isArray(b.posFleet) && b.posFleet.length > 0);
+        if (!hasAnyBankFleet && currentBanks.length > 0 && ptcFleet.length > 0) {
+          currentBanks = currentBanks.map(b => {
+            if (b.isPrimary) {
+              return { ...b, posFleet: ptcFleet };
+            }
+            return b;
+          });
+        }
+
+        const allBankDevices: POSTerminalDevice[] = [];
+        currentBanks.forEach(b => {
+          (b.posFleet || []).forEach(d => {
+            allBankDevices.push({
+              ...d,
+              bankId: b.id,
+              bankName: b.bankName,
+              bankCoaCode: b.coaAccountCode
+            });
+          });
+        });
+
+        if (allBankDevices.length > 0) {
+          setPosFleet(allBankDevices);
+        } else if (ptcFleet.length > 0) {
+          setPosFleet(ptcFleet);
         } else {
           setPosFleet([
             {
@@ -614,32 +666,50 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     }
   };
 
-  // 1 to 5 POS Fleet Handlers
+  // 1 to 5 POS Fleet Handlers (Synchronized with Bank Accounts)
   const handleToggleDeviceActive = async (deviceId: string) => {
     if (!companyProfile) return;
-    const currentFleet = posFleet.length > 0 ? posFleet : (companyProfile.posTerminalConfig?.fleet || []);
-    const updatedFleet = currentFleet.map(dev => {
+    const currentBanks = [...(companyProfile.bankAccounts || [])];
+    let targetDeviceName = '';
+    let targetDeviceActive = false;
+
+    const updatedBanks = currentBanks.map(bank => {
+      if (!Array.isArray(bank.posFleet)) return bank;
+      const updatedFleet = bank.posFleet.map(dev => {
+        if (dev.id === deviceId) {
+          targetDeviceName = dev.name;
+          targetDeviceActive = !dev.isActive;
+          return { ...dev, isActive: !dev.isActive };
+        }
+        return dev;
+      });
+      return { ...bank, posFleet: updatedFleet };
+    });
+
+    const currentFleet = posFleet.map(dev => {
       if (dev.id === deviceId) {
+        if (!targetDeviceName) targetDeviceName = dev.name;
+        targetDeviceActive = !dev.isActive;
         return { ...dev, isActive: !dev.isActive };
       }
       return dev;
     });
 
-    setPosFleet(updatedFleet);
+    setPosFleet(currentFleet);
 
     const updatedProfile = {
       ...companyProfile,
+      bankAccounts: updatedBanks,
       posTerminalConfig: {
         ...(companyProfile.posTerminalConfig || posConfig),
-        fleet: updatedFleet
+        fleet: currentFleet
       }
     };
 
     try {
       await CompanyProfileService.updateCompanyProfile(updatedProfile);
       setCompanyProfile(updatedProfile);
-      const targetDev = updatedFleet.find(d => d.id === deviceId);
-      showMsg(`Device "${targetDev?.name}" is now ${targetDev?.isActive ? 'ACTIVE (Enabled in POS)' : 'INACTIVE (Disabled in POS)'}`);
+      showMsg(`Device "${targetDeviceName || 'Terminal'}" is now ${targetDeviceActive ? 'ACTIVE (Enabled in POS)' : 'INACTIVE (Disabled in POS)'}`);
       onRefreshAll();
     } catch (err: any) {
       showMsg(err?.message || 'Error updating device status', 'error');
@@ -648,18 +718,24 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
 
   const handleDeleteDevice = async (deviceId: string) => {
     if (!companyProfile) return;
-    if (posFleet.length <= 1) {
-      showMsg('You must keep at least 1 POS terminal device configured.', 'error');
-      return;
-    }
     const devToDelete = posFleet.find(d => d.id === deviceId);
-    if (!confirm(`Are you sure you want to remove "${devToDelete?.name || 'this POS machine'}" from your fleet?`)) return;
+    if (!confirm(`Are you sure you want to delete "${devToDelete?.name || 'this POS machine'}"?`)) return;
+
+    const currentBanks = [...(companyProfile.bankAccounts || [])];
+    const updatedBanks = currentBanks.map(bank => {
+      if (!Array.isArray(bank.posFleet)) return bank;
+      return {
+        ...bank,
+        posFleet: bank.posFleet.filter(d => d.id !== deviceId)
+      };
+    });
 
     const updatedFleet = posFleet.filter(d => d.id !== deviceId);
     setPosFleet(updatedFleet);
 
     const updatedProfile = {
       ...companyProfile,
+      bankAccounts: updatedBanks,
       posTerminalConfig: {
         ...(companyProfile.posTerminalConfig || posConfig),
         fleet: updatedFleet
@@ -669,7 +745,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     try {
       await CompanyProfileService.updateCompanyProfile(updatedProfile);
       setCompanyProfile(updatedProfile);
-      showMsg(`Device "${devToDelete?.name}" removed from POS fleet.`);
+      showMsg(`✓ Device "${devToDelete?.name || 'Terminal'}" deleted from fleet.`);
       onRefreshAll();
     } catch (err: any) {
       showMsg(err?.message || 'Error removing device', 'error');
@@ -818,9 +894,11 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     showMsg('COA account mappings reset to system defaults. Click Save to persist.');
   };
 
-  // Bank Account Handlers (Auto-synced to COA)
+  // Bank Account Handlers (Auto-synced to COA & Bank-Wise POS Fleets)
   const handleOpenAddBank = () => {
     setEditingBank(null);
+    setBankModalTab('details');
+    setShowBankDeviceForm(false);
     const existing = companyProfile?.bankAccounts || [];
     const nextIdx = existing.length;
     setBankForm({
@@ -835,15 +913,94 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       isPrimary: existing.length === 0,
       linkedPosTerminalId: posConfig?.terminalId || '',
       coaAccountCode: `112${nextIdx}-00`,
-      status: 'ACTIVE'
+      status: 'ACTIVE',
+      posFleet: []
     });
     setShowBankModal(true);
   };
 
-  const handleOpenEditBank = (bank: BankAccountConfig) => {
+  const handleOpenEditBank = (bank: BankAccountConfig, initialTab: 'details' | 'pos_fleet' = 'details') => {
     setEditingBank(bank);
-    setBankForm({ ...bank });
+    setBankModalTab(initialTab);
+    setShowBankDeviceForm(false);
+    setBankForm({
+      ...bank,
+      posFleet: Array.isArray(bank.posFleet) ? [...bank.posFleet] : []
+    });
     setShowBankModal(true);
+  };
+
+  // Machine handlers inside Bank Modal (1 to 5 devices per bank)
+  const handleOpenAddBankDevice = () => {
+    const fleet = bankForm.posFleet || [];
+    if (fleet.length >= 5) {
+      showMsg('Maximum 5 devices can be linked to this bank account.', 'error');
+      return;
+    }
+    const nextNum = fleet.length + 1;
+    const bankPrefix = (bankForm.bankName || 'BANK').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'DXB';
+    setEditingBankDeviceIndex(null);
+    setBankDeviceForm({
+      id: `pos-${bankPrefix.toLowerCase()}-${Date.now().toString(36)}`,
+      name: `${bankForm.bankName || 'Bank'} Terminal #${nextNum}`,
+      model: nextNum === 2 ? 'SUNMI_P2' : nextNum === 3 ? 'INGENICO' : nextNum === 4 ? 'VERIFONE' : 'PAX_A920',
+      connectionType: nextNum === 3 ? 'USB_SERIAL' : nextNum === 4 ? 'BLUETOOTH' : 'IP_ETHERNET',
+      ipAddress: `192.168.1.15${nextNum}`,
+      port: 8080,
+      terminalId: `TID-${bankPrefix}-00${nextNum}`,
+      merchantId: bankForm.bankName ? `MID-${bankPrefix}-9881` : 'MID-VV-9881',
+      isActive: true,
+      status: 'ONLINE',
+      location: nextNum === 1 ? 'Main Cash Counter' : nextNum === 2 ? 'Express Lane' : nextNum === 3 ? 'Live Studio' : 'Wholesale Gate'
+    });
+    setShowBankDeviceForm(true);
+  };
+
+  const handleOpenEditBankDevice = (index: number) => {
+    const fleet = bankForm.posFleet || [];
+    const dev = fleet[index];
+    if (!dev) return;
+    setEditingBankDeviceIndex(index);
+    setBankDeviceForm({ ...dev });
+    setShowBankDeviceForm(true);
+  };
+
+  const handleSaveBankDevice = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!bankDeviceForm.name.trim() || !bankDeviceForm.terminalId.trim()) {
+      showMsg('Device Name and Terminal ID (TID) are required.', 'error');
+      return;
+    }
+    const fleet = [...(bankForm.posFleet || [])];
+    if (editingBankDeviceIndex !== null && editingBankDeviceIndex >= 0) {
+      fleet[editingBankDeviceIndex] = { ...bankDeviceForm };
+    } else {
+      if (fleet.length >= 5) {
+        showMsg('Maximum 5 devices allowed per bank.', 'error');
+        return;
+      }
+      fleet.push({
+        ...bankDeviceForm,
+        id: bankDeviceForm.id || `pos-${Date.now().toString(36)}`
+      });
+    }
+    setBankForm(prev => ({ ...prev, posFleet: fleet }));
+    setShowBankDeviceForm(false);
+    setEditingBankDeviceIndex(null);
+  };
+
+  const handleDeleteBankDevice = (index: number) => {
+    const fleet = [...(bankForm.posFleet || [])];
+    fleet.splice(index, 1);
+    setBankForm(prev => ({ ...prev, posFleet: fleet }));
+  };
+
+  const handleToggleBankDeviceActive = (index: number) => {
+    const fleet = [...(bankForm.posFleet || [])];
+    if (fleet[index]) {
+      fleet[index] = { ...fleet[index], isActive: !fleet[index].isActive };
+      setBankForm(prev => ({ ...prev, posFleet: fleet }));
+    }
   };
 
   const handleSaveBank = async (e: React.FormEvent) => {
@@ -876,9 +1033,26 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       }));
     }
 
+    // Synchronize all devices across all banks to posTerminalConfig.fleet
+    const allBankDevices: POSTerminalDevice[] = [];
+    updatedList.forEach(b => {
+      (b.posFleet || []).forEach(d => {
+        allBankDevices.push({
+          ...d,
+          bankId: b.id,
+          bankName: b.bankName,
+          bankCoaCode: b.coaAccountCode
+        });
+      });
+    });
+
     const updatedProfile = {
       ...companyProfile,
       bankAccounts: updatedList,
+      posTerminalConfig: {
+        ...(companyProfile.posTerminalConfig || posConfig),
+        fleet: allBankDevices
+      },
       ...(bankForm.isPrimary ? {
         bankName: bankForm.bankName,
         bankAccountTitle: bankForm.accountTitle,
@@ -891,8 +1065,9 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     try {
       await CompanyProfileService.updateCompanyProfile(updatedProfile);
       setCompanyProfile(updatedProfile);
+      setPosFleet(allBankDevices);
       setShowBankModal(false);
-      showMsg('✓ Bank Account successfully saved and auto-synced to Chart of Accounts (COA)!');
+      showMsg('✓ Bank Account & POS Machines saved and auto-synced to Chart of Accounts (COA)!');
       onRefreshAll();
       loadData();
     } catch (err: any) {
@@ -2525,148 +2700,354 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
             </div>
           </div>
 
-          {/* SECTION 2: SMART POS PAYMENT TERMINAL FLEET MANAGER (1 TO 5 DEVICES) */}
+          {/* SECTION 2: LIVE POS TERMINAL FLEET ACTIVITY & HARDWARE STATUS LOGS */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-5">
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
               <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl border border-blue-200">
-                  <CreditCard className="w-6 h-6" />
+                <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-200">
+                  <Activity className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wider flex items-center gap-2">
-                    Section 2: Smart POS Payment Terminal Fleet (1 to 5 Devices)
-                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-blue-100 text-blue-800 border border-blue-300 font-mono">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wider">
+                      Section 2: Live POS Terminal Fleet Activity & Hardware Status Logs
+                    </h3>
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 font-mono">
                       {posFleet.filter(d => d.isActive).length}/{posFleet.length} Active in POS
                     </span>
-                  </h3>
+                  </div>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Connect up to 5 physical Android / Linux card machines (PAX A920, Sunmi P2, Ingenico, Verifone). Use the toggle to activate or deactivate devices. Inactive devices are automatically hidden from counter cashier desks.
+                    Live hardware status, real-time connectivity telemetry, and active operational state across all connected banking partners. Cashiers can only process payments on terminals marked ACTIVE.
                   </p>
                 </div>
               </div>
 
+              {/* Quick Actions: Add Machine & Ping All */}
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleOpenAddDevice}
-                  disabled={posFleet.length >= 5}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs uppercase tracking-wider shadow-sm transition cursor-pointer"
-                  title={posFleet.length >= 5 ? 'Maximum 5 devices reached' : 'Add new POS terminal device'}
+                  onClick={() => {
+                    const primaryOrFirstBank = (companyProfile?.bankAccounts || []).find(b => b.isPrimary) || (companyProfile?.bankAccounts || [])[0];
+                    if (primaryOrFirstBank) {
+                      handleOpenEditBank(primaryOrFirstBank, 'pos_fleet');
+                    } else {
+                      handleOpenAddBank();
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition cursor-pointer"
+                  title="Add new POS card machine to fleet"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>{posFleet.length >= 5 ? 'Fleet Full (5/5)' : 'Add POS Device'}</span>
+                  <span>+ Add POS Machine</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    posFleet.forEach(d => handlePingDevice(d));
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs border border-slate-300 transition cursor-pointer"
+                  title="Ping all devices in fleet to test handshake"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Ping All</span>
                 </button>
               </div>
             </div>
 
-            {/* Fleet Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-              {posFleet.map((dev, idx) => {
-                const pingState = devicePingResults[dev.id];
-                return (
-                  <div
-                    key={dev.id}
-                    className={`rounded-xl border p-4 transition-all relative space-y-3 ${
-                      dev.isActive
-                        ? 'bg-white border-blue-200/80 shadow-sm ring-1 ring-blue-500/10'
-                        : 'bg-slate-50/80 border-slate-200 opacity-75'
-                    }`}
-                  >
-                    {/* Card Header */}
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-mono font-bold text-slate-400">#{idx + 1}</span>
-                          <h4 className="text-xs font-bold text-slate-900 leading-tight">
-                            {dev.name}
-                          </h4>
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-slate-100 text-slate-700 border border-slate-200 font-mono">
-                            {dev.model}
-                          </span>
-                          <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-slate-100 text-slate-600 border border-slate-200 font-mono">
-                            {dev.connectionType}
-                          </span>
-                        </div>
-                      </div>
+            {/* Fleet Health KPI Ribbon */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-blue-100 text-blue-700 font-bold">
+                  <CreditCard className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Total Connected</div>
+                  <div className="text-sm font-bold text-slate-900 font-mono">{posFleet.length} Machines</div>
+                </div>
+              </div>
 
-                      {/* Active / Inactive Switch Button */}
-                      <button
-                        type="button"
-                        onClick={() => handleToggleDeviceActive(dev.id)}
-                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs ${
-                          dev.isActive
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
-                            : 'bg-slate-200 text-slate-600 border border-slate-300 hover:bg-slate-300'
-                        }`}
-                        title="Click to toggle Active / Inactive status"
-                      >
-                        <span className={`w-2 h-2 rounded-full ${dev.isActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
-                        <span>{dev.isActive ? 'ACTIVE' : 'INACTIVE'}</span>
-                      </button>
-                    </div>
-
-                    {/* Connection & Network Spec */}
-                    <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 space-y-1 text-[11px] font-mono">
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span className="text-slate-400 font-sans text-[10px] uppercase font-bold">IP & Port:</span>
-                        <span className="font-bold text-slate-900">{dev.ipAddress || '192.168.1.150'}:{dev.port || 8080}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span className="text-slate-400 font-sans text-[10px] uppercase font-bold">TID / MID:</span>
-                        <span className="text-indigo-600 font-bold">{dev.terminalId} / {dev.merchantId}</span>
-                      </div>
-                      {dev.location && (
-                        <div className="flex items-center justify-between text-slate-600 font-sans">
-                          <span className="text-slate-400 text-[10px] uppercase font-bold">Station:</span>
-                          <span className="text-slate-700">{dev.location}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Card Action Buttons */}
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => handlePingDevice(dev)}
-                        disabled={pingState === 'TESTING'}
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border transition cursor-pointer ${
-                          pingState === 'SUCCESS'
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                            : pingState === 'FAILED'
-                            ? 'bg-rose-50 text-rose-700 border-rose-300'
-                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                        }`}
-                      >
-                        <RefreshCw className={`w-3 h-3 ${pingState === 'TESTING' ? 'animate-spin text-amber-500' : ''}`} />
-                        <span>{pingState === 'TESTING' ? 'Pinging...' : pingState === 'SUCCESS' ? 'Online 18ms' : pingState === 'FAILED' ? 'Offline' : 'Ping Test'}</span>
-                      </button>
-
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEditDevice(dev)}
-                          className="p-1 rounded text-slate-500 hover:text-blue-600 hover:bg-blue-50 cursor-pointer"
-                          title="Edit device configuration"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        {posFleet.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteDevice(dev.id)}
-                            className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
-                            title="Remove device from fleet"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
+              <div className="bg-emerald-50/60 border border-emerald-200 p-3 rounded-xl flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-emerald-100 text-emerald-700 font-bold">
+                  <Wifi className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold uppercase text-emerald-700">Active in POS</div>
+                  <div className="text-sm font-bold text-emerald-800 font-mono">
+                    {posFleet.filter(d => d.isActive).length} Terminals
                   </div>
-                );
-              })}
+                </div>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-slate-200 text-slate-600 font-bold">
+                  <Radio className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold uppercase text-slate-500">Standby / Inactive</div>
+                  <div className="text-sm font-bold text-slate-600 font-mono">
+                    {posFleet.filter(d => !d.isActive).length} Disabled
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-indigo-50/60 border border-indigo-200 p-3 rounded-xl flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-indigo-100 text-indigo-700 font-bold">
+                  <Landmark className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold uppercase text-indigo-700">Banking Fleets</div>
+                  <div className="text-sm font-bold text-indigo-900 font-mono">
+                    {(companyProfile?.bankAccounts || []).length} Accounts
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Filter Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold text-slate-500 mr-1 uppercase">Filter:</span>
+                <button
+                  type="button"
+                  onClick={() => setFleetLogFilter('ALL')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                    fleetLogFilter === 'ALL'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  All Terminals ({posFleet.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFleetLogFilter('ACTIVE')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
+                    fleetLogFilter === 'ACTIVE'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                  <span>Active in POS ({posFleet.filter(d => d.isActive).length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFleetLogFilter('INACTIVE')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
+                    fleetLogFilter === 'INACTIVE'
+                      ? 'bg-slate-700 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                  <span>Inactive ({posFleet.filter(d => !d.isActive).length})</span>
+                </button>
+              </div>
+
+              {(companyProfile?.bankAccounts || []).length > 1 && (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase">Bank:</span>
+                  <select
+                    value={fleetLogBankFilter}
+                    onChange={e => setFleetLogBankFilter(e.target.value)}
+                    className="border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-800 bg-white"
+                  >
+                    <option value="ALL">All Banking Fleets</option>
+                    {(companyProfile?.bankAccounts || []).map(b => (
+                      <option key={b.id} value={b.id}>{b.bankName} (COA: {b.coaAccountCode})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+
+            {/* Live Status Logs Table */}
+            <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px] tracking-wider">
+                    <tr>
+                      <th className="py-2.5 px-3">Device & Hardware</th>
+                      <th className="py-2.5 px-3">Linked Bank & COA</th>
+                      <th className="py-2.5 px-3">Network & Credentials</th>
+                      <th className="py-2.5 px-3">Station / Desk</th>
+                      <th className="py-2.5 px-3">Connectivity</th>
+                      <th className="py-2.5 px-3 text-center">POS State</th>
+                      <th className="py-2.5 px-3 text-right">Bank Setup</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 bg-white">
+                    {posFleet
+                      .filter(dev => {
+                        if (fleetLogFilter === 'ACTIVE') return dev.isActive;
+                        if (fleetLogFilter === 'INACTIVE') return !dev.isActive;
+                        return true;
+                      })
+                      .filter(dev => {
+                        if (fleetLogBankFilter === 'ALL') return true;
+                        return dev.bankId === fleetLogBankFilter;
+                      })
+                      .map((dev, idx) => {
+                        const pingState = devicePingResults[dev.id];
+                        const parentBank = (companyProfile?.bankAccounts || []).find(b => b.id === dev.bankId || b.bankName === dev.bankName) || (companyProfile?.bankAccounts || [])[0];
+                        return (
+                          <tr
+                            key={dev.id}
+                            className={`transition hover:bg-slate-50/80 ${
+                              dev.isActive ? '' : 'bg-slate-50/40 text-slate-500'
+                            }`}
+                          >
+                            {/* Device & Hardware */}
+                            <td className="py-3 px-3">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-slate-400 font-bold text-[11px]">#{idx + 1}</span>
+                                <div>
+                                  <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                                    <span>{dev.name}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1 mt-0.5">
+                                    <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 text-[10px] font-mono font-bold border border-slate-200">
+                                      {dev.model}
+                                    </span>
+                                    <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 text-[10px] font-mono border border-slate-200">
+                                      {dev.connectionType}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Linked Bank & COA */}
+                            <td className="py-3 px-3">
+                              <div className="space-y-0.5">
+                                <div className="font-bold text-slate-800 flex items-center gap-1">
+                                  <Landmark className="w-3 h-3 text-emerald-600" />
+                                  <span>{dev.bankName || parentBank?.bankName || 'Primary Bank'}</span>
+                                </div>
+                                <span className="inline-block px-1.5 py-0.2 rounded bg-blue-50 text-blue-800 text-[10px] font-mono font-bold border border-blue-200">
+                                  COA: {dev.bankCoaCode || parentBank?.coaAccountCode || '1120-02'}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Network & Credentials */}
+                            <td className="py-3 px-3 font-mono text-[11px]">
+                              <div className="space-y-0.5">
+                                <div><span className="text-slate-400 font-sans text-[10px] uppercase font-bold">IP: </span><strong className="text-slate-800">{dev.ipAddress || '192.168.1.150'}:{dev.port || 8080}</strong></div>
+                                <div><span className="text-slate-400 font-sans text-[10px] uppercase font-bold">TID: </span><span className="text-indigo-600 font-bold">{dev.terminalId}</span></div>
+                              </div>
+                            </td>
+
+                            {/* Station */}
+                            <td className="py-3 px-3">
+                              <span className="px-2 py-1 rounded-md bg-slate-100 text-slate-700 text-[11px] font-medium border border-slate-200">
+                                {dev.location || 'Retail Floor Desk'}
+                              </span>
+                            </td>
+
+                            {/* Connectivity */}
+                            <td className="py-3 px-3">
+                              <button
+                                type="button"
+                                onClick={() => handlePingDevice(dev)}
+                                disabled={pingState === 'TESTING'}
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border transition cursor-pointer ${
+                                  pingState === 'SUCCESS'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                                    : pingState === 'FAILED'
+                                    ? 'bg-rose-50 text-rose-700 border-rose-300'
+                                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                                }`}
+                              >
+                                <RefreshCw className={`w-3 h-3 ${pingState === 'TESTING' ? 'animate-spin text-amber-500' : ''}`} />
+                                <span>{pingState === 'TESTING' ? 'Pinging...' : pingState === 'SUCCESS' ? 'Online 18ms' : pingState === 'FAILED' ? 'Offline' : 'Ping'}</span>
+                              </button>
+                            </td>
+
+                            {/* POS State (Interactive Toggle Switch) */}
+                            <td className="py-3 px-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleDeviceActive(dev.id)}
+                                className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition-all inline-flex items-center gap-1.5 cursor-pointer shadow-2xs ${
+                                  dev.isActive
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
+                                    : 'bg-slate-200 text-slate-600 border border-slate-300 hover:bg-slate-300'
+                                }`}
+                                title="Click to toggle Active in POS / Inactive"
+                              >
+                                <span className={`w-2 h-2 rounded-full ${dev.isActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
+                                <span>{dev.isActive ? 'ACTIVE' : 'INACTIVE'}</span>
+                              </button>
+                            </td>
+
+                            {/* Actions: Edit & Delete */}
+                            <td className="py-3 px-3 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (parentBank) {
+                                      handleOpenEditBank(parentBank, 'pos_fleet');
+                                    }
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer"
+                                  title="Edit this machine in bank settings"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                  <span>Edit</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteDevice(dev.id)}
+                                  className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition cursor-pointer"
+                                  title="Delete this machine from fleet"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+
+                    {posFleet.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center bg-slate-50/50">
+                          <CreditCard className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                          <div className="font-bold text-slate-700 text-xs">No POS Card Terminals Configured</div>
+                          <p className="text-[11px] text-slate-500 mt-1 max-w-sm mx-auto">
+                            Click "+ Add POS Machine" above to connect your first card machine to your bank account.
+                          </p>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Architecture Tip Box */}
+            <div className="p-3.5 bg-indigo-50/60 border border-indigo-200 rounded-xl text-xs flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-indigo-900">
+                <Landmark className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span>
+                  <strong>Bank-Wise Fleet Architecture:</strong> Each corporate bank account manages its own fleet of up to 5 Smart POS machines. To add a new card terminal or configure IP credentials, click <strong>"Edit"</strong> on that Bank Account above in <strong>Section 1</strong>.
+                </span>
+              </div>
+              {(companyProfile?.bankAccounts || []).length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const firstBank = (companyProfile?.bankAccounts || [])[0];
+                    if (firstBank) handleOpenEditBank(firstBank, 'pos_fleet');
+                  }}
+                  className="shrink-0 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs cursor-pointer flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Configure Bank Fleet</span>
+                </button>
+              )}
             </div>
 
             {/* Global Hardware & Settlement Routing */}
@@ -4772,152 +5153,465 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       {/* 9. BANK ACCOUNT ADD / EDIT MODAL */}
       {showBankModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl border-2 border-emerald-300 max-w-lg w-full shadow-2xl p-6 relative">
-            <div className="flex items-center justify-between pb-3 mb-4 border-b border-emerald-100">
-              <div className="flex items-center gap-2">
+          <div className="bg-white rounded-2xl border-2 border-emerald-300 max-w-2xl w-full shadow-2xl p-6 relative max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 mb-3 border-b border-emerald-100">
+              <div className="flex items-center gap-2.5">
                 <div className="p-2 bg-emerald-100 text-emerald-800 rounded-lg">
                   <Landmark className="w-5 h-5" />
                 </div>
                 <div>
                   <h4 className="font-bold text-slate-900 text-sm">
-                    {editingBank ? 'Edit Bank Account & COA Link' : 'Add Corporate Bank Account'}
+                    {editingBank ? 'Edit Bank Account & POS Fleet' : 'Add Corporate Bank Account & POS Fleet'}
                   </h4>
-                  <p className="text-[11px] text-slate-500">Auto-syncs as an Asset account in Chart of Accounts</p>
+                  <p className="text-[11px] text-slate-500">Auto-syncs to Chart of Accounts (COA) and manages bank-specific card machines</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setShowBankModal(false)}
-                className="text-slate-400 hover:text-slate-700 font-bold p-1 rounded-lg"
+                className="text-slate-400 hover:text-slate-700 font-bold p-1 rounded-lg cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSaveBank} className="space-y-3.5 text-xs">
-              {/* Bank Name */}
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                  Bank Name & Institution *
-                </label>
-                <input
-                  type="text"
-                  list="uae-banks-list"
-                  value={bankForm.bankName}
-                  onChange={e => setBankForm({ ...bankForm, bankName: e.target.value })}
-                  placeholder="e.g. Emirates NBD, Wio Bank, Mashreq Neo, ADCB"
-                  required
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                />
-                <datalist id="uae-banks-list">
-                  <option value="Emirates NBD" />
-                  <option value="Abu Dhabi Commercial Bank (ADCB)" />
-                  <option value="Wio Bank Business" />
-                  <option value="Mashreq Bank" />
-                  <option value="Dubai Islamic Bank (DIB)" />
-                  <option value="First Abu Dhabi Bank (FAB)" />
-                  <option value="Standard Chartered UAE" />
-                  <option value="RAKBANK" />
-                </datalist>
-              </div>
+            {/* Modal Tabs: Bank Details vs Bank POS Fleet */}
+            <div className="flex items-center gap-2 border-b border-slate-200 mb-4 pb-2">
+              <button
+                type="button"
+                onClick={() => setBankModalTab('details')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  bankModalTab === 'details'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                <Landmark className="w-3.5 h-3.5" />
+                <span>🏛️ Corporate Bank Details</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setBankModalTab('pos_fleet')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  bankModalTab === 'pos_fleet'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                <CreditCard className="w-3.5 h-3.5" />
+                <span>💳 Smart POS Fleet ({(bankForm.posFleet || []).length}/5 Devices)</span>
+              </button>
+            </div>
 
-              {/* Account Title */}
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                  Account Title / Beneficiary Legal Name *
-                </label>
-                <input
-                  type="text"
-                  value={bankForm.accountTitle}
-                  onChange={e => setBankForm({ ...bankForm, accountTitle: e.target.value })}
-                  placeholder="e.g. VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C"
-                  required
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs text-slate-900 focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              {/* UAE IBAN */}
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                  UAE IBAN Number (Starts with AE...) *
-                </label>
-                <input
-                  type="text"
-                  value={bankForm.iban}
-                  onChange={e => setBankForm({ ...bankForm, iban: e.target.value.toUpperCase() })}
-                  placeholder="AE24 0331 2345 6789 0123 456"
-                  required
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 tracking-wider"
-                />
-              </div>
-
-              {/* Account Number & Branch */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Account Number
-                  </label>
-                  <input
-                    type="text"
-                    value={bankForm.accountNumber || ''}
-                    onChange={e => setBankForm({ ...bankForm, accountNumber: e.target.value })}
-                    placeholder="e.g. 1048291029301"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono text-slate-900 focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Branch / City
-                  </label>
-                  <input
-                    type="text"
-                    value={bankForm.branchName || ''}
-                    onChange={e => setBankForm({ ...bankForm, branchName: e.target.value })}
-                    placeholder="e.g. Business Bay, Dubai"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs text-slate-900 focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-              </div>
-
-              {/* Currency & COA Code Info */}
-              <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
-                    Account Currency
-                  </label>
-                  <select
-                    value={bankForm.currency}
-                    onChange={e => setBankForm({ ...bankForm, currency: e.target.value })}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold text-slate-900 bg-white"
-                  >
-                    <option value="AED">AED - UAE Dirham</option>
-                    <option value="USD">USD - US Dollar</option>
-                    <option value="EUR">EUR - Euro</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
-                    Assigned COA Code
-                  </label>
-                  <div className="px-2.5 py-1.5 rounded-lg bg-white border border-blue-200 text-xs font-mono font-bold text-blue-700">
-                    {bankForm.coaAccountCode || '1120-00'} (Asset)
+            <form onSubmit={handleSaveBank} className="space-y-4 text-xs">
+              {/* TAB 1: BANK & COA DETAILS */}
+              {bankModalTab === 'details' && (
+                <div className="space-y-3.5">
+                  {/* Bank Name */}
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      Bank Name & Institution *
+                    </label>
+                    <input
+                      type="text"
+                      list="uae-banks-list"
+                      value={bankForm.bankName}
+                      onChange={e => setBankForm({ ...bankForm, bankName: e.target.value })}
+                      placeholder="e.g. Emirates NBD, Wio Bank, Mashreq Neo, ADCB, RAKBANK"
+                      required
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                    />
+                    <datalist id="uae-banks-list">
+                      <option value="RAKBANK" />
+                      <option value="Emirates NBD" />
+                      <option value="Mashreq Bank" />
+                      <option value="Abu Dhabi Commercial Bank (ADCB)" />
+                      <option value="Wio Bank Business" />
+                      <option value="Dubai Islamic Bank (DIB)" />
+                      <option value="First Abu Dhabi Bank (FAB)" />
+                      <option value="Standard Chartered UAE" />
+                    </datalist>
                   </div>
-                </div>
-              </div>
 
-              {/* Primary Bank Toggle */}
-              <label className="flex items-center gap-2.5 p-2.5 rounded-xl border border-amber-200 bg-amber-50/50 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={bankForm.isPrimary}
-                  onChange={e => setBankForm({ ...bankForm, isPrimary: e.target.checked })}
-                  className="w-4 h-4 text-amber-600 accent-amber-600 rounded cursor-pointer"
-                />
-                <div className="text-xs">
-                  <span className="font-bold text-amber-900">Set as Primary Settlement Bank</span>
-                  <p className="text-[10px] text-amber-700">All POS Card terminal settlements and Counter QR payments will route here by default.</p>
+                  {/* Account Title */}
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      Account Title / Beneficiary Legal Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={bankForm.accountTitle}
+                      onChange={e => setBankForm({ ...bankForm, accountTitle: e.target.value })}
+                      placeholder="e.g. VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C"
+                      required
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  {/* UAE IBAN */}
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      UAE IBAN Number (Starts with AE...) *
+                    </label>
+                    <input
+                      type="text"
+                      value={bankForm.iban}
+                      onChange={e => setBankForm({ ...bankForm, iban: e.target.value.toUpperCase() })}
+                      placeholder="AE24 0331 2345 6789 0123 456"
+                      required
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 tracking-wider"
+                    />
+                  </div>
+
+                  {/* Account Number & Branch */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                        Account Number
+                      </label>
+                      <input
+                        type="text"
+                        value={bankForm.accountNumber || ''}
+                        onChange={e => setBankForm({ ...bankForm, accountNumber: e.target.value })}
+                        placeholder="e.g. 1048291029301"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                        Branch / City
+                      </label>
+                      <input
+                        type="text"
+                        value={bankForm.branchName || ''}
+                        onChange={e => setBankForm({ ...bankForm, branchName: e.target.value })}
+                        placeholder="e.g. Al Ain, Dubai Downtown"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Currency & COA Code Info */}
+                  <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                        Account Currency
+                      </label>
+                      <select
+                        value={bankForm.currency}
+                        onChange={e => setBankForm({ ...bankForm, currency: e.target.value })}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold text-slate-900 bg-white"
+                      >
+                        <option value="AED">AED - UAE Dirham</option>
+                        <option value="USD">USD - US Dollar</option>
+                        <option value="EUR">EUR - Euro</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                        Assigned COA Code
+                      </label>
+                      <div className="px-2.5 py-1.5 rounded-lg bg-white border border-blue-200 text-xs font-mono font-bold text-blue-700">
+                        {bankForm.coaAccountCode || '1120-00'} (Asset)
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Primary Bank Toggle */}
+                  <label className="flex items-center gap-2.5 p-2.5 rounded-xl border border-amber-200 bg-amber-50/50 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={bankForm.isPrimary}
+                      onChange={e => setBankForm({ ...bankForm, isPrimary: e.target.checked })}
+                      className="w-4 h-4 text-amber-600 accent-amber-600 rounded cursor-pointer"
+                    />
+                    <div className="text-xs">
+                      <span className="font-bold text-amber-900">Set as Primary Settlement Bank</span>
+                      <p className="text-[10px] text-amber-700">All POS Card terminal settlements and Counter QR payments will route here by default.</p>
+                    </div>
+                  </label>
                 </div>
-              </label>
+              )}
+
+              {/* TAB 2: SMART POS FLEET (1 TO 5 DEVICES FOR THIS BANK) */}
+              {bankModalTab === 'pos_fleet' && (
+                <div className="space-y-3.5">
+                  {/* Bank POS Header Banner */}
+                  <div className="p-3 bg-blue-50/80 border border-blue-200 rounded-xl flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs">
+                      <div className="font-bold text-blue-900 flex items-center gap-1.5">
+                        <CreditCard className="w-4 h-4 text-blue-600" />
+                        <span>POS Terminals for {bankForm.bankName || 'This Bank Account'}</span>
+                      </div>
+                      <p className="text-[11px] text-blue-700 mt-0.5">
+                        Card payments through these devices settle to <strong>COA: {bankForm.coaAccountCode || '1120-02'}</strong>. Connect up to 5 machines.
+                      </p>
+                    </div>
+
+                    {!showBankDeviceForm && (
+                      <button
+                        type="button"
+                        onClick={handleOpenAddBankDevice}
+                        disabled={(bankForm.posFleet || []).length >= 5}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs shadow-xs cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>{(bankForm.posFleet || []).length >= 5 ? 'Fleet Full (5/5)' : 'Add Machine'}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Add / Edit Machine Sub-Form */}
+                  {showBankDeviceForm ? (
+                    <div className="p-4 bg-slate-50 border-2 border-blue-300 rounded-xl space-y-3 animate-in fade-in duration-150">
+                      <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                        <span className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                          <CreditCard className="w-4 h-4 text-blue-600" />
+                          <span>{editingBankDeviceIndex !== null ? 'Edit Card Terminal' : 'Add New Card Terminal to this Bank'}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowBankDeviceForm(false)}
+                          className="text-slate-400 hover:text-slate-700 font-bold"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                            Terminal Name *
+                          </label>
+                          <input
+                            type="text"
+                            value={bankDeviceForm.name}
+                            onChange={e => setBankDeviceForm({ ...bankDeviceForm, name: e.target.value })}
+                            placeholder="e.g. Counter 1 - Main Desk PED"
+                            required
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold text-slate-900 bg-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                            Hardware Model *
+                          </label>
+                          <select
+                            value={bankDeviceForm.model}
+                            onChange={e => setBankDeviceForm({ ...bankDeviceForm, model: e.target.value as any })}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold text-slate-900 bg-white"
+                          >
+                            <option value="PAX_A920">PAX A920 (Smart Android PED)</option>
+                            <option value="SUNMI_P2">Sunmi P2 (Handheld POS)</option>
+                            <option value="INGENICO">Ingenico Tetra / Move 5000</option>
+                            <option value="VERIFONE">Verifone Engage V240m</option>
+                            <option value="SIMULATOR">Virtual Simulator</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                            Connection Protocol *
+                          </label>
+                          <select
+                            value={bankDeviceForm.connectionType}
+                            onChange={e => setBankDeviceForm({ ...bankDeviceForm, connectionType: e.target.value as any })}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold text-slate-900 bg-white"
+                          >
+                            <option value="IP_ETHERNET">LAN / IP Ethernet</option>
+                            <option value="WIFI_IP">WiFi TCP/IP</option>
+                            <option value="USB_SERIAL">USB / RS232 Serial</option>
+                            <option value="BLUETOOTH">Bluetooth Wireless</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                            Station / Location
+                          </label>
+                          <input
+                            type="text"
+                            value={bankDeviceForm.location || ''}
+                            onChange={e => setBankDeviceForm({ ...bankDeviceForm, location: e.target.value })}
+                            placeholder="e.g. Main Cash Counter, Express Lane"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs text-slate-900 bg-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                            IP Address & Port *
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              value={bankDeviceForm.ipAddress || ''}
+                              onChange={e => setBankDeviceForm({ ...bankDeviceForm, ipAddress: e.target.value })}
+                              placeholder="192.168.1.150"
+                              className="w-2/3 px-2 py-1.5 rounded-lg border border-slate-300 text-xs font-mono font-bold text-slate-900 bg-white"
+                            />
+                            <input
+                              type="number"
+                              value={bankDeviceForm.port || 8080}
+                              onChange={e => setBankDeviceForm({ ...bankDeviceForm, port: parseInt(e.target.value) || 8080 })}
+                              placeholder="8080"
+                              className="w-1/3 px-2 py-1.5 rounded-lg border border-slate-300 text-xs font-mono font-bold text-slate-900 bg-white"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                            Terminal ID (TID) *
+                          </label>
+                          <input
+                            type="text"
+                            value={bankDeviceForm.terminalId}
+                            onChange={e => setBankDeviceForm({ ...bankDeviceForm, terminalId: e.target.value })}
+                            placeholder="TID-DXB-001"
+                            required
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono font-bold text-indigo-700 bg-white uppercase"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
+                            Merchant ID (MID)
+                          </label>
+                          <input
+                            type="text"
+                            value={bankDeviceForm.merchantId}
+                            onChange={e => setBankDeviceForm({ ...bankDeviceForm, merchantId: e.target.value })}
+                            placeholder="MID-VV-9881"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono text-slate-900 bg-white"
+                          />
+                        </div>
+
+                        <div className="flex items-center pt-4">
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={bankDeviceForm.isActive !== false}
+                              onChange={e => setBankDeviceForm({ ...bankDeviceForm, isActive: e.target.checked })}
+                              className="w-4 h-4 text-emerald-600 rounded"
+                            />
+                            <span className="text-xs font-bold text-slate-800">
+                              Active in Counter POS (Allows payments)
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+                        <button
+                          type="button"
+                          onClick={() => setShowBankDeviceForm(false)}
+                          className="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-bold text-slate-600 hover:bg-white cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveBankDevice}
+                          className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs cursor-pointer"
+                        >
+                          {editingBankDeviceIndex !== null ? 'Update Terminal' : 'Add Terminal'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* List of Configured Devices for this Bank */}
+                  {(bankForm.posFleet || []).length === 0 ? (
+                    <div className="p-6 text-center border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+                      <CreditCard className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                      <div className="font-bold text-slate-700 text-xs">No POS Card Terminals Linked to this Bank</div>
+                      <p className="text-[11px] text-slate-500 mt-1 max-w-sm mx-auto">
+                        Connect up to 5 physical card machines (PAX, Sunmi, Ingenico) to settle directly into {bankForm.bankName || 'this bank'}.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleOpenAddBankDevice}
+                        className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add First Terminal</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-72 overflow-y-auto p-0.5">
+                      {(bankForm.posFleet || []).map((dev, idx) => (
+                        <div
+                          key={dev.id || idx}
+                          className={`p-3 rounded-xl border transition-all space-y-2 relative ${
+                            dev.isActive
+                              ? 'bg-white border-blue-200 shadow-2xs'
+                              : 'bg-slate-50 border-slate-200 opacity-70'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-1.5">
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-mono font-bold text-slate-400">#{idx + 1}</span>
+                                <h5 className="font-bold text-xs text-slate-900 leading-tight">{dev.name}</h5>
+                              </div>
+                              <div className="flex items-center gap-1 mt-0.5">
+                                <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 text-[9px] font-mono font-bold border border-slate-200">
+                                  {dev.model}
+                                </span>
+                                <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 text-[9px] font-mono border border-slate-200">
+                                  {dev.connectionType}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Active Switch */}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleBankDeviceActive(idx)}
+                              className={`px-2 py-0.5 rounded-full text-[9px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                                dev.isActive
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                  : 'bg-slate-200 text-slate-600 border border-slate-300'
+                              }`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${dev.isActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
+                              <span>{dev.isActive ? 'ACTIVE' : 'INACTIVE'}</span>
+                            </button>
+                          </div>
+
+                          <div className="bg-slate-50 p-2 rounded-lg border border-slate-200 text-[10px] font-mono space-y-0.5">
+                            <div><span className="text-slate-400 font-sans uppercase font-bold">IP: </span>{dev.ipAddress || '192.168.1.150'}:{dev.port || 8080}</div>
+                            <div><span className="text-slate-400 font-sans uppercase font-bold">TID: </span><span className="text-indigo-600 font-bold">{dev.terminalId}</span></div>
+                            {dev.location && <div><span className="text-slate-400 font-sans uppercase font-bold">Desk: </span>{dev.location}</div>}
+                          </div>
+
+                          <div className="flex items-center justify-end gap-1 pt-1 border-t border-slate-100 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditBankDevice(idx)}
+                              className="p-1 rounded text-slate-500 hover:text-blue-600 hover:bg-blue-50 cursor-pointer"
+                              title="Edit device configuration"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteBankDevice(idx)}
+                              className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
+                              title="Remove machine from bank"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Actions */}
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
@@ -4933,7 +5627,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  <span>{editingBank ? 'Update & Sync COA' : 'Save & Sync to COA'}</span>
+                  <span>{editingBank ? 'Update Bank & POS Fleet' : 'Save Bank & POS Fleet'}</span>
                 </button>
               </div>
             </form>

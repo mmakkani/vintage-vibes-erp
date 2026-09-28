@@ -286,6 +286,27 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   }, [activeProfile?.posTerminalConfig]);
 
   const posFleet: POSTerminalDevice[] = useMemo(() => {
+    // 1. Gather all devices from all bank accounts if configured
+    const bankDevices: POSTerminalDevice[] = [];
+    if (Array.isArray(activeProfile?.bankAccounts)) {
+      activeProfile.bankAccounts.forEach(b => {
+        if (Array.isArray(b.posFleet) && b.posFleet.length > 0) {
+          b.posFleet.forEach(dev => {
+            bankDevices.push({
+              ...dev,
+              bankId: b.id,
+              bankName: b.bankName,
+              bankCoaCode: b.coaAccountCode || '1120-02'
+            });
+          });
+        }
+      });
+    }
+
+    if (bankDevices.length > 0) {
+      return bankDevices;
+    }
+
     if (Array.isArray(posConfig?.fleet) && posConfig.fleet.length > 0) {
       return posConfig.fleet;
     }
@@ -304,7 +325,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         location: 'Main Cash Counter'
       }
     ];
-  }, [posConfig]);
+  }, [posConfig, activeProfile?.bankAccounts]);
 
   const activeFleet = useMemo(() => {
     return posFleet.filter(dev => dev.isActive !== false);
@@ -2635,6 +2656,13 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                             >
                               <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500'}`}></span>
                               <span>{dev.name}</span>
+                              {dev.bankName && (
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold ${
+                                  isSelected ? 'bg-indigo-800 text-indigo-100' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
+                                }`}>
+                                  {dev.bankName}
+                                </span>
+                              )}
                               <span className="text-[10px] opacity-75 font-mono">({dev.model})</span>
                             </button>
                           );

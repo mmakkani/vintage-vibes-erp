@@ -82,6 +82,9 @@ export interface POSTerminalDevice {
   status: 'ONLINE' | 'STANDBY' | 'OFFLINE';
   location?: string;
   lastPingAt?: string;
+  bankId?: string;
+  bankName?: string;
+  bankCoaCode?: string;
 }
 
 export interface POSTerminalConfig {
