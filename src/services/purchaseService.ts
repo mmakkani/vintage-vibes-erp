@@ -1015,17 +1015,29 @@ export class PurchaseService {
             // Delete inward transfer vouchers specifically
             await FinanceService.cascadeDeleteVouchersForDocument(`INWARD-${invoiceNo}`, { docType: 'INWARD' });
             const cleanInvNo = invoiceNo.replace(/[^a-zA-Z0-9]/g, '');
-            const { data: inwVchs } = await supabase
-              .from('financial_vouchers')
-              .select('id, voucher_no')
-              .or(`reference.eq.INWARD-${invoiceNo},voucher_no.ilike.JV-INW-%${cleanInvNo}%`);
+            if (cleanInvNo) {
+              const { data: inwVchs } = await supabase
+                .from('financial_vouchers')
+                .select('id, voucher_no, reference')
+                .or(`reference.eq.INWARD-${invoiceNo},reference.eq.INW-${invoiceNo},voucher_no.ilike.JV-INW-TRF-%${cleanInvNo}%,voucher_no.ilike.JV-INW-%${cleanInvNo}%`);
 
-            if (inwVchs && inwVchs.length > 0) {
-              for (const iv of inwVchs) {
-                await supabase.from('journal_entries').delete().eq('voucher_id', iv.id);
-                await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
-                await supabase.from('financial_vouchers').delete().eq('id', iv.id);
-                await supabase.from('vouchers').delete().eq('id', iv.id);
+              if (inwVchs && inwVchs.length > 0) {
+                for (const iv of inwVchs) {
+                  const vNo = String(iv.voucher_no || '');
+                  const vRef = String((iv as any).reference || '');
+                  const isStrictMatch = vRef === `INWARD-${invoiceNo}` || 
+                                       vRef === `INW-${invoiceNo}` || 
+                                       vNo.includes(cleanInvNo);
+                  if (!isStrictMatch) {
+                    console.warn(`[PurchaseService] Skipping unrelated voucher ${vNo} during bale delete for invoice ${invoiceNo}`);
+                    continue;
+                  }
+
+                  await supabase.from('journal_entries').delete().eq('voucher_id', iv.id);
+                  await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
+                  await supabase.from('financial_vouchers').delete().eq('id', iv.id);
+                  await supabase.from('vouchers').delete().eq('id', iv.id);
+                }
               }
             }
           }

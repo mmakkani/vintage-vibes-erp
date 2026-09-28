@@ -1254,8 +1254,12 @@ export class FinanceService {
 
         let isMatch = false;
         for (const t of tokens) {
+          if (!t || t.trim().length < 3) continue;
           const tUpper = t.toUpperCase();
           const tClean = t.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+          if (!tClean || tClean.length < 3) continue;
+          if (['INWARD', 'PURCHASE', 'SALES', 'INVOICE', 'BALE'].includes(tUpper)) continue;
+
           if (
             (vRef && (vRef === tUpper || vRef.includes(tUpper) || vRef === `PINV-${tUpper}` || vRef === `PUR-${tUpper}` || vRef === `INWARD-${tUpper}` || vRef === `SINV-${tUpper}` || vRef === `SLS-${tUpper}` || vRef === `IGP-${tUpper}` || vRef === `BALE-${tUpper}`)) ||
             (vRefNo && (vRefNo === tUpper || vRefNo.includes(tUpper) || vRefNo === `PINV-${tUpper}` || vRefNo === `PUR-${tUpper}` || vRefNo === `INWARD-${tUpper}` || vRefNo === `SINV-${tUpper}` || vRefNo === `SLS-${tUpper}` || vRefNo === `IGP-${tUpper}` || vRefNo === `BALE-${tUpper}`)) ||
@@ -1316,16 +1320,19 @@ export class FinanceService {
         } catch (_) {}
       }
 
-      // 3. Safety broad delete on journal_entries, ledgers, financial_vouchers matching any token
+      // 3. Safety delete on journal_entries, ledgers, financial_vouchers matching specific tokens
       for (const tok of tokens) {
+        if (!tok || tok.trim().length < 4 || ['INWARD', 'PURCHASE', 'SALES', 'INVOICE', 'BALE'].includes(tok.trim().toUpperCase())) {
+          continue;
+        }
         try {
-          await supabase.from('journal_entries').delete().ilike('description', `%${tok}%`);
+          await supabase.from('journal_entries').delete().eq('reference', tok);
         } catch (_) {}
         try {
-          await supabase.from('financial_vouchers').delete().or(`reference.eq.${tok},reference_no.eq.${tok},reference.ilike.%${tok}%,reference_no.ilike.%${tok}%`);
+          await supabase.from('financial_vouchers').delete().or(`reference.eq.${tok},reference_no.eq.${tok}`);
         } catch (_) {}
         try {
-          await supabase.from('vouchers').delete().or(`reference.eq.${tok},reference.ilike.%${tok}%`);
+          await supabase.from('vouchers').delete().or(`reference.eq.${tok},reference_no.eq.${tok}`);
         } catch (_) {}
       }
 

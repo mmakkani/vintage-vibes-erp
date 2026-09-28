@@ -9228,22 +9228,35 @@ RULES FOR YOUR RESPONSE:
               }
               if (invoiceNo) {
                 await supabaseAdmin.from('purchase_invoices').update({ converted_to_inward: false }).eq('invoice_no', invoiceNo);
-                const { data: inwVchs } = await supabaseAdmin
-                  .from('financial_vouchers')
-                  .select('id, voucher_no')
-                  .or(`reference.eq.INWARD-${invoiceNo},voucher_no.ilike.%JV-INW%`);
+                const cleanInvNo = invoiceNo.replace(/[^a-zA-Z0-9]/g, '');
+                if (cleanInvNo) {
+                  const { data: inwVchs } = await supabaseAdmin
+                    .from('financial_vouchers')
+                    .select('id, voucher_no, reference')
+                    .or(`reference.eq.INWARD-${invoiceNo},reference.eq.INW-${invoiceNo},voucher_no.ilike.JV-INW-TRF-%${cleanInvNo}%,voucher_no.ilike.JV-INW-%${cleanInvNo}%`);
 
-                if (inwVchs && inwVchs.length > 0) {
-                  for (const iv of inwVchs) {
-                    await supabaseAdmin.from('journal_entries').delete().eq('voucher_id', iv.id);
-                    await supabaseAdmin.from('voucher_entries').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
-                    await supabaseAdmin.from('general_ledger').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
-                    await supabaseAdmin.from('financial_vouchers').delete().eq('id', iv.id);
-                    await supabaseAdmin.from('vouchers').delete().eq('id', iv.id);
+                  if (inwVchs && inwVchs.length > 0) {
+                    for (const iv of inwVchs) {
+                      const vNo = String(iv.voucher_no || '');
+                      const vRef = String(iv.reference || '');
+                      const isStrictMatch = vRef === `INWARD-${invoiceNo}` || 
+                                           vRef === `INW-${invoiceNo}` || 
+                                           vNo.includes(cleanInvNo);
+                      if (!isStrictMatch) {
+                        console.warn(`[API] Skipping deletion of unrelated voucher ${vNo} during bale delete for invoice ${invoiceNo}`);
+                        continue;
+                      }
+
+                      await supabaseAdmin.from('journal_entries').delete().eq('voucher_id', iv.id);
+                      await supabaseAdmin.from('voucher_entries').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
+                      await supabaseAdmin.from('general_ledger').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
+                      await supabaseAdmin.from('financial_vouchers').delete().eq('id', iv.id);
+                      await supabaseAdmin.from('vouchers').delete().eq('id', iv.id);
+                    }
+                    try {
+                      await supabaseAdmin.rpc('sync_coa_current_balances');
+                    } catch (_) {}
                   }
-                  try {
-                    await supabaseAdmin.rpc('sync_coa_current_balances');
-                  } catch (_) {}
                 }
               }
             }
