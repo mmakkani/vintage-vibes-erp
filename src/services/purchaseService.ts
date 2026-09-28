@@ -443,40 +443,42 @@ export class PurchaseService {
       }
 
       const invoice = invRows[0];
-      if (invoice.status === 'POSTED') {
-        console.warn(`[PurchaseService] Invoice ${cleanId} is already in POSTED status. Skipping duplicate post.`);
-        return { alreadyPosted: true, invoice };
+      const currency = (invoice.currency || 'AED').toUpperCase();
+      const exchangeRate = Number(invoice.exchange_rate) || (currency === 'USD' ? 3.6725 : 1);
+      const invoiceTotalAmount = Number(invoice.total_amount || 0);
+      const invoiceTotalAed = currency === 'AED' ? invoiceTotalAmount : Number((invoiceTotalAmount * exchangeRate).toFixed(2));
+      const invoiceNo = invoice.invoice_no || `PUR-${Date.now().toString().slice(-6)}`;
+      const supplierName = invoice.supplier_name || invoice.party_name || 'Trade Supplier';
+
+      // 1. Mark status as POSTED if not already
+      if (invoice.status !== 'POSTED') {
+        await supabase
+          .from('purchase_invoices')
+          .update({ status: 'POSTED' })
+          .eq('id', cleanId);
       }
-    const currency = (invoice.currency || 'AED').toUpperCase();
-    const exchangeRate = Number(invoice.exchange_rate) || (currency === 'USD' ? 3.6725 : 1);
-    const invoiceTotalAmount = Number(invoice.total_amount || 0);
-    const invoiceTotalAed = currency === 'AED' ? invoiceTotalAmount : Number((invoiceTotalAmount * exchangeRate).toFixed(2));
-    const invoiceNo = invoice.invoice_no || `PUR-${Date.now().toString().slice(-6)}`;
-    const supplierName = invoice.supplier_name || invoice.party_name || 'Trade Supplier';
 
-    // Requirement 1 & 3: Strict Registry Lookup first - fail-closed before modifying status
-    const supplierCoa = await PurchaseService.resolveSupplierCoaAccount(
-      invoice.supplier_id,
-      supplierName,
-      invoice.currency
-    );
+      // 2. Check if Stage 1 voucher already created for this commercial invoice
+      const { data: existingVouchers } = await supabase
+        .from('financial_vouchers')
+        .select('id, voucher_no')
+        .eq('reference', `PINV-${invoiceNo}`)
+        .limit(1);
 
-    // 1. Mark status as POSTED
-    await supabase
-      .from('purchase_invoices')
-      .update({ status: 'POSTED' })
-      .eq('id', cleanId);
+      let createdVoucher: any = null;
 
-    // 2. Check if voucher already created for this invoice
-    const { data: existingVouchers } = await supabase
-      .from('financial_vouchers')
-      .select('id, voucher_no')
-      .or(`reference.eq.PINV-${invoiceNo},reference.eq.INWARD-${invoiceNo},reference.eq.PUR-${invoiceNo}`)
-      .limit(1);
+      if (existingVouchers && existingVouchers.length > 0) {
+        console.warn(`[PurchaseService] Commercial invoice voucher already exists for ${invoiceNo}: ${existingVouchers[0].voucher_no}. Skipping duplicate post.`);
+        return { alreadyPosted: true, invoice, voucher: existingVouchers[0] };
+      }
 
-    let createdVoucher: any = null;
+      // Requirement 1 & 3: Strict Registry Lookup first - fail-closed before creating voucher
+      const supplierCoa = await PurchaseService.resolveSupplierCoaAccount(
+        invoice.supplier_id,
+        supplierName,
+        invoice.currency
+      );
 
-    if (!existingVouchers || existingVouchers.length === 0) {
       // Requirement 4: Apply Same Logic to Inventory Account:
       // If the system needs the Inventory account (e.g., 1140-01), perform a strict SELECT id FROM chart_of_accounts WHERE code = '1140-01'. Do not upsert or rename it.
       let rawInvAccountId: string | undefined = undefined;
@@ -507,10 +509,10 @@ export class PurchaseService {
         throw new Error("Inventory account '1140-01' not found in Chart of Accounts. Please configure it in COA first.");
       }
 
-      // Requirement 1: USE THIS ID IMMEDIATELY for the journal_entries payload.
-      // Post Journal Voucher: Dr 1140-01 (Raw Material Unsorted) / Cr Supplier Liability Account (Strict Registry Account)
+      // Stage 1 Journal Voucher: Dr 1140-01 (Raw Material Unsorted) / Cr Supplier Liability Account (Strict Registry Account)
+      const pinvUniqueSuffix = `${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
       createdVoucher = await FinanceService.addVoucher({
-        voucherNo: `JV-PUR-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
+        voucherNo: `JV-PINV-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${pinvUniqueSuffix}`,
         date: invoice.invoice_date || invoice.issue_date || new Date().toISOString().slice(0, 10),
         type: 'JOURNAL',
         reference: `PINV-${invoiceNo}`,
@@ -541,10 +543,6 @@ export class PurchaseService {
         ]
       });
 
-      // Requirement 2: Remove ALL Destructive COA Mutations:
-      // Completely DELETE any .upsert(), .update(), or .insert() logic targeting chart_of_accounts or coa_accounts.
-      // The COA is STRICTLY READ-ONLY. Live balances are derived from General Ledger / Journal Entries.
-
       // Update supplier balance in parties table
       if (supplierCoa.partyId) {
         const { data: ptyRow } = await supabase.from('parties').select('current_balance').eq('id', supplierCoa.partyId).maybeSingle();
@@ -566,9 +564,6 @@ export class PurchaseService {
           notes: `Purchase Commercial Invoice: ${invoiceNo}`
         });
       }
-    } else {
-      createdVoucher = existingVouchers[0];
-    }
 
     PurchaseService.invalidateInvoicesCache();
     if (typeof window !== 'undefined') {
@@ -1460,26 +1455,40 @@ export class PurchaseService {
       }
     }
 
-    // 4. POST TO COA (WIP INVENTORY & SUPPLIER AP)
+    // 4. POST TO COA (STAGE 1 COMMERCIAL INVOICE & STAGE 2 INWARD GATE PASS TRANSFER)
     let createdInwardVoucher: any = null;
     try {
-      const supplierCoa = await PurchaseService.resolveSupplierCoaAccount(
-        invoice.supplier_id,
-        supplierName,
-        invoice.currency
-      );
-
-      // Check if voucher already created for this invoice (e.g. if already posted earlier)
-      const { data: existingVouchers } = await supabase
+      // Step 4A: Check if Stage 1 Commercial Invoice voucher exists (Dr 1140-01 Raw Material / Cr Supplier)
+      const { data: existingPinv } = await supabase
         .from('financial_vouchers')
         .select('id, voucher_no')
-        .or(`reference.eq.INWARD-${invoiceNo},reference.eq.PINV-${invoiceNo},reference.eq.PUR-${invoiceNo}`)
+        .eq('reference', `PINV-${invoiceNo}`)
         .limit(1);
 
-      if (!existingVouchers || existingVouchers.length === 0) {
+      if (!existingPinv || existingPinv.length === 0) {
+        // If Stage 1 was never posted, auto-post it now so Raw Material Unsorted and Supplier AP are recognized
+        try {
+          await PurchaseService.postPurchaseInvoice(invoiceId);
+        } catch (stage1Err) {
+          console.warn('[convertToInwardGatePass] Auto-posting Stage 1 commercial invoice notice:', stage1Err);
+        }
+      }
+
+      // Step 4B: Check if Stage 2 Inward Transfer voucher already exists (Dr 1150-01 WIP / Cr 1140-01 Raw Material)
+      const cleanInvNo = invoiceNo.replace(/[^a-zA-Z0-9]/g, '');
+      const { data: existingInwTransfer } = await supabase
+        .from('financial_vouchers')
+        .select('id, voucher_no')
+        .or(`reference.eq.INWARD-${invoiceNo},reference.eq.INW-${invoiceNo},voucher_no.ilike.JV-INW-TRF-%${cleanInvNo}%,voucher_no.ilike.JV-INW-%${cleanInvNo}%`)
+        .limit(1);
+
+      if (existingInwTransfer && existingInwTransfer.length > 0) {
+        console.log(`Inward transfer voucher already exists for ${invoiceNo}: ${existingInwTransfer[0].voucher_no}. Skipping duplicate voucher creation.`);
+        createdInwardVoucher = existingInwTransfer[0];
+      } else {
         // Look up dynamic UUID for Tier 3 Account 1150-01 strictly read-only
         let wipAccountId: string | undefined = undefined;
-        let wipAccountName = 'Inventory - Sorting Work-in-Progress (WIP Bales Under Grading)';
+        let wipAccountName = 'WIP (Work in Progress)';
 
         const { data: wipChart } = await supabase
           .from('chart_of_accounts')
@@ -1502,14 +1511,45 @@ export class PurchaseService {
           }
         }
 
-        // Post full Journal Entry: Dr 1150-01 (Sorting WIP Inventory) / Cr Supplier Liability Account
-        const inwUniqueSuffix = `${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+        // Look up dynamic UUID for Raw Material Unsorted account 1140-01
+        let rawInvAccountId: string | undefined = undefined;
+        let rawInvAccountName = 'Raw Material Unsorted';
+
+        const { data: rawChart } = await supabase
+          .from('chart_of_accounts')
+          .select('id, name')
+          .eq('code', '1140-01')
+          .maybeSingle();
+
+        if (rawChart?.id) {
+          rawInvAccountId = String(rawChart.id);
+          if (rawChart.name) rawInvAccountName = rawChart.name;
+        } else {
+          const { data: rawCoa } = await supabase
+            .from('coa_accounts')
+            .select('id, name')
+            .eq('code', '1140-01')
+            .maybeSingle();
+          if (rawCoa?.id) {
+            rawInvAccountId = String(rawCoa.id);
+            if (rawCoa.name) rawInvAccountName = rawCoa.name;
+          }
+        }
+
+        if (!wipAccountId) {
+          throw new Error("WIP Inventory account '1150-01' not found in Chart of Accounts. Please configure it in COA first.");
+        }
+        if (!rawInvAccountId) {
+          throw new Error("Inventory account '1140-01' not found in Chart of Accounts. Please configure it in COA first.");
+        }
+
+        const inwTrfUniqueSuffix = `${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
         createdInwardVoucher = await FinanceService.addVoucher({
-          voucherNo: `JV-INW-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${inwUniqueSuffix}`,
+          voucherNo: `JV-INW-TRF-${cleanInvNo}-${inwTrfUniqueSuffix}`,
           date: new Date().toISOString().slice(0, 10),
           type: 'JOURNAL',
           reference: `INWARD-${invoiceNo}`,
-          narration: `Inward Consignment Bales Transferred to WIP Inventory: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
+          narration: `Consignment Bales Inward Transfer from Warehouse to Sorting WIP: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
           totalDebit: invoiceTotalAed,
           totalCredit: invoiceTotalAed,
           status: 'POSTED',
@@ -1524,81 +1564,15 @@ export class PurchaseService {
               memo: `WIP Raw Bales Inward: ${invoiceNo} (${createdPasses.length} bales)`
             },
             {
-              accountId: supplierCoa.accountId,
-              accountCode: supplierCoa.accountCode,
-              accountName: supplierCoa.accountName,
-              partyId: supplierCoa.partyId,
-              partyName: supplierCoa.partyName,
+              accountId: rawInvAccountId,
+              accountCode: '1140-01',
+              accountName: rawInvAccountName,
               debitAmount: 0,
               creditAmount: invoiceTotalAed,
-              memo: `Supplier Payable: ${supplierName} for ${invoiceNo}`
+              memo: `Warehouse Stock Inward to WIP: ${invoiceNo}`
             }
           ]
         });
-
-        // Update supplier balance in parties table (read-only COA)
-        if (supplierCoa.partyId) {
-          const { data: ptyRow } = await supabase.from('parties').select('current_balance').eq('id', supplierCoa.partyId).maybeSingle();
-          const currentPartyBal = Number(ptyRow?.current_balance ?? 0);
-          const updatedPartyBal = currentPartyBal + invoiceTotalAed;
-
-          await supabase.from('parties').update({
-            current_balance: updatedPartyBal
-          }).eq('id', supplierCoa.partyId);
-
-          // Add entry in party_khata_logs
-          await PartiesService.addKhataLog({
-            partyId: supplierCoa.partyId,
-            date: invoice.invoice_date || invoice.issue_date || new Date().toISOString().slice(0, 10),
-            reference: invoiceNo,
-            debit: 0,
-            credit: invoiceTotalAed,
-            runningBalance: updatedPartyBal,
-            notes: `Purchase Inward Consignment: ${invoiceNo} (${createdPasses.length} bales)`
-          });
-        }
-      } else {
-        // If invoice was already posted (PINV), transfer from Raw Bales Stock (1140-01) to Sorting WIP (1150-01)
-        // Hard Idempotency Check: Verify if an inward transfer voucher has ALREADY been posted for this invoice
-        const cleanInvNo = invoiceNo.replace(/[^a-zA-Z0-9]/g, '');
-        const { data: existingInwTransfer } = await supabase
-          .from('financial_vouchers')
-          .select('id, voucher_no')
-          .or(`reference.eq.INWARD-${invoiceNo},voucher_no.ilike.JV-INW-%${cleanInvNo}%`)
-          .limit(1);
-
-        if (existingInwTransfer && existingInwTransfer.length > 0) {
-          console.log(`Inward transfer voucher already exists for ${invoiceNo}: ${existingInwTransfer[0].voucher_no}. Skipping duplicate voucher creation.`);
-        } else {
-          const inwTrfUniqueSuffix = `${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-          createdInwardVoucher = await FinanceService.addVoucher({
-            voucherNo: `JV-INW-TRF-${cleanInvNo}-${inwTrfUniqueSuffix}`,
-            date: new Date().toISOString().slice(0, 10),
-            type: 'JOURNAL',
-            reference: `INWARD-${invoiceNo}`,
-            narration: `Consignment Bales Inward Transfer from Warehouse to Sorting WIP: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
-            totalDebit: invoiceTotalAed,
-            totalCredit: invoiceTotalAed,
-            status: 'POSTED',
-            createdBy: 'System (Purchase Inward)',
-            lines: [
-              {
-                accountCode: '1150-01',
-                accountName: 'Inventory - Sorting Work-in-Progress (WIP Bales Under Grading)',
-                debitAmount: invoiceTotalAed,
-                creditAmount: 0,
-                memo: `WIP Raw Bales Inward: ${invoiceNo} (${createdPasses.length} bales)`
-              },
-              {
-                accountCode: '1140-01',
-                accountName: 'Raw Material Unsorted',
-                debitAmount: 0,
-                creditAmount: invoiceTotalAed,
-                memo: `Warehouse Stock Inward to WIP: ${invoiceNo}`
-              }
-            ]
-          });
-        }
       }
     } catch (coaErr: any) {
       console.error('Error on COA voucher posting during inward conversion:', coaErr);

@@ -484,10 +484,65 @@ financeRouter.patch('/coa/:id/toggle-active', async (req, res) => {
 
 financeRouter.get('/vouchers', async (req, res) => {
   try {
-    const data = await FinanceService.getVouchers();
-    return res.json(data);
-  } catch (_) {
-    return res.json(FinanceController.getVouchers());
+    const vouchers = await withDb(async (client) => {
+      const q = `
+        SELECT 
+          fv.*,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'id', ve.id,
+                'voucherId', ve.voucher_id,
+                'accountId', ve.account_id,
+                'accountCode', ve.account_code,
+                'accountName', ve.account_name,
+                'partyId', ve.party_id,
+                'partyName', ve.party_name,
+                'debitAmount', ve.debit,
+                'creditAmount', ve.credit,
+                'debit', ve.debit,
+                'credit', ve.credit,
+                'memo', COALESCE(ve.memo, ve.particulars, ve.narration, '')
+              )
+            ) FILTER (WHERE ve.id IS NOT NULL),
+            '[]'
+          ) as lines
+        FROM financial_vouchers fv
+        LEFT JOIN voucher_entries ve ON fv.id::text = ve.voucher_id::text OR fv.voucher_no = ve.voucher_no
+        GROUP BY fv.id
+        ORDER BY fv.created_at DESC
+      `;
+      const result = await client.query(q);
+      return result.rows.map((row: any) => ({
+        id: row.id,
+        voucherNo: row.voucher_no || row.id,
+        date: typeof row.date === 'string' ? row.date.slice(0, 10) : (row.date ? new Date(row.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)),
+        type: row.type || row.voucher_type || 'JOURNAL',
+        reference: row.reference || row.reference_no || '',
+        narration: row.narration || '',
+        totalDebit: Number(row.total_debit || 0),
+        totalCredit: Number(row.total_credit || 0),
+        status: row.status || 'POSTED',
+        currency: (row.currency || 'AED').toUpperCase(),
+        exchangeRate: Number(row.exchange_rate || 1.0),
+        baseCurrency: (row.base_currency || 'AED').toUpperCase(),
+        foreignTotalAmount: Number(row.foreign_total_amount || 0),
+        createdBy: row.created_by || 'System',
+        isAuto: Boolean(row.is_auto),
+        lines: Array.isArray(row.lines) ? row.lines : [],
+        entries: Array.isArray(row.lines) ? row.lines : [],
+        createdAt: row.created_at
+      }));
+    });
+    return res.json(vouchers);
+  } catch (err: any) {
+    console.warn('[Finance GET /vouchers] PostgreSQL query failed, falling back:', err?.message);
+    try {
+      const data = await FinanceService.getVouchers();
+      return res.json(data);
+    } catch (_) {
+      return res.json(FinanceController.getVouchers());
+    }
   }
 });
 

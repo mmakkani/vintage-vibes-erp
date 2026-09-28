@@ -73,6 +73,64 @@ export class FinanceService {
     const type = options?.type?.trim() || 'ALL';
     const status = options?.status?.trim() || 'ALL';
 
+    // 1. Primary: Fetch from Express backend API (PostgreSQL direct)
+    if (typeof window !== 'undefined') {
+      try {
+        const apiData = await safeFetchJson<any[]>('/api/finance/vouchers');
+        if (Array.isArray(apiData)) {
+          let filtered = apiData.map((row: any) => {
+            const lines = row.lines || row.entries || [];
+            return {
+              id: String(row.id),
+              voucherNo: row.voucherNo || row.voucher_no || row.id,
+              date: typeof row.date === 'string' ? row.date.slice(0, 10) : (row.date ? new Date(row.date).toISOString().slice(0, 10) : (row.voucher_date || new Date().toISOString().slice(0, 10))),
+              type: row.type || row.voucher_type || 'JOURNAL',
+              reference: row.reference || row.reference_no || '',
+              narration: row.narration || '',
+              totalDebit: Number(row.totalDebit ?? row.total_debit ?? 0),
+              totalCredit: Number(row.totalCredit ?? row.total_credit ?? 0),
+              status: row.status || 'POSTED',
+              currency: (row.currency || 'AED').toUpperCase(),
+              exchangeRate: Number(row.exchangeRate ?? row.exchange_rate ?? 1.0),
+              baseCurrency: (row.baseCurrency || row.base_currency || 'AED').toUpperCase(),
+              foreignTotalAmount: Number(row.foreignTotalAmount ?? row.foreign_total_amount ?? 0),
+              createdBy: row.createdBy || row.created_by || 'System',
+              isAuto: Boolean(row.isAuto ?? row.is_auto ?? FinanceService.isAutoVoucher(row)),
+              entries: lines,
+              lines: lines,
+              createdAt: row.createdAt || row.created_at
+            } as Voucher;
+          });
+
+          if (search) {
+            const sLower = search.toLowerCase();
+            filtered = filtered.filter(v =>
+              (v.voucherNo && v.voucherNo.toLowerCase().includes(sLower)) ||
+              (v.reference && v.reference.toLowerCase().includes(sLower)) ||
+              (v.narration && v.narration.toLowerCase().includes(sLower))
+            );
+          }
+
+          if (type && type !== 'ALL') {
+            filtered = filtered.filter(v => (v.type || '').toUpperCase() === type.toUpperCase());
+          }
+
+          if (status && status !== 'ALL') {
+            filtered = filtered.filter(v => (v.status || '').toUpperCase() === status.toUpperCase());
+          }
+
+          const total = filtered.length;
+          const startIndex = (page - 1) * pageSize;
+          const paginatedData = filtered.slice(startIndex, startIndex + pageSize);
+
+          return buildPaginatedResponse<Voucher>(paginatedData, total, page, pageSize);
+        }
+      } catch (err) {
+        console.warn('[FinanceService] getVouchersPaginated API fetch failed, trying direct Supabase:', err);
+      }
+    }
+
+    // 2. Secondary fallback: Direct Supabase query
     let query = supabase
       .from('financial_vouchers')
       .select('*', { count: 'exact' });
@@ -597,6 +655,22 @@ export class FinanceService {
 
   // --- Vouchers ---
   public static async getVouchers(): Promise<Voucher[]> {
+    if (typeof window !== 'undefined') {
+      try {
+        const apiData = await safeFetchJson<any[]>('/api/finance/vouchers');
+        if (Array.isArray(apiData) && apiData.length > 0) {
+          return apiData.map(v => ({
+            ...v,
+            isAuto: Boolean(v.isAuto ?? v.is_auto ?? FinanceService.isAutoVoucher(v)),
+            lines: v.lines || v.entries || [],
+            entries: v.entries || v.lines || []
+          }));
+        }
+      } catch (err) {
+        console.warn('[FinanceService] GET /api/finance/vouchers fallback to Supabase:', err);
+      }
+    }
+
     let rows: any[] = [];
     try {
       const { data, error } = await supabase
