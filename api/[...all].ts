@@ -10884,9 +10884,285 @@ RULES FOR YOUR RESPONSE:
         });
       }
 
-      // 13. Live Selling Pool / Inventory items
-      if (pathname.includes('/live-stream/pool')) {
-        return res.status(200).json({ success: true, pools: [] });
+      // 13. Live Selling Pool / Active Claimed Items in Booth
+      if (pathname.includes('/live-stream/pool') && method === 'GET') {
+        const boothParam = parsedUrl.searchParams.get('boothId') || 'booth-1';
+        const client = await getPgClient();
+        if (!client) {
+          return res.status(200).json({ success: true, pools: [] });
+        }
+        try {
+          const poolRes = await client.query(
+            `SELECT id, barcode, sku, item_name, brand_name, cost_price, 
+                    COALESCE(retail_price_aed, price_aed, cost_price, 120) as retail_price_aed,
+                    status, locked_by_station, locked_by_buyer, locked_by_booth, locked_at, lock_expires_at, reserved_until
+             FROM inventory_pieces
+             WHERE (status = 'RESERVED' OR status = 'CLAIMED_PENDING')
+               AND (locked_by_booth = $1 OR $1 = 'all' OR locked_by_booth IS NULL)
+             ORDER BY locked_at DESC LIMIT 100;`,
+            [boothParam]
+          );
+          return res.status(200).json({
+            success: true,
+            pools: poolRes.rows.map(r => ({
+              ...r,
+              barcode: r.barcode || r.sku,
+              buyerHandle: r.locked_by_buyer || 'Guest',
+              stationId: r.locked_by_station || 'Station 1',
+              priceAed: Number(r.retail_price_aed || 0)
+            }))
+          });
+        } catch (poolErr) {
+          return res.status(200).json({ success: true, pools: [] });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      // 13-A. Live Selling Concurrency Claim Endpoint (Atomic Pessimistic Lock)
+      if ((pathname.includes('/live-stream/claim') || pathname.includes('/live/claim')) && method === 'POST') {
+        const barcode = (body.barcode || body.sku || '').trim();
+        const buyerHandle = (body.buyerHandle || body.buyer_handle || 'Guest Buyer').trim();
+        const buyerPhone = body.buyerPhone || body.buyer_phone || '';
+        const channel = body.channel || 'TikTok Live';
+        const boothId = body.boothId || body.booth_id || 'booth-1';
+        const stationId = body.stationId || body.station_id || 'Station 1';
+        const offeredPrice = body.offeredPrice !== undefined ? Number(body.offeredPrice) : undefined;
+        const lockSeconds = Number(body.lockDurationSeconds) || 180;
+        const timeoutMin = Number(body.reservationTimeoutMinutes) || 120;
+
+        if (!barcode || !buyerHandle) {
+          return res.status(400).json({ success: false, error: 'Barcode and buyerHandle are required' });
+        }
+
+        const client = await getPgClient();
+        if (!client) {
+          return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        }
+
+        try {
+          const nowMs = Date.now();
+          const lockExpiresAt = nowMs + lockSeconds * 1000;
+          const reservedUntil = nowMs + timeoutMin * 60 * 1000;
+
+          // 1. Pessimistic concurrency lock via atomic UPDATE on inventory_pieces
+          const updateRes = await client.query(
+            `UPDATE inventory_pieces
+             SET status = 'RESERVED',
+                 locked_by_station = $1,
+                 locked_by_buyer = $2,
+                 locked_by_booth = $3,
+                 locked_at = NOW(),
+                 lock_expires_at = $4,
+                 reserved_until = $5,
+                 updated_at = NOW()
+             WHERE (LOWER(barcode) = LOWER($6) OR LOWER(sku) = LOWER($6) OR id::text = $6)
+               AND (status = 'IN_STOCK' OR status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT')
+               AND (is_sold = false OR is_sold IS NULL)
+             RETURNING *;`,
+            [stationId, buyerHandle, boothId, lockExpiresAt, reservedUntil, barcode]
+          );
+
+          if (updateRes.rowCount && updateRes.rowCount > 0) {
+            const piece = updateRes.rows[0];
+            return res.status(200).json({
+              success: true,
+              piece: {
+                ...piece,
+                brandName: piece.brand_name || piece.brand || 'Vintage',
+                itemName: piece.item_name || piece.title || 'Vintage Piece',
+                retailPriceAed: offeredPrice !== undefined ? offeredPrice : Number(piece.retail_price_aed || piece.price_aed || piece.cost_price || 0),
+                lockedByStation: stationId,
+                locked_by_station: stationId,
+                lockedByBuyer: buyerHandle,
+                locked_by_buyer: buyerHandle
+              },
+              stationId,
+              buyerHandle,
+              message: `Locked by ${stationId} for ${buyerHandle}`
+            });
+          }
+
+          // 2. Not updated: check why (already sold, already locked, or in bale_sorted_pieces)
+          const checkRes = await client.query(
+            `SELECT id, barcode, sku, item_name, brand_name, status, locked_by_station, locked_by_buyer, is_sold, sold_invoice_id, retail_price_aed, cost_price
+             FROM inventory_pieces
+             WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1
+             LIMIT 1;`,
+            [barcode]
+          );
+
+          if (checkRes.rowCount === 0) {
+            // Also check if piece exists in bale_sorted_pieces and auto-link to inventory_pieces
+            const baleCheck = await client.query(
+              `SELECT id, piece_code, sku, category, brand_title, cost_price 
+               FROM bale_sorted_pieces 
+               WHERE LOWER(piece_code) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1
+               LIMIT 1;`,
+              [barcode]
+            );
+
+            if (baleCheck.rowCount && baleCheck.rowCount > 0) {
+              const bp = baleCheck.rows[0];
+              const insertRes = await client.query(
+                `INSERT INTO inventory_pieces (
+                   id, barcode, sku, item_name, brand_name, status, 
+                   locked_by_station, locked_by_buyer, locked_by_booth, 
+                   locked_at, lock_expires_at, reserved_until, is_sold, cost_price, created_at, updated_at
+                 ) VALUES (
+                   $1, $2, $3, $4, $5, 'RESERVED',
+                   $6, $7, $8,
+                   NOW(), $9, $10, false, $11, NOW(), NOW()
+                 )
+                 ON CONFLICT (id) DO UPDATE SET
+                   status = 'RESERVED',
+                   locked_by_station = EXCLUDED.locked_by_station,
+                   locked_by_buyer = EXCLUDED.locked_by_buyer,
+                   locked_by_booth = EXCLUDED.locked_by_booth,
+                   locked_at = NOW(),
+                   lock_expires_at = EXCLUDED.lock_expires_at,
+                   reserved_until = EXCLUDED.reserved_until,
+                   updated_at = NOW()
+                 RETURNING *;`,
+                [
+                  bp.id,
+                  bp.piece_code || barcode,
+                  bp.sku || bp.piece_code || barcode,
+                  bp.category || 'Vintage Garment',
+                  bp.brand_title || 'Vintage',
+                  stationId,
+                  buyerHandle,
+                  boothId,
+                  lockExpiresAt,
+                  reservedUntil,
+                  Number(bp.cost_price || 0)
+                ]
+              );
+
+              if (insertRes.rowCount && insertRes.rowCount > 0) {
+                const insertedPiece = insertRes.rows[0];
+                return res.status(200).json({
+                  success: true,
+                  piece: {
+                    ...insertedPiece,
+                    brandName: insertedPiece.brand_name || 'Vintage',
+                    itemName: insertedPiece.item_name || 'Vintage Piece',
+                    retailPriceAed: offeredPrice !== undefined ? offeredPrice : Number(insertedPiece.retail_price_aed || insertedPiece.cost_price || 0),
+                    lockedByStation: stationId,
+                    locked_by_station: stationId,
+                    lockedByBuyer: buyerHandle,
+                    locked_by_buyer: buyerHandle
+                  },
+                  stationId,
+                  buyerHandle,
+                  message: `Locked by ${stationId} for ${buyerHandle}`
+                });
+              }
+            }
+
+            return res.status(404).json({
+              success: false,
+              error: `SKU / Barcode "${barcode}" does not exist in warehouse inventory.`
+            });
+          }
+
+          const existing = checkRes.rows[0];
+          if (existing.is_sold || existing.status === 'SOLD') {
+            return res.status(409).json({
+              success: false,
+              error: `Already Sold: Piece "${barcode}" has already been sold on invoice ${existing.sold_invoice_id || 'PREVIOUS'}.`
+            });
+          }
+
+          const holdingStation = existing.locked_by_station || 'another station';
+          const holdingBuyer = existing.locked_by_buyer || 'another buyer';
+          return res.status(409).json({
+            success: false,
+            error: `Already Claimed: Piece "${barcode}" is currently locked by ${holdingStation} for ${holdingBuyer}. Concurrency lock preserved.`,
+            lockedByStation: holdingStation,
+            lockedByBuyer: holdingBuyer
+          });
+        } catch (dbErr: any) {
+          console.error('[Live Stream Claim Error]', dbErr);
+          return res.status(500).json({ success: false, error: dbErr.message || 'Failed to claim piece' });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      // 13-B. Live Selling Release Lock / Fast Drop Endpoint
+      if ((pathname.includes('/live-stream/release-lock') || pathname.includes('/live/release-lock')) && method === 'POST') {
+        const barcode = (body.barcode || body.sku || '').trim();
+        const boothId = body.boothId || body.booth_id || 'booth-1';
+        const stationId = body.stationId || body.station_id || 'Station 1';
+
+        if (!barcode) {
+          return res.status(400).json({ success: false, error: 'Barcode is required' });
+        }
+
+        const client = await getPgClient();
+        if (!client) {
+          return res.status(500).json({ success: false, error: 'Database connection unavailable' });
+        }
+
+        try {
+          const resDrop = await client.query(
+            `UPDATE inventory_pieces
+             SET status = 'IN_STOCK',
+                 locked_by_station = NULL,
+                 locked_at = NULL,
+                 locked_by_buyer = NULL,
+                 locked_by_booth = NULL,
+                 lock_expires_at = NULL,
+                 reserved_until = NULL,
+                 updated_at = NOW()
+             WHERE (LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1)
+               AND (status = 'RESERVED' OR status = 'CLAIMED_PENDING')
+             RETURNING *;`,
+            [barcode]
+          );
+
+          return res.status(200).json({
+            success: true,
+            piece: resDrop.rows[0] || null,
+            message: `Lock released for ${barcode}`
+          });
+        } catch (dbErr: any) {
+          return res.status(500).json({ success: false, error: dbErr.message || 'Failed to release lock' });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      // 13-C. Sweep Expired Live Reservations
+      if (pathname.includes('/live-stream/sweep-reservations') && method === 'POST') {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const sweepRes = await client.query(
+              `UPDATE inventory_pieces
+               SET status = 'IN_STOCK',
+                   locked_by_station = NULL,
+                   locked_at = NULL,
+                   locked_by_buyer = NULL,
+                   locked_by_booth = NULL,
+                   lock_expires_at = NULL,
+                   reserved_until = NULL,
+                   updated_at = NOW()
+               WHERE status = 'RESERVED'
+                 AND reserved_until IS NOT NULL
+                 AND reserved_until < $1
+               RETURNING barcode;`,
+              [Date.now()]
+            );
+            return res.status(200).json({ success: true, sweptCount: sweepRes.rowCount || 0 });
+          } catch (_) {
+            return res.status(200).json({ success: true, sweptCount: 0 });
+          } finally {
+            try { await client.end(); } catch (_) {}
+          }
+        }
+        return res.status(200).json({ success: true, sweptCount: 0 });
       }
 
       // 14. Sorting Workflow Endpoints (Start Sorting / Issue to WIP & Complete Sorting / Capitalize FG)
