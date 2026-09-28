@@ -28,7 +28,8 @@ import {
   Zap,
   Edit,
   MessageSquare,
-  Building2
+  Building2,
+  RotateCcw
 } from 'lucide-react';
 import { EditParcelLogisticsModal } from './EditParcelLogisticsModal.tsx';
 import { ThermalShippingLabelModal } from './ThermalShippingLabelModal.tsx';
@@ -44,6 +45,7 @@ interface CourierOption {
 }
 
 const DEFAULT_COURIERS: CourierOption[] = [
+  { partyId: 75, id: 'party-banana-express-001', name: 'Banana Express', accountCode: '2120-06' },
   { partyId: 70, id: '404b940f-1c3b-4c59-9aa0-223b26d99b0d', name: 'DHL Express UAE', accountCode: '2120-01' },
   { partyId: 71, id: '5a81bbcc-dd51-437e-aaae-de817b59a221', name: 'Aramex Logistics UAE', accountCode: '2120-02' },
   { partyId: 72, id: '086bbab8-ee4d-483c-9e50-622a341c8408', name: 'SMSA Express GCC', accountCode: '2120-03' },
@@ -97,6 +99,7 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                 (type === 'COURIER' ||
                   type === 'LOGISTICS_AGENT' ||
                   type === 'AGENT' ||
+                  name.includes('BANANA') ||
                   name.includes('DHL') ||
                   name.includes('ARAMEX') ||
                   name.includes('SMSA') ||
@@ -111,13 +114,15 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                 'COUR-02': '2120-02',
                 'COUR-03': '2120-03',
                 'COUR-04': '2120-04',
-                'COUR-05': '2120-05'
+                'COUR-05': '2120-05',
+                'COUR-06': '2120-06'
               };
               const accountCode =
                 p.account_map?.payableAccountId ||
                 p.account_map?.payable_account_id ||
                 codeMap[p.code] ||
-                (p.name?.includes('DHL') ? '2120-01' :
+                (p.name?.includes('Banana') ? '2120-06' :
+                 p.name?.includes('DHL') ? '2120-01' :
                  p.name?.includes('Aramex') ? '2120-02' :
                  p.name?.includes('SMSA') ? '2120-03' :
                  p.name?.includes('Emirates') ? '2120-04' :
@@ -148,19 +153,20 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [channelFilter, setChannelFilter] = useState<'ALL' | 'LIVE' | 'ECOMMERCE'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'DRAFT' | 'POSTED'>('ALL');
   const [showSettlementModal, setShowSettlementModal] = useState<boolean>(false);
 
-  // Filter only DRAFT invoices (Strictly LIVE Stream claims & E-Commerce, never B2B Wholesale or POS)
+  // Filter invoices for Live Claim Hub (Strictly LIVE Stream claims & E-Commerce, never B2B Wholesale or POS)
   const draftInvoices = useMemo(() => {
     return invoices.filter(inv => 
-      inv.status === 'DRAFT' &&
+      (statusFilter === 'ALL' || inv.status === statusFilter) &&
       inv.channel !== 'WHOLESALE_B2B' &&
       inv.channel !== 'POS' &&
       !inv.isB2BCustomSale &&
       !inv.invoiceNo?.startsWith('B2B-') &&
       !inv.invoiceNo?.startsWith('SLS-B2B')
     );
-  }, [invoices]);
+  }, [invoices, statusFilter]);
 
   // Selected invoice
   const selectedInvoice = useMemo(() => {
@@ -379,6 +385,57 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
     }
   };
 
+  // Handle Unposting an Invoice back to Draft
+  const handleUnpostDraft = async (invoiceId: string, invoiceNo?: string) => {
+    if (!confirm(`Unpost order ${invoiceNo || ''} back to DRAFT? This will unlock garments and reverse all COA financial vouchers.`)) return;
+
+    setIsProcessing(true);
+    setFeedback(null);
+    try {
+      const res = await fetch(`/api/sales/invoices/${invoiceId}/unpost`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setFeedback({ text: `↩️ Order ${invoiceNo || ''} unposted back to DRAFT. Items unlocked and vouchers reversed.`, type: 'success' });
+        onRefresh();
+      } else {
+        setFeedback({ text: data.error || 'Failed to unpost order', type: 'error' });
+      }
+    } catch (e: any) {
+      setFeedback({ text: 'Network error unposting order: ' + e.message, type: 'error' });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Handle Permanently Deleting an Invoice / Draft
+  const handleDeleteDraft = async (invoiceId: string, invoiceNo?: string) => {
+    if (!confirm(`⚠️ PERMANENTLY DELETE invoice ${invoiceNo || ''}? This will permanently void this sale, release all garments back to ACTIVE INVENTORY (IN_STOCK), and reverse all accounting vouchers.`)) return;
+
+    setIsProcessing(true);
+    setFeedback(null);
+    try {
+      const res = await fetch(`/api/sales/invoices/${invoiceId}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setFeedback({ text: `🗑️ Order ${invoiceNo || ''} permanently deleted. All pieces restored to IN_STOCK and vouchers purged.`, type: 'success' });
+        setSelectedInvoiceId('');
+        onRefresh();
+      } else {
+        setFeedback({ text: data.error || 'Failed to delete order', type: 'error' });
+      }
+    } catch (e: any) {
+      setFeedback({ text: 'Network error deleting order: ' + e.message, type: 'error' });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header Bar */}
@@ -480,6 +537,16 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                   className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
               </div>
+
+              <select
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value as any)}
+                className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs bg-white font-bold text-slate-700 focus:outline-none"
+              >
+                <option value="ALL">All Status</option>
+                <option value="DRAFT">⏳ Draft Holds</option>
+                <option value="POSTED">✅ Dispatched / Posted</option>
+              </select>
 
               <select
                 value={channelFilter}
@@ -600,7 +667,7 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                         <strong>{inv.items.length}</strong> items bundled ({(totalGrams / 1000).toFixed(2)} KG)
                       </span>
                       <span className="font-mono text-[11px] text-slate-500">
-                        {inv.courierPartner || 'DHL Express'} &bull; {inv.paymentStatus || 'Pending COD'}
+                        {inv.courierPartner || 'Unassigned'} &bull; {inv.paymentStatus || 'Pending COD'}
                       </span>
                     </div>
                   </div>
@@ -652,33 +719,56 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
+                  {selectedInvoice.status === 'DRAFT' ? (
+                    <button
+                      onClick={handleFinalizeAndPost}
+                      disabled={isProcessing}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                      title="Post & Finalize Order (Locks items as SOLD & Generates COA Voucher)"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-amber-300" />
+                      <span>{isProcessing ? 'Posting...' : '⚡ Post & Dispatch'}</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleUnpostDraft(selectedInvoice.id, selectedInvoice.invoiceNo)}
+                      disabled={isProcessing}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                      title="Unpost Order (Reverts to DRAFT, unlocks items & reverses COA vouchers)"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-white" />
+                      <span>{isProcessing ? 'Reversing...' : '↩️ Unpost Order'}</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => setWhatsAppInvoice(selectedInvoice)}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                    className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                   >
                     <MessageSquare className="w-3.5 h-3.5" />
-                    <span>📱 WhatsApp Buyer</span>
+                    <span>📱 WhatsApp</span>
                   </button>
                   <button
                     onClick={() => setEditingParcelInvoice(selectedInvoice)}
                     className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                   >
                     <Edit className="w-3.5 h-3.5 text-slate-950" />
-                    <span>✏️ Edit Parcel & Pay</span>
+                    <span>✏️ Edit</span>
                   </button>
                   <button
                     onClick={() => setThermalSlipInvoice(selectedInvoice)}
                     className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-amber-300 font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                   >
                     <Printer className="w-3.5 h-3.5 text-amber-300" />
-                    <span>📄 Print Label / Slip</span>
+                    <span>📄 Slip</span>
                   </button>
                   <button
-                    onClick={() => handleCancelDraft(selectedInvoice.id)}
-                    className="px-3 py-1.5 border border-rose-200 hover:bg-rose-50 text-rose-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    onClick={() => handleDeleteDraft(selectedInvoice.id, selectedInvoice.invoiceNo)}
+                    disabled={isProcessing}
+                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                    title="Permanently Delete Order, restore garments to IN_STOCK, and purge vouchers"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Cancel Hold
+                    <Trash2 className="w-3.5 h-3.5 text-white" />
+                    <span>Delete</span>
                   </button>
                   <button
                     type="button"
@@ -861,17 +951,30 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                       <span className="text-[10px] text-indigo-600 font-bold">Registry Linked</span>
                     </label>
                     <select
-                      value={selectedInvoice.courierPartner || (courierList[0]?.name ?? 'DHL Express UAE')}
+                      value={selectedInvoice.courierPartner || (courierList[0]?.name ?? 'Banana Express')}
                       onChange={e => {
                         const sel = courierList.find(c => c.name === e.target.value);
+                        let autoAwb = selectedInvoice.trackingNumber;
+                        if (!autoAwb || autoAwb.trim() === '') {
+                          const pfx = (e.target.value || '').toUpperCase().includes('BANANA') ? 'BNN' :
+                                      (e.target.value || '').toUpperCase().includes('DHL') ? 'DHL' :
+                                      (e.target.value || '').toUpperCase().includes('ARAMEX') ? 'ARX' :
+                                      (e.target.value || '').toUpperCase().includes('SMSA') ? 'SMSA' : 'AWB';
+                          const suffix = selectedInvoice.invoiceNo.replace(/[^0-9]/g, '').slice(-8) || Math.floor(10000000 + Math.random() * 90000000);
+                          autoAwb = `${pfx}-${suffix}`;
+                        }
                         if (sel) {
                           handleUpdateLogistics({
                             courierPartner: sel.name,
                             courierPartnerId: sel.partyId,
-                            courierPartyId: sel.id
+                            courierPartyId: sel.id,
+                            ...(autoAwb ? { trackingNumber: autoAwb } : {})
                           });
                         } else {
-                          handleUpdateLogistics('courierPartner', e.target.value);
+                          handleUpdateLogistics({
+                            courierPartner: e.target.value,
+                            ...(autoAwb ? { trackingNumber: autoAwb } : {})
+                          });
                         }
                       }}
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:outline-none font-bold text-slate-800"
@@ -885,9 +988,27 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Courier Tracking Number
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-slate-700">
+                        Courier Tracking Number
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cName = String(selectedInvoice.courierPartner || courierList[0]?.name || '').toUpperCase();
+                          const pfx = cName.includes('BANANA') ? 'BNN' :
+                                      cName.includes('DHL') ? 'DHL' :
+                                      cName.includes('ARAMEX') ? 'ARX' :
+                                      cName.includes('SMSA') ? 'SMSA' : 'AWB';
+                          const suffix = selectedInvoice.invoiceNo.replace(/[^0-9]/g, '').slice(-8) || Math.floor(10000000 + Math.random() * 90000000);
+                          handleUpdateLogistics('trackingNumber', `${pfx}-${suffix}`);
+                        }}
+                        className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded cursor-pointer transition-colors"
+                        title="Auto-generate tracking number with courier prefix"
+                      >
+                        ⚡ Auto AWB
+                      </button>
+                    </div>
                     <div className="relative">
                       <input
                         type="text"
@@ -1096,15 +1217,36 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                   </div>
                 </div>
 
-                <div className="pt-2 flex items-center justify-end gap-3">
+                <div className="pt-2 flex flex-wrap items-center justify-end gap-3">
                   <button
-                    onClick={handleFinalizeAndPost}
+                    onClick={() => handleDeleteDraft(selectedInvoice.id, selectedInvoice.invoiceNo)}
                     disabled={isProcessing}
-                    className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer disabled:opacity-50"
+                    className="px-4 py-3 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 font-bold text-xs uppercase tracking-wider rounded-xl border border-rose-500/40 flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer disabled:opacity-50"
+                    title="Permanently void and delete order"
                   >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>🚀 Finalize & Dispatch Parcel (Auto-COGS & COD Entry)</span>
+                    <Trash2 className="w-4 h-4 text-rose-400" />
+                    <span>Void & Delete</span>
                   </button>
+
+                  {selectedInvoice.status === 'DRAFT' ? (
+                    <button
+                      onClick={handleFinalizeAndPost}
+                      disabled={isProcessing}
+                      className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer disabled:opacity-50"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>🚀 Finalize & Dispatch Parcel (Auto-COGS & COD Entry)</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleUnpostDraft(selectedInvoice.id, selectedInvoice.invoiceNo)}
+                      disabled={isProcessing}
+                      className="w-full sm:w-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-xl shadow-indigo-600/30 flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer disabled:opacity-50"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      <span>↩️ Unpost Order back to DRAFT (Reverse COA Entries)</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

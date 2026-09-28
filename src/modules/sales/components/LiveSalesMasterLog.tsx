@@ -18,7 +18,9 @@ import {
   RotateCcw,
   Sparkles,
   Edit,
-  MessageSquare
+  MessageSquare,
+  Zap,
+  Trash2
 } from 'lucide-react';
 import { EditParcelLogisticsModal } from './EditParcelLogisticsModal.tsx';
 import { ThermalShippingLabelModal } from './ThermalShippingLabelModal.tsx';
@@ -46,6 +48,71 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
   const [editingParcelInvoice, setEditingParcelInvoice] = useState<SalesInvoice | null>(null);
   const [thermalSlipInvoice, setThermalSlipInvoice] = useState<SalesInvoice | null>(null);
   const [whatsAppInvoice, setWhatsAppInvoice] = useState<SalesInvoice | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+
+  const handlePostInvoice = async (invoiceId: string, invoiceNo: string) => {
+    if (!confirm(`Post & Finalize order ${invoiceNo}? This will mark garments as SOLD and generate COA double-entry accounting vouchers.`)) return;
+    try {
+      setActionLoadingId(invoiceId);
+      const res = await fetch(`/api/sales/invoices/${invoiceId}/post`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postedBy: 'Live Sales Operator' })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (onRefresh) onRefresh();
+      } else {
+        alert(data.error || 'Failed to post order');
+      }
+    } catch (e: any) {
+      alert('Network error posting order: ' + e.message);
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleUnpostInvoice = async (invoiceId: string, invoiceNo: string) => {
+    if (!confirm(`Unpost order ${invoiceNo} back to DRAFT? This will unlock garments and reverse all COA financial vouchers.`)) return;
+    try {
+      setActionLoadingId(invoiceId);
+      const res = await fetch(`/api/sales/invoices/${invoiceId}/unpost`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (onRefresh) onRefresh();
+      } else {
+        alert(data.error || 'Failed to unpost order');
+      }
+    } catch (e: any) {
+      alert('Network error unposting order: ' + e.message);
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleDeleteInvoice = async (invoiceId: string, invoiceNo: string) => {
+    if (!confirm(`⚠️ DELETE order ${invoiceNo}? This will permanently void this sale, release all garments back to ACTIVE INVENTORY (IN_STOCK), and reverse all accounting vouchers.`)) return;
+    try {
+      setActionLoadingId(invoiceId);
+      const res = await fetch(`/api/sales/invoices/${invoiceId}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (onRefresh) onRefresh();
+      } else {
+        alert(data.error || 'Failed to delete order');
+      }
+    } catch (e: any) {
+      alert('Network error deleting order: ' + e.message);
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
 
   // Strict LIVE channel predicate: excludes POS sales completely
   const isStrictlyLive = (inv: SalesInvoice) => {
@@ -507,9 +574,31 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                         </td>
                         <td className="px-4 py-3 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
+                            {inv.status === 'DRAFT' && (
+                              <button
+                                onClick={() => handlePostInvoice(inv.id, inv.invoiceNo)}
+                                disabled={actionLoadingId === inv.id}
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-md text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                                title="Post & Finalize Order (Locks items as SOLD & Generates COA Voucher)"
+                              >
+                                <Zap className="w-3 h-3 text-amber-300" />
+                                <span>{actionLoadingId === inv.id ? 'Posting...' : 'Post'}</span>
+                              </button>
+                            )}
+                            {inv.status === 'POSTED' && (
+                              <button
+                                onClick={() => handleUnpostInvoice(inv.id, inv.invoiceNo)}
+                                disabled={actionLoadingId === inv.id}
+                                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-md text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                                title="Unpost Order (Reverts to DRAFT, unlocks items & reverses COA vouchers)"
+                              >
+                                <RotateCcw className="w-3 h-3 text-white" />
+                                <span>{actionLoadingId === inv.id ? 'Reversing...' : 'Unpost'}</span>
+                              </button>
+                            )}
                             <button
                               onClick={() => setWhatsAppInvoice(inv)}
-                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                              className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded-md text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
                               title="Send WhatsApp Order Confirmation, Payment Link & Slip"
                             >
                               <MessageSquare className="w-3 h-3 text-white" />
@@ -521,7 +610,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                               title="Edit DHL / Courier Tracking, Shipping Bearer, and Payment Status"
                             >
                               <Edit className="w-3 h-3 text-slate-950" />
-                              <span>✏️ Edit Parcel & Pay</span>
+                              <span>✏️ Edit</span>
                             </button>
                             <button
                               onClick={() => setThermalSlipInvoice(inv)}
@@ -529,7 +618,16 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                               title="Print 4x6 Thermal Shipping Waybill and Dispatch Advice Slip"
                             >
                               <Printer className="w-3 h-3 text-amber-300" />
-                              <span>📄 Print Label / Slip</span>
+                              <span>📄 Slip</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteInvoice(inv.id, inv.invoiceNo)}
+                              disabled={actionLoadingId === inv.id}
+                              className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-md text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                              title="Delete Order (Deletes invoice, restores garments to IN_STOCK, deletes vouchers)"
+                            >
+                              <Trash2 className="w-3 h-3 text-white" />
+                              <span>{actionLoadingId === inv.id ? 'Deleting...' : 'Delete'}</span>
                             </button>
                           </div>
                         </td>

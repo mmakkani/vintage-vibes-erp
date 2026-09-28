@@ -71,11 +71,78 @@ salesRouter.post('/gate-passes/:id/convert-invoice', (req, res) => {
 });
 
 salesRouter.get('/invoices', async (req, res) => {
+  let client: Client | null = null;
   try {
-    const list = await SalesService.getSalesInvoices();
-    return res.json(list);
-  } catch (_) {
-    return res.json(SalesController.getInvoices());
+    client = await getDbClient();
+    const query = `
+      SELECT si.*,
+             p.name as courier_partner_name,
+             p.company_name as courier_company_name
+      FROM sales_invoices si
+      LEFT JOIN parties p ON (p.party_id = si.courier_partner_id OR p.id::text = si.courier_partner_id::text)
+      ORDER BY si.created_at DESC;
+    `;
+    const result = await client.query(query);
+    const rows = result.rows || [];
+    const mapped = rows.map((row: any) => {
+      let parsedItems: any[] = [];
+      if (Array.isArray(row.items)) {
+        parsedItems = row.items;
+      } else if (typeof row.items === 'string') {
+        try { parsedItems = JSON.parse(row.items); } catch (_) {}
+      }
+      const rawDate = row.invoice_date ? String(row.invoice_date).slice(0, 10) : new Date().toISOString().slice(0, 10);
+      const subVal = Number(row.subtotal ?? row.total_amount ?? 0);
+      const vatVal = Number(row.tax_amount ?? 0);
+      const totalVal = Number(row.total_amount ?? (subVal + vatVal));
+      const courierName = row.courier_partner_name || row.courier_company_name || (row.courier_partner_id === 75 ? 'Banana Express' : (row.courier_partner_id ? `Courier #${row.courier_partner_id}` : undefined));
+
+      return {
+        id: row.id,
+        invoiceNo: row.invoice_no,
+        clientId: row.client_id,
+        customerId: row.client_id || '',
+        customerName: row.customer_name || 'Walk-in Guest',
+        customerPhone: row.customer_phone || '',
+        invoiceDate: rawDate,
+        date: rawDate,
+        time: row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '14:30',
+        channel: row.channel || (row.invoice_no?.startsWith('LIVE-') ? 'LIVE_STREAM' : 'POS_COUNTER'),
+        paymentMethod: row.payment_method || 'COD',
+        paymentStatus: row.payment_status || (row.status === 'PAID' ? 'PAID' : 'UNPAID_PENDING_COD'),
+        paymentReference: row.payment_reference || '',
+        shippingAddress: row.shipping_address || '',
+        city: row.city || '',
+        courierPartyId: row.courier_party_id || row.courier_partner_id,
+        courierPartnerId: row.courier_partner_id,
+        courierPartner: courierName,
+        trackingNumber: row.tracking_number || '',
+        shippingFeeAed: Number(row.shipping_fee || 0),
+        shippingBearer: row.shipping_bearer || 'CUSTOMER',
+        buyerHandle: row.buyer_handle || (row.customer_name?.startsWith('@') ? row.customer_name : undefined),
+        boothId: row.booth_id,
+        subtotal: subVal,
+        subTotal: subVal,
+        discountAmount: Number(row.discount_amount || 0),
+        taxAmount: vatVal,
+        vatAmount: vatVal,
+        totalAmount: totalVal,
+        grandTotalAED: totalVal,
+        status: row.status || 'DRAFT',
+        items: parsedItems,
+        createdAt: row.created_at
+      };
+    });
+    return res.json(mapped);
+  } catch (err) {
+    try {
+      const list = await SalesService.getSalesInvoices();
+      return res.json(list);
+    } catch (_) {
+      return res.json(SalesController.getInvoices());
+    }
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
 });
 
@@ -240,8 +307,50 @@ const handleUpdateDraftInvoice = async (req: any, res: any) => {
         WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id = $1
       `, [req.body.removeBarcode.trim()]);
     }
+
+    const updatedInv = result.invoice;
+    if (updatedInv) {
+      await client.query(`
+        UPDATE sales_invoices
+        SET items = $1::jsonb,
+            subtotal = $2,
+            tax_amount = $3,
+            total_amount = $4,
+            shipping_fee = $5,
+            courier_partner_id = $6,
+            tracking_number = $7,
+            shipping_bearer = $8,
+            payment_status = $9,
+            payment_method = $10,
+            payment_reference = $11,
+            shipping_address = $12,
+            customer_phone = $13,
+            customer_name = $14,
+            updated_at = NOW()
+        WHERE id::text = $15 OR invoice_no = $15
+      `, [
+        JSON.stringify(updatedInv.items || []),
+        Number(updatedInv.subtotal || updatedInv.subTotal || 0),
+        Number(updatedInv.taxAmount || updatedInv.vatAmount || 0),
+        Number(updatedInv.totalAmount || 0),
+        Number(updatedInv.shippingFeeAed ?? updatedInv.shippingCharge ?? 0),
+        updatedInv.courierPartnerId || updatedInv.courierPartyId || null,
+        updatedInv.trackingNumber || '',
+        updatedInv.shippingBearer || 'CUSTOMER',
+        updatedInv.paymentStatus || 'UNPAID_PENDING_COD',
+        updatedInv.paymentMethod || 'COD',
+        updatedInv.paymentReference || '',
+        updatedInv.shippingAddress || '',
+        updatedInv.customerPhone || '',
+        updatedInv.buyerHandle || updatedInv.customerName || 'Walk-in Guest',
+        id
+      ]);
+    }
+
     await client.end().catch(() => {});
-  } catch (_) {}
+  } catch (err: any) {
+    console.error('Error persisting draft invoice update to DB:', err);
+  }
   return res.json(result);
 };
 
@@ -323,29 +432,90 @@ salesRouter.post('/invoices/:id/post', async (req, res) => {
 
 salesRouter.post('/invoices/:id/unpost', async (req, res) => {
   const { id } = req.params;
-  const inv = relationalStore.getSalesInvoices().find(i => i.id === id);
-  const result = SalesController.unpostInvoice(id);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
+  let client: Client | null = null;
+  try {
+    client = await getDbClient();
+    const invRes = await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id]);
+    if (invRes.rowCount > 0) {
+      const row = invRes.rows[0];
+      const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
+      const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
+      if (barcodes.length > 0) {
+        await client.query(`UPDATE inventory_pieces SET status = 'RESERVED', is_sold = false, updated_at = NOW() WHERE barcode = ANY($1)`, [barcodes]);
+      }
+      await client.query(`UPDATE sales_invoices SET status = 'DRAFT' WHERE id = $1`, [row.id]);
+      const vNo = `JV-SLS-${row.invoice_no || row.id}`;
+      await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
+      await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
+    }
+    SalesController.unpostInvoice(id);
+    return res.json({ success: true, message: 'Sales invoice successfully unposted to DRAFT' });
+  } catch (err: any) {
+    console.error('Error during sales invoice unpost in DB:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Failed to unpost invoice' });
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
-  if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
-    const barcodes = inv.items.map(it => it.barcode).filter(Boolean);
-    try {
-      const client = await getDbClient();
-      await client.query(`
-        UPDATE inventory_pieces
-        SET status = 'IN_STOCK', is_sold = false, updated_at = NOW()
-        WHERE barcode = ANY($1)
-      `, [barcodes]);
-      await client.query(`
-        UPDATE sales_invoices
-        SET status = 'DRAFT'
-        WHERE id = $1 OR invoice_no = $1;
-      `, [id]);
-      await client.end().catch(() => {});
-    } catch (_) {}
+});
+
+salesRouter.delete('/invoices/:id', async (req, res) => {
+  const { id } = req.params;
+  let client: Client | null = null;
+  try {
+    client = await getDbClient();
+    const invRes = await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id]);
+    if (invRes.rowCount > 0) {
+      const row = invRes.rows[0];
+      const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
+      const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
+      if (barcodes.length > 0) {
+        await client.query(`
+          UPDATE inventory_pieces
+          SET status = 'IN_STOCK', locked_by_buyer = NULL, locked_by_booth = NULL, lock_expires_at = NULL, reserved_until = NULL, is_sold = false, updated_at = NOW()
+          WHERE barcode = ANY($1)
+        `, [barcodes]);
+      }
+      const vNo = `JV-SLS-${row.invoice_no || row.id}`;
+      await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
+      await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
+      await client.query('DELETE FROM sales_invoices WHERE id = $1', [row.id]);
+    }
+    return res.json({ success: true, message: 'Invoice deleted and inventory released to stock' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || 'Failed to delete invoice' });
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
-  return res.json(result);
+});
+
+salesRouter.post('/invoices/:id/delete', async (req, res) => {
+  const { id } = req.params;
+  let client: Client | null = null;
+  try {
+    client = await getDbClient();
+    const invRes = await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id]);
+    if (invRes.rowCount > 0) {
+      const row = invRes.rows[0];
+      const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
+      const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
+      if (barcodes.length > 0) {
+        await client.query(`
+          UPDATE inventory_pieces
+          SET status = 'IN_STOCK', locked_by_buyer = NULL, locked_by_booth = NULL, lock_expires_at = NULL, reserved_until = NULL, is_sold = false, updated_at = NOW()
+          WHERE barcode = ANY($1)
+        `, [barcodes]);
+      }
+      const vNo = `JV-SLS-${row.invoice_no || row.id}`;
+      await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
+      await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
+      await client.query('DELETE FROM sales_invoices WHERE id = $1', [row.id]);
+    }
+    return res.json({ success: true, message: 'Invoice deleted and inventory released to stock' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || 'Failed to delete invoice' });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
 });
 
 // Retail POS Counter Sale Endpoints

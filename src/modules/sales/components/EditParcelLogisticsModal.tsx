@@ -26,6 +26,7 @@ interface CourierOption {
 }
 
 const DEFAULT_COURIERS: CourierOption[] = [
+  { partyId: 75, id: 'b42f8f14-cdda-4b12-9539-ed8fc3f66152', name: 'Banana Express', accountCode: '2120-06' },
   { partyId: 70, id: '404b940f-1c3b-4c59-9aa0-223b26d99b0d', name: 'DHL Express UAE', accountCode: '2120-01' },
   { partyId: 71, id: '5a81bbcc-dd51-437e-aaae-de817b59a221', name: 'Aramex Logistics UAE', accountCode: '2120-02' },
   { partyId: 72, id: '086bbab8-ee4d-483c-9e50-622a341c8408', name: 'SMSA Express GCC', accountCode: '2120-03' },
@@ -50,10 +51,10 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
 }) => {
   const [courierList, setCourierList] = useState<CourierOption[]>(DEFAULT_COURIERS);
   const [courierPartner, setCourierPartner] = useState<string>(
-    invoice.courierPartner || 'DHL Express UAE'
+    invoice.courierPartner || (invoice.courierPartnerId === 75 ? 'Banana Express' : 'Banana Express')
   );
   const [courierPartnerId, setCourierPartnerId] = useState<number | string | undefined>(
-    invoice.courierPartnerId
+    invoice.courierPartnerId || 75
   );
   const [courierPartyId, setCourierPartyId] = useState<string | undefined>(
     invoice.courierPartyId
@@ -132,6 +133,17 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
     if (sel) {
       setCourierPartnerId(sel.partyId);
       setCourierPartyId(sel.id);
+    }
+    if (!trackingNumber || trackingNumber.trim() === '') {
+      let pfx = 'AWB';
+      const n = name.toUpperCase();
+      if (n.includes('BANANA')) pfx = 'BNN';
+      else if (n.includes('ARAMEX')) pfx = 'ARX';
+      else if (n.includes('EMIRATES') || n.includes('POST')) pfx = 'EMP';
+      else if (n.includes('SMSA')) pfx = 'SMSA';
+      else if (n.includes('IMILE')) pfx = 'IML';
+      else if (n.includes('DHL')) pfx = 'DHL';
+      setTrackingNumber(`${pfx}-${invoice.invoiceNo.replace(/[^0-9]/g, '').slice(-8) || Math.floor(10000000 + Math.random() * 90000000)}`);
     }
   };
 
@@ -375,9 +387,29 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
 
               {/* Tracking / Parcel Waybill # with Scanner Icon */}
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Tracking / Parcel Waybill #
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-bold text-slate-700">
+                    Tracking / Parcel Waybill #
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      let pfx = 'AWB';
+                      const n = (courierPartner || '').toUpperCase();
+                      if (n.includes('BANANA')) pfx = 'BNN';
+                      else if (n.includes('ARAMEX')) pfx = 'ARX';
+                      else if (n.includes('EMIRATES') || n.includes('POST')) pfx = 'EMP';
+                      else if (n.includes('SMSA')) pfx = 'SMSA';
+                      else if (n.includes('IMILE')) pfx = 'IML';
+                      else if (n.includes('DHL')) pfx = 'DHL';
+                      setTrackingNumber(`${pfx}-${invoice.invoiceNo.replace(/[^0-9]/g, '').slice(-8) || Math.floor(10000000 + Math.random() * 90000000)}`);
+                    }}
+                    className="text-[10px] text-amber-700 hover:text-amber-800 font-bold flex items-center gap-0.5 cursor-pointer"
+                  >
+                    <Zap className="w-3 h-3" />
+                    <span>Auto AWB</span>
+                  </button>
+                </div>
                 <div className="relative">
                   <input
                     type="text"

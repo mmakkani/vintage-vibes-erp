@@ -12,8 +12,18 @@ interface ThermalShippingLabelModalProps {
 export const ThermalShippingLabelModal: React.FC<ThermalShippingLabelModalProps> = ({ invoice, onClose }) => {
   const barcodeSvgRef = useRef<SVGSVGElement | null>(null);
 
-  const waybillNo = invoice.trackingNumber || `DHL-${invoice.invoiceNo.replace(/[^0-9]/g, '').slice(-8) || '98765432'}`;
-  const courier = invoice.courierPartner || 'DHL Express';
+  const courier = invoice.courierPartner || (invoice.courierPartnerId === 75 ? 'Banana Express Logistics UAE' : (invoice.courierPartnerId ? `Courier #${invoice.courierPartnerId}` : 'Banana Express Logistics UAE'));
+  const getCourierPrefix = (name: string) => {
+    const n = name.toUpperCase();
+    if (n.includes('BANANA')) return 'BNN';
+    if (n.includes('ARAMEX')) return 'ARX';
+    if (n.includes('EMIRATES') || n.includes('POST')) return 'EMP';
+    if (n.includes('SMSA')) return 'SMSA';
+    if (n.includes('IMILE')) return 'IML';
+    if (n.includes('DHL')) return 'DHL';
+    return 'AWB';
+  };
+  const waybillNo = invoice.trackingNumber || `${getCourierPrefix(courier)}-${invoice.invoiceNo.replace(/[^0-9]/g, '').slice(-8) || '98765432'}`;
   const isCOD = invoice.paymentMethod === 'COD' || invoice.paymentStatus === 'UNPAID_PENDING_COD';
   const totalAmount = invoice.totalAmount || invoice.subTotal || 0;
   const shippingFee = invoice.shippingFeeAed !== undefined ? invoice.shippingFeeAed : (invoice.shippingCharge || 0);

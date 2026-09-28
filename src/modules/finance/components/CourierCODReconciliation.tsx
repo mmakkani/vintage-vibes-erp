@@ -35,20 +35,69 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
 
+  const [courierOptions, setCourierOptions] = useState<string[]>([
+    'Banana Express',
+    'DHL Express UAE',
+    'Aramex Logistics UAE',
+    'SMSA Express GCC',
+    'Emirates Post Premium',
+    'iMile Delivery UAE'
+  ]);
+
   // Find Bank and Cash accounts from COA
   const bankAccounts = useMemo(() => {
     return accounts.filter(a => a.code?.startsWith('111') || a.code?.startsWith('112') || a.sub_type?.includes('Bank') || a.sub_type?.includes('Cash') || a.name?.toLowerCase().includes('bank') || a.name?.toLowerCase().includes('cash'));
   }, [accounts]);
 
-  // Find Courier COD Clearing account from COA (1128-00)
+  // Find Courier COD Clearing account from COA (1128)
   const codClearingAccount = useMemo(() => {
-    return accounts.find(a => a.code === '1128-00' || a.name?.toLowerCase().includes('cod clearing')) || null;
+    return accounts.find(a => a.code?.startsWith('1128') || a.name?.toLowerCase().includes('cod clearing')) || null;
   }, [accounts]);
 
   const [settlementBankId, setSettlementBankId] = useState<string>(() => bankAccounts[0]?.id || '');
-  const [remittanceRef, setRemittanceRef] = useState<string>(`REMIT-DHL-${new Date().toISOString().slice(0, 10)}`);
+  const [remittanceRef, setRemittanceRef] = useState<string>(`REMIT-COD-${new Date().toISOString().slice(0, 10)}`);
   const [processing, setProcessing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Fetch registered couriers from Registry / Parties
+  useEffect(() => {
+    async function fetchCourierParties() {
+      try {
+        const res = await fetch('/api/parties');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const list = data
+            .filter((p: any) => {
+              const type = (p.type || p.party_type || '').toUpperCase();
+              const name = (p.name || p.company_name || '').toUpperCase();
+              return (
+                p.is_active !== false &&
+                (type === 'COURIER' ||
+                  type === 'LOGISTICS_AGENT' ||
+                  type === 'AGENT' ||
+                  name.includes('BANANA') ||
+                  name.includes('DHL') ||
+                  name.includes('ARAMEX') ||
+                  name.includes('SMSA') ||
+                  name.includes('POST') ||
+                  name.includes('COURIER') ||
+                  name.includes('EXPRESS'))
+              );
+            })
+            .map((p: any) => p.name || p.company_name)
+            .filter(Boolean);
+
+          if (list.length > 0) {
+            setCourierOptions(prev => Array.from(new Set([...prev, ...list])));
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load couriers from /api/parties:', err);
+      }
+    }
+    fetchCourierParties();
+  }, []);
 
   // Load invoices
   const loadCODInvoices = async () => {
@@ -56,8 +105,12 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
       setLoading(true);
       const data = await safeFetchJson<SalesInvoice[]>('/api/sales/invoices', undefined, 3, 300);
       if (Array.isArray(data)) {
-        // Filter for COD orders
-        const codOrders = data.filter(inv => inv.paymentMethod === 'COD' || inv.paymentStatus === 'UNPAID_PENDING_COD');
+        // Filter for COD orders (COD payment method, UNPAID_PENDING_COD, or orders with couriers assigned)
+        const codOrders = data.filter(inv => {
+          const pm = (inv.paymentMethod || '').toUpperCase();
+          const ps = (inv.paymentStatus || '').toUpperCase();
+          return pm === 'COD' || pm === 'CASH_ON_DELIVERY' || ps === 'UNPAID_PENDING_COD' || ps === 'PENDING' || inv.courierPartner || inv.trackingNumber;
+        });
         setInvoices(codOrders);
       }
     } catch {
@@ -71,14 +124,33 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
     loadCODInvoices();
   }, []);
 
+  const allCourierList = useMemo(() => {
+    const fromInvoices = invoices.map(i => i.courierPartner).filter(Boolean) as string[];
+    return Array.from(new Set([...courierOptions, ...fromInvoices]));
+  }, [courierOptions, invoices]);
+
+  const handleCourierChange = (courier: string) => {
+    setSelectedCourier(courier);
+    const pfx = courier === 'ALL' ? 'COD' : courier.replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase();
+    setRemittanceRef(`REMIT-${pfx}-${new Date().toISOString().slice(0, 10)}`);
+  };
+
   // Filtered invoices
   const filteredInvoices = useMemo(() => {
     return invoices.filter(inv => {
-      const matchCourier = selectedCourier === 'ALL' || (inv.courierPartner || 'DHL Express') === selectedCourier;
+      const invCourier = (inv.courierPartner || '').toLowerCase().trim();
+      const targetCourier = selectedCourier.toLowerCase().trim();
+      const matchCourier =
+        selectedCourier === 'ALL' ||
+        invCourier === targetCourier ||
+        (targetCourier !== '' && invCourier.includes(targetCourier)) ||
+        (invCourier !== '' && targetCourier.includes(invCourier));
+
       const matchSearch =
         searchTerm === '' ||
-        inv.invoiceNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        inv.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (inv.invoiceNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (inv.customerName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (inv.buyerHandle || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (inv.trackingNumber && inv.trackingNumber.toLowerCase().includes(searchTerm.toLowerCase()));
       return matchCourier && matchSearch;
     });
@@ -408,15 +480,13 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
 
             <select
               value={selectedCourier}
-              onChange={e => setSelectedCourier(e.target.value)}
-              className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-700 focus:outline-hidden"
+              onChange={e => handleCourierChange(e.target.value)}
+              className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-hidden"
             >
-              <option value="ALL">All Couriers (DHL, Aramex, etc.)</option>
-              <option value="DHL Express">DHL Express UAE</option>
-              <option value="Emirates Post">Emirates Post</option>
-              <option value="Aramex">Aramex</option>
-              <option value="Fetchr">Fetchr</option>
-              <option value="Local Rider">Local Rider</option>
+              <option value="ALL">All Couriers (Banana, DHL, Aramex, etc.)</option>
+              {allCourierList.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
             </select>
           </div>
 
@@ -494,7 +564,7 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
                       </td>
                       <td className="px-4 py-3">
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
-                          {inv.courierPartner || 'DHL Express'}
+                          {inv.courierPartner || 'Unassigned'}
                         </span>
                       </td>
                       <td className="px-4 py-3 font-mono text-slate-600">

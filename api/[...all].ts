@@ -7993,6 +7993,75 @@ RULES FOR YOUR RESPONSE:
         }
       }
 
+      // Sales Invoices List (Direct PostgreSQL Query with Joined Couriers)
+      if ((pathname === '/api/sales/invoices' || pathname.startsWith('/api/sales/invoices?') || pathname === '/sales/invoices') && method === 'GET') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+        try {
+          const invRes = await client.query(`
+            SELECT si.*,
+                   p.name as courier_partner_name,
+                   p.company_name as courier_company_name
+            FROM sales_invoices si
+            LEFT JOIN parties p ON (p.party_id = si.courier_partner_id OR p.id::text = si.courier_partner_id::text)
+            ORDER BY si.created_at DESC;
+          `);
+          const mapped = invRes.rows.map((row: any) => {
+            const courierName = row.courier_partner_name || row.courier_company_name || (row.courier_partner_id === 75 ? 'Banana Express' : (row.courier_partner_id ? `Courier #${row.courier_partner_id}` : undefined));
+            const rawDate = row.invoice_date ? String(row.invoice_date).slice(0, 10) : new Date().toISOString().slice(0, 10);
+            const subVal = Number(row.subtotal ?? row.total_amount ?? 0);
+            const vatVal = Number(row.tax_amount ?? 0);
+            const totalVal = Number(row.total_amount ?? (subVal + vatVal));
+            let parsedItems: any[] = [];
+            if (Array.isArray(row.items)) parsedItems = row.items;
+            else if (typeof row.items === 'string') {
+              try { parsedItems = JSON.parse(row.items); } catch (_) {}
+            }
+
+            return {
+              id: row.id,
+              invoiceNo: row.invoice_no,
+              clientId: row.client_id,
+              customerId: row.client_id || '',
+              customerName: row.customer_name || 'Walk-in Guest',
+              customerPhone: row.customer_phone || '',
+              invoiceDate: rawDate,
+              date: rawDate,
+              time: row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '14:30',
+              channel: row.channel || (row.invoice_no?.startsWith('LIVE-') ? 'LIVE_STREAM' : 'POS_COUNTER'),
+              paymentMethod: row.payment_method || 'COD',
+              paymentStatus: row.payment_status || (row.status === 'PAID' ? 'PAID' : 'UNPAID_PENDING_COD'),
+              paymentReference: row.payment_reference || '',
+              shippingAddress: row.shipping_address || '',
+              city: row.city || '',
+              courierPartyId: row.courier_party_id || row.courier_partner_id,
+              courierPartnerId: row.courier_partner_id,
+              courierPartner: courierName,
+              trackingNumber: row.tracking_number || '',
+              shippingFeeAed: Number(row.shipping_fee || 0),
+              shippingBearer: row.shipping_bearer || 'CUSTOMER',
+              buyerHandle: row.buyer_handle || (row.customer_name?.startsWith('@') ? row.customer_name : undefined),
+              boothId: row.booth_id,
+              subtotal: subVal,
+              subTotal: subVal,
+              discountAmount: Number(row.discount_amount || 0),
+              taxAmount: vatVal,
+              vatAmount: vatVal,
+              totalAmount: totalVal,
+              grandTotalAED: totalVal,
+              status: row.status || 'DRAFT',
+              items: parsedItems,
+              createdAt: row.created_at
+            };
+          });
+          return res.status(200).json(mapped);
+        } catch (e: any) {
+          return res.status(500).json({ success: false, error: e.message });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
       // Sales Invoice Draft Updating & SKU Bundling / Unbundling / Logistics
       if (pathname.includes('/sales/invoices/') && pathname.endsWith('/draft') && (method === 'PUT' || method === 'POST')) {
         const invId = decodeURIComponent(pathname.replace('/draft', '').split('/').pop() || '');
@@ -8097,7 +8166,17 @@ RULES FOR YOUR RESPONSE:
 
           // Logistics & Header fields update
           const courierPartnerId = body.courierPartnerId !== undefined ? Number(body.courierPartnerId) : invRow.courier_partner_id;
-          const trackingNumber = body.trackingNumber ?? invRow.tracking_number;
+          let trackingNumber = body.trackingNumber ?? invRow.tracking_number;
+          if (!trackingNumber || String(trackingNumber).trim() === '') {
+            let pfx = 'AWB';
+            const cName = String(body.courierPartner || '').toUpperCase();
+            if (courierPartnerId === 75 || cName.includes('BANANA')) pfx = 'BNN';
+            else if (courierPartnerId === 70 || cName.includes('DHL')) pfx = 'DHL';
+            else if (courierPartnerId === 71 || cName.includes('ARAMEX')) pfx = 'ARX';
+            else if (courierPartnerId === 73 || cName.includes('EMIRATES') || cName.includes('POST')) pfx = 'EMP';
+            else if (courierPartnerId === 72 || cName.includes('SMSA')) pfx = 'SMSA';
+            trackingNumber = `${pfx}-${invRow.invoice_no.replace(/[^0-9]/g, '').slice(-8) || Math.floor(10000000 + Math.random() * 90000000)}`;
+          }
           const shippingBearer = body.shippingBearer ?? invRow.shipping_bearer ?? 'CUSTOMER';
           const isCompanyBorne = shippingBearer.toString().toUpperCase().includes('COMPANY');
           const paymentStatus = body.paymentStatus ?? invRow.payment_status;
@@ -8216,35 +8295,39 @@ RULES FOR YOUR RESPONSE:
             );
           }
 
-          // 3. Post Dual-Entry Voucher in financial_vouchers
+          // 3. Post Dual-Entry Voucher in financial_vouchers & voucher_entries
           const totalAmount = Number(invRow.total_amount || 0);
           const subtotal = Number(invRow.subtotal || 0);
           const shippingFee = Number(invRow.shipping_fee || 0);
 
-          // Resolve courier COA code dynamically from parties registry
+          // Resolve courier COA code & Name dynamically from parties registry
           const courierId = invRow.courier_partner_id;
           let courierCoaCode = '2120-00';
+          let courierName = 'Courier Partner';
           if (courierId) {
             try {
               const partyRes = await client.query(
-                `SELECT account_map FROM parties WHERE party_id::text = $1::text OR id::text = $1::text LIMIT 1;`,
+                `SELECT name, company_name, account_map FROM parties WHERE party_id::text = $1::text OR id::text = $1::text LIMIT 1;`,
                 [courierId]
               );
-              if (partyRes.rowCount > 0 && partyRes.rows[0].account_map) {
-                const accMap = typeof partyRes.rows[0].account_map === 'string'
-                  ? JSON.parse(partyRes.rows[0].account_map)
-                  : partyRes.rows[0].account_map;
-                courierCoaCode = accMap.payableAccountId || accMap.courierPayableAccountId || accMap.coaCode || courierCoaCode;
+              if (partyRes.rowCount > 0) {
+                courierName = partyRes.rows[0].name || partyRes.rows[0].company_name || courierName;
+                if (partyRes.rows[0].account_map) {
+                  const accMap = typeof partyRes.rows[0].account_map === 'string'
+                    ? JSON.parse(partyRes.rows[0].account_map)
+                    : partyRes.rows[0].account_map;
+                  courierCoaCode = accMap.payableAccountId || accMap.courierPayableAccountId || accMap.coaCode || courierCoaCode;
+                }
               }
             } catch (_) {}
           }
           if (courierCoaCode === '2120-00') {
-            if (courierId === 70) courierCoaCode = '2120-01';
-            else if (courierId === 71) courierCoaCode = '2120-02';
-            else if (courierId === 72) courierCoaCode = '2120-03';
-            else if (courierId === 73) courierCoaCode = '2120-04';
-            else if (courierId === 74) courierCoaCode = '2120-05';
-            else if (courierId === 75) courierCoaCode = '2120-06';
+            if (courierId === 70) { courierCoaCode = '2120-01'; courierName = 'DHL Express UAE'; }
+            else if (courierId === 71) { courierCoaCode = '2120-02'; courierName = 'Aramex Logistics UAE'; }
+            else if (courierId === 72) { courierCoaCode = '2120-03'; courierName = 'SMSA Express GCC'; }
+            else if (courierId === 73) { courierCoaCode = '2120-04'; courierName = 'Emirates Post Premium'; }
+            else if (courierId === 74) { courierCoaCode = '2120-05'; courierName = 'iMile Delivery UAE'; }
+            else if (courierId === 75) { courierCoaCode = '2120-06'; courierName = 'Banana Express Logistics UAE'; }
           }
 
           // Get COGS total
@@ -8270,30 +8353,30 @@ RULES FOR YOUR RESPONSE:
 
           if (isCompanyBorne) {
             // Company pays shipping as an operating expense, customer only pays order subtotal + vat
-            lines.push({ code: '1128-01', debit: totalAmount, credit: 0, desc: 'Courier COD Clearing / Customer Receivable' });
+            lines.push({ code: '1128-01', name: `Courier COD Clearing (${courierName})`, debit: totalAmount, credit: 0, desc: `Courier COD Clearing / Customer Receivable - ${invRow.invoice_no}` });
             if (shippingFee > 0) {
-              lines.push({ code: '5140-01', debit: shippingFee, credit: 0, desc: 'Courier & Freight Delivery Expense (Company Absorbed)' });
-              lines.push({ code: courierCoaCode, debit: 0, credit: shippingFee, desc: 'Courier Partner Payable' });
+              lines.push({ code: '5140-01', name: 'Courier & Freight Delivery Expense', debit: shippingFee, credit: 0, desc: 'Courier Delivery Expense (Company Absorbed)' });
+              lines.push({ code: courierCoaCode, name: `${courierName} Payable`, debit: 0, credit: shippingFee, desc: `${courierName} Delivery Fee Payable` });
             }
-            lines.push({ code: '4120-01', debit: 0, credit: subtotal, desc: 'Live Stream Sales Revenue' });
+            lines.push({ code: '4120-01', name: 'Live Stream Sales Revenue', debit: 0, credit: subtotal, desc: `Live Stream Sales Revenue - ${invRow.invoice_no}` });
             if (vatAmount > 0) {
-              lines.push({ code: '2140-01', debit: 0, credit: vatAmount, desc: 'VAT Output Tax Payable (5%)' });
+              lines.push({ code: '2140-01', name: 'VAT Output Tax Payable (5%)', debit: 0, credit: vatAmount, desc: 'UAE VAT Output Tax (5%)' });
             }
           } else {
             // Customer bears shipping: Courier collects full amount at doorstep
-            lines.push({ code: '1128-01', debit: totalAmount, credit: 0, desc: 'Courier COD Clearing / Total Collectible' });
+            lines.push({ code: '1128-01', name: `Courier COD Clearing (${courierName})`, debit: totalAmount, credit: 0, desc: `Courier COD Clearing / Total Collectible - ${invRow.invoice_no}` });
             if (shippingFee > 0) {
-              lines.push({ code: courierCoaCode, debit: 0, credit: shippingFee, desc: 'Courier Partner Payable' });
+              lines.push({ code: courierCoaCode, name: `${courierName} Payable`, debit: 0, credit: shippingFee, desc: `${courierName} Delivery Fee Payable` });
             }
-            lines.push({ code: '4120-01', debit: 0, credit: subtotal, desc: 'Live Stream Sales Revenue' });
+            lines.push({ code: '4120-01', name: 'Live Stream Sales Revenue', debit: 0, credit: subtotal, desc: `Live Stream Sales Revenue - ${invRow.invoice_no}` });
             if (vatAmount > 0) {
-              lines.push({ code: '2140-01', debit: 0, credit: vatAmount, desc: 'VAT Output Tax Payable (5%)' });
+              lines.push({ code: '2140-01', name: 'VAT Output Tax Payable (5%)', debit: 0, credit: vatAmount, desc: 'UAE VAT Output Tax (5%)' });
             }
           }
 
           if (totalCOGS > 0) {
-            lines.push({ code: '5100-02', debit: totalCOGS, credit: 0, desc: 'Cost of Goods Sold - Finished Goods' });
-            lines.push({ code: '1160-01', debit: 0, credit: totalCOGS, desc: 'Finished Goods Inventory Asset Relief' });
+            lines.push({ code: '5100-02', name: 'Cost of Goods Sold - Finished Goods', debit: totalCOGS, credit: 0, desc: `COGS Expense - ${invRow.invoice_no}` });
+            lines.push({ code: '1160-01', name: 'Finished Goods Inventory Asset Relief', debit: 0, credit: totalCOGS, desc: `Finished Goods Asset Relief - ${invRow.invoice_no}` });
           }
 
           const voucherId = crypto.randomUUID();
@@ -8310,7 +8393,11 @@ RULES FOR YOUR RESPONSE:
               $1, $2, CURRENT_DATE, CURRENT_DATE, 'SALES', 'SALES', $3, $3,
               $4, $5, $6, $5, 'AED', 1.0,
               'POSTED', true, NOW()
-            ) ON CONFLICT (id) DO NOTHING;
+            ) ON CONFLICT (id) DO UPDATE SET
+              total_debit = EXCLUDED.total_debit,
+              total_credit = EXCLUDED.total_credit,
+              narration = EXCLUDED.narration,
+              status = 'POSTED';
           `, [
             voucherId,
             vNo,
@@ -8320,13 +8407,30 @@ RULES FOR YOUR RESPONSE:
             totalCredit
           ]);
 
+          // Clear any previous entries if re-posting
+          await client.query(`DELETE FROM voucher_entries WHERE voucher_id::text = $1 OR voucher_no = $2;`, [voucherId, vNo]);
+
+          // Insert into voucher_entries table (CORRECT POSTGRESQL TABLE)
           for (const ln of lines) {
+            const entryId = crypto.randomUUID();
             await client.query(`
-              INSERT INTO financial_voucher_lines (
-                id, voucher_id, account_code, account_name, debit, credit, description, created_at
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-              ON CONFLICT (id) DO NOTHING;
-            `, [crypto.randomUUID(), voucherId, ln.code, ln.desc, ln.debit, ln.credit, ln.desc]).catch(() => {});
+              INSERT INTO voucher_entries (
+                id, voucher_id, voucher_no, account_code, account_name,
+                debit, credit, particulars, memo, narration, date, created_at, currency, exchange_rate
+              ) VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, $8, $8, $8, CURRENT_DATE, NOW(), 'AED', 1.0
+              );
+            `, [
+              entryId,
+              voucherId,
+              vNo,
+              ln.code,
+              ln.name,
+              ln.debit,
+              ln.credit,
+              ln.desc
+            ]).catch(e => console.error('[voucher_entries insert error]', e));
           }
 
           return res.status(200).json({
@@ -8336,6 +8440,120 @@ RULES FOR YOUR RESPONSE:
         } catch (postErr: any) {
           console.error('[Sales Invoice Post Error]', postErr);
           return res.status(500).json({ success: false, error: postErr.message || 'Failed to post sales invoice' });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      // Sales Invoice Unpost (revert to DRAFT, unlock pieces, delete/reverse vouchers)
+      if (pathname.includes('/sales/invoices/') && pathname.endsWith('/unpost') && method === 'POST') {
+        const targetId = decodeURIComponent(pathname.replace('/unpost', '').split('/').pop() || '');
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+
+        try {
+          const invRes = await client.query(
+            `SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1;`,
+            [targetId]
+          );
+
+          if (invRes.rowCount === 0) {
+            return res.status(404).json({ success: false, error: `Sales Invoice "${targetId}" not found.` });
+          }
+
+          const invRow = invRes.rows[0];
+          let items: any[] = [];
+          if (Array.isArray(invRow.items)) items = invRow.items;
+          else if (typeof invRow.items === 'string') {
+            try { items = JSON.parse(invRow.items); } catch (_) {}
+          }
+          const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
+
+          // 1. Revert invoice status to DRAFT
+          await client.query(`UPDATE sales_invoices SET status = 'DRAFT' WHERE id = $1;`, [invRow.id]);
+
+          // 2. Unlock pieces back to RESERVED
+          if (barcodes.length > 0) {
+            await client.query(`
+              UPDATE inventory_pieces
+              SET status = 'RESERVED',
+                  is_sold = false,
+                  updated_at = NOW()
+              WHERE barcode = ANY($1::text[]);
+            `, [barcodes]);
+          }
+
+          // 3. Delete/reverse accounting vouchers
+          const vNo = `JV-SLS-${invRow.invoice_no || invRow.id}`;
+          await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2;`, [vNo, invRow.id]);
+          await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2;`, [vNo, invRow.invoice_no]);
+
+          return res.status(200).json({
+            success: true,
+            message: `Invoice ${invRow.invoice_no} unposted back to DRAFT. Accounting entries reversed.`
+          });
+        } catch (unpostErr: any) {
+          console.error('[Sales Invoice Unpost Error]', unpostErr);
+          return res.status(500).json({ success: false, error: unpostErr.message || 'Failed to unpost invoice' });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      // Sales Invoice Delete (Hard deletion / cancel, releases all pieces to IN_STOCK, cleans up vouchers)
+      if (pathname.includes('/sales/invoices/') && (pathname.endsWith('/delete') || method === 'DELETE')) {
+        const targetId = decodeURIComponent(pathname.replace('/delete', '').split('/').pop() || '');
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+
+        try {
+          const invRes = await client.query(
+            `SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1;`,
+            [targetId]
+          );
+
+          if (invRes.rowCount === 0) {
+            return res.status(404).json({ success: false, error: `Sales Invoice "${targetId}" not found.` });
+          }
+
+          const invRow = invRes.rows[0];
+          let items: any[] = [];
+          if (Array.isArray(invRow.items)) items = invRow.items;
+          else if (typeof invRow.items === 'string') {
+            try { items = JSON.parse(invRow.items); } catch (_) {}
+          }
+          const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
+
+          // 1. Release pieces back to IN_STOCK
+          if (barcodes.length > 0) {
+            await client.query(`
+              UPDATE inventory_pieces
+              SET status = 'IN_STOCK',
+                  locked_by_buyer = NULL,
+                  locked_by_booth = NULL,
+                  lock_expires_at = NULL,
+                  reserved_until = NULL,
+                  is_sold = false,
+                  updated_at = NOW()
+              WHERE barcode = ANY($1::text[]);
+            `, [barcodes]);
+          }
+
+          // 2. Delete linked vouchers
+          const vNo = `JV-SLS-${invRow.invoice_no || invRow.id}`;
+          await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2;`, [vNo, invRow.id]);
+          await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2;`, [vNo, invRow.invoice_no]);
+
+          // 3. Delete invoice from sales_invoices
+          await client.query(`DELETE FROM sales_invoices WHERE id = $1;`, [invRow.id]);
+
+          return res.status(200).json({
+            success: true,
+            message: `Invoice ${invRow.invoice_no} deleted and pieces restored to active stock.`
+          });
+        } catch (delErr: any) {
+          console.error('[Sales Invoice Delete Error]', delErr);
+          return res.status(500).json({ success: false, error: delErr.message || 'Failed to delete invoice' });
         } finally {
           try { await client.end(); } catch (_) {}
         }
@@ -8383,6 +8601,11 @@ RULES FOR YOUR RESPONSE:
               WHERE barcode = ANY($1::text[]);
             `, [barcodes]);
           }
+
+          // 3. Delete any linked vouchers if previously posted
+          const vNo = `JV-SLS-${invRow.invoice_no || invRow.id}`;
+          await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2;`, [vNo, invRow.id]);
+          await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2;`, [vNo, invRow.invoice_no]);
 
           return res.status(200).json({
             success: true,
