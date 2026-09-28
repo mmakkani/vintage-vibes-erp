@@ -1,5 +1,7 @@
 import JsBarcode from 'jsbarcode';
 import { VINTAGE_VIBES_GOLD_SEAL_POS_BASE64 } from '../assets/vintageGoldSeal';
+import { openThermalPrintPopup } from '../modules/setup/thermal/thermalPopupManager.ts';
+import { ThermalEngineConfig, DEFAULT_THERMAL_ENGINE_CONFIG } from '../modules/setup/thermal/thermalTypes.ts';
 
 export interface ThermalLabelData {
   itemCode: string;
@@ -47,6 +49,33 @@ export interface ThermalShippingWaybillData {
  * Open a self-contained window for thermal barcode sticker printing.
  */
 export function openThermalLabelPrintWindow(data: ThermalLabelData): Window | null {
+  // If Global Setup thermal engine config exists, use the modern dynamic popup
+  try {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('vintage_thermal_engine_config') : null;
+    if (saved) {
+      const engineConfig = JSON.parse(saved);
+      const rawWeightKg = Number(data.weightKg || 0);
+      const weightGrams = rawWeightKg > 0 ? Math.round(rawWeightKg * 1000) : 340;
+      const cleanBarcode = (data.itemCode || '').replace(/\s*\[.*\]$/, '').trim();
+      const mergedConfig: ThermalEngineConfig = {
+        ...DEFAULT_THERMAL_ENGINE_CONFIG,
+        ...engineConfig,
+        skuBarcode: cleanBarcode || engineConfig.skuBarcode,
+        itemName: data.description || cleanBarcode || engineConfig.itemName,
+        brandName: data.brand || engineConfig.brandName || '',
+        category: data.category || engineConfig.category || 'Apparel',
+        size: data.size || 'Free Size',
+        priceAed: Number(data.retailPriceAed || 0),
+        weightValue: weightGrams,
+        weightUnit: 'g',
+        batchNo: data.batchNo || engineConfig.batchNo || ''
+      };
+      return openThermalPrintPopup(mergedConfig, mergedConfig.styleId);
+    }
+  } catch (err) {
+    console.warn('[ThermalPrinter] Global thermal config notice:', err);
+  }
+
   const size = data.printSize || '50x25mm';
   let widthMm = 50;
   let heightMm = 25;
