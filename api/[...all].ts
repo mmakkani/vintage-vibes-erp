@@ -7932,19 +7932,20 @@ RULES FOR YOUR RESPONSE:
           }
 
           // 2. Cascade delete financial vouchers & journal entries
-          if (invoiceNo) {
+          if (invoiceNo && invoiceNo.trim().length >= 4 && !['SALES', 'INVOICE', 'DRAFT', 'B2B'].includes(invoiceNo.trim().toUpperCase())) {
             const { data: fvList } = await supabaseAdmin
               .from('financial_vouchers')
               .select('id, voucher_no, reference, narration');
 
             const matchedVchs: { id: string; voucher_no: string }[] = [];
             if (fvList) {
-              const target = invoiceNo.toUpperCase();
+              const target = invoiceNo.trim().toUpperCase();
+              const cleanInvNo = invoiceNo.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
               for (const v of fvList) {
                 const vRef = String(v.reference || '').toUpperCase();
                 const vNo = String(v.voucher_no || '').toUpperCase();
                 const vNarr = String(v.narration || '').toUpperCase();
-                if (vRef.includes(target) || vNarr.includes(target) || vNo.includes(target)) {
+                if (vRef === target || vRef === `SINV-${target}` || vRef === `SLS-${target}` || (cleanInvNo && vNo.includes(cleanInvNo)) || (target.length >= 6 && (vNarr.includes(target) || vRef.includes(target)))) {
                   matchedVchs.push({ id: String(v.id), voucher_no: String(v.voucher_no) });
                 }
               }
@@ -7959,8 +7960,12 @@ RULES FOR YOUR RESPONSE:
               try { await supabaseAdmin.from('vouchers').delete().eq('id', mv.id); } catch (_) {}
             }
 
-            // Wipe party khata logs matching invoice
-            await supabaseAdmin.from('party_khata_logs').delete().or(`reference.eq.${invoiceNo},reference.eq.SINV-${invoiceNo},reference.eq.UNPOST-${invoiceNo},reference.eq.REV-${invoiceNo},reference.ilike.%${invoiceNo}%,notes.ilike.%${invoiceNo}%`);
+            // Wipe party khata logs strictly matching invoice
+            const khataFilters = [`reference.eq.${invoiceNo}`, `reference.eq.SINV-${invoiceNo}`, `reference.eq.UNPOST-${invoiceNo}`, `reference.eq.REV-${invoiceNo}`];
+            if (invoiceNo.trim().length >= 6) {
+              khataFilters.push(`reference.ilike.%${invoiceNo}%`, `notes.ilike.%${invoiceNo}%`);
+            }
+            await supabaseAdmin.from('party_khata_logs').delete().or(khataFilters.join(','));
           }
 
           // 3. Reset invoice status to DRAFT
@@ -8876,19 +8881,20 @@ RULES FOR YOUR RESPONSE:
             });
           }
 
-          if (invoiceNo) {
+          if (invoiceNo && invoiceNo.trim().length >= 4 && !['PURCHASE', 'INVOICE', 'DRAFT'].includes(invoiceNo.trim().toUpperCase())) {
             const { data: fvList } = await supabaseAdmin
               .from('financial_vouchers')
               .select('id, voucher_no, reference, narration');
 
             const matchedVchs: { id: string; voucher_no: string }[] = [];
             if (fvList) {
-              const target = invoiceNo.toUpperCase();
+              const target = invoiceNo.trim().toUpperCase();
+              const cleanInvNo = invoiceNo.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
               for (const v of fvList) {
                 const vRef = String(v.reference || '').toUpperCase();
                 const vNo = String(v.voucher_no || '').toUpperCase();
                 const vNarr = String(v.narration || '').toUpperCase();
-                if (vRef.includes(target) || vNarr.includes(target) || vNo.includes(target)) {
+                if (vRef === target || vRef === `PINV-${target}` || vRef === `PUR-${target}` || (cleanInvNo && vNo.includes(cleanInvNo)) || (target.length >= 6 && (vNarr.includes(target) || vRef.includes(target)))) {
                   matchedVchs.push({ id: String(v.id), voucher_no: String(v.voucher_no) });
                 }
               }
@@ -8903,7 +8909,11 @@ RULES FOR YOUR RESPONSE:
               try { await supabaseAdmin.from('vouchers').delete().eq('id', mv.id); } catch (_) {}
             }
 
-            await supabaseAdmin.from('party_khata_logs').delete().or(`reference.eq.${invoiceNo},reference.eq.PINV-${invoiceNo},reference.eq.UNPOST-${invoiceNo},reference.eq.DEL-${invoiceNo},reference.eq.REV-${invoiceNo},reference.ilike.%${invoiceNo}%,notes.ilike.%${invoiceNo}%`);
+            const khataFilters = [`reference.eq.${invoiceNo}`, `reference.eq.PINV-${invoiceNo}`, `reference.eq.UNPOST-${invoiceNo}`, `reference.eq.DEL-${invoiceNo}`, `reference.eq.REV-${invoiceNo}`];
+            if (invoiceNo.trim().length >= 6) {
+              khataFilters.push(`reference.ilike.%${invoiceNo}%`, `notes.ilike.%${invoiceNo}%`);
+            }
+            await supabaseAdmin.from('party_khata_logs').delete().or(khataFilters.join(','));
           }
 
           await supabaseAdmin.from('purchase_invoices').update({ status: 'DRAFT' }).eq('id', invRow.id);
@@ -9023,12 +9033,12 @@ RULES FOR YOUR RESPONSE:
                 const vRef = String(v.reference || v.reference_no || '').toUpperCase();
                 const vNo = String(v.voucher_no || '').toUpperCase();
                 const vNarr = String(v.narration || '').toUpperCase();
-                const target = (invoiceNo || '').toUpperCase();
-                const targetClean = cleanInvNo.toUpperCase();
+                const target = (invoiceNo || '').trim().toUpperCase();
+                const targetClean = cleanInvNo.trim().toUpperCase();
 
                 if (
-                  (target && (vRef === target || vRef.includes(target) || vNarr.includes(target) || vRef === `PINV-${target}` || vRef === `INWARD-${target}` || vRef === `PUR-${target}`)) ||
-                  (targetClean && vNo.includes(targetClean))
+                  (target && target.length >= 4 && !['PURCHASE', 'INVOICE', 'DRAFT'].includes(target) && (vRef === target || vRef === `PINV-${target}` || vRef === `INWARD-${target}` || vRef === `PUR-${target}` || (target.length >= 6 && (vRef.includes(target) || vNarr.includes(target))))) ||
+                  (targetClean && targetClean.length >= 4 && vNo.includes(targetClean))
                 ) {
                   matchedVchs.push({ id: String(v.id), voucher_no: String(v.voucher_no) });
                 }
@@ -9042,8 +9052,12 @@ RULES FOR YOUR RESPONSE:
                 await supabaseAdmin.from('vouchers').delete().or(`id.eq.${mv.id},voucher_no.eq.${mv.voucher_no}`);
               }
 
-              if (invoiceNo) {
-                await supabaseAdmin.from('party_khata_logs').delete().or(`reference.eq.${invoiceNo},reference.eq.PINV-${invoiceNo},reference.eq.UNPOST-${invoiceNo},reference.eq.DEL-${invoiceNo},reference.eq.INWARD-${invoiceNo},notes.ilike.%${invoiceNo}%`);
+              if (invoiceNo && invoiceNo.trim().length >= 4) {
+                const khataFilters = [`reference.eq.${invoiceNo}`, `reference.eq.PINV-${invoiceNo}`, `reference.eq.UNPOST-${invoiceNo}`, `reference.eq.DEL-${invoiceNo}`, `reference.eq.INWARD-${invoiceNo}`];
+                if (invoiceNo.trim().length >= 6) {
+                  khataFilters.push(`notes.ilike.%${invoiceNo}%`);
+                }
+                await supabaseAdmin.from('party_khata_logs').delete().or(khataFilters.join(','));
               }
             } catch (vErr) {
               console.warn('[API Delete Invoice] Notice cascading vouchers:', vErr);

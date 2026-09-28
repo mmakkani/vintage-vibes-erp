@@ -863,8 +863,10 @@ export class SalesService {
       }
 
       // Purge any lingering ledger entries mentioning this invoice number
-      try { await supabase.from('general_ledger').delete().ilike('narration', `%${invoiceNo}%`); } catch (_) {}
-      try { await supabase.from('ledgers').delete().ilike('narration', `%${invoiceNo}%`); } catch (_) {}
+      if (invoiceNo && invoiceNo.trim().length >= 4 && !['SALES', 'INVOICE', 'DRAFT', 'B2B'].includes(invoiceNo.trim().toUpperCase())) {
+        try { await supabase.from('general_ledger').delete().ilike('narration', `%${invoiceNo}%`); } catch (_) {}
+        try { await supabase.from('ledgers').delete().ilike('narration', `%${invoiceNo}%`); } catch (_) {}
+      }
 
       try {
         await supabase.from('pos_sales').delete().or(`invoice_number.eq.${invoiceNo},invoice_number.eq.${cleanId},id.eq.${cleanId}`);

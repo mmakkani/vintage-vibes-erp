@@ -862,36 +862,71 @@ async function cascadeDeleteInvoiceVouchersPg(client: any, invoiceNo: string, in
   if (!invoiceNo && !invoiceId) return;
   const no = (invoiceNo || '').trim();
   const id = (invoiceId || '').trim();
+  const isNoValid = no.length >= 4 && !['SALES', 'INVOICE', 'B2B', 'DRAFT'].includes(no.toUpperCase());
+  const isIdValid = id.length >= 4 && !['NONE', 'NULL', 'UNDEFINED'].includes(id.toUpperCase());
 
-  // Find all matching vouchers
+  if (!isNoValid && !isIdValid) return;
+
+  // Build strict parameterized conditions (never use empty % wildcard)
+  const conditions: string[] = [];
+  const params: any[] = [];
+
+  if (isNoValid) {
+    params.push(no);
+    const p1 = `$${params.length}`;
+    params.push(`%${no}%`);
+    const p2 = `$${params.length}`;
+    conditions.push(`reference = ${p1} OR reference_no = ${p1} OR voucher_no = 'JV-SLS-' || ${p1} OR narration ILIKE ${p2}`);
+  }
+
+  if (isIdValid) {
+    params.push(id);
+    const pId = `$${params.length}`;
+    params.push(`%${id}%`);
+    const pIdLike = `$${params.length}`;
+    conditions.push(`reference = ${pId} OR reference_no = ${pId} OR id::text = ${pId} OR narration ILIKE ${pIdLike}`);
+  }
+
+  const whereClause = conditions.join(' OR ');
   const vRes = await client.query(
-    `SELECT DISTINCT id, voucher_no FROM (
-       SELECT id, voucher_no FROM financial_vouchers 
-       WHERE reference = $1 OR reference_no = $1 OR reference = $2 OR reference_no = $2 
-          OR narration ILIKE $3 OR narration ILIKE $4
+    `SELECT DISTINCT id, voucher_no, reference, narration FROM (
+       SELECT id, voucher_no, reference, narration FROM financial_vouchers 
+       WHERE ${whereClause}
        UNION
-       SELECT id, voucher_no FROM vouchers 
-       WHERE reference = $1 OR reference = $2 
-          OR narration ILIKE $3 OR narration ILIKE $4
+       SELECT id, voucher_no, reference, narration FROM vouchers 
+       WHERE ${whereClause}
      ) matched`,
-    [no, id, `%${no}%`, `%${id}%`]
+    params
   );
 
-  const matched = vRes.rows || [];
+  const rawMatched = vRes.rows || [];
+  // Strict match validation: Ensure voucher strictly references this invoice
+  const matched = rawMatched.filter((r: any) => {
+    const vRef = String(r.reference || '').toUpperCase();
+    const vNo = String(r.voucher_no || '').toUpperCase();
+    const vNarr = String(r.narration || '').toUpperCase();
+    const noUpper = no.toUpperCase();
+    const idUpper = id.toUpperCase();
+    return (isNoValid && (vRef === noUpper || vRef.includes(noUpper) || vNo.includes(noUpper) || vNarr.includes(noUpper))) ||
+           (isIdValid && (vRef === idUpper || vRef.includes(idUpper) || vNo.includes(idUpper) || vNarr.includes(idUpper)));
+  });
+
   const vIds = matched.map((r: any) => r.id).filter(Boolean);
   const vNos = matched.map((r: any) => r.voucher_no).filter(Boolean);
 
+  if (vIds.length === 0 && vNos.length === 0 && !isNoValid) return;
+
   // Find affected account codes before deleting
-  const accRes = await client.query(
+  const accRes = (vIds.length > 0 || vNos.length > 0) ? await client.query(
     `SELECT DISTINCT account_code FROM (
        SELECT account_code FROM voucher_entries WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])
        UNION
-       SELECT account_code FROM general_ledger WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[]) OR narration ILIKE $3
+       SELECT account_code FROM general_ledger WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])
        UNION
-       SELECT account_code FROM ledgers WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[]) OR narration ILIKE $3
+       SELECT account_code FROM ledgers WHERE voucher_id = ANY($1::text[]) OR voucher_no = ANY($2::text[])
      ) sub WHERE account_code IS NOT NULL`,
-    [vIds, vNos, `%${no}%`]
-  );
+    [vIds, vNos]
+  ) : { rows: [] };
   const affectedCodes = (accRes.rows || []).map((r: any) => r.account_code).filter(Boolean);
 
   // 1. Delete voucher entries
@@ -904,8 +939,8 @@ async function cascadeDeleteInvoiceVouchersPg(client: any, invoiceNo: string, in
     await client.query(`DELETE FROM vouchers WHERE id = ANY($1::text[]) OR voucher_no = ANY($2::text[])`, [vIds, vNos]);
   }
 
-  // 2. Extra safety: Purge any lingering ledger entries with narration mentioning invoiceNo
-  if (no) {
+  // 2. Extra safety: Purge any lingering ledger entries with narration strictly mentioning invoiceNo
+  if (isNoValid) {
     await client.query(`DELETE FROM journal_entries WHERE description ILIKE $1`, [`%${no}%`]);
     await client.query(`DELETE FROM general_ledger WHERE narration ILIKE $1`, [`%${no}%`]);
     await client.query(`DELETE FROM ledgers WHERE narration ILIKE $1`, [`%${no}%`]);
