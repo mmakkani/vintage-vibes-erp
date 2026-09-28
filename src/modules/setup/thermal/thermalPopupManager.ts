@@ -44,8 +44,10 @@ export function openThermalPrintPopup(config: ThermalEngineConfig, styleId: Ther
   const heightMm = config.heightMm || 50;
   const styleDef = THERMAL_DESIGN_STYLES.find(s => s.id === styleId) || THERMAL_DESIGN_STYLES[0];
 
-  // 1. Generate crisp vector SVGs
-  const barcodeSvg = generateBarcodeSvgString(config.skuBarcode);
+  // 1. Generate crisp vector SVGs with responsive inline scaling
+  const rawBarcodeSvg = generateBarcodeSvgString(config.skuBarcode);
+  const barcodeSvg = rawBarcodeSvg.replace('<svg ', '<svg style="max-width:100%;max-height:100%;width:auto;height:auto;display:block;margin:0 auto;" ');
+
   const qrPayload = JSON.stringify({
     sku: config.skuBarcode,
     item: config.itemName,
@@ -54,7 +56,8 @@ export function openThermalPrintPopup(config: ThermalEngineConfig, styleId: Ther
     brand: config.brandName,
     company: config.companyName
   });
-  const qrSvg = generateQrCodeSvgString(qrPayload, 80);
+  const rawQrSvg = generateQrCodeSvgString(qrPayload, 80);
+  const qrSvg = rawQrSvg.replace('<svg ', '<svg style="width:100%;height:100%;max-width:100%;max-height:100%;display:block;" ');
 
   // 2. Render inner template
   const labelInnerHtml = renderLabelHtml(styleId, {
@@ -84,7 +87,7 @@ export function openThermalPrintPopup(config: ThermalEngineConfig, styleId: Ther
       }
       body {
         margin: 0;
-        padding: 2mm;
+        padding: 0 !important;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
         background: #ffffff !important;
@@ -94,7 +97,9 @@ export function openThermalPrintPopup(config: ThermalEngineConfig, styleId: Ther
       }
       .preview-viewport {
         padding: 0 !important;
+        margin: 0 !important;
         background: #ffffff !important;
+        min-height: auto !important;
       }
       .label-canvas {
         box-shadow: none !important;
@@ -234,12 +239,23 @@ export function openThermalPrintPopup(config: ThermalEngineConfig, styleId: Ther
       box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
       overflow: hidden;
       position: relative;
+      box-sizing: border-box;
+    }
+
+    #thermal-autofit-content {
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+      transform-origin: top left;
+    }
+
+    #thermal-autofit-content .label-box {
+      box-sizing: border-box !important;
     }
 
     /* Ensure SVGs inside fill properly */
     .label-canvas svg {
       max-width: 100%;
-      height: auto;
     }
   </style>
 </head>
@@ -250,6 +266,7 @@ export function openThermalPrintPopup(config: ThermalEngineConfig, styleId: Ther
       <div class="style-title">
         <span>Style #${styleDef.styleNumber}: ${styleDef.title}</span>
         <span class="badge-pill">${config.widthIn}" x ${config.heightIn}" (${widthMm} x ${heightMm} mm)</span>
+        <span class="badge-pill" id="scale-badge" style="background:#065f46; color:#6ee7b7; font-weight:bold;">Auto-Fit 100%</span>
       </div>
       <div class="meta-subtitle">
         SKU: <strong style="font-family:monospace; color:#fff;">${config.skuBarcode}</strong> &bull; AED ${Number(config.priceAed).toFixed(2)}
@@ -257,7 +274,7 @@ export function openThermalPrintPopup(config: ThermalEngineConfig, styleId: Ther
       </div>
     </div>
     <div class="button-group">
-      <button class="btn btn-print" onclick="window.print()">
+      <button class="btn btn-print" onclick="fitToCanvas(); window.print()">
         🖨️ Print Now
       </button>
       <button class="btn btn-close" onclick="window.close()">
@@ -272,28 +289,82 @@ export function openThermalPrintPopup(config: ThermalEngineConfig, styleId: Ther
       Monochrome Thermal Head Simulation (${widthMm}mm &times; ${heightMm}mm) &bull; Press Ctrl+P or Click Print Now
     </div>
 
-    <!-- Scaled Thermal Card -->
-    <div class="label-canvas">
-      ${labelInnerHtml}
+    <!-- Scaled Thermal Card with Guaranteed Auto-Fit Engine -->
+    <div class="label-canvas" id="label-canvas">
+      <div id="thermal-autofit-content">
+        ${labelInnerHtml}
+      </div>
     </div>
   </div>
 
-  <!-- Auto-Print Script if enabled -->
+  <!-- Dynamic Vector Auto-Fit Anti-Cut Engine -->
   <script>
+    function fitToCanvas() {
+      var canvas = document.getElementById('label-canvas');
+      var wrapper = document.getElementById('thermal-autofit-content');
+      var scaleBadge = document.getElementById('scale-badge');
+      if (!canvas || !wrapper) return;
+
+      // 1. Reset wrapper to measure natural dimensions required by content
+      wrapper.style.transform = 'none';
+      wrapper.style.width = canvas.clientWidth + 'px';
+      wrapper.style.height = 'auto';
+
+      // 2. Measure natural scroll size vs target canvas size
+      var naturalWidth = wrapper.scrollWidth || wrapper.offsetWidth;
+      var naturalHeight = wrapper.scrollHeight || wrapper.offsetHeight;
+      var targetWidth = canvas.clientWidth;
+      var targetHeight = canvas.clientHeight;
+
+      if (targetWidth > 0 && targetHeight > 0 && (naturalHeight > targetHeight || naturalWidth > targetWidth)) {
+        var scaleX = targetWidth / Math.max(1, naturalWidth);
+        var scaleY = targetHeight / Math.max(1, naturalHeight);
+        var scale = Math.min(scaleX, scaleY) * 0.97; // 3% margin protects against thermal roll edge clipping
+
+        wrapper.style.width = Math.round(targetWidth / scale) + 'px';
+        wrapper.style.height = Math.round(targetHeight / scale) + 'px';
+        wrapper.style.transform = 'scale(' + scale.toFixed(4) + ')';
+        wrapper.style.transformOrigin = 'top left';
+
+        if (scaleBadge) {
+          scaleBadge.style.display = 'inline-block';
+          scaleBadge.style.background = '#065f46';
+          scaleBadge.style.color = '#6ee7b7';
+          scaleBadge.textContent = 'Auto-Scaled: ' + Math.round(scale * 100) + '% (Anti-Cut)';
+        }
+      } else {
+        wrapper.style.width = '100%';
+        wrapper.style.height = '100%';
+        wrapper.style.transform = 'none';
+
+        if (scaleBadge) {
+          scaleBadge.style.display = 'inline-block';
+          scaleBadge.style.background = '#1e3a8a';
+          scaleBadge.style.color = '#93c5fd';
+          scaleBadge.textContent = '1:1 True Fit';
+        }
+      }
+    }
+
     (function() {
+      // Execute immediately and upon all readiness checkpoints
+      if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        fitToCanvas();
+      } else {
+        document.addEventListener('DOMContentLoaded', fitToCanvas);
+      }
+      window.addEventListener('load', fitToCanvas);
+      window.addEventListener('resize', fitToCanvas);
+      window.onbeforeprint = fitToCanvas;
+      setTimeout(fitToCanvas, 60);
+      setTimeout(fitToCanvas, 200);
+
       var autoPrint = ${config.autoPrint ? 'true' : 'false'};
       if (autoPrint) {
-        window.addEventListener('load', function() {
-          setTimeout(function() {
-            window.print();
-          }, 280);
-        });
-        // Fallback for immediate DOM readiness
-        if (document.readyState === 'complete') {
-          setTimeout(function() {
-            window.print();
-          }, 280);
-        }
+        setTimeout(function() {
+          fitToCanvas();
+          window.print();
+        }, 320);
       }
     })();
   </script>
