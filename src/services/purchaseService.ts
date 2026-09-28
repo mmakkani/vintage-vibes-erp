@@ -1065,6 +1065,23 @@ export class PurchaseService {
       return PurchaseService._gatePassesCache.data;
     }
 
+    // 1. Primary route: Query server endpoint directly connected to PostgreSQL with anti-cache busting
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const apiRes = await rawFetch('/api/purchase/gate-passes?_t=' + Date.now(), {
+          headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' }
+        });
+        if (apiRes && apiRes.ok) {
+          const list = await apiRes.json();
+          if (Array.isArray(list)) {
+            PurchaseService._gatePassesCache = { data: list, timestamp: Date.now() };
+            return list;
+          }
+        }
+      } catch (_) {}
+    }
+
     let data: any[] | null = null;
     try {
       const res = await supabase
@@ -1079,7 +1096,7 @@ export class PurchaseService {
     // If Supabase REST errored, check server endpoint
     if (data === null) {
       try {
-        const apiRes = await fetch('/api/purchase/gate-passes');
+        const apiRes = await fetch('/api/purchase/gate-passes?_t=' + Date.now());
         if (apiRes.ok) {
           const apiList = await apiRes.json();
           if (Array.isArray(apiList)) {
@@ -1440,6 +1457,7 @@ export class PurchaseService {
 
         createdPasses.push({
           id: baleId,
+          passNo: passNo,
           gatePassNo: passNo,
           baleCode: baleCode,
           baleCategory: item.item_name || 'Vintage Mixed Bales',
@@ -1605,7 +1623,16 @@ export class PurchaseService {
       .eq('id', invoiceId);
 
     PurchaseService.invalidateInvoicesCache();
-    PurchaseService.invalidateGatePassesCache();
+    if (PurchaseService._gatePassesCache?.data) {
+      const newIds = new Set(createdPasses.map(p => String(p.id)));
+      PurchaseService._gatePassesCache.data = [
+        ...createdPasses,
+        ...PurchaseService._gatePassesCache.data.filter(p => !newIds.has(String(p.id)))
+      ];
+      PurchaseService._gatePassesCache.timestamp = Date.now();
+    } else {
+      PurchaseService._gatePassesCache = { data: createdPasses, timestamp: Date.now() };
+    }
     PurchaseService.invalidatePiecesCache();
     if (typeof window !== 'undefined') {
       try {

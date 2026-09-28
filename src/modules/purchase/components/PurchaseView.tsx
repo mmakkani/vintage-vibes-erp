@@ -136,9 +136,13 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
   const [isStickerModalOpen, setIsStickerModalOpen] = useState(false);
 
   const isFetchingRef = useRef(false);
+  const queuedForceRef = useRef(false);
 
   const fetchPurchaseData = useCallback(async (force = false) => {
-    if (isFetchingRef.current) return;
+    if (isFetchingRef.current) {
+      if (force) queuedForceRef.current = true;
+      return;
+    }
     isFetchingRef.current = true;
     setIsLoading(true);
     try {
@@ -151,7 +155,12 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
       ]);
 
       if (Array.isArray(balesRes)) {
-        setBales(balesRes);
+        setBales(prev => {
+          if (prev.length === 0) return balesRes;
+          const resIds = new Set(balesRes.map(b => String(b.id)));
+          const recentBales = prev.filter(b => !resIds.has(String(b.id)) && (Date.now() - new Date(b.createdAt || 0).getTime() < 30000));
+          return [...recentBales, ...balesRes];
+        });
       }
       if (Array.isArray(invRes)) {
         setInvoices(invRes);
@@ -200,11 +209,15 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
     } finally {
       setIsLoading(false);
       isFetchingRef.current = false;
+      if (queuedForceRef.current) {
+        queuedForceRef.current = false;
+        fetchPurchaseData(true);
+      }
     }
   }, []);
 
   useEffect(() => {
-    fetchPurchaseData();
+    fetchPurchaseData(true);
   }, [fetchPurchaseData, syncVersion]);
 
   // Handle open sorting terminal modal
@@ -271,8 +284,17 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
       const newIds = new Set(newBales.map(b => String(b.id)));
       return [...newBales, ...prev.filter(b => !newIds.has(String(b.id)))];
     });
-    PurchaseService.invalidateGatePassesCache();
+    if (newBales.length > 0 && newBales[0]?.id) {
+      setActiveSortingBaleId(newBales[0].id);
+    }
   }, []);
+
+  const handleSelectSubTab = (tab: PurchaseSubTab) => {
+    setActiveSubTab(tab);
+    if (tab === 'sorting_terminal') {
+      fetchPurchaseData(true);
+    }
+  };
 
   // Handle save partial / reopen
   const handleSavePartial = async (baleId: string, e?: React.MouseEvent) => {
@@ -323,7 +345,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
           <button
             type="button"
-            onClick={() => setActiveSubTab('sorting_terminal')}
+            onClick={() => handleSelectSubTab('sorting_terminal')}
             className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
               activeSubTab === 'sorting_terminal'
                 ? 'bg-indigo-600 text-white shadow-sm'
@@ -336,7 +358,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
 
           <button
             type="button"
-            onClick={() => setActiveSubTab('inventory')}
+            onClick={() => handleSelectSubTab('inventory')}
             className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
               activeSubTab === 'inventory'
                 ? 'bg-indigo-600 text-white shadow-sm'
@@ -349,7 +371,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
 
           <button
             type="button"
-            onClick={() => setActiveSubTab('commercial_invoices')}
+            onClick={() => handleSelectSubTab('commercial_invoices')}
             className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
               activeSubTab === 'commercial_invoices'
                 ? 'bg-indigo-600 text-white shadow-sm'
@@ -362,7 +384,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
 
           <button
             type="button"
-            onClick={() => setActiveSubTab('settings')}
+            onClick={() => handleSelectSubTab('settings')}
             className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
               activeSubTab === 'settings'
                 ? 'bg-indigo-600 text-white shadow-sm'
