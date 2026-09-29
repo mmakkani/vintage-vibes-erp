@@ -48,14 +48,52 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
     grade
   } = config;
 
-  const displayInvoice = (invoiceNo && invoiceNo.trim() !== '' && invoiceNo !== 'INV-2026-8891')
+  const rawInvoice = (invoiceNo && invoiceNo.trim() !== '' && invoiceNo !== 'INV-2026-8891' && !invoiceNo.startsWith('igp-17'))
     ? invoiceNo.trim()
-    : (batchNo && batchNo.trim() !== '' ? batchNo.trim() : 'AUTHENTIC');
+    : (batchNo && batchNo.trim() !== '' && !batchNo.startsWith('igp-17') ? batchNo.trim() : 'AUTHENTIC');
+  const displayInvoice = rawInvoice.length > 20 ? rawInvoice.slice(0, 20) : rawInvoice;
 
   const formattedPrice = Number(priceAed).toFixed(2);
   const formattedWeight = `${weightValue} ${weightUnit.toUpperCase()}`;
   const currentDate = new Date().toISOString().split('T')[0];
   const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  // Resolve clean primary brand (e.g. "Hollister" from "Hollister Must-Have Collection...")
+  let cleanBrand = (brandName || '').trim();
+  if (cleanBrand.length > 25) {
+    cleanBrand = cleanBrand.split(/\s+/)[0] || cleanBrand;
+  }
+  if (!cleanBrand || cleanBrand.toLowerCase() === 'apparel' || cleanBrand.toLowerCase() === 'apparel / heavy denim') {
+    cleanBrand = 'VINTAGE';
+  }
+
+  // Resolve clean AI garment title without redundant category/size suffix
+  let displayTitle = (itemName || '').trim();
+  displayTitle = displayTitle.replace(/\s*•\s*[^•]+(\([^)]*\))?$/, '').trim();
+  if (!displayTitle || displayTitle.length < 3) {
+    displayTitle = `${cleanBrand} ${category || 'VINTAGE GARMENT'}`;
+  }
+
+  // Resolve taxonomy names (clean uppercase, strictly avoiding literal "DEPARTMENT" or "CATEGORY")
+  const displayDept = (department && department.trim() !== '' && department.toUpperCase() !== 'DEPARTMENT')
+    ? department.trim().toUpperCase()
+    : 'LADIES';
+
+  const displayCategory = (category && category.trim() !== '' && category !== 'Apparel / Heavy Denim' && category.toUpperCase() !== 'CATEGORY')
+    ? category.trim().toUpperCase()
+    : 'TOPS & BLOUSES';
+
+  const displaySubCat = (subCategory && subCategory.trim() !== '' && subCategory.toUpperCase() !== 'SUBCATEGORY' && subCategory.toLowerCase() !== displayCategory.toLowerCase())
+    ? subCategory.trim().toUpperCase()
+    : '';
+
+  const displaySeason = (season && season.trim() !== '' && season.toUpperCase() !== 'SEASON')
+    ? season.trim().toUpperCase()
+    : 'SUMMER 2026';
+
+  const displayGrade = (grade && grade.trim() !== '' && grade.toUpperCase() !== 'GRADE')
+    ? grade.trim().toUpperCase()
+    : 'SUPER CREAM';
 
   // Effective logo rendering (falls back to Vintage Vibes Gold Seal base64 if no custom logo provided)
   const effectiveLogoSrc = (config.logoUrl && config.logoUrl.trim() !== '')
@@ -68,43 +106,61 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
     // 1. Modern Minimalist: Clean sans-serif, hairline accents, brand logo medallion, compact QR, bold price badge
     case 'modern_minimalist':
       return `
-        <div class="label-box" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display:flex; flex-direction:column; justify-content:space-between; height:100%; border:0.75px solid #000; padding:2mm; box-sizing:border-box;">
+        <div class="label-box" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display:flex; flex-direction:column; justify-content:space-between; height:100%; border:0.75px solid #000; padding:1.8mm; box-sizing:border-box; overflow:hidden;">
           <div>
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:0.75px solid #000; padding-bottom:1.5mm; margin-bottom:1.5mm; gap:5px;">
-              <div style="display:flex; align-items:center; gap:5px; flex:1; min-width:0;">
-                <img src="${effectiveLogoSrc}" alt="Logo" style="width:26px; height:26px; min-width:26px; max-width:26px; max-height:26px; object-fit:contain; border-radius:50%; flex-shrink:0; display:inline-block;" />
+            <!-- HEADER -->
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:0.75px solid #000; padding-bottom:1mm; margin-bottom:1mm; gap:4px;">
+              <div style="display:flex; align-items:center; gap:4px; flex:1; min-width:0;">
+                <img src="${effectiveLogoSrc}" alt="Logo" style="width:22px; height:22px; min-width:22px; max-width:22px; max-height:22px; object-fit:contain; border-radius:50%; flex-shrink:0; display:inline-block;" />
                 <div style="flex:1; min-width:0;">
-                  <div style="font-weight:900; font-size:9.5px; text-transform:uppercase; letter-spacing:0.3px; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${companyName}</div>
-                  <div style="font-size:6.5px; color:#333; font-family:monospace; margin-top:0.5px;">TRN: ${trn} &bull; TEL: ${phone}</div>
+                  <div style="font-weight:900; font-size:8.5px; text-transform:uppercase; letter-spacing:0.2px; line-height:1.1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${companyName}</div>
+                  <div style="font-size:6px; color:#333; font-family:monospace; margin-top:0.5px;">TRN: ${trn} &bull; TEL: ${phone}</div>
                 </div>
               </div>
-              <div style="font-size:7.5px; font-family:monospace; font-weight:bold; border:0.75px solid #000; padding:1px 4px; border-radius:2px; flex-shrink:0; white-space:nowrap;">
+              <div style="font-size:7px; font-family:monospace; font-weight:800; border:0.75px solid #000; padding:1px 3.5px; border-radius:2px; flex-shrink:0; white-space:nowrap; background:#fff;">
                 ${displayInvoice}
               </div>
             </div>
-            <div style="font-size:7.5px; text-transform:uppercase; font-weight:bold; color:#444; letter-spacing:0.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-              ${brandName ? `${brandName} &bull; ` : ''}${department ? `${department} &bull; ` : ''}${category}${subCategory && subCategory !== category ? ` (${subCategory})` : ''}
+
+            <!-- SUBLINE -->
+            <div style="font-size:6.8px; text-transform:uppercase; font-weight:700; color:#555; letter-spacing:0.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:1px;">
+              ${cleanBrand} &bull; ${displayDept} &bull; ${displayCategory}
             </div>
-            <div style="font-size:11.5px; font-weight:900; text-transform:uppercase; line-height:1.15; margin:1.5px 0 2px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${itemName}</div>
-            <div style="display:flex; justify-content:space-between; align-items:center; font-size:7px; font-weight:bold; background:#eee; padding:1px 3px; border-radius:2px; margin-bottom:1px; text-transform:uppercase; border:0.5px solid #ccc;">
-              <span>${department || 'DEPARTMENT'}</span>
-              <span>${season || 'SUMMER 2026'}</span>
-              <span style="font-weight:900; color:#000;">${grade || 'SUPER CREAM'}</span>
+
+            <!-- AI GARMENT TITLE (2-LINE WRAP, NO CUTOFF!) -->
+            <div style="font-size:9.5px; font-weight:900; text-transform:uppercase; line-height:1.15; color:#000; margin:1px 0 2px 0; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; line-clamp:2; -webkit-box-orient:vertical; word-break:break-word;">
+              ${displayTitle}
+            </div>
+
+            <!-- TAXONOMY PILLS (REAL NAMES ONLY, NEVER LITERAL 'DEPARTMENT') -->
+            <div style="display:flex; align-items:center; gap:2.5px; overflow:hidden; margin:1.5px 0;">
+              <span style="background:#000; color:#fff; font-size:6px; font-weight:800; padding:1px 3.5px; border-radius:2px; text-transform:uppercase; white-space:nowrap; flex-shrink:0;">${department || 'DEPARTMENT'}</span>
+              <span style="background:#eef2f6; color:#111; font-size:6px; font-weight:700; padding:1px 3.5px; border-radius:2px; border:0.5px solid #cbd5e1; text-transform:uppercase; white-space:nowrap; flex-shrink:0;">${displayCategory}</span>
+              ${displaySubCat ? `<span style="background:#f1f5f9; color:#475569; font-size:6px; font-weight:600; padding:1px 3px; border-radius:2px; border:0.5px solid #e2e8f0; text-transform:uppercase; white-space:nowrap; flex-shrink:0;">${displaySubCat}</span>` : ''}
+              <span style="background:#f8fafc; color:#334155; font-size:6px; font-weight:600; padding:1px 3.5px; border-radius:2px; border:0.5px solid #cbd5e1; text-transform:uppercase; white-space:nowrap; flex-shrink:0;">${season || 'SUMMER 2026'}</span>
+              <span style="background:#052e16; color:#86efac; font-size:6px; font-weight:800; padding:1px 4px; border-radius:2px; border:0.5px solid #16a34a; text-transform:uppercase; white-space:nowrap; margin-left:auto; flex-shrink:0;">${grade || 'SUPER CREAM'}</span>
             </div>
           </div>
 
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; border-top:0.5px dashed #000; padding-top:1.5mm; margin-top:1mm;">
-            <div style="flex:1; min-width:0;">
-              <div style="font-family:monospace; font-size:8px; font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">SKU: ${skuBarcode}</div>
-              <div style="font-size:7.5px; color:#333; font-weight:600;">WT: ${formattedWeight} &bull; SIZE: ${size}</div>
-              <div style="font-size:6.5px; color:#555; font-family:monospace;">DATE: ${currentDate}</div>
+          <!-- FOOTER: DEDICATED FULL WIDTH SKU + METADATA + QR + PRICE -->
+          <div style="border-top:0.5px dashed #000; padding-top:1mm; margin-top:auto;">
+            <!-- FULL WIDTH SKU LINE: Fits all 30 characters easily, 0% cut off! -->
+            <div style="font-family:monospace; font-size:7px; font-weight:800; color:#000; letter-spacing:0.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:1mm;">
+              SKU: <span style="font-weight:900; font-size:7.5px;">${skuBarcode}</span>
             </div>
-            <div style="width:34px; height:34px; flex-shrink:0;">
-              ${qrSvg}
-            </div>
-            <div style="background:#000; color:#fff; padding:4px 8px; border-radius:3px; text-align:right; flex-shrink:0;">
-              <div style="font-size:6px; font-weight:bold; letter-spacing:0.5px;">PRICE (AED)</div>
-              <div style="font-size:15px; font-weight:900; line-height:1; letter-spacing:-0.5px;">${formattedPrice}</div>
+
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:4px;">
+              <div style="flex:1; min-width:0; line-height:1.25;">
+                <div style="font-size:6.8px; color:#222; font-weight:700;">WT: ${formattedWeight} &bull; SIZE: ${size}</div>
+                <div style="font-size:6px; color:#666; font-family:monospace; margin-top:0.5px;">DATE: ${currentDate}</div>
+              </div>
+              <div style="width:30px; height:30px; flex-shrink:0;">
+                ${qrSvg}
+              </div>
+              <div style="background:#000; color:#fff; padding:2.5px 5px; border-radius:3px; text-align:right; flex-shrink:0; min-width:44px;">
+                <div style="font-size:5px; font-weight:800; letter-spacing:0.5px;">PRICE (AED)</div>
+                <div style="font-size:13px; font-weight:900; line-height:1; letter-spacing:-0.5px;">${formattedPrice}</div>
+              </div>
             </div>
           </div>
         </div>

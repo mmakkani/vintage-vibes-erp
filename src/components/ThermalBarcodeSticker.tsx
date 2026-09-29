@@ -150,19 +150,19 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
       skuBarcode: cleanItemCode || engineConfig.skuBarcode,
       itemName: sticker.description || cleanItemCode || engineConfig.itemName,
       brandName: sticker.brand || engineConfig.brandName || '',
-      category: sticker.category || engineConfig.category || 'Apparel',
-      department: sticker.department || (engineConfig as any).department || '',
-      subCategory: sticker.subCategory || (engineConfig as any).subCategory || '',
-      season: sticker.season || (engineConfig as any).season || '',
-      grade: sticker.grade || (engineConfig as any).grade || '',
-      size: sticker.size || 'Free Size', // Size included prominently!
+      category: sticker.category || (engineConfig.category !== 'Apparel / Heavy Denim' ? engineConfig.category : 'Tops & Blouses') || 'Tops & Blouses',
+      department: sticker.department || (engineConfig as any).department || 'LADIES',
+      subCategory: sticker.subCategory || '',
+      season: sticker.season || (engineConfig as any).season || 'Summer Edition 2026',
+      grade: sticker.grade || (engineConfig as any).grade || 'Super Cream',
+      size: sticker.size || 'XL', // Size included prominently!
       priceAed: Number(sticker.retailPriceAed ?? 0),
       weightValue: weightGrams,
       weightUnit: 'g',
       batchNo: sticker.batchNo || engineConfig.batchNo || '',
-      invoiceNo: (sticker.invoiceNo && sticker.invoiceNo !== 'INV-2026-8891')
+      invoiceNo: (sticker.invoiceNo && sticker.invoiceNo !== 'INV-2026-8891' && !sticker.invoiceNo.startsWith('igp-17'))
         ? sticker.invoiceNo
-        : (engineConfig.invoiceNo && engineConfig.invoiceNo !== 'INV-2026-8891' ? engineConfig.invoiceNo : (sticker.batchNo || '')),
+        : (sticker.batchNo && !sticker.batchNo.startsWith('igp-17') ? sticker.batchNo : (engineConfig.invoiceNo && engineConfig.invoiceNo !== 'INV-2026-8891' ? engineConfig.invoiceNo : '')),
       serialNumber: cleanItemCode,
       styleId: selectedStyleId
     };

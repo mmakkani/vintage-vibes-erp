@@ -92,19 +92,19 @@ export function openThermalLabelPrintWindow(data: ThermalLabelData): Window | nu
         skuBarcode: cleanBarcode || engineConfig.skuBarcode,
         itemName: data.description || cleanBarcode || engineConfig.itemName,
         brandName: data.brand || engineConfig.brandName || '',
-        category: data.category || engineConfig.category || 'Apparel',
-        department: data.department || (engineConfig as any).department || '',
-        subCategory: data.subCategory || (engineConfig as any).subCategory || '',
-        season: data.season || (engineConfig as any).season || '',
-        grade: data.grade || (engineConfig as any).grade || '',
-        size: data.size || 'Free Size',
+        category: data.category || (engineConfig.category !== 'Apparel / Heavy Denim' ? engineConfig.category : 'Tops & Blouses') || 'Tops & Blouses',
+        department: data.department || (engineConfig as any).department || 'LADIES',
+        subCategory: data.subCategory || '',
+        season: data.season || (engineConfig as any).season || 'Summer Edition 2026',
+        grade: data.grade || (engineConfig as any).grade || 'Super Cream',
+        size: data.size || 'XL',
         priceAed: Number(data.retailPriceAed || 0),
         weightValue: weightGrams,
         weightUnit: 'g',
         batchNo: data.batchNo || engineConfig.batchNo || '',
-        invoiceNo: (data.invoiceNo && data.invoiceNo !== 'INV-2026-8891')
+        invoiceNo: (data.invoiceNo && data.invoiceNo !== 'INV-2026-8891' && !data.invoiceNo.startsWith('igp-17'))
           ? data.invoiceNo
-          : (engineConfig.invoiceNo && engineConfig.invoiceNo !== 'INV-2026-8891' ? engineConfig.invoiceNo : (data.batchNo || ''))
+          : (data.batchNo && !data.batchNo.startsWith('igp-17') ? data.batchNo : (engineConfig.invoiceNo && engineConfig.invoiceNo !== 'INV-2026-8891' ? engineConfig.invoiceNo : ''))
       };
       return openThermalPrintPopup(mergedConfig, targetStyleId);
     }

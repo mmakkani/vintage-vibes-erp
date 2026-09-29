@@ -1258,15 +1258,18 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       baleSortedPiecesToInsert.push(sortedPieceDb);
       newPieceBreakdownItems.push({ ...breakdownItem, ...sortedPieceDb });
 
+      const primaryBrand = (brandTitle.trim().split(/\s+/)[0] || brandTitle.trim() || effectiveCategory).trim();
+      const garmentTitle = brandTitle.trim() || `${primaryBrand} ${effectiveCategory}`;
+
       stickerPayloads.push({
         itemCode: pieceSku || barcode,
-        description: `${brandTitle || effectiveCategory} • ${effectiveCategory}${sizeScanned ? ` (${sizeScanned})` : ''}`,
+        description: garmentTitle,
         category: effectiveCategory,
-        department: parentDeptName,
+        department: parentDeptName || 'LADIES',
         subCategory: subCategoryName,
         season: collectionName || 'Summer Edition 2026',
         size: sizeScanned,
-        brand: brandTitle || effectiveCategory,
+        brand: primaryBrand,
         grade: selectedGrade,
         retailPriceAed: effectiveSellingPrice,
         weightKg,
@@ -1363,6 +1366,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             itemCode: stickerPayload.itemCode,
             description: stickerPayload.description,
             category: stickerPayload.category,
+            department: stickerPayload.department || parentDeptName,
+            subCategory: stickerPayload.subCategory || subCategoryName,
+            season: stickerPayload.season || collectionName || 'Summer Edition 2026',
             size: stickerPayload.size,
             brand: stickerPayload.brand,
             grade: stickerPayload.grade,
@@ -1370,6 +1376,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             weightKg: stickerPayload.weightKg,
             batchNo: stickerPayload.batchNo,
             date: stickerPayload.date,
+            origin: stickerPayload.origin,
+            shopLocation: stickerPayload.shopLocation,
             invoiceNo: stickerPayload.invoiceNo || activeBale.purchaseInvoiceNo || activeBale.gatePassNo || activeBale.baleCode || ''
           });
         } catch {}
@@ -3862,15 +3870,19 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                               type="button"
                               onClick={() => {
                                 luxuryAudio.playMechanicalClick();
+                                const rawBrand = piece.brand_title || piece.brandName || brandTitle || category;
+                                const primaryBrand = (rawBrand.split(/\s+/)[0] || rawBrand).trim();
+                                const garmentTitle = piece.brand_title || piece.brandName || (piece.style ? `${primaryBrand} ${piece.style}` : `${primaryBrand} ${category}`);
+
                                 onPrintSticker({
                                   itemCode: piece.sku || barcode,
-                                  description: `${brandTitle || category} • ${category} (${size})`,
+                                  description: garmentTitle,
                                   category,
-                                  department: deptName,
+                                  department: deptName || 'LADIES',
                                   subCategory: subCatName,
-                                  season: seasonName,
+                                  season: seasonName || 'Summer Edition 2026',
                                   size,
-                                  brand: brandTitle,
+                                  brand: primaryBrand,
                                   grade: qualityGrade,
                                   retailPriceAed: price,
                                   weightKg: Number(g / 1000),
