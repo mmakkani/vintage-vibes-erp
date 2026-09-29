@@ -59,6 +59,9 @@ export interface ExtractedTagData {
     pitToPit?: number | string;
     length?: number | string;
   };
+  gender?: string;
+  widthTapeImageUrl?: string;
+  lengthTapeImageUrl?: string;
 }
 
 interface CameraTagScannerModalProps {

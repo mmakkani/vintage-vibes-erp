@@ -27,6 +27,7 @@ export interface VintageValuationResult {
   recommendedRetailPriceAed: number;
   pitToPitInches?: number | string;
   lengthInches?: number | string;
+  gender?: 'Men\'s' | 'Ladies' | 'Unisex' | 'Kids' | string;
   global_insights?: {
     usa_market_usd?: number;
     europe_market_eur?: number;
@@ -166,17 +167,30 @@ EVALUATION RULES:
 9. E-Commerce Archival Copywriting & SEO Keywords:
    - ecommerce_description: Generate a 2-3 sentence, highly engaging luxury archival description. Highlight era provenance, fabric patina/wash, stitch lineage, fit/drape, and styling recommendation.
    - seo_tags: Return an array of 5-8 high-intent search keywords (e.g., ["vintage single stitch tee", "90s streetwear", "faded black wash", "rare archival thrift dubai"]).
-10. Garment Measurement Scaling & Tape Reading:
-   - If multi-angle photos are provided, inspect all images. In particular, the 4th image contains a measuring tape on the garment. Read the tape to extract the exact Pit-to-Pit (Chest) and Length in inches.
-   - If a tape is visible, read the numeric markings at the armpit seams (Pit-to-Pit) and from collar seam to hem (Length).
-   - If a tape is not visible or cannot be precisely read, estimate standard realistic vintage dimensions for the detected garment size (e.g. Size S ~ Pit: 19.5, Len: 26.5; Size M ~ Pit: 21.5, Len: 27.5; Size L ~ Pit: 23.5, Len: 29; Size XL ~ Pit: 25.5, Len: 30.5).
-   - Return "pitToPitInches" (e.g. 22 or 21.5) and "lengthInches" (e.g. 29 or 28.5).
+10. Dual Measuring Tape OCR & Conversion (Length Tape & Width Tape):
+   - You may be provided with up to 5 photos:
+     * Photo 1: Clean Front View (without measuring tape)
+     * Photo 2: Back View
+     * Photo 3: Tag / Neck Label
+     * Photo 4: Length Measurement Tape (vertical tape running from collar/shoulder seam down to bottom hem)
+     * Photo 5: Width / Chest Measurement Tape (horizontal tape running across the chest from armpit seam to armpit seam)
+   - TAPE READING & UNIT CONVERSION (CM to INCHES):
+     * Read the numeric length marking from the vertical length tape photo (collar to hem).
+     * Read the numeric chest/width marking from the horizontal width tape photo (armpit to armpit).
+     * MANDATORY CM TO INCH CONVERSION: If the measuring tape shows CENTIMETERS (cm) (e.g. 50-70 cm chest, 65-85 cm length), you MUST CONVERT IT INTO INCHES by dividing by 2.54 (e.g., 58 cm / 2.54 = 22.8 inches; 75 cm / 2.54 = 29.5 inches).
+     * ALWAYS output both "pitToPitInches" and "lengthInches" as numbers in INCHES (rounded to 1 decimal place, e.g. 23.5 and 29.5).
+     * If tape is blurry or absent, estimate standard vintage dimensions for the size (e.g. Size M ~ Pit: 21.5, Len: 27.5; Size L ~ Pit: 23.5, Len: 29; Size XL ~ Pit: 25.5, Len: 30.5).
+
+11. Gender / Department Classification (Men vs Ladies vs Unisex vs Kids):
+   - Inspect the silhouette, collar style, sleeve cut, button orientation (men's right-over-left vs ladies left-over-right), waist taper, and neck tag markings.
+   - Output "gender" as EXACTLY one of: "Men's", "Ladies", "Unisex", "Kids".
 
 Return ONLY a pure JSON object matching this schema without markdown codeblocks:
 {
   "brand": "Exact brand name (e.g. Nike, Carhartt, Levi's, or Non-Brand)",
   "garmentTitle": "Full descriptive title (e.g. 1990s Carhartt Detroit Jacket J97)",
   "category": "Category name",
+  "gender": "Men's or Ladies or Unisex or Kids",
   "size": "Exact garment size (e.g. L, XL, 32x32, M)",
   "countryOfOrigin": "Made in USA / etc.",
   "era": "1990s Vintage / Antique Heritage / Y2K / Modern Non-Brand",
@@ -188,8 +202,8 @@ Return ONLY a pure JSON object matching this schema without markdown codeblocks:
   "estimatedMarketValueAed": 750,
   "estimatedMarketValueUsd": 205,
   "recommendedRetailPriceAed": 650,
-  "pitToPitInches": 22,
-  "lengthInches": 29,
+  "pitToPitInches": 23.5,
+  "lengthInches": 29.5,
   "global_insights": {
     "usa_market_usd": 220,
     "europe_market_eur": 200,
@@ -350,12 +364,38 @@ async function callGeminiVisionAppraisal(
         else finalTier = 'GRADE_A';
       }
 
-      const pitToPit = parsed.pitToPitInches !== undefined && parsed.pitToPitInches !== ''
+      let pitToPit: any = parsed.pitToPitInches !== undefined && parsed.pitToPitInches !== ''
         ? parsed.pitToPitInches
         : (parsed.measurements?.pitToPit || parsed.global_insights?.measurements?.pitToPit || '');
-      const garmentLength = parsed.lengthInches !== undefined && parsed.lengthInches !== ''
+      let garmentLength: any = parsed.lengthInches !== undefined && parsed.lengthInches !== ''
         ? parsed.lengthInches
         : (parsed.measurements?.length || parsed.global_insights?.measurements?.length || '');
+
+      // MANDATORY CM TO INCHES CONVERSION SAFEGUARD (if tape measurements were in cm):
+      if (pitToPit !== '' && !isNaN(Number(pitToPit))) {
+        const numP2P = Number(pitToPit);
+        if (numP2P > 35) { // Garment width / pit-to-pit > 35 is in CM
+          pitToPit = Number((numP2P / 2.54).toFixed(1));
+        } else {
+          pitToPit = Number(numP2P.toFixed(1));
+        }
+      }
+      if (garmentLength !== '' && !isNaN(Number(garmentLength))) {
+        const numLen = Number(garmentLength);
+        if (numLen > 45) { // Garment length > 45 is in CM
+          garmentLength = Number((numLen / 2.54).toFixed(1));
+        } else {
+          garmentLength = Number(numLen.toFixed(1));
+        }
+      }
+
+      // Gender normalization: Men's vs Ladies vs Unisex vs Kids
+      let gender = parsed.gender || 'Men\'s';
+      const gLower = String(gender).toLowerCase();
+      if (gLower.includes('ladi') || gLower.includes('women') || gLower.includes('female')) gender = 'Ladies';
+      else if (gLower.includes('kid') || gLower.includes('child')) gender = 'Kids';
+      else if (gLower.includes('uni')) gender = 'Unisex';
+      else gender = 'Men\'s';
 
       const globalInsights = parsed.global_insights ? {
         usa_market_usd: Number(parsed.global_insights.usa_market_usd) || Math.round(mktAed / 3.67),
@@ -386,6 +426,7 @@ async function callGeminiVisionAppraisal(
         brand: parsed.brand || (isNonBrand ? 'Non-Brand Everyday Basic' : 'Vintage Curated'),
         garmentTitle: parsed.garmentTitle || `${parsed.brand || 'Vintage'} Apparel Piece`,
         category: parsed.category || 'Graphic T-Shirts & Band Tees',
+        gender,
         size: parsed.size || 'L',
         era: eraVal,
         marketSegment: segment,
@@ -827,6 +868,9 @@ export function getHeuristicVintageAppraisal(hintText?: string, imageBase64?: st
 }
 
 function ensureSeoAndCopy(res: VintageValuationResult): VintageValuationResult {
+  if (!res.gender) {
+    res.gender = "Men's";
+  }
   if (!res.ecommerce_description) {
     const eraText = res.era || 'Vintage';
     const brandText = res.brand || 'Vintage Archive';

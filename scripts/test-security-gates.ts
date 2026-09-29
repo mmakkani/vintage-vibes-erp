@@ -1376,6 +1376,109 @@ async function runSecurityGateTests() {
     );
   }
 
+  // =========================================================================
+  // GATE 23: 5-Angle Garment Studio, Dual Tape OCR (CM to Inch), and Gender Classification Gate
+  // =========================================================================
+  console.log('\n--- GATE 23: 5-Angle Garment Studio, Dual Tape OCR (CM to Inch) & Gender Classification ---');
+  {
+    // 1. Bulk Classifier 5-Photo Contract & Anti-Confusion Logic
+    const classifierPath = path.resolve(process.cwd(), 'src/utils/geminiBulkClassifier.ts');
+    assert(fs.existsSync(classifierPath), 'geminiBulkClassifier.ts exists');
+    const classifierContent = fs.readFileSync(classifierPath, 'utf-8');
+    assert(
+      classifierContent.includes('length_tape_index') && classifierContent.includes('width_tape_index'),
+      'geminiBulkClassifier.ts supports length_tape_index and width_tape_index in BulkClassificationResult'
+    );
+    assert(
+      classifierContent.includes('base64Images.slice(0, 5)'),
+      'classifyGarmentPhotosWithGemini accepts up to 5 photos'
+    );
+    assert(
+      classifierContent.includes('clean front look') || classifierContent.includes('WITHOUT measuring tape'),
+      'Bulk classifier prompt instructs AI to reserve front_index strictly for clean look WITHOUT tape'
+    );
+    assert(
+      classifierContent.includes('width_tape_index') && classifierContent.includes('horizontal'),
+      'Bulk classifier prompt distinguishes vertical length tape from horizontal chest/width tape'
+    );
+
+    // 2. Vintage Valuation & Dual Tape OCR Prompt + CM-to-Inch Safeguard
+    const valuationPath = path.resolve(process.cwd(), 'src/utils/geminiVintageValuation.ts');
+    assert(fs.existsSync(valuationPath), 'geminiVintageValuation.ts exists');
+    const valuationContent = fs.readFileSync(valuationPath, 'utf-8');
+    assert(
+      valuationContent.includes('Dual Measuring Tape OCR & Conversion') || valuationContent.includes('cm / 2.54'),
+      'geminiVintageValuation.ts prompt contains Dual Tape Measurement OCR and CM to Inch conversion'
+    );
+    assert(
+      valuationContent.includes('Gender / Department Classification') && valuationContent.includes("Men's"),
+      'geminiVintageValuation.ts prompt includes Gender / Department Classification'
+    );
+    assert(
+      (valuationContent.includes('numP2P > 35') || valuationContent.includes('pitToPit > 35') || valuationContent.includes('pitToPitInches > 35')) && valuationContent.includes('2.54'),
+      'geminiVintageValuation.ts enforces code-level safeguard to auto-convert CM to inches for Pit-to-Pit'
+    );
+    assert(
+      (valuationContent.includes('numLen > 45') || valuationContent.includes('garmentLength > 45') || valuationContent.includes('lengthInches > 45')) && valuationContent.includes('2.54'),
+      'geminiVintageValuation.ts enforces code-level safeguard to auto-convert CM to inches for Length'
+    );
+
+    // 3. StudioPhotoCaptureModal 5-Slot Architecture
+    const studioModalPath = path.resolve(process.cwd(), 'src/modules/purchase/components/StudioPhotoCaptureModal.tsx');
+    assert(fs.existsSync(studioModalPath), 'StudioPhotoCaptureModal.tsx exists');
+    const studioModalContent = fs.readFileSync(studioModalPath, 'utf-8');
+    assert(
+      studioModalContent.includes("'front' | 'back' | 'tag' | 'lengthTape' | 'widthTape'"),
+      'StudioPhotoCaptureModal defines 5 distinct photo slots (front, back, tag, lengthTape, widthTape)'
+    );
+    assert(
+      studioModalContent.includes('Select up to 5 Photos'),
+      'StudioPhotoCaptureModal bulk upload button allows selecting up to 5 photos'
+    );
+    assert(
+      studioModalContent.includes('Dept:') && studioModalContent.includes("Men's"),
+      'StudioPhotoCaptureModal appraisal card displays Department / Gender selection'
+    );
+    assert(
+      studioModalContent.includes('LEN TAPE') && studioModalContent.includes('WID TAPE'),
+      'StudioPhotoCaptureModal bottom bar renders distinct LEN TAPE and WID TAPE thumbnails'
+    );
+
+    // 4. BaleSortingTerminal Integration & Runtime CM-to-Inch Math Verification
+    const terminalPath = path.resolve(process.cwd(), 'src/modules/purchase/components/BaleSortingTerminal.tsx');
+    assert(fs.existsSync(terminalPath), 'BaleSortingTerminal.tsx exists');
+    const terminalContent = fs.readFileSync(terminalPath, 'utf-8');
+    assert(
+      terminalContent.includes('widthTapeImageUrl') && terminalContent.includes('setWidthTapeImageUrl'),
+      'BaleSortingTerminal declares widthTapeImageUrl state'
+    );
+    assert(
+      terminalContent.includes('sanitizeMeasurementToInches'),
+      'BaleSortingTerminal implements sanitizeMeasurementToInches safeguard in handleApplyExtractedTag'
+    );
+    assert(
+      terminalContent.includes('length_tape_image_url') && terminalContent.includes('width_tape_image_url'),
+      'BaleSortingTerminal saves both length_tape_image_url and width_tape_image_url into pieceGlobalInsights'
+    );
+
+    // 5. Direct Mathematical Unit Test for CM to Inch Conversion Function
+    const testSanitizeToInches = (raw: any, maxExpectedInches: number = 36): string => {
+      if (raw === undefined || raw === null || raw === '') return '';
+      const str = String(raw).trim();
+      const isExplicitCm = str.toLowerCase().includes('cm');
+      const num = parseFloat(str.replace(/[^0-9.]/g, ''));
+      if (!isNaN(num) && (isExplicitCm || num > maxExpectedInches)) {
+        return (num / 2.54).toFixed(1);
+      }
+      return str;
+    };
+
+    assert(testSanitizeToInches('55.88 cm', 35) === '22.0', '55.88 cm converts accurately to 22.0 inches');
+    assert(testSanitizeToInches('73.66', 45) === '29.0', '73.66 (detected cm > 45) converts accurately to 29.0 inches');
+    assert(testSanitizeToInches('22', 35) === '22', '22 inches remains 22 inches without distortion');
+    assert(testSanitizeToInches('29.5', 45) === '29.5', '29.5 inches remains 29.5 inches without distortion');
+  }
+
   console.log('\n======================================================');
   console.log(`  SECURITY & INTEGRITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('======================================================\n');

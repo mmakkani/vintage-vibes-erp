@@ -12,6 +12,8 @@ export interface BulkClassificationResult {
   front_index: number;
   back_index: number;
   tag_index: number;
+  length_tape_index?: number;
+  width_tape_index?: number;
   confidence?: number;
   reasoning?: string;
   source: 'GEMINI_AI_VISION' | 'HEURISTIC_FALLBACK';
@@ -36,14 +38,19 @@ const CLASSIFICATION_CASCADE_MODELS: string[] = [
 ];
 
 /**
- * Classifies an array of 2 or 3 garment images using Google Gemini Vision API.
+ * Classifies an array of up to 5 garment images using Google Gemini Vision API:
+ * 1. Clean Front Look (no measuring tape)
+ * 2. Back Look
+ * 3. Tag / Label
+ * 4. Length Measurement Tape (vertical tape)
+ * 5. Width / Chest Measurement Tape (horizontal tape)
  */
 export async function classifyGarmentPhotosWithGemini(
   base64Images: string[],
   apiKeyOverride?: string
 ): Promise<BulkClassificationResult> {
   if (!base64Images || base64Images.length === 0) {
-    return { front_index: 0, back_index: 1, tag_index: 2, source: 'HEURISTIC_FALLBACK' };
+    return { front_index: 0, back_index: 1, tag_index: 2, length_tape_index: 3, width_tape_index: 4, source: 'HEURISTIC_FALLBACK' };
   }
 
   if (base64Images.length === 1) {
@@ -65,7 +72,7 @@ export async function classifyGarmentPhotosWithGemini(
   // 2. Direct browser execution via Gemini Vision API
   if (apiKey && apiKey.length > 10) {
     const parts: any[] = [];
-    const imagesToClassify = base64Images.slice(0, 3);
+    const imagesToClassify = base64Images.slice(0, 5);
 
     imagesToClassify.forEach((img, idx) => {
       const mime = detectMime(img);
@@ -83,22 +90,29 @@ export async function classifyGarmentPhotosWithGemini(
 
     parts.push({
       text: `You are an expert AI garment cataloguer and archivist for a vintage thrift enterprise.
-You have been provided with ${imagesToClassify.length} photos of a single clothing garment piece, with array indices 0, 1, and 2.
+You have been provided with ${imagesToClassify.length} photos of a single clothing garment piece, with array indices 0 to ${imagesToClassify.length - 1}.
 
 Carefully inspect each image and classify which array index corresponds to each slot:
-1. "front_index": The FRONT view of the garment (shows the front chest, main graphic, front collar, buttons, or zipper).
+1. "front_index": The CLEAN FRONT view of the garment (shows the front chest, main graphic, front collar, buttons, or zipper WITHOUT any measuring tape placed over it).
 2. "back_index": The BACK view of the garment (shows the reverse rear view, back graphic, or blank back side).
 3. "tag_index": The CLOTHING TAG / LABEL (close-up photo showing brand label, care instructions, neck tag, size tag, or wash tag).
+4. "length_tape_index": The LENGTH MEASUREMENT TAPE photo (shows a measuring tape placed VERTICALLY down the length of the garment from collar/shoulder seam to bottom hem).
+5. "width_tape_index": The WIDTH / CHEST / PIT-TO-PIT MEASUREMENT TAPE photo (shows a measuring tape placed HORIZONTALLY across the chest from armpit to armpit).
 
-CRITICAL REQUIREMENTS:
-- "front_index", "back_index", and "tag_index" MUST be distinct integer numbers (0, 1, or 2).
+CRITICAL ANTI-CONFUSION RULES:
+- DO NOT assign an image that has a measuring tape on it as "front_index" if a clean front image without tape exists!
+- If an image has a measuring tape running vertically (top-to-bottom), it is "length_tape_index".
+- If an image has a measuring tape running horizontally (left-to-right across the chest), it is "width_tape_index".
+- All assigned indices MUST be distinct integer numbers within [0, ${imagesToClassify.length - 1}].
 - Return ONLY a pure JSON object without markdown formatting or codeblocks:
 {
   "front_index": 0,
   "back_index": 1,
   "tag_index": 2,
+  "length_tape_index": 3,
+  "width_tape_index": 4,
   "confidence": 0.95,
-  "reasoning": "Image 1 has the chest logo, Image 0 shows the back, Image 2 is a close-up of the neck label"
+  "reasoning": "Image 0 has clean front look without tape, Image 1 is back view, Image 2 is neck label, Image 3 has vertical length tape, Image 4 has horizontal width tape"
 }`
     });
 
@@ -136,47 +150,53 @@ CRITICAL REQUIREMENTS:
           if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[0]);
 
-            let f = Number(parsed.front_index ?? parsed.frontIndex ?? parsed.front ?? parsed.front_img_index);
-            let b = Number(parsed.back_index ?? parsed.backIndex ?? parsed.back ?? parsed.back_img_index);
-            let t = Number(parsed.tag_index ?? parsed.tagIndex ?? parsed.tag ?? parsed.tag_img_index ?? parsed.label_index);
+            let f = Number(parsed.front_index ?? parsed.frontIndex ?? parsed.front);
+            let b = Number(parsed.back_index ?? parsed.backIndex ?? parsed.back);
+            let t = Number(parsed.tag_index ?? parsed.tagIndex ?? parsed.tag ?? parsed.label_index);
+            let l = parsed.length_tape_index !== undefined ? Number(parsed.length_tape_index) : undefined;
+            let w = parsed.width_tape_index !== undefined ? Number(parsed.width_tape_index) : undefined;
 
-            // Normalize 1-based indexing if LLM generated 1, 2, 3
-            if (Math.min(f, b, t) === 1 && Math.max(f, b, t) === imagesToClassify.length) {
+            // Normalize 1-based indexing if LLM generated 1, 2, 3...
+            const vals = [f, b, t, l, w].filter((v): v is number => v !== undefined && !isNaN(v));
+            if (Math.min(...vals) === 1 && Math.max(...vals) === imagesToClassify.length) {
               f -= 1;
               b -= 1;
               t -= 1;
+              if (l !== undefined) l -= 1;
+              if (w !== undefined) w -= 1;
             }
 
-            // Validate indices
-            if (!isNaN(f) && !isNaN(b) && !isNaN(t)) {
-              // Ensure bounds [0, imagesToClassify.length - 1]
-              f = Math.max(0, Math.min(imagesToClassify.length - 1, f));
-              b = Math.max(0, Math.min(imagesToClassify.length - 1, b));
-              t = Math.max(0, Math.min(imagesToClassify.length - 1, t));
+            // Validate and collision-repair across all provided images
+            const total = imagesToClassify.length;
+            const available = Array.from({ length: total }, (_, i) => i);
+            const assigned = new Set<number>();
 
-              // If collision occurred, repair indices
-              if (f === b || f === t || b === t) {
-                const available = [0, 1, 2].slice(0, imagesToClassify.length);
-                const used = new Set<number>();
-                if (available.includes(f)) used.add(f);
-                if (used.has(b) || !available.includes(b)) {
-                  b = available.find(x => !used.has(x)) ?? b;
-                }
-                used.add(b);
-                if (used.has(t) || !available.includes(t)) {
-                  t = available.find(x => !used.has(x)) ?? t;
-                }
+            const assignSlot = (candidateVal?: number, fallbackIndex = 0): number => {
+              if (candidateVal !== undefined && !isNaN(candidateVal) && candidateVal >= 0 && candidateVal < total && !assigned.has(candidateVal)) {
+                assigned.add(candidateVal);
+                return candidateVal;
               }
+              const nextAvail = available.find(x => !assigned.has(x)) ?? fallbackIndex;
+              assigned.add(nextAvail);
+              return nextAvail;
+            };
 
-              return {
-                front_index: f,
-                back_index: b,
-                tag_index: t,
-                confidence: Number(parsed.confidence) || 0.95,
-                reasoning: parsed.reasoning || 'Gemini Vision AI classified Front, Back & Tag successfully.',
-                source: 'GEMINI_AI_VISION'
-              };
-            }
+            const fClean = assignSlot(f, 0);
+            const bClean = assignSlot(b, 1 % total);
+            const tClean = assignSlot(t, 2 % total);
+            const lClean = total >= 4 ? assignSlot(l, 3 % total) : undefined;
+            const wClean = total >= 5 ? assignSlot(w, 4 % total) : undefined;
+
+            return {
+              front_index: fClean,
+              back_index: bClean,
+              tag_index: tClean,
+              length_tape_index: lClean,
+              width_tape_index: wClean,
+              confidence: Number(parsed.confidence) || 0.95,
+              reasoning: parsed.reasoning || 'Gemini Vision AI classified clean front, back, tag and tape measurements.',
+              source: 'GEMINI_AI_VISION'
+            };
           }
         }
       } catch (err: any) {
@@ -204,6 +224,8 @@ CRITICAL REQUIREMENTS:
             front_index: Number(serverData.front_index),
             back_index: Number(serverData.back_index),
             tag_index: Number(serverData.tag_index),
+            length_tape_index: serverData.length_tape_index !== undefined ? Number(serverData.length_tape_index) : undefined,
+            width_tape_index: serverData.width_tape_index !== undefined ? Number(serverData.width_tape_index) : undefined,
             confidence: Number(serverData.confidence) || 0.95,
             reasoning: serverData.reasoning || 'Gemini Vision AI classified via backend',
             source: 'GEMINI_AI_VISION'
@@ -215,11 +237,14 @@ CRITICAL REQUIREMENTS:
     }
   }
 
-  // 4. Fallback to default sequential order [0: Front, 1: Back, 2: Tag]
+  // 4. Fallback to default sequential order [0: Front, 1: Back, 2: Tag, 3: Length Tape, 4: Width Tape]
+  const count = base64Images.length;
   return {
     front_index: 0,
-    back_index: 1,
-    tag_index: 2,
+    back_index: count > 1 ? 1 : 0,
+    tag_index: count > 2 ? 2 : 0,
+    length_tape_index: count > 3 ? 3 : undefined,
+    width_tape_index: count > 4 ? 4 : undefined,
     confidence: 0.8,
     reasoning: 'Heuristic sequential assignment applied.',
     source: 'HEURISTIC_FALLBACK'
