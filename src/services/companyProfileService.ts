@@ -10,12 +10,16 @@ export const DEFAULT_RAKBANK_POS_DEVICE: POSTerminalDevice = {
   ipAddress: '',
   port: 8080,
   terminalId: '12857001',
-  merchantId: '114400000012857',
+  merchantId: '85283',
   serialNumber: '1180511614',
   imei: '350814987795465',
   simCarrier: 'DU',
-  paymobTid: '51898',
+  paymobTid: '12857001',
   paymobMid: '85283',
+  paymobApiKey: (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_API_KEY) ||
+    (typeof process !== 'undefined' && (process.env.PAYMOB_API_KEY || process.env.VITE_PAYMOB_API_KEY)) || '',
+  paymobIntegrationId: (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_INTEGRATION_ID) ||
+    (typeof process !== 'undefined' && (process.env.PAYMOB_INTEGRATION_ID || process.env.VITE_PAYMOB_INTEGRATION_ID)) || '',
   cloudPushEnabled: true,
   isActive: true,
   status: 'ONLINE',
