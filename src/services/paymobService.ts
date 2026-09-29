@@ -32,7 +32,9 @@ export class PaymobService {
   public static async pushAmountToTerminal(req: PaymobPushRequest): Promise<PaymobPushResponse> {
     const effectiveCurrency = req.currency || 'AED';
     const amountInCents = Math.round(req.amount * 100); // 26.00 AED = 2600 fils
-    const effectiveApiKey = (req.apiKey || '').trim();
+    const envKey = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_API_KEY) ||
+      (typeof process !== 'undefined' && (process.env?.PAYMOB_API_KEY || process.env?.VITE_PAYMOB_API_KEY)) || '';
+    const effectiveApiKey = (req.apiKey || envKey || '').trim();
 
     // If cashier/admin has not yet entered their Paymob API Key:
     if (!effectiveApiKey) {
@@ -84,8 +86,10 @@ export class PaymobService {
       }
       const orderData = await orderRes.json();
 
-      // Step 3: Generate Payment Key for POS Terminal Integration (99482)
-      const targetIntegrationId = Number(req.integrationId || 99482);
+      // Step 3: Generate Payment Key for POS Terminal Integration
+      const envIntegrationId = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_INTEGRATION_ID) ||
+        (typeof process !== 'undefined' && (process.env?.PAYMOB_INTEGRATION_ID || process.env?.VITE_PAYMOB_INTEGRATION_ID)) || '';
+      const targetIntegrationId = Number(req.integrationId || envIntegrationId || 0);
       const pKeyRes = await fetch('https://uae.paymob.com/api/acceptance/payment_keys', {
         method: 'POST',
         headers: {
@@ -123,7 +127,9 @@ export class PaymobService {
       const paymentToken = pKeyData.token;
 
       // Step 4: Dispatch push request directly to physical terminal
-      const targetTerminalId = String(req.terminalId || '12857001').trim();
+      const envTid = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_TID) ||
+        (typeof process !== 'undefined' && (process.env?.PAYMOB_TID || process.env?.VITE_PAYMOB_TID)) || '';
+      const targetTerminalId = String(req.terminalId || envTid || '').trim();
       const payRes = await fetch('https://uae.paymob.com/api/acceptance/payments/pay', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
