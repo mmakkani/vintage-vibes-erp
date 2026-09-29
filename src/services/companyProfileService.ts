@@ -285,16 +285,17 @@ export class CompanyProfileService {
       };
     }
 
-    // Merge cached profile from localStorage if available in browser
+    // Merge cached profile from localStorage ONLY as fallback if database had no fleet
     if (typeof window !== 'undefined') {
       try {
         const cachedStr = localStorage.getItem('vintage_cached_company_profile');
         if (cachedStr) {
           const cached = JSON.parse(cachedStr);
-          if (Array.isArray(cached.bankAccounts) && cached.bankAccounts.some((b: any) => b.posFleet?.length > 0)) {
+          const dbHasFleet = bankAccounts.some(b => Array.isArray(b.posFleet) && b.posFleet.length > 0);
+          if (!dbHasFleet && Array.isArray(cached.bankAccounts) && cached.bankAccounts.some((b: any) => b.posFleet?.length > 0)) {
             bankAccounts = cached.bankAccounts;
           }
-          if (cached.posTerminalConfig?.fleet?.length > 0) {
+          if ((!posTerminalConfig.fleet || posTerminalConfig.fleet.length === 0) && cached.posTerminalConfig?.fleet?.length > 0) {
             posTerminalConfig = cached.posTerminalConfig;
           }
         }
@@ -324,6 +325,18 @@ export class CompanyProfileService {
         paymobApiKey: dev.paymobApiKey || envApiKey || ''
       }))
     }));
+
+    if (Array.isArray(posTerminalConfig.fleet)) {
+      posTerminalConfig.fleet = posTerminalConfig.fleet.map(dev => ({
+        ...dev,
+        terminalId: dev.terminalId || envTid || '',
+        merchantId: dev.merchantId || envMid || '',
+        paymobTid: dev.paymobTid || envTid || '',
+        paymobMid: dev.paymobMid || envMid || '',
+        paymobIntegrationId: dev.paymobIntegrationId || envIntegrationId || '',
+        paymobApiKey: dev.paymobApiKey || envApiKey || ''
+      }));
+    }
 
     // Map database snake_case or raw profile_data to camelCase and snake_case
     const prof: CompanyProfile = {
@@ -357,7 +370,6 @@ export class CompanyProfileService {
       bankIban: data.bank_iban || data.bankIban || DEFAULT_COMPANY_PROFILE.bankIban,
       bankAccountNumber: data.bank_account_number || data.bankAccountNumber || '',
       bankQrCodeUrl: data.bank_qr_code_url || data.bankQrCodeUrl || DEFAULT_COMPANY_PROFILE.bankQrCodeUrl,
-      bankAccounts,
       enableCod: data.enable_cod !== false && data.enableCod !== false,
       enableBankTransfer: data.enable_bank_transfer !== false && data.enableBankTransfer !== false,
       enableCardPay: data.enable_card_pay !== false && data.enableCardPay !== false,
@@ -369,7 +381,6 @@ export class CompanyProfileService {
       whatsappOrdersNumber: waOrdersNumber,
       virtualHostVideoUrl: data.virtual_host_video_url || data.virtualHostVideoUrl || DEFAULT_COMPANY_PROFILE.virtualHostVideoUrl || '/mazi_video.mp4',
       virtual_host_video_url: data.virtual_host_video_url || data.virtualHostVideoUrl || DEFAULT_COMPANY_PROFILE.virtual_host_video_url || '/mazi_video.mp4',
-      posTerminalConfig,
       paymentGateway: data.payment_gateway || data.paymentGateway || DEFAULT_COMPANY_PROFILE.paymentGateway,
       tiktokLiveSocket: data.tiktok_live_socket || data.tiktokLiveSocket,
       posBridge: data.pos_bridge || data.posBridge,
@@ -382,7 +393,9 @@ export class CompanyProfileService {
       vatOutputAccountCode: data.vat_output_account_code || data.vatOutputAccountCode || data.profile_data?.vatOutputAccountCode || DEFAULT_COMPANY_PROFILE.vatOutputAccountCode,
       cashAccountCode: data.cash_account_code || data.cashAccountCode || data.profile_data?.cashAccountCode || DEFAULT_COMPANY_PROFILE.cashAccountCode,
       bankAccountCode: data.bank_account_code || data.bankAccountCode || data.profile_data?.bankAccountCode || DEFAULT_COMPANY_PROFILE.bankAccountCode,
-      ...(data.profile_data || {})
+      ...(data.profile_data || {}),
+      bankAccounts,
+      posTerminalConfig
     };
 
         this.cachedProfile = prof;
