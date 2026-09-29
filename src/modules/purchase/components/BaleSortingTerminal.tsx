@@ -3873,14 +3873,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                                 const rawBrand = piece.brand_title || piece.brandName || brandTitle || category;
                                 const primaryBrand = (rawBrand.split(/\s+/)[0] || rawBrand).trim();
                                 const garmentTitle = piece.brand_title || piece.brandName || (piece.style ? `${primaryBrand} ${piece.style}` : `${primaryBrand} ${category}`);
+                                const cleanGarmentTitle = (garmentTitle || '').replace(/\s*(\([^)]*\)|•\s*[^•]+)$/, '').trim() || `${primaryBrand} ${category}`;
 
-                                onPrintSticker({
+                                const stickerPayload: StickerData = {
                                   itemCode: piece.sku || barcode,
-                                  description: garmentTitle,
+                                  description: cleanGarmentTitle,
                                   category,
-                                  department: deptName || 'LADIES',
-                                  subCategory: subCatName,
-                                  season: seasonName || 'Summer Edition 2026',
+                                  department: deptName || parentDeptName || 'LADIES',
+                                  subCategory: subCatName || subCategoryName,
+                                  season: seasonName || collectionName || 'Summer Edition 2026',
                                   size,
                                   brand: primaryBrand,
                                   grade: qualityGrade,
@@ -3891,7 +3892,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                                   origin: piece.countryOfOrigin || piece.country_of_origin,
                                   shopLocation: piece.shopLocation || piece.shop_location,
                                   invoiceNo: activeBale?.purchaseInvoiceNo || activeBale?.gatePassNo || activeBale?.baleCode || ''
-                                });
+                                };
+
+                                try {
+                                  openThermalLabelPrintWindow(stickerPayload);
+                                } catch {}
+                                onPrintSticker(stickerPayload);
                               }}
                               className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-amber-400 rounded transition-colors cursor-pointer"
                               title="Print 4x2 Thermal Barcode Sticker"

@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { PieceBreakdownItem, InwardGatePass } from '../purchase.types.ts';
 import { StickerData } from '../../../components/ThermalBarcodeSticker.tsx';
 import { PurchaseService } from '../../../services/purchaseService.ts';
+import { openThermalLabelPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { ImageOptimizer } from '../../../utils/imageOptimizer.ts';
 import { Pagination } from '../../../components/Pagination.tsx';
 import {
@@ -64,6 +65,52 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   // Pessimistic Delta Cache Injection for instant UI updates on Restock
   const [deltaUpdates, setDeltaUpdates] = useState<Record<string, Partial<PieceBreakdownItem>>>({});
   const [restockingId, setRestockingId] = useState<string | null>(null);
+
+  const handlePrintPieceSticker = (piece: PieceBreakdownItem, fallbackBaleCode?: string) => {
+    luxuryAudio.playMechanicalClick();
+    const parentBale = bales?.find(b => String(b.id) === String(piece.gatePassId) || b.baleCode === piece.baleCode || b.gatePassNo === piece.baleCode);
+    const invoiceNo = parentBale?.purchaseInvoiceNo || parentBale?.baleCode || parentBale?.gatePassNo || piece.baleCode || fallbackBaleCode || '';
+    const batchNo = parentBale?.baleCode || parentBale?.gatePassNo || piece.baleCode || fallbackBaleCode || 'BAL-01';
+    const department = piece.parentCategoryName || (piece as any).parent_category_name || (piece as any).department || parentBale?.department || 'LADIES';
+    const category = (piece as any).category || piece.itemName || 'Tops & Blouses';
+    const subCategory = (piece as any).subCategory || (piece as any).sub_category || '';
+    const season = (piece as any).season || (piece as any).collectionName || (piece as any).collection_name || parentBale?.season || 'Summer Edition 2026';
+    const grade = piece.labelGrade || (piece as any).quality_grade || (piece as any).grade || 'Super Cream';
+    const size = piece.sizeScanned || (piece as any).size || 'XL';
+    const primaryBrand = (piece.brandName || (piece as any).brand_title || (piece as any).brandTitle || 'Vintage').split(/\s+/)[0];
+    
+    // AI title priority: style > brand_title > brandName + itemName
+    const rawTitle = (piece as any).brand_title || (piece as any).brandTitle || piece.style || (piece.brandName ? `${primaryBrand} ${category}` : category);
+    // Sanitize any accidental trailing " (XL)" or " • XL" that might have been saved in style
+    const cleanTitle = (rawTitle || '').replace(/\s*(\([^)]*\)|•\s*[^•]+)$/, '').trim() || `${primaryBrand} ${category}`;
+
+    const stickerPayload: StickerData = {
+      itemCode: piece.sku || piece.barcode,
+      description: cleanTitle,
+      category,
+      department,
+      subCategory,
+      season,
+      size,
+      brand: primaryBrand,
+      grade,
+      retailPriceAed: Number(piece.retailPriceAed ?? piece.estimatedPrice ?? 0),
+      weightKg: piece.weightKg || ((piece.weightGrams || 0) / 1000) || 0.35,
+      batchNo,
+      date: piece.createdAt?.slice(0, 10) || new Date().toISOString().slice(0, 10),
+      origin: piece.countryOfOrigin,
+      shopLocation: piece.shopLocation,
+      invoiceNo
+    };
+
+    // 1. Direct Thermal Print Window (identical to auto-print: "auto wala bikul perfect hai")
+    try {
+      openThermalLabelPrintWindow(stickerPayload);
+    } catch {}
+
+    // 2. Also pass to sticker modal so user can view/preview if desired
+    onPrintSticker(stickerPayload);
+  };
 
   const handleReleasePiece = async (piece: PieceBreakdownItem) => {
     try {
@@ -813,20 +860,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                             )}
                             <button
                               type="button"
-                              onClick={() =>
-                                onPrintSticker({
-                                  itemCode: piece.barcode,
-                                  description: `${piece.itemName} (${piece.sizeScanned || 'L'})`,
-                                  brand: piece.brandName,
-                                  grade: piece.labelGrade,
-                                  retailPriceAed: price,
-                                  weightKg: piece.weightKg || (grams / 1000),
-                                  batchNo: piece.gatePassId || 'BALE',
-                                  date: piece.createdAt?.slice(0, 10) || new Date().toISOString().slice(0, 10),
-                                  origin: piece.countryOfOrigin,
-                                  shopLocation: piece.shopLocation
-                                })
-                              }
+                              onClick={() => handlePrintPieceSticker(piece)}
                               className="p-1.5 hover:bg-slate-100 text-slate-600 rounded cursor-pointer transition-colors"
                               title="Print Thermal Barcode Label"
                             >
@@ -1110,21 +1144,9 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                               <td className="px-3 py-2 text-right">
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    onPrintSticker({
-                                      itemCode: p.barcode,
-                                      description: `${p.itemName} (${p.sizeScanned || 'L'})`,
-                                      brand: p.brandName,
-                                      grade: p.labelGrade,
-                                      retailPriceAed: price,
-                                      weightKg: p.weightKg || (g / 1000),
-                                      batchNo: bg.baleCode,
-                                      date: p.createdAt?.slice(0, 10) || new Date().toISOString().slice(0, 10),
-                                      origin: p.countryOfOrigin,
-                                      shopLocation: p.shopLocation
-                                    })
-                                  }
+                                  onClick={() => handlePrintPieceSticker(p, bg.baleCode)}
                                   className="p-1 hover:bg-slate-200 text-slate-600 rounded cursor-pointer"
+                                  title="Print Thermal Barcode Label"
                                 >
                                   <Printer className="w-3 h-3" />
                                 </button>

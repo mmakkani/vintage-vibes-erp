@@ -14,6 +14,7 @@ import {
   generateQrCodeSvgString
 } from '../modules/setup/thermal/thermalPopupManager.ts';
 import { renderLabelHtml } from '../modules/setup/thermal/thermalTemplates.ts';
+import { openThermalLabelPrintWindow } from '../utils/thermalPrinter.ts';
 
 export interface StickerData {
   itemCode: string;
@@ -138,6 +139,20 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
     const weightGrams = rawWeightKg > 0 ? Math.round(rawWeightKg * 1000) : 340;
     const cleanItemCode = String(sticker.itemCode || '').trim();
 
+    // Sanitize any redundant trailing " (XL)" or " • XL" from itemName
+    let cleanItemName = String(sticker.description || cleanItemCode || engineConfig.itemName || '').trim();
+    cleanItemName = cleanItemName.replace(/\s*(\([A-Za-z0-9\s-]+\)|•\s*[A-Za-z0-9\s-]+)$/, '').trim();
+    if (!cleanItemName || cleanItemName.length < 3) {
+      cleanItemName = `${sticker.brand || 'VINTAGE'} ${sticker.category || 'GARMENT'}`;
+    }
+
+    const rawBatch = (sticker.batchNo && !sticker.batchNo.startsWith('igp-17'))
+      ? sticker.batchNo.trim()
+      : (engineConfig.batchNo && !engineConfig.batchNo.startsWith('igp-17') ? engineConfig.batchNo : 'BAL-01');
+    const rawInvoice = (sticker.invoiceNo && sticker.invoiceNo !== 'INV-2026-8891' && !sticker.invoiceNo.startsWith('igp-17'))
+      ? sticker.invoiceNo.trim()
+      : (rawBatch && !rawBatch.startsWith('igp-17') ? rawBatch : (engineConfig.invoiceNo && engineConfig.invoiceNo !== 'INV-2026-8891' && !engineConfig.invoiceNo.startsWith('igp-17') ? engineConfig.invoiceNo : ''));
+
     return {
       ...engineConfig,
       // 1. Company Branding: Preserved from Global Setup
@@ -148,7 +163,7 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
 
       // 2. Dynamic Item & Transaction Metadata: Injected directly from sorted item
       skuBarcode: cleanItemCode || engineConfig.skuBarcode,
-      itemName: sticker.description || cleanItemCode || engineConfig.itemName,
+      itemName: cleanItemName,
       brandName: sticker.brand || engineConfig.brandName || '',
       category: sticker.category || (engineConfig.category !== 'Apparel / Heavy Denim' ? engineConfig.category : 'Tops & Blouses') || 'Tops & Blouses',
       department: sticker.department || (engineConfig as any).department || 'LADIES',
@@ -159,10 +174,8 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
       priceAed: Number(sticker.retailPriceAed ?? 0),
       weightValue: weightGrams,
       weightUnit: 'g',
-      batchNo: sticker.batchNo || engineConfig.batchNo || '',
-      invoiceNo: (sticker.invoiceNo && sticker.invoiceNo !== 'INV-2026-8891' && !sticker.invoiceNo.startsWith('igp-17'))
-        ? sticker.invoiceNo
-        : (sticker.batchNo && !sticker.batchNo.startsWith('igp-17') ? sticker.batchNo : (engineConfig.invoiceNo && engineConfig.invoiceNo !== 'INV-2026-8891' ? engineConfig.invoiceNo : '')),
+      batchNo: rawBatch,
+      invoiceNo: rawInvoice,
       serialNumber: cleanItemCode,
       styleId: selectedStyleId
     };
@@ -191,22 +204,41 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
     });
   }, [activeConfig, barcodeSvgString, qrSvgString]);
 
-  // Handle direct print launch
+  // Handle direct print launch (delegates to the exact same thermal print engine as auto-print)
   const handlePrint = () => {
-    const win = openThermalPrintPopup(activeConfig, activeConfig.styleId);
-    if (!win) {
-      window.print();
+    try {
+      openThermalLabelPrintWindow({
+        itemCode: activeConfig.skuBarcode,
+        description: activeConfig.itemName,
+        category: activeConfig.category,
+        department: activeConfig.department,
+        subCategory: activeConfig.subCategory,
+        season: activeConfig.season,
+        size: activeConfig.size,
+        brand: activeConfig.brandName,
+        grade: activeConfig.grade,
+        retailPriceAed: activeConfig.priceAed,
+        weightKg: (activeConfig.weightValue || 350) / 1000,
+        batchNo: activeConfig.batchNo,
+        date: new Date().toISOString().slice(0, 10),
+        invoiceNo: activeConfig.invoiceNo
+      });
+    } catch {
+      const win = openThermalPrintPopup(activeConfig, activeConfig.styleId);
+      if (!win) {
+        window.print();
+      }
     }
   };
 
   // Label Dimension & Aspect Ratio Calculations for container preview
   const widthMm = activeConfig.widthMm || 57;
-  const heightMm = activeConfig.heightMm || 32;
+  const heightMm = activeConfig.heightMm || 37;
   const aspectRatio = widthMm / Math.max(1, heightMm);
 
-  // Scaled dimensions with generous boundaries preventing clipping
-  const maxCardWidthPx = 430;
-  const maxCardHeightPx = 250;
+  // Scaled dimensions strictly matching physical 57x37mm label aspect ratio (eliminating empty vertical void)
+  const maxCardWidthPx = 360;
+  const maxCardHeightPx = 220;
 
   let previewWidthPx = maxCardWidthPx;
   let previewHeightPx = Math.round(previewWidthPx / aspectRatio);

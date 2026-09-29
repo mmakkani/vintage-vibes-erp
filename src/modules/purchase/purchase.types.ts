@@ -79,6 +79,11 @@ export interface PieceBreakdownItem {
   status?: 'IN_STOCK' | 'SOLD' | 'DAMAGED' | 'RESERVED' | 'CLAIMED_PENDING' | 'WIP_LAUNDRY';
   sku?: string;
   parentCategoryName?: string;
+  category?: string;
+  subCategory?: string;
+  collectionName?: string;
+  brandTitle?: string;
+  brand_title?: string;
   readyForEcommerce?: boolean;
   ecommerceDescription?: string;
   seoTags?: string[];

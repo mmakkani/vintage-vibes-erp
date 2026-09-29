@@ -1838,7 +1838,7 @@ export class PurchaseService {
   }
 
   public static readonly INVENTORY_PIECES_COLUMNS = 'id, gate_pass_id, barcode, item_name, brand_name, brand_tier, label_grade, shop_location, weight_kg, weight_grams, cost_per_gram, cost_price, estimated_price, retail_price_aed, size_scanned, country_of_origin, style, front_image_url, back_image_url, tag_image_url, is_sold, status, locked_by_buyer, locked_by_booth, lock_expires_at, reserved_until, market_segment, is_grail, ai_suggested_price, is_price_overridden, global_insights, created_at';
-  public static readonly BALE_SORTED_PIECES_COLUMNS = 'id, bale_id, piece_code, weight_grams, cost_price, selling_price, brand_title, category, size, quality_grade, front_image, back_image, tag_image, market_segment, is_grail, ai_suggested_price, is_price_overridden, global_insights, created_at';
+  public static readonly BALE_SORTED_PIECES_COLUMNS = 'id, bale_id, piece_code, weight_grams, cost_price, selling_price, brand_title, category, size, quality_grade, front_image, back_image, tag_image, market_segment, is_grail, ai_suggested_price, is_price_overridden, global_insights, created_at, sku, parent_category_name, sub_category, collection_name';
   public static readonly PIECES_GRID_COLUMNS = PurchaseService.INVENTORY_PIECES_COLUMNS;
 
   public static async getInventoryPieces(limit = 1000, force = false): Promise<PieceBreakdownItem[]> {
@@ -1953,6 +1953,13 @@ export class PurchaseService {
             sizeScanned: row.size || 'L',
             countryOfOrigin: 'USA',
             style: row.brand_title || '',
+            sku: row.sku || barcode,
+            parentCategoryName: row.parent_category_name || '',
+            category: row.category || 'Tops & Blouses',
+            subCategory: row.sub_category || '',
+            collectionName: row.collection_name || '',
+            brandTitle: row.brand_title || '',
+            brand_title: row.brand_title || '',
             frontImageUrl: row.front_image || '',
             backImageUrl: row.back_image || '',
             tagImageUrl: row.tag_image || '',
