@@ -201,11 +201,20 @@ export default function App() {
     return init;
   });
 
+  const dispatchTimerRef = useRef<any>(null);
+  const lastDispatchedRef = useRef<Record<string, string>>({});
+
   // Cross-Module Sub-Destination Event Dispatcher & DOM Click Bridge
   const dispatchSubTabNavigation = useCallback((targetTab: ActiveTab, targetSubTab?: string) => {
     if (!targetSubTab) return;
+    if (lastDispatchedRef.current[targetTab] === targetSubTab) return;
+    lastDispatchedRef.current[targetTab] = targetSubTab;
 
-    const execute = () => {
+    if (dispatchTimerRef.current) {
+      clearTimeout(dispatchTimerRef.current);
+    }
+
+    dispatchTimerRef.current = setTimeout(() => {
       // 1. REGISTRY / PARTIES MODULE DISPATCHER
       if (targetTab === 'parties') {
         const partiesContainer = document.getElementById('keepalive-tab-parties') || document.body;
@@ -234,7 +243,7 @@ export default function App() {
 
             const filterBtn = freshButtons.find(b => b.textContent?.trim() === filterLabel);
             if (filterBtn) filterBtn.click();
-          }, 80);
+          }, 50);
         } else if (targetSubTab === 'VISITING_CARDS') {
           const cardBtn = allButtons.find(b => b.textContent?.includes('Visiting Card Directory'));
           if (cardBtn) cardBtn.click();
@@ -247,21 +256,21 @@ export default function App() {
           setTimeout(() => {
             const addBtn = document.getElementById('btn-add-new-party') || Array.from(partiesContainer.querySelectorAll('button')).find(b => b.textContent?.includes('Register New Party'));
             if (addBtn) (addBtn as HTMLButtonElement).click();
-          }, 100);
+          }, 50);
         } else if (targetSubTab === 'SCAN_CARD') {
           const cardBtn = allButtons.find(b => b.textContent?.includes('Visiting Card Directory'));
           if (cardBtn) cardBtn.click();
           setTimeout(() => {
             const scanBtn = Array.from(partiesContainer.querySelectorAll('button')).find(b => b.textContent?.includes('Scan Visiting Card') || b.textContent?.includes('Live Card Scanner'));
             if (scanBtn) (scanBtn as HTMLButtonElement).click();
-          }, 100);
+          }, 50);
         } else if (targetSubTab === 'NEW_RETAIL') {
           const retailBtn = allButtons.find(b => b.textContent?.includes('Retail Customer CRM'));
           if (retailBtn) retailBtn.click();
           setTimeout(() => {
             const newRetBtn = Array.from(partiesContainer.querySelectorAll('button')).find(b => b.textContent?.includes('New Customer') || b.textContent?.includes('Add Customer'));
             if (newRetBtn) (newRetBtn as HTMLButtonElement).click();
-          }, 100);
+          }, 50);
         }
       }
 
@@ -377,11 +386,7 @@ export default function App() {
           if (btn) btn.click();
         }
       }
-    };
-
-    setTimeout(execute, 40);
-    setTimeout(execute, 160);
-    setTimeout(execute, 350);
+    }, 60);
   }, []);
 
   const setActiveTab = (tab: ActiveTab, subTab?: string) => {
@@ -1055,7 +1060,7 @@ export default function App() {
             </div>
 
             {/* Purchase & Container Inward Module */}
-            <div id="keepalive-tab-purchase" className={activeTab === 'purchase' ? 'block' : 'hidden'} key={`keepalive-tab-purchase-${subTabKeys['purchase'] || 'default'}`}>
+            <div id="keepalive-tab-purchase" className={activeTab === 'purchase' ? 'block' : 'hidden'} key="keepalive-tab-purchase">
               {visitedTabs.has('purchase') && (
                 <ErrorBoundary sectionName="Purchase & Container Inward Module">
                   <PurchaseView
@@ -1068,7 +1073,7 @@ export default function App() {
             </div>
 
             {/* Sales, Barcode & Dispatch Module */}
-            <div id="keepalive-tab-sales" className={activeTab === 'sales' ? 'block' : 'hidden'} key={`keepalive-tab-sales-${subTabKeys['sales'] || 'default'}`}>
+            <div id="keepalive-tab-sales" className={activeTab === 'sales' ? 'block' : 'hidden'} key="keepalive-tab-sales">
               {visitedTabs.has('sales') && (
                 <ErrorBoundary sectionName="Sales, Barcode & Dispatch Module">
                   <ModuleMaintenanceGuard
@@ -1088,7 +1093,7 @@ export default function App() {
             </div>
 
             {/* Marketing & AI Automation Module */}
-            <div id="keepalive-tab-marketing" className={activeTab === 'marketing' ? 'block' : 'hidden'} key={`keepalive-tab-marketing-${subTabKeys['marketing'] || 'default'}`}>
+            <div id="keepalive-tab-marketing" className={activeTab === 'marketing' ? 'block' : 'hidden'} key="keepalive-tab-marketing">
               {visitedTabs.has('marketing') && (
                 <ErrorBoundary sectionName="Marketing & AI Automation Module">
                   <MarketingAutomationView
@@ -1100,7 +1105,7 @@ export default function App() {
             </div>
 
             {/* Financial Accounts & COA Module */}
-            <div id="keepalive-tab-finance" className={activeTab === 'finance' ? 'block' : 'hidden'} key={`keepalive-tab-finance-${subTabKeys['finance'] || 'default'}`}>
+            <div id="keepalive-tab-finance" className={activeTab === 'finance' ? 'block' : 'hidden'} key="keepalive-tab-finance">
               {visitedTabs.has('finance') && (
                 <ErrorBoundary sectionName="Financial Accounts & COA Module">
                   <FinanceView
@@ -1130,7 +1135,7 @@ export default function App() {
             </div>
 
             {/* Parties & Khata Ledger Module */}
-            <div id="keepalive-tab-parties" className={activeTab === 'parties' ? 'block' : 'hidden'} key={`keepalive-tab-parties-${subTabKeys['parties'] || 'default'}`}>
+            <div id="keepalive-tab-parties" className={activeTab === 'parties' ? 'block' : 'hidden'} key="keepalive-tab-parties">
               {visitedTabs.has('parties') && (
                 <ErrorBoundary sectionName="Parties & Khata Ledger Module">
                   <PartiesView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
@@ -1139,7 +1144,7 @@ export default function App() {
             </div>
 
             {/* HR, Vault & Payroll Module */}
-            <div id="keepalive-tab-hr" className={activeTab === 'hr' ? 'block' : 'hidden'} key={`keepalive-tab-hr-${subTabKeys['hr'] || 'default'}`}>
+            <div id="keepalive-tab-hr" className={activeTab === 'hr' ? 'block' : 'hidden'} key="keepalive-tab-hr">
               {visitedTabs.has('hr') && (
                 <ErrorBoundary sectionName="HR, Vault & Payroll Module">
                   <ModuleMaintenanceGuard
@@ -1155,7 +1160,7 @@ export default function App() {
             </div>
 
             {/* Global Master Setup & Configuration Module */}
-            <div id="keepalive-tab-setup" className={activeTab === 'setup' ? 'block' : 'hidden'} key={`keepalive-tab-setup-${subTabKeys['setup'] || 'default'}`}>
+            <div id="keepalive-tab-setup" className={activeTab === 'setup' ? 'block' : 'hidden'} key="keepalive-tab-setup">
               {visitedTabs.has('setup') && (
                 !isTabAccessible('setup', currentUser) ? (
                   <AccessDeniedNotice
@@ -1229,7 +1234,7 @@ export default function App() {
             </div>
 
             {/* System Audit Trail & Compliance Module */}
-            <div id="keepalive-tab-audit" className={activeTab === 'audit' ? 'block' : 'hidden'} key={`keepalive-tab-audit-${subTabKeys['audit'] || 'default'}`}>
+            <div id="keepalive-tab-audit" className={activeTab === 'audit' ? 'block' : 'hidden'} key="keepalive-tab-audit">
               {visitedTabs.has('audit') && (
                 <ErrorBoundary sectionName="System Audit Trail & Compliance Module">
                   <AuditView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
@@ -1238,7 +1243,7 @@ export default function App() {
             </div>
 
             {/* Access Control Module */}
-            <div id="keepalive-tab-access" className={activeTab === 'access' ? 'block' : 'hidden'} key={`keepalive-tab-access-${subTabKeys['access'] || 'default'}`}>
+            <div id="keepalive-tab-access" className={activeTab === 'access' ? 'block' : 'hidden'} key="keepalive-tab-access">
               {visitedTabs.has('access') && (
                 !isTabAccessible('access', currentUser) ? (
                   <AccessDeniedNotice

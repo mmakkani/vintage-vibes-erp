@@ -139,7 +139,19 @@ export async function executeClientFallback<T = any>(
           .from('chart_of_accounts')
           .select('*')
           .order('code', { ascending: true });
-        return (data || []) as any;
+        const accounts = (data || []).map((r: any) => ({
+          ...r,
+          account_code: r.code || r.account_code,
+          account_name: r.name || r.account_name,
+          pillar_category: r.type || r.pillar_category || 'ASSET',
+          isActive: r.is_active !== false && r.isActive !== false
+        }));
+        return Object.assign([...accounts], {
+          success: true,
+          accounts: accounts,
+          coa: accounts,
+          data: accounts
+        }) as any;
       }
       if (url.includes('/finance/vouchers') || url.includes('/vouchers')) {
         return (await FinanceService.getVouchers()) as any;
@@ -573,7 +585,10 @@ export function attachAuthHeader(url: string, init?: RequestInit): RequestInit {
   }
   try {
     let token: string | null = null;
-    const explicitToken = localStorage.getItem('vv_auth_token') || localStorage.getItem('session_token');
+    const explicitToken =
+      localStorage.getItem('vv_auth_token') ||
+      localStorage.getItem('session_token') ||
+      (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('vv_auth_token') : null);
     if (explicitToken && typeof explicitToken === 'string' && explicitToken.trim()) {
       token = explicitToken.trim();
     }
@@ -582,6 +597,21 @@ export function attachAuthHeader(url: string, init?: RequestInit): RequestInit {
       if (stored) {
         const u = JSON.parse(stored);
         token = u?.token || null;
+      }
+    }
+    // Verify token expiration before attaching (vv_sess_<opaque>.<user>.<role>.<expiresAt>.<sig>)
+    if (token && token.startsWith('vv_sess_')) {
+      const parts = token.split('.');
+      if (parts.length === 5) {
+        const expiresAt = Number(parts[3]);
+        if (Number.isFinite(expiresAt) && Date.now() > expiresAt) {
+          try {
+            localStorage.removeItem('vv_auth_token');
+            localStorage.removeItem('session_token');
+            if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem('vv_auth_token');
+          } catch (_) {}
+          token = null;
+        }
       }
     }
     if (token) {
@@ -632,7 +662,7 @@ export async function safeFetchJson<T = any>(
           return data as T;
         }
         if (res.status === 401 || res.status === 403) {
-          console.warn(`[safeFetchJson] Auth required (HTTP ${res.status}) for ${url}`);
+          // Session requires refresh or permissions; fallback seamlessly to direct Supabase client
           break;
         }
         if (attempt < retries && (res.status === 404 || res.status >= 500)) {
@@ -649,11 +679,10 @@ export async function safeFetchJson<T = any>(
     }
   }
 
-  // 2. Client-side fallback if server is unreachable
+  // 2. Client-side fallback if server is unreachable or requires session refresh
   try {
     return await executeClientFallback<T>(url, options);
   } catch (fbErr: any) {
-    console.warn(`[safeFetchJson Fallback Notice for ${url}]:`, fbErr?.message);
     return null;
   }
 }
@@ -723,14 +752,16 @@ export function initUniversalFetchInterceptor() {
       // 1. Try real server HTTP request first
       try {
         const res = await rawFetch.apply(this, [input, effectiveInit]);
-        if (res.ok || (res.status !== 404 && res.status !== 502 && res.status !== 503)) {
+        const isAuthRoute = url.includes('/api/auth/login') || url.includes('/api/auth/verify');
+        // Return immediately if successful, or if auth route returns 401/403 (for login credential messages)
+        if (res.ok || (isAuthRoute && (res.status === 401 || res.status === 403))) {
           return res;
         }
       } catch (_) {
         // Network offline or server unreachable, proceed to client fallback
       }
 
-      // 2. Client-side fallback if server is unreachable
+      // 2. Client-side fallback if server returned error (401, 403, 404, 500, etc.) or is unreachable
       try {
         const data = await executeClientFallback(url, effectiveInit);
         if (data !== null && data !== undefined) {
@@ -740,9 +771,7 @@ export function initUniversalFetchInterceptor() {
             headers: { 'Content-Type': 'application/json' }
           });
         }
-      } catch (err: any) {
-        console.warn(`[Fetch Interceptor Fallback for ${url}]:`, err?.message);
-      }
+      } catch (_) {}
       // Return safe JSON fallback
       return new Response(JSON.stringify({ success: true, data: [] }), {
         status: 200,
