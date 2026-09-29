@@ -496,14 +496,37 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       const mapping: Record<string, string> = { men: 'MEN', ladies: 'LAD', children: 'KID', accessories: 'ACC' };
       return mapping[selectedDeptObj.slug.toLowerCase()] || selectedDeptObj.slug.toUpperCase().slice(0, 3);
     }
-    return 'MEN';
+    if (selectedDeptObj && selectedDeptObj.name) {
+      const n = selectedDeptObj.name.toLowerCase();
+      if (n.includes('lad') || n.includes('wom')) return 'LAD';
+      if (n.includes('men')) return 'MEN';
+      if (n.includes('kid') || n.includes('child')) return 'KID';
+      if (n.includes('acc')) return 'ACC';
+    }
+    return 'LAD';
   }, [selectedDeptObj]);
 
-  useEffect(() => {
-    SetupService.generateSku(activeDeptCode)
-      .then(sku => setGeneratedSku(sku))
-      .catch(() => setGeneratedSku(`VIN-${activeDeptCode}-0001`));
-  }, [activeDeptCode]);
+  const getCategoryCode = (catName: string, catSlug?: string): string => {
+    const slug = (catSlug || '').toLowerCase();
+    const name = (catName || '').toLowerCase();
+    if (slug.includes('top') || name.includes('top') || name.includes('blouse')) return 'TOP';
+    if (slug.includes('tee') || slug.includes('t-shirt') || name.includes('t-shirt') || name.includes('tee')) return 'TEE';
+    if (slug.includes('denim') || slug.includes('jean') || name.includes('denim') || name.includes('jean')) return 'DNM';
+    if (slug.includes('jacket') || slug.includes('coat') || name.includes('jacket') || name.includes('outerwear')) return 'JAC';
+    if (slug.includes('dress') || slug.includes('skirt') || name.includes('dress') || name.includes('skirt')) return 'DRS';
+    if (slug.includes('sweater') || slug.includes('knit') || name.includes('sweater') || name.includes('knit')) return 'SWT';
+    if (slug.includes('hoodie') || slug.includes('fleece') || name.includes('hoodie') || name.includes('fleece')) return 'HOD';
+    if (slug.includes('pant') || slug.includes('trouser') || name.includes('pant') || name.includes('trouser')) return 'PNT';
+    if (slug.includes('short') || name.includes('short')) return 'SHT';
+    if (slug.includes('acc') || name.includes('accessor')) return 'ACC';
+    const clean = (catSlug || catName || 'GEN').replace(/[^a-zA-Z]/g, '').toUpperCase();
+    return clean.slice(0, 3) || 'GEN';
+  };
+
+  const activeCategoryCode = useMemo(() => {
+    const effectiveCat = selectedSubCatObj?.name || selectedMainCatObj?.name || selectedCategory;
+    return getCategoryCode(effectiveCat, selectedMainCatObj?.slug || selectedSubCatObj?.slug);
+  }, [selectedSubCatObj, selectedMainCatObj, selectedCategory]);
 
   // Searchable Options for Cascading Comboboxes
   const deptOptions: SearchableOption[] = useMemo(() => {
@@ -749,7 +772,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     return { activeBalesList: active, completedBalesList: completed };
   }, [effectiveBales]);
 
-  // Auto-generated Next Piece Barcode Preview (${activeBaleId || 'BAL-01'}-P0001)
+  // Auto-generated Next Piece Barcode Preview (${baseCode}-${activeDeptCode}-${activeCategoryCode}-P0001)
   const nextPieceBarcode = useMemo(() => {
     const baseCode = activeBale?.baleCode || activeBale?.gatePassNo || activeBale?.id || 'BAL-01';
     const maxSeq = pieces.reduce((max, p) => {
@@ -757,8 +780,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       return match ? Math.max(max, parseInt(match[1], 10)) : max;
     }, 0);
     const nextIdx = Math.max(pieces.length, maxSeq) + 1;
-    return `${baseCode}-P${String(nextIdx).padStart(4, '0')}`;
-  }, [activeBale, pieces]);
+    return `${baseCode}-${activeDeptCode}-${activeCategoryCode}-P${String(nextIdx).padStart(4, '0')}`;
+  }, [activeBale, pieces, activeDeptCode, activeCategoryCode]);
+
+  useEffect(() => {
+    setGeneratedSku(nextPieceBarcode);
+  }, [nextPieceBarcode]);
 
   // Apply OCR extracted tag data (AI Grail & Vintage Value Hunter)
   const handleApplyExtractedTag = (tagData: ExtractedTagData) => {
@@ -797,8 +824,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       setLengthInches(sanitizeMeasurementToInches(rawLength, 45));
     }
 
-    // 2c. Auto-Department / Gender matching (Men's, Ladies, Kids)
-    if (tagData.gender) {
+    // 2c. Auto-Department / Gender matching (Men's, Ladies, Kids) - ONLY if user has not explicitly selected a department
+    if (tagData.gender && !selectedDeptId) {
       const gNorm = tagData.gender.toLowerCase();
       let matchedDept: SearchableOption | undefined;
       if (gNorm.includes('lad') || gNorm.includes('wom') || gNorm.includes('fem')) {
@@ -858,8 +885,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     if (tagData.lengthTapeImageUrl) setMeasurementImageUrl(tagData.lengthTapeImageUrl);
     if (tagData.widthTapeImageUrl) setWidthTapeImageUrl(tagData.widthTapeImageUrl);
 
-    // 5. Category matching: ONLY apply if user hasn't explicitly chosen a specific category
-    const isCurrentGeneric = !selectedCategory || selectedCategory === 'Mix' || selectedCategory === 'Apparel' || selectedCategory === 'Vintage Mix' || selectedCategory === 'Miscellaneous Curated';
+    // 5. Category matching: ONLY apply if user hasn't explicitly chosen a specific category or main category
+    const isCurrentGeneric = !selectedMainCategoryId && (!selectedCategory || selectedCategory === 'Mix' || selectedCategory === 'Apparel' || selectedCategory === 'Vintage Mix' || selectedCategory === 'Miscellaneous Curated');
     if (isCurrentGeneric && tagData.category) {
       const matchCat = availableCategories.find(c =>
         c.toLowerCase().includes(tagData.category!.toLowerCase()) ||
@@ -1055,10 +1082,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       }
     }
 
+    const effectiveCategory = selectedSubCatObj?.name || selectedMainCatObj?.name || selectedCategory;
+    const catCode = getCategoryCode(effectiveCategory, selectedMainCatObj?.slug || selectedSubCatObj?.slug);
+    const deptCode = activeDeptCode || 'LAD';
     const subCategoryName = selectedSubCatObj?.name || '';
     const collectionId = selectedCollectionObj?.id || null;
     const collectionName = selectedCollectionObj?.name || null;
-    const parentDeptName = selectedDeptObj?.name || activeDeptObj?.name || 'Vintage';
+    const parentDeptName = selectedDeptObj?.name || activeDeptObj?.name || 'Ladies';
 
     // Distribute weights across bundle items
     const baseGramsPerPiece = Math.floor(numericGramWeight / qty);
@@ -1092,8 +1122,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
     for (let i = 0; i < qty; i++) {
       const pieceIdx = startSeq + 1 + i;
-      const barcode = `${activeBaleId}-P${String(pieceIdx).padStart(4, '0')}`;
-      const pieceSku = qty === 1 ? generatedSku : `${generatedSku}-${String(i + 1).padStart(2, '0')}`;
+      const pieceUnifiedCode = `${activeBaleId}-${deptCode}-${catCode}-P${String(pieceIdx).padStart(4, '0')}`;
+      const barcode = pieceUnifiedCode;
+      const pieceSku = pieceUnifiedCode;
       const pieceWeightGrams = (i === qty - 1) ? remainingGramsToDistribute : baseGramsPerPiece;
       remainingGramsToDistribute -= pieceWeightGrams;
       const weightKg = Number((pieceWeightGrams / 1000).toFixed(3));
@@ -1116,13 +1147,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         piece_code: sanitizeString(barcode, 64),
         sku: sanitizeString(pieceSku, 50),
         parent_category_name: sanitizeNullableString(parentDeptName, 64),
-        category: sanitizeString(selectedCategory, 64),
+        category: sanitizeString(effectiveCategory, 64),
         sub_category: sanitizeNullableString(subCategoryName, 64),
         collection_id: collectionId,
         collection_name: sanitizeNullableString(collectionName, 64),
         ready_for_ecommerce: readyForEcommerce,
-        ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
-        seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
+        ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${effectiveCategory} curated by Vintage Vibes.`,
+        seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, effectiveCategory.toLowerCase(), brandTitle.toLowerCase()],
         size: sanitizeString(sizeScanned, 32),
         brand_title: sanitizeString(brandTitle, 64),
         weight_grams: pieceWeightGrams,
@@ -1146,7 +1177,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         gate_pass_id: String(activeBale.id),
         barcode: sanitizeString(barcode, 64),
         sku: sanitizeString(pieceSku, 50),
-        item_name: sanitizeString(selectedCategory, 128),
+        item_name: sanitizeString(effectiveCategory, 128),
         brand_name: sanitizeString(brandTitle.split(' ')[0] || "Vintage", 64),
         brand_tier: sanitizeString(finalGrailStatus ? 'Grail' : 'Vintage Curated', 32),
         label_grade: sanitizeString(selectedGrade, 32),
@@ -1170,8 +1201,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         is_price_overridden: isOverridden,
         global_insights: effectiveGlobalInsights,
         ready_for_ecommerce: readyForEcommerce,
-        ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${selectedCategory} curated by Vintage Vibes.`,
-        seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, selectedCategory.toLowerCase(), brandTitle.toLowerCase()],
+        ecommerce_description: ecommerceDescription || styleNotes || `Authentic ${era} ${effectiveCategory} curated by Vintage Vibes.`,
+        seo_tags: seoTags.length > 0 ? seoTags : [`${era} vintage`, effectiveCategory.toLowerCase(), brandTitle.toLowerCase()],
         parent_category_name: sanitizeNullableString(parentDeptName, 64),
         sub_category: sanitizeNullableString(subCategoryName, 64),
         collection_id: collectionId,
@@ -1183,7 +1214,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         gatePassId: String(activeBale.id),
         baleCode: activeBale.baleCode || activeBale.gatePassNo,
         barcode,
-        itemName: selectedCategory,
+        sku: pieceSku,
+        itemName: effectiveCategory,
         brandName: brandTitle.split(' ')[0] || "Levi's",
         brandTier: finalGrailStatus ? 'Grail' : 'Vintage Curated',
         labelGrade: selectedGrade,
@@ -1228,10 +1260,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
       stickerPayloads.push({
         itemCode: pieceSku || barcode,
-        description: `${pieceSku} • ${selectedCategory} (${sizeScanned})`,
-        category: selectedCategory,
+        description: `${brandTitle || effectiveCategory} • ${effectiveCategory}${sizeScanned ? ` (${sizeScanned})` : ''}`,
+        category: effectiveCategory,
+        department: parentDeptName,
+        subCategory: subCategoryName,
+        season: collectionName || 'Summer Edition 2026',
         size: sizeScanned,
-        brand: brandTitle || selectedCategory,
+        brand: brandTitle || effectiveCategory,
         grade: selectedGrade,
         retailPriceAed: effectiveSellingPrice,
         weightKg,
@@ -1343,17 +1378,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       stickerPayloads.forEach(sticker => onPrintSticker(sticker));
     }
 
+    const firstPieceUnifiedCode = `${activeBaleId}-${deptCode}-${catCode}-P${String(startSeq + 1).padStart(4, '0')}`;
     setFeedbackToast({
       text: qty > 1
         ? `✓ Added Bundle of ${qty} pieces (${numericGramWeight}g)!`
         : readyForEcommerce
-        ? `✓ Added ${generatedSku} (${numericGramWeight}g) • 🌐 Routed to Storefront!`
-        : `✓ Added ${generatedSku} (${numericGramWeight}g) • 🧺 Routed to WIP Laundry`,
+        ? `✓ Added ${firstPieceUnifiedCode} (${numericGramWeight}g) • 🌐 Routed to Storefront!`
+        : `✓ Added ${firstPieceUnifiedCode} (${numericGramWeight}g) • 🧺 Routed to WIP Laundry`,
       type: 'success'
     });
-
-    // Advance sequence for next piece
-    SetupService.generateSku(activeDeptCode).then(s => setGeneratedSku(s)).catch(() => {});
 
     // Reset fields with smart defaults and refocus weight immediately
     setBundleQuantity(1);
@@ -3405,7 +3438,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                                 onMouseDown={e => {
                                   e.preventDefault();
                                   setBrandTitle(im.name);
-                                  if (im.category && availableCategories.includes(im.category)) {
+                                  if (im.category && availableCategories.includes(im.category) && !selectedMainCategoryId) {
                                     setSelectedCategory(im.category);
                                   }
                                   setIsItemMasterDropdownOpen(false);
@@ -3631,9 +3664,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
             <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-400 pt-1 gap-2">
               <span className="font-mono flex items-center gap-2">
-                <span>Next Barcode: <strong className="text-indigo-400">{nextPieceBarcode}</strong></span>
-                <span className="text-slate-600">•</span>
-                <span>Next SKU: <strong className="text-amber-400 font-bold">{generatedSku}</strong></span>
+                <span>Next Code (Barcode & SKU): <strong className="text-indigo-400 font-bold">{nextPieceBarcode}</strong></span>
               </span>
               <span className="text-[10px] text-slate-500 font-mono">
                 Keyboard Shortcut: Press <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-300 font-bold">Enter</kbd> to add and auto-focus next
@@ -3664,10 +3695,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 <thead className="sticky top-0 bg-slate-950 text-slate-400 font-mono text-[11px] uppercase border-b border-slate-800 z-10">
                   <tr>
                     <th className="py-2.5 px-3">#</th>
-                    <th className="py-2.5 px-3">Barcode</th>
+                    <th className="py-2.5 px-3">Barcode / SKU</th>
                     <th className="py-2.5 px-3 text-center">Date / Time</th>
                     <th className="py-2.5 px-3">Era / Vintage</th>
-                    <th className="py-2.5 px-3">Category</th>
+                    <th className="py-2.5 px-3">Category & Taxonomy</th>
+                    <th className="py-2.5 px-3 text-center">Grade</th>
                     <th className="py-2.5 px-3 text-center">Size</th>
                     <th className="py-2.5 px-3">Brand & Title</th>
                     <th className="py-2.5 px-3 text-center">Studio Photos</th>
@@ -3681,7 +3713,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 <tbody className="divide-y divide-slate-800/60 font-sans">
                   {(!pieces || pieces.length === 0) ? (
                     <tr>
-                      <td colSpan={13} className="py-12 text-center text-slate-500">
+                      <td colSpan={14} className="py-12 text-center text-slate-500">
                         <Tag className="w-8 h-8 text-slate-700 mx-auto mb-2" />
                         <p className="font-semibold text-slate-400">No pieces sorted in this bale yet</p>
                         <p className="text-[11px] text-slate-600 mt-0.5">
@@ -3692,8 +3724,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                   ) : (
                     pieces.map((piece, idx) => {
                       const pieceNum = pieces.length - idx;
-                      const barcode = piece.piece_code || piece.barcode;
+                      const barcode = piece.piece_code || piece.barcode || piece.sku;
                       const category = piece.category || piece.itemName || 'Vintage Garment';
+                      const deptName = piece.parent_category_name || (piece as any).parentCategoryName || '';
+                      const subCatName = piece.sub_category || (piece as any).subCategory || '';
+                      const seasonName = piece.collection_name || (piece as any).collectionName || (piece as any).season || '';
                       const size = piece.size || piece.sizeScanned || 'L';
                       const brandTitle = piece.brand_title || piece.brandName || '';
                       const g = piece.weight_grams ?? piece.weightGrams ?? Math.round((piece.weightKg || 0) * 1000);
@@ -3702,7 +3737,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       const frontImg = piece.front_image || piece.frontImageUrl;
                       const backImg = piece.back_image || piece.backImageUrl;
                       const tagImg = piece.tag_image || piece.tagImageUrl;
-                      const qualityGrade = piece.quality_grade || piece.labelGrade;
+                      const qualityGrade = piece.quality_grade || piece.labelGrade || (piece as any).grade || 'Super Cream';
                       const isOverridden = Boolean(piece.is_price_overridden ?? piece.isPriceOverridden);
                       const isGrailItem = Boolean(piece.is_grail ?? piece.isGrail ?? (piece.marketSegment === 'Antique' || piece.market_segment === 'Antique' || piece.marketSegment === 'Grails' || piece.market_segment === 'Grails' || piece.marketSegment === 'Boutique' || piece.market_segment === 'Boutique'));
                       const aiPrice = piece.ai_suggested_price ?? piece.aiSuggestedPrice;
@@ -3711,7 +3746,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       return (
                         <tr key={piece.id || idx} className="hover:bg-slate-900/80 transition-colors">
                           <td className="py-2.5 px-3 font-mono text-slate-500 text-[11px]">{pieceNum}</td>
-                          <td className="py-2.5 px-3 font-mono font-bold text-indigo-400 text-[11px]">{barcode}</td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-indigo-400 text-[11px] whitespace-nowrap">{barcode}</td>
                           <td className="py-2.5 px-3 text-center font-mono text-slate-400 text-[11px] whitespace-nowrap">
                             {piece.created_at || (piece as any).createdAt
                               ? new Date(piece.created_at || (piece as any).createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -3737,7 +3772,32 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                               )}
                             </div>
                           </td>
-                          <td className="py-2.5 px-3 text-slate-300">{category}</td>
+                          <td className="py-2.5 px-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {deptName && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-950/80 text-indigo-300 border border-indigo-700/50 uppercase">
+                                    {deptName}
+                                  </span>
+                                )}
+                                <span className="font-semibold text-white text-xs">{category}</span>
+                                {subCatName && subCatName !== category && (
+                                  <span className="text-[11px] text-slate-400">› {subCatName}</span>
+                                )}
+                              </div>
+                              {seasonName && (
+                                <div className="text-[10px] text-amber-300/90 font-mono flex items-center gap-1">
+                                  <span>📅</span>
+                                  <span>{seasonName}</span>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-emerald-950/80 text-emerald-300 border border-emerald-600/50 shadow-xs whitespace-nowrap">
+                              {qualityGrade}
+                            </span>
+                          </td>
                           <td className="py-2.5 px-3 text-center">
                             <span className="px-2 py-0.5 rounded bg-slate-800 text-amber-300 font-mono font-bold border border-slate-700 text-[11px] shadow-xs">
                               {size}
@@ -3804,8 +3864,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                                 luxuryAudio.playMechanicalClick();
                                 onPrintSticker({
                                   itemCode: piece.sku || barcode,
-                                  description: `${category} (${size})`,
+                                  description: `${brandTitle || category} • ${category} (${size})`,
                                   category,
+                                  department: deptName,
+                                  subCategory: subCatName,
+                                  season: seasonName,
                                   size,
                                   brand: brandTitle,
                                   grade: qualityGrade,

@@ -41,7 +41,11 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
     serialNumber,
     securityHash,
     isCod,
-    codAmount
+    codAmount,
+    department,
+    subCategory,
+    season,
+    grade
   } = config;
 
   const displayInvoice = (invoiceNo && invoiceNo.trim() !== '' && invoiceNo !== 'INV-2026-8891')
@@ -78,15 +82,22 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
                 ${displayInvoice}
               </div>
             </div>
-            <div style="font-size:8px; text-transform:uppercase; font-weight:bold; color:#555; letter-spacing:0.5px;">${brandName} &bull; ${category}</div>
-            <div style="font-size:12px; font-weight:900; text-transform:uppercase; line-height:1.2; margin:2px 0 3px 0; overflow:hidden; text-overflow:ellipsis;">${itemName}</div>
+            <div style="font-size:7.5px; text-transform:uppercase; font-weight:bold; color:#444; letter-spacing:0.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              ${brandName ? `${brandName} &bull; ` : ''}${department ? `${department} &bull; ` : ''}${category}${subCategory && subCategory !== category ? ` (${subCategory})` : ''}
+            </div>
+            <div style="font-size:11.5px; font-weight:900; text-transform:uppercase; line-height:1.15; margin:1.5px 0 2px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${itemName}</div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:7px; font-weight:bold; background:#eee; padding:1px 3px; border-radius:2px; margin-bottom:1px; text-transform:uppercase; border:0.5px solid #ccc;">
+              <span>${department || 'DEPARTMENT'}</span>
+              <span>${season || 'SUMMER 2026'}</span>
+              <span style="font-weight:900; color:#000;">${grade || 'SUPER CREAM'}</span>
+            </div>
           </div>
 
           <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; border-top:0.5px dashed #000; padding-top:1.5mm; margin-top:1mm;">
             <div style="flex:1; min-width:0;">
-              <div style="font-family:monospace; font-size:8px; font-weight:bold;">SKU: ${skuBarcode}</div>
-              <div style="font-size:7.5px; color:#444;">WT: ${formattedWeight} &bull; SIZE: ${size}</div>
-              <div style="font-size:6.5px; color:#666; font-family:monospace;">DATE: ${currentDate}</div>
+              <div style="font-family:monospace; font-size:8px; font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">SKU: ${skuBarcode}</div>
+              <div style="font-size:7.5px; color:#333; font-weight:600;">WT: ${formattedWeight} &bull; SIZE: ${size}</div>
+              <div style="font-size:6.5px; color:#555; font-family:monospace;">DATE: ${currentDate}</div>
             </div>
             <div style="width:34px; height:34px; flex-shrink:0;">
               ${qrSvg}
@@ -109,9 +120,9 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
               <div style="font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:1.5px; border-bottom:0.5px solid #000; padding-bottom:1mm; width:85%;">${companyName}</div>
               <div style="font-size:6.5px; font-family:sans-serif; letter-spacing:0.5px; color:#444; margin-top:1px;">DUBAI ARCHIVE ATELIER &bull; TRN ${trn}</div>
             </div>
-            <div style="font-style:italic; font-size:9px; color:#333;">Curated Collection &bull; ${brandName}</div>
+            <div style="font-style:italic; font-size:8.5px; color:#333;">${department ? `${department} &bull; ` : ''}${season ? `${season} &bull; ` : ''}${grade ? `${grade} &bull; ` : ''}${brandName}</div>
             <div style="font-size:13px; font-weight:bold; text-transform:uppercase; margin:2px 0; letter-spacing:0.5px;">${itemName}</div>
-            <div style="font-size:8px; font-family:sans-serif; text-transform:uppercase; letter-spacing:1px; color:#333;">${category} &bull; ${size}</div>
+            <div style="font-size:8px; font-family:sans-serif; text-transform:uppercase; letter-spacing:1px; color:#333;">${category}${subCategory && subCategory !== category ? ` (${subCategory})` : ''} &bull; ${size}</div>
           </div>
 
           <div style="border-top:0.5px solid #000; padding-top:2mm; margin-top:2mm; display:flex; align-items:flex-end; justify-content:space-between;">
@@ -138,12 +149,12 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
           <div>
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #000; padding-bottom:1mm; margin-bottom:1mm;">
               <span style="font-weight:900; font-size:10px; text-transform:uppercase;">${companyName}</span>
-              <span style="font-size:8px; font-weight:bold; background:#000; color:#fff; padding:1px 4px;">IND-LOGISTICS</span>
+              <span style="font-size:8px; font-weight:bold; background:#000; color:#fff; padding:1px 4px;">${grade || 'SUPER CREAM'}</span>
             </div>
-            <div style="display:flex; justify-content:space-between; font-size:8px; font-weight:bold; margin-bottom:2px;">
-              <span>BRAND: ${brandName}</span>
+            <div style="display:flex; justify-content:space-between; font-size:7.5px; font-weight:bold; margin-bottom:2px;">
+              <span>${department ? `${department}/` : ''}${category}</span>
               <span>WT: ${formattedWeight}</span>
-              <span>BATCH: ${batchNo}</span>
+              <span>${season || 'SUMMER-26'}</span>
             </div>
             <div style="font-size:11px; font-weight:900; text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
               ${itemName}
@@ -169,7 +180,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
           <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom:1px solid #000; padding-bottom:1.5mm;">
             <div>
               <div style="font-weight:900; font-size:10px; text-transform:uppercase;">${companyName}</div>
-              <div style="font-size:7px; color:#444; font-family:monospace;">${trn} &bull; ${category}</div>
+              <div style="font-size:7px; color:#444; font-family:monospace;">${department ? `${department} &bull; ` : ''}${category}${subCategory && subCategory !== category ? ` (${subCategory})` : ''} &bull; ${grade || 'SUPER CREAM'}</div>
               <div style="font-weight:900; font-size:11px; text-transform:uppercase; margin-top:2px;">${itemName}</div>
             </div>
             <div style="text-align:right;">
@@ -193,7 +204,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
 
           <div style="display:flex; justify-content:space-between; font-size:7px; font-family:monospace; border-top:1px solid #000; padding-top:1mm;">
             <span>SIZE: ${size} &bull; WT: ${formattedWeight}</span>
-            <span>INVOICE: ${displayInvoice}</span>
+            <span>SEASON: ${season || 'SUMMER-26'} &bull; INV: ${displayInvoice}</span>
           </div>
         </div>
       `;

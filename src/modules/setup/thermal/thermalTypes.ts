@@ -243,6 +243,10 @@ export interface ThermalEngineConfig {
 
   // Contextual metadata for specialized styles
   size: string;
+  department?: string;
+  subCategory?: string;
+  season?: string;
+  grade?: string;
   consigneeName: string;
   buyerHandle: string;
   customerPhone: string;
@@ -287,6 +291,10 @@ export const DEFAULT_THERMAL_ENGINE_CONFIG: ThermalEngineConfig = {
   skuBarcode: 'VV-USA-501-8891',
 
   size: 'L (Chest 42")',
+  department: 'LADIES',
+  subCategory: 'Tops & Blouses',
+  season: 'Summer Edition 2026',
+  grade: 'Super Cream',
   consigneeName: 'Fatima Al Mansoori',
   buyerHandle: '@vintage_dubai_grails',
   customerPhone: '+971 50 789 4432',

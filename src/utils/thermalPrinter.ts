@@ -7,6 +7,9 @@ export interface ThermalLabelData {
   itemCode: string;
   description: string;
   category?: string;
+  department?: string;
+  subCategory?: string;
+  season?: string;
   size?: string;
   brand?: string;
   grade?: string;
@@ -90,6 +93,10 @@ export function openThermalLabelPrintWindow(data: ThermalLabelData): Window | nu
         itemName: data.description || cleanBarcode || engineConfig.itemName,
         brandName: data.brand || engineConfig.brandName || '',
         category: data.category || engineConfig.category || 'Apparel',
+        department: data.department || (engineConfig as any).department || '',
+        subCategory: data.subCategory || (engineConfig as any).subCategory || '',
+        season: data.season || (engineConfig as any).season || '',
+        grade: data.grade || (engineConfig as any).grade || '',
         size: data.size || 'Free Size',
         priceAed: Number(data.retailPriceAed || 0),
         weightValue: weightGrams,

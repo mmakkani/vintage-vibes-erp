@@ -1554,6 +1554,71 @@ async function runSecurityGateTests() {
     );
   }
 
+  // =========================================================================
+  // GATE 25: Unified Taxonomy Barcode, Intelligent SKU & Complete Label Rendering
+  // =========================================================================
+  console.log('\n--- GATE 25: Unified Taxonomy Barcode, Intelligent SKU & Complete Label Rendering ---');
+  {
+    // 1. BaleSortingTerminal: Unified intelligent barcode construction and category code derivation
+    const terminalPath = path.resolve(process.cwd(), 'src/modules/purchase/components/BaleSortingTerminal.tsx');
+    assert(fs.existsSync(terminalPath), 'BaleSortingTerminal.tsx exists');
+    const terminalContent = fs.readFileSync(terminalPath, 'utf-8');
+    assert(
+      terminalContent.includes('getCategoryCode') && terminalContent.includes("'TOP'") && terminalContent.includes("'TEE'"),
+      'BaleSortingTerminal implements intelligent category code extractor (TOP, TEE, DNM, etc.)'
+    );
+    assert(
+      terminalContent.includes('const pieceUnifiedCode = `${activeBaleId}-${deptCode}-${catCode}-P'),
+      'BaleSortingTerminal forms unified barcode incorporating bale, department, category, and piece sequence'
+    );
+    assert(
+      terminalContent.includes('const barcode = pieceUnifiedCode;') && terminalContent.includes('const pieceSku = pieceUnifiedCode;'),
+      'BaleSortingTerminal sets barcode and SKU identically to pieceUnifiedCode (unifying table and sticker)'
+    );
+    assert(
+      terminalContent.includes('Next Code (Barcode & SKU):'),
+      'BaleSortingTerminal unifies Next Barcode and Next SKU display into single consistent code'
+    );
+    assert(
+      terminalContent.includes('<th className="py-2.5 px-3 text-center">Grade</th>'),
+      'BaleSortingTerminal piece log table includes dedicated Grade column'
+    );
+    assert(
+      terminalContent.includes('Category & Taxonomy'),
+      'BaleSortingTerminal piece log table header includes Category & Taxonomy column'
+    );
+
+    // 2. Thermal Types & Templates: Complete taxonomy metadata support
+    const thermalTypesPath = path.resolve(process.cwd(), 'src/modules/setup/thermal/thermalTypes.ts');
+    const typesContent = fs.readFileSync(thermalTypesPath, 'utf-8');
+    assert(
+      typesContent.includes('department?: string') && typesContent.includes('subCategory?: string') && typesContent.includes('season?: string') && typesContent.includes('grade?: string'),
+      'ThermalEngineConfig defines department, subCategory, season, and grade fields'
+    );
+
+    const templatesPath = path.resolve(process.cwd(), 'src/modules/setup/thermal/thermalTemplates.ts');
+    const templatesContent = fs.readFileSync(templatesPath, 'utf-8');
+    assert(
+      templatesContent.includes('${department || \'DEPARTMENT\'}') && templatesContent.includes('${season || \'SUMMER 2026\'}') && templatesContent.includes('${grade || \'SUPER CREAM\'}'),
+      'thermalTemplates.ts renders prominent taxonomy badge strip (Dept, Season, Grade) in modern_minimalist style'
+    );
+
+    // 3. Thermal Printer and Sticker Data Interfaces
+    const printerPath = path.resolve(process.cwd(), 'src/utils/thermalPrinter.ts');
+    const printerContent = fs.readFileSync(printerPath, 'utf-8');
+    assert(
+      printerContent.includes('department?: string') && printerContent.includes('subCategory?: string') && printerContent.includes('season?: string'),
+      'ThermalLabelData interface in thermalPrinter.ts supports department, subCategory, and season'
+    );
+
+    const stickerPath = path.resolve(process.cwd(), 'src/components/ThermalBarcodeSticker.tsx');
+    const stickerContent = fs.readFileSync(stickerPath, 'utf-8');
+    assert(
+      stickerContent.includes('department?: string') && stickerContent.includes('subCategory?: string') && stickerContent.includes('season?: string'),
+      'StickerData interface in ThermalBarcodeSticker.tsx supports department, subCategory, and season'
+    );
+  }
+
   console.log('\n======================================================');
   console.log(`  SECURITY & INTEGRITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('======================================================\n');

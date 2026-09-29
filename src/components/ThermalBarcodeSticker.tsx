@@ -19,6 +19,9 @@ export interface StickerData {
   itemCode: string;
   description: string;
   category?: string;
+  department?: string;
+  subCategory?: string;
+  season?: string;
   size?: string;
   brand?: string;
   grade?: string;
@@ -148,6 +151,10 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
       itemName: sticker.description || cleanItemCode || engineConfig.itemName,
       brandName: sticker.brand || engineConfig.brandName || '',
       category: sticker.category || engineConfig.category || 'Apparel',
+      department: sticker.department || (engineConfig as any).department || '',
+      subCategory: sticker.subCategory || (engineConfig as any).subCategory || '',
+      season: sticker.season || (engineConfig as any).season || '',
+      grade: sticker.grade || (engineConfig as any).grade || '',
       size: sticker.size || 'Free Size', // Size included prominently!
       priceAed: Number(sticker.retailPriceAed ?? 0),
       weightValue: weightGrams,
