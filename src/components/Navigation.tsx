@@ -16,7 +16,9 @@ import {
   Zap,
   ArrowRight,
   ShieldAlert,
-  CheckCircle2
+  CheckCircle2,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { User } from '../modules/auth/auth.types.ts';
 import { isTabAccessible } from '../modules/auth/utils/permissionUtils.ts';
@@ -47,6 +49,8 @@ interface NavigationProps {
   activeTab: ActiveTab;
   onSelectTab: (tab: ActiveTab, subTab?: string) => void;
   onPrefetchTab?: (tab: ActiveTab, subTab?: string) => void;
+  hideInternalSubtabs?: boolean;
+  onToggleHideSubtabs?: () => void;
   currentUser?: User | null;
 }
 
@@ -54,6 +58,8 @@ export const Navigation: React.FC<NavigationProps> = ({
   activeTab,
   onSelectTab,
   onPrefetchTab,
+  hideInternalSubtabs,
+  onToggleHideSubtabs,
   currentUser
 }) => {
   const [openDropdown, setOpenDropdown] = useState<{ id: ActiveTab; rect: DOMRect } | null>(null);
@@ -238,6 +244,35 @@ export const Navigation: React.FC<NavigationProps> = ({
           <div className="hidden lg:flex items-center px-2.5 py-1 text-[10px] font-black text-amber-900 uppercase tracking-widest bg-amber-100/80 border border-amber-300/80 rounded mr-1 shrink-0">
             Modules
           </div>
+
+          {onToggleHideSubtabs && (
+            <button
+              type="button"
+              onClick={onToggleHideSubtabs}
+              title={
+                hideInternalSubtabs
+                  ? 'Internal module sub-tabs are currently hidden for testing. Click to unhide.'
+                  : 'Internal module sub-tabs are visible. Click to hide.'
+              }
+              className={`hidden sm:inline-flex items-center gap-1 px-2 py-1 text-[9px] font-mono font-bold rounded shrink-0 border transition-all cursor-pointer mr-1.5 ${
+                hideInternalSubtabs
+                  ? 'bg-rose-100/90 hover:bg-rose-200 text-rose-900 border-rose-300'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+              }`}
+            >
+              {hideInternalSubtabs ? (
+                <>
+                  <EyeOff className="w-2.5 h-2.5 text-rose-600" />
+                  <span>Sub-Tabs: Hidden</span>
+                </>
+              ) : (
+                <>
+                  <Eye className="w-2.5 h-2.5 text-slate-500" />
+                  <span>Sub-Tabs: Visible</span>
+                </>
+              )}
+            </button>
+          )}
 
           {visibleTabs.map(tab => {
             const isActive = activeTab === tab.id;

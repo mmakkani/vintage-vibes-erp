@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useCallback, Suspense, useRef } from 'react';
 import { Header } from './components/Header.tsx';
+import { Eye, EyeOff, Sliders } from 'lucide-react';
 import { DubaiLiveSoukTicker } from './components/DubaiLiveSoukTicker.tsx';
 import { Navigation, ActiveTab } from './components/Navigation.tsx';
 import { DashboardKPIs } from './components/DashboardKPIs.tsx';
@@ -135,6 +136,36 @@ export default function App() {
     } catch {}
     return 'dashboard';
   });
+
+  // UX Testing Switch: Hide/Unhide Internal Module Sub-Tabs (Requested by user for testing new dropdowns)
+  const [hideInternalSubtabs, setHideInternalSubtabs] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('vintage_hide_internal_subtabs');
+      return stored === null ? true : stored === 'true'; // Default to true (hidden) for initial testing
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleHideInternalSubtabs = useCallback((hidden: boolean) => {
+    setHideInternalSubtabs(hidden);
+    try {
+      localStorage.setItem('vintage_hide_internal_subtabs', String(hidden));
+    } catch {}
+    if (hidden) {
+      document.body.classList.add('hide-internal-subtabs');
+    } else {
+      document.body.classList.remove('hide-internal-subtabs');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (hideInternalSubtabs) {
+      document.body.classList.add('hide-internal-subtabs');
+    } else {
+      document.body.classList.remove('hide-internal-subtabs');
+    }
+  }, [hideInternalSubtabs]);
 
   const [financeInitialSubTab, setFinanceInitialSubTab] = useState<any>(() => {
     try {
@@ -762,6 +793,8 @@ export default function App() {
           activeTab={activeTab}
           onSelectTab={setActiveTab}
           onPrefetchTab={handlePrefetchTab}
+          hideInternalSubtabs={hideInternalSubtabs}
+          onToggleHideSubtabs={() => toggleHideInternalSubtabs(!hideInternalSubtabs)}
           currentUser={currentUser}
         />
 
@@ -906,6 +939,60 @@ export default function App() {
                   />
                 ) : (
                   <ErrorBoundary sectionName="Master Setup & Configuration Module">
+                    {/* UX Testing Control Switch: Module Sub-Tabs Visibility Controller */}
+                    <div className="mb-4 bg-gradient-to-r from-amber-950 via-slate-900 to-amber-950 border border-amber-500/40 rounded-2xl p-4 shadow-xl text-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-300 shrink-0">
+                          <Sliders className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-extrabold text-sm text-amber-200 tracking-wide uppercase">
+                              UX Testing Control: Module Sub-Tabs Ribbon
+                            </h3>
+                            <span
+                              className={`text-[10px] font-mono font-black px-2 py-0.5 rounded-full border ${
+                                hideInternalSubtabs
+                                  ? 'bg-rose-950/80 text-rose-300 border-rose-500/40'
+                                  : 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40'
+                              }`}
+                            >
+                              {hideInternalSubtabs
+                                ? '● SUB-TABS HIDDEN (TESTING TOP DROPDOWNS)'
+                                : '● SUB-TABS VISIBLE (NORMAL EXPANDED)'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-300 mt-0.5">
+                            Temporarily hide or unhide internal horizontal sub-tab ribbons across all modules (Purchase, Sales, Finance, HR, Marketing) to test the new top dropdown navigation.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                        <button
+                          type="button"
+                          onClick={() => toggleHideInternalSubtabs(!hideInternalSubtabs)}
+                          className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all shadow-md cursor-pointer ${
+                            hideInternalSubtabs
+                              ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-emerald-950'
+                              : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-amber-950'
+                          }`}
+                        >
+                          {hideInternalSubtabs ? (
+                            <>
+                              <Eye className="w-4 h-4" />
+                              <span>Unhide All Sub-Tabs</span>
+                            </>
+                          ) : (
+                            <>
+                              <EyeOff className="w-4 h-4" />
+                              <span>Hide All Sub-Tabs</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
                     <SetupView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
                   </ErrorBoundary>
                 )
