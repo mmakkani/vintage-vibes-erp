@@ -599,7 +599,10 @@ body.hide-internal-subtabs #comprehensive-finance-module-view > div.bg-white.p-3
 body.hide-internal-subtabs #comprehensive-finance-module-view > div.bg-white:first-child,
 body.hide-internal-subtabs div:has(> div > #subtab-payroll-slips),
 body.hide-internal-subtabs div:has(> #subtab-payroll-slips),
-body.hide-internal-subtabs div.border-b.border-amber-300\/80.pb-2:has(button) {
+body.hide-internal-subtabs div.border-b.border-amber-300\/80.pb-2:has(button),
+body.hide-internal-subtabs #keepalive-tab-parties div.flex.items-center.gap-2.border-b.border-slate-200.pb-2.flex-wrap,
+body.hide-internal-subtabs #keepalive-tab-access div.flex.items-center.gap-2.border-b.border-amber-200\/80.pb-2,
+body.hide-internal-subtabs div:has(> #tab-setup-profile) {
   display: none !important;
 }
 

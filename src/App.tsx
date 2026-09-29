@@ -178,23 +178,219 @@ export default function App() {
   const [subTabKeys, setSubTabKeys] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
     try {
-      const p = localStorage.getItem('vintage_purchase_subtab');
+      const urlParams = new URLSearchParams(window.location.search);
+      const p = urlParams.get('purchaseSubTab') || localStorage.getItem('vintage_purchase_subtab');
       if (p) init.purchase = p;
-      const s = localStorage.getItem('vintage_sales_subtab');
+      const s = urlParams.get('subTab') || localStorage.getItem('vintage_sales_subtab');
       if (s) init.sales = s;
-      const f = localStorage.getItem('vintage_finance_subtab');
+      const f = urlParams.get('financeSubTab') || localStorage.getItem('vintage_finance_subtab');
       if (f) init.finance = f;
-      const h = localStorage.getItem('vintage_hr_subtab');
+      const h = urlParams.get('hrSubTab') || localStorage.getItem('vintage_hr_subtab');
       if (h) init.hr = h;
-      const set = localStorage.getItem('vintage_setup_subtab');
+      const set = urlParams.get('setupSubTab') || localStorage.getItem('vintage_setup_subtab');
       if (set) init.setup = set;
+      const pt = urlParams.get('partiesSubTab') || localStorage.getItem('vintage_parties_subtab');
+      if (pt) init.parties = pt;
+      const m = urlParams.get('marketingSubTab') || localStorage.getItem('vintage_marketing_subtab');
+      if (m) init.marketing = m;
+      const a = urlParams.get('auditSubTab') || localStorage.getItem('vintage_audit_subtab');
+      if (a) init.audit = a;
+      const acc = urlParams.get('accessSubTab') || localStorage.getItem('vintage_access_subtab');
+      if (acc) init.access = acc;
     } catch {}
     return init;
   });
 
+  // Cross-Module Sub-Destination Event Dispatcher & DOM Click Bridge
+  const dispatchSubTabNavigation = useCallback((targetTab: ActiveTab, targetSubTab?: string) => {
+    if (!targetSubTab) return;
+
+    const execute = () => {
+      // 1. REGISTRY / PARTIES MODULE DISPATCHER
+      if (targetTab === 'parties') {
+        const partiesContainer = document.getElementById('keepalive-tab-parties') || document.body;
+        const allButtons = Array.from(partiesContainer.querySelectorAll('button'));
+
+        if (
+          targetSubTab === 'all_parties' ||
+          targetSubTab === 'ALL' ||
+          targetSubTab === 'CUSTOMER' ||
+          targetSubTab === 'SUPPLIER' ||
+          targetSubTab === 'AGENT' ||
+          targetSubTab === 'COURIER'
+        ) {
+          // Switch to Registered Parties tab
+          const tabBtn = allButtons.find(b => b.textContent?.includes('Registered Parties & Ledgers'));
+          if (tabBtn) tabBtn.click();
+
+          // Apply specific category filter
+          setTimeout(() => {
+            const freshButtons = Array.from(partiesContainer.querySelectorAll('button'));
+            let filterLabel = 'All Parties';
+            if (targetSubTab === 'CUSTOMER') filterLabel = 'Clients (Customers)';
+            else if (targetSubTab === 'SUPPLIER') filterLabel = 'Suppliers';
+            else if (targetSubTab === 'AGENT') filterLabel = 'Agents';
+            else if (targetSubTab === 'COURIER') filterLabel = 'Couriers';
+
+            const filterBtn = freshButtons.find(b => b.textContent?.trim() === filterLabel);
+            if (filterBtn) filterBtn.click();
+          }, 80);
+        } else if (targetSubTab === 'VISITING_CARDS') {
+          const cardBtn = allButtons.find(b => b.textContent?.includes('Visiting Card Directory'));
+          if (cardBtn) cardBtn.click();
+        } else if (targetSubTab === 'RETAIL_CRM') {
+          const retailBtn = allButtons.find(b => b.textContent?.includes('Retail Customer CRM'));
+          if (retailBtn) retailBtn.click();
+        } else if (targetSubTab === 'NEW_PARTY') {
+          const tabBtn = allButtons.find(b => b.textContent?.includes('Registered Parties & Ledgers'));
+          if (tabBtn) tabBtn.click();
+          setTimeout(() => {
+            const addBtn = document.getElementById('btn-add-new-party') || Array.from(partiesContainer.querySelectorAll('button')).find(b => b.textContent?.includes('Register New Party'));
+            if (addBtn) (addBtn as HTMLButtonElement).click();
+          }, 100);
+        } else if (targetSubTab === 'SCAN_CARD') {
+          const cardBtn = allButtons.find(b => b.textContent?.includes('Visiting Card Directory'));
+          if (cardBtn) cardBtn.click();
+          setTimeout(() => {
+            const scanBtn = Array.from(partiesContainer.querySelectorAll('button')).find(b => b.textContent?.includes('Scan Visiting Card') || b.textContent?.includes('Live Card Scanner'));
+            if (scanBtn) (scanBtn as HTMLButtonElement).click();
+          }, 100);
+        } else if (targetSubTab === 'NEW_RETAIL') {
+          const retailBtn = allButtons.find(b => b.textContent?.includes('Retail Customer CRM'));
+          if (retailBtn) retailBtn.click();
+          setTimeout(() => {
+            const newRetBtn = Array.from(partiesContainer.querySelectorAll('button')).find(b => b.textContent?.includes('New Customer') || b.textContent?.includes('Add Customer'));
+            if (newRetBtn) (newRetBtn as HTMLButtonElement).click();
+          }, 100);
+        }
+      }
+
+      // 2. MARKETING & AUTOMATION MODULE DISPATCHER
+      else if (targetTab === 'marketing') {
+        const marketingContainer = document.getElementById('keepalive-tab-marketing') || document.body;
+        const buttons = Array.from(marketingContainer.querySelectorAll('button'));
+        const targetBtn = buttons.find(b => {
+          const txt = (b.textContent || '').toLowerCase();
+          if (targetSubTab === 'campaigns') return txt.includes('broadcast');
+          if (targetSubTab === 'automations') return txt.includes('automation');
+          if (targetSubTab === 'coupons') return txt.includes('coupon');
+          if (targetSubTab === 'audiences') return txt.includes('audience');
+          if (targetSubTab === 'chat-claim') return txt.includes('chat claim') || txt.includes('mine');
+          if (targetSubTab === 'auto-broadcast') return txt.includes('social asset') || txt.includes('reels');
+          if (targetSubTab === 'live-desk') return txt.includes('live broadcast desk') || txt.includes('live desk');
+          if (targetSubTab === 'ad-catalog-pixels') return txt.includes('ad catalog') || txt.includes('pixel');
+          if (targetSubTab === 'storefront-analytics') return txt.includes('storefront analytics') || txt.includes('funnel');
+          return false;
+        });
+        if (targetBtn) targetBtn.click();
+      }
+
+      // 3. ACCESS CONTROL MODULE DISPATCHER
+      else if (targetTab === 'access') {
+        const accessContainer = document.getElementById('keepalive-tab-access') || document.body;
+        const buttons = Array.from(accessContainer.querySelectorAll('button'));
+        if (targetSubTab === 'operators') {
+          const opBtn = buttons.find(b => b.textContent?.includes('Operator Accounts & Roles'));
+          if (opBtn) opBtn.click();
+        } else if (targetSubTab === 'devices') {
+          const devBtn = buttons.find(b => b.textContent?.includes('Registered Phones') || b.textContent?.includes('Telemetry'));
+          if (devBtn) devBtn.click();
+        } else if (targetSubTab === 'new_operator') {
+          const createBtn = document.getElementById('btn-create-operator') || buttons.find(b => b.textContent?.includes('New Operator'));
+          if (createBtn) (createBtn as HTMLButtonElement).click();
+        } else if (targetSubTab === 'matrix') {
+          const matrixBtn = buttons.find(b => b.textContent?.includes('Authority Matrix') || b.textContent?.includes('Roles & Authority') || b.getAttribute('title')?.includes('Authority'));
+          if (matrixBtn) matrixBtn.click();
+        }
+      }
+
+      // 4. AUDIT TRAIL MODULE DISPATCHER
+      else if (targetTab === 'audit') {
+        const auditContainer = document.getElementById('keepalive-tab-audit') || document.body;
+        const select = auditContainer.querySelector('select');
+        if (select) {
+          select.value = targetSubTab;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          const refreshBtn = auditContainer.querySelector('button[title*="Refresh"]') as HTMLButtonElement;
+          if (refreshBtn) refreshBtn.click();
+        }
+      }
+
+      // 5. MAIN DASHBOARD SCROLL DISPATCHER
+      else if (targetTab === 'dashboard') {
+        if (targetSubTab === 'overview') {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else if (targetSubTab === 'liquidity') {
+          const el = Array.from(document.querySelectorAll('h3, h4, span, div')).find(e =>
+            e.textContent?.includes('Cash Flow') || e.textContent?.includes('Liquidity Radar') || e.textContent?.includes('Emirates NBD')
+          );
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else if (targetSubTab === 'velocity') {
+          const el = Array.from(document.querySelectorAll('h3, h4, span, div')).find(e =>
+            e.textContent?.includes('Sales Channel Velocity') || e.textContent?.includes('Target Pacing') || e.textContent?.includes('Bale Yield')
+          );
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+
+      // 6. SETUP MODULE DISPATCHER
+      else if (targetTab === 'setup') {
+        const btn = document.getElementById(`tab-setup-${targetSubTab}`);
+        if (btn) btn.click();
+      }
+
+      // 7. PURCHASE MODULE DISPATCHER
+      else if (targetTab === 'purchase') {
+        const realSub = targetSubTab === 'bale_inward' ? 'sorting_terminal' : targetSubTab;
+        const purchaseContainer = document.getElementById('keepalive-tab-purchase') || document.body;
+        const buttons = Array.from(purchaseContainer.querySelectorAll('button'));
+        const btn = buttons.find(b => {
+          const txt = (b.textContent || '').toLowerCase();
+          if (realSub === 'sorting_terminal') return txt.includes('bale sorting');
+          if (realSub === 'inventory') return txt.includes('inventory');
+          if (realSub === 'commercial_invoices') return txt.includes('commercial invoices');
+          if (realSub === 'settings') return txt.includes('factory settings');
+          return false;
+        });
+        if (btn) btn.click();
+      }
+
+      // 8. SALES MODULE DISPATCHER
+      else if (targetTab === 'sales') {
+        const btn = document.getElementById(`subtab-sales-${targetSubTab}`);
+        if (btn) btn.click();
+      }
+
+      // 9. HR MODULE DISPATCHER
+      else if (targetTab === 'hr') {
+        const idMap: Record<string, string> = {
+          payroll: 'subtab-payroll-slips',
+          attendance: 'subtab-attendance-grid',
+          employees: 'subtab-employee-master',
+          loans: 'subtab-advance-loans',
+          vault: 'subtab-document-vault',
+          'ocr-logs': 'subtab-ocr-logs'
+        };
+        const btnId = idMap[targetSubTab];
+        if (btnId) {
+          const btn = document.getElementById(btnId);
+          if (btn) btn.click();
+        }
+      }
+    };
+
+    setTimeout(execute, 40);
+    setTimeout(execute, 160);
+    setTimeout(execute, 350);
+  }, []);
+
   const setActiveTab = (tab: ActiveTab, subTab?: string) => {
     const targetTab = tab === 'ledger' ? 'finance' : tab;
-    const targetSubTab = tab === 'ledger' ? 'ledger' : subTab;
+    let targetSubTab = tab === 'ledger' ? 'ledger' : subTab;
+
+    if (targetTab === 'purchase' && targetSubTab === 'bale_inward') {
+      targetSubTab = 'sorting_terminal';
+    }
 
     if (targetSubTab) {
       try {
@@ -224,8 +420,28 @@ export default function App() {
           const url = new URL(window.location.href);
           url.searchParams.set('setupSubTab', targetSubTab);
           window.history.replaceState({}, '', url.toString());
+        } else if (targetTab === 'parties') {
+          localStorage.setItem('vintage_parties_subtab', targetSubTab);
+          const url = new URL(window.location.href);
+          url.searchParams.set('partiesSubTab', targetSubTab);
+          window.history.replaceState({}, '', url.toString());
+        } else if (targetTab === 'marketing') {
+          localStorage.setItem('vintage_marketing_subtab', targetSubTab);
+          const url = new URL(window.location.href);
+          url.searchParams.set('marketingSubTab', targetSubTab);
+          window.history.replaceState({}, '', url.toString());
+        } else if (targetTab === 'audit') {
+          localStorage.setItem('vintage_audit_subtab', targetSubTab);
+          const url = new URL(window.location.href);
+          url.searchParams.set('auditSubTab', targetSubTab);
+          window.history.replaceState({}, '', url.toString());
+        } else if (targetTab === 'access') {
+          localStorage.setItem('vintage_access_subtab', targetSubTab);
+          const url = new URL(window.location.href);
+          url.searchParams.set('accessSubTab', targetSubTab);
+          window.history.replaceState({}, '', url.toString());
         }
-        setSubTabKeys(prev => ({ ...prev, [targetTab]: targetSubTab }));
+        setSubTabKeys(prev => ({ ...prev, [targetTab]: targetSubTab! }));
       } catch {}
     }
 
@@ -236,7 +452,20 @@ export default function App() {
       url.searchParams.set('tab', targetTab);
       window.history.replaceState({}, '', url.toString());
     } catch {}
+
+    // Dispatch DOM / Component Sub-Destination
+    if (targetSubTab) {
+      dispatchSubTabNavigation(targetTab, targetSubTab);
+    }
   };
+
+  // Re-sync sub-destination upon tab switch
+  useEffect(() => {
+    const currentSub = subTabKeys[activeTab];
+    if (currentSub) {
+      dispatchSubTabNavigation(activeTab, currentSub);
+    }
+  }, [activeTab, dispatchSubTabNavigation]);
 
   // Silent SWR background RAM cache warming on hover
   const handlePrefetchTab = useCallback((tab: ActiveTab, subTab?: string) => {
@@ -814,7 +1043,7 @@ export default function App() {
 
           <Suspense fallback={<ModuleLoadingFallback name={activeTab.toUpperCase()} />}>
             {/* Executive Dashboard */}
-            <div className={activeTab === 'dashboard' ? 'block' : 'hidden'} key="keepalive-tab-dashboard">
+            <div id="keepalive-tab-dashboard" className={activeTab === 'dashboard' ? 'block' : 'hidden'} key="keepalive-tab-dashboard">
               {visitedTabs.has('dashboard') && isTabAccessible('dashboard', currentUser) && (
                 <ErrorBoundary sectionName="Executive Dashboard">
                   <MainDashboardView
@@ -826,7 +1055,7 @@ export default function App() {
             </div>
 
             {/* Purchase & Container Inward Module */}
-            <div className={activeTab === 'purchase' ? 'block' : 'hidden'} key={`keepalive-tab-purchase-${subTabKeys['purchase'] || 'default'}`}>
+            <div id="keepalive-tab-purchase" className={activeTab === 'purchase' ? 'block' : 'hidden'} key={`keepalive-tab-purchase-${subTabKeys['purchase'] || 'default'}`}>
               {visitedTabs.has('purchase') && (
                 <ErrorBoundary sectionName="Purchase & Container Inward Module">
                   <PurchaseView
@@ -839,7 +1068,7 @@ export default function App() {
             </div>
 
             {/* Sales, Barcode & Dispatch Module */}
-            <div className={activeTab === 'sales' ? 'block' : 'hidden'} key={`keepalive-tab-sales-${subTabKeys['sales'] || 'default'}`}>
+            <div id="keepalive-tab-sales" className={activeTab === 'sales' ? 'block' : 'hidden'} key={`keepalive-tab-sales-${subTabKeys['sales'] || 'default'}`}>
               {visitedTabs.has('sales') && (
                 <ErrorBoundary sectionName="Sales, Barcode & Dispatch Module">
                   <ModuleMaintenanceGuard
@@ -859,7 +1088,7 @@ export default function App() {
             </div>
 
             {/* Marketing & AI Automation Module */}
-            <div className={activeTab === 'marketing' ? 'block' : 'hidden'} key="keepalive-tab-marketing">
+            <div id="keepalive-tab-marketing" className={activeTab === 'marketing' ? 'block' : 'hidden'} key={`keepalive-tab-marketing-${subTabKeys['marketing'] || 'default'}`}>
               {visitedTabs.has('marketing') && (
                 <ErrorBoundary sectionName="Marketing & AI Automation Module">
                   <MarketingAutomationView
@@ -871,7 +1100,7 @@ export default function App() {
             </div>
 
             {/* Financial Accounts & COA Module */}
-            <div className={activeTab === 'finance' ? 'block' : 'hidden'} key={`keepalive-tab-finance-${subTabKeys['finance'] || 'default'}`}>
+            <div id="keepalive-tab-finance" className={activeTab === 'finance' ? 'block' : 'hidden'} key={`keepalive-tab-finance-${subTabKeys['finance'] || 'default'}`}>
               {visitedTabs.has('finance') && (
                 <ErrorBoundary sectionName="Financial Accounts & COA Module">
                   <FinanceView
@@ -886,7 +1115,7 @@ export default function App() {
             </div>
 
             {/* General Ledger & Vouchers Module */}
-            <div className={activeTab === 'ledger' ? 'block' : 'hidden'} key="keepalive-tab-ledger">
+            <div id="keepalive-tab-ledger" className={activeTab === 'ledger' ? 'block' : 'hidden'} key="keepalive-tab-ledger">
               {visitedTabs.has('ledger') && (
                 <ErrorBoundary sectionName="General Ledger & Vouchers Module">
                   <FinanceView
@@ -901,7 +1130,7 @@ export default function App() {
             </div>
 
             {/* Parties & Khata Ledger Module */}
-            <div className={activeTab === 'parties' ? 'block' : 'hidden'} key="keepalive-tab-parties">
+            <div id="keepalive-tab-parties" className={activeTab === 'parties' ? 'block' : 'hidden'} key={`keepalive-tab-parties-${subTabKeys['parties'] || 'default'}`}>
               {visitedTabs.has('parties') && (
                 <ErrorBoundary sectionName="Parties & Khata Ledger Module">
                   <PartiesView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
@@ -910,7 +1139,7 @@ export default function App() {
             </div>
 
             {/* HR, Vault & Payroll Module */}
-            <div className={activeTab === 'hr' ? 'block' : 'hidden'} key={`keepalive-tab-hr-${subTabKeys['hr'] || 'default'}`}>
+            <div id="keepalive-tab-hr" className={activeTab === 'hr' ? 'block' : 'hidden'} key={`keepalive-tab-hr-${subTabKeys['hr'] || 'default'}`}>
               {visitedTabs.has('hr') && (
                 <ErrorBoundary sectionName="HR, Vault & Payroll Module">
                   <ModuleMaintenanceGuard
@@ -926,7 +1155,7 @@ export default function App() {
             </div>
 
             {/* Global Master Setup & Configuration Module */}
-            <div className={activeTab === 'setup' ? 'block' : 'hidden'} key={`keepalive-tab-setup-${subTabKeys['setup'] || 'default'}`}>
+            <div id="keepalive-tab-setup" className={activeTab === 'setup' ? 'block' : 'hidden'} key={`keepalive-tab-setup-${subTabKeys['setup'] || 'default'}`}>
               {visitedTabs.has('setup') && (
                 !isTabAccessible('setup', currentUser) ? (
                   <AccessDeniedNotice
@@ -1000,7 +1229,7 @@ export default function App() {
             </div>
 
             {/* System Audit Trail & Compliance Module */}
-            <div className={activeTab === 'audit' ? 'block' : 'hidden'} key="keepalive-tab-audit">
+            <div id="keepalive-tab-audit" className={activeTab === 'audit' ? 'block' : 'hidden'} key={`keepalive-tab-audit-${subTabKeys['audit'] || 'default'}`}>
               {visitedTabs.has('audit') && (
                 <ErrorBoundary sectionName="System Audit Trail & Compliance Module">
                   <AuditView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
@@ -1009,7 +1238,7 @@ export default function App() {
             </div>
 
             {/* Access Control Module */}
-            <div className={activeTab === 'access' ? 'block' : 'hidden'} key="keepalive-tab-access">
+            <div id="keepalive-tab-access" className={activeTab === 'access' ? 'block' : 'hidden'} key={`keepalive-tab-access-${subTabKeys['access'] || 'default'}`}>
               {visitedTabs.has('access') && (
                 !isTabAccessible('access', currentUser) ? (
                   <AccessDeniedNotice

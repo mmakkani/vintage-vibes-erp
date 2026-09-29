@@ -67,7 +67,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   const menuCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Complete Exhaustive Sub-Item Sitemap (72 Destinations across all 10 Modules)
+  // Complete Exhaustive Sub-Item Sitemap across all Modules
   const subItemsMap: Record<ActiveTab, NavigationSubItem[]> = {
     dashboard: [
       { id: 'overview', label: 'Executive KPI Pulse', description: 'Real-time revenue, piece volume, margin & AOV', icon: '📈', badge: 'LIVE', badgeColor: 'bg-emerald-900/80 text-emerald-300 border-emerald-500/40' },
@@ -92,11 +92,12 @@ export const Navigation: React.FC<NavigationProps> = ({
       { id: 'salesSettings', label: 'Sales Channel Pricing Rules', description: 'Markup benchmarks, VIP buyer discounts & commission tiers', icon: '⚙️' }
     ],
     marketing: [
-      { id: 'campaigns', label: 'WhatsApp Cloud Broadcast Engine', description: 'Bulk customer notification blasts & cart recovery triggers', icon: '💬', badge: 'API 2026', badgeColor: 'bg-emerald-900/80 text-emerald-300 border-emerald-500/40' },
-      { id: 'auto-broadcast', label: 'AI Social Asset Studio & Reels', description: 'Auto-generation of Instagram/TikTok product cards & reels', icon: '🎨', badge: 'AI VISION', badgeColor: 'bg-purple-900/80 text-purple-300 border-purple-500/40' },
+      { id: 'campaigns', label: 'WhatsApp & SMS Broadcasts', description: 'Bulk customer notification blasts & cart recovery triggers', icon: '💬', badge: 'WHATSAPP', badgeColor: 'bg-emerald-900/80 text-emerald-300 border-emerald-500/40' },
+      { id: 'automations', label: 'Post-Order Automations', description: 'Automated post-order invoice dispatch, shipping & alerts', icon: '⚡', badge: 'TRIGGERS', badgeColor: 'bg-amber-900/80 text-amber-300 border-amber-500/40' },
       { id: 'coupons', label: 'Smart Coupons & Loyalty Discounts', description: 'Promotional promo codes, VIP percentage discounts & caps', icon: '🎟️' },
       { id: 'audiences', label: 'Audience Segmentation & VIP Lists', description: 'High-roller collectors & dormant customer re-engagement', icon: '👥' },
       { id: 'chat-claim', label: 'Live Chat Claim Automation', description: 'NLP parser for chat streams (MINE #102) & auto-DM links', icon: '🤖', badge: 'NLP', badgeColor: 'bg-pink-900/80 text-pink-300 border-pink-500/40' },
+      { id: 'auto-broadcast', label: 'AI Social Asset Studio & Reels', description: 'Auto-generation of Instagram/TikTok product cards & reels', icon: '🎨', badge: 'AI VISION', badgeColor: 'bg-purple-900/80 text-purple-300 border-purple-500/40' },
       { id: 'live-desk', label: 'Unified Live Broadcast Desk', description: 'Multi-booth controller, streamer allocation & OBS camera feeds', icon: '📡' },
       { id: 'ad-catalog-pixels', label: 'Ad Catalog Feeds & Pixels', description: 'Meta CAPI, TikTok Pixel & Google Merchant sync', icon: '📊' },
       { id: 'storefront-analytics', label: 'Storefront Analytics & Funnels', description: 'Visitor session replays, add-to-cart rate & drop-off analysis', icon: '📈' }
@@ -111,16 +112,23 @@ export const Navigation: React.FC<NavigationProps> = ({
       { id: 'cod-reconciliation', label: 'Courier COD Reconciliation', description: 'Cash-on-delivery courier remittances & airway bill matching', icon: '🚚', badge: 'AIRWAY', badgeColor: 'bg-cyan-900/80 text-cyan-300 border-cyan-500/40' },
       { id: 'recurring-vouchers', label: 'Recurring Vouchers & Amortization', description: 'Monthly rent, software licenses & depreciation schedules', icon: '🔄' },
       { id: 'budgeting', label: 'Departmental Budgeting & Allocations', description: 'Operating budgets vs. actual spending, variance analysis', icon: '🎯' },
-      { id: 'tax-compliance', label: 'UAE FTA VAT 201 Tax Compliance', description: 'Output VAT, Input VAT & net VAT liability calculation', icon: '🏛️', badge: 'FTA TAX', badgeColor: 'bg-purple-900/80 text-purple-300 border-purple-500/40' }
+      { id: 'tax-compliance', label: 'UAE FTA VAT 201 Tax Compliance', description: 'Output VAT, Input VAT & net VAT liability calculation', icon: '🏛️', badge: 'FTA TAX', badgeColor: 'bg-purple-900/80 text-purple-300 border-purple-500/40' },
+      { id: 'custom-reports', label: 'Custom Financial Report Builder', description: 'Multi-column financial reporting & statement generator', icon: '📊' }
     ],
     ledger: [
       { id: 'ledger', label: 'General Ledger Account Balances', description: 'Complete double-entry general ledger, filters & audit trail', icon: '📖' }
     ],
     parties: [
-      { id: 'SUPPLIER', label: 'Commercial Bale Suppliers', description: 'International container exporters, textile mills & freight agents', icon: '🏭', badge: 'SUPPLIER', badgeColor: 'bg-blue-900/80 text-blue-300 border-blue-500/40' },
-      { id: 'CUSTOMER', label: 'Wholesale Corporate B2B Clients', description: 'Multi-branch retail buyers, credit limits & aging khata', icon: '🏬', badge: 'B2B', badgeColor: 'bg-indigo-900/80 text-indigo-300 border-indigo-500/40' },
-      { id: 'VISITING_CARDS', label: 'Visiting Card AI OCR Scanner', description: 'Live camera/upload scanner, Gemini Vision business card digitization', icon: '📷', badge: 'GEMINI AI', badgeColor: 'bg-amber-900/80 text-amber-300 border-amber-500/40' },
-      { id: 'RETAIL_CRM', label: 'Retail VIP Customers & Loyalty', description: 'Walk-in buyers, loyalty points balance & instant store registration', icon: '🛍️' }
+      { id: 'all_parties', label: 'Registered Parties Directory (All)', description: 'Complete directory of suppliers, clients, agents & couriers', icon: '🏢', badge: 'ALL', badgeColor: 'bg-blue-900/80 text-blue-300 border-blue-500/40' },
+      { id: 'CUSTOMER', label: 'Wholesale Corporate B2B Clients', description: 'Multi-branch retail buyers, credit limits & aging khata ledger', icon: '🏬', badge: 'B2B', badgeColor: 'bg-indigo-900/80 text-indigo-300 border-indigo-500/40' },
+      { id: 'SUPPLIER', label: 'Commercial Bale Suppliers', description: 'International container exporters, textile mills & freight agents', icon: '🏭', badge: 'SUPPLIER', badgeColor: 'bg-cyan-900/80 text-cyan-300 border-cyan-500/40' },
+      { id: 'AGENT', label: 'Freight & Clearing Agents', description: 'Customs clearance, shipping brokers & port clearance agents', icon: '🚢', badge: 'AGENTS', badgeColor: 'bg-amber-900/80 text-amber-300 border-amber-500/40' },
+      { id: 'COURIER', label: 'COD Courier Delivery Partners', description: 'Cash-on-delivery couriers & airway bill tracking partners', icon: '🚚', badge: 'COURIER', badgeColor: 'bg-purple-900/80 text-purple-300 border-purple-500/40' },
+      { id: 'VISITING_CARDS', label: 'Visiting Card Directory / CRM Leads', description: 'AI OCR digitized business cards & customer lead directory', icon: '📇', badge: 'GEMINI AI', badgeColor: 'bg-amber-900/80 text-amber-300 border-amber-500/40' },
+      { id: 'RETAIL_CRM', label: 'Retail VIP Customers & Loyalty', description: 'Walk-in buyers, loyalty points balance & statement dossiers', icon: '🛍️', badge: 'VIP CRM', badgeColor: 'bg-emerald-900/80 text-emerald-300 border-emerald-500/40' },
+      { id: 'NEW_PARTY', label: '➕ Register New Party & Provision COA', description: 'Direct shortcut to register corporate entity with auto GL account', icon: '✨', badge: 'ACTION', badgeColor: 'bg-emerald-900/80 text-emerald-300 border-emerald-500/40' },
+      { id: 'SCAN_CARD', label: '📷 Scan Visiting Card with AI Vision', description: 'Open live camera OCR scanner to digitize card text directly into CRM', icon: '📸', badge: 'ACTION', badgeColor: 'bg-purple-900/80 text-purple-300 border-purple-500/40' },
+      { id: 'NEW_RETAIL', label: '🛍️ Register Walk-in Retail Customer', description: 'Quick POS retail customer registration linked to 1130-05 account', icon: '👤', badge: 'ACTION', badgeColor: 'bg-blue-900/80 text-blue-300 border-blue-500/40' }
     ],
     hr: [
       { id: 'employees', label: 'Staff Directory & Bio Profiles', description: 'Employee records, emergency contacts, job titles & visa copies', icon: '👥' },
@@ -135,22 +143,34 @@ export const Navigation: React.FC<NavigationProps> = ({
       { id: 'pos_terminal', label: 'Thermal Barcode Printer & Hardware', description: '57x37mm & 50x25mm label designer, PAX POS & scales setup', icon: '🖨️', badge: 'THERMAL', badgeColor: 'bg-indigo-900/80 text-indigo-300 border-indigo-500/40' },
       { id: 'categories', label: 'Garment Taxonomy & Categories', description: 'Men/Women/Kids departments, item categories & garment seasons', icon: '🏷️' },
       { id: 'sizes', label: 'Size Masters & Measurements', description: 'Standardized sizes (XS to 3XL) & chest/waist metric guidelines', icon: '📏' },
-      { id: 'items', label: 'Item & Brand Master Catalog', description: 'Vintage brand registry, condition grades & master garment codes', icon: '👕' },
+      { id: 'items', label: 'Item Master Catalog', description: 'Vintage brand registry, condition grades & master garment codes', icon: '👕' },
+      { id: 'brands', label: 'Brand Tiers & Designer Registry', description: 'Vintage designer brands, premium labels & origin definitions', icon: '🏷️' },
+      { id: 'labels', label: 'Quality & Grading Standards', description: 'Pristine, Grade A, Grade B, Distressed garment standards', icon: '✨' },
       { id: 'shops', label: 'Shop Branches & Warehouses Hub', description: 'Physical store locations, stock transfer routing & Al Ain showroom', icon: '🏪' },
       { id: 'ai_vision', label: 'AI Studio & Gemini Vision Calibration', description: 'Gemini API keys, vision temperature & OCR prompt fine-tuning', icon: '🧠', badge: 'GEMINI', badgeColor: 'bg-purple-900/80 text-purple-300 border-purple-500/40' },
       { id: 'payment_gateways', label: 'Payment Gateways & UAE Bank QR', description: 'Stripe, Telr, Emirates NBD IBAN bank QR code generator & COD', icon: '💳' },
       { id: 'live_multicast_sockets', label: 'Social Multicast Live Sockets', description: 'RTMP server endpoints for TikTok, Instagram Live & YouTube', icon: '📡' },
+      { id: 'whatsapp', label: 'WhatsApp Cloud API Config', description: 'Official Meta Cloud API webhook & auto-notification engine', icon: '💬', badge: 'META', badgeColor: 'bg-emerald-900/80 text-emerald-300 border-emerald-500/40' },
+      { id: 'bale_qr', label: 'Factory Bale QR Templates', description: 'Industrial container label designer and gross tare parameters', icon: '📦' },
+      { id: 'currency', label: 'Multi-Currency & FX Exchange Rates', description: 'AED base currency, USD, EUR, GBP conversion rates and update', icon: '💱' },
       { id: 'maintenance', label: 'Module Maintenance Switchboard', description: 'Safe emergency lock / maintenance toggle for individual ERP subsystems', icon: '🛡️', badge: 'GUARD', badgeColor: 'bg-rose-900/80 text-rose-300 border-rose-500/40' },
       { id: 'security', label: 'Security Master PIN Protocol (0099)', description: 'Master PIN status, enterprise lockdown parameters & overrides', icon: '🔒', badge: 'PIN 0099', badgeColor: 'bg-red-900/80 text-red-300 border-red-500/40' }
     ],
     audit: [
       { id: 'ALL', label: 'Real-Time System Audit Logs', description: 'Real-time CDC record tracking, mutation trail & operator attribution', icon: '🛡️', badge: 'IMMUTABLE', badgeColor: 'bg-purple-900/80 text-purple-300 border-purple-500/40' },
-      { id: 'sessions', label: 'User Sessions & IP Inspector', description: 'Active login tokens, device fingerprinting & IP address security logs', icon: '🔍' }
+      { id: 'PURCHASE', label: 'Purchase & Inward Gate Pass Audit', description: 'Container receiving, port manifests & gross weight mutation log', icon: '🚢' },
+      { id: 'INVENTORY', label: 'Inventory & Bale Piece Sorting Audit', description: 'Sorted garment piece additions, adjustments & deletion audit', icon: '📦' },
+      { id: 'SALES', label: 'Sales & POS Invoicing Audit Trail', description: 'Counter POS checkout, B2B posting, unpost & return audit', icon: '💻' },
+      { id: 'FINANCE', label: 'Financial Vouchers & COA Mutation Log', description: 'Double-entry voucher posting, balance modifications & COA audit', icon: '⚖️' },
+      { id: 'HR', label: 'HR Biometric & Payroll Audit', description: 'Attendance logs, employee profile edits & WPS payroll audit', icon: '👥' },
+      { id: 'PARTIES', label: 'Registry, Parties & Khata Log Audit', description: 'Party creation, credit limits & visiting card conversion audit', icon: '🏢' },
+      { id: 'SETUP', label: 'System Setup & Configuration Audit', description: 'Hardware printers, company profiles & tax setting changes', icon: '⚙️' }
     ],
     access: [
       { id: 'operators', label: 'Operator User Accounts & Credentials', description: 'Staff usernames, encrypted passwords, branch allocation & toggles', icon: '👤', badge: 'AUTH', badgeColor: 'bg-blue-900/80 text-blue-300 border-blue-500/40' },
       { id: 'devices', label: 'Authorized Devices & POS Whitelist', description: 'Hardware machine ID registration & mobile staff APK activation', icon: '📱', badge: 'HARDWARE', badgeColor: 'bg-emerald-900/80 text-emerald-300 border-emerald-500/40' },
-      { id: 'matrix', label: 'Roles & Authority Matrix (RBAC)', description: 'Super Admin, Store Manager, Cashier, Sorter privilege matrix', icon: '🔑', badge: 'RBAC', badgeColor: 'bg-amber-900/80 text-amber-300 border-amber-500/40' }
+      { id: 'matrix', label: 'Roles & Authority Matrix (RBAC)', description: 'Super Admin, Store Manager, Cashier, Sorter privilege matrix', icon: '🔑', badge: 'RBAC', badgeColor: 'bg-amber-900/80 text-amber-300 border-amber-500/40' },
+      { id: 'new_operator', label: '➕ New Operator & Role Assignment', description: 'Direct shortcut to provision a new staff login credential', icon: '✨', badge: 'ACTION', badgeColor: 'bg-emerald-900/80 text-emerald-300 border-emerald-500/40' }
     ]
   };
 
