@@ -38,6 +38,24 @@
       ]
     },
     {
+      "source": "/technology.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/architecture.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
       "source": "/vintagevibes.mobileconfig",
       "headers": [
         {
@@ -73,7 +91,15 @@
       "destination": "/assets/$1"
     },
     {
-      "source": "/((?!api/|assets/|vintagevibes\\.mobileconfig).*)",
+      "source": "/technology",
+      "destination": "/technology.html"
+    },
+    {
+      "source": "/architecture",
+      "destination": "/architecture.html"
+    },
+    {
+      "source": "/((?!api/|assets/|technology|architecture|vintagevibes\\.mobileconfig).*)",
       "destination": "/index.html"
     }
   ]

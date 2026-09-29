@@ -599,6 +599,9 @@ export default function App() {
   // Primary Application View: 'storefront' vs 'login' vs 'erp' vs 'staff-mobile' (APK) vs 'pos-standalone' vs 'live-overlay'
   const [currentView, setCurrentView] = useState<'storefront' | 'login' | 'erp' | 'staff-mobile' | 'pos-standalone' | 'live-overlay'>(() => {
     try {
+      if (typeof window !== 'undefined' && (window.location.pathname.startsWith('/technology') || window.location.pathname.startsWith('/architecture'))) {
+        window.location.replace('/technology.html');
+      }
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.has('piece') || urlParams.has('checkout') || urlParams.has('sku')) return 'storefront';
       const viewParam = urlParams.get('view');
