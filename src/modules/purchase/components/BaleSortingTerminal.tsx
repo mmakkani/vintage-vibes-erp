@@ -587,11 +587,22 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setSelectedDeptId(deptId);
     const mainCats = productCategoriesList.filter(c => (c.taxonomy_level === 'CATEGORY' || Number(c.level) === 2) && (c.parent_id === deptId || (c as any).parent_slug === deptId));
     if (mainCats.length > 0) {
-      const firstCat = mainCats[0];
-      setSelectedMainCategoryId(firstCat.id);
-      setSelectedCategory(firstCat.name);
-      const subCats = productCategoriesList.filter(c => (c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3) && c.parent_id === firstCat.id);
-      setSelectedSubCategoryId(subCats.length > 0 ? subCats[0].id : '');
+      // Find matching category under new department to maintain user selection
+      const isCurrentGeneric = !selectedCategory || selectedCategory === 'Mix' || selectedCategory === 'Apparel' || selectedCategory === 'Vintage Mix';
+      const matchingCat = !isCurrentGeneric ? mainCats.find(c => c.name.toLowerCase() === selectedCategory.toLowerCase()) : null;
+      const activeCat = matchingCat || (isCurrentGeneric ? mainCats[0] : null);
+
+      if (activeCat) {
+        setSelectedMainCategoryId(activeCat.id);
+        setSelectedCategory(activeCat.name);
+        const subCats = productCategoriesList.filter(c => (c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3) && c.parent_id === activeCat.id);
+        setSelectedSubCategoryId(subCats.length > 0 ? subCats[0].id : '');
+      } else {
+        // Keep user's selected category intact; set tier 2 ID for hierarchical structure
+        setSelectedMainCategoryId(mainCats[0].id);
+        const subCats = productCategoriesList.filter(c => (c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3) && c.parent_id === mainCats[0].id);
+        setSelectedSubCategoryId(subCats.length > 0 ? subCats[0].id : '');
+      }
     } else {
       setSelectedMainCategoryId('');
       setSelectedSubCategoryId('');
@@ -847,8 +858,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     if (tagData.lengthTapeImageUrl) setMeasurementImageUrl(tagData.lengthTapeImageUrl);
     if (tagData.widthTapeImageUrl) setWidthTapeImageUrl(tagData.widthTapeImageUrl);
 
-    // 5. Category matching
-    if (tagData.category) {
+    // 5. Category matching: ONLY apply if user hasn't explicitly chosen a specific category
+    const isCurrentGeneric = !selectedCategory || selectedCategory === 'Mix' || selectedCategory === 'Apparel' || selectedCategory === 'Vintage Mix' || selectedCategory === 'Miscellaneous Curated';
+    if (isCurrentGeneric && tagData.category) {
       const matchCat = availableCategories.find(c =>
         c.toLowerCase().includes(tagData.category!.toLowerCase()) ||
         tagData.category!.toLowerCase().includes(c.toLowerCase())
@@ -1215,7 +1227,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       newPieceBreakdownItems.push({ ...breakdownItem, ...sortedPieceDb });
 
       stickerPayloads.push({
-        itemCode: barcode,
+        itemCode: pieceSku || barcode,
         description: `${pieceSku} • ${selectedCategory} (${sizeScanned})`,
         category: selectedCategory,
         size: sizeScanned,
@@ -1226,7 +1238,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         batchNo: activeBale.baleCode || activeBale.gatePassNo,
         date: nowIso.slice(0, 10),
         origin: countryOfOrigin,
-        shopLocation
+        shopLocation,
+        invoiceNo: activeBale.purchaseInvoiceNo || activeBale.gatePassNo || activeBale.baleCode || ''
       });
     }
 
@@ -1312,7 +1325,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       stickerPayloads.forEach(stickerPayload => {
         try {
           openThermalLabelPrintWindow({
-            itemCode: `${stickerPayload.itemCode} [${stickerPayload.description.split(' • ')[0]}]`,
+            itemCode: stickerPayload.itemCode,
             description: stickerPayload.description,
             category: stickerPayload.category,
             size: stickerPayload.size,
@@ -1321,7 +1334,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             retailPriceAed: stickerPayload.retailPriceAed,
             weightKg: stickerPayload.weightKg,
             batchNo: stickerPayload.batchNo,
-            date: stickerPayload.date
+            date: stickerPayload.date,
+            invoiceNo: stickerPayload.invoiceNo || activeBale.purchaseInvoiceNo || activeBale.gatePassNo || activeBale.baleCode || ''
           });
         } catch {}
       });
@@ -3789,7 +3803,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                               onClick={() => {
                                 luxuryAudio.playMechanicalClick();
                                 onPrintSticker({
-                                  itemCode: barcode,
+                                  itemCode: piece.sku || barcode,
                                   description: `${category} (${size})`,
                                   category,
                                   size,
@@ -3800,7 +3814,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                                   batchNo: activeBale?.baleCode || activeBale?.gatePassNo || 'BAL-01',
                                   date: new Date().toISOString().slice(0, 10),
                                   origin: piece.countryOfOrigin || piece.country_of_origin,
-                                  shopLocation: piece.shopLocation || piece.shop_location
+                                  shopLocation: piece.shopLocation || piece.shop_location,
+                                  invoiceNo: activeBale?.purchaseInvoiceNo || activeBale?.gatePassNo || activeBale?.baleCode || ''
                                 });
                               }}
                               className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-amber-400 rounded transition-colors cursor-pointer"

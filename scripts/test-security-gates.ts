@@ -1479,6 +1479,81 @@ async function runSecurityGateTests() {
     assert(testSanitizeToInches('29.5', 45) === '29.5', '29.5 inches remains 29.5 inches without distortion');
   }
 
+  // =========================================================================
+  // GATE 24: Thermal QR Pure SKU, Category Preservation & POS Auto-Add Gate
+  // =========================================================================
+  console.log('\n--- GATE 24: Thermal QR Pure SKU, Category Preservation & POS Auto-Add ---');
+  {
+    // 1. Thermal Popup Manager: Pure SKU QR payload (low density for instant optical scan)
+    const popupManagerPath = path.resolve(process.cwd(), 'src/modules/setup/thermal/thermalPopupManager.ts');
+    assert(fs.existsSync(popupManagerPath), 'thermalPopupManager.ts exists');
+    const popupContent = fs.readFileSync(popupManagerPath, 'utf-8');
+    assert(
+      popupContent.includes("qrPayload = (config.skuBarcode || '').trim()"),
+      'thermalPopupManager.ts encodes pure SKU string without JSON data bloating'
+    );
+
+    // 2. Thermal Sticker Modal: Pure SKU QR payload
+    const stickerComponentPath = path.resolve(process.cwd(), 'src/components/ThermalBarcodeSticker.tsx');
+    assert(fs.existsSync(stickerComponentPath), 'ThermalBarcodeSticker.tsx exists');
+    const stickerContent = fs.readFileSync(stickerComponentPath, 'utf-8');
+    assert(
+      stickerContent.includes("qrPayload = (activeConfig.skuBarcode || '').trim()"),
+      'ThermalBarcodeSticker.tsx encodes pure SKU string in live preview QR'
+    );
+    assert(
+      stickerContent.includes('invoiceNo?: string'),
+      'StickerData interface declares invoiceNo property'
+    );
+
+    // 3. Thermal Types & Config: Elimination of hardcoded demo invoice number
+    const thermalTypesPath = path.resolve(process.cwd(), 'src/modules/setup/thermal/thermalTypes.ts');
+    assert(fs.existsSync(thermalTypesPath), 'thermalTypes.ts exists');
+    const typesContent = fs.readFileSync(thermalTypesPath, 'utf-8');
+    assert(
+      typesContent.includes("invoiceNo: ''"),
+      'DEFAULT_THERMAL_ENGINE_CONFIG defaults invoiceNo to clean empty string'
+    );
+    assert(
+      !typesContent.includes("invoiceNo: 'INV-2026-8891'"),
+      'DEFAULT_THERMAL_ENGINE_CONFIG completely purged of hardcoded INV-2026-8891'
+    );
+
+    // 4. BaleSortingTerminal: Category Preservation & Real Invoice Sourcing
+    const terminalPath = path.resolve(process.cwd(), 'src/modules/purchase/components/BaleSortingTerminal.tsx');
+    assert(fs.existsSync(terminalPath), 'BaleSortingTerminal.tsx exists');
+    const terminalContent = fs.readFileSync(terminalPath, 'utf-8');
+    assert(
+      terminalContent.includes('matchingCat = !isCurrentGeneric ? mainCats.find'),
+      'BaleSortingTerminal preserves user-selected category on department switch'
+    );
+    assert(
+      terminalContent.includes('isCurrentGeneric && tagData.category'),
+      'BaleSortingTerminal protects user category from being clobbered by AI tag extraction'
+    );
+    assert(
+      terminalContent.includes('activeBale.purchaseInvoiceNo || activeBale.gatePassNo'),
+      'BaleSortingTerminal passes real activeBale purchaseInvoiceNo to thermal sticker payloads'
+    );
+
+    // 5. CounterSalePOSTerminal: Dual-Field Barcode & SKU Lookup + Instant Auto-Add
+    const posPath = path.resolve(process.cwd(), 'src/modules/sales/components/CounterSalePOSTerminal.tsx');
+    assert(fs.existsSync(posPath), 'CounterSalePOSTerminal.tsx exists');
+    const posContent = fs.readFileSync(posPath, 'utf-8');
+    assert(
+      posContent.includes('p.barcode?.toLowerCase() === cleanCode') && posContent.includes('p.sku && p.sku.toLowerCase() === cleanCode'),
+      'CounterSalePOSTerminal matches pieces in memory by both barcode and SKU'
+    );
+    assert(
+      posContent.includes('barcode.ilike.${code},sku.ilike.${code}'),
+      'CounterSalePOSTerminal queries Supabase with dual-field OR filter for barcode and sku'
+    );
+    assert(
+      posContent.includes('code.startsWith(\'{\')') && posContent.includes('parsed.sku || parsed.itemCode || parsed.barcode'),
+      'CounterSalePOSTerminal safely unpacks legacy JSON QR payloads'
+    );
+  }
+
   console.log('\n======================================================');
   console.log(`  SECURITY & INTEGRITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('======================================================\n');

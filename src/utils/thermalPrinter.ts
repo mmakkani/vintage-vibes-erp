@@ -13,6 +13,7 @@ export interface ThermalLabelData {
   retailPriceAed: number;
   batchNo?: string;
   date?: string;
+  invoiceNo?: string;
   companyName?: string;
   trn?: string;
   weightKg?: number;
@@ -93,7 +94,10 @@ export function openThermalLabelPrintWindow(data: ThermalLabelData): Window | nu
         priceAed: Number(data.retailPriceAed || 0),
         weightValue: weightGrams,
         weightUnit: 'g',
-        batchNo: data.batchNo || engineConfig.batchNo || ''
+        batchNo: data.batchNo || engineConfig.batchNo || '',
+        invoiceNo: (data.invoiceNo && data.invoiceNo !== 'INV-2026-8891')
+          ? data.invoiceNo
+          : (engineConfig.invoiceNo && engineConfig.invoiceNo !== 'INV-2026-8891' ? engineConfig.invoiceNo : (data.batchNo || ''))
       };
       return openThermalPrintPopup(mergedConfig, targetStyleId);
     }
@@ -789,12 +793,7 @@ export function openBaleThermalTagPrintWindow(data: BaleThermalTagData): Window 
         margin: 2
       });
       var qr = qrcode(4, 'L');
-      qr.addData(JSON.stringify({
-        bale: "${data.baleCode}",
-        cat: "${data.category}",
-        wtKg: ${data.grossWeightKg},
-        inv: "${data.purchaseInvoiceNo || ''}"
-      }));
+      qr.addData("${data.baleCode}");
       qr.make();
       document.getElementById('qr-elem').innerHTML = qr.createImgTag(2, 2);
     } catch(e) {
@@ -1044,12 +1043,7 @@ export function openBatchBaleThermalTagsPrintWindow(bales: BatchBaleThermalTagIt
           margin: 1
         });
         var qr = qrcode(4, 'L');
-        qr.addData(JSON.stringify({
-          bale: item.baleCode,
-          cat: item.category,
-          wtKg: item.wtKg,
-          inv: item.inv
-        }));
+        qr.addData(item.baleCode);
         qr.make();
         const qrContainer = document.getElementById('qr-elem-' + idx);
         if (qrContainer) qrContainer.innerHTML = qr.createImgTag(1.8, 1.8);

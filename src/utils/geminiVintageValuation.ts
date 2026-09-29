@@ -425,7 +425,7 @@ async function callGeminiVisionAppraisal(
         success: true,
         brand: parsed.brand || (isNonBrand ? 'Non-Brand Everyday Basic' : 'Vintage Curated'),
         garmentTitle: parsed.garmentTitle || `${parsed.brand || 'Vintage'} Apparel Piece`,
-        category: parsed.category || 'Graphic T-Shirts & Band Tees',
+        category: parsed.category || 'Apparel',
         gender,
         size: parsed.size || 'L',
         era: eraVal,

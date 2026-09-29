@@ -277,7 +277,7 @@ export const DEFAULT_THERMAL_ENGINE_CONFIG: ThermalEngineConfig = {
   phone: '+971 55 418 6086',
   trn: '100482910300003',
 
-  invoiceNo: 'INV-2026-8891',
+  invoiceNo: '',
   itemName: 'Vintage 1994 Levi’s 501 Trucker Jacket',
   category: 'Apparel / Heavy Denim',
   brandName: "Levi's Strauss & Co.",

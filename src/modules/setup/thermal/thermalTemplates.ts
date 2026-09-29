@@ -44,6 +44,10 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
     codAmount
   } = config;
 
+  const displayInvoice = (invoiceNo && invoiceNo.trim() !== '' && invoiceNo !== 'INV-2026-8891')
+    ? invoiceNo.trim()
+    : (batchNo && batchNo.trim() !== '' ? batchNo.trim() : 'AUTHENTIC');
+
   const formattedPrice = Number(priceAed).toFixed(2);
   const formattedWeight = `${weightValue} ${weightUnit.toUpperCase()}`;
   const currentDate = new Date().toISOString().split('T')[0];
@@ -71,7 +75,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
                 </div>
               </div>
               <div style="font-size:7.5px; font-family:monospace; font-weight:bold; border:0.75px solid #000; padding:1px 4px; border-radius:2px; flex-shrink:0; white-space:nowrap;">
-                ${invoiceNo}
+                ${displayInvoice}
               </div>
             </div>
             <div style="font-size:8px; text-transform:uppercase; font-weight:bold; color:#555; letter-spacing:0.5px;">${brandName} &bull; ${category}</div>
@@ -152,7 +156,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
           </div>
 
           <div style="display:flex; justify-content:space-between; align-items:center; border-top:2px solid #000; padding-top:1.5mm; font-size:8px; font-weight:bold;">
-            <div>INV: ${invoiceNo} | ${currentDate}</div>
+            <div>INV: ${displayInvoice} | ${currentDate}</div>
             <div style="font-size:14px; font-weight:900;">AED ${formattedPrice}</div>
           </div>
         </div>
@@ -189,7 +193,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
 
           <div style="display:flex; justify-content:space-between; font-size:7px; font-family:monospace; border-top:1px solid #000; padding-top:1mm;">
             <span>SIZE: ${size} &bull; WT: ${formattedWeight}</span>
-            <span>INVOICE: ${invoiceNo}</span>
+            <span>INVOICE: ${displayInvoice}</span>
           </div>
         </div>
       `;
@@ -236,7 +240,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
               </div>
               <div style="text-align:right; font-size:8px;">
                 <div>BATCH: <strong>${batchNo}</strong></div>
-                <div>INV: ${invoiceNo}</div>
+                <div>INV: ${displayInvoice}</div>
               </div>
             </div>
 
@@ -349,7 +353,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
                 <div style="color:#555;">CAT: ${category}</div>
               </div>
               <div style="font-family:monospace; font-size:7px; border-top:0.5px dashed #666; padding-top:2px;">
-                <div>INVOICE: ${invoiceNo}</div>
+                <div>INVOICE: ${displayInvoice}</div>
                 <div>WEIGHT: ${formattedWeight}</div>
                 <div>TRN: ${trn}</div>
               </div>
@@ -383,7 +387,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
                 <span style="background:#000; color:#fff; font-size:9px; font-weight:900; padding:1px 5px; text-transform:uppercase;">EXPRESS DISPATCH</span>
                 <span style="font-size:8px; font-weight:bold; margin-left:4px;">AIR/DOMESTIC</span>
               </div>
-              <div style="font-size:8px; font-family:monospace; font-weight:bold;">INV: ${invoiceNo}</div>
+              <div style="font-size:8px; font-family:monospace; font-weight:bold;">INV: ${displayInvoice}</div>
             </div>
 
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; border-bottom:1.5px solid #000; padding-bottom:2mm; margin-bottom:2mm; font-size:7.5px;">
@@ -570,7 +574,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
               </div>
               <div style="text-align:right; font-size:7.5px; font-family:monospace;">
                 <div>BATCH: ${batchNo}</div>
-                <div>INV: ${invoiceNo}</div>
+                <div>INV: ${displayInvoice}</div>
               </div>
             </div>
 

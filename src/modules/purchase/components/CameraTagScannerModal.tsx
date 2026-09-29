@@ -932,7 +932,8 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                   <label className="block text-[10px] font-bold text-slate-500 uppercase">Category</label>
                   <input
                     type="text"
-                    value={extractedData.category || 'Graphic T-Shirts & Band Tees'}
+                    value={extractedData.category || ''}
+                    placeholder="e.g. T-Shirts, Denim..."
                     onChange={e => setExtractedData({ ...extractedData, category: e.target.value })}
                     className="w-full mt-1 bg-white border border-slate-300 rounded p-1.5 text-xs font-bold text-slate-900"
                   />

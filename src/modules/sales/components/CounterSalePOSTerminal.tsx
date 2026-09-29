@@ -752,15 +752,32 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     return Number((tendered - grandTotal).toFixed(2));
   }, [cashTendered, grandTotal]);
 
-  // Add piece to cart handler with pessimistic reservation
+  // Add piece to cart handler with pessimistic reservation (Dual-Field Barcode & SKU Lookup + Instant Auto-Add)
   const handleScanPiece = async (rawCode?: string) => {
-    const barcode = rawCode || '';
-    if (!barcode || barcode.length === 0) return;
-    const code = barcode.trim();
-    if (!code || code.length === 0) return;
+    const raw = rawCode || '';
+    if (!raw || raw.length === 0) return;
 
-    // Check if already in cart
-    const inCartIdx = cart.findIndex(c => c.piece.barcode.toLowerCase() === code.toLowerCase());
+    // Clean scanned code: extract SKU if scanner read legacy JSON QR code
+    let code = raw.trim();
+    if (code.startsWith('{') && (code.includes('sku') || code.includes('itemCode') || code.includes('barcode'))) {
+      try {
+        const parsed = JSON.parse(code);
+        code = String(parsed.sku || parsed.itemCode || parsed.barcode || code).trim();
+      } catch (_) {}
+    }
+    // Remove potential bracketed suffix e.g. "BAL-01-P0001 [HOLLISTER...]"
+    const bracketIdx = code.indexOf(' [');
+    if (bracketIdx !== -1) {
+      code = code.substring(0, bracketIdx).trim();
+    }
+    if (!code || code.length === 0) return;
+    const cleanCode = code.toLowerCase();
+
+    // Check if already in cart (matching either piece barcode or sku)
+    const inCartIdx = cart.findIndex(c =>
+      c.piece.barcode?.toLowerCase() === cleanCode ||
+      (c.piece.sku && c.piece.sku.toLowerCase() === cleanCode)
+    );
     if (inCartIdx !== -1) {
       luxuryAudio.playMechanicalClick();
       setScanFeedback({
@@ -771,22 +788,26 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       return;
     }
 
-    // Lookup piece in stock
-    let piece = allPieces.find(p => p.barcode.toLowerCase() === code.toLowerCase());
+    // Lookup piece in stock (matching either barcode or sku)
+    let piece = allPieces.find(p =>
+      p.barcode?.toLowerCase() === cleanCode ||
+      (p.sku && p.sku.toLowerCase() === cleanCode)
+    );
 
     // Live Database Fallback: if not found in memory (e.g., initial hydration or freshly sorted piece)
     if (!piece) {
       try {
         const { data: dbPiece } = await supabase
           .from('inventory_pieces')
-          .select(PurchaseService.INVENTORY_PIECES_COLUMNS)
-          .ilike('barcode', code)
+          .select('*, id, gate_pass_id, barcode, item_name, brand_name, brand_tier, label_grade, shop_location, weight_kg, weight_grams, cost_price, estimated_price, retail_price_aed, size_scanned, country_of_origin, style, front_image_url, is_sold, status, sku')
+          .or(`barcode.ilike.${code},sku.ilike.${code}`)
           .maybeSingle();
 
         if (dbPiece) {
           const mappedPiece: PieceBreakdownItem = {
             id: dbPiece.id,
             barcode: dbPiece.barcode,
+            sku: dbPiece.sku,
             itemName: dbPiece.item_name || 'Vintage Garment',
             brandName: dbPiece.brand_name || 'Vintage Brand',
             brandTier: dbPiece.brand_tier || 'TIER_3_MASS_MARKET',
@@ -806,7 +827,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           };
           piece = mappedPiece;
           if (!mappedPiece.isSold && mappedPiece.status === 'IN_STOCK') {
-            setAllPieces(prev => [mappedPiece, ...prev.filter(p => p.barcode.toLowerCase() !== code.toLowerCase())]);
+            setAllPieces(prev => [mappedPiece, ...prev.filter(p => p.barcode?.toLowerCase() !== cleanCode && (!p.sku || p.sku.toLowerCase() !== cleanCode))]);
           }
         }
       } catch (err) {
@@ -877,7 +898,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     setCart(prev => [newItem, ...prev]);
     luxuryAudio.playCashChime();
     setScanFeedback({
-      text: `✓ Added ${piece.brandName} ${piece.itemName} (${piece.sizeScanned || 'M'}) • AED ${sellingPrice}`,
+      text: `✓ Added ${piece.sku || piece.barcode} • ${piece.brandName} ${piece.itemName} • AED ${sellingPrice}`,
       type: 'success'
     });
 

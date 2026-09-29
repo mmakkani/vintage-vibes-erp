@@ -31,6 +31,7 @@ export interface StickerData {
   weightKg?: number;
   estimatedPrice?: number;
   shopLocation?: string;
+  invoiceNo?: string;
 }
 
 interface ThermalBarcodeStickerProps {
@@ -152,7 +153,9 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
       weightValue: weightGrams,
       weightUnit: 'g',
       batchNo: sticker.batchNo || engineConfig.batchNo || '',
-      invoiceNo: sticker.batchNo || engineConfig.invoiceNo || '',
+      invoiceNo: (sticker.invoiceNo && sticker.invoiceNo !== 'INV-2026-8891')
+        ? sticker.invoiceNo
+        : (engineConfig.invoiceNo && engineConfig.invoiceNo !== 'INV-2026-8891' ? engineConfig.invoiceNo : (sticker.batchNo || '')),
       serialNumber: cleanItemCode,
       styleId: selectedStyleId
     };
@@ -164,20 +167,13 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
     return rawBarcodeSvg.replace('<svg ', '<svg style="max-width:100%;max-height:100%;width:auto;height:auto;display:block;" ');
   }, [activeConfig.skuBarcode]);
 
-  // Generate crisp QR code SVG for live item (auto-constrained so it never bleeds or cuts off)
+  // Generate crisp QR code SVG for live item (pure SKU payload for low-density instant laser/camera scan)
   const qrSvgString = useMemo(() => {
-    const qrPayload = JSON.stringify({
-      sku: activeConfig.skuBarcode,
-      item: activeConfig.itemName,
-      price: activeConfig.priceAed,
-      size: activeConfig.size,
-      brand: activeConfig.brandName,
-      company: activeConfig.companyName
-    });
+    const qrPayload = (activeConfig.skuBarcode || '').trim();
     const rawQrSvg = generateQrCodeSvgString(qrPayload, 80);
     // Inject responsive scaling so the QR code strictly honors its parent container
     return rawQrSvg.replace('<svg ', '<svg style="width:100%;height:100%;max-width:100%;max-height:100%;display:block;" ');
-  }, [activeConfig]);
+  }, [activeConfig.skuBarcode]);
 
   // Render the selected label design style
   const livePreviewHtml = useMemo(() => {

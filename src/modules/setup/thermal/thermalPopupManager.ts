@@ -48,14 +48,8 @@ export function openThermalPrintPopup(config: ThermalEngineConfig, styleId: Ther
   const rawBarcodeSvg = generateBarcodeSvgString(config.skuBarcode);
   const barcodeSvg = rawBarcodeSvg.replace('<svg ', '<svg style="max-width:100%;max-height:100%;width:auto;height:auto;display:block;margin:0 auto;" ');
 
-  const qrPayload = JSON.stringify({
-    sku: config.skuBarcode,
-    item: config.itemName,
-    price: config.priceAed,
-    inv: config.invoiceNo,
-    brand: config.brandName,
-    company: config.companyName
-  });
+  // Pure SKU / Barcode payload: low-density vector matrix for instant optical scan & 100% laser/camera decode
+  const qrPayload = (config.skuBarcode || '').trim();
   const rawQrSvg = generateQrCodeSvgString(qrPayload, 80);
   const qrSvg = rawQrSvg.replace('<svg ', '<svg style="width:100%;height:100%;max-width:100%;max-height:100%;display:block;" ');
 
