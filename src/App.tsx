@@ -20,7 +20,7 @@ import { AccessDeniedNotice } from './components/AccessDeniedNotice.tsx';
 import { GoldenCursorDust } from './components/GoldenCursorDust.tsx';
 import { useIdleTimer } from './hooks/useIdleTimer.ts';
 import { isTabAccessible, getAccessibleTabs } from './modules/auth/utils/permissionUtils.ts';
-import { CompanyProfileService, SetupService, AuthService, DeviceService, PresenceService } from './services/index.ts';
+import { CompanyProfileService, SetupService, AuthService, DeviceService, PresenceService, PurchaseService, SalesService, FinanceService, PartiesService, HrService } from './services/index.ts';
 import { MasterDataCache } from './services/masterDataCache.ts';
 import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
 import { ModuleMaintenanceGuard } from './components/ModuleMaintenanceGuard.tsx';
@@ -67,6 +67,18 @@ const TabActiveSyncManager: React.FC<{ activeTab: ActiveTab }> = ({ activeTab })
       triggerGlobalSync(activeTab);
     }
   }, [activeTab, triggerGlobalSync]);
+
+  // Reactive SWR background pre-fetch listener triggered on menu hover
+  useEffect(() => {
+    const handlePrefetch = (e: any) => {
+      const targetMod = e?.detail?.tab;
+      if (targetMod) {
+        triggerGlobalSync(targetMod);
+      }
+    };
+    window.addEventListener('vv:prefetch-tab', handlePrefetch);
+    return () => window.removeEventListener('vv:prefetch-tab', handlePrefetch);
+  }, [triggerGlobalSync]);
 
   return null;
 };
@@ -124,13 +136,68 @@ export default function App() {
     return 'dashboard';
   });
 
-  const setActiveTab = (tab: ActiveTab) => {
+  const [financeInitialSubTab, setFinanceInitialSubTab] = useState<any>(() => {
+    try {
+      return localStorage.getItem('vintage_finance_subtab') || 'coa';
+    } catch {
+      return 'coa';
+    }
+  });
+
+  const [subTabKeys, setSubTabKeys] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    try {
+      const p = localStorage.getItem('vintage_purchase_subtab');
+      if (p) init.purchase = p;
+      const s = localStorage.getItem('vintage_sales_subtab');
+      if (s) init.sales = s;
+      const f = localStorage.getItem('vintage_finance_subtab');
+      if (f) init.finance = f;
+      const h = localStorage.getItem('vintage_hr_subtab');
+      if (h) init.hr = h;
+      const set = localStorage.getItem('vintage_setup_subtab');
+      if (set) init.setup = set;
+    } catch {}
+    return init;
+  });
+
+  const setActiveTab = (tab: ActiveTab, subTab?: string) => {
     const targetTab = tab === 'ledger' ? 'finance' : tab;
-    if (tab === 'ledger') {
+    const targetSubTab = tab === 'ledger' ? 'ledger' : subTab;
+
+    if (targetSubTab) {
       try {
-        localStorage.setItem('vintage_finance_subtab', 'ledger');
+        if (targetTab === 'purchase') {
+          localStorage.setItem('vintage_purchase_subtab', targetSubTab);
+          const url = new URL(window.location.href);
+          url.searchParams.set('purchaseSubTab', targetSubTab);
+          window.history.replaceState({}, '', url.toString());
+        } else if (targetTab === 'sales') {
+          localStorage.setItem('vintage_sales_subtab', targetSubTab);
+          const url = new URL(window.location.href);
+          url.searchParams.set('subTab', targetSubTab);
+          window.history.replaceState({}, '', url.toString());
+        } else if (targetTab === 'finance') {
+          localStorage.setItem('vintage_finance_subtab', targetSubTab);
+          setFinanceInitialSubTab(targetSubTab);
+          const url = new URL(window.location.href);
+          url.searchParams.set('financeSubTab', targetSubTab);
+          window.history.replaceState({}, '', url.toString());
+        } else if (targetTab === 'hr') {
+          localStorage.setItem('vintage_hr_subtab', targetSubTab);
+          const url = new URL(window.location.href);
+          url.searchParams.set('hrSubTab', targetSubTab);
+          window.history.replaceState({}, '', url.toString());
+        } else if (targetTab === 'setup') {
+          localStorage.setItem('vintage_setup_subtab', targetSubTab);
+          const url = new URL(window.location.href);
+          url.searchParams.set('setupSubTab', targetSubTab);
+          window.history.replaceState({}, '', url.toString());
+        }
+        setSubTabKeys(prev => ({ ...prev, [targetTab]: targetSubTab }));
       } catch {}
     }
+
     setActiveTabState(targetTab);
     try {
       localStorage.setItem('vintage_erp_active_tab', targetTab);
@@ -139,6 +206,26 @@ export default function App() {
       window.history.replaceState({}, '', url.toString());
     } catch {}
   };
+
+  // Silent SWR background RAM cache warming on hover
+  const handlePrefetchTab = useCallback((tab: ActiveTab, subTab?: string) => {
+    try {
+      if (tab === 'purchase') {
+        PurchaseService.getInwardGatePasses(false).catch(() => {});
+        PurchaseService.getInventoryPieces(100, false).catch(() => {});
+      } else if (tab === 'sales') {
+        SalesService.getSalesInvoicesPaginated(1, 10).catch(() => {});
+        SalesService.getSalesGatePasses().catch(() => {});
+      } else if (tab === 'finance') {
+        FinanceService.getChartOfAccounts(false).catch(() => {});
+      } else if (tab === 'parties') {
+        PartiesService.getPartiesPaginated(1, 10).catch(() => {});
+      } else if (tab === 'hr') {
+        HrService.getEmployees(false).catch(() => {});
+      }
+      window.dispatchEvent(new CustomEvent('vv:prefetch-tab', { detail: { tab, subTab } }));
+    } catch {}
+  }, []);
 
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [isExecutiveTerminalOpen, setIsExecutiveTerminalOpen] = useState(false);
@@ -670,8 +757,13 @@ export default function App() {
         {/* Dubai Live Gold Souk, Forex Exchange & Inbound Cargo Marquee Ticker */}
         <DubaiLiveSoukTicker />
 
-        {/* Main Tab Navigation */}
-        <Navigation activeTab={activeTab} onSelectTab={setActiveTab} currentUser={currentUser} />
+        {/* Main Tab Navigation with SWR Pre-Fetching & Hierarchical Dropdown */}
+        <Navigation
+          activeTab={activeTab}
+          onSelectTab={setActiveTab}
+          onPrefetchTab={handlePrefetchTab}
+          currentUser={currentUser}
+        />
 
         {/* Full-Width Main Content Area - Unconstrained Edge-to-Edge Data Density */}
         <main id="main-content" className="flex-1 w-full max-w-none px-3 sm:px-6 lg:px-8 py-3.5 sm:py-4 text-left">
@@ -701,7 +793,7 @@ export default function App() {
             </div>
 
             {/* Purchase & Container Inward Module */}
-            <div className={activeTab === 'purchase' ? 'block' : 'hidden'} key="keepalive-tab-purchase">
+            <div className={activeTab === 'purchase' ? 'block' : 'hidden'} key={`keepalive-tab-purchase-${subTabKeys['purchase'] || 'default'}`}>
               {visitedTabs.has('purchase') && (
                 <ErrorBoundary sectionName="Purchase & Container Inward Module">
                   <PurchaseView
@@ -714,7 +806,7 @@ export default function App() {
             </div>
 
             {/* Sales, Barcode & Dispatch Module */}
-            <div className={activeTab === 'sales' ? 'block' : 'hidden'} key="keepalive-tab-sales">
+            <div className={activeTab === 'sales' ? 'block' : 'hidden'} key={`keepalive-tab-sales-${subTabKeys['sales'] || 'default'}`}>
               {visitedTabs.has('sales') && (
                 <ErrorBoundary sectionName="Sales, Barcode & Dispatch Module">
                   <ModuleMaintenanceGuard
@@ -746,13 +838,13 @@ export default function App() {
             </div>
 
             {/* Financial Accounts & COA Module */}
-            <div className={activeTab === 'finance' ? 'block' : 'hidden'} key="keepalive-tab-finance">
+            <div className={activeTab === 'finance' ? 'block' : 'hidden'} key={`keepalive-tab-finance-${subTabKeys['finance'] || 'default'}`}>
               {visitedTabs.has('finance') && (
                 <ErrorBoundary sectionName="Financial Accounts & COA Module">
                   <FinanceView
                     onRefreshAll={refreshGlobalData}
                     currentUserRole={currentUser.role}
-                    initialSubTab={currentUser.role === 'ADMIN' ? 'coa' : 'vouchers'}
+                    initialSubTab={financeInitialSubTab}
                     maintenanceModules={companyProfile.maintenance_modules}
                     companyProfile={companyProfile}
                   />
@@ -785,7 +877,7 @@ export default function App() {
             </div>
 
             {/* HR, Vault & Payroll Module */}
-            <div className={activeTab === 'hr' ? 'block' : 'hidden'} key="keepalive-tab-hr">
+            <div className={activeTab === 'hr' ? 'block' : 'hidden'} key={`keepalive-tab-hr-${subTabKeys['hr'] || 'default'}`}>
               {visitedTabs.has('hr') && (
                 <ErrorBoundary sectionName="HR, Vault & Payroll Module">
                   <ModuleMaintenanceGuard
@@ -801,7 +893,7 @@ export default function App() {
             </div>
 
             {/* Global Master Setup & Configuration Module */}
-            <div className={activeTab === 'setup' ? 'block' : 'hidden'} key="keepalive-tab-setup">
+            <div className={activeTab === 'setup' ? 'block' : 'hidden'} key={`keepalive-tab-setup-${subTabKeys['setup'] || 'default'}`}>
               {visitedTabs.has('setup') && (
                 !isTabAccessible('setup', currentUser) ? (
                   <AccessDeniedNotice
