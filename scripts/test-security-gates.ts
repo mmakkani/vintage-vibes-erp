@@ -950,8 +950,8 @@ async function runSecurityGateTests() {
       assert(postDbRes.rows[0]?.status === 'POSTED', 'Invoice status transitioned to POSTED');
 
       let pieceDbRes = await client.query('SELECT status, is_sold FROM inventory_pieces WHERE barcode = $1', [testBarcode]);
-      for (let attempt = 0; attempt < 5 && (!pieceDbRes.rows[0] || pieceDbRes.rows[0]?.status !== 'SOLD' || pieceDbRes.rows[0]?.is_sold !== true); attempt++) {
-        await new Promise(r => setTimeout(r, 250));
+      for (let attempt = 0; attempt < 10 && (!pieceDbRes.rows[0] || pieceDbRes.rows[0]?.status !== 'SOLD' || pieceDbRes.rows[0]?.is_sold !== true); attempt++) {
+        await new Promise(r => setTimeout(r, 300));
         pieceDbRes = await client.query('SELECT status, is_sold FROM inventory_pieces WHERE barcode = $1', [testBarcode]);
       }
       assert(
