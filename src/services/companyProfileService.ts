@@ -1,5 +1,70 @@
 import { supabase } from '../supabaseClient.ts';
-import { CompanyProfile } from '../modules/setup/setup.types.ts';
+import { CompanyProfile, BankAccountConfig } from '../modules/setup/setup.types.ts';
+import { POSTerminalConfig, POSTerminalDevice } from '../modules/setup/hardware.types.ts';
+
+export const DEFAULT_RAKBANK_POS_DEVICE: POSTerminalDevice = {
+  id: 'pos-dev-01',
+  name: 'RAKBANK Paymob PAX A960',
+  model: 'PAX_A960',
+  connectionType: 'CELLULAR_SIM',
+  ipAddress: '',
+  port: 8080,
+  terminalId: '12857001',
+  merchantId: '114400000012857',
+  serialNumber: '1180511614',
+  imei: '350814987795465',
+  simCarrier: 'DU',
+  paymobTid: '51898',
+  paymobMid: '85283',
+  cloudPushEnabled: true,
+  isActive: true,
+  status: 'ONLINE',
+  location: 'Main Cash Counter',
+  bankId: 'bnk-rak-01',
+  bankName: 'RAKBANK',
+  bankCoaCode: '1120-02'
+};
+
+export const DEFAULT_BANK_ACCOUNTS: BankAccountConfig[] = [
+  {
+    id: 'bnk-rak-01',
+    bankName: 'RAKBANK',
+    accountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+    iban: 'AE24 0331 2345 6789 0123 456',
+    accountNumber: '1048291029301',
+    branchName: 'Dubai Downtown / Al Ain',
+    swiftBic: 'RAKBAEADXXX',
+    currency: 'AED',
+    qrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%26bank%3DRAKBANK',
+    isPrimary: true,
+    linkedPosTerminalId: '12857001',
+    coaAccountCode: '1120-02',
+    status: 'ACTIVE',
+    posFleet: [DEFAULT_RAKBANK_POS_DEVICE]
+  }
+];
+
+export const DEFAULT_POS_TERMINAL_CONFIG: POSTerminalConfig = {
+  id: 'pos-dev-01',
+  terminalName: 'RAKBANK Paymob PAX A960',
+  terminalModel: 'PAX_A960',
+  model: 'PAX_A960',
+  connectionType: 'CELLULAR_SIM',
+  terminalId: '12857001',
+  merchantId: '114400000012857',
+  status: 'ONLINE',
+  clearingAccountId: '1125-00',
+  settlementCoaAccountCode: '1120-02',
+  linkedBankName: 'RAKBANK',
+  linkedBankAccountId: 'bnk-rak-01',
+  autoPrintCustomerReceipt: true,
+  autoPrintMerchantSlip: false,
+  allowApplePayNfc: true,
+  allowGooglePayNfc: true,
+  allowContactlessChip: true,
+  currency: 'AED',
+  fleet: [DEFAULT_RAKBANK_POS_DEVICE]
+};
 
 const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
@@ -36,10 +101,12 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   },
   vatRatePercent: 5.0,
   globalStockAlertThreshold: 5,
-  bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%26bank%3DEMIRATES%20NBD',
+  bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%26bank%3DRAKBANK',
   bankIban: 'AE24 0331 2345 6789 0123 456',
-  bankName: 'Emirates NBD',
+  bankName: 'RAKBANK',
   bankAccountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+  bankAccounts: DEFAULT_BANK_ACCOUNTS,
+  posTerminalConfig: DEFAULT_POS_TERMINAL_CONFIG,
   enableCod: true,
   enableBankTransfer: true,
   enableCardPay: true,
@@ -184,6 +251,52 @@ export class CompanyProfileService {
     const corpEmail = data.corporate_email || data.corporateEmail || data.email || DEFAULT_COMPANY_PROFILE.email;
     const socialLinks = data.social_links || data.socialLinks || DEFAULT_COMPANY_PROFILE.social_links;
 
+    // Parse / normalize bank accounts
+    let bankAccounts: BankAccountConfig[] = data.bank_accounts || data.bankAccounts;
+    if (!Array.isArray(bankAccounts) || bankAccounts.length === 0) {
+      bankAccounts = [...DEFAULT_BANK_ACCOUNTS];
+    } else {
+      const hasFleet = bankAccounts.some(b => Array.isArray(b.posFleet) && b.posFleet.length > 0);
+      if (!hasFleet && DEFAULT_BANK_ACCOUNTS[0]?.posFleet) {
+        bankAccounts = bankAccounts.map((b, idx) => {
+          if (b.isPrimary || idx === 0) {
+            return {
+              ...b,
+              posFleet: [...(DEFAULT_BANK_ACCOUNTS[0].posFleet || [])]
+            };
+          }
+          return b;
+        });
+      }
+    }
+
+    // Parse / normalize POS terminal config
+    let posTerminalConfig: POSTerminalConfig = data.pos_terminal_config || data.posTerminalConfig || DEFAULT_POS_TERMINAL_CONFIG;
+    if (!posTerminalConfig || (!posTerminalConfig.fleet?.length && !posTerminalConfig.terminalId)) {
+      posTerminalConfig = { ...DEFAULT_POS_TERMINAL_CONFIG };
+    } else if (!Array.isArray(posTerminalConfig.fleet) || posTerminalConfig.fleet.length === 0) {
+      posTerminalConfig = {
+        ...posTerminalConfig,
+        fleet: [DEFAULT_RAKBANK_POS_DEVICE]
+      };
+    }
+
+    // Merge cached profile from localStorage if available in browser
+    if (typeof window !== 'undefined') {
+      try {
+        const cachedStr = localStorage.getItem('vintage_cached_company_profile');
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr);
+          if (Array.isArray(cached.bankAccounts) && cached.bankAccounts.some((b: any) => b.posFleet?.length > 0)) {
+            bankAccounts = cached.bankAccounts;
+          }
+          if (cached.posTerminalConfig?.fleet?.length > 0) {
+            posTerminalConfig = cached.posTerminalConfig;
+          }
+        }
+      } catch {}
+    }
+
     // Map database snake_case or raw profile_data to camelCase and snake_case
     const prof: CompanyProfile = {
       ...DEFAULT_COMPANY_PROFILE,
@@ -216,7 +329,7 @@ export class CompanyProfileService {
       bankIban: data.bank_iban || data.bankIban || DEFAULT_COMPANY_PROFILE.bankIban,
       bankAccountNumber: data.bank_account_number || data.bankAccountNumber || '',
       bankQrCodeUrl: data.bank_qr_code_url || data.bankQrCodeUrl || DEFAULT_COMPANY_PROFILE.bankQrCodeUrl,
-      bankAccounts: data.bank_accounts || data.bankAccounts || [],
+      bankAccounts,
       enableCod: data.enable_cod !== false && data.enableCod !== false,
       enableBankTransfer: data.enable_bank_transfer !== false && data.enableBankTransfer !== false,
       enableCardPay: data.enable_card_pay !== false && data.enableCardPay !== false,
@@ -228,7 +341,7 @@ export class CompanyProfileService {
       whatsappOrdersNumber: waOrdersNumber,
       virtualHostVideoUrl: data.virtual_host_video_url || data.virtualHostVideoUrl || DEFAULT_COMPANY_PROFILE.virtualHostVideoUrl || '/mazi_video.mp4',
       virtual_host_video_url: data.virtual_host_video_url || data.virtualHostVideoUrl || DEFAULT_COMPANY_PROFILE.virtual_host_video_url || '/mazi_video.mp4',
-      posTerminalConfig: data.pos_terminal_config || data.posTerminalConfig,
+      posTerminalConfig,
       paymentGateway: data.payment_gateway || data.paymentGateway || DEFAULT_COMPANY_PROFILE.paymentGateway,
       tiktokLiveSocket: data.tiktok_live_socket || data.tiktokLiveSocket,
       posBridge: data.pos_bridge || data.posBridge,
@@ -246,6 +359,11 @@ export class CompanyProfileService {
 
         this.cachedProfile = prof;
         this.lastFetched = Date.now();
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('vintage_cached_company_profile', JSON.stringify(prof));
+          } catch {}
+        }
         return prof;
       } finally {
         this.profilePromise = null;
@@ -350,6 +468,16 @@ export class CompanyProfileService {
     }
 
     this.clearCache();
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('vintage_cached_company_profile', JSON.stringify({
+          ...DEFAULT_COMPANY_PROFILE,
+          ...profile,
+          bankAccounts: profile.bankAccounts || DEFAULT_BANK_ACCOUNTS,
+          posTerminalConfig: profile.posTerminalConfig || DEFAULT_POS_TERMINAL_CONFIG
+        }));
+      } catch {}
+    }
     return this.getCompanyProfile(true);
   }
 

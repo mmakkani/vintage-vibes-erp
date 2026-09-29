@@ -21,7 +21,7 @@ import { AccessDeniedNotice } from './components/AccessDeniedNotice.tsx';
 import { GoldenCursorDust } from './components/GoldenCursorDust.tsx';
 import { useIdleTimer } from './hooks/useIdleTimer.ts';
 import { isTabAccessible, getAccessibleTabs } from './modules/auth/utils/permissionUtils.ts';
-import { CompanyProfileService, SetupService, AuthService, DeviceService, PresenceService, PurchaseService, SalesService, FinanceService, PartiesService, HrService } from './services/index.ts';
+import { CompanyProfileService, SetupService, AuthService, DeviceService, PresenceService, PurchaseService, SalesService, FinanceService, PartiesService, HrService, DEFAULT_BANK_ACCOUNTS, DEFAULT_POS_TERMINAL_CONFIG } from './services/index.ts';
 import { MasterDataCache } from './services/masterDataCache.ts';
 import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
 import { ModuleMaintenanceGuard } from './components/ModuleMaintenanceGuard.tsx';
@@ -718,6 +718,8 @@ export default function App() {
       defaultCurrency: 'AED',
       vatRatePercent: 5.0,
       logoUrl: '/vintage_logo.svg',
+      bankAccounts: DEFAULT_BANK_ACCOUNTS,
+      posTerminalConfig: DEFAULT_POS_TERMINAL_CONFIG,
       social_links: {
         facebook: 'https://www.facebook.com/vintagevibes.ae/',
         instagram: 'https://www.instagram.com/vintagevibes.llc/',

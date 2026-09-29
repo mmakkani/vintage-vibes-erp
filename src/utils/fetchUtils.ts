@@ -754,7 +754,28 @@ export function initUniversalFetchInterceptor() {
         const res = await rawFetch.apply(this, [input, effectiveInit]);
         const isAuthRoute = url.includes('/api/auth/login') || url.includes('/api/auth/verify');
         // Return immediately if successful, or if auth route returns 401/403 (for login credential messages)
-        if (res.ok || (isAuthRoute && (res.status === 401 || res.status === 403))) {
+        if (res.ok) {
+          if (url.includes('/company-profile') || url.includes('/setup/company')) {
+            try {
+              const cloned = res.clone();
+              const json = await cloned.json();
+              const hasFleet = Array.isArray(json?.bankAccounts) && json.bankAccounts.some((b: any) => Array.isArray(b.posFleet) && b.posFleet.length > 0);
+              const hasConfigFleet = Array.isArray(json?.posTerminalConfig?.fleet) && json.posTerminalConfig.fleet.length > 0;
+              if (hasFleet || hasConfigFleet) {
+                return res;
+              }
+              const fullProf = await CompanyProfileService.getCompanyProfile();
+              return new Response(JSON.stringify(fullProf), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' }
+              });
+            } catch (_) {
+              return res;
+            }
+          }
+          return res;
+        }
+        if (isAuthRoute && (res.status === 401 || res.status === 403)) {
           return res;
         }
       } catch (_) {
