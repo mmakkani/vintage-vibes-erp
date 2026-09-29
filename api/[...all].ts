@@ -9445,6 +9445,67 @@ RULES FOR YOUR RESPONSE:
       return res.status(200).json(data || []);
     }
 
+    if (pathname.includes('/setup/thermal-config') || pathname.endsWith('/thermal-config')) {
+      if (method === 'GET') {
+        let client: any = null;
+        try {
+          client = await borrowClient();
+          if (client) {
+            const q = await client.query("SELECT config FROM thermal_barcode_configs WHERE id = 'default' LIMIT 1;");
+            if (q?.rows?.[0]?.config) {
+              return res.status(200).json({ success: true, data: q.rows[0].config });
+            }
+          }
+        } catch (e: any) {
+          console.warn('[thermal-config GET serverless error]:', e?.message);
+        } finally {
+          if (client && typeof client.release === 'function') {
+            try { client.release(); } catch (_) {}
+          }
+        }
+        try {
+          const { data } = await supabaseAdmin.from('thermal_barcode_configs').select('config').eq('id', 'default').maybeSingle();
+          if (data?.config) {
+            return res.status(200).json({ success: true, data: data.config });
+          }
+        } catch (_) {}
+        return res.status(200).json({ success: true, data: null });
+      }
+
+      if (method === 'PUT' || method === 'POST') {
+        const config = body;
+        if (!config || typeof config !== 'object') {
+          return res.status(400).json({ success: false, error: 'Invalid configuration payload' });
+        }
+        let client: any = null;
+        try {
+          client = await borrowClient();
+          if (client) {
+            await client.query(`
+              INSERT INTO thermal_barcode_configs (id, config, updated_at)
+              VALUES ('default', $1, NOW())
+              ON CONFLICT (id) DO UPDATE
+              SET config = EXCLUDED.config,
+                  updated_at = NOW();
+            `, [JSON.stringify(config)]);
+            return res.status(200).json({ success: true, data: config });
+          }
+        } catch (e: any) {
+          console.warn('[thermal-config PUT serverless error]:', e?.message);
+          try {
+            await supabaseAdmin.from('thermal_barcode_configs').upsert({ id: 'default', config, updated_at: new Date().toISOString() });
+            return res.status(200).json({ success: true, data: config });
+          } catch (supaErr: any) {
+            return res.status(500).json({ success: false, error: supaErr?.message || e?.message });
+          }
+        } finally {
+          if (client && typeof client.release === 'function') {
+            try { client.release(); } catch (_) {}
+          }
+        }
+      }
+    }
+
     if (pathname.includes('/ios/install') || pathname.endsWith('.mobileconfig')) {
       res.setHeader('Content-Type', 'application/x-apple-aspen-config; charset=utf-8');
       res.setHeader('Content-Disposition', 'attachment; filename="vintagevibes.mobileconfig"');

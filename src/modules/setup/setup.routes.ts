@@ -1112,6 +1112,16 @@ setupRouter.put('/whatsapp-config', async (req, res) => {
 // Thermal Barcode & QR Label Designer Settings
 setupRouter.get('/thermal-config', async (req, res) => {
   try {
+    const data = await withDb(async (client) => {
+      const q = await client.query("SELECT config FROM thermal_barcode_configs WHERE id = 'default' LIMIT 1;");
+      return q.rows[0]?.config || null;
+    });
+    if (data) return res.json({ success: true, data });
+  } catch (err: any) {
+    console.warn('[thermal-config GET] withDb notice:', err?.message);
+  }
+
+  try {
     const cfg = await SetupService.getThermalBarcodeConfig();
     if (cfg) return res.json({ success: true, data: cfg });
   } catch (_) {}
@@ -1119,11 +1129,29 @@ setupRouter.get('/thermal-config', async (req, res) => {
 });
 
 setupRouter.put('/thermal-config', async (req, res) => {
+  const config = req.body;
+  if (!config || typeof config !== 'object') {
+    return res.status(400).json({ success: false, error: 'Invalid configuration payload' });
+  }
   try {
-    await SetupService.updateThermalBarcodeConfig(req.body);
-    return res.json({ success: true, data: req.body });
+    await withDb(async (client) => {
+      await client.query(`
+        INSERT INTO thermal_barcode_configs (id, config, updated_at)
+        VALUES ('default', $1, NOW())
+        ON CONFLICT (id) DO UPDATE
+        SET config = EXCLUDED.config,
+            updated_at = NOW();
+      `, [JSON.stringify(config)]);
+    });
+    return res.json({ success: true, data: config });
   } catch (e: any) {
-    return res.status(500).json({ success: false, error: e.message });
+    console.warn('[thermal-config PUT] withDb error, trying service fallback:', e?.message);
+    try {
+      await SetupService.updateThermalBarcodeConfig(config);
+      return res.json({ success: true, data: config });
+    } catch (fallbackErr: any) {
+      return res.status(500).json({ success: false, error: fallbackErr.message || e.message });
+    }
   }
 });
 

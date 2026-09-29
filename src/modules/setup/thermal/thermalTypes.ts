@@ -298,13 +298,25 @@ export const DEFAULT_THERMAL_ENGINE_CONFIG: ThermalEngineConfig = {
   isCod: true,
   codAmount: 245.00,
 
-  presetId: '2.25x1.25',
+  presetId: 'custom_vintage_vibes_57x37',
   defaultPresetId: '2.25x1.25',
   widthIn: 2.25,
-  heightIn: 1.25,
+  heightIn: 1.47,
   widthMm: 57,
-  heightMm: 32,
-  customPresets: [],
+  heightMm: 37,
+  customPresets: [
+    {
+      id: 'custom_vintage_vibes_57x37',
+      name: 'Vintage Vibes',
+      widthIn: 2.25,
+      heightIn: 1.47,
+      widthMm: 57,
+      heightMm: 37,
+      description: '2.25" x 1.47" (57x37 mm) - Custom Preset',
+      badge: '2.25" x 1.47" (57x37 mm)',
+      isCustom: true
+    }
+  ],
 
   autoPrint: false,
   styleId: 'modern_minimalist',

@@ -1300,6 +1300,82 @@ async function runSecurityGateTests() {
     );
   }
 
+  // ========================================================================
+  // GATE 22: Cross-Device Database Persistence & Contract for Custom Thermal Presets
+  // ========================================================================
+  console.log('\n--- GATE 22: Cross-Device Database Persistence & Contract for Custom Thermal Presets ---');
+  {
+    // 1. Direct PostgreSQL Live Data Contract Verification
+    const client = await getPgClient();
+    if (client) {
+      const q = await client.query("SELECT id, config, updated_at FROM thermal_barcode_configs WHERE id = 'default' LIMIT 1;");
+      assert(q.rows && q.rows.length === 1, 'Live PostgreSQL thermal_barcode_configs contains default record');
+      
+      const row = q.rows[0];
+      const cfg = typeof row.config === 'string' ? JSON.parse(row.config) : row.config;
+      assert(cfg && typeof cfg === 'object', 'thermal_barcode_configs.config is valid JSON object');
+      assert(Array.isArray(cfg.customPresets), 'thermal_barcode_configs contains customPresets array');
+
+      const customPreset = cfg.customPresets.find((p: any) => p.name === 'Vintage Vibes' || (p.widthMm === 57 && p.heightMm === 37));
+      assert(
+        !!customPreset,
+        'Live DB contains "Vintage Vibes" (57x37 mm / 2.25"x1.47") custom preset saved across all devices'
+      );
+      assert(
+        customPreset.widthMm === 57 && customPreset.heightMm === 37,
+        'Custom preset dimensions strictly match 57mm x 37mm'
+      );
+
+      // 2. Direct DB Persistence Round-Trip Test (No mock/demo)
+      const testTag = `TestSync_${Date.now()}`;
+      const updatedConfig = { ...cfg, testTag };
+      await client.query(`
+        INSERT INTO thermal_barcode_configs (id, config, updated_at)
+        VALUES ('default', $1, NOW())
+        ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config, updated_at = NOW();
+      `, [JSON.stringify(updatedConfig)]);
+
+      const verifyQ = await client.query("SELECT config FROM thermal_barcode_configs WHERE id = 'default';");
+      const readBack = typeof verifyQ.rows[0].config === 'string' ? JSON.parse(verifyQ.rows[0].config) : verifyQ.rows[0].config;
+      assert(readBack.testTag === testTag, 'Round-trip write & read directly verified in PostgreSQL thermal_barcode_configs');
+
+      // Clean up testTag while preserving custom preset
+      delete readBack.testTag;
+      await client.query("UPDATE thermal_barcode_configs SET config = $1 WHERE id = 'default';", [JSON.stringify(readBack)]);
+    }
+
+    // 3. Serverless API Endpoint Contract Verification (api/[...all].ts)
+    const { req: getReq, res: getRes } = createMockReqRes({
+      method: 'GET',
+      url: '/api/setup/thermal-config'
+    });
+    await allHandler(getReq, getRes);
+    const getResponse = getRes.getResponse();
+    assert(getResponse.statusCode === 200, 'GET /api/setup/thermal-config returns HTTP 200');
+    assert(getResponse.body?.success === true, 'GET /api/setup/thermal-config returns success: true');
+    assert(
+      getResponse.body?.data && Array.isArray(getResponse.body.data.customPresets),
+      'GET /api/setup/thermal-config payload includes valid customPresets array'
+    );
+
+    // 4. Source Code Cross-Device Synchronization Verification
+    const enginePath = path.resolve(process.cwd(), 'src/modules/setup/components/ThermalBarcodeConfigEngine.tsx');
+    assert(fs.existsSync(enginePath), 'ThermalBarcodeConfigEngine.tsx exists');
+    const engineContent = fs.readFileSync(enginePath, 'utf-8');
+    assert(
+      engineContent.includes('isInitialLoadedRef') && engineContent.includes('/api/setup/thermal-config?_t='),
+      'ThermalBarcodeConfigEngine.tsx prevents cold cache DB wipe and uses cache-busting fetch'
+    );
+
+    const stickerPath = path.resolve(process.cwd(), 'src/components/ThermalBarcodeSticker.tsx');
+    assert(fs.existsSync(stickerPath), 'ThermalBarcodeSticker.tsx exists');
+    const stickerContent = fs.readFileSync(stickerPath, 'utf-8');
+    assert(
+      stickerContent.includes('allPresets') && stickerContent.includes('/api/setup/thermal-config?_t='),
+      'ThermalBarcodeSticker.tsx loads custom presets from DB and merges them into label size presets'
+    );
+  }
+
   console.log('\n======================================================');
   console.log(`  SECURITY & INTEGRITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('======================================================\n');

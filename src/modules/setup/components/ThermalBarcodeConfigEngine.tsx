@@ -92,23 +92,44 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
     }
   }, [defaultCompanyProfile]);
 
+  const isInitialLoadedRef = useRef(false);
+
   // Fetch saved thermal config from SQL database on mount
   useEffect(() => {
-    fetch('/api/setup/thermal-config')
+    fetch(`/api/setup/thermal-config?_t=${Date.now()}`)
       .then(r => (r.ok ? r.json() : null))
       .then(res => {
         if (res && res.success && res.data) {
-          setConfig(prev => ({ ...prev, ...res.data }));
+          setConfig(prev => {
+            const serverPresets = Array.isArray(res.data.customPresets) ? res.data.customPresets : [];
+            const localPresets = Array.isArray(prev.customPresets) ? prev.customPresets : [];
+            const presetMap = new Map();
+            localPresets.forEach(p => presetMap.set(p.id, p));
+            serverPresets.forEach(p => presetMap.set(p.id, p));
+            const mergedPresets = Array.from(presetMap.values());
+
+            return {
+              ...prev,
+              ...res.data,
+              customPresets: mergedPresets.length > 0 ? mergedPresets : (res.data.customPresets || prev.customPresets)
+            };
+          });
           try {
             localStorage.setItem('vintage_thermal_engine_config', JSON.stringify(res.data));
           } catch {}
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.warn('Could not load thermal config from database on mount:', err);
+      })
+      .finally(() => {
+        isInitialLoadedRef.current = true;
+      });
   }, []);
 
-  // Persist to localStorage and PostgreSQL on change
+  // Persist to localStorage and PostgreSQL on change (only after initial load finishes)
   useEffect(() => {
+    if (!isInitialLoadedRef.current) return;
     try {
       localStorage.setItem('vintage_thermal_engine_config', JSON.stringify(config));
       fetch('/api/setup/thermal-config', {

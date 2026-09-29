@@ -61,7 +61,11 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
     return engineConfig.presetId || '2.25x1.25';
   });
 
-  // Re-sync if Global Setup saved changes in background
+  const allPresets = useMemo(() => {
+    return [...THERMAL_PRESETS, ...(engineConfig.customPresets || [])];
+  }, [engineConfig.customPresets]);
+
+  // Re-sync if Global Setup saved changes in background, and fetch from SQL DB for cross-device parity
   useEffect(() => {
     try {
       const saved = localStorage.getItem('vintage_thermal_engine_config');
@@ -72,12 +76,28 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
         if (parsed.presetId) setSelectedPresetId(parsed.presetId);
       }
     } catch (_) {}
+
+    // Real DB cross-device sync (e.g. mobile loading desktop presets)
+    fetch(`/api/setup/thermal-config?_t=${Date.now()}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(res => {
+        if (res && res.success && res.data) {
+          const cfg = res.data;
+          setEngineConfig(prev => ({ ...prev, ...cfg }));
+          if (cfg.styleId) setSelectedStyleId(cfg.styleId);
+          if (cfg.presetId) setSelectedPresetId(cfg.presetId);
+          try {
+            localStorage.setItem('vintage_thermal_engine_config', JSON.stringify(cfg));
+          } catch (_) {}
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Preset Selection Handler (Updates width/height & persists preference)
   const handleSelectPreset = (presetId: ThermalPresetId) => {
     setSelectedPresetId(presetId);
-    const preset = THERMAL_PRESETS.find(p => p.id === presetId);
+    const preset = allPresets.find(p => p.id === presetId);
     if (preset) {
       setEngineConfig(prev => {
         const updated = {
@@ -193,7 +213,7 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
   }
 
   const currentStyleDef = THERMAL_DESIGN_STYLES.find(s => s.id === activeConfig.styleId) || THERMAL_DESIGN_STYLES[0];
-  const currentPresetDef = THERMAL_PRESETS.find(p => p.id === activeConfig.presetId);
+  const currentPresetDef = allPresets.find(p => p.id === activeConfig.presetId);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-3 sm:p-4 print:p-0 print:bg-white print:static">
@@ -245,9 +265,9 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
               onChange={e => handleSelectPreset(e.target.value as ThermalPresetId)}
               className="bg-slate-800 border border-slate-700 text-blue-300 text-xs font-bold rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
             >
-              {THERMAL_PRESETS.map(preset => (
+              {allPresets.map(preset => (
                 <option key={preset.id} value={preset.id} className="bg-slate-900 text-slate-200">
-                  {preset.name} ({preset.widthMm}&times;{preset.heightMm} mm) - {preset.badge}
+                  {preset.name} ({preset.widthMm}&times;{preset.heightMm} mm) {preset.badge ? `- ${preset.badge}` : ''}
                 </option>
               ))}
             </select>
