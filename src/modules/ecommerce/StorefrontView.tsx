@@ -43,7 +43,8 @@ import {
   X,
   User,
   Wallet,
-  Crown
+  Crown,
+  Cpu
 } from 'lucide-react';
 import { Vintage3DLogo } from '../../components/Vintage3DLogo.tsx';
 import { CompanyName3D } from '../../components/CompanyName3D.tsx';
@@ -2000,16 +2001,26 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                   </div>
                 </div>
 
-                {/* Direct Action Button */}
-                <a
-                  href="https://wa.me/923022190822?text=Hello%20Murtaza,%20I%20am%20interested%20in%20your%20custom%20ERP%20and%20cloud%20solutions"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2.5 px-6 py-3 rounded-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 font-bold text-xs sm:text-sm tracking-wide uppercase shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer border border-amber-300"
-                >
-                  <MessageCircle className="w-4 h-4 fill-slate-950" />
-                  <span>Direct Chat with System Architect</span>
-                </a>
+                {/* Action Buttons */}
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 pt-1">
+                  <a
+                    href="https://wa.me/923022190822?text=Hello%20Murtaza,%20I%20am%20interested%20in%20your%20custom%20ERP%20and%20cloud%20solutions"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2.5 px-6 py-3 rounded-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 font-bold text-xs sm:text-sm tracking-wide uppercase shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer border border-amber-300"
+                  >
+                    <MessageCircle className="w-4 h-4 fill-slate-950" />
+                    <span>Direct Chat with System Architect</span>
+                  </a>
+
+                  <a
+                    href="/technology.html"
+                    className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-slate-900 text-amber-400 font-bold text-xs sm:text-sm tracking-wide uppercase hover:bg-slate-800 hover:text-amber-300 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer border border-amber-400/50 shadow-md"
+                  >
+                    <Cpu className="w-4 h-4 text-amber-400" />
+                    <span>System Architecture & Technology</span>
+                  </a>
+                </div>
               </div>
             </div>
           </div>
@@ -2018,7 +2029,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           <div className="pt-6 border-t border-amber-300 text-center text-slate-600 text-[11px] space-y-1">
             <p>Copyright © Vintage Vibes General Trading LLC SPC. All Rights Reserved</p>
             <p className="text-[10px] text-slate-500">
-              Powered by Vintage Vibe Enterprise ERP • Modular High-Density Garment Management System
+              Powered by Vintage Vibe Enterprise ERP • Modular High-Density Garment Management System • <a href="/technology.html" className="text-amber-600 hover:text-amber-700 underline font-semibold">Architecture & Tech Specs</a>
             </p>
           </div>
         </div>
