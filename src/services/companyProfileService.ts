@@ -301,6 +301,30 @@ export class CompanyProfileService {
       } catch {}
     }
 
+    // Hydrate Paymob integration credentials from env variables without hardcoding
+    const envIntegrationId = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_INTEGRATION_ID) ||
+      (typeof process !== 'undefined' && (process.env?.PAYMOB_INTEGRATION_ID || process.env?.VITE_PAYMOB_INTEGRATION_ID)) || '';
+    const envApiKey = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_API_KEY) ||
+      (typeof process !== 'undefined' && (process.env?.PAYMOB_API_KEY || process.env?.VITE_PAYMOB_API_KEY)) || '';
+    const envTid = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_TID) ||
+      (typeof process !== 'undefined' && (process.env?.PAYMOB_TID || process.env?.VITE_PAYMOB_TID)) || '';
+    const envMid = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_MID) ||
+      (typeof process !== 'undefined' && (process.env?.PAYMOB_MID || process.env?.VITE_PAYMOB_MID)) || '';
+
+    bankAccounts = bankAccounts.map(b => ({
+      ...b,
+      linkedPosTerminalId: b.linkedPosTerminalId || envTid || '',
+      posFleet: (b.posFleet || []).map(dev => ({
+        ...dev,
+        terminalId: dev.terminalId || envTid || '',
+        merchantId: dev.merchantId || envMid || '',
+        paymobTid: dev.paymobTid || envTid || '',
+        paymobMid: dev.paymobMid || envMid || '',
+        paymobIntegrationId: dev.paymobIntegrationId || envIntegrationId || '',
+        paymobApiKey: dev.paymobApiKey || envApiKey || ''
+      }))
+    }));
+
     // Map database snake_case or raw profile_data to camelCase and snake_case
     const prof: CompanyProfile = {
       ...DEFAULT_COMPANY_PROFILE,
