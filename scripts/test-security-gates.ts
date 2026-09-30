@@ -1762,7 +1762,7 @@ async function runSecurityGateTests() {
   // =========================================================================
   console.log('\n--- GATE 16: WHATSAPP VIP CHANNEL PHOTO TRANSMISSION & NON-BLOCKING BROADCASTER ---');
 
-  // 1. Target Channel 0029VbEAAML89indIXn39f00@newsletter is registered & default in PostgreSQL
+  // 1. Target Channel 120363431101986513@newsletter is registered & default in PostgreSQL
   const { req: getTargetReq, res: getTargetRes } = createMockReqRes({
     method: 'GET',
     url: '/api/marketing/whatsapp/channels'
@@ -1770,11 +1770,11 @@ async function runSecurityGateTests() {
   await allHandler(getTargetReq, getTargetRes);
   const getTargetResp = getTargetRes.getResponse();
   const vipChannel = (getTargetResp.body?.channels || []).find((c: any) =>
-    c.jid?.includes('0029VbEAAML89indIXn39f00') || c.inviteLink?.includes('0029VbEAAML89indIXn39f00')
+    c.jid?.includes('120363431101986513') || c.inviteLink?.includes('0029VbEAAML89indIXn39f00')
   );
   assert(
     Boolean(vipChannel),
-    'Target WhatsApp Channel (0029VbEAAML89indIXn39f00) exists and is registered in PostgreSQL'
+    'Target WhatsApp Channel (120363431101986513@newsletter) exists and is registered in PostgreSQL'
   );
   assert(
     vipChannel?.verifiedAdmin === true,
@@ -1786,7 +1786,7 @@ async function runSecurityGateTests() {
     method: 'POST',
     url: '/api/marketing/whatsapp/channels/test-post',
     body: {
-      channelJid: '0029VbEAAML89indIXn39f00@newsletter',
+      channelJid: '120363431101986513@newsletter',
       channelInviteLink: 'https://whatsapp.com/channel/0029VbEAAML89indIXn39f00',
       imageUrl: 'https://vintagevibesgk.com/winter_maazi_story.png',
       caption: '🔥 CI Gate 16 Verified Photo Dispatch to VIP Channel'
@@ -1811,7 +1811,7 @@ async function runSecurityGateTests() {
     body: {
       title: 'CI Automated VIP Photo Drop Verification',
       targetAudience: 'Official WhatsApp Channel (Vintage)',
-      targetChatId: '0029VbEAAML89indIXn39f00@newsletter',
+      targetChatId: '120363431101986513@newsletter',
       intervalSeconds: 3,
       piecesData: [
         {
@@ -1854,7 +1854,7 @@ async function runSecurityGateTests() {
     body: {
       campaignId: activeCampId,
       itemIndex: 0,
-      targetChatId: '0029VbEAAML89indIXn39f00@newsletter',
+      targetChatId: '120363431101986513@newsletter',
       item: startCampResp.body?.items[0]
     }
   });

@@ -4835,17 +4835,21 @@ RULES FOR YOUR RESPONSE:
       // 9c. Resolve Newsletter by Link
       if (pathname.includes('/whatsapp/channels/resolve') && method === 'POST') {
         const { inviteLink } = body;
-        let resolvedJid = `120363${Date.now()}@newsletter`;
+        let resolvedJid = '120363431101986513@newsletter';
         if (inviteLink) {
-          const m = String(inviteLink).match(/whatsapp\.com\/channel\/([a-zA-Z0-9_-]+)/i);
-          if (m && m[1]) resolvedJid = `${m[1]}@newsletter`;
+          if (String(inviteLink).includes('0029VbEAAML89indIXn39f00')) {
+            resolvedJid = '120363431101986513@newsletter';
+          } else {
+            const m = String(inviteLink).match(/whatsapp\.com\/channel\/([a-zA-Z0-9_-]+)/i);
+            if (m && m[1]) resolvedJid = `${m[1]}@newsletter`;
+          }
         }
         return res.status(200).json({
           success: true,
           meta: {
             id: resolvedJid,
-            name: 'Vintage Vibes Official VIP Channel',
-            inviteLink: inviteLink || 'https://whatsapp.com/channel/0029Vb4q8jX5kg7J9Y2z3a',
+            name: 'Vintage',
+            inviteLink: inviteLink || 'https://whatsapp.com/channel/0029VbEAAML89indIXn39f00',
             role: 'ADMIN'
           }
         });
@@ -4855,11 +4859,13 @@ RULES FOR YOUR RESPONSE:
       if (pathname.includes('/whatsapp/channels/test-post') && method === 'POST') {
         const { channelJid, channelInviteLink, imageUrl, caption } = body || {};
         let targetJid = (channelJid || '').trim();
-        if (!targetJid && channelInviteLink) {
+        if ((!targetJid || targetJid.includes('0029VbEAAML89indIXn39f00')) && (channelInviteLink?.includes('0029VbEAAML89indIXn39f00') || !targetJid)) {
+          targetJid = '120363431101986513@newsletter';
+        } else if (!targetJid && channelInviteLink) {
           const m = String(channelInviteLink).match(/whatsapp\.com\/channel\/([a-zA-Z0-9_-]+)/i);
           if (m && m[1]) targetJid = `${m[1]}@newsletter`;
         }
-        if (!targetJid) targetJid = '0029VbEAAML89indIXn39f00@newsletter';
+        if (!targetJid || targetJid.includes('0029VbEAAML89indIXn39f00')) targetJid = '120363431101986513@newsletter';
 
         let postImg = imageUrl || 'https://vintagevibesgk.com/winter_maazi_story.png';
         if (postImg.startsWith('/')) postImg = `https://vintagevibesgk.com${postImg}`;
@@ -11596,8 +11602,8 @@ ${courierLines}
           const { title, targetAudience, targetChatId, customerPhones, pieceIds, piecesData, voiceNoteEnabled, voiceNotePresetId, customVoiceNoteText, intervalSeconds } = body || {};
 
           let resolvedChatId = (targetChatId || '').trim();
-          if (!resolvedChatId || resolvedChatId === 'CHANNEL' || resolvedChatId.startsWith('chan-') || !resolvedChatId.includes('@newsletter')) {
-            resolvedChatId = '0029VbEAAML89indIXn39f00@newsletter';
+          if (!resolvedChatId || resolvedChatId === 'CHANNEL' || resolvedChatId.startsWith('chan-') || !resolvedChatId.includes('@newsletter') || resolvedChatId.includes('0029VbEAAML89indIXn39f00')) {
+            resolvedChatId = '120363431101986513@newsletter';
           }
 
           // Build queue items with valid image URLs and conversion captions
@@ -11699,8 +11705,8 @@ ${courierLines}
         if (pathname.endsWith('/dispatch-item') && method === 'POST') {
           const { campaignId, itemIndex, targetChatId, item } = body || {};
           let targetJid = (targetChatId || item?.targetChatId || '').trim();
-          if (!targetJid || targetJid === 'CHANNEL' || targetJid.startsWith('chan-') || !targetJid.includes('@newsletter')) {
-            targetJid = '0029VbEAAML89indIXn39f00@newsletter';
+          if (!targetJid || targetJid === 'CHANNEL' || targetJid.startsWith('chan-') || !targetJid.includes('@newsletter') || targetJid.includes('0029VbEAAML89indIXn39f00')) {
+            targetJid = '120363431101986513@newsletter';
           }
 
           let imgUrl = item?.imageUrl || item?.frontImageUrl || 'https://vintagevibesgk.com/winter_maazi_story.png';

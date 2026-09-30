@@ -416,7 +416,11 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
   const handleTestChannelPost = async () => {
     setIsTestingChannelPost(true);
     try {
-      const activeJid = channelConfig?.channelJid || selectedChannelJid || '0029VbEAAML89indIXn39f00@newsletter';
+      const activeJid = (channelConfig?.channelJid && !channelConfig.channelJid.includes('0029VbEAAML89indIXn39f00'))
+        ? channelConfig.channelJid
+        : (selectedChannelJid && !selectedChannelJid.includes('0029VbEAAML89indIXn39f00'))
+        ? selectedChannelJid
+        : '120363431101986513@newsletter';
       const samplePiece = pieces.find(p => selectedPieceSkus.includes(p.barcode)) || pieces[0];
       let img = samplePiece?.frontImageUrl || '/winter_maazi_story.png';
       if (img.startsWith('/')) img = `https://vintagevibesgk.com${img}`;
@@ -720,11 +724,11 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         ? `VIP Phone Directory (${selectedCustomerList.length} Customers)`
         : (customChatId || 'VIP Group');
 
-      const activeChannelJid = (channelConfig?.channelJid && channelConfig.channelJid.includes('@newsletter'))
+      const activeChannelJid = (channelConfig?.channelJid && !channelConfig.channelJid.includes('0029VbEAAML89indIXn39f00') && channelConfig.channelJid.includes('@newsletter'))
         ? channelConfig.channelJid
-        : (selectedChannelJid && selectedChannelJid.includes('@newsletter'))
+        : (selectedChannelJid && !selectedChannelJid.includes('0029VbEAAML89indIXn39f00') && selectedChannelJid.includes('@newsletter'))
         ? selectedChannelJid
-        : (channels[0]?.jid || '0029VbEAAML89indIXn39f00@newsletter');
+        : (channels.find(c => c.jid && !c.jid.includes('0029VbEAAML89indIXn39f00'))?.jid || '120363431101986513@newsletter');
 
       if (audienceMode === 'CHANNEL' && (!activeChannelJid || !activeChannelJid.includes('@newsletter'))) {
         alert('Please connect or select a valid WhatsApp Channel before broadcasting.');
