@@ -170,7 +170,10 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
     let settledCount = 0;
 
     for (const inv of filteredInvoices) {
-      const total = inv.grandTotalAED || inv.totalAmount || 0;
+      const advPaid = Number((inv as any).advanceAmountPaid ?? (inv as any).paidAmount ?? (inv as any).paid_amount ?? 0);
+      const total = advPaid > 0 && ((inv as any).balanceDue ?? (inv as any).balance_due ?? (inv as any).creditAmountDue) !== undefined
+        ? Number((inv as any).balanceDue ?? (inv as any).balance_due ?? (inv as any).creditAmountDue)
+        : (inv.grandTotalAED || inv.totalAmount || 0);
       if (inv.paymentStatus === 'PREPAID_VERIFIED' || (inv as any).codSettled) {
         settledAmount += total;
         settledCount++;
@@ -215,7 +218,13 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
     const list = Array.isArray(filteredInvoices) ? filteredInvoices : [];
     return list
       .filter(inv => inv && selectedInvoiceIds.has(inv.id))
-      .reduce((sum, inv) => sum + (Number(inv.grandTotalAED) || Number(inv.totalAmount) || 0), 0);
+      .reduce((sum, inv) => {
+        const advPaid = Number((inv as any).advanceAmountPaid ?? (inv as any).paidAmount ?? (inv as any).paid_amount ?? 0);
+        const amt = advPaid > 0 && ((inv as any).balanceDue ?? (inv as any).balance_due ?? (inv as any).creditAmountDue) !== undefined
+          ? Number((inv as any).balanceDue ?? (inv as any).balance_due ?? (inv as any).creditAmountDue)
+          : (Number(inv.grandTotalAED) || Number(inv.totalAmount) || 0);
+        return sum + amt;
+      }, 0);
   }, [filteredInvoices, selectedInvoiceIds]);
 
   // Execute Reconcile Settlement
@@ -540,7 +549,10 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
                 filteredInvoices.map(inv => {
                   const isSettled = inv.paymentStatus === 'PREPAID_VERIFIED' || (inv as any).codSettled;
                   const isSelected = selectedInvoiceIds.has(inv.id);
-                  const total = inv.grandTotalAED || inv.totalAmount || 0;
+                  const advPaid = Number((inv as any).advanceAmountPaid ?? (inv as any).paidAmount ?? (inv as any).paid_amount ?? 0);
+                  const total = advPaid > 0 && ((inv as any).balanceDue ?? (inv as any).balance_due ?? (inv as any).creditAmountDue) !== undefined
+                    ? Number((inv as any).balanceDue ?? (inv as any).balance_due ?? (inv as any).creditAmountDue)
+                    : (inv.grandTotalAED || inv.totalAmount || 0);
 
                   return (
                     <tr
@@ -579,6 +591,11 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
                       <td className="px-4 py-3">{inv.items.length} items</td>
                       <td className="px-4 py-3 text-right font-mono font-black text-slate-900">
                         AED {total.toFixed(2)}
+                        {advPaid > 0 && (
+                          <div className="text-[10px] text-emerald-600 font-normal">
+                            (Adv: AED {advPaid.toFixed(2)})
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-center">
                         {isSettled ? (

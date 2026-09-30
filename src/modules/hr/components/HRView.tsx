@@ -13,6 +13,7 @@ import { RoyalWaxSeal } from '../../../components/RoyalWaxSeal.tsx';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { HrService } from '../../../services/hrService.ts';
 import { PayrollService } from '../../../services/payrollService.ts';
+import { FinanceService } from '../../../services/financeService.ts';
 import { autoCropAndResizeDocument } from '../../../utils/documentCropper.ts';
 import { compressImage } from '../../../utils/imageCompressor.ts';
 import { printEmployeeProfileA4, printAttendanceSheetA4, printPayrollRegisterA4, printEmployeeLoanA4 } from '../../../utils/printHrA4.ts';
@@ -503,7 +504,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
         }),
         fetch(`/api/hr/attendance?month=${selectedMonth}`).then(r => r.ok ? r.json() : []).catch(() => []),
         fetch(`/api/hr/payroll?month=${selectedMonth}`).then(r => r.ok ? r.json() : []).catch(() => []),
-        fetch('/api/finance/coa').then(r => r.ok ? r.json() : []).catch(() => []),
+        FinanceService.getCoaAccounts().catch(() => []),
         fetch('/api/hr/attendance/sheets').then(async r => {
           if (r.ok) return r.json();
           return await HrService.getAttendanceSheets().catch(() => []);

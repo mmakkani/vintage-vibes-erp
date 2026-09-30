@@ -2163,24 +2163,33 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
-                {activeCampaign.items.map((item, idx) => (
-                  <tr key={item.piece.id} className="hover:bg-slate-50 transition">
-                    <td className="py-2.5 px-3 font-mono text-slate-400">{idx + 1}</td>
-                    <td className="py-2.5 px-3">
-                      <img
-                        src={item.imageMediaUrl}
-                        alt=""
-                        className="w-10 h-10 rounded-lg object-cover border border-slate-200 bg-white"
-                      />
-                    </td>
-                    <td className="py-2.5 px-3 font-mono font-bold text-slate-900">{item.piece.barcode}</td>
-                    <td className="py-2.5 px-3">
-                      <span className="font-bold block text-slate-800">{item.piece.itemName}</span>
-                      <span className="text-[11px] text-slate-400 font-mono">{item.piece.brandName} • Size: {item.piece.sizeScanned}</span>
-                    </td>
-                    <td className="py-2.5 px-3 font-mono font-bold text-emerald-700">
-                      AED {item.piece.retailPriceAed || item.piece.estimatedPrice}
-                    </td>
+                {activeCampaign.items.map((item, idx) => {
+                  const piece = item.piece || (item as any);
+                  const barcode = piece?.barcode || (item as any)?.barcode || '—';
+                  const title = piece?.itemName || (item as any)?.itemName || 'Garment Piece';
+                  const brand = piece?.brandName || (item as any)?.brandName || '';
+                  const size = piece?.sizeScanned || (item as any)?.sizeScanned || '';
+                  const price = piece?.retailPriceAed || piece?.estimatedPrice || (item as any)?.price || 0;
+                  return (
+                    <tr key={piece?.id || (item as any)?.pieceId || (item as any)?.id || idx} className="hover:bg-slate-50 transition">
+                      <td className="py-2.5 px-3 font-mono text-slate-400">{idx + 1}</td>
+                      <td className="py-2.5 px-3">
+                        <img
+                          src={item.imageMediaUrl || (piece as any)?.front_photo_url || ''}
+                          alt=""
+                          className="w-10 h-10 rounded-lg object-cover border border-slate-200 bg-white"
+                        />
+                      </td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-slate-900">{barcode}</td>
+                      <td className="py-2.5 px-3">
+                        <span className="font-bold block text-slate-800">{title}</span>
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          {brand}{size ? ` • Size: ${size}` : ''}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-emerald-700">
+                        AED {price}
+                      </td>
                     <td className="py-2.5 px-3">
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
@@ -2201,7 +2210,8 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
                       {item.caption.replace(/\n/g, ' ')}
                     </td>
                   </tr>
-                ))}
+                    );
+                  })}
               </tbody>
             </table>
           </div>

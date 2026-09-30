@@ -8527,10 +8527,14 @@ ${courierLines}
         try {
           const invRes = await client.query(`
             SELECT si.*,
+                   b2b.paid_amount as b2b_paid_amount,
+                   b2b.balance_due as b2b_balance_due,
+                   b2b.payment_terms as b2b_payment_terms,
                    p.name as courier_partner_name,
                    p.company_name as courier_company_name
             FROM sales_invoices si
-            LEFT JOIN parties p ON (p.party_id = si.courier_partner_id OR p.id::text = si.courier_partner_id::text)
+            LEFT JOIN b2b_sales b2b ON (b2b.b2b_invoice_number = si.invoice_no OR b2b.id::text = si.id::text)
+            LEFT JOIN parties p ON (p.party_id::text = si.courier_partner_id::text OR p.id::text = si.courier_partner_id::text)
             ORDER BY si.created_at DESC;
           `);
           const mapped = invRes.rows.map((row: any) => {
@@ -8545,18 +8549,36 @@ ${courierLines}
               try { parsedItems = JSON.parse(row.items); } catch (_) {}
             }
 
+            let metaNotes: any = {};
+            if (row.payment_reference && typeof row.payment_reference === 'string') {
+              if (row.payment_reference.startsWith('{')) {
+                try { metaNotes = JSON.parse(row.payment_reference); } catch (_) {}
+              } else if (row.payment_reference.includes('|') || row.payment_reference.includes(':')) {
+                row.payment_reference.split('|').forEach((part: string) => {
+                  const [k, v] = part.split(':');
+                  if (k === 'BANK') metaNotes.bankAccountCode = v;
+                  if (k === 'ADV') metaNotes.advanceAmountPaid = Number(v);
+                  if (k === 'BAL') metaNotes.creditAmountDue = Number(v);
+                  if (k === 'AWB') metaNotes.waybillNo = v;
+                });
+              }
+            }
+
+            const advVal = Number(row.b2b_paid_amount ?? metaNotes.advanceAmountPaid ?? 0);
+            const balVal = Number(row.b2b_balance_due ?? metaNotes.creditAmountDue ?? (totalVal > 0 && advVal > 0 ? totalVal - advVal : totalVal));
+
             return {
               id: row.id,
               invoiceNo: row.invoice_no,
               clientId: row.client_id,
               customerId: row.client_id || '',
               customerName: row.customer_name || 'Walk-in Guest',
-              customerPhone: row.customer_phone || '',
+              customerPhone: row.customer_phone || metaNotes.customerPhone || '',
               invoiceDate: rawDate,
               date: rawDate,
               time: row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '14:30',
               channel: row.channel || (row.invoice_no?.startsWith('LIVE-') ? 'LIVE_STREAM' : 'POS_COUNTER'),
-              paymentMethod: row.payment_method || 'COD',
+              paymentMethod: row.payment_method || metaNotes.paymentMethod || 'COD',
               paymentStatus: row.payment_status || (row.status === 'PAID' ? 'PAID' : 'UNPAID_PENDING_COD'),
               paymentReference: row.payment_reference || '',
               shippingAddress: row.shipping_address || '',
@@ -8564,7 +8586,7 @@ ${courierLines}
               courierPartyId: row.courier_party_id || row.courier_partner_id,
               courierPartnerId: row.courier_partner_id,
               courierPartner: courierName,
-              trackingNumber: row.tracking_number || '',
+              trackingNumber: row.tracking_number || metaNotes.waybillNo || '',
               shippingFeeAed: Number(row.shipping_fee || 0),
               shippingBearer: row.shipping_bearer || 'CUSTOMER',
               buyerHandle: row.buyer_handle || (row.customer_name?.startsWith('@') ? row.customer_name : undefined),
@@ -8577,6 +8599,14 @@ ${courierLines}
               totalAmount: totalVal,
               grandTotalAED: totalVal,
               status: row.status || 'DRAFT',
+              paidAmount: advVal,
+              paid_amount: advVal,
+              advanceAmountPaid: advVal,
+              balanceDue: balVal,
+              balance_due: balVal,
+              creditAmountDue: balVal,
+              bankAccountCode: metaNotes.bankAccountCode || undefined,
+              notes: row.payment_reference || '',
               items: parsedItems,
               createdAt: row.created_at
             };

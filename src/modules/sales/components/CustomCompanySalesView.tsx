@@ -99,6 +99,34 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     return accounts.find(b => b.isPrimary) || accounts[0] || null;
   }, [companyProfile]);
 
+  const availableBankAccounts = useMemo(() => {
+    const fromProfile = (companyProfile?.bankAccounts || []).map(b => ({
+      code: b.coaAccountCode || '1120-02',
+      name: b.bankName || 'RAKBANK - Current Account',
+      accountNumber: b.accountNumber || '',
+      iban: b.iban || ''
+    }));
+    const fromCoa = (coaAccounts || [])
+      .filter(a => a.code?.startsWith('1120') || (a.code?.startsWith('11') && a.name?.toLowerCase().includes('bank')))
+      .map(a => ({
+        code: a.code,
+        name: a.name,
+        accountNumber: '',
+        iban: ''
+      }));
+
+    const combined = [...fromProfile];
+    for (const c of fromCoa) {
+      if (!combined.some(x => x.code === c.code)) {
+        combined.push(c);
+      }
+    }
+    if (combined.length === 0) {
+      combined.push({ code: '1120-02', name: 'RAKBANK - Current Account (0143656279001 - Al Ain)', accountNumber: '0143656279001', iban: '' });
+    }
+    return combined;
+  }, [companyProfile, coaAccounts]);
+
   // Screen Search & Filters for the Invoices Log
   const [logSearch, setLogSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'DRAFT' | 'POSTED'>('ALL');
@@ -133,6 +161,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   const [exportCustomsDeclarationNo, setExportCustomsDeclarationNo] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<'CREDIT_ACCOUNT' | 'BANK_TRANSFER' | 'CASH' | 'CARD_POS'>('CREDIT_ACCOUNT');
   const [advanceAmountPaid, setAdvanceAmountPaid] = useState<number>(0);
+  const [selectedBankCoaCode, setSelectedBankCoaCode] = useState<string>('1120-02');
   const [pdcChequeNo, setPdcChequeNo] = useState<string>('');
   const [pdcChequeDate, setPdcChequeDate] = useState<string>('');
   const [salespersonOrBroker, setSalespersonOrBroker] = useState<string>('');
@@ -218,15 +247,36 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       for (const row of (sinvRes.data || [])) {
         const invNo = row.invoice_no || `B2B-${row.id}`;
         let metaNotes: any = {};
-        try {
-          if (row.notes && typeof row.notes === 'string' && row.notes.startsWith('{')) {
-            metaNotes = JSON.parse(row.notes);
+        const rawRef = row.payment_reference || (row as any).paymentReference || row.notes || '';
+        if (typeof rawRef === 'string') {
+          if (rawRef.startsWith('{')) {
+            try { metaNotes = JSON.parse(rawRef); } catch {}
+          } else if (rawRef.includes('|') || rawRef.includes(':')) {
+            rawRef.split('|').forEach((part: string) => {
+              const [k, v] = part.split(':');
+              if (k === 'BANK') metaNotes.bankAccountCode = v;
+              if (k === 'ADV') metaNotes.advanceAmountPaid = Number(v);
+              if (k === 'BAL') metaNotes.creditAmountDue = Number(v);
+              if (k === 'AWB') metaNotes.waybillNo = v;
+            });
           }
-        } catch {}
+        }
+        const advAmt = Number(row.paid_amount ?? (row as any).paidAmount ?? metaNotes.advanceAmountPaid ?? 0);
+        const totAmt = Number(row.total_amount ?? 0);
+        const balAmt = Number(row.balance_due ?? (row as any).balanceDue ?? (totAmt > 0 && advAmt > 0 ? totAmt - advAmt : totAmt));
         mappedMap.set(invNo, {
           ...row,
           invoiceNo: invNo,
           customerPhone: row.customer_phone || row.customerPhone || metaNotes.customerPhone || '',
+          paymentMethod: row.payment_method || metaNotes.paymentMethod || 'CREDIT_ACCOUNT',
+          payment_method: row.payment_method || metaNotes.paymentMethod || 'CREDIT_ACCOUNT',
+          advanceAmountPaid: advAmt,
+          paidAmount: advAmt,
+          paid_amount: advAmt,
+          creditAmountDue: balAmt,
+          balanceDue: balAmt,
+          balance_due: balAmt,
+          bankAccountCode: metaNotes.bankAccountCode || '1120-02',
           courierId: row.courier_partner_id || metaNotes.courierId || '',
           courierPartnerId: row.courier_partner_id || metaNotes.courierPartnerId || '',
           courier_partner_id: row.courier_partner_id || '',
@@ -245,6 +295,9 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       }
       for (const b of (b2bRes.data || [])) {
         const invNo = b.b2b_invoice_number || `B2B-${b.id}`;
+        const bAdv = Number(b.paid_amount || 0);
+        const bTot = Number(b.total_amount || 0);
+        const bBal = Number(b.balance_due ?? (bTot > 0 && bAdv > 0 ? bTot - bAdv : bTot));
         if (!mappedMap.has(invNo)) {
           mappedMap.set(invNo, {
             id: b.id,
@@ -254,8 +307,14 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
             customerTrn: b.trn_number || '',
             channel: 'WHOLESALE_B2B',
             isB2BCustomSale: true,
-            totalAmount: Number(b.total_amount || 0),
-            creditAmountDue: Number(b.balance_due || b.total_amount || 0),
+            totalAmount: bTot,
+            advanceAmountPaid: bAdv,
+            paidAmount: bAdv,
+            paid_amount: bAdv,
+            creditAmountDue: bBal,
+            balanceDue: bBal,
+            balance_due: bBal,
+            paymentMethod: b.payment_terms === 'Direct Bank Wire (IBAN)' ? 'BANK_TRANSFER' : (b.payment_terms === 'Cash in Hand' ? 'CASH' : 'CREDIT_ACCOUNT'),
             status: String(b.credit_status || 'DRAFT').toUpperCase(),
             items: Array.isArray(b.items) ? b.items : [],
             createdAt: b.created_at
@@ -264,6 +323,16 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           const ex = mappedMap.get(invNo);
           if (!ex.customerPhone && b.phone) {
             ex.customerPhone = b.phone;
+          }
+          if (bAdv > 0 && (!ex.advanceAmountPaid || ex.advanceAmountPaid === 0)) {
+            ex.advanceAmountPaid = bAdv;
+            ex.paidAmount = bAdv;
+            ex.paid_amount = bAdv;
+          }
+          if (b.balance_due !== undefined && b.balance_due !== null) {
+            ex.creditAmountDue = bBal;
+            ex.balanceDue = bBal;
+            ex.balance_due = bBal;
           }
         }
       }
@@ -933,11 +1002,20 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   // Open Existing Invoice in Popup Modal
   const handleOpenExistingInvoiceModal = (inv: SalesInvoice) => {
     let metaNotes: any = {};
-    try {
-      if (inv.notes && typeof inv.notes === 'string' && inv.notes.startsWith('{')) {
-        metaNotes = JSON.parse(inv.notes);
+    const rawRef = (inv as any).payment_reference || (inv as any).paymentReference || (inv as any).notes || '';
+    if (typeof rawRef === 'string') {
+      if (rawRef.startsWith('{')) {
+        try { metaNotes = JSON.parse(rawRef); } catch {}
+      } else if (rawRef.includes('|') || rawRef.includes(':')) {
+        rawRef.split('|').forEach((part: string) => {
+          const [k, v] = part.split(':');
+          if (k === 'BANK') metaNotes.bankAccountCode = v;
+          if (k === 'ADV') metaNotes.advanceAmountPaid = Number(v);
+          if (k === 'BAL') metaNotes.creditAmountDue = Number(v);
+          if (k === 'AWB') metaNotes.waybillNo = v;
+        });
       }
-    } catch {}
+    }
 
     setInvoiceId(inv.id);
     setInvoiceNo(inv.invoiceNo);
@@ -969,8 +1047,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     setStatus(inv.status as any || 'DRAFT');
     setTaxType(inv.taxType || 'MAINLAND_5_VAT');
     setExportCustomsDeclarationNo(inv.exportCustomsDeclarationNo || '');
-    setPaymentMethod((inv.paymentMethod as any) || 'CREDIT_ACCOUNT');
-    setAdvanceAmountPaid(inv.advanceAmountPaid || 0);
+    const loadedPaymentMethod = (inv.paymentMethod as any) || (inv as any).payment_method || metaNotes.paymentMethod || 'CREDIT_ACCOUNT';
+    setPaymentMethod(loadedPaymentMethod);
+    const loadedAdv = Number((inv as any).advanceAmountPaid ?? (inv as any).paid_amount ?? (inv as any).paidAmount ?? metaNotes.advanceAmountPaid ?? 0);
+    setAdvanceAmountPaid(loadedAdv);
+    const loadedBank = metaNotes.bankAccountCode || (inv as any).bankAccountCode || (inv as any).bank_account_code || '1120-02';
+    setSelectedBankCoaCode(loadedBank);
     setPdcChequeNo(inv.pdcChequeNo || '');
     setPdcChequeDate(inv.pdcChequeDate || '');
     setSalespersonOrBroker(inv.salespersonOrBroker || '');
@@ -1000,6 +1082,8 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       }
       let finalId = invoiceId;
 
+      const compactDraftRef = `BANK:${selectedBankCoaCode || '1120-02'}|ADV:${advanceAmountPaid || 0}|BAL:${creditAmountDue || 0}|AWB:${waybillNo || ''}`.slice(0, 120);
+
       if (invoiceId) {
         // 1. Update existing b2b_sales record
         await safeSupabaseCall(
@@ -1016,7 +1100,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
               total_amount: grandTotal,
               paid_amount: Number(advanceAmountPaid) || 0,
               balance_due: creditAmountDue,
-              payment_terms: 'Net 30',
+              payment_terms: paymentMethod === 'BANK_TRANSFER' ? 'Direct Bank Wire (IBAN)' : (paymentMethod === 'CASH' ? 'Cash in Hand' : 'Net 30'),
               credit_status: 'DRAFT',
               shipping_address: selectedCustomer.address || ''
             })
@@ -1048,6 +1132,8 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           supabase
             .from('sales_invoices')
             .update({
+              payment_method: paymentMethod as any,
+              payment_reference: compactDraftRef,
               tracking_number: waybillNo || null,
               courier_partner_id: selectedCourierId || null,
               shipping_fee: Number(courierFee) || 0,
@@ -1068,7 +1154,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           total_amount: grandTotal,
           paid_amount: Number(advanceAmountPaid) || 0,
           balance_due: creditAmountDue,
-          payment_terms: 'Net 30',
+          payment_terms: paymentMethod === 'BANK_TRANSFER' ? 'Direct Bank Wire (IBAN)' : (paymentMethod === 'CASH' ? 'Cash in Hand' : 'Net 30'),
           credit_status: 'DRAFT',
           shipping_address: selectedCustomer.address || ''
         });
@@ -1105,6 +1191,8 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           supabase
             .from('sales_invoices')
             .update({
+              payment_method: paymentMethod as any,
+              payment_reference: compactDraftRef,
               tracking_number: waybillNo || null,
               courier_partner_id: selectedCourierId || null,
               shipping_fee: Number(courierFee) || 0,
@@ -1329,8 +1417,9 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       // Line 9 & 10: Advance Payment Settlement (if advance paid)
       const advPaid = Number(advanceAmountPaid) || 0;
       if (advPaid > 0) {
-        const receiptAccCode = paymentMethod === 'BANK_TRANSFER' ? (primaryBank?.coaAccountCode || companyProfile?.bankAccountCode || '1120-02') : '1110-01';
-        const receiptAccName = paymentMethod === 'BANK_TRANSFER' ? `${primaryBank?.bankName || companyProfile?.bankName || 'Corporate Bank'} Account` : 'Main Cash in Hand';
+        const receiptAccCode = paymentMethod === 'BANK_TRANSFER' ? (selectedBankCoaCode || primaryBank?.coaAccountCode || companyProfile?.bankAccountCode || '1120-02') : '1110-01';
+        const matchedBank = availableBankAccounts.find(b => b.code === receiptAccCode);
+        const receiptAccName = paymentMethod === 'BANK_TRANSFER' ? (matchedBank?.name || `${primaryBank?.bankName || companyProfile?.bankName || 'Corporate Bank'} Account`) : 'Main Cash in Hand';
         voucherLines.push({
           accountId: receiptAccCode,
           accountCode: receiptAccCode,
@@ -1350,6 +1439,33 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           debit: 0,
           credit: advPaid,
           memo: `Advance Payment Applied to Invoice ${genInvoiceNo}`
+        });
+      }
+
+      // Line 11 & 12: Courier COD In-Transit Transfer (if balance due and courier assigned)
+      if (creditAmountDue > 0 && selectedCourier) {
+        const codClearingAcc = (coaAccounts || []).find(a => a.code === '1128-01' || a.code === '1128-00');
+        const codCode = codClearingAcc?.code || '1128-00';
+        const codName = codClearingAcc?.name || 'Courier COD Clearing (Pending Remittance)';
+        voucherLines.push({
+          accountId: codClearingAcc?.id || codCode,
+          accountCode: codCode,
+          accountName: `${codName} - ${selectedCourier.name || 'Courier'}`,
+          partyId: selectedCourier.id,
+          partyName: selectedCourier.name,
+          debit: creditAmountDue,
+          credit: 0,
+          memo: `Courier COD In-Transit Receivable (AWB: ${waybillNo || 'N/A'}): Invoice ${genInvoiceNo}`
+        });
+        voucherLines.push({
+          accountId: selectedCustomerCoaAccount?.id || selectedCustomerCoaCode,
+          accountCode: selectedCustomerCoaCode,
+          accountName: selectedCustomerCoaAccount?.name || `Accounts Receivable - ${selectedCustomer?.name || 'Client'}`,
+          partyId: selectedCustomer?.id,
+          partyName: selectedCustomer?.name,
+          debit: 0,
+          credit: creditAmountDue,
+          memo: `COD Doorstep Collection Transferred to Courier (${selectedCourier.name || 'Courier'}): Invoice ${genInvoiceNo}`
         });
       }
 
@@ -1389,12 +1505,30 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         console.warn('B2B backend post sync note:', e);
       }
 
+      const postMetadata = {
+        paymentMethod,
+        advanceAmountPaid: Number(advanceAmountPaid) || 0,
+        creditAmountDue: Number(creditAmountDue) || 0,
+        courierId: selectedCourierId || '',
+        courierName: selectedCourier?.name || '',
+        waybillNo: waybillNo || '',
+        courierFee: Number(courierFee) || 0,
+        courierFeePayer: courierFeePayer,
+        airwayBillPhotoUrl: airwayBillPhotoUrl || '',
+        customerPhone: customerPhone || selectedCustomer?.phone || '',
+        bankAccountCode: paymentMethod === 'BANK_TRANSFER' ? (selectedBankCoaCode || '1120-02') : undefined
+      };
+      const compactPostRef = `BANK:${selectedBankCoaCode || '1120-02'}|ADV:${advanceAmountPaid || 0}|BAL:${creditAmountDue || 0}|AWB:${waybillNo || ''}`.slice(0, 120);
+
       // 5. Update b2b_sales & sales_invoices status to POSTED
       await safeSupabaseCall(
         supabase
           .from('b2b_sales')
           .update({
             credit_status: 'POSTED',
+            paid_amount: Number(advanceAmountPaid) || 0,
+            balance_due: Number(creditAmountDue) || 0,
+            payment_terms: paymentMethod === 'BANK_TRANSFER' ? 'Direct Bank Wire (IBAN)' : (paymentMethod === 'CASH' ? 'Cash in Hand' : 'Credit Account'),
             phone: customerPhone || selectedCustomer?.phone || ''
           })
           .or(`b2b_invoice_number.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`)
@@ -1404,6 +1538,9 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           .from('sales_invoices')
           .update({
             status: 'POSTED',
+            payment_method: paymentMethod as any,
+            payment_status: (Number(creditAmountDue) > 0 && selectedCourierId) ? 'UNPAID_PENDING_COD' : ((Number(creditAmountDue) <= 0) ? 'PAID' : 'PENDING'),
+            payment_reference: compactPostRef,
             customer_phone: customerPhone || selectedCustomer?.phone || '',
             tracking_number: waybillNo || null,
             courier_partner_id: selectedCourierId || null,
@@ -1425,6 +1562,15 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           return prev.map(p => (p.id === activeInvoiceId || p.invoiceNo === genInvoiceNo) ? {
             ...p,
             status: 'POSTED',
+            paymentMethod,
+            payment_method: paymentMethod,
+            advanceAmountPaid: Number(advanceAmountPaid) || 0,
+            paidAmount: Number(advanceAmountPaid) || 0,
+            paid_amount: Number(advanceAmountPaid) || 0,
+            creditAmountDue: Number(creditAmountDue) || 0,
+            balanceDue: Number(creditAmountDue) || 0,
+            balance_due: Number(creditAmountDue) || 0,
+            bankAccountCode: selectedBankCoaCode,
             customerPhone: customerPhone || selectedCustomer?.phone || p.customerPhone,
             courierFee,
             courierFeePayer,
@@ -1452,7 +1598,15 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           isB2BCustomSale: true,
           totalAmount: grandTotal,
           grandTotalAED: grandTotal,
-          creditAmountDue: creditAmountDue,
+          paymentMethod,
+          payment_method: paymentMethod,
+          advanceAmountPaid: Number(advanceAmountPaid) || 0,
+          paidAmount: Number(advanceAmountPaid) || 0,
+          paid_amount: Number(advanceAmountPaid) || 0,
+          creditAmountDue: Number(creditAmountDue) || 0,
+          balanceDue: Number(creditAmountDue) || 0,
+          balance_due: Number(creditAmountDue) || 0,
+          bankAccountCode: selectedBankCoaCode,
           status: 'POSTED',
           items: items,
           courierFee,
@@ -2924,8 +3078,50 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                       </div>
                     </div>
 
+                    {paymentMethod === 'BANK_TRANSFER' && (
+                      <div className="bg-indigo-50/60 p-2 rounded-lg border border-indigo-200/80 space-y-1">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-indigo-950">
+                          <span className="flex items-center gap-1">
+                            <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                            Settlement Bank Account:
+                          </span>
+                          <span className="text-[10px] font-mono text-indigo-800 bg-white px-1.5 py-0.5 rounded border border-indigo-200 font-bold">
+                            COA: {selectedBankCoaCode}
+                          </span>
+                        </div>
+                        <select
+                          value={selectedBankCoaCode}
+                          onChange={e => setSelectedBankCoaCode(e.target.value)}
+                          disabled={status === 'POSTED'}
+                          className="w-full bg-white border border-indigo-200 rounded px-2 py-1 text-xs font-semibold text-slate-800"
+                        >
+                          {availableBankAccounts.map(b => (
+                            <option key={b.code} value={b.code}>
+                              [{b.code}] {b.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {paymentMethod === 'CASH' && (
+                      <div className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-1 rounded border border-emerald-200 font-mono flex items-center justify-between">
+                        <span>Settlement Account:</span>
+                        <span className="font-bold">COA: 1110-01 (Cash in Hand - Counter / POS)</span>
+                      </div>
+                    )}
+
+                    {paymentMethod === 'CREDIT_ACCOUNT' && (
+                      <div className="text-[10px] text-purple-800 bg-purple-50 px-2 py-1 rounded border border-purple-200 font-mono flex items-center justify-between">
+                        <span>Customer Registry Ledger:</span>
+                        <span className="font-bold">COA: {selectedCustomerCoaCode}</span>
+                      </div>
+                    )}
+
                     <div className="p-2 bg-purple-50/60 rounded-lg border border-purple-100 flex items-center justify-between text-xs font-bold">
-                      <span className="text-purple-900">Remaining Balance Due (To Registry):</span>
+                      <span className="text-purple-900">
+                        {selectedCourier ? 'Remaining Balance Due (Doorstep COD Collection):' : 'Remaining Balance Due (Customer Registry):'}
+                      </span>
                       <span className="font-mono text-sm text-purple-950">AED {creditAmountDue.toFixed(2)}</span>
                     </div>
 
