@@ -329,7 +329,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: target,
-          text: 'Salam! This is a verified test dispatch from Vintage Vibes Dubai ERP via Official Meta Cloud API.'
+          text: 'Salam! This is a verified test dispatch from Vintage Vibes ERP via Official Meta Cloud API.'
         })
       });
       const data = await res.json();

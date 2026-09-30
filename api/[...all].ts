@@ -925,13 +925,13 @@ const broadcastHistory: any[] = [];
 
 const defaultCompanyProfile = {
   companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
-  addressLine1: 'Plot 42, Industrial Zone 3, Al Quoz',
-  addressLine2: 'Dubai Wholesale Garments Hub, UAE',
+  addressLine1: 'Downtown, Al Qaseedah District',
+  addressLine2: '135 Khalifa Bin Zayed Street, Alain UAE',
   trnTaxNo: 'TRN-100482910300003',
   defaultCurrency: 'AED',
   logoUrl: '/vintage_logo.svg',
-  phone: '+971 4 883 9120',
-  email: 'contact@vintagevibe.ae',
+  phone: '+971554186086',
+  email: 'vintagevibe006@gmail.com',
   vatRatePercent: 5.0,
   globalStockAlertThreshold: 5,
   bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBE%20LLC%26bank%3DEMIRATES%20NBD',
@@ -1194,7 +1194,7 @@ async function sendMetaCloudWhatsAppMessage(
     reqBody.type = 'image';
     reqBody.image = {
       link: mediaUrl,
-      caption: caption || text || 'Vintage Vibes Dubai Exclusive Drop'
+      caption: caption || text || 'Vintage Vibes Exclusive Drop'
     };
   } else {
     reqBody.type = 'text';
@@ -1255,7 +1255,7 @@ async function callGeminiSalesAgent(prompt: string, apiKey: string): Promise<str
       }
     } catch (_) {}
   }
-  return `Salam! 🌟 Thank you for contacting Vintage Vibes Dubai. Our VIP sales desk has received your request. To reserve or view items right away, message us at +971 55 418 6086 or visit our Dubai showroom!`;
+  return `Salam! 🌟 Thank you for contacting Vintage Vibes. Our VIP sales desk has received your request. To reserve or view items right away, message us at +971 55 418 6086 or visit our store!`;
 }
 
 
@@ -4004,7 +4004,7 @@ export default async function handler(req: any, res: any) {
       }
 
       if (messageType !== 'text' || !userText.trim()) {
-        const replyText = `Salam! 🌟 Welcome to Vintage Vibes Dubai. Our AI Concierge received your message. For immediate inquiries, please text us your item name or SKU (e.g., "Carhartt Jacket" or "Bale info"). You can also call us directly at +971 55 418 6086.`;
+        const replyText = `Salam! 🌟 Welcome to Vintage Vibes. Our AI Concierge received your message. For immediate inquiries, please text us your item name or SKU (e.g., "Carhartt Jacket" or "Bale info"). You can also call us directly at +971 55 418 6086.`;
         await sendMetaCloudWhatsAppMessage(senderPhone, replyText).catch(() => {});
         return res.status(200).json({ success: true, replied: true });
       }
@@ -4068,8 +4068,8 @@ export default async function handler(req: any, res: any) {
       }
 
       // 3. Format Prompt & Execute Gemini AI Concierge
-      const prompt = `You are the exclusive AI Sales Concierge for Vintage Vibes Dubai (@vintagevibes_official), a premier vintage clothing & collector enterprise based in UAE.
-Our warehouse/showroom is located in Dubai, UAE. We specialize in authentic vintage garments (90s streetwear, Carhartt, Nike, band tees, leather jackets, denim) and wholesale raw vintage bales.
+      const prompt = `You are the exclusive AI Sales Concierge for Vintage Vibes (@vintagevibes_official), a premier vintage clothing & collector enterprise based in UAE.
+Our warehouse/store is located at Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE. We specialize in authentic vintage garments (90s streetwear, Carhartt, Nike, band tees, leather jackets, denim) and wholesale raw vintage bales.
 
 LIVE IN-STOCK PIECES (Available Right Now):
 ${inventorySummary}
@@ -4083,7 +4083,7 @@ CUSTOMER INQUIRY (from WhatsApp +${senderPhone}):
 RULES FOR YOUR RESPONSE:
 1. Greet the customer warmly and professionally (e.g. "Salam!", "Welcome to Vintage Vibes!").
 2. Answer their question directly based on the live inventory list above. Quote exact prices in AED, sizes, and barcodes/SKUs for matching pieces.
-3. If the customer wants to reserve or buy an item, tell them to reply: "MINE <BARCODE>" or visit our Dubai showroom.
+3. If the customer wants to reserve or buy an item, tell them to reply: "MINE <BARCODE>" or visit our store in Alain.
 4. Keep the message concise, energetic, and formatted cleanly for WhatsApp with emojis and bullet points.
 5. If the customer writes in Arabic, respond in fluent polite Arabic; otherwise in English.
 6. Never make up items not listed in inventory. If not found, say it is currently sold out but new bales arrive weekly.`;
@@ -4092,7 +4092,7 @@ RULES FOR YOUR RESPONSE:
       if (geminiKey) {
         aiResponseText = await callGeminiSalesAgent(prompt, geminiKey);
       } else {
-        aiResponseText = `Salam! 🌟 Welcome to Vintage Vibes Dubai. We received your message: "${userText.slice(0, 50)}...". Our Dubai showroom is open daily with thousands of vintage grails and fresh bales! For immediate assistance, call +971 55 418 6086 or reply with MINE <SKU> to claim.`;
+        aiResponseText = `Salam! 🌟 Welcome to Vintage Vibes. We received your message: "${userText.slice(0, 50)}...". Our store is open daily with thousands of vintage grails and fresh bales! For immediate assistance, call +971 55 418 6086 or reply with MINE <SKU> to claim.`;
       }
 
       // 4. Dispatch response via Meta Official WhatsApp Cloud API
@@ -4218,7 +4218,8 @@ RULES FOR YOUR RESPONSE:
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               to: cleanTo,
-              text,
+              text: finalImageUrl ? '' : text,
+              caption: '',
               imageUrl: finalImageUrl
             }),
             signal: AbortSignal.timeout(8000)
@@ -4330,7 +4331,7 @@ RULES FOR YOUR RESPONSE:
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               to: cleanCustPhone,
-              text: `Hello ${customerName || 'Valued Collector'}! 👋\n\nThank you for reaching out to *Vintage Vibes Dubai* regarding ${pieceTitle ? `"${pieceTitle}"` : 'our vintage archive'}.\nOur concierge team has received your inquiry and will reply shortly! 🛍️✨\n\n📍 Showroom: Al Quoz Industrial 3, Dubai\n🌐 Catalog: https://vintagevibesgk.com`,
+              text: `Hello ${customerName || 'Valued Collector'}! 👋\n\nThank you for reaching out to *Vintage Vibes* regarding ${pieceTitle ? `"${pieceTitle}"` : 'our vintage archive'}.\nOur concierge team has received your inquiry and will reply shortly! 🛍️✨\n\n📍 Showroom: Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE\n🌐 Catalog: https://vintagevibesgk.com`,
               imageUrl
             }),
             signal: AbortSignal.timeout(8000)
@@ -4982,11 +4983,11 @@ RULES FOR YOUR RESPONSE:
         const activeBales = baleRes.rows[0]?.active_bales || 0;
 
         const formattedReport =
-          `📊 *VINTAGE VIBES DUBAI — EXECUTIVE DAILY DIGEST*\n` +
+          `📊 *VINTAGE VIBES — EXECUTIVE DAILY DIGEST*\n` +
           `📅 *Date:* ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
           `🏢 *Entity:* VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C\n` +
-          `📍 *Location:* Al Quoz Industrial 3, Dubai\n` +
+          `📍 *Location:* Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE\n` +
           `💰 *Currency:* AED (UAE Dirham)\n\n` +
           `🛍️ *RETAIL POS PERFORMANCE (TODAY):*\n` +
           `• Total Revenue: *AED ${Number(posStats.total).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*\n` +
@@ -5006,11 +5007,11 @@ RULES FOR YOUR RESPONSE:
       } catch (digestErr: any) {
         console.warn('[Vercel whatsapp-report] DB query error fallback:', digestErr?.message);
         return res.status(200).json({
-          reportText: `📊 *VINTAGE VIBES DUBAI — DAILY DIGEST*\n` +
+          reportText: `📊 *VINTAGE VIBES — DAILY DIGEST*\n` +
             `📅 *Date:* ${new Date().toLocaleDateString('en-GB')}\n` +
             `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
             `🏢 *Entity:* VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C\n` +
-            `📍 *Location:* Al Quoz Industrial 3, Dubai\n` +
+            `📍 *Location:* Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE\n` +
             `💰 *Currency:* AED (UAE Dirham)\n\n` +
             `📦 *System Status:* Modules operational & connected to live Supabase cloud DB.\n` +
             `_Generated automatically via Vintage Vibes ERP_`
@@ -9017,6 +9018,72 @@ RULES FOR YOUR RESPONSE:
 
     // Company Profile
     if (pathname.includes('/company-profile') || pathname.includes('/setup/company')) {
+      try {
+        const client = await getPgClient();
+        if (client) {
+          if (method === 'PUT' || method === 'POST') {
+            const p = body || {};
+            const cName = p.companyName || p.company_name || p.companyDisplayName || p.company_display_name || defaultCompanyProfile.companyName;
+            const a1 = p.addressLine1 || p.address_line_1 || p.address_line1 || defaultCompanyProfile.addressLine1;
+            const a2 = p.addressLine2 || p.address_line_2 || p.address_line2 || defaultCompanyProfile.addressLine2;
+            const ph = p.phone || p.corporatePhone || p.corporate_phone || defaultCompanyProfile.phone;
+            const em = p.email || p.corporateEmail || p.corporate_email || defaultCompanyProfile.email;
+            const trn = p.trnTaxNo || p.trn_number || p.trnNumber || defaultCompanyProfile.trnTaxNo;
+
+            await client.query(`
+              UPDATE public.company_profile
+              SET 
+                company_name = $1::varchar,
+                company_display_name = $1::text,
+                address_line_1 = $2::text,
+                address_line1 = $2::text,
+                address_line_2 = $3::text,
+                address_line2 = $3::text,
+                city = 'Al Ain',
+                country = 'United Arab Emirates',
+                corporate_phone = $4::text,
+                phone = $4::text,
+                whatsapp_orders_number = $4::text,
+                corporate_email = $5::text,
+                email = $5::text,
+                trn_number = $6::text,
+                trn_tax_no = $6::text,
+                updated_at = NOW()
+              WHERE id = 'default-company';
+            `, [cName, a1, a2, ph, em, trn]);
+          }
+
+          const dbRes = await client.query("SELECT * FROM public.company_profile WHERE id = 'default-company' LIMIT 1;");
+          if (dbRes.rows && dbRes.rows.length > 0) {
+            const r = dbRes.rows[0];
+            const pData = r.profile_data || r.data || {};
+            const resolvedProfile = {
+              ...defaultCompanyProfile,
+              ...pData,
+              companyName: r.company_display_name || r.company_name || defaultCompanyProfile.companyName,
+              companyDisplayName: r.company_display_name || r.company_name || defaultCompanyProfile.companyName,
+              addressLine1: r.address_line_1 || r.address_line1 || defaultCompanyProfile.addressLine1,
+              address_line_1: r.address_line_1 || r.address_line1 || defaultCompanyProfile.addressLine1,
+              addressLine2: r.address_line_2 || r.address_line2 || defaultCompanyProfile.addressLine2,
+              address_line_2: r.address_line_2 || r.address_line2 || defaultCompanyProfile.addressLine2,
+              city: r.city || 'Al Ain',
+              country: r.country || 'United Arab Emirates',
+              phone: r.corporate_phone || r.phone || defaultCompanyProfile.phone,
+              corporatePhone: r.corporate_phone || r.phone || defaultCompanyProfile.phone,
+              corporate_phone: r.corporate_phone || r.phone || defaultCompanyProfile.phone,
+              email: r.corporate_email || r.email || defaultCompanyProfile.email,
+              corporateEmail: r.corporate_email || r.email || defaultCompanyProfile.email,
+              corporate_email: r.corporate_email || r.email || defaultCompanyProfile.email,
+              trnTaxNo: r.trn_number || r.trn_tax_no || defaultCompanyProfile.trnTaxNo,
+              trn_number: r.trn_number || r.trn_tax_no || defaultCompanyProfile.trnTaxNo,
+              trnNumber: r.trn_number || r.trn_tax_no || defaultCompanyProfile.trnTaxNo
+            };
+            return res.status(200).json(method === 'PUT' || method === 'POST' ? { success: true, profile: resolvedProfile } : resolvedProfile);
+          }
+        }
+      } catch (err: any) {
+        console.warn('[Serverless Company Profile Route Note]:', err?.message);
+      }
       if (method === 'PUT' || method === 'POST') {
         return res.status(200).json({ success: true, profile: { ...defaultCompanyProfile, ...(body || {}) } });
       }
@@ -12566,7 +12633,7 @@ RULES FOR YOUR RESPONSE:
             .map((it: any, i: number) => `${i + 1}. *${it.description}* - AED ${it.unitPrice.toFixed(2)} (SKU: ${it.barcode})`)
             .join('\n');
 
-          const whatsAppText = `✨ *VINTAGE VIBES DUBAI — LIVE ORDER CLAIM* ✨\n\nHello @${buyerHandle}!\nYour pieces from today's live drop are reserved:\n\n${itemsText}\n\n📦 *Subtotal*: AED ${subTotal.toFixed(2)}\n🚚 *Delivery*: AED ${shippingFee.toFixed(2)}\n🧾 *VAT (5%)*: AED ${vatAmount.toFixed(2)}\n💰 *TOTAL PAYABLE*: AED ${grandTotal.toFixed(2)}\n\n📍 Please reply with your exact delivery address and WhatsApp location link to confirm dispatch!\n\n_Ref Invoice: ${invoiceNo}_`;
+          const whatsAppText = `✨ *VINTAGE VIBES — LIVE ORDER CLAIM* ✨\n\nHello @${buyerHandle}!\nYour pieces from today's live drop are reserved:\n\n${itemsText}\n\n📦 *Subtotal*: AED ${subTotal.toFixed(2)}\n🚚 *Delivery*: AED ${shippingFee.toFixed(2)}\n🧾 *VAT (5%)*: AED ${vatAmount.toFixed(2)}\n💰 *TOTAL PAYABLE*: AED ${grandTotal.toFixed(2)}\n\n📍 Please reply with your exact delivery address and WhatsApp location link to confirm dispatch!\n\n_Ref Invoice: ${invoiceNo}_`;
 
           return res.status(200).json({
             success: true,
@@ -12704,7 +12771,7 @@ RULES FOR YOUR RESPONSE:
             invoiceNo,
             barcode: p.barcode || p.sku,
             priceAed: grandTotal,
-            message: `🎉 *ORDER RESERVED - VINTAGE VIBES DUBAI*\n\nHello @${buyerHandle}! Your claim for piece *${p.barcode || barcode}* has been reserved.\n\n💵 *Total:* AED ${grandTotal.toFixed(2)}\n🧾 *Draft Invoice:* ${invoiceNo}\n\nOur dispatch team will assign your courier tracking number shortly!`
+            message: `🎉 *ORDER RESERVED - VINTAGE VIBES*\n\nHello @${buyerHandle}! Your claim for piece *${p.barcode || barcode}* has been reserved.\n\n💵 *Total:* AED ${grandTotal.toFixed(2)}\n🧾 *Draft Invoice:* ${invoiceNo}\n\nOur dispatch team will assign your courier tracking number shortly!`
           };
 
           return res.status(200).json({
@@ -13434,7 +13501,7 @@ RULES FOR YOUR RESPONSE:
 
           const itemsList = items.map((it: any) => `• ${it.description || it.itemName || it.barcode} (AED ${it.unitPrice || it.price})`).join('\n');
           const waText = encodeURIComponent(
-            `*Vintage Vibes Dubai - Order Confirmation*\n` +
+            `*Vintage Vibes - Order Confirmation*\n` +
             `Order Ref: *#${orderNumber}*\n` +
             `Customer: ${customerName}\n` +
             `Phone: ${customerPhone}\n` +
@@ -13443,7 +13510,7 @@ RULES FOR YOUR RESPONSE:
             `*Total Payable:* AED ${totalAmount.toFixed(2)} (${paymentMethod})\n\n` +
             `Thank you for shopping authentic vintage!`
           );
-          const whatsappUrl = `https://wa.me/971508839120?text=${waText}`;
+          const whatsappUrl = `https://wa.me/971554186086?text=${waText}`;
 
           return res.status(200).json({
             success: true,

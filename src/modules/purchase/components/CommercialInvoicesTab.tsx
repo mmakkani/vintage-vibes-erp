@@ -632,7 +632,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       supplierName: getSupplierDisplayName(inv),
       supplierTrn: getSupplierTrn(inv) || undefined,
       consigneeName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
-      consigneeAddress: 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE',
+      consigneeAddress: 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE',
       consigneeTrn: '100482910300003',
       vesselName: (inv as any).vesselName || (inv as any).vessel_name || '-',
       billOfLading: inv.blAirwayBillNo || (inv as any).bl_no || '-',

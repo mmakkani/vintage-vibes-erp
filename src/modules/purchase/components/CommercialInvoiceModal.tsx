@@ -190,7 +190,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
       supplierName,
       supplierTrn: invoice?.supplierTrn || (invoice as any)?.supplier_trn,
       consigneeName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
-      consigneeAddress: 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE',
+      consigneeAddress: 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE',
       consigneeTrn: '100482910300003',
       vesselName,
       billOfLading,
@@ -352,7 +352,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
                   </div>
                 </div>
                 <p className="text-[10px] text-slate-600 pt-1">
-                  House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, United Arab Emirates<br />
+                  Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE<br />
                   Tel: +971 55 418 6086 &bull; Email: sales@vintagevibesllcspc.com &bull; Tax TRN: <strong>100482910300003</strong>
                 </p>
               </div>
@@ -397,7 +397,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
                 VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C
               </div>
               <p className="text-slate-600 text-[11px] mt-0.5">
-                Al Quoz Industrial 3, Dubai, UAE &bull; TRN: 100492819200003<br />
+                Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE &bull; TRN: 100482910300003<br />
                 Notify Party: Same as Consignee / JAFZA Freight Clearing Agent
               </p>
             </div>

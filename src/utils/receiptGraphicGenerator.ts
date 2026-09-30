@@ -26,6 +26,7 @@ export interface ReceiptGraphicData {
   customerTrn?: string;
   companyName?: string;
   companyAddress?: string;
+  companyPhone?: string;
   companyTrn?: string;
   paymentMethod?: string;
   items: ReceiptGraphicItem[];
@@ -236,16 +237,20 @@ export async function generateReceiptGraphic(data: ReceiptGraphicData): Promise<
   ctx.fillStyle = '#0f172a';
   ctx.font = '900 20px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText('VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C', 125, 54);
+  const cName = data.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C';
+  ctx.fillText(cName, 125, 54);
 
   // Subtitle / Address & TRN
+  const displayAddress = data.companyAddress || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE';
+  const displayTrn = data.companyTrn || 'TRN-100482910300003';
   ctx.fillStyle = '#64748b';
-  ctx.font = '500 12.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  ctx.fillText('Al Jimi, Al Ain, Abu Dhabi, UAE • TRN-100482910300003', 125, 75);
+  ctx.font = '500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.fillText(`${displayAddress} • ${displayTrn}`, 125, 75);
 
   ctx.fillStyle = '#94a3b8';
   ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  ctx.fillText('Showroom & Warehouse: Al Quoz Industrial 3, Dubai • Official Digital Tax Receipt', 125, 93);
+  const phoneStr = data.companyPhone || '+971554186086';
+  ctx.fillText(`Phone: ${phoneStr} • Official Digital Tax Receipt`, 125, 93);
 
   // Divider
   ctx.beginPath();
@@ -356,12 +361,12 @@ export async function generateReceiptGraphic(data: ReceiptGraphicData): Promise<
     const weightLabel = weightVal > 0 ? `Weight: ${weightVal.toFixed(2)} KG` : 'Single Curated Piece';
     ctx.fillStyle = '#475569';
     ctx.font = '500 12px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText(`• ${weightLabel}  • Hand-Inspected & Graded  • Dubai Archive`, infoX, cardY + 106);
+    ctx.fillText(`• ${weightLabel}  • Hand-Inspected & Graded  • UAE Archive`, infoX, cardY + 106);
 
     // Verified Quality Stamp
     ctx.fillStyle = '#059669';
     ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText('✓ Grade A Authenticated • Dispatched from Vintage Vibes Dubai', infoX, cardY + 128);
+    ctx.fillText('✓ Grade A Authenticated • Dispatched from Vintage Vibes', infoX, cardY + 128);
 
     // Price tag
     const itemPrice = Number(firstItem.finalAmount ?? firstItem.final_amount ?? firstItem.unitPrice ?? firstItem.price ?? 0);
@@ -504,8 +509,9 @@ export async function generateReceiptGraphic(data: ReceiptGraphicData): Promise<
   ctx.textAlign = 'center';
   ctx.fillStyle = '#94a3b8';
   ctx.font = '500 10px -apple-system, BlinkMacSystemFont, sans-serif';
+  const fPhone = data.companyPhone || '+971554186086';
   ctx.fillText(
-    'Thank you for choosing Vintage Vibes Dubai! 🛍️ • For inquiries: +971 55 418 6086 • vintagevibesgk.com',
+    `Thank you for choosing Vintage Vibes! 🛍️ • For inquiries: ${fPhone} • vintagevibesgk.com`,
     width / 2,
     currentY + 22
   );

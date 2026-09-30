@@ -1029,9 +1029,9 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               </span>
             </div>
             <p className="hidden md:flex text-[11px] text-slate-700 font-semibold tracking-wide items-center gap-1.5 mt-0.5">
-              <span>{companyProfile.address_line_1 || companyProfile.addressLine1 || 'Al Jimi, Al Ain'}</span>
+              <span>{companyProfile.address_line_1 || companyProfile.addressLine1 || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE'}</span>
               <span>•</span>
-              <span className="text-amber-900 font-bold">{companyProfile.corporate_phone || companyProfile.phone || '+971 55 418 6086'}</span>
+              <span className="text-amber-900 font-bold">{companyProfile.corporate_phone || companyProfile.phone || '+971554186086'}</span>
             </p>
           </div>
         </div>
@@ -1701,7 +1701,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 Vintage Vibes LLC SPC is a curated vintage clothing and thrift store in Al Ain, UAE, dedicated to bringing authentic pre-owned fashion to people who value quality, comfort, and individuality. We specialize in handpicked vintage and second-hand clothing for men and women, offering timeless styles that stand out from fast fashion trends.
               </p>
               <p className="text-sm sm:text-base text-slate-700 leading-relaxed">
-                Located in Al Jimi, Al Ain, we offer a welcoming in-store experience along with convenient pickup and delivery options. Whether you’re searching for a dependable used clothing store or a curated vintage shop, we’re here to help you discover pieces that feel unique and timeless.
+                Located in Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE, we offer a welcoming in-store experience along with convenient pickup and delivery options. Whether you’re searching for a dependable used clothing store or a curated vintage shop, we’re here to help you discover pieces that feel unique and timeless.
               </p>
               <div className="pt-2">
                 <button
@@ -1964,10 +1964,10 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 <p className="flex items-start gap-2">
                   <MapPin className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
                   <span>
-                    {(companyProfile.address_line_1 || companyProfile.addressLine1 || 'House 14 Street 4 - Al Jimi - Al Nudood') +
+                    {(companyProfile.address_line_1 || companyProfile.addressLine1 || 'Downtown, Al Qaseedah District') +
                       (companyProfile.address_line_2 || companyProfile.addressLine2
                         ? ', ' + (companyProfile.address_line_2 || companyProfile.addressLine2)
-                        : ', Abu Dhabi, UAE')}
+                        : ', 135 Khalifa Bin Zayed Street, Alain UAE')}
                   </span>
                 </p>
               </div>
@@ -1978,9 +1978,9 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                   href={`https://maps.google.com/?q=${encodeURIComponent(
                     (companyProfile.company_display_name || companyProfile.companyName || 'Vintage Vibes') +
                     ' ' +
-                    (companyProfile.address_line_1 || companyProfile.addressLine1 || 'House 14 Street 4 - Al Jimi - Al Nudood') +
+                    (companyProfile.address_line_1 || companyProfile.addressLine1 || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street') +
                     ' ' +
-                    (companyProfile.address_line_2 || companyProfile.addressLine2 || 'Al Ain UAE')
+                    (companyProfile.address_line_2 || companyProfile.addressLine2 || 'Alain UAE')
                   )}`}
                   target="_blank"
                   rel="noreferrer"

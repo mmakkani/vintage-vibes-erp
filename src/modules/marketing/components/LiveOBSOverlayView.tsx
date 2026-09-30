@@ -110,7 +110,7 @@ export const LiveOBSOverlayView: React.FC = () => {
           <div>
             <div className="flex items-center gap-2">
               <span className="font-serif font-black text-white text-sm tracking-wider">
-                VINTAGE VIBES DUBAI
+                VINTAGE VIBES
               </span>
               <span className="px-2 py-0.5 rounded-full bg-red-600 text-white text-[9px] font-black uppercase tracking-wider flex items-center gap-1 shadow-md animate-pulse">
                 <span className="w-1.5 h-1.5 rounded-full bg-white"></span>

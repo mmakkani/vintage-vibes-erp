@@ -1164,9 +1164,9 @@ marketingRouter.post('/whatsapp/storefront-inquiry', async (req, res) => {
     // 2. Send instant acknowledgement to Customer
     const customerAck =
       `Hello ${customerName || 'Valued Collector'}! 👋\n\n` +
-      `Thank you for reaching out to *Vintage Vibes Dubai* regarding ${pieceTitle ? `"${pieceTitle}"` : 'our vintage archive'}.\n\n` +
+      `Thank you for reaching out to *Vintage Vibes* regarding ${pieceTitle ? `"${pieceTitle}"` : 'our vintage archive'}.\n\n` +
       `Our concierge team has received your inquiry and will reply to this chat shortly! 🛍️✨\n\n` +
-      `📍 *Showroom:* Al Quoz Industrial 3, Dubai\n` +
+      `📍 *Showroom:* Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE\n` +
       `🌐 *Catalog:* https://vintagevibesgk.com`;
 
     const custResult = await baileysManager.sendUnifiedMessage(cleanCustPhone, customerAck, imageUrl).catch(() => null);
@@ -1194,11 +1194,11 @@ marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
     }
 
     const textToSend = reportText ||
-      `📊 *VINTAGE VIBES DUBAI — DAILY EXECUTIVE DIGEST*\n` +
+      `📊 *VINTAGE VIBES — DAILY EXECUTIVE DIGEST*\n` +
       `📅 Date: ${new Date().toLocaleDateString('en-GB')}\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
       `🏢 Entity: Vintage Vibes General Trading L.L.C SPC\n` +
-      `📍 Location: Al Quoz Industrial 3, Dubai\n` +
+      `📍 Location: Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE\n` +
       `💰 Currency: AED\n\n` +
       `System Status: Live & Operational.\n` +
       `Dispatched via Unified WhatsApp Engine.`;

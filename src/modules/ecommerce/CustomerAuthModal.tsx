@@ -192,7 +192,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xl">✨</span>
             <span className="text-xs font-mono font-bold tracking-widest text-amber-400 uppercase">
-              Vintage Vibes Dubai
+              Vintage Vibes
             </span>
           </div>
           <h2 className="text-xl font-black font-serif tracking-tight text-white">
@@ -201,7 +201,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
           <p className="text-xs text-amber-200/80 mt-1">
             {mode === 'signin'
               ? 'Access live order tracking, Store Credit Wallet, & wholesale access.'
-              : 'Join Dubai’s vintage archive network with instant Store Credit benefits.'}
+              : 'Join UAE’s vintage archive network with instant Store Credit benefits.'}
           </p>
 
           {/* Tab Selector */}

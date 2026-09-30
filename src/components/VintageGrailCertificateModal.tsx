@@ -75,7 +75,7 @@ export const VintageGrailCertificateModal: React.FC<VintageGrailCertificateModal
   };
 
   const handleShareWhatsApp = () => {
-    const text = `📜 *VINTAGE VIBES DUBAI - CERTIFICATE OF AUTHENTICITY*\n\n` +
+    const text = `📜 *VINTAGE VIBES - CERTIFICATE OF AUTHENTICITY*\n\n` +
       `Item: *${cert.itemTitle}*\n` +
       `Era: ${cert.era}\n` +
       `Provenance: ${cert.provenance}\n` +

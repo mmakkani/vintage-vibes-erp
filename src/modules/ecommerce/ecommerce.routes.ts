@@ -733,7 +733,7 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
         // 11. Format WhatsApp notification URL
         const itemsList = items.map((it: any) => `• ${it.description || it.itemName || it.barcode} (AED ${it.unitPrice || it.price})`).join('\n');
         const waText = encodeURIComponent(
-          `*Vintage Vibes Dubai - Order Confirmation*\n` +
+          `*Vintage Vibes - Order Confirmation*\n` +
           `Order Ref: *#${orderNumber}*\n` +
           `Customer: ${customerName} (${resolvedCustomerType})\n` +
           `Phone: ${customerPhone}\n` +
@@ -743,7 +743,7 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           (effectiveWalletUsed > 0 ? `*Wallet Credit Applied:* AED ${effectiveWalletUsed.toFixed(2)}\n` : '') +
           `\nThank you for shopping authentic vintage!`
         );
-        const whatsappUrl = `https://wa.me/971508839120?text=${waText}`;
+        const whatsappUrl = `https://wa.me/971554186086?text=${waText}`;
 
         return {
           status: 200,

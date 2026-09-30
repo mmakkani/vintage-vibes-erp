@@ -17,7 +17,7 @@ export function exportCurrentViewToPdf(options: ExportPdfOptions) {
     title,
     companyName = 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
     trnTaxNo = 'TRN-100482910300003',
-    address = 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE',
+    address = 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE',
     operatorName = 'Enterprise Operator',
     customElementId
   } = options;

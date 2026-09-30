@@ -397,7 +397,7 @@ export function openCommercialInvoiceA4PrintWindow(data: InvoiceA4PrintData): Wi
             Dubai Economy & Tourism License: <strong>1049281</strong> &bull; Customs Code: <strong>AE-9281048</strong>
           </p>
           <p class="meta-text">
-            House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, United Arab Emirates
+            Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE
           </p>
           <p class="meta-text">
             Tel: +971 55 418 6086 &bull; Email: sales@vintagevibesllcspc.com &bull; Tax TRN: <strong>100482910300003</strong>
@@ -1109,7 +1109,7 @@ export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Windo
             Dubai Economy & Tourism License: <strong>1049281</strong> &bull; Customs Code: <strong>AE-9281048</strong>
           </p>
           <p class="meta-text">
-            House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, United Arab Emirates
+            Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE
           </p>
           <p class="meta-text">
             Tel: +971 55 418 6086 &bull; Email: sales@vintagevibesllcspc.com &bull; Tax TRN: <strong>100482910300003</strong>
@@ -1564,7 +1564,7 @@ export function openB2BPackingListA4PrintWindow(data: B2BTaxInvoiceA4Data): Wind
         <div>
           <h1 class="logo-title">VINTAGE VIBES LOGISTICS & WAREHOUSE</h1>
           <p class="meta-text">Outward Cargo Dispatch & Freight Terminal</p>
-          <p class="meta-text">House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE</p>
+          <p class="meta-text">Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE</p>
         </div>
       </div>
 

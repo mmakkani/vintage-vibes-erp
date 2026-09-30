@@ -15,7 +15,7 @@ interface RoyalWaxSealProps {
 
 export const RoyalWaxSeal: React.FC<RoyalWaxSealProps> = ({
   sealText = 'APPROVED',
-  subText = 'VINTAGE VIBES DUBAI',
+  subText = 'VINTAGE VIBES',
   size = 'md',
   date,
   approver,

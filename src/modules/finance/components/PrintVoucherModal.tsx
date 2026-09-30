@@ -68,7 +68,7 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
                 Commercial License: 1049281 &bull; TRN (VAT): 100482910300003
               </div>
               <div className="text-[10px] text-slate-600">
-                House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, United Arab Emirates
+                Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE
               </div>
             </div>
 
@@ -186,7 +186,7 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
                   <div className="absolute -top-7 right-4 pointer-events-none">
                     <RoyalWaxSeal
                       sealText="POSTED & VERIFIED"
-                      subText="VINTAGE VIBES DUBAI"
+                      subText="VINTAGE VIBES"
                       size="sm"
                       date={voucher.date}
                       approver={voucher.postedBy || 'MD OFFICE'}

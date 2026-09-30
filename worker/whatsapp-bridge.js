@@ -559,9 +559,10 @@ app.post('/send', requireAuth, async (req, res) => {
       const imagePayload = typeof imageUrl === 'string' && imageUrl.startsWith('data:')
         ? Buffer.from(imageUrl.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, ''), 'base64')
         : { url: imageUrl };
+      const effectiveCaption = typeof caption === 'string' ? caption : (text && !text.includes('TAX INVOICE') && !text.includes('Items Summary') ? text : '');
       result = await sock.sendMessage(jid, {
         image: imagePayload,
-        caption: caption || text || ''
+        caption: effectiveCaption
       });
     } else {
       result = await sock.sendMessage(jid, {

@@ -131,7 +131,7 @@ export class WhatsAppService {
     const subtotalLine = payload.subtotal ? `*Subtotal:* ${currency} ${Number(payload.subtotal).toFixed(2)}\n` : '';
     const vatLine = payload.taxAmount ? `*VAT (5%):* ${currency} ${Number(payload.taxAmount).toFixed(2)}\n` : '';
 
-    return `🧾 *VINTAGE VIBES DUBAI — OFFICIAL TAX INVOICE*
+    return `🧾 *VINTAGE VIBES — OFFICIAL TAX INVOICE*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 *Invoice No:* #${payload.invoiceNo}
 *Date:* ${dateStr}
@@ -139,7 +139,7 @@ export class WhatsAppService {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━${itemLines}
 ${subtotalLine}${vatLine}*TOTAL AMOUNT:* *${currency} ${formattedTotal}*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-Thank you for choosing Vintage Vibes Dubai! 🛍️
+Thank you for choosing Vintage Vibes! 🛍️
 For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_official.`;
   }
 
@@ -157,13 +157,15 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
       const formattedText = this.formatInvoiceMessage(payload);
 
       // 1. Primary: Dispatch via Unified WhatsApp Engine (Baileys Linked Phone or Meta Cloud Fallback)
+      // When imageUrl (Option 2 digital slip) is present, do NOT pass text as caption to avoid duplicate message under image
       const res = await fetch('/api/marketing/whatsapp/send-invoice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
           to: cleanPhone,
-          text: formattedText,
+          text: payload.imageUrl ? '' : formattedText,
+          caption: '',
           invoiceNo: payload.invoiceNo,
           customerName: payload.customerName,
           totalAmount: payload.totalAmount,

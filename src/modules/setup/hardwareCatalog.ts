@@ -381,7 +381,7 @@ export const DEFAULT_HARDWARE_GADGETS: HardwareGadget[] = [
 export const DEFAULT_WORKSTATIONS: WorkstationProfile[] = [
   {
     id: 'ws-dock-01',
-    stationName: 'Al Quoz Container Unloading Bay (Dock 1)',
+    stationName: 'Alain Container Unloading Bay (Dock 1)',
     location: 'Warehouse Gate A - Bay 1',
     module: 'purchase',
     operatorName: 'Tariq Mansoor (Dock Master)',
@@ -438,8 +438,8 @@ export const DEFAULT_WORKSTATIONS: WorkstationProfile[] = [
   },
   {
     id: 'ws-retail-01',
-    stationName: 'Vintage Vibe Flagship Showroom POS',
-    location: 'Al Quoz Flagship Storefront',
+    stationName: 'Vintage Vibes Flagship Showroom POS',
+    location: 'Downtown Alain Flagship Storefront',
     module: 'pos_warehouse',
     operatorName: 'Amina Al-Falasi (Store Cashier)',
     activePrinterId: 'gadget-pos-station',

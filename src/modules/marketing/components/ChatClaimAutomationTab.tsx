@@ -324,7 +324,7 @@ export const ChatClaimAutomationTab: React.FC = () => {
           </style>
         </head>
         <body>
-          <div class="center bold" style="font-size: 14px;">VINTAGE VIBES DUBAI</div>
+          <div class="center bold" style="font-size: 14px;">VINTAGE VIBES</div>
           <div class="center">HQ Live Stream Sales Counter</div>
           <div class="center">TRN: 100492837400003</div>
           <div class="line"></div>

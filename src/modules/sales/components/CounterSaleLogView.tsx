@@ -182,9 +182,9 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
         cashierName: (inv as any).cashier_name || (inv as any).createdBy || 'Cashier 01',
         paymentMethod: inv.paymentMethod || 'CASH',
         logoUrl: companyProfile?.logoUrl || '/vintage_logo.svg',
-        companyName: companyProfile?.companyName || 'VINTAGE VIBES DUBAI',
+        companyName: companyProfile?.companyName || 'VINTAGE VIBES',
         trn: companyProfile?.trn_number || companyProfile?.trnTaxNo || '100482910300003',
-        address: companyProfile?.address_line_1 || companyProfile?.addressLine1 || 'Al Quoz Industrial 3, Dubai, UAE',
+        address: companyProfile?.address_line_1 || companyProfile?.addressLine1 || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE',
         items: safeItems.map((it: any) => ({
           description: it.description || it.itemName || `${it.brandName || ''} ${it.itemName || ''}`.trim() || 'Garment Item',
           barcode: it.barcode || '',
@@ -301,6 +301,11 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
           date: inv.date,
           customerName: inv.customerName || client?.name || 'Walk-In Customer',
           customerPhone: cleanPhone,
+          companyName: companyProfile?.companyName || 'VINTAGE VIBES',
+          companyAddress: (companyProfile?.address_line_1 || companyProfile?.addressLine1)
+            ? `${companyProfile?.address_line_1 || companyProfile?.addressLine1}${companyProfile?.address_line_2 || companyProfile?.addressLine2 ? ', ' + (companyProfile?.address_line_2 || companyProfile?.addressLine2) : ''}`
+            : 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE',
+          companyPhone: companyProfile?.corporate_phone || companyProfile?.corporatePhone || companyProfile?.phone || '+971554186086',
           items: (Array.isArray(inv?.items) ? inv.items : []).map((it: any) => ({
             description: it.description || it.itemName || it.name || 'Garment Item',
             barcode: it.barcode,
@@ -355,7 +360,7 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
     // 3. Fallback: Browser wa.me link if socket dispatch fails
     const itemsSummary = (Array.isArray(inv?.items) ? inv.items : []).map((it: any) => `• ${it?.description || 'Item'} — AED ${it?.finalAmount || it?.unitPrice || 0}`).join('\n');
     const text = encodeURIComponent(
-      `🛍️ *VINTAGE VIBES DUBAI - POS E-RECEIPT*\n` +
+      `🛍️ *VINTAGE VIBES - POS E-RECEIPT*\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `📄 *Invoice No:* ${inv.invoiceNo}\n` +
       `📅 *Date:* ${inv.date}\n` +
@@ -367,8 +372,9 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
       `UAE VAT (5%): AED ${Number(inv.vatAmount || 0).toFixed(2)}\n` +
       `*TOTAL PAID: AED ${Number(inv.totalAmount || 0).toFixed(2)}*\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
-      `TRN: 100482910300003\n` +
-      `Store: Al Quoz Industrial 3, Dubai\n` +
+      `TRN: ${companyProfile?.trn_number || companyProfile?.trnTaxNo || '100482910300003'}\n` +
+      `Store: ${companyProfile?.address_line_1 || companyProfile?.addressLine1 || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE'}\n` +
+      `Tel: ${companyProfile?.corporate_phone || companyProfile?.corporatePhone || companyProfile?.phone || '+971554186086'}\n` +
       `Thank you for your visit!`
     );
     window.open(`https://wa.me/${cleanPhone}?text=${text}`, '_blank');

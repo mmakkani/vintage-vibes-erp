@@ -16,11 +16,11 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
   useEffect(() => {
     if (isOpen) {
       const fallbackReport = 
-        `📊 VINTAGE VIBES DUBAI - DAILY DIGEST\n` +
+        `📊 VINTAGE VIBES - DAILY DIGEST\n` +
         `📅 Date: ${new Date().toLocaleDateString('en-GB')}\n` +
         `-----------------------------------------\n` +
         `🏢 Entity: VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C\n` +
-        `📍 Location: Al Quoz Industrial 3, Dubai\n` +
+        `📍 Location: Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE\n` +
         `💰 Currency: AED\n\n` +
         `📦 System Status: All modules active & connected to live Supabase cloud DB.\n` +
         `🚀 Generated automatically via Vintage Vibes ERP`;

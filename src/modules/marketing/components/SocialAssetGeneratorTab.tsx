@@ -138,7 +138,7 @@ export const SocialAssetGeneratorTab: React.FC = () => {
       ctx.font = 'bold 32px "Cinzel", Georgia, serif';
       ctx.textAlign = 'center';
       ctx.letterSpacing = '6px';
-      ctx.fillText('VINTAGE VIBES DUBAI', width / 2, isSquare ? 110 : 140);
+      ctx.fillText('VINTAGE VIBES', width / 2, isSquare ? 110 : 140);
 
       ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
       ctx.font = '16px monospace';
@@ -256,7 +256,7 @@ export const SocialAssetGeneratorTab: React.FC = () => {
         if (cfg.showAuthenticityBadge) {
           ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
           ctx.font = '14px monospace';
-          ctx.fillText('100% CERTIFIED VINTAGE • INSPECTED & CERTIFIED IN AL QUOZ DUBAI', width / 2, isSquare ? 1025 : 1850);
+          ctx.fillText('100% CERTIFIED VINTAGE • INSPECTED & CERTIFIED IN UAE', width / 2, isSquare ? 1025 : 1850);
         }
 
         resolve();

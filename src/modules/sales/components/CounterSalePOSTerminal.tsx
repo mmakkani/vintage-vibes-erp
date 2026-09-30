@@ -93,7 +93,7 @@ export function buildWhatsAppReceiptUrl({
   const discountLine = discountAmount && discountAmount > 0 ? `Discount: -AED ${Number(discountAmount).toFixed(2)}\n` : '';
 
   const text =
-`🛍️ *${(companyName || 'VINTAGE VIBES DUBAI').toUpperCase()} - OFFICIAL RECEIPT*
+`🛍️ *${(companyName || 'VINTAGE VIBES').toUpperCase()} - OFFICIAL RECEIPT*
 ━━━━━━━━━━━━━━━━━━━━
 📄 *Tax Invoice:* ${invoiceNo}
 📅 *Date:* ${date}
@@ -107,8 +107,8 @@ Subtotal: AED ${Number(subTotal).toFixed(2)}
 ${discountLine}UAE VAT (5%): AED ${Number(vatAmount).toFixed(2)}
 *TOTAL PAID: AED ${Number(totalAmount).toFixed(2)}*
 ━━━━━━━━━━━━━━━━━━━━
-🏢 *${companyName || 'Vintage Vibes Luxury Boutiques'}*
-📍 ${address || 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, UAE'}
+🏢 *${companyName || 'Vintage Vibes'}*
+📍 ${address || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE'}
 TRN: ${trn || '100482910300003'}
 
 Thank you for shopping authentic vintage grails! ✨`;
@@ -1551,9 +1551,12 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
               currency: 'AED',
               paymentMethod: effectivePaymentMode,
               garmentImageUrl: pieceImageUrl,
-              companyName: activeProfile?.companyName,
-              companyAddress: activeProfile?.address_line_1 || activeProfile?.addressLine1,
-              companyTrn: activeProfile?.trn_number || activeProfile?.trnTaxNo
+              companyName: activeProfile?.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+              companyAddress: activeProfile?.address_line_1 && activeProfile?.address_line_2 
+                ? `${activeProfile.address_line_1}, ${activeProfile.address_line_2}` 
+                : (activeProfile?.address_line_1 || activeProfile?.addressLine1 || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE'),
+              companyPhone: activeProfile?.corporate_phone || activeProfile?.corporatePhone || activeProfile?.phone || '+971554186086',
+              companyTrn: activeProfile?.trn_number || activeProfile?.trnTaxNo || 'TRN-100482910300003'
             });
             if (generatedSlip) {
               finalSlipGraphic = generatedSlip;
@@ -1738,9 +1741,12 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         currency: inv.currency || 'AED',
         paymentMethod: inv.paymentMethod || 'CASH',
         garmentImageUrl: pieceImageUrl,
-        companyName: activeProfile?.companyName,
-        companyAddress: activeProfile?.address_line_1 || activeProfile?.addressLine1,
-        companyTrn: activeProfile?.trn_number || activeProfile?.trnTaxNo
+        companyName: activeProfile?.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+        companyAddress: activeProfile?.address_line_1 && activeProfile?.address_line_2 
+          ? `${activeProfile.address_line_1}, ${activeProfile.address_line_2}` 
+          : (activeProfile?.address_line_1 || activeProfile?.addressLine1 || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE'),
+        companyPhone: activeProfile?.corporate_phone || activeProfile?.corporatePhone || activeProfile?.phone || '+971554186086',
+        companyTrn: activeProfile?.trn_number || activeProfile?.trnTaxNo || 'TRN-100482910300003'
       });
       if (generatedSlip) {
         finalSlipGraphic = generatedSlip;
@@ -1801,7 +1807,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     openGiftReceiptPrintWindow({
       invoiceNo: inv.invoiceNo,
       date: inv.date,
-      companyName: activeProfile?.companyName || 'VINTAGE VIBES DUBAI',
+      companyName: activeProfile?.companyName || 'VINTAGE VIBES',
       trn: activeProfile?.trnTaxNo || '100482910300003',
       customerName: selectedCustomer?.name || 'Retail Client',
       giftMessage: giftMessage.trim() || undefined,
@@ -1848,7 +1854,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
     const itemsSummary = (Array.isArray(checkoutSuccessData?.pieces) ? checkoutSuccessData.pieces : []).map((p: any) => `• ${p.brandName} ${p.itemName} (${p.sizeScanned || 'M'}) [SKU: ${p.barcode}]`).join('\n');
     const msgText = 
-      `🎁 *${activeProfile?.companyName || 'VINTAGE VIBES DUBAI'} - OFFICIAL GIFT SLIP*\n` +
+      `🎁 *${activeProfile?.companyName || 'VINTAGE VIBES'} - OFFICIAL GIFT SLIP*\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `📄 *Gift Ref:* #${inv.invoiceNo}\n` +
       `📅 *Date:* ${inv.date}\n` +
@@ -1859,7 +1865,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       `★ *14-DAY EXCHANGE POLICY* ★\n` +
       `• Exchange permitted within 14 days with tags attached.\n` +
       `• No cash refund. Prices hidden for recipient.\n` +
-      `📍 Store: ${activeProfile?.address_line_1 || activeProfile?.addressLine1 || 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, UAE'}\n` +
+      `📍 Store: ${activeProfile?.address_line_1 || activeProfile?.addressLine1 || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE'}\n` +
       `_Enjoy your vintage grail!_ 🛍️✨`;
 
     try {

@@ -828,7 +828,7 @@ liveStreamingRouter.post('/confirm-sale', (req, res) => {
     invoiceNo: result.invoice?.invoiceNo || `INV-LIVE-${Date.now().toString(36).toUpperCase()}`,
     barcode,
     priceAed,
-    message: `🎉 *ORDER CONFIRMED - VINTAGE VIBES DUBAI*\n\nHello ${buyerHandle}! Your live claim for piece *${barcode}* has been confirmed.\n\n💵 *Total:* AED ${priceAed}\n🧾 *Invoice:* ${result.invoice?.invoiceNo || 'DRAFT'}\n🚚 *Courier:* Express UAE Dispatch\n\nPlease reply with your delivery address or share your location pin to dispatch your parcel!`
+    message: `🎉 *ORDER CONFIRMED - VINTAGE VIBES*\n\nHello ${buyerHandle}! Your live claim for piece *${barcode}* has been confirmed.\n\n💵 *Total:* AED ${priceAed}\n🧾 *Invoice:* ${result.invoice?.invoiceNo || 'DRAFT'}\n🚚 *Courier:* Express UAE Dispatch\n\nPlease reply with your delivery address or share your location pin to dispatch your parcel!`
   };
 
   // Update booth metrics
@@ -881,7 +881,7 @@ liveStreamingRouter.post('/booths/:boothId/confirm-sale', (req, res) => {
     invoiceNo: result.invoice?.invoiceNo || `INV-LIVE-${Date.now().toString(36).toUpperCase()}`,
     barcode,
     priceAed,
-    message: `🎉 *ORDER CONFIRMED - VINTAGE VIBES DUBAI*\n\nHello ${buyerHandle}! Your live claim for piece *${barcode}* has been confirmed.\n\n💵 *Total:* AED ${priceAed}\n🧾 *Invoice:* ${result.invoice?.invoiceNo || 'DRAFT'}\n🚚 *Courier:* Express UAE Dispatch\n\nPlease reply with your delivery address or share your location pin to dispatch your parcel!`
+    message: `🎉 *ORDER CONFIRMED - VINTAGE VIBES*\n\nHello ${buyerHandle}! Your live claim for piece *${barcode}* has been confirmed.\n\n💵 *Total:* AED ${priceAed}\n🧾 *Invoice:* ${result.invoice?.invoiceNo || 'DRAFT'}\n🚚 *Courier:* Express UAE Dispatch\n\nPlease reply with your delivery address or share your location pin to dispatch your parcel!`
   };
 
   streamController.recordClaim(boothId, barcode, priceAed);
@@ -910,7 +910,7 @@ liveStreamingRouter.post('/whatsapp/dispatch', async (req, res) => {
   const { to, customerPhone, message, buyerHandle, invoiceNo, barcode, priceAed } = req.body;
   const rawPhone = to || customerPhone || '';
   const cleanPhone = rawPhone.replace(/\D/g, '');
-  const text = message || `🎉 *ORDER CONFIRMED - VINTAGE VIBES DUBAI*\n\nHello ${buyerHandle || 'Valued Customer'}! Your live claim for piece *${barcode || ''}* has been confirmed.\n\n💵 *Total:* AED ${priceAed || 120}\n🧾 *Invoice:* ${invoiceNo || 'DRAFT'}\n🚚 *Courier:* Express UAE Dispatch\n\nPlease reply with your delivery address or share your location pin to dispatch your parcel!`;
+  const text = message || `🎉 *ORDER CONFIRMED - VINTAGE VIBES*\n\nHello ${buyerHandle || 'Valued Customer'}! Your live claim for piece *${barcode || ''}* has been confirmed.\n\n💵 *Total:* AED ${priceAed || 120}\n🧾 *Invoice:* ${invoiceNo || 'DRAFT'}\n🚚 *Courier:* Express UAE Dispatch\n\nPlease reply with your delivery address or share your location pin to dispatch your parcel!`;
 
   const waMeLink = cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}` : null;
 
@@ -1675,7 +1675,7 @@ export function parseWhatsAppAddress(rawText: string) {
 
   if (!name) name = 'Live Auction Customer';
   if (!phone) phone = '+971 50 000 0000';
-  const fullAddress = addressParts.join(', ') || 'Al Quoz Industrial Area, Dubai';
+  const fullAddress = addressParts.join(', ') || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE';
 
   return {
     name,

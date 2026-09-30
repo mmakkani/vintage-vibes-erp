@@ -733,7 +733,7 @@ export const ThermalBarcodeConfigEngine: React.FC<ThermalBarcodeConfigEngineProp
                     type="text"
                     value={config.phone}
                     onChange={e => setConfig({ ...config, phone: e.target.value })}
-                    placeholder="+971 4 883 9120"
+                    placeholder="+971554186086"
                     className="w-full px-3 py-1.5 rounded-lg border border-slate-300 font-mono text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>

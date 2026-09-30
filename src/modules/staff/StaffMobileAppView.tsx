@@ -818,7 +818,7 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
                   <div className="bg-black/60 p-3 rounded-xl border border-amber-400/30 space-y-1">
                     <span className="text-slate-400 text-[10px]">CASH IN DRAWER</span>
                     <strong className="text-lg font-black text-emerald-400 block">AED 4,820</strong>
-                    <span className="text-[9px] text-slate-500">Al Jimi Store, Al Ain</span>
+                    <span className="text-[9px] text-slate-500">Downtown Alain Store</span>
                   </div>
 
                   <div className="bg-black/60 p-3 rounded-xl border border-amber-400/30 space-y-1">

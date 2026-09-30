@@ -450,7 +450,7 @@ async function callGeminiVisionAppraisal(
         ecommerce_description: parsed.ecommerce_description || `Authentic ${eraVal} ${parsed.category || 'vintage garment'} curated by Vintage Vibes. Features authentic ${parsed.stitchType || 'archival'} construction with distinct character.`,
         seo_tags: Array.isArray(parsed.seo_tags) && parsed.seo_tags.length > 0 
           ? parsed.seo_tags 
-          : [`${eraVal} vintage`, `${parsed.brand || 'vintage'} ${parsed.category || ''}`.trim(), 'vintage vibes dubai', 'archival fashion', segment.toLowerCase()]
+          : [`${eraVal} vintage`, `${parsed.brand || 'vintage'} ${parsed.category || ''}`.trim(), 'vintage vibes', 'archival fashion', segment.toLowerCase()]
       };
     } catch (err: any) {
       lastError = err;

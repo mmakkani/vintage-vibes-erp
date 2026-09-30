@@ -68,13 +68,13 @@ class RelationalStore {
   constructor() {
     this.companyProfile = {
       companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
-      addressLine1: 'Plot 42, Industrial Zone 3, Al Quoz',
-      addressLine2: 'Dubai Wholesale Garments Hub, UAE',
-      trnTaxNo: 'TRN-100482910300003',
+      addressLine1: 'Downtown, Al Qaseedah District',
+      addressLine2: '135 Khalifa Bin Zayed Street, Alain UAE',
+      trnTaxNo: '100482910300003',
       defaultCurrency: 'AED',
       logoUrl: '/vintage_vibes_seal.svg',
-      phone: '+971 4 883 9120',
-      email: 'contact@vintagevibe.ae',
+      phone: '+971554186086',
+      email: 'vintagevibe006@gmail.com',
       vatRatePercent: 5.0,
       globalStockAlertThreshold: 5,
       bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%26bank%3DRAKBANK',
@@ -86,7 +86,7 @@ class RelationalStore {
       enableCardPay: true,
       freeShippingThresholdAed: 350,
       standardShippingFeeAed: 25,
-      whatsappOrderNumber: ''
+      whatsappOrderNumber: '+971554186086'
     };
 
     this.liveMulticastConfig = {
@@ -4129,7 +4129,7 @@ class RelationalStore {
         `🚚 *Express UAE Courier:* ${pool.shippingAed === 0 ? 'FREE (Orders > AED 500)' : `AED ${pool.shippingAed.toFixed(2)}`}\n` +
         `💰 *GRAND TOTAL:* AED ${pool.grandTotalAed.toFixed(2)}\n\n` +
         `💳 *Payment Method:* ${params.paymentMethod}\n` +
-        `📍 *Dispatch Hub:* Vintage Vibes Main Facility, Al Jimi, Al Ain, Abu Dhabi, UAE.\n\n` +
+        `📍 *Dispatch Hub:* Vintage Vibes Main Facility, Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE.\n\n` +
         `Your parcel is pre-labeled with thermal barcode stickers and will dispatch via overnight courier!`;
 
       // Thermal barcode packing stickers

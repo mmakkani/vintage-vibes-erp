@@ -984,7 +984,7 @@ export const HardwareGadgetsHub: React.FC<HardwareGadgetsHubProps> = ({ onNotify
               <div className="p-3 bg-stone-100 rounded-xl border border-stone-200 flex items-center justify-center min-h-[220px]">
                 {testPrintType === '50x25mm_TAG' && (
                   <div className="bg-white p-2.5 rounded shadow-sm border border-stone-300 w-56 text-center text-stone-900 font-sans">
-                    <div className="text-[11px] font-black uppercase tracking-wider">VINTAGE VIBE AL QUOZ</div>
+                    <div className="text-[11px] font-black uppercase tracking-wider">VINTAGE VIBES ALAIN</div>
                     <div className="text-[9px] text-stone-600">Vintage Fleece Lined Denim Jacket (M)</div>
                     <div className="my-1 flex justify-center">
                       <svg ref={testBarcodeSvgRef} className="max-w-full"></svg>

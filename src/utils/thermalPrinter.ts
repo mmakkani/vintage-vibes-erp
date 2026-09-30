@@ -591,10 +591,10 @@ export function openThermalShippingWaybillPrintWindow(data: ThermalShippingWaybi
         <div class="party-col-from">
           <div class="party-title">FROM (SHIPPER):</div>
           <div style="font-weight:800;">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</div>
-          <div>House 14 Street 4 - Al Jimi - Al Nudood</div>
-          <div>Al Ain, Abu Dhabi, United Arab Emirates</div>
+          <div>Downtown, Al Qaseedah District</div>
+          <div>135 Khalifa Bin Zayed Street, Alain UAE</div>
           <div style="font-weight:700;margin-top:2px;">TRN: 100482910300003</div>
-          <div>Tel: +971 55 418 6086</div>
+          <div>Tel: +971554186086</div>
         </div>
         <div>
           <div class="party-title">TO (CONSIGNEE):</div>
@@ -745,7 +745,7 @@ export function openBaleThermalTagPrintWindow(data: BaleThermalTagData): Window 
   <div class="tag-card">
     <div class="header-row">
       <div>
-        <div class="brand-title">VINTAGE VIBES DUBAI &bull; INWARD BALE</div>
+        <div class="brand-title">VINTAGE VIBES &bull; INWARD BALE</div>
         <div class="factory-ref">FACTORY REF: ${data.purchaseInvoiceNo || 'DIRECT IMPORT'}</div>
       </div>
       <div style="text-align: right;">
@@ -869,7 +869,7 @@ export function openBatchBaleThermalTagsPrintWindow(bales: BatchBaleThermalTagIt
       <div class="tag-card">
         <div class="header-row">
           <div>
-            <div class="brand-title">VINTAGE VIBES DUBAI &bull; INWARD BALE</div>
+            <div class="brand-title">VINTAGE VIBES &bull; INWARD BALE</div>
             <div class="factory-ref">REF: ${bale.purchaseInvoiceNo || 'IMPORT'} &bull; TAG ${bale.index} / ${bale.totalCount || totalBalesCount}</div>
           </div>
           <div style="text-align: right;">
@@ -1216,8 +1216,8 @@ export function openGiftReceiptPrintWindow(data: GiftReceiptData): Window | null
   <div class="gift-container">
     <div class="header text-center">
       ${VINTAGE_VIBES_THERMAL_MEDALLION_SVG}
-      <div class="title">${data.companyName || 'VINTAGE VIBES DUBAI'}</div>
-      <div style="font-size: 8.5px; color: #444;">Al Quoz Industrial 3, Dubai &bull; TRN: ${data.trn || '100482910300003'}</div>
+      <div class="title">${data.companyName || 'VINTAGE VIBES'}</div>
+      <div style="font-size: 8.5px; color: #444;">${data.address || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE'} &bull; TRN: ${data.trn || '100482910300003'}</div>
       <div class="gift-badge">🎁 GIFT RECEIPT</div>
       <div class="info">
         <div>Ref: <strong>${data.invoiceNo}</strong></div>
@@ -1557,8 +1557,8 @@ export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): W
   <div class="receipt-container">
     <div class="header text-center">
       ${logoMarkup}
-      <div class="store-name">${data.companyName || 'VINTAGE VIBES DUBAI'}</div>
-      <div class="store-sub">${data.address || 'Al Quoz Industrial 3, Dubai, UAE'}</div>
+      <div class="store-name">${data.companyName || 'VINTAGE VIBES'}</div>
+      <div class="store-sub">${data.address || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE'}</div>
       <div class="store-sub"><strong>TRN:</strong> ${data.trn || '100482910300003'}</div>
       <div class="tax-badge">TAX INVOICE / CASH MEMO</div>
     </div>

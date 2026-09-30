@@ -2949,7 +2949,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                         <h1 className="text-base font-black text-amber-950 tracking-wide font-serif">
                           VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C
                         </h1>
-                        <p className="text-[10px] text-slate-600">House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE</p>
+                        <p className="text-[10px] text-slate-600">Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE</p>
                         <p className="text-[10px] font-mono font-bold text-slate-800">
                           Dubai Economy & Tourism Lic: 1049281 &bull; Customs: AE-9281048
                         </p>
@@ -3093,7 +3093,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                           VINTAGE VIBES LOGISTICS & WAREHOUSE
                         </h1>
                         <p className="text-[10px] text-slate-600">Outward Cargo Dispatch & Freight Terminal</p>
-                        <p className="text-[10px] text-slate-600">House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, Abu Dhabi, UAE</p>
+                        <p className="text-[10px] text-slate-600">Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE</p>
                       </div>
                     </div>
                     <div className="text-right">

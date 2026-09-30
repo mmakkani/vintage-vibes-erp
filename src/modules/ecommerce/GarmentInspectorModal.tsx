@@ -287,7 +287,7 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
                 </span>
 
                 <span className="px-2 py-0.5 rounded bg-white text-slate-700 font-bold text-[10px] border border-amber-300">
-                  {piece.shopLocation || 'Al Jimi Store'}
+                  {piece.shopLocation || 'Alain Store'}
                 </span>
               </div>
 

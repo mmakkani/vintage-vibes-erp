@@ -221,7 +221,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
 
     const itemsCount = Array.isArray(inv?.items) ? inv.items.length : 0;
     const msgText = 
-      `🚚 *VINTAGE VIBES DUBAI - B2B DISPATCH ADVICE*\n` +
+      `🚚 *VINTAGE VIBES - B2B DISPATCH ADVICE*\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `📄 *Invoice No:* ${inv.invoiceNo}\n` +
       `🏢 *Client:* ${inv.customerName}\n` +
@@ -229,8 +229,8 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
       `📦 *Items Dispatched:* ${itemsCount} Graded Garments\n` +
       `💰 *Total Amount:* AED ${inv.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} (Incl. 5% UAE VAT)\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
-      `📍 *Warehouse:* Al Quoz Industrial 3, Dubai\n` +
-      `📞 *Support:* +971 4 883 9120\n` +
+      `📍 *Warehouse:* ${companyProfile?.address_line_1 || companyProfile?.addressLine1 || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE'}\n` +
+      `📞 *Support:* ${companyProfile?.corporate_phone || companyProfile?.corporatePhone || companyProfile?.phone || '+971554186086'}\n` +
       `_Thank you for your valued business!_`;
 
     // Generate Option 2 Digital Tax Receipt Slip Image with embedded garment photo, TRN, items, & 3D Royal Wax Seal
@@ -254,6 +254,11 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
         date: inv.date,
         customerName: inv.customerName,
         customerPhone: cleanPhone,
+        companyName: companyProfile?.companyName || 'VINTAGE VIBES',
+        companyAddress: (companyProfile?.address_line_1 || companyProfile?.addressLine1)
+          ? `${companyProfile?.address_line_1 || companyProfile?.addressLine1}${companyProfile?.address_line_2 || companyProfile?.addressLine2 ? ', ' + (companyProfile?.address_line_2 || companyProfile?.addressLine2) : ''}`
+          : 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE',
+        companyPhone: companyProfile?.corporate_phone || companyProfile?.corporatePhone || companyProfile?.phone || '+971554186086',
         items: (Array.isArray(inv?.items) ? inv.items : []).map(it => ({
           description: it.description || (it as any).itemName || 'Vintage Garment',
           barcode: it.barcode,
@@ -1122,7 +1127,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                 />
                 <div>
                   <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</h3>
-                  <p className="text-[10px] text-slate-500">Al Jimi, Al Ain, Abu Dhabi, UAE • TRN-100482910300003</p>
+                  <p className="text-[10px] text-slate-500">Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE • TRN-100482910300003</p>
                 </div>
               </div>
               <button

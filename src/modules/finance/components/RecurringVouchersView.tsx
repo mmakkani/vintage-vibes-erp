@@ -69,11 +69,11 @@ export const RecurringVouchersView: React.FC<RecurringVouchersViewProps> = ({
 
   const handleOpenAdd = () => {
     setEditingTemplate(null);
-    setFormTitle('Monthly DEWA Warehouse Utilities');
+    setFormTitle('Monthly Warehouse Utilities');
     setFormType('BPV');
     setFormFrequency('MONTHLY');
     setFormDayOfMonth(5);
-    setFormNarration('Monthly DEWA electricity and water utility payment for Plot 42 Warehouse');
+    setFormNarration('Monthly electricity and water utility payment for Alain Facility');
     
     // Default 2-line template
     const expAcc = accounts.find(a => a.classification === 'EXPENSE') || accounts[0];
@@ -449,7 +449,7 @@ export const RecurringVouchersView: React.FC<RecurringVouchersViewProps> = ({
                     required
                     value={formTitle}
                     onChange={e => setFormTitle(e.target.value)}
-                    placeholder="e.g. Al Jimi Warehouse Facility Lease Rent"
+                    placeholder="e.g. Alain Warehouse Facility Lease Rent"
                     className="w-full text-xs p-2 rounded-lg border border-slate-300 focus:border-amber-500 font-bold text-slate-900"
                   />
                 </div>

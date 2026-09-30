@@ -182,7 +182,7 @@ export const GrailBountyRadarView: React.FC = () => {
     const rawPhone = bounty.whatsapp_phone || bounty.customer_phone || '';
     const cleanPhone = rawPhone.replace(/[^0-9]/g, '');
     const text = encodeURIComponent(
-      `Hello ${bounty.customer_name}, your requested grail (${bounty.desired_brand} - ${bounty.preferred_size || bounty.desired_size || 'Size L'}) just arrived and was scanned from our incoming US bales at Vintage Vibes Dubai! Would you like to see photos and reserve it?`
+      `Hello ${bounty.customer_name}, your requested grail (${bounty.desired_brand} - ${bounty.preferred_size || bounty.desired_size || 'Size L'}) just arrived and was scanned from our incoming US bales at Vintage Vibes! Would you like to see photos and reserve it?`
     );
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${text}` : `https://wa.me/?text=${text}`;
   };

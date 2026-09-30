@@ -84,7 +84,7 @@ export const RetailCustomerStatementModal: React.FC<RetailCustomerStatementModal
     }).join('\n');
 
     const rawMessage = 
-      `🧾 *VINTAGE VIBES DUBAI — RETAIL CUSTOMER STATEMENT*\n` +
+      `🧾 *VINTAGE VIBES — RETAIL CUSTOMER STATEMENT*\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
       `*Customer:* ${customer.name}\n` +
       `*Account Ref:* ${customer.code} (Control: 1130-05)\n` +
