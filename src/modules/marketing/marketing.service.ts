@@ -1592,10 +1592,33 @@ class MarketingService {
           campaign.currentIndex += 1;
           campaign.sentCount += 1;
         } catch (postErr: any) {
-          console.warn(`[Broadcast Queue] Network blip or rate limit on item ${item.piece.barcode}:`, postErr?.message);
-          item.error = postErr?.message || 'Network delay';
-          // Auto-retry mechanism: pause for 15 seconds to recover and resume without losing remaining items
-          setTimeout(step, 15000);
+          console.warn(`[Broadcast Queue] Delivery blip or network delay on piece ${item.piece?.barcode || item.pieceId}:`, postErr?.message);
+          item.status = 'FAILED';
+          item.error = postErr?.message || 'Delivery error';
+          campaign.failedCount = (campaign.failedCount || 0) + 1;
+          campaign.currentIndex += 1;
+          this.persistBroadcastCampaignToSql(campaign).catch(() => {});
+
+          // If reached end of queue, complete gracefully
+          if (campaign.currentIndex >= campaign.items.length) {
+            campaign.status = 'COMPLETED';
+            campaign.completedAt = new Date().toISOString();
+            this.broadcastHistory.unshift({ ...campaign });
+            this.persistBroadcastCampaignToSql(campaign).catch(() => {});
+            eventHub.broadcast({
+              type: 'ENTITY_MUTATED',
+              module: 'MARKETING',
+              entity: 'BROADCAST_COMPLETED',
+              action: 'UPDATE',
+              documentRef: campaign.id,
+              data: { campaign }
+            });
+            return;
+          }
+
+          // Advance to next piece after safe throttle pause so queue never hangs
+          const throttleMs = Math.max(3000, campaign.intervalSeconds * 1000);
+          setTimeout(step, throttleMs);
           return;
         }
 

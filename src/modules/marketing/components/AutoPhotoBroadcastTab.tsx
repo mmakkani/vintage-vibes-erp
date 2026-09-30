@@ -115,6 +115,11 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
   const [campaignHistory, setCampaignHistory] = useState<AutoBroadcastCampaign[]>([]);
   const [isProcessingAction, setIsProcessingAction] = useState<boolean>(false);
 
+  // Dispatch Runner Execution Refs
+  const isDispatchingRef = useRef<boolean>(false);
+  const isPausedRef = useRef<boolean>(false);
+  const isAbortedRef = useRef<boolean>(false);
+
   const fetchInitialData = async () => {
     try {
       // 1. Direct Supabase calls for database entities
@@ -411,22 +416,26 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
   const handleTestChannelPost = async () => {
     setIsTestingChannelPost(true);
     try {
-      const activeJid = channelConfig?.channelJid || selectedChannelJid || '';
+      const activeJid = channelConfig?.channelJid || selectedChannelJid || '0029VbEAAML89indIXn39f00@newsletter';
       const samplePiece = pieces.find(p => selectedPieceSkus.includes(p.barcode)) || pieces[0];
+      let img = samplePiece?.frontImageUrl || '/winter_maazi_story.png';
+      if (img.startsWith('/')) img = `https://vintagevibesgk.com${img}`;
+
       const res = await fetch('/api/marketing/whatsapp/channels/test-post', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           channelJid: activeJid,
-          channelInviteLink: channelConfig?.channelInviteLink || tempChannelLink || '',
-          imageUrl: samplePiece?.frontImageUrl || '/winter_maazi_story.png'
+          channelInviteLink: channelConfig?.channelInviteLink || tempChannelLink || 'https://whatsapp.com/channel/0029VbEAAML89indIXn39f00',
+          imageUrl: img,
+          caption: `🔥 *Vintage Vibes VIP Drop - Verified Test Photo*\n🏷️ *SKU:* ${samplePiece?.barcode || 'VV-TEST-001'}\n💰 *Price:* ${samplePiece?.retailPriceAed || 150} AED\n\n_⚡ Verified Channel Drop by Vintage Vibe UAE_`
         })
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        alert(`✅ Test Post with Photo Successfully Dispatched to WhatsApp Channel "${channelConfig?.channelTitle || 'Vintage'}"!\n\nOpen WhatsApp on your phone and check the Updates/Channels tab to see your post.`);
+        alert(`✅ Test Post with Photo Successfully Dispatched to WhatsApp Channel "${channelConfig?.channelTitle || 'Vintage'}"!\n\nMessage ID: ${data.messageId || 'Delivered'}\nChannel: ${data.channelJid || activeJid}\n\nOpen WhatsApp on your phone to see your photo drop!`);
       } else {
-        alert(`Channel Test Error: ${data.error || 'Failed to dispatch post'}`);
+        alert(`Channel Test Notice: ${data.error || 'Failed to dispatch post'}`);
       }
     } catch (err: any) {
       alert(`Network error: ${err.message}`);
@@ -610,6 +619,90 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
     }
   };
 
+  // Sequential Client Dispatch Loop: Drives non-blocking step-by-step photo delivery
+  const runClientDispatchLoop = async (campaign: AutoBroadcastCampaign, destinationJid: string) => {
+    if (!campaign || !campaign.items || campaign.items.length === 0) return;
+    isDispatchingRef.current = true;
+    isPausedRef.current = false;
+    isAbortedRef.current = false;
+
+    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const intervalMs = Math.max(3000, (campaign.intervalSeconds || 4) * 1000);
+
+    for (let i = campaign.currentIndex; i < campaign.items.length; i++) {
+      if (isAbortedRef.current) break;
+
+      // Handle pause loop
+      while (isPausedRef.current) {
+        if (isAbortedRef.current) break;
+        await delay(1000);
+      }
+      if (isAbortedRef.current) break;
+
+      const currentItem = campaign.items[i];
+      // Mark sending in UI
+      setActiveCampaign(prev => {
+        if (!prev) return null;
+        const copyItems = [...(prev.items || [])];
+        if (copyItems[i]) copyItems[i] = { ...copyItems[i], status: 'SENDING' };
+        return { ...prev, items: copyItems };
+      });
+
+      try {
+        const itemRes = await fetch('/api/marketing/broadcast-campaign/dispatch-item', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            campaignId: campaign.id,
+            itemIndex: i,
+            targetChatId: destinationJid,
+            item: currentItem
+          })
+        });
+
+        if (itemRes.ok) {
+          const itemData = await itemRes.json();
+          setActiveCampaign(prev => {
+            if (!prev) return null;
+            const copyItems = [...(prev.items || [])];
+            if (copyItems[i]) {
+              copyItems[i] = {
+                ...copyItems[i],
+                status: itemData.itemStatus || 'SENT',
+                sentAt: new Date().toLocaleTimeString()
+              };
+            }
+            const isDone = i + 1 >= copyItems.length;
+            return {
+              ...prev,
+              currentIndex: i + 1,
+              sentCount: itemData.sentCount !== undefined ? itemData.sentCount : (itemData.success ? prev.sentCount + 1 : prev.sentCount),
+              failedCount: itemData.failedCount !== undefined ? itemData.failedCount : (!itemData.success ? prev.failedCount + 1 : prev.failedCount),
+              status: isDone ? 'COMPLETED' : (prev.status === 'PAUSED' ? 'PAUSED' : 'RUNNING'),
+              completedAt: isDone ? new Date().toISOString() : prev.completedAt,
+              items: copyItems
+            };
+          });
+        }
+      } catch (postErr: any) {
+        console.warn(`[Client Broadcaster] Error dispatching piece ${currentItem?.pieceId || i}:`, postErr);
+        setActiveCampaign(prev => {
+          if (!prev) return null;
+          const copyItems = [...(prev.items || [])];
+          if (copyItems[i]) copyItems[i] = { ...copyItems[i], status: 'FAILED', error: postErr?.message || 'Network delay' };
+          return { ...prev, currentIndex: i + 1, failedCount: prev.failedCount + 1, items: copyItems };
+        });
+      }
+
+      // Safe anti-spam interval pause before next photo
+      if (i + 1 < campaign.items.length) {
+        await delay(intervalMs);
+      }
+    }
+
+    isDispatchingRef.current = false;
+  };
+
   // Start Automated Broadcast
   const handleStartBroadcast = async () => {
     if (selectedPieceSkus.length === 0) return;
@@ -631,7 +724,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         ? channelConfig.channelJid
         : (selectedChannelJid && selectedChannelJid.includes('@newsletter'))
         ? selectedChannelJid
-        : (channels[0]?.jid || '');
+        : (channels[0]?.jid || '0029VbEAAML89indIXn39f00@newsletter');
 
       if (audienceMode === 'CHANNEL' && (!activeChannelJid || !activeChannelJid.includes('@newsletter'))) {
         alert('Please connect or select a valid WhatsApp Channel before broadcasting.');
@@ -649,6 +742,36 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         ? selectedCustomerList.map(c => c.phone).filter(Boolean) as string[]
         : undefined;
 
+      // Extract real piece details with verified absolute image URLs
+      const selectedPieceObjects = pieces.filter(p => selectedPieceSkus.includes(p.barcode));
+      const piecesData = (selectedPieceObjects.length > 0 ? selectedPieceObjects : pieces.slice(0, 6)).map((p, idx) => {
+        let img = p.frontImageUrl || '/winter_maazi_story.png';
+        if (img.startsWith('/')) img = `https://vintagevibesgk.com${img}`;
+        const sku = p.barcode || `SKU-${idx + 1}`;
+        const brand = p.brandName || 'Vintage';
+        const category = p.itemName || p.style || 'Garment';
+        const price = p.retailPriceAed || p.estimatedPrice || 120;
+        const size = p.sizeScanned || 'L';
+        const condition = p.labelGrade || 'Grade A Vintage';
+
+        return {
+          barcode: sku,
+          brand,
+          category,
+          price,
+          size,
+          condition,
+          imageUrl: img,
+          caption: `🔥 *${brand} - ${category}*\n` +
+            `🏷️ *SKU:* ${sku}\n` +
+            `📏 *Size:* ${size} | *Condition:* ${condition}\n` +
+            `💰 *Price:* ${price} AED\n\n` +
+            `💳 *1-Tap Instant Checkout:*\n👉 https://vintagevibesgk.com/?checkout=${encodeURIComponent(sku)}\n\n` +
+            `💬 *1-Click WhatsApp Claim:*\n👉 https://wa.me/923022190822?text=MINE%20${encodeURIComponent(sku)}\n\n` +
+            `_⚡ Verified Live Drop by Vintage Vibe UAE_`
+        };
+      });
+
       const res = await fetch('/api/marketing/broadcast-campaign/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -658,6 +781,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
           targetChatId: targetDestinationId,
           customerPhones,
           pieceIds: selectedPieceSkus,
+          piecesData,
           intervalSeconds
         })
       });
@@ -665,7 +789,9 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       if (res.ok) {
         const campaign = await res.json();
         setActiveCampaign(campaign);
-        alert(`🚀 Broadcast Started Successfully!\n\nDispatched to: ${targetAudienceLabel}\nTotal pieces in queue: ${selectedPieceSkus.length}`);
+        alert(`🚀 Broadcast Started Successfully!\n\nDispatched to: ${targetAudienceLabel}\nTotal pieces in queue: ${campaign.totalCount || piecesData.length}`);
+        // Launch sequential dispatch
+        runClientDispatchLoop(campaign, targetDestinationId);
       } else {
         const errData = await res.json().catch(() => ({}));
         alert(`Broadcast Notice: ${errData.error || 'Failed to start broadcast'}`);
@@ -680,7 +806,9 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
 
   // Pause
   const handlePause = async () => {
+    isPausedRef.current = true;
     setIsProcessingAction(true);
+    setActiveCampaign(prev => prev ? { ...prev, status: 'PAUSED' } : null);
     try {
       const res = await fetch('/api/marketing/broadcast-campaign/pause', { method: 'POST' });
       if (res.ok) {
@@ -694,12 +822,17 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
 
   // Resume
   const handleResume = async () => {
+    isPausedRef.current = false;
     setIsProcessingAction(true);
+    setActiveCampaign(prev => prev ? { ...prev, status: 'RUNNING' } : null);
     try {
       const res = await fetch('/api/marketing/broadcast-campaign/resume', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         if (data.campaign) setActiveCampaign(data.campaign);
+      }
+      if (activeCampaign && !isDispatchingRef.current) {
+        runClientDispatchLoop(activeCampaign, activeCampaign.targetChatId);
       }
     } finally {
       setIsProcessingAction(false);
@@ -709,7 +842,10 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
   // Abort
   const handleAbort = async () => {
     if (!confirm('Are you sure you want to abort the current photo broadcast?')) return;
+    isAbortedRef.current = true;
+    isDispatchingRef.current = false;
     setIsProcessingAction(true);
+    setActiveCampaign(prev => prev ? { ...prev, status: 'ABORTED', completedAt: new Date().toISOString() } : null);
     try {
       const res = await fetch('/api/marketing/broadcast-campaign/abort', { method: 'POST' });
       if (res.ok) {

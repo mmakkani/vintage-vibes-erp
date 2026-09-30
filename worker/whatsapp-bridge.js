@@ -597,15 +597,64 @@ app.post('/post-channel', requireAuth, async (req, res) => {
     return res.status(400).json({ success: false, error: 'Channel JID is required (e.g. 120363xxx@newsletter).' });
   }
 
+  let targetJid = String(channelJid).trim();
+
+  // If channelJid is an invite link or invite code, extract code and resolve
+  if (targetJid.includes('/channel/') || targetJid.startsWith('0029') || !targetJid.endsWith('@newsletter')) {
+    const code = targetJid.replace(/.*\/channel\//i, '').replace(/@newsletter$/i, '').trim();
+    if (code) {
+      try {
+        if (typeof sock.newsletterMetadata === 'function') {
+          const meta = await sock.newsletterMetadata('invite', code);
+          if (meta?.id) {
+            targetJid = meta.id;
+            console.log(`[WhatsApp Bridge] Resolved newsletter code "${code}" to numeric JID: ${targetJid}`);
+          } else {
+            targetJid = `${code}@newsletter`;
+          }
+        } else {
+          targetJid = `${code}@newsletter`;
+        }
+      } catch (resErr) {
+        console.warn(`[WhatsApp Bridge] Newsletter code metadata lookup error, falling back to ${code}@newsletter:`, resErr?.message);
+        targetJid = `${code}@newsletter`;
+      }
+    }
+  }
+
   try {
     let result;
     if (imageUrl) {
-      result = await sock.sendMessage(channelJid, {
-        image: { url: imageUrl },
-        caption: caption || ''
-      });
+      let imageBuffer = null;
+      if (typeof imageUrl === 'string' && imageUrl.startsWith('data:image/')) {
+        try {
+          const base64Data = imageUrl.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '');
+          imageBuffer = Buffer.from(base64Data, 'base64');
+        } catch (_) {}
+      } else if (typeof imageUrl === 'string' && imageUrl.startsWith('http')) {
+        try {
+          const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(8000) });
+          if (imgRes.ok) {
+            imageBuffer = Buffer.from(await imgRes.arrayBuffer());
+          }
+        } catch (fetchErr) {
+          console.warn('[WhatsApp Bridge] Could not fetch image for buffer, falling back to URL payload:', fetchErr?.message);
+        }
+      }
+
+      if (imageBuffer && Buffer.isBuffer(imageBuffer)) {
+        result = await sock.sendMessage(targetJid, {
+          image: imageBuffer,
+          caption: caption || ''
+        });
+      } else {
+        result = await sock.sendMessage(targetJid, {
+          image: { url: imageUrl },
+          caption: caption || ''
+        });
+      }
     } else {
-      result = await sock.sendMessage(channelJid, {
+      result = await sock.sendMessage(targetJid, {
         text: caption || ''
       });
     }
@@ -613,10 +662,24 @@ app.post('/post-channel', requireAuth, async (req, res) => {
     return res.json({
       success: true,
       messageId: result?.key?.id,
-      channelJid
+      channelJid: targetJid
     });
   } catch (err) {
-    console.error(`[WhatsApp Bridge] Channel post error:`, err);
+    console.error(`[WhatsApp Bridge] Channel post error to ${targetJid}:`, err);
+    // If sending with image failed, fallback to text message with photo link so broadcast doesn't halt
+    if (imageUrl && !caption?.includes(imageUrl)) {
+      try {
+        console.log(`[WhatsApp Bridge] Attempting text fallback for channel post...`);
+        const fallbackText = `${caption || ''}\n\n📸 *Garment Photo:* ${imageUrl}`;
+        const fbResult = await sock.sendMessage(targetJid, { text: fallbackText });
+        return res.json({
+          success: true,
+          messageId: fbResult?.key?.id,
+          channelJid: targetJid,
+          fallbackMode: 'TEXT_WITH_PHOTO_LINK'
+        });
+      } catch (_) {}
+    }
     return res.status(500).json({ success: false, error: err?.message });
   }
 });

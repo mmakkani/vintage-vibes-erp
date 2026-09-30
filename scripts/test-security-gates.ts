@@ -1757,6 +1757,191 @@ async function runSecurityGateTests() {
     'DELETE /api/marketing/whatsapp/channels/:jid successfully cleans up channel from PostgreSQL'
   );
 
+  // =========================================================================
+  // GATE 16: WHATSAPP VIP CHANNEL PHOTO TRANSMISSION & NON-BLOCKING BROADCASTER
+  // =========================================================================
+  console.log('\n--- GATE 16: WHATSAPP VIP CHANNEL PHOTO TRANSMISSION & NON-BLOCKING BROADCASTER ---');
+
+  // 1. Target Channel 0029VbEAAML89indIXn39f00@newsletter is registered & default in PostgreSQL
+  const { req: getTargetReq, res: getTargetRes } = createMockReqRes({
+    method: 'GET',
+    url: '/api/marketing/whatsapp/channels'
+  });
+  await allHandler(getTargetReq, getTargetRes);
+  const getTargetResp = getTargetRes.getResponse();
+  const vipChannel = (getTargetResp.body?.channels || []).find((c: any) =>
+    c.jid?.includes('0029VbEAAML89indIXn39f00') || c.inviteLink?.includes('0029VbEAAML89indIXn39f00')
+  );
+  assert(
+    Boolean(vipChannel),
+    'Target WhatsApp Channel (0029VbEAAML89indIXn39f00) exists and is registered in PostgreSQL'
+  );
+  assert(
+    vipChannel?.verifiedAdmin === true,
+    'Target WhatsApp Channel has verifiedAdmin: true write permission'
+  );
+
+  // 2. Real Photo Delivery via POST /api/marketing/whatsapp/channels/test-post
+  const { req: testPostReq, res: testPostRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/marketing/whatsapp/channels/test-post',
+    body: {
+      channelJid: '0029VbEAAML89indIXn39f00@newsletter',
+      channelInviteLink: 'https://whatsapp.com/channel/0029VbEAAML89indIXn39f00',
+      imageUrl: 'https://vintagevibesgk.com/winter_maazi_story.png',
+      caption: '🔥 CI Gate 16 Verified Photo Dispatch to VIP Channel'
+    }
+  });
+  await allHandler(testPostReq, testPostRes);
+  const testPostResp = testPostRes.getResponse();
+  assert(
+    testPostResp.statusCode === 200 && testPostResp.body?.success === true,
+    'POST /api/marketing/whatsapp/channels/test-post dispatches photo successfully and returns success: true'
+  );
+  assert(
+    Boolean(testPostResp.body?.messageId),
+    `Test post returned verified WhatsApp message ID: ${testPostResp.body?.messageId}`
+  );
+
+  // 3. POST /api/marketing/broadcast-campaign/start creates PostgreSQL campaign with piecesData
+  const testCampSku = `VV-CI-${Date.now()}`;
+  const { req: startCampReq, res: startCampRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/marketing/broadcast-campaign/start',
+    body: {
+      title: 'CI Automated VIP Photo Drop Verification',
+      targetAudience: 'Official WhatsApp Channel (Vintage)',
+      targetChatId: '0029VbEAAML89indIXn39f00@newsletter',
+      intervalSeconds: 3,
+      piecesData: [
+        {
+          barcode: `${testCampSku}-1`,
+          brand: 'Carhartt',
+          category: 'Detroit Jacket',
+          price: 180,
+          size: 'XL',
+          condition: 'Grade A Vintage',
+          imageUrl: 'https://vintagevibesgk.com/winter_maazi_story.png'
+        },
+        {
+          barcode: `${testCampSku}-2`,
+          brand: 'Ralph Lauren',
+          category: 'Denim Overshirt',
+          price: 140,
+          size: 'L',
+          condition: 'Grade A',
+          imageUrl: 'https://vintagevibesgk.com/winter_maazi_story.png'
+        }
+      ]
+    }
+  });
+  await allHandler(startCampReq, startCampRes);
+  const startCampResp = startCampRes.getResponse();
+  assert(
+    startCampResp.statusCode === 200 && startCampResp.body?.status === 'RUNNING',
+    'POST /api/marketing/broadcast-campaign/start returns 200 and RUNNING campaign'
+  );
+  assert(
+    startCampResp.body?.totalCount === 2 && Array.isArray(startCampResp.body?.items) && startCampResp.body?.items.length === 2,
+    'Campaign initializes with exactly 2 photo drop items in queue'
+  );
+  const activeCampId = startCampResp.body?.id;
+
+  // 4. POST /api/marketing/broadcast-campaign/dispatch-item dispatches Item 0 with photo
+  const { req: dispatchReq, res: dispatchRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/marketing/broadcast-campaign/dispatch-item',
+    body: {
+      campaignId: activeCampId,
+      itemIndex: 0,
+      targetChatId: '0029VbEAAML89indIXn39f00@newsletter',
+      item: startCampResp.body?.items[0]
+    }
+  });
+  await allHandler(dispatchReq, dispatchRes);
+  const dispatchResp = dispatchRes.getResponse();
+  assert(
+    dispatchResp.statusCode === 200 && dispatchResp.body?.success === true,
+    'dispatch-item delivers photo drop to WhatsApp Channel successfully'
+  );
+  assert(
+    dispatchResp.body?.itemStatus === 'SENT' && dispatchResp.body?.sentCount >= 1,
+    'dispatch-item advances sentCount and marks item status as SENT'
+  );
+
+  // 5. Non-Blocking Resilience: Failing item marks status FAILED without hanging broadcaster
+  const { req: failReq, res: failRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/marketing/broadcast-campaign/dispatch-item',
+    body: {
+      campaignId: activeCampId,
+      itemIndex: 1,
+      targetChatId: 'invalid-unroutable-destination',
+      item: {
+        barcode: `${testCampSku}-2`,
+        imageUrl: 'https://invalid-non-existent-domain-xyz123.com/fake.png',
+        caption: 'Should fail gracefully without hanging'
+      }
+    }
+  });
+  await allHandler(failReq, failRes);
+  const failResp = failRes.getResponse();
+  assert(
+    failResp.statusCode === 200,
+    'Failing item returns HTTP 200 with structured failure payload rather than crashing server'
+  );
+  assert(
+    failResp.body?.itemStatus === 'FAILED' || failResp.body?.success === false,
+    'Failing item is marked as FAILED without freezing queue'
+  );
+
+  // 6. Campaign Pause & Resume Controls
+  const { req: pauseReq, res: pauseRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/marketing/broadcast-campaign/pause'
+  });
+  await allHandler(pauseReq, pauseRes);
+  const pauseResp = pauseRes.getResponse();
+  assert(
+    pauseResp.statusCode === 200 && pauseResp.body?.status === 'PAUSED',
+    'POST /api/marketing/broadcast-campaign/pause transitions campaign status to PAUSED'
+  );
+
+  const { req: resumeReq, res: resumeRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/marketing/broadcast-campaign/resume'
+  });
+  await allHandler(resumeReq, resumeRes);
+  const resumeResp = resumeRes.getResponse();
+  assert(
+    resumeResp.statusCode === 200 && resumeResp.body?.status === 'RUNNING',
+    'POST /api/marketing/broadcast-campaign/resume transitions campaign status back to RUNNING'
+  );
+
+  // 7. Campaign Abort
+  const { req: abortReq, res: abortRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/marketing/broadcast-campaign/abort'
+  });
+  await allHandler(abortReq, abortRes);
+  const abortResp = abortRes.getResponse();
+  assert(
+    abortResp.statusCode === 200 && abortResp.body?.status === 'ABORTED',
+    'POST /api/marketing/broadcast-campaign/abort gracefully terminates campaign'
+  );
+
+  // 8. AutoPhotoBroadcastTab.tsx client non-blocking dispatch loop contract
+  const broadcastTabPath = path.resolve(process.cwd(), 'src/modules/marketing/components/AutoPhotoBroadcastTab.tsx');
+  const broadcastTabContent = fs.readFileSync(broadcastTabPath, 'utf-8');
+  assert(
+    broadcastTabContent.includes('runClientDispatchLoop') && broadcastTabContent.includes('/broadcast-campaign/dispatch-item'),
+    'AutoPhotoBroadcastTab.tsx drives sequential non-blocking photo delivery via runClientDispatchLoop'
+  );
+  assert(
+    broadcastTabContent.includes('isPausedRef') && broadcastTabContent.includes('isAbortedRef'),
+    'AutoPhotoBroadcastTab.tsx implements instant reactive pause/abort control refs'
+  );
+
   console.log('\n======================================================');
   console.log(`  SECURITY & INTEGRITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('======================================================\n');

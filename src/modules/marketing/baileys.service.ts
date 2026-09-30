@@ -765,12 +765,33 @@ class BaileysManager extends EventEmitter {
     }
 
     // ============================================================
-    // MODE 1: FREE DIRECT MODE (BAILEYS LINKED PHONE SOCKET)
+    // MODE 1: FREE DIRECT MODE (BAILEYS LINKED PHONE SOCKET OR PERSISTENT BRIDGE)
     // ============================================================
     const session = this.sessions.get(userId);
     if (!session?.sock || session.status !== 'CONNECTED') {
-      console.warn(`[Baileys] Cannot post: WhatsApp socket not connected for user ${userId}`);
-      throw new Error(`WhatsApp is not connected for user ${userId}. Please connect via QR or Pairing code.`);
+      const bridgeUrl = process.env.RAILWAY_WORKER_URL || 'https://vintage-vibes-erp-production.up.railway.app';
+      console.log(`[Baileys postToChannel] Local socket not connected. Forwarding to worker bridge: ${bridgeUrl}`);
+      try {
+        const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/post-channel`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channelJid: targetJid,
+            imageUrl: payload.imageUrl,
+            caption: cleanCaption
+          }),
+          signal: AbortSignal.timeout(15000)
+        });
+        const bData = await bRes.json().catch(() => ({}));
+        if (bRes.ok && (bData.success || bData.messageId)) {
+          console.log(`[Baileys postToChannel] Successfully delivered via persistent bridge:`, bData);
+          return { success: true, mode: 'WORKER_BRIDGE', messageId: bData.messageId, channelJid: targetJid };
+        }
+        throw new Error(bData.error || 'Failed to dispatch via persistent worker bridge');
+      } catch (fErr: any) {
+        console.warn(`[Baileys postToChannel] Persistent worker bridge error:`, fErr?.message);
+        throw new Error(`WhatsApp is not connected locally and bridge dispatch failed: ${fErr?.message}`);
+      }
     }
 
     // 1. Fetch / Download image URL into in-memory buffer
@@ -781,7 +802,7 @@ class BaileysManager extends EventEmitter {
       if (payload.imageUrl.startsWith('http')) {
         try {
           console.log(`[Baileys Channel Post] Fetching image for thumbnail: ${payload.imageUrl}`);
-          const res = await fetch(payload.imageUrl);
+          const res = await fetch(payload.imageUrl, { signal: AbortSignal.timeout(8000) });
           if (res.ok) {
             imageBuffer = Buffer.from(await res.arrayBuffer());
           }
@@ -807,7 +828,25 @@ class BaileysManager extends EventEmitter {
     const prepared = imageBuffer ? await this.prepareJpegImageAndThumbnail(imageBuffer) : null;
     const finalMediaBuffer = prepared?.imageBuffer || imageBuffer;
 
-    // 2. Format drop post card with direct photo link so photo is ALWAYS viewable in channel feed
+    // 2. Primary Delivery: Dispatch Native Photo Directly to WhatsApp Channel
+    if (finalMediaBuffer || payload.imageUrl) {
+      try {
+        console.log(`[Baileys Channel Post] Dispatching native photo to newsletter ${targetJid}`);
+        const imageResult = await session.sock.sendMessage(targetJid, {
+          image: finalMediaBuffer || { url: payload.imageUrl || '' },
+          caption: cleanCaption,
+          mimetype: 'image/jpeg',
+          jpegThumbnail: prepared?.thumbnailBuffer
+        }, {
+          additionalAttributes: { mediatype: 'image' }
+        });
+        return imageResult;
+      } catch (imgErr: any) {
+        console.warn(`[Baileys Channel Post] Native image delivery blip (${imgErr?.message}), falling back to text preview card`);
+      }
+    }
+
+    // 3. Fallback: Format drop post card with direct photo link so photo is ALWAYS viewable in channel feed
     let dropCardText = cleanCaption;
     if (payload.imageUrl && !dropCardText.includes(payload.imageUrl)) {
       dropCardText = dropCardText.replace(
@@ -817,10 +856,9 @@ class BaileysManager extends EventEmitter {
     }
 
     const urlMatch = dropCardText.match(/https?:\/\/[^\s]+/);
-    const targetUrl = payload.imageUrl || (urlMatch ? urlMatch[0] : 'http://localhost:3000');
+    const targetUrl = payload.imageUrl || (urlMatch ? urlMatch[0] : 'https://vintagevibesgk.com');
 
-    // 3. Dispatch the guaranteed drop post card to channel (Arrives 100% reliably in WhatsApp mobile & web feed!)
-    console.log(`[Baileys Channel Post] Dispatching Free Mode drop post card to newsletter ${targetJid}`);
+    console.log(`[Baileys Channel Post] Dispatching drop post card to newsletter ${targetJid}`);
     const cardResult = await session.sock.sendMessage(targetJid, {
       text: dropCardText,
       linkPreview: prepared ? {
@@ -831,18 +869,6 @@ class BaileysManager extends EventEmitter {
         jpegThumbnail: prepared.thumbnailBuffer
       } : undefined
     });
-
-    // 4. Also attempt native image message silently for client versions that support it
-    if (finalMediaBuffer || payload.imageUrl) {
-      session.sock.sendMessage(targetJid, {
-        image: finalMediaBuffer || { url: payload.imageUrl || '' },
-        caption: cleanCaption,
-        mimetype: 'image/jpeg',
-        jpegThumbnail: prepared?.thumbnailBuffer
-      }, {
-        additionalAttributes: { mediatype: 'image' }
-      }).catch((e: any) => console.log('[Baileys Channel Post] Silent image attempt notice:', e?.message));
-    }
 
     return cardResult;
   }
