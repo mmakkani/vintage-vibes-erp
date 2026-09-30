@@ -1326,7 +1326,11 @@ export class FinanceService {
           continue;
         }
         try {
-          await supabase.from('journal_entries').delete().eq('reference', tok);
+          if (tok.includes('-') && tok.length === 36) {
+            await supabase.from('journal_entries').delete().eq('voucher_id', tok);
+          } else {
+            await supabase.from('journal_entries').delete().ilike('description', `%${tok}%`);
+          }
         } catch (_) {}
         try {
           await supabase.from('financial_vouchers').delete().or(`reference.eq.${tok},reference_no.eq.${tok}`);

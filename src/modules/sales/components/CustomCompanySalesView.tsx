@@ -26,12 +26,18 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
-  Truck
+  Truck,
+  MessageSquare,
+  Camera,
+  Upload,
+  Send
 } from 'lucide-react';
 import { SalesService } from '../../../services/salesService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
 import { CompanyProfileService } from '../../../services/companyProfileService.ts';
+import { WhatsAppService } from '../../../services/whatsappService.ts';
+import { generateB2BInvoiceGraphic } from '../../../utils/b2bReceiptGraphicGenerator.ts';
 import { CompanyProfile } from '../../setup/setup.types.ts';
 import { COAAccount } from '../../finance/finance.types.ts';
 import { supabase } from '../../../supabaseClient.ts';
@@ -111,9 +117,16 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   const [invoiceId, setInvoiceId] = useState<string>('');
   const [invoiceNo, setInvoiceNo] = useState<string>('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+  const [customerPhone, setCustomerPhone] = useState<string>('');
   const [courierParties, setCourierParties] = useState<Party[]>([]);
   const [selectedCourierId, setSelectedCourierId] = useState<string>('');
   const [waybillNo, setWaybillNo] = useState<string>('');
+  const [courierFee, setCourierFee] = useState<number>(0);
+  const [courierFeePayer, setCourierFeePayer] = useState<'BUYER' | 'SELLER'>('BUYER');
+  const [airwayBillPhotoUrl, setAirwayBillPhotoUrl] = useState<string>('');
+  const [isSendingWhatsApp, setIsSendingWhatsApp] = useState<boolean>(false);
+  const [isScanningAwb, setIsScanningAwb] = useState<boolean>(false);
+  const [awbScanInput, setAwbScanInput] = useState<string>('');
   const [invoiceDate, setInvoiceDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [status, setStatus] = useState<'DRAFT' | 'POSTED'>('DRAFT');
   const [taxType, setTaxType] = useState<'MAINLAND_5_VAT' | 'EXPORT_ZERO_RATED'>('MAINLAND_5_VAT');
@@ -204,9 +217,20 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       const mappedMap = new Map<string, any>();
       for (const row of (sinvRes.data || [])) {
         const invNo = row.invoice_no || `B2B-${row.id}`;
+        let metaNotes: any = {};
+        try {
+          if (row.notes && typeof row.notes === 'string' && row.notes.startsWith('{')) {
+            metaNotes = JSON.parse(row.notes);
+          }
+        } catch {}
         mappedMap.set(invNo, {
           ...row,
           invoiceNo: invNo,
+          customerPhone: row.customer_phone || row.customerPhone || metaNotes.customerPhone || '',
+          courierFee: metaNotes.courierFee ?? row.courier_fee ?? 0,
+          courierFeePayer: metaNotes.courierFeePayer || 'BUYER',
+          waybillNo: metaNotes.waybillNo || row.waybill_no || row.tracking_no || '',
+          airwayBillPhotoUrl: metaNotes.airwayBillPhotoUrl || '',
           isB2BCustomSale: true,
           status: String(row.status || 'DRAFT').toUpperCase()
         });
@@ -228,6 +252,11 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
             items: Array.isArray(b.items) ? b.items : [],
             createdAt: b.created_at
           });
+        } else {
+          const ex = mappedMap.get(invNo);
+          if (!ex.customerPhone && b.phone) {
+            ex.customerPhone = b.phone;
+          }
         }
       }
       if (mappedMap.size > 0) {
@@ -476,9 +505,13 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     return Number((vatBase * 0.05).toFixed(2));
   }, [itemsSubtotal, otherCharges, taxType]);
 
+  const effectiveCourierCharge = useMemo(() => {
+    return courierFeePayer === 'BUYER' ? (Number(courierFee) || 0) : 0;
+  }, [courierFee, courierFeePayer]);
+
   const grandTotal = useMemo(() => {
-    return Number((itemsSubtotal + otherChargesTotal + vatAmount).toFixed(2));
-  }, [itemsSubtotal, otherChargesTotal, vatAmount]);
+    return Number((itemsSubtotal + otherChargesTotal + effectiveCourierCharge + vatAmount).toFixed(2));
+  }, [itemsSubtotal, otherChargesTotal, effectiveCourierCharge, vatAmount]);
 
   const creditAmountDue = useMemo(() => {
     const rem = grandTotal - (Number(advanceAmountPaid) || 0);
@@ -527,13 +560,16 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       salespersonOrBroker,
       customerName: selectedCustomer?.name || 'Walk-in Corporate Client',
       customerAddress: selectedCustomer?.address || 'Industrial Area, Dubai, UAE',
-      customerPhone: selectedCustomer?.phone || 'N/A',
+      customerPhone: customerPhone || selectedCustomer?.phone || 'N/A',
       customerEmail: selectedCustomer?.email,
       customerTrn: selectedCustomer?.trnNo || 'Not Registered / Freezone',
       customerCoaCode: selectedCustomerCoaCode,
       courierName: selectedCourier?.name,
       waybillNo: waybillNo,
       courierCoaCode: selectedCourierCoaCode,
+      courierFee: Number(courierFee) || 0,
+      courierFeePayer: courierFeePayer,
+      airwayBillPhotoUrl: airwayBillPhotoUrl,
       items: items || [],
       itemsSubtotal,
       otherCharges: otherCharges || [],
@@ -828,8 +864,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     setInvoiceId('');
     setInvoiceNo('');
     setSelectedCustomerId('');
+    setCustomerPhone('');
     setSelectedCourierId('');
     setWaybillNo('');
+    setCourierFee(0);
+    setCourierFeePayer('BUYER');
+    setAirwayBillPhotoUrl('');
     setInvoiceDate(new Date().toISOString().slice(0, 10));
     setStatus('DRAFT');
     setTaxType('MAINLAND_5_VAT');
@@ -850,13 +890,24 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
   // Open Existing Invoice in Popup Modal
   const handleOpenExistingInvoiceModal = (inv: SalesInvoice) => {
+    let metaNotes: any = {};
+    try {
+      if (inv.notes && typeof inv.notes === 'string' && inv.notes.startsWith('{')) {
+        metaNotes = JSON.parse(inv.notes);
+      }
+    } catch {}
+
     setInvoiceId(inv.id);
     setInvoiceNo(inv.invoiceNo);
     const targetCustId = inv.customerId || inv.clientId || '';
     const matched = customerClients.find(c => c.id === targetCustId || (inv.customerName && c.name?.trim().toLowerCase() === inv.customerName.trim().toLowerCase()));
     setSelectedCustomerId(matched ? matched.id : targetCustId);
-    setSelectedCourierId((inv as any).courierId || (inv as any).courier_id || '');
-    setWaybillNo((inv as any).waybillNo || (inv as any).waybill_no || (inv as any).trackingNo || '');
+    setCustomerPhone(inv.customerPhone || (inv as any).phone || (inv as any).customer_phone || metaNotes.customerPhone || matched?.phone || '');
+    setSelectedCourierId((inv as any).courierId || (inv as any).courier_id || metaNotes.courierId || '');
+    setWaybillNo((inv as any).waybillNo || (inv as any).waybill_no || (inv as any).trackingNo || metaNotes.waybillNo || '');
+    setCourierFee(Number(metaNotes.courierFee ?? (inv as any).courierFee ?? (inv as any).courier_fee ?? 0));
+    setCourierFeePayer(metaNotes.courierFeePayer || (inv as any).courierFeePayer || 'BUYER');
+    setAirwayBillPhotoUrl(metaNotes.airwayBillPhotoUrl || (inv as any).airwayBillPhotoUrl || '');
     setInvoiceDate(inv.date);
     setStatus(inv.status as any || 'DRAFT');
     setTaxType(inv.taxType || 'MAINLAND_5_VAT');
@@ -899,7 +950,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
               company_name: selectedCustomer.name || 'Wholesale Client',
               trn_number: selectedCustomer.trnNo || '',
               contact_person: selectedCustomer.contactPerson || '',
-              phone: selectedCustomer.phone || '',
+              phone: customerPhone || selectedCustomer.phone || '',
               email: selectedCustomer.email || '',
               items: items,
               total_amount: grandTotal,
@@ -917,7 +968,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           invoiceNo: genInvoiceNo,
           clientId: selectedCustomer.id,
           customerName: selectedCustomer.name,
-          customerPhone: selectedCustomer.phone || '',
+          customerPhone: customerPhone || selectedCustomer.phone || '',
           invoiceDate: invoiceDate,
           channel: 'WHOLESALE_B2B',
           paymentMethod: paymentMethod as any,
@@ -926,7 +977,16 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           taxAmount: vatAmount,
           totalAmount: grandTotal,
           status: 'DRAFT',
-          items: items
+          items: items,
+          notes: JSON.stringify({
+            courierId: selectedCourierId,
+            courierName: selectedCourier?.name,
+            waybillNo,
+            courierFee,
+            courierFeePayer,
+            airwayBillPhotoUrl,
+            customerPhone: customerPhone || selectedCustomer.phone || ''
+          })
         }).catch(e => console.warn('B2B sales_invoices update note:', e));
       } else {
         // 1. Direct write to public.b2b_sales with credit_status: 'DRAFT'
@@ -935,7 +995,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           company_name: selectedCustomer.name || 'Wholesale Client',
           trn_number: selectedCustomer.trnNo || '',
           contact_person: selectedCustomer.contactPerson || '',
-          phone: selectedCustomer.phone || '',
+          phone: customerPhone || selectedCustomer.phone || '',
           email: selectedCustomer.email || '',
           items: items,
           total_amount: grandTotal,
@@ -954,7 +1014,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           invoiceNo: genInvoiceNo,
           clientId: selectedCustomer.id,
           customerName: selectedCustomer.name,
-          customerPhone: selectedCustomer.phone || '',
+          customerPhone: customerPhone || selectedCustomer.phone || '',
           invoiceDate: invoiceDate,
           channel: 'WHOLESALE_B2B',
           paymentMethod: paymentMethod as any,
@@ -963,7 +1023,16 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           taxAmount: vatAmount,
           totalAmount: grandTotal,
           status: 'DRAFT',
-          items: items
+          items: items,
+          notes: JSON.stringify({
+            courierId: selectedCourierId,
+            courierName: selectedCourier?.name,
+            waybillNo,
+            courierFee,
+            courierFeePayer,
+            airwayBillPhotoUrl,
+            customerPhone: customerPhone || selectedCustomer.phone || ''
+          })
         }).catch(e => console.warn('B2B sales_invoices sync note:', e));
 
         if (createdSInv?.id) {
@@ -1080,6 +1149,34 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
             debit: 0,
             credit: otherChargesTotal,
             memo: `Delivery & Freight Revenue: Invoice ${genInvoiceNo}`
+          });
+        }
+      }
+
+      // Line 3b: Courier Fee (Credit Courier Khata; and if Company pays, Debit 5140-01 Freight Expense)
+      const cFee = Number(courierFee) || 0;
+      if (cFee > 0) {
+        voucherLines.push({
+          accountId: selectedCourierCoaAccount?.id || selectedCourierCoaCode,
+          accountCode: selectedCourierCoaCode,
+          accountName: selectedCourierCoaAccount?.name || `Accounts Payable - ${selectedCourier?.name || 'Courier Partner'}`,
+          partyId: selectedCourier?.id,
+          partyName: selectedCourier?.name,
+          debit: 0,
+          credit: cFee,
+          memo: `Courier Delivery Fee Payable (AWB: ${waybillNo || 'N/A'}): Invoice ${genInvoiceNo}`
+        });
+
+        if (courierFeePayer === 'SELLER') {
+          const expAccount = (coaAccounts || []).find(a => a.code === '5140-01' || (a.category === 'EXPENSE' && a.name?.toLowerCase().includes('freight')));
+          const expCode = expAccount?.code || '5140-01';
+          voucherLines.push({
+            accountId: expAccount?.id || expCode,
+            accountCode: expCode,
+            accountName: expAccount?.name || 'Courier Delivery & Last-Mile Shipping Expense',
+            debit: cFee,
+            credit: 0,
+            memo: `Company Absorbed Courier Freight Expense: Invoice ${genInvoiceNo}`
           });
         }
       }
@@ -1219,8 +1316,33 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       }
 
       // 5. Update b2b_sales & sales_invoices status to POSTED
-      await safeSupabaseCall(supabase.from('b2b_sales').update({ credit_status: 'POSTED' }).or(`b2b_invoice_number.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`));
-      await safeSupabaseCall(supabase.from('sales_invoices').update({ status: 'POSTED' }).or(`invoice_no.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`));
+      await safeSupabaseCall(
+        supabase
+          .from('b2b_sales')
+          .update({
+            credit_status: 'POSTED',
+            phone: customerPhone || selectedCustomer?.phone || ''
+          })
+          .or(`b2b_invoice_number.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`)
+      );
+      await safeSupabaseCall(
+        supabase
+          .from('sales_invoices')
+          .update({
+            status: 'POSTED',
+            customer_phone: customerPhone || selectedCustomer?.phone || '',
+            notes: JSON.stringify({
+              courierId: selectedCourierId,
+              courierName: selectedCourier?.name,
+              waybillNo,
+              courierFee,
+              courierFeePayer,
+              airwayBillPhotoUrl,
+              customerPhone: customerPhone || selectedCustomer?.phone || ''
+            })
+          })
+          .or(`invoice_no.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`)
+      );
 
       setStatus('POSTED');
       setInvoiceNo(genInvoiceNo);
@@ -1231,13 +1353,21 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       setInternalInvoices(prev => {
         const found = prev.some(p => p.id === activeInvoiceId || p.invoiceNo === genInvoiceNo);
         if (found) {
-          return prev.map(p => (p.id === activeInvoiceId || p.invoiceNo === genInvoiceNo) ? { ...p, status: 'POSTED' } : p);
+          return prev.map(p => (p.id === activeInvoiceId || p.invoiceNo === genInvoiceNo) ? {
+            ...p,
+            status: 'POSTED',
+            customerPhone: customerPhone || selectedCustomer?.phone || p.customerPhone,
+            courierFee,
+            courierFeePayer,
+            waybillNo,
+            airwayBillPhotoUrl
+          } : p);
         }
         return [{
           id: activeInvoiceId,
           invoiceNo: genInvoiceNo,
           customerName: selectedCustomer?.name || 'Wholesale Client',
-          customerPhone: selectedCustomer?.phone || '',
+          customerPhone: customerPhone || selectedCustomer?.phone || '',
           customerTrn: selectedCustomer?.trnNo || '',
           invoiceDate: invoiceDate,
           date: invoiceDate,
@@ -1247,7 +1377,11 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           grandTotalAED: grandTotal,
           creditAmountDue: creditAmountDue,
           status: 'POSTED',
-          items: items
+          items: items,
+          courierFee,
+          courierFeePayer,
+          waybillNo,
+          airwayBillPhotoUrl
         } as SalesInvoice, ...prev];
       });
       refreshAllB2BData();
@@ -1350,6 +1484,146 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       refreshAllB2BData();
     } catch (err) {
       showMsg('Delete error', 'error');
+    }
+  };
+
+  // 📱 Send B2B Tax Invoice directly to Customer's WhatsApp (Direct Image + Airway Bill Photo, No Web Link)
+  const handleSendWhatsAppInvoice = async (inv?: SalesInvoice) => {
+    const targetInvNo = inv?.invoiceNo || invoiceNo;
+    if (!targetInvNo) {
+      showMsg('Please save the invoice before dispatching to WhatsApp.', 'error');
+      return;
+    }
+
+    let targetPhone = '';
+    let targetCustomerName = '';
+    let targetItems: any[] = [];
+    let targetGrandTotal = 0;
+    let targetSubtotal = 0;
+    let targetVat = 0;
+    let targetCourierFee = 0;
+    let targetCourierPayer: 'BUYER' | 'SELLER' = 'BUYER';
+    let targetCourierName = '';
+    let targetWaybill = '';
+    let targetAwbPhoto = '';
+    let targetTrn = '';
+    let targetAddress = '';
+    let targetDate = '';
+    let targetCoaCode = '';
+
+    if (inv) {
+      let meta: any = {};
+      try {
+        if (inv.notes && typeof inv.notes === 'string' && inv.notes.startsWith('{')) meta = JSON.parse(inv.notes);
+      } catch {}
+      const matchedClient = customerClients.find(c => c.id === (inv.customerId || inv.clientId) || c.name?.toLowerCase() === (inv.customerName || '').toLowerCase());
+      targetPhone = inv.customerPhone || (inv as any).phone || (inv as any).customer_phone || meta.customerPhone || matchedClient?.phone || '';
+      targetCustomerName = inv.customerName || inv.clientName || 'Valued Corporate Client';
+      targetItems = inv.items || [];
+      targetGrandTotal = Number(inv.totalAmount || inv.grandTotalAED || 0);
+      targetSubtotal = Number(inv.subTotal || inv.subtotal || 0);
+      targetVat = Number(inv.vatAmount || inv.taxAmount || 0);
+      targetCourierFee = Number(meta.courierFee ?? (inv as any).courierFee ?? 0);
+      targetCourierPayer = meta.courierFeePayer || (inv as any).courierFeePayer || 'BUYER';
+      targetCourierName = meta.courierName || (inv as any).courierName || '';
+      targetWaybill = meta.waybillNo || (inv as any).waybillNo || (inv as any).trackingNo || '';
+      targetAwbPhoto = meta.airwayBillPhotoUrl || (inv as any).airwayBillPhotoUrl || '';
+      targetTrn = inv.customerTrn || (inv as any).trnNo || matchedClient?.trnNo || '';
+      targetAddress = inv.customerAddress || matchedClient?.address || '';
+      targetDate = inv.date || (inv as any).invoiceDate || new Date().toISOString().slice(0, 10);
+      targetCoaCode = matchedClient?.coaAccountId || (matchedClient as any)?.coa_account_id || '';
+    } else {
+      targetPhone = customerPhone || selectedCustomer?.phone || '';
+      targetCustomerName = selectedCustomer?.name || 'Valued Corporate Client';
+      targetItems = items || [];
+      targetGrandTotal = grandTotal;
+      targetSubtotal = itemsSubtotal;
+      targetVat = vatAmount;
+      targetCourierFee = courierFee;
+      targetCourierPayer = courierFeePayer;
+      targetCourierName = selectedCourier?.name || '';
+      targetWaybill = waybillNo;
+      targetAwbPhoto = airwayBillPhotoUrl;
+      targetTrn = selectedCustomer?.trnNo || '';
+      targetAddress = selectedCustomer?.address || '';
+      targetDate = invoiceDate;
+      targetCoaCode = selectedCustomerCoaCode;
+    }
+
+    if (!targetPhone || targetPhone.trim().length < 8) {
+      const promptPhone = window.prompt(
+        `Customer WhatsApp phone number is missing for Invoice ${targetInvNo}.\n` +
+        `Please enter recipient's mobile number (e.g. 971554186086 or 0554186086):`,
+        targetPhone
+      );
+      if (!promptPhone || promptPhone.trim().length < 7) {
+        showMsg('Valid customer WhatsApp phone number is required to send invoice.', 'error');
+        return;
+      }
+      targetPhone = promptPhone.trim();
+      if (!inv) {
+        setCustomerPhone(targetPhone);
+      }
+    }
+
+    setIsSendingWhatsApp(true);
+    showMsg(`Rendering high-resolution B2B Tax Invoice graphic and dispatching to ${targetPhone}...`);
+
+    try {
+      // 1. Generate High-Definition B2B Invoice Graphic Image
+      const invoiceGraphicUrl = await generateB2BInvoiceGraphic({
+        invoiceNo: targetInvNo,
+        date: targetDate,
+        customerName: targetCustomerName,
+        customerPhone: targetPhone,
+        customerAddress: targetAddress,
+        customerTrn: targetTrn,
+        customerCoaCode: targetCoaCode,
+        courierName: targetCourierName,
+        waybillNo: targetWaybill,
+        courierFee: targetCourierFee,
+        courierFeePayer: targetCourierPayer,
+        airwayBillPhotoUrl: targetAwbPhoto,
+        items: targetItems,
+        itemsSubtotal: targetSubtotal,
+        vatAmount: targetVat,
+        grandTotal: targetGrandTotal,
+        paymentMethod: paymentMethod,
+        taxType: taxType,
+        companyName: companyProfile?.name,
+        companyAddress: companyProfile?.address,
+        companyPhone: companyProfile?.phone,
+        companyTrn: companyProfile?.trnNumber
+      });
+
+      // 2. Dispatch Tax Invoice directly via WhatsApp API with image
+      const res = await WhatsAppService.sendInvoiceNotification({
+        invoiceNo: targetInvNo,
+        customerName: targetCustomerName,
+        customerPhone: targetPhone,
+        totalAmount: targetGrandTotal,
+        currency: 'AED',
+        imageUrl: invoiceGraphicUrl
+      });
+
+      // 3. If Airway Bill slip photo is attached, dispatch it too!
+      if (targetAwbPhoto) {
+        await WhatsAppService.sendTextMessage(
+          targetPhone,
+          `📦 Official Airway Bill / Consignment Slip for Invoice #${targetInvNo} (AWB: ${targetWaybill || 'N/A'})`,
+          targetAwbPhoto
+        ).catch(e => console.warn('AWB slip photo dispatch note:', e));
+      }
+
+      if (res.success) {
+        showMsg(`✅ Invoice #${targetInvNo} ${targetAwbPhoto ? '& Airway Bill slip ' : ''}dispatched directly to WhatsApp (${targetPhone})!`);
+      } else {
+        showMsg(res.error || 'WhatsApp message queued or device not linked.', 'error');
+      }
+    } catch (err: any) {
+      showMsg(`WhatsApp dispatch note: ${err?.message || err}`, 'error');
+    } finally {
+      setIsSendingWhatsApp(false);
     }
   };
 
@@ -1646,6 +1920,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                   <th className="py-2.5 px-3">Invoice #</th>
                   <th className="py-2.5 px-3">Date</th>
                   <th className="py-2.5 px-3">Buyer Company (Khata)</th>
+                  <th className="py-2.5 px-3">WhatsApp / Phone</th>
                   <th className="py-2.5 px-3">UAE TRN</th>
                   <th className="py-2.5 px-3 text-center">Items & Bales</th>
                   <th className="py-2.5 px-3 text-right">Billable (AED)</th>
@@ -1687,6 +1962,38 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                               <span>COA:</span> <span className="bg-indigo-50 px-1 rounded border border-indigo-200">{coaCode}</span>
                             </div>
                           ) : null;
+                        })()}
+                      </td>
+
+                      {/* WhatsApp / Phone */}
+                      <td className="py-2.5 px-3" onClick={e => e.stopPropagation()}>
+                        {(() => {
+                          const matchedClient = customerClients.find(c => c.id === (inv.customerId || inv.clientId) || c.name?.toLowerCase() === (inv.customerName || '').toLowerCase());
+                          let metaNotes: any = {};
+                          try {
+                            if (inv.notes && typeof inv.notes === 'string' && inv.notes.startsWith('{')) metaNotes = JSON.parse(inv.notes);
+                          } catch {}
+                          const phoneNum = inv.customerPhone || (inv as any).phone || (inv as any).customer_phone || metaNotes.customerPhone || matchedClient?.phone || '';
+                          return (
+                            <div className="flex items-center gap-1.5">
+                              {phoneNum ? (
+                                <>
+                                  <span className="font-mono text-xs font-bold text-slate-800">{phoneNum}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSendWhatsAppInvoice(inv)}
+                                    disabled={isSendingWhatsApp}
+                                    title={`Send B2B Tax Invoice directly to WhatsApp (${phoneNum})`}
+                                    className="p-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 transition cursor-pointer"
+                                  >
+                                    <MessageSquare className="w-3 h-3 text-emerald-600" />
+                                  </button>
+                                </>
+                              ) : (
+                                <span className="text-slate-400 text-[11px]">—</span>
+                              )}
+                            </div>
+                          );
                         })()}
                       </td>
 
@@ -1750,6 +2057,18 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                                 👁️ View
                               </button>
 
+                              {/* 📱 WHATSAPP SEND BUTTON */}
+                              <button
+                                type="button"
+                                onClick={() => handleSendWhatsAppInvoice(inv)}
+                                disabled={isSendingWhatsApp}
+                                title="Send B2B Invoice Image and Airway Bill directly to WhatsApp (No Web Link)"
+                                className="px-2 py-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                              >
+                                <MessageSquare className="w-3 h-3 text-emerald-600" />
+                                <span>WhatsApp</span>
+                              </button>
+
                               {/* 🖨️ PRINT BUTTON */}
                               <button
                                 type="button"
@@ -1803,6 +2122,18 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                                 title="Edit Draft Invoice"
                               >
                                 ✎ Edit
+                              </button>
+
+                              {/* 📱 WHATSAPP SEND BUTTON */}
+                              <button
+                                type="button"
+                                onClick={() => handleSendWhatsAppInvoice(inv)}
+                                disabled={isSendingWhatsApp}
+                                title="Send B2B Invoice Image and Airway Bill directly to WhatsApp"
+                                className="px-2 py-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                              >
+                                <MessageSquare className="w-3 h-3 text-emerald-600" />
+                                <span>WhatsApp</span>
                               </button>
 
                               {/* 🖨️ PRINT BUTTON */}
@@ -1901,6 +2232,17 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                   <span>Print Packing List</span>
                 </button>
 
+                <button
+                  type="button"
+                  onClick={() => handleSendWhatsAppInvoice()}
+                  disabled={items.length === 0 || isSendingWhatsApp}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold transition flex items-center gap-1 shadow-xs cursor-pointer"
+                  title="Dispatch B2B Invoice Image and Airway Bill directly to Customer's WhatsApp (No Web Link)"
+                >
+                  {isSendingWhatsApp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <MessageSquare className="w-3.5 h-3.5 text-emerald-200" />}
+                  <span>📱 Send WhatsApp</span>
+                </button>
+
                 {/* Close Modal Window */}
                 <button
                   type="button"
@@ -1977,7 +2319,14 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                       <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Corporate Customer:</label>
                       <select
                         value={selectedCustomerId}
-                        onChange={e => setSelectedCustomerId(e.target.value)}
+                        onChange={e => {
+                          const newId = e.target.value;
+                          setSelectedCustomerId(newId);
+                          const matched = customerClients.find(c => c.id === newId);
+                          if (matched?.phone) {
+                            setCustomerPhone(matched.phone);
+                          }
+                        }}
                         disabled={status === 'POSTED'}
                         className="w-full bg-[#FAF4E6]/50 border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:bg-white focus:border-indigo-500 transition"
                       >
@@ -2036,8 +2385,17 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                             <span className="font-mono font-bold text-slate-800">{selectedCustomer.trnNo || 'Not Registered / Freezone'}</span>
                           </div>
                           <div>
-                            <span className="font-bold text-slate-500">Phone: </span>
-                            <span className="font-mono text-slate-800">{selectedCustomer.phone || 'N/A'}</span>
+                            <span className="font-bold text-slate-500 flex items-center gap-1">
+                              <MessageSquare className="w-3 h-3 text-emerald-600" /> WhatsApp / Phone:
+                            </span>
+                            <input
+                              type="text"
+                              value={customerPhone}
+                              onChange={e => setCustomerPhone(e.target.value)}
+                              disabled={status === 'POSTED'}
+                              placeholder="e.g. +971 50 123 4567"
+                              className="w-full mt-0.5 bg-white border border-amber-300 rounded px-2 py-0.5 text-xs font-mono font-bold text-slate-900 focus:border-amber-600 focus:outline-none"
+                            />
                           </div>
                           <div className="col-span-2">
                             <span className="font-bold text-slate-500">Delivery Address: </span>
@@ -2108,7 +2466,22 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                         </div>
 
                         <div>
-                          <label className="block text-[11px] font-bold text-slate-700 mb-1">Waybill / Tracking / Consignment #:</label>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block text-[11px] font-bold text-slate-700">Waybill / Tracking / Consignment #:</label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAwbScanInput('');
+                                setIsScanningAwb(true);
+                              }}
+                              disabled={status === 'POSTED'}
+                              className="text-[10px] font-bold px-2 py-0.5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded border border-amber-300 flex items-center gap-1 cursor-pointer"
+                              title="Scan Airway Bill Barcode with Scanner Gun or Camera"
+                            >
+                              <Scan className="w-3 h-3 text-amber-700" />
+                              <span>Scan AWB</span>
+                            </button>
+                          </div>
                           <input
                             type="text"
                             placeholder="e.g. AWB-982348102"
@@ -2118,6 +2491,139 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                             className="w-full bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
                           />
                         </div>
+                      </div>
+
+                      {/* Courier Fee & Who Pays (کس نے کرایہ ادا کرنا ہے؟) */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-2.5 bg-white/90 rounded-lg border border-amber-200">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                            Courier / Delivery Fee (AED):
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="0.00"
+                              value={courierFee || ''}
+                              onChange={e => setCourierFee(Math.max(0, parseFloat(e.target.value) || 0))}
+                              disabled={status === 'POSTED'}
+                              className="w-full bg-white border border-amber-300 rounded-lg pl-3 pr-12 py-1.5 text-xs font-mono font-bold text-slate-900 focus:border-amber-600 focus:outline-none"
+                            />
+                            <span className="absolute right-2.5 top-1.5 text-[10px] font-bold text-slate-500">AED</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                            Who Pays Delivery? (کرایہ کون دے گا؟):
+                          </label>
+                          <div className="flex rounded-lg overflow-hidden border border-amber-300 p-0.5 bg-amber-50">
+                            <button
+                              type="button"
+                              onClick={() => setCourierFeePayer('BUYER')}
+                              disabled={status === 'POSTED'}
+                              className={`flex-1 py-1 px-2 text-xs font-bold rounded transition cursor-pointer ${
+                                courierFeePayer === 'BUYER'
+                                  ? 'bg-amber-600 text-white shadow-xs'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              🛒 Buyer Pays (+Bill)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setCourierFeePayer('SELLER')}
+                              disabled={status === 'POSTED'}
+                              className={`flex-1 py-1 px-2 text-xs font-bold rounded transition cursor-pointer ${
+                                courierFeePayer === 'SELLER'
+                                  ? 'bg-emerald-600 text-white shadow-xs'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              🏢 Company Pays (Free)
+                            </button>
+                          </div>
+                          <div className="text-[10px] mt-1 text-slate-500">
+                            {courierFeePayer === 'BUYER' ? (
+                              <span className="text-amber-800 font-semibold">ℹ️ Added to invoice bill total & customer khata.</span>
+                            ) : (
+                              <span className="text-emerald-700 font-semibold">ℹ️ Free delivery to buyer; debited to Delivery Expense (5140-01).</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Airway Bill (AWB) Physical Slip Photo Upload / Capture */}
+                      <div className="p-2.5 bg-white/90 rounded-lg border border-amber-200/90 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                            <Camera className="w-3.5 h-3.5 text-amber-700" />
+                            <span>Airway Bill (AWB) Physical Slip / Photo (بلٹی تصویر):</span>
+                          </label>
+                          {airwayBillPhotoUrl && (
+                            <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                              ✓ Slip Attached
+                            </span>
+                          )}
+                        </div>
+
+                        {airwayBillPhotoUrl ? (
+                          <div className="flex items-center gap-3 p-2 bg-amber-50/50 rounded border border-amber-200">
+                            <img
+                              src={airwayBillPhotoUrl}
+                              alt="AWB Slip"
+                              className="w-16 h-16 object-cover rounded border border-amber-300 shadow-2xs cursor-pointer hover:scale-105 transition"
+                              onClick={() => {
+                                const w = window.open('');
+                                if (w) {
+                                  w.document.write(`<img src="${airwayBillPhotoUrl}" style="max-width:100%; height:auto;" />`);
+                                }
+                              }}
+                            />
+                            <div className="flex-1 text-xs">
+                              <div className="font-bold text-slate-900">Physical AWB Slip Attached</div>
+                              <div className="text-[10px] text-slate-500">
+                                Dispatched together with invoice image on WhatsApp!
+                              </div>
+                            </div>
+                            {status !== 'POSTED' && (
+                              <button
+                                type="button"
+                                onClick={() => setAirwayBillPhotoUrl('')}
+                                className="px-2 py-1 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded border border-rose-200 cursor-pointer"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <label className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-amber-300 rounded-lg text-xs font-bold text-amber-900 bg-amber-50/40 hover:bg-amber-100/60 transition cursor-pointer ${status === 'POSTED' ? 'opacity-50 pointer-events-none' : ''}`}>
+                              <Camera className="w-4 h-4 text-amber-700" />
+                              <Upload className="w-4 h-4 text-amber-700" />
+                              <span>Snap Photo or Upload AWB Slip</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                capture="environment"
+                                disabled={status === 'POSTED'}
+                                className="hidden"
+                                onChange={e => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    const reader = new FileReader();
+                                    reader.onload = evt => {
+                                      const res = evt.target?.result as string;
+                                      if (res) setAirwayBillPhotoUrl(res);
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }
+                                }}
+                              />
+                            </label>
+                          </div>
+                        )}
                       </div>
 
                       {selectedCourier ? (
@@ -2669,6 +3175,18 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                         </div>
                       )}
 
+                      {courierFee > 0 && (
+                        <div className="flex justify-between text-slate-600">
+                          <span className="flex items-center gap-1">
+                            <Truck className="w-3.5 h-3.5 text-amber-700" />
+                            Courier Fee ({courierFeePayer === 'BUYER' ? 'Customer Paid' : 'Free Delivery - Company Paid'}):
+                          </span>
+                          <span className={`font-mono font-bold ${courierFeePayer === 'BUYER' ? 'text-slate-900' : 'text-emerald-700'}`}>
+                            {courierFeePayer === 'BUYER' ? `+AED ${courierFee.toFixed(2)}` : `AED ${courierFee.toFixed(2)} (Absorbed)`}
+                          </span>
+                        </div>
+                      )}
+
                       <div className="flex justify-between text-slate-600">
                         <span>VAT ({taxType === 'MAINLAND_5_VAT' ? '5% UAE Standard' : '0% Export Zero-Rated'}):</span>
                         <span className="font-mono font-bold text-slate-900">AED {vatAmount.toFixed(2)}</span>
@@ -2699,7 +3217,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
                     {/* Modal Primary Action Buttons */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-amber-200">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         {status !== 'POSTED' ? (
                           <>
                             <button
@@ -2723,6 +3241,17 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                               <span>✅ Post & Dispatch (Deduct Inventory & Khata)</span>
                             </button>
 
+                            <button
+                              type="button"
+                              onClick={() => handleSendWhatsAppInvoice()}
+                              disabled={isSendingWhatsApp || items.length === 0}
+                              className="px-3.5 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold transition shadow-xs cursor-pointer flex items-center gap-1.5"
+                              title="Send high-resolution B2B invoice graphic & Airway Bill directly to customer's WhatsApp"
+                            >
+                              {isSendingWhatsApp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <MessageSquare className="w-3.5 h-3.5" />}
+                              <span>📱 Send WhatsApp</span>
+                            </button>
+
                             {invoiceId && (
                               <button
                                 type="button"
@@ -2734,16 +3263,29 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                             )}
                           </>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={handleUnpostInvoice}
-                            disabled={isSaving}
-                            className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-black uppercase tracking-wider transition shadow-sm cursor-pointer flex items-center gap-1.5"
-                          >
-                            {isSaving && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                            <RefreshCw className="w-3.5 h-3.5" />
-                            <span>🔄 UNPOST INVOICE (Restore Stock & Reverse Khata)</span>
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleUnpostInvoice}
+                              disabled={isSaving}
+                              className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-black uppercase tracking-wider transition shadow-sm cursor-pointer flex items-center gap-1.5"
+                            >
+                              {isSaving && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              <span>🔄 UNPOST INVOICE (Restore Stock & Reverse Khata)</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleSendWhatsAppInvoice()}
+                              disabled={isSendingWhatsApp}
+                              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold transition shadow-sm cursor-pointer flex items-center gap-1.5"
+                              title="Send high-resolution B2B invoice graphic & Airway Bill directly to customer's WhatsApp"
+                            >
+                              {isSendingWhatsApp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <MessageSquare className="w-3.5 h-3.5" />}
+                              <span>📱 Send WhatsApp</span>
+                            </button>
+                          </>
                         )}
                       </div>
 
@@ -3197,6 +3739,74 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= 6. AWB BARCODE QUICK SCANNER DIALOG ================= */}
+      {isScanningAwb && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl border border-amber-300 w-full max-w-md p-5 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-amber-200 pb-3">
+              <div className="flex items-center gap-2">
+                <Scan className="w-5 h-5 text-amber-600" />
+                <h3 className="text-sm font-black text-slate-900 uppercase">
+                  Scan Airway Bill (AWB) Barcode
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsScanningAwb(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600">
+              Point your barcode scanner gun at the Airway Bill / Consignment label, or type the tracking number below and press Enter.
+            </p>
+
+            <form
+              onSubmit={e => {
+                e.preventDefault();
+                if (awbScanInput.trim()) {
+                  setWaybillNo(awbScanInput.trim());
+                  setIsScanningAwb(false);
+                  setAwbScanInput('');
+                  showMsg(`AWB ${awbScanInput.trim()} scanned & assigned!`);
+                }
+              }}
+              className="space-y-3"
+            >
+              <div>
+                <input
+                  type="text"
+                  autoFocus
+                  value={awbScanInput}
+                  onChange={e => setAwbScanInput(e.target.value)}
+                  placeholder="Scan or enter AWB barcode..."
+                  className="w-full px-3 py-2.5 bg-amber-50/50 border-2 border-amber-400 rounded-lg text-sm font-mono font-bold text-slate-900 focus:bg-white focus:outline-none focus:border-amber-600"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsScanningAwb(false)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold border border-slate-300 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!awbScanInput.trim()}
+                  className="px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+                >
+                  Confirm AWB
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

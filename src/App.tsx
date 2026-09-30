@@ -137,13 +137,14 @@ export default function App() {
     return 'dashboard';
   });
 
-  // UX Testing Switch: Hide/Unhide Internal Module Sub-Tabs (Requested by user for testing new dropdowns)
+  // UX Testing Switch: Hide/Unhide Internal Module Sub-Tabs (Defaults to false/visible for standard full navigation)
   const [hideInternalSubtabs, setHideInternalSubtabs] = useState<boolean>(() => {
     try {
       const stored = localStorage.getItem('vintage_hide_internal_subtabs');
-      return stored === null ? true : stored === 'true'; // Default to true (hidden) for initial testing
+      // Default to false (visible) so all ERP navigation sub-tabs are always shown and operational
+      return stored === 'true';
     } catch {
-      return true;
+      return false;
     }
   });
 
@@ -202,19 +203,28 @@ export default function App() {
   });
 
   const dispatchTimerRef = useRef<any>(null);
-  const lastDispatchedRef = useRef<Record<string, string>>({});
 
   // Cross-Module Sub-Destination Event Dispatcher & DOM Click Bridge
   const dispatchSubTabNavigation = useCallback((targetTab: ActiveTab, targetSubTab?: string) => {
     if (!targetSubTab) return;
-    if (lastDispatchedRef.current[targetTab] === targetSubTab) return;
-    lastDispatchedRef.current[targetTab] = targetSubTab;
 
     if (dispatchTimerRef.current) {
       clearTimeout(dispatchTimerRef.current);
     }
 
-    dispatchTimerRef.current = setTimeout(() => {
+    // 1. Broadcast global reactive event for real-time sub-navigation across components
+    try {
+      window.dispatchEvent(
+        new CustomEvent('vv:navigate-subtab', {
+          detail: { tab: targetTab, subTab: targetSubTab }
+        })
+      );
+    } catch {}
+
+    // 2. Multi-tier DOM bridge with retry for newly mounted keep-alive tab components
+    const attemptDispatch = (attempt = 0) => {
+      let handled = false;
+
       // 1. REGISTRY / PARTIES MODULE DISPATCHER
       if (targetTab === 'parties') {
         const partiesContainer = document.getElementById('keepalive-tab-parties') || document.body;
@@ -228,49 +238,64 @@ export default function App() {
           targetSubTab === 'AGENT' ||
           targetSubTab === 'COURIER'
         ) {
-          // Switch to Registered Parties tab
           const tabBtn = allButtons.find(b => b.textContent?.includes('Registered Parties & Ledgers'));
-          if (tabBtn) tabBtn.click();
+          if (tabBtn) {
+            tabBtn.click();
+            handled = true;
+            setTimeout(() => {
+              const freshButtons = Array.from(partiesContainer.querySelectorAll('button'));
+              let filterLabel = 'All Parties';
+              if (targetSubTab === 'CUSTOMER') filterLabel = 'Clients (Customers)';
+              else if (targetSubTab === 'SUPPLIER') filterLabel = 'Suppliers';
+              else if (targetSubTab === 'AGENT') filterLabel = 'Agents';
+              else if (targetSubTab === 'COURIER') filterLabel = 'Couriers';
 
-          // Apply specific category filter
-          setTimeout(() => {
-            const freshButtons = Array.from(partiesContainer.querySelectorAll('button'));
-            let filterLabel = 'All Parties';
-            if (targetSubTab === 'CUSTOMER') filterLabel = 'Clients (Customers)';
-            else if (targetSubTab === 'SUPPLIER') filterLabel = 'Suppliers';
-            else if (targetSubTab === 'AGENT') filterLabel = 'Agents';
-            else if (targetSubTab === 'COURIER') filterLabel = 'Couriers';
-
-            const filterBtn = freshButtons.find(b => b.textContent?.trim() === filterLabel);
-            if (filterBtn) filterBtn.click();
-          }, 50);
+              const filterBtn = freshButtons.find(b => b.textContent?.trim() === filterLabel);
+              if (filterBtn) filterBtn.click();
+            }, 60);
+          }
         } else if (targetSubTab === 'VISITING_CARDS') {
           const cardBtn = allButtons.find(b => b.textContent?.includes('Visiting Card Directory'));
-          if (cardBtn) cardBtn.click();
+          if (cardBtn) {
+            cardBtn.click();
+            handled = true;
+          }
         } else if (targetSubTab === 'RETAIL_CRM') {
           const retailBtn = allButtons.find(b => b.textContent?.includes('Retail Customer CRM'));
-          if (retailBtn) retailBtn.click();
+          if (retailBtn) {
+            retailBtn.click();
+            handled = true;
+          }
         } else if (targetSubTab === 'NEW_PARTY') {
           const tabBtn = allButtons.find(b => b.textContent?.includes('Registered Parties & Ledgers'));
-          if (tabBtn) tabBtn.click();
-          setTimeout(() => {
-            const addBtn = document.getElementById('btn-add-new-party') || Array.from(partiesContainer.querySelectorAll('button')).find(b => b.textContent?.includes('Register New Party'));
-            if (addBtn) (addBtn as HTMLButtonElement).click();
-          }, 50);
+          if (tabBtn) {
+            tabBtn.click();
+            handled = true;
+            setTimeout(() => {
+              const addBtn = document.getElementById('btn-add-new-party') || Array.from(partiesContainer.querySelectorAll('button')).find(b => b.textContent?.includes('Register New Party'));
+              if (addBtn) (addBtn as HTMLButtonElement).click();
+            }, 60);
+          }
         } else if (targetSubTab === 'SCAN_CARD') {
           const cardBtn = allButtons.find(b => b.textContent?.includes('Visiting Card Directory'));
-          if (cardBtn) cardBtn.click();
-          setTimeout(() => {
-            const scanBtn = Array.from(partiesContainer.querySelectorAll('button')).find(b => b.textContent?.includes('Scan Visiting Card') || b.textContent?.includes('Live Card Scanner'));
-            if (scanBtn) (scanBtn as HTMLButtonElement).click();
-          }, 50);
+          if (cardBtn) {
+            cardBtn.click();
+            handled = true;
+            setTimeout(() => {
+              const scanBtn = Array.from(partiesContainer.querySelectorAll('button')).find(b => b.textContent?.includes('Scan Visiting Card') || b.textContent?.includes('Live Card Scanner'));
+              if (scanBtn) (scanBtn as HTMLButtonElement).click();
+            }, 60);
+          }
         } else if (targetSubTab === 'NEW_RETAIL') {
           const retailBtn = allButtons.find(b => b.textContent?.includes('Retail Customer CRM'));
-          if (retailBtn) retailBtn.click();
-          setTimeout(() => {
-            const newRetBtn = Array.from(partiesContainer.querySelectorAll('button')).find(b => b.textContent?.includes('New Customer') || b.textContent?.includes('Add Customer'));
-            if (newRetBtn) (newRetBtn as HTMLButtonElement).click();
-          }, 50);
+          if (retailBtn) {
+            retailBtn.click();
+            handled = true;
+            setTimeout(() => {
+              const newRetBtn = Array.from(partiesContainer.querySelectorAll('button')).find(b => b.textContent?.includes('New Customer') || b.textContent?.includes('Add Customer'));
+              if (newRetBtn) (newRetBtn as HTMLButtonElement).click();
+            }, 60);
+          }
         }
       }
 
@@ -281,17 +306,20 @@ export default function App() {
         const targetBtn = buttons.find(b => {
           const txt = (b.textContent || '').toLowerCase();
           if (targetSubTab === 'campaigns') return txt.includes('broadcast');
-          if (targetSubTab === 'automations') return txt.includes('automation');
+          if (targetSubTab === 'automations') return txt.includes('automation') || txt.includes('trigger');
           if (targetSubTab === 'coupons') return txt.includes('coupon');
           if (targetSubTab === 'audiences') return txt.includes('audience');
-          if (targetSubTab === 'chat-claim') return txt.includes('chat claim') || txt.includes('mine');
-          if (targetSubTab === 'auto-broadcast') return txt.includes('social asset') || txt.includes('reels');
-          if (targetSubTab === 'live-desk') return txt.includes('live broadcast desk') || txt.includes('live desk');
-          if (targetSubTab === 'ad-catalog-pixels') return txt.includes('ad catalog') || txt.includes('pixel');
-          if (targetSubTab === 'storefront-analytics') return txt.includes('storefront analytics') || txt.includes('funnel');
+          if (targetSubTab === 'chat-claim') return txt.includes('chat') || txt.includes('claim') || txt.includes('bot') || txt.includes('mine');
+          if (targetSubTab === 'auto-broadcast') return txt.includes('social asset') || txt.includes('reels') || txt.includes('media drop') || txt.includes('vip media');
+          if (targetSubTab === 'live-desk') return txt.includes('live broadcast desk') || txt.includes('live desk') || txt.includes('studio desk') || txt.includes('selling studio');
+          if (targetSubTab === 'ad-catalog-pixels') return txt.includes('ad catalog') || txt.includes('pixel') || txt.includes('ad feed');
+          if (targetSubTab === 'storefront-analytics') return txt.includes('storefront analytics') || txt.includes('funnel') || txt.includes('traffic');
           return false;
         });
-        if (targetBtn) targetBtn.click();
+        if (targetBtn) {
+          targetBtn.click();
+          handled = true;
+        }
       }
 
       // 3. ACCESS CONTROL MODULE DISPATCHER
@@ -300,28 +328,34 @@ export default function App() {
         const buttons = Array.from(accessContainer.querySelectorAll('button'));
         if (targetSubTab === 'operators') {
           const opBtn = buttons.find(b => b.textContent?.includes('Operator Accounts & Roles'));
-          if (opBtn) opBtn.click();
+          if (opBtn) { opBtn.click(); handled = true; }
         } else if (targetSubTab === 'devices') {
           const devBtn = buttons.find(b => b.textContent?.includes('Registered Phones') || b.textContent?.includes('Telemetry'));
-          if (devBtn) devBtn.click();
+          if (devBtn) { devBtn.click(); handled = true; }
         } else if (targetSubTab === 'new_operator') {
           const createBtn = document.getElementById('btn-create-operator') || buttons.find(b => b.textContent?.includes('New Operator'));
-          if (createBtn) (createBtn as HTMLButtonElement).click();
+          if (createBtn) { (createBtn as HTMLButtonElement).click(); handled = true; }
         } else if (targetSubTab === 'matrix') {
           const matrixBtn = buttons.find(b => b.textContent?.includes('Authority Matrix') || b.textContent?.includes('Roles & Authority') || b.getAttribute('title')?.includes('Authority'));
-          if (matrixBtn) matrixBtn.click();
+          if (matrixBtn) { matrixBtn.click(); handled = true; }
         }
       }
 
       // 4. AUDIT TRAIL MODULE DISPATCHER
       else if (targetTab === 'audit') {
         const auditContainer = document.getElementById('keepalive-tab-audit') || document.body;
-        const select = auditContainer.querySelector('select');
+        const select = auditContainer.querySelector('select') as HTMLSelectElement | null;
         if (select) {
-          select.value = targetSubTab;
+          const nativeSelectValueSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set;
+          if (nativeSelectValueSetter) {
+            nativeSelectValueSetter.call(select, targetSubTab);
+          } else {
+            select.value = targetSubTab;
+          }
           select.dispatchEvent(new Event('change', { bubbles: true }));
           const refreshBtn = auditContainer.querySelector('button[title*="Refresh"]') as HTMLButtonElement;
           if (refreshBtn) refreshBtn.click();
+          handled = true;
         }
       }
 
@@ -329,23 +363,48 @@ export default function App() {
       else if (targetTab === 'dashboard') {
         if (targetSubTab === 'overview') {
           window.scrollTo({ top: 0, behavior: 'smooth' });
+          handled = true;
         } else if (targetSubTab === 'liquidity') {
           const el = Array.from(document.querySelectorAll('h3, h4, span, div')).find(e =>
             e.textContent?.includes('Cash Flow') || e.textContent?.includes('Liquidity Radar') || e.textContent?.includes('Emirates NBD')
           );
-          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); handled = true; }
         } else if (targetSubTab === 'velocity') {
           const el = Array.from(document.querySelectorAll('h3, h4, span, div')).find(e =>
             e.textContent?.includes('Sales Channel Velocity') || e.textContent?.includes('Target Pacing') || e.textContent?.includes('Bale Yield')
           );
-          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); handled = true; }
         }
       }
 
       // 6. SETUP MODULE DISPATCHER
       else if (targetTab === 'setup') {
-        const btn = document.getElementById(`tab-setup-${targetSubTab}`);
-        if (btn) btn.click();
+        const setupMap: Record<string, string> = {
+          pos_terminal: 'tab-setup-bale_qr',
+          payment_gateways: 'tab-setup-banks',
+          banks: 'tab-setup-banks',
+          profile: 'tab-setup-profile',
+          ai_vision: 'tab-setup-ai_vision',
+          maintenance: 'tab-setup-maintenance',
+          live_multicast_sockets: 'tab-setup-live_multicast_sockets',
+          sales_coa: 'tab-setup-sales_coa',
+          bale_qr: 'tab-setup-bale_qr',
+          currency: 'tab-setup-currency',
+          categories: 'tab-setup-categories',
+          sizes: 'tab-setup-sizes',
+          items: 'tab-setup-items',
+          brands: 'tab-setup-brands',
+          labels: 'tab-setup-labels',
+          shops: 'tab-setup-shops',
+          whatsapp: 'tab-setup-whatsapp',
+          security: 'tab-setup-security'
+        };
+        const targetBtnId = setupMap[targetSubTab] || `tab-setup-${targetSubTab}`;
+        const btn = document.getElementById(targetBtnId);
+        if (btn) {
+          btn.click();
+          handled = true;
+        }
       }
 
       // 7. PURCHASE MODULE DISPATCHER
@@ -355,19 +414,41 @@ export default function App() {
         const buttons = Array.from(purchaseContainer.querySelectorAll('button'));
         const btn = buttons.find(b => {
           const txt = (b.textContent || '').toLowerCase();
-          if (realSub === 'sorting_terminal') return txt.includes('bale sorting');
+          if (realSub === 'sorting_terminal') return txt.includes('bale sorting') || txt.includes('sorting operations');
           if (realSub === 'inventory') return txt.includes('inventory');
-          if (realSub === 'commercial_invoices') return txt.includes('commercial invoices');
-          if (realSub === 'settings') return txt.includes('factory settings');
+          if (realSub === 'commercial_invoices') return txt.includes('commercial invoice');
+          if (realSub === 'settings') return txt.includes('factory setting');
           return false;
         });
-        if (btn) btn.click();
+        if (btn) {
+          btn.click();
+          handled = true;
+        }
       }
 
       // 8. SALES MODULE DISPATCHER
       else if (targetTab === 'sales') {
-        const btn = document.getElementById(`subtab-sales-${targetSubTab}`);
-        if (btn) btn.click();
+        const salesMap: Record<string, string> = {
+          counterSale: 'subtab-sales-counter-sale',
+          'counter-sale': 'subtab-sales-counter-sale',
+          customSale: 'subtab-sales-custom-b2b',
+          'custom-b2b': 'subtab-sales-custom-b2b',
+          liveSelling: 'subtab-sales-live-selling',
+          'live-selling': 'subtab-sales-live-selling',
+          drafts: 'subtab-sales-drafts',
+          bounties: 'subtab-sales-bounties',
+          masterLog: 'subtab-sales-master-log',
+          'master-log': 'subtab-sales-master-log',
+          returns: 'subtab-sales-returns',
+          salesSettings: 'subtab-sales-settings',
+          settings: 'subtab-sales-settings'
+        };
+        const targetBtnId = salesMap[targetSubTab] || `subtab-sales-${targetSubTab}`;
+        const btn = document.getElementById(targetBtnId);
+        if (btn) {
+          btn.click();
+          handled = true;
+        }
       }
 
       // 9. HR MODULE DISPATCHER
@@ -380,13 +461,27 @@ export default function App() {
           vault: 'subtab-document-vault',
           'ocr-logs': 'subtab-ocr-logs'
         };
-        const btnId = idMap[targetSubTab];
+        const btnId = idMap[targetSubTab] || `subtab-${targetSubTab}`;
         if (btnId) {
           const btn = document.getElementById(btnId);
-          if (btn) btn.click();
+          if (btn) {
+            btn.click();
+            handled = true;
+          }
         }
       }
-    }, 60);
+
+      // If component was still mounting (e.g. first time opening tab), retry smoothly up to 3 times
+      if (!handled && attempt < 3) {
+        dispatchTimerRef.current = setTimeout(() => {
+          attemptDispatch(attempt + 1);
+        }, attempt === 0 ? 80 : 180);
+      }
+    };
+
+    dispatchTimerRef.current = setTimeout(() => {
+      attemptDispatch(0);
+    }, 40);
   }, []);
 
   const setActiveTab = (tab: ActiveTab, subTab?: string) => {

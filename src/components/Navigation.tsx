@@ -201,6 +201,9 @@ export const Navigation: React.FC<NavigationProps> = ({
   }, [onPrefetchTab]);
 
   const handleOpenDropdown = (tabId: ActiveTab, e: React.MouseEvent<HTMLElement>) => {
+    if (hoverDebounceRef.current) {
+      clearTimeout(hoverDebounceRef.current);
+    }
     if (menuCloseTimeoutRef.current) {
       clearTimeout(menuCloseTimeoutRef.current);
     }
@@ -213,15 +216,24 @@ export const Navigation: React.FC<NavigationProps> = ({
     if (menuCloseTimeoutRef.current) {
       clearTimeout(menuCloseTimeoutRef.current);
     }
+    if (hoverDebounceRef.current) {
+      clearTimeout(hoverDebounceRef.current);
+    }
     const rect = e.currentTarget.getBoundingClientRect();
-    setOpenDropdown({ id: tabId, rect });
     handleItemHover(tabId);
+    // Smooth 180ms debounce so rapid mouse travel doesn't trigger jittery popovers
+    hoverDebounceRef.current = setTimeout(() => {
+      setOpenDropdown({ id: tabId, rect });
+    }, 180);
   };
 
   const handleMouseLeaveDropdown = () => {
+    if (hoverDebounceRef.current) {
+      clearTimeout(hoverDebounceRef.current);
+    }
     menuCloseTimeoutRef.current = setTimeout(() => {
       setOpenDropdown(null);
-    }, 250);
+    }, 200);
   };
 
   const handleDropdownContentEnter = () => {
@@ -320,6 +332,8 @@ export const Navigation: React.FC<NavigationProps> = ({
                     type="button"
                     id={`nav-tab-${tab.id}`}
                     onClick={() => {
+                      if (hoverDebounceRef.current) clearTimeout(hoverDebounceRef.current);
+                      if (menuCloseTimeoutRef.current) clearTimeout(menuCloseTimeoutRef.current);
                       setOpenDropdown(null);
                       onSelectTab(tab.id);
                     }}
@@ -405,6 +419,8 @@ export const Navigation: React.FC<NavigationProps> = ({
                     type="button"
                     onMouseEnter={() => handleItemHover(openDropdown.id, item.id)}
                     onClick={() => {
+                      if (hoverDebounceRef.current) clearTimeout(hoverDebounceRef.current);
+                      if (menuCloseTimeoutRef.current) clearTimeout(menuCloseTimeoutRef.current);
                       setOpenDropdown(null);
                       onSelectTab(openDropdown.id, item.id);
                     }}

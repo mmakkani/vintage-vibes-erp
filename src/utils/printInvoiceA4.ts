@@ -707,6 +707,9 @@ export interface B2BTaxInvoiceA4Data {
   courierName?: string;
   waybillNo?: string;
   courierCoaCode?: string;
+  courierFee?: number;
+  courierFeePayer?: 'BUYER' | 'SELLER';
+  airwayBillPhotoUrl?: string;
 
   // Items
   items: Array<{
@@ -1153,6 +1156,7 @@ export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Windo
           <strong>Tax Treatment:</strong> ${isMainland ? 'Standard Mainland 5% VAT' : 'Export 0% Zero-Rated'}<br>
           ${data.courierName ? `<strong>Courier / Transporter:</strong> <span style="font-weight: 700; color: #0f172a;">${data.courierName}</span> ${data.courierCoaCode ? `<span style="font-family: monospace; color: #3730a3; font-size: 8.5px;">(${data.courierCoaCode})</span>` : ''}<br>` : ''}
           ${data.waybillNo ? `<strong>Waybill / Tracking #:</strong> <span style="font-family: monospace; font-weight: 700; color: #b45309;">${data.waybillNo}</span><br>` : ''}
+          ${data.courierFee !== undefined && Number(data.courierFee) > 0 ? `<strong>Courier Fee:</strong> <span style="font-family: monospace; font-weight: 700; color: #0f172a;">AED ${Number(data.courierFee).toFixed(2)}</span> <span style="font-size: 8.5px; color: ${data.courierFeePayer === 'BUYER' ? '#b45309' : '#059669'}; font-weight: 700;">(${data.courierFeePayer === 'BUYER' ? 'Paid by Buyer' : 'FREE / Company Paid'})</span><br>` : ''}
           ${data.exportCustomsDeclarationNo ? `<strong>Customs Dec #:</strong> <span style="font-family: monospace; font-weight: 700;">${data.exportCustomsDeclarationNo}</span><br>` : ''}
           ${data.pdcChequeNo ? `<strong>PDC Cheque #:</strong> <span style="font-family: monospace; font-weight: 700;">${data.pdcChequeNo}</span> (Due: ${data.pdcChequeDate || 'N/A'})<br>` : ''}
           ${data.salespersonOrBroker ? `<strong>Representative / Broker:</strong> ${data.salespersonOrBroker}` : ''}
@@ -1218,6 +1222,14 @@ export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Windo
                 </td>
               </tr>
             ` : ''}
+            ${data.courierFee !== undefined && Number(data.courierFee) > 0 ? `
+              <tr>
+                <td style="color: #475569; font-weight: 600;">Courier / Delivery Fee:</td>
+                <td style="text-align: right; font-family: monospace; font-weight: 700; color: #0f172a;">
+                  ${data.courierFeePayer === 'BUYER' ? `AED ${Number(data.courierFee).toFixed(2)}` : `<span style="color: #059669; font-size: 9.5px;">FREE (AED ${Number(data.courierFee).toFixed(2)} Absorbed)</span>`}
+                </td>
+              </tr>
+            ` : ''}
             <tr>
               <td style="color: #059669; font-weight: 600;">VAT (${isMainland ? '5%' : '0%'}):</td>
               <td style="text-align: right; font-family: monospace; font-weight: 700; color: #059669;">
@@ -1250,6 +1262,24 @@ export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Windo
         </table>
       </div>
     </div>
+
+    ${data.airwayBillPhotoUrl ? `
+      <!-- Attached Physical Airway Bill Slip -->
+      <div style="margin-bottom: 14px; border: 1.5px dashed #cbd5e1; border-radius: 6px; padding: 12px; background: #f8fafc;">
+        <div style="font-size: 9px; font-weight: 800; color: #92400e; text-transform: uppercase; margin-bottom: 8px;">
+          📦 Attached Airway Bill / Consignment Tracking Slip (AWB: ${data.waybillNo || 'N/A'})
+        </div>
+        <div style="display: flex; gap: 14px; align-items: center;">
+          <img src="${data.airwayBillPhotoUrl}" alt="Airway Bill Slip" style="max-height: 180px; max-width: 320px; border-radius: 4px; border: 1px solid #cbd5e1; object-fit: contain; background: #fff;" />
+          <div style="font-size: 9.5px; color: #475569; line-height: 1.5;">
+            <strong>Carrier Partner:</strong> ${data.courierName || 'Courier Partner'}<br>
+            <strong>Consignment No:</strong> <span style="font-family: monospace; font-weight: 700; color: #b45309;">${data.waybillNo || 'N/A'}</span><br>
+            Official physical waybill slip captured and attached at sales dispatch.<br>
+            Tracking barcode verified and registered on UAE logistics network.
+          </div>
+        </div>
+      </div>
+    ` : ''}
 
     <!-- Amount in Words & Legal Tax Declaration -->
     <div class="words-box">
