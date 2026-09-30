@@ -85,16 +85,18 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   city: 'Al Ain',
   country: 'United Arab Emirates',
   trnTaxNo: 'TRN-100482910300003',
+  tradeLicenseNumber: 'CN-5888545',
+  trade_license_number: 'CN-5888545',
   defaultCurrency: 'AED',
   logoUrl: '/vintage_logo.svg',
   phone: '+971554186086',
   email: 'vintagevibe006@gmail.com',
   vatRatePercent: 5.0,
   globalStockAlertThreshold: 5,
-  bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%26bank%3DEMIRATES%20NBD',
-  bankIban: 'AE24 0331 2345 6789 0123 456',
-  bankName: 'Emirates NBD',
-  bankAccountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+  bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=iban%3AAE760400000143656279001%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%20L.L.C-S.P.C%26bank%3DRAKBANK',
+  bankIban: 'AE76 0400 0001 4365 6279 001',
+  bankName: 'RAKBANK',
+  bankAccountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C-S.P.C',
   enableCod: true,
   enableBankTransfer: true,
   enableCardPay: true,
@@ -1959,7 +1961,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
           </div>
 
           <form onSubmit={handleSaveCompanyProfile} className="space-y-2.5 text-xs">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
               <div>
                 <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Company Display Name:</label>
                 <input
@@ -1980,6 +1982,18 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                   value={companyProfile.trnTaxNo}
                   onChange={e => setCompanyProfile({ ...companyProfile, trnTaxNo: e.target.value })}
                   className="w-full border border-slate-300 rounded p-1.5 font-mono text-slate-900 focus:border-blue-500 text-xs"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Trade / Commercial License No:</label>
+                <input
+                  type="text"
+                  placeholder="[ENTER LICENSE NO (E.G., CN-5888545)]"
+                  value={companyProfile.tradeLicenseNumber || companyProfile.trade_license_number || ''}
+                  onChange={e => setCompanyProfile({ ...companyProfile, tradeLicenseNumber: e.target.value, trade_license_number: e.target.value })}
+                  className="w-full border border-blue-300 bg-blue-50/40 rounded p-1.5 font-mono font-bold text-blue-900 focus:border-blue-500 text-xs"
                   required
                 />
               </div>

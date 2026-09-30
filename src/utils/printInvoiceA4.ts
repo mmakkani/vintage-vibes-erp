@@ -741,6 +741,21 @@ export interface B2BTaxInvoiceA4Data {
   grandTotal: number;
   advanceAmountPaid?: number;
   packingListNotes?: string;
+  tradeLicenseNumber?: string;
+  customsCode?: string;
+  companyName?: string;
+  companyAddress?: string;
+  companyPhone?: string;
+  companyEmail?: string;
+  companyTrn?: string;
+  bankDetails?: {
+    bankName?: string;
+    branchName?: string;
+    accountTitle?: string;
+    iban?: string;
+    swiftBic?: string;
+    accountNumber?: string;
+  };
 }
 
 export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Window | null {
@@ -758,7 +773,7 @@ export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Windo
     data.paymentMethod === 'CASH' ? 'Cash Settlement' :
     data.paymentMethod === 'CARD_POS' ? 'Card / POS Payment' :
     data.paymentMethod === 'PDC_CHEQUE' ? `PDC Cheque ${data.pdcChequeNo ? `(#${data.pdcChequeNo})` : ''}` :
-    'Company Credit Account (Khata)';
+    'Company Credit Account (Registry)';
 
   const itemsHtml = (data.items || []).map((it, idx) => {
     const net = Number(it.finalAmount) || 0;
@@ -1107,15 +1122,15 @@ export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Windo
       <div class="brand-group">
         ${VINTAGE_VIBES_MONOGRAM_SVG}
         <div>
-          <h1 class="logo-title">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</h1>
+          <h1 class="logo-title">${data.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C'}</h1>
           <p class="meta-text" style="font-family: monospace; font-size: 9px;">
-            Dubai Economy & Tourism License: <strong>1049281</strong> &bull; Customs Code: <strong>AE-9281048</strong>
+            Trade License No: <strong>${data.tradeLicenseNumber || 'CN-5888545'}</strong>${data.customsCode ? ` &bull; Customs Code: <strong>${data.customsCode}</strong>` : ''}
           </p>
           <p class="meta-text">
-            Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE
+            ${data.companyAddress || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE'}
           </p>
           <p class="meta-text">
-            Tel: +971 55 418 6086 &bull; Email: sales@vintagevibesllcspc.com &bull; Tax TRN: <strong>100482910300003</strong>
+            Tel: ${data.companyPhone || '+971 55 418 6086'} &bull; Email: ${data.companyEmail || 'sales@vintagevibesllcspc.com'} &bull; Tax TRN: <strong>${data.companyTrn || '100482910300003'}</strong>
           </p>
         </div>
       </div>
@@ -1145,7 +1160,7 @@ export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Windo
         <div class="card-desc">
           ${data.customerAddress || 'Industrial Area, Dubai, UAE'}<br>
           Tel / Mobile: <strong>${data.customerPhone || 'N/A'}</strong> ${data.customerEmail ? `&bull; ${data.customerEmail}` : ''}
-          ${data.customerCoaCode ? `<br><span style="font-family: monospace; color: #3730a3; font-weight: 700;">Chart of Accounts (Khata): ${data.customerCoaCode}</span>` : ''}
+          ${data.customerCoaCode ? `<br><span style="font-family: monospace; color: #3730a3; font-weight: 700;">Chart of Accounts (Registry): ${data.customerCoaCode}</span>` : ''}
         </div>
       </div>
 
@@ -1191,10 +1206,10 @@ export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Windo
           <span>🏛️ Bank Details for Wire Transfer</span>
         </div>
         <div style="line-height: 1.5;">
-          <strong>Bank:</strong> Emirates NBD, Al Quoz Branch, Dubai<br>
-          <strong>Beneficiary Name:</strong> Vintage Vibes General Trading L.L.C - S.P.C<br>
-          <strong>IBAN:</strong> <span style="font-family: monospace; font-weight: 800; color: #0f172a;">AE28 0260 0010 4928 1900 003</span><br>
-          <strong>SWIFT / BIC:</strong> <span style="font-family: monospace; font-weight: 700; color: #0f172a;">EBILAEAD</span> &bull; Currency: <strong>AED</strong>
+          <strong>Bank:</strong> ${data.bankDetails?.bankName || 'RAKBANK'}, ${data.bankDetails?.branchName || 'Al Ain Branch'}<br>
+          <strong>Beneficiary Name:</strong> ${data.bankDetails?.accountTitle || data.companyName || 'Vintage Vibes General Trading L.L.C - S.P.C'}<br>
+          <strong>IBAN:</strong> <span style="font-family: monospace; font-weight: 800; color: #0f172a;">${data.bankDetails?.iban || 'AE76 0400 0001 4365 6279 001'}</span><br>
+          <strong>SWIFT / BIC:</strong> <span style="font-family: monospace; font-weight: 700; color: #0f172a;">${data.bankDetails?.swiftBic || 'RAKBAEADXXX'}</span> &bull; Currency: <strong>AED</strong>
         </div>
         ${data.customerCoaCode ? `
           <div style="margin-top: 6px; padding-top: 5px; border-top: 1px dashed #cbd5e1; font-size: 8.5px; color: #475569;">

@@ -187,7 +187,9 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
         credentials: 'include',
         body: JSON.stringify({
           to: cleanPhone,
-          text: formattedText
+          text: payload.imageUrl ? '' : formattedText,
+          mediaUrl: payload.imageUrl,
+          imageUrl: payload.imageUrl
         })
       }).catch(() => null);
 
@@ -307,6 +309,39 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
       return { success: false, error: data.error || 'Failed to submit inquiry' };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Network error submitting inquiry' };
+    }
+  }
+
+  /**
+   * Fetches the comprehensive Executive Daily Digest (Purchases, Multi-Channel Sales, Liquidity & Courier Liabilities)
+   */
+  public static async getDailyDigestReport(): Promise<{
+    success: boolean;
+    reportText: string;
+    metrics?: any;
+    error?: string;
+  }> {
+    try {
+      const res = await fetch('/api/setup/whatsapp-report');
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.reportText) {
+        return {
+          success: true,
+          reportText: data.reportText,
+          metrics: data.metrics
+        };
+      }
+      return {
+        success: false,
+        reportText: data.reportText || '',
+        error: data.error || 'Failed to fetch daily digest report'
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        reportText: '',
+        error: err?.message || 'Network error fetching daily digest'
+      };
     }
   }
 

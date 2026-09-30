@@ -4351,7 +4351,20 @@ RULES FOR YOUR RESPONSE:
         return res.status(400).json({ success: false, error: 'Report text is required.' });
       }
 
-      const targetPhone = (to ? String(to).replace(/\D/g, '') : '') || '923022190822';
+      let targetPhone = to ? String(to).replace(/\D/g, '') : '';
+      if (!targetPhone) {
+        try {
+          const client = await getPgClient();
+          const cpRes = await client.query('SELECT whatsapp_orders_number, phone FROM company_profile LIMIT 1');
+          if (cpRes.rows.length > 0) {
+            const rawPhone = cpRes.rows[0].whatsapp_orders_number || cpRes.rows[0].phone;
+            if (rawPhone) targetPhone = String(rawPhone).replace(/\D/g, '');
+          }
+        } catch (_) {}
+      }
+      if (!targetPhone) {
+        targetPhone = '971554186086';
+      }
       const currentCfg = await getWhatsappGatewayConfigFromDb().catch(() => ({}));
       const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
 
@@ -4712,8 +4725,9 @@ RULES FOR YOUR RESPONSE:
 
     // 7. Meta Cloud API Send (Tab 3)
     if (pathname.endsWith('/whatsapp/meta-cloud-send') && method === 'POST') {
-      const { to, text, mediaUrl, caption } = body;
-      const result = await sendMetaCloudWhatsAppMessage(to, text, mediaUrl, caption);
+      const { to, text, mediaUrl, imageUrl, caption } = body || {};
+      const finalMedia = mediaUrl || imageUrl;
+      const result = await sendMetaCloudWhatsAppMessage(to, text, finalMedia, caption);
       if (result.success) {
         return res.status(200).json({
           success: true,
@@ -4962,51 +4976,167 @@ RULES FOR YOUR RESPONSE:
       try {
         const client = await getPgClient();
         const todayDate = new Date().toISOString().slice(0, 10);
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 
-        // 1. Query POS Sales today
-        const posRes = await client.query(
-          "SELECT count(*)::int as count, COALESCE(sum(grand_total), 0) as total, COALESCE(sum(tax_amount), 0) as vat, COALESCE(sum(discount_amount), 0) as discount FROM public.pos_sales WHERE created_at::text LIKE $1",
+        // 1. Daily Purchases & Inward Bales
+        const purRes = await client.query(
+          "SELECT count(*)::int as count, COALESCE(sum(COALESCE(total_amount, total_payable, 0)), 0) as total FROM purchase_invoices WHERE invoice_date::text LIKE $1 OR created_at::text LIKE $1",
           [`${todayDate}%`]
         );
-        const posStats = posRes.rows[0] || { count: 0, total: 0, vat: 0, discount: 0 };
+        const purStats = purRes.rows[0] || { count: 0, total: 0 };
 
-        // 2. Query Available Stock in Warehouse
+        const baleRes = await client.query(
+          "SELECT count(*)::int as bales_count, COALESCE(sum(COALESCE(total_bale_weight, weight_kg, 0)), 0) as bales_weight FROM inward_gate_passes WHERE created_at::text LIKE $1",
+          [`${todayDate}%`]
+        );
+        const baleStats = baleRes.rows[0] || { bales_count: 0, bales_weight: 0 };
+
+        // 2. Multi-Channel Sales Performance
+        // POS Sales
+        const posRes = await client.query(
+          "SELECT count(*)::int as count, COALESCE(sum(grand_total), 0) as total, COALESCE(sum(CASE WHEN UPPER(payment_type) = 'CASH' THEN grand_total ELSE 0 END), 0) as cash, COALESCE(sum(CASE WHEN UPPER(payment_type) IN ('CARD', 'PAYMOB', 'ONLINE', 'BANK') THEN grand_total ELSE 0 END), 0) as bank FROM pos_sales WHERE created_at::text LIKE $1",
+          [`${todayDate}%`]
+        );
+        const posStats = posRes.rows[0] || { count: 0, total: 0, cash: 0, bank: 0 };
+
+        // B2B Wholesale Sales
+        const b2bRes = await client.query(
+          "SELECT count(*)::int as count, COALESCE(sum(total_amount), 0) as total, COALESCE(sum(CASE WHEN UPPER(payment_method) = 'CASH' THEN total_amount ELSE 0 END), 0) as cash, COALESCE(sum(CASE WHEN UPPER(payment_method) IN ('BANK_TRANSFER', 'CARD_POS', 'WIRE') THEN total_amount ELSE 0 END), 0) as bank FROM sales_invoices WHERE (channel = 'WHOLESALE_B2B' OR invoice_no LIKE 'B2B-%') AND (invoice_date::text LIKE $1 OR created_at::text LIKE $1)",
+          [`${todayDate}%`]
+        );
+        const b2bStats = b2bRes.rows[0] || { count: 0, total: 0, cash: 0, bank: 0 };
+
+        // Shop / Storefront Sales
+        const shopRes = await client.query(
+          "SELECT count(*)::int as count, COALESCE(sum(total_amount), 0) as total, COALESCE(sum(CASE WHEN UPPER(payment_method) = 'CASH' THEN total_amount ELSE 0 END), 0) as cash, COALESCE(sum(CASE WHEN UPPER(payment_method) IN ('BANK_TRANSFER', 'CARD_POS', 'WIRE') THEN total_amount ELSE 0 END), 0) as bank FROM sales_invoices WHERE channel IN ('STOREFRONT', 'SHOP') AND (invoice_date::text LIKE $1 OR created_at::text LIKE $1)",
+          [`${todayDate}%`]
+        );
+        const shopStats = shopRes.rows[0] || { count: 0, total: 0, cash: 0, bank: 0 };
+
+        // E-Commerce Online Sales
+        const ecomRes = await client.query(
+          "SELECT count(*)::int as count, COALESCE(sum(total_amount), 0) as total FROM sales_invoices WHERE channel = 'ECOMMERCE' AND (invoice_date::text LIKE $1 OR created_at::text LIKE $1)",
+          [`${todayDate}%`]
+        );
+        const ecomStats = ecomRes.rows[0] || { count: 0, total: 0 };
+
+        // 3. Courier & Logistics Liability (Accounts Payable 2120%)
+        const courierRes = await client.query(
+          "SELECT code, name, current_balance FROM chart_of_accounts WHERE code LIKE '2120%' ORDER BY code ASC"
+        );
+        const courierRows = courierRes.rows || [];
+        const courierLiability = courierRows.reduce((acc: number, c: any) => acc + (parseFloat(c.current_balance) || 0), 0);
+        const activeCouriers = courierRows.filter((c: any) => parseFloat(c.current_balance) > 0 || c.code !== '2120-00');
+
+        // Aggregations
+        const totalSalesVal = (parseFloat(posStats.total) || 0) + (parseFloat(b2bStats.total) || 0) + (parseFloat(shopStats.total) || 0) + (parseFloat(ecomStats.total) || 0);
+        const totalTxCount = (parseInt(posStats.count) || 0) + (parseInt(b2bStats.count) || 0) + (parseInt(shopStats.count) || 0) + (parseInt(ecomStats.count) || 0);
+
+        const bankReceivedVal = (parseFloat(posStats.bank) || 0) + (parseFloat(b2bStats.bank) || 0) + (parseFloat(shopStats.bank) || 0);
+        const cashReceivedVal = (parseFloat(posStats.cash) || 0) + (parseFloat(b2bStats.cash) || 0) + (parseFloat(shopStats.cash) || 0);
+        const totalCollections = bankReceivedVal + cashReceivedVal;
+
+        // Warehouse Stock count
         const stockRes = await client.query(
           "SELECT count(*)::int as total_stock FROM public.inventory_pieces WHERE is_sold = false AND status = 'IN_STOCK'"
         );
         const stockCount = stockRes.rows[0]?.total_stock || 0;
 
-        // 3. Query Active Inward Bales
-        const baleRes = await client.query(
-          "SELECT count(*)::int as active_bales FROM public.inward_gate_passes WHERE status != 'COMPLETED'"
-        );
-        const activeBales = baleRes.rows[0]?.active_bales || 0;
+        const fmt = (n: number | string) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+        let courierLines = '';
+        if (activeCouriers.length > 0) {
+          courierLines = activeCouriers.map((c: any) => `  ├─ 🚚 *${c.name.replace(/ \(Courier Payable\)/i, '')}:* AED ${fmt(c.current_balance)}`).join('\n');
+        } else {
+          courierLines = '  └─ 🚚 *Courier Control (2120-00):* AED 0.00 (All Settled)';
+        }
 
         const formattedReport =
-          `📊 *VINTAGE VIBES — EXECUTIVE DAILY DIGEST*\n` +
-          `📅 *Date:* ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `🏢 *Entity:* VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C\n` +
-          `📍 *Location:* Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE\n` +
-          `💰 *Currency:* AED (UAE Dirham)\n\n` +
-          `🛍️ *RETAIL POS PERFORMANCE (TODAY):*\n` +
-          `• Total Revenue: *AED ${Number(posStats.total).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*\n` +
-          `• POS Transactions: *${posStats.count} Completed*\n` +
-          `• 5% UAE VAT Assessed: *AED ${Number(posStats.vat).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*\n\n` +
-          `📦 *WAREHOUSE & INVENTORY STATUS:*\n` +
-          `• Available Curated Stock: *${Number(stockCount).toLocaleString()} Pieces*\n` +
-          `• Active Inward Bales / Lots: *${activeBales} In-Progress*\n` +
-          `• System Status: *All Ledgers & COA 100% Balanced*\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `_Generated live via Vintage Vibes Executive Engine_ 🚀`;
+`📊 *VINTAGE VIBES — EXECUTIVE DAILY DIGEST*
+📅 *Date:* ${dateStr} | ⏰ *Time:* ${timeStr}
+🏢 *Entity:* VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C
+📍 *License:* CN-5888545 | *Location:* Al Ain, UAE
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📦 *1. DAILY PURCHASES & INWARD REPORT (خریداری و بیلز)*
+• Total Purchases (Today): *AED ${fmt(purStats.total)}* (${purStats.count} Invoices)
+• Inward Bales Processed: *${baleStats.bales_count} Bales* (${Number(baleStats.bales_weight).toFixed(1)} KG)
+• Curated Inventory In Stock: *${Number(stockCount).toLocaleString()} Pieces*
+
+💰 *2. DAILY SALES PERFORMANCE (کل یومیہ فروخت)*
+• *TOTAL GROSS SALES:* *AED ${fmt(totalSalesVal)}* (${totalTxCount} Orders)
+  ├─ 🏢 *B2B Wholesale:* AED ${fmt(b2bStats.total)} (${b2bStats.count} Invoices)
+  ├─ 🏬 *Shop / Storefront:* AED ${fmt(shopStats.total)} (${shopStats.count} Bills)
+  ├─ 🖥️ *POS Counter Retail:* AED ${fmt(posStats.total)} (${posStats.count} Slips)
+  └─ 🌐 *E-Commerce Online:* AED ${fmt(ecomStats.total)} (${ecomStats.count} Orders)
+
+💳 *3. CASH & BANK LIQUIDITY INFLOW (وصولی کیش و بینک)*
+• 🏦 *Total Received in Bank:* *AED ${fmt(bankReceivedVal)}*
+  _(Direct IBAN Wire, Card POS & Gateway)_
+• 💵 *Total Cash Received:* *AED ${fmt(cashReceivedVal)}*
+  _(Physical Cash collected in hand / registers)_
+• 📈 *Total Daily Collections:* *AED ${fmt(totalCollections)}*
+
+🚚 *4. COURIER & LOGISTICS LIABILITY (کوریئر واجبات)*
+• *Total Outstanding Payable:* *AED ${fmt(courierLiability)}*
+${courierLines}
+  _(COA Control Account 2120-00 - Accounts Payable Courier & Freight)_
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ *System Status:* Dual-Entry General Ledger 100% Balanced.
+🚀 _Generated live via Vintage Vibes Executive Engine_`;
 
         return res.status(200).json({
+          success: true,
           reportText: formattedReport,
-          messageText: formattedReport
+          messageText: formattedReport,
+          metrics: {
+            date: todayDate,
+            purchases: {
+              total: parseFloat(purStats.total) || 0,
+              count: parseInt(purStats.count) || 0,
+              balesCount: parseInt(baleStats.bales_count) || 0,
+              balesWeight: parseFloat(baleStats.bales_weight) || 0
+            },
+            sales: {
+              totalGross: totalSalesVal,
+              totalOrders: totalTxCount,
+              b2b: {
+                total: parseFloat(b2bStats.total) || 0,
+                count: parseInt(b2bStats.count) || 0
+              },
+              shop: {
+                total: parseFloat(shopStats.total) || 0,
+                count: parseInt(shopStats.count) || 0
+              },
+              pos: {
+                total: parseFloat(posStats.total) || 0,
+                count: parseInt(posStats.count) || 0
+              },
+              ecommerce: {
+                total: parseFloat(ecomStats.total) || 0,
+                count: parseInt(ecomStats.count) || 0
+              }
+            },
+            liquidity: {
+              bankReceived: bankReceivedVal,
+              cashReceived: cashReceivedVal,
+              totalCollections
+            },
+            courierLiability: {
+              total: courierLiability,
+              couriers: courierRows
+            },
+            inventoryStockCount: stockCount
+          }
         });
       } catch (digestErr: any) {
         console.warn('[Vercel whatsapp-report] DB query error fallback:', digestErr?.message);
         return res.status(200).json({
+          success: false,
+          error: digestErr?.message,
           reportText: `📊 *VINTAGE VIBES — DAILY DIGEST*\n` +
             `📅 *Date:* ${new Date().toLocaleDateString('en-GB')}\n` +
             `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +

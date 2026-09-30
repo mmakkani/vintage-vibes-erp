@@ -37,7 +37,7 @@ import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
 import { CompanyProfileService } from '../../../services/companyProfileService.ts';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
-import { generateB2BInvoiceGraphic } from '../../../utils/b2bReceiptGraphicGenerator.ts';
+import { generateB2BInvoiceGraphic, generateAirwayBillGraphic } from '../../../utils/b2bReceiptGraphicGenerator.ts';
 import { CompanyProfile } from '../../setup/setup.types.ts';
 import { COAAccount } from '../../finance/finance.types.ts';
 import { supabase } from '../../../supabaseClient.ts';
@@ -859,10 +859,43 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     setOtherCharges(prev => prev.filter(c => c.id !== id));
   };
 
+  // Generate B2B monthly sequence number: B2B-YYYYMM-01, B2B-YYYYMM-02...
+  const generateNextB2BInvoiceNumber = async (): Promise<string> => {
+    const now = new Date();
+    const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const prefix = `B2B-${yyyymm}-`;
+
+    try {
+      const [b2bRes, salesRes] = await Promise.all([
+        supabase.from('b2b_sales').select('b2b_invoice_number').ilike('b2b_invoice_number', `${prefix}%`),
+        supabase.from('sales_invoices').select('invoice_no').ilike('invoice_no', `${prefix}%`)
+      ]);
+
+      let maxSeq = 0;
+      const parseSeq = (no?: string | null) => {
+        if (!no || !no.startsWith(prefix)) return;
+        const seqPart = no.slice(prefix.length);
+        const num = parseInt(seqPart, 10);
+        if (!isNaN(num) && num > maxSeq) {
+          maxSeq = num;
+        }
+      };
+
+      (b2bRes.data || []).forEach(r => parseSeq(r.b2b_invoice_number));
+      (salesRes.data || []).forEach(r => parseSeq(r.invoice_no));
+
+      const nextSeq = maxSeq + 1;
+      return `${prefix}${String(nextSeq).padStart(2, '0')}`;
+    } catch {
+      return `${prefix}01`;
+    }
+  };
+
   // Open New Invoice Popup Modal
   const handleOpenNewInvoiceModal = () => {
     setInvoiceId('');
     setInvoiceNo('');
+    generateNextB2BInvoiceNumber().then(nextNo => setInvoiceNo(nextNo)).catch(() => {});
     setSelectedCustomerId('');
     setCustomerPhone('');
     setSelectedCourierId('');
@@ -927,7 +960,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
   // Save Draft (No Ledgers, No Financial Vouchers, Reserve Stock)
   const handleSaveDraft = async (forcedInvoiceNo?: string): Promise<{ id: string; invoiceNo: string } | null> => {
     if (!selectedCustomerId) {
-      showMsg('Please select a Customer / Company from Parties Khata first!', 'error');
+      showMsg('Please select a Customer / Company from Parties Registry first!', 'error');
       return null;
     }
     if (items.length === 0) {
@@ -937,7 +970,10 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
     setIsSaving(true);
     try {
-      const genInvoiceNo = forcedInvoiceNo || invoiceNo || `B2B-${Date.now().toString().slice(-6)}`;
+      let genInvoiceNo = forcedInvoiceNo || invoiceNo;
+      if (!genInvoiceNo || !genInvoiceNo.startsWith('B2B-') || genInvoiceNo.length < 10) {
+        genInvoiceNo = await generateNextB2BInvoiceNumber();
+      }
       let finalId = invoiceId;
 
       if (invoiceId) {
@@ -963,7 +999,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
             .or(`id.eq.${invoiceId},b2b_invoice_number.eq.${genInvoiceNo}`)
         );
 
-        // 2. Update existing sales_invoices record
+        // 2. Update existing sales_invoices record using native database schema columns
         await SalesService.updateSalesInvoice(invoiceId, {
           invoiceNo: genInvoiceNo,
           clientId: selectedCustomer.id,
@@ -977,17 +1013,20 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           taxAmount: vatAmount,
           totalAmount: grandTotal,
           status: 'DRAFT',
-          items: items,
-          notes: JSON.stringify({
-            courierId: selectedCourierId,
-            courierName: selectedCourier?.name,
-            waybillNo,
-            courierFee,
-            courierFeePayer,
-            airwayBillPhotoUrl,
-            customerPhone: customerPhone || selectedCustomer.phone || ''
-          })
+          items: items
         }).catch(e => console.warn('B2B sales_invoices update note:', e));
+
+        await safeSupabaseCall(
+          supabase
+            .from('sales_invoices')
+            .update({
+              tracking_number: waybillNo || null,
+              courier_partner_id: selectedCourierId || null,
+              shipping_fee: Number(courierFee) || 0,
+              shipping_bearer: courierFeePayer === 'BUYER' ? 'CUSTOMER' : 'COMPANY'
+            })
+            .or(`id.eq.${invoiceId},invoice_no.eq.${genInvoiceNo}`)
+        );
       } else {
         // 1. Direct write to public.b2b_sales with credit_status: 'DRAFT'
         const b2bRecord = await SalesService.createB2bSale({
@@ -1023,21 +1062,24 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           taxAmount: vatAmount,
           totalAmount: grandTotal,
           status: 'DRAFT',
-          items: items,
-          notes: JSON.stringify({
-            courierId: selectedCourierId,
-            courierName: selectedCourier?.name,
-            waybillNo,
-            courierFee,
-            courierFeePayer,
-            airwayBillPhotoUrl,
-            customerPhone: customerPhone || selectedCustomer.phone || ''
-          })
+          items: items
         }).catch(e => console.warn('B2B sales_invoices sync note:', e));
 
         if (createdSInv?.id) {
           finalId = createdSInv.id;
         }
+
+        await safeSupabaseCall(
+          supabase
+            .from('sales_invoices')
+            .update({
+              tracking_number: waybillNo || null,
+              courier_partner_id: selectedCourierId || null,
+              shipping_fee: Number(courierFee) || 0,
+              shipping_bearer: courierFeePayer === 'BUYER' ? 'CUSTOMER' : 'COMPANY'
+            })
+            .or(`id.eq.${finalId},invoice_no.eq.${genInvoiceNo}`)
+        );
       }
 
       // 3. Mark piece barcodes as RESERVED (not SOLD, no ledger entries)
@@ -1083,7 +1125,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       `• Raw Bales (${items.filter(i => i.isRawBale).length}) will be deducted from 1140-01 to 5100-01 COGS\n` +
       `• Garment Pieces (${items.filter(i => !i.isRawBale).length}) will be deducted from 1160-01 to 5100-02 COGS\n` +
       `• Double-Entry General Ledger Journal Voucher will be dispatched.\n` +
-      `• Customer Khata (${selectedCustomerCoaCode}) will be debited AED ${grandTotal.toFixed(2)}.`
+      `• Customer Registry (${selectedCustomerCoaCode}) will be debited AED ${grandTotal.toFixed(2)}.`
     );
     if (!confirmPost) return;
 
@@ -1104,7 +1146,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       // 2. Build GAAP/IFRS Double-Entry Journal Voucher Lines
       const voucherLines: any[] = [];
 
-      // Line 1: Debit Customer Khata (Accounts Receivable)
+      // Line 1: Debit Customer Registry (Accounts Receivable)
       voucherLines.push({
         accountId: selectedCustomerCoaAccount?.id || selectedCustomerCoaCode,
         accountCode: selectedCustomerCoaCode,
@@ -1127,7 +1169,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         memo: `Wholesale B2B Sales Revenue (${items.length} items): Invoice ${genInvoiceNo}`
       });
 
-      // Line 3: Credit Other Charges (Freight/Delivery) -> Assigned Courier Khata (2120-xx) or Shipping Revenue (4110-04)
+      // Line 3: Credit Other Charges (Freight/Delivery) -> Assigned Courier Registry (2120-xx) or Shipping Revenue (4110-04)
       if (otherChargesTotal > 0) {
         if (selectedCourier) {
           voucherLines.push({
@@ -1153,7 +1195,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         }
       }
 
-      // Line 3b: Courier Fee (Credit Courier Khata; and if Company pays, Debit 5140-01 Freight Expense)
+      // Line 3b: Courier Fee (Credit Courier Registry; and if Company pays, Debit 5140-01 Freight Expense)
       const cFee = Number(courierFee) || 0;
       if (cFee > 0) {
         voucherLines.push({
@@ -1331,15 +1373,10 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           .update({
             status: 'POSTED',
             customer_phone: customerPhone || selectedCustomer?.phone || '',
-            notes: JSON.stringify({
-              courierId: selectedCourierId,
-              courierName: selectedCourier?.name,
-              waybillNo,
-              courierFee,
-              courierFeePayer,
-              airwayBillPhotoUrl,
-              customerPhone: customerPhone || selectedCustomer?.phone || ''
-            })
+            tracking_number: waybillNo || null,
+            courier_partner_id: selectedCourierId || null,
+            shipping_fee: Number(courierFee) || 0,
+            shipping_bearer: courierFeePayer === 'BUYER' ? 'CUSTOMER' : 'COMPANY'
           })
           .or(`invoice_no.eq.${genInvoiceNo},id.eq.${activeInvoiceId}`)
       );
@@ -1400,7 +1437,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       `UNPOST Invoice ${targetNo}?\n\n` +
       `• Restores all Raw Bales & Garment Pieces to stock\n` +
       `• Reverses General Ledger Journal Voucher & Ledgers\n` +
-      `• Credits Customer Khata to reverse balance\n` +
+      `• Credits Customer Registry to reverse balance\n` +
       `• Unlocks invoice for editing or deletion`
     );
     if (!confirmUnpost) return;
@@ -1570,6 +1607,15 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     showMsg(`Rendering high-resolution B2B Tax Invoice graphic and dispatching to ${targetPhone}...`);
 
     try {
+      const liveProfile = companyProfile || await CompanyProfileService.getCompanyProfile();
+      const activeBank = (liveProfile?.bankAccounts && liveProfile.bankAccounts[0]) || {
+        bankName: liveProfile?.bankName || 'RAKBANK',
+        accountTitle: liveProfile?.bankAccountTitle || 'VINTAGE VIBES GENERAL TRADING L.L.C-S.P.C',
+        iban: liveProfile?.bankIban || 'AE76 0400 0001 4365 6279 001',
+        swiftBic: 'RAKBAEADXXX',
+        branchName: 'Al Ain'
+      };
+
       // 1. Generate High-Definition B2B Invoice Graphic Image
       const invoiceGraphicUrl = await generateB2BInvoiceGraphic({
         invoiceNo: targetInvNo,
@@ -1590,13 +1636,51 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         grandTotal: targetGrandTotal,
         paymentMethod: paymentMethod,
         taxType: taxType,
-        companyName: companyProfile?.name,
-        companyAddress: companyProfile?.address,
-        companyPhone: companyProfile?.phone,
-        companyTrn: companyProfile?.trnNumber
+        tradeLicenseNumber: liveProfile?.tradeLicenseNumber || liveProfile?.trade_license_number || 'CN-5888545',
+        customsCode: liveProfile?.customsCode || '',
+        companyName: liveProfile?.companyDisplayName || liveProfile?.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+        companyAddress: liveProfile?.addressLine1 ? `${liveProfile.addressLine1}, ${liveProfile.addressLine2 || ''}` : undefined,
+        companyPhone: liveProfile?.corporatePhone || liveProfile?.phone || '+971 55 418 6086',
+        companyTrn: liveProfile?.trnTaxNo || liveProfile?.trnNumber || '100482910300003',
+        bankDetails: {
+          bankName: activeBank.bankName || 'RAKBANK',
+          branchName: activeBank.branchName || 'Al Ain Branch',
+          accountTitle: activeBank.accountTitle || 'VINTAGE VIBES GENERAL TRADING L.L.C-S.P.C',
+          iban: activeBank.iban || 'AE76 0400 0001 4365 6279 001',
+          swiftBic: activeBank.swiftBic || 'RAKBAEADXXX'
+        }
       });
 
-      // 2. Dispatch Tax Invoice directly via WhatsApp API with image
+      // 2. Automatically generate high-contrast companion Courier Airway Bill Cargo Slip
+      let awbGraphicUrl = '';
+      if (targetWaybill || targetCourierName) {
+        const computedWeight = targetItems.reduce((acc, it) => acc + (Number(it.weightKg || it.grossWeightKg) || 0), 0);
+        const computedDue = (inv as any)?.balance_due !== undefined 
+          ? Number((inv as any).balance_due) 
+          : (creditAmountDue !== undefined ? Number(creditAmountDue) : (targetGrandTotal - Number(advanceAmountPaid || 0)));
+
+        awbGraphicUrl = await generateAirwayBillGraphic({
+          awbNumber: targetWaybill || `AWB-${targetInvNo}`,
+          invoiceNo: targetInvNo,
+          date: targetDate,
+          courierName: targetCourierName || 'Express Courier Partner',
+          shipperName: liveProfile?.companyDisplayName || liveProfile?.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+          shipperAddress: liveProfile?.addressLine1 ? `${liveProfile.addressLine1}, ${liveProfile.addressLine2 || ''}` : 'Al Ain, UAE',
+          shipperPhone: liveProfile?.corporatePhone || liveProfile?.phone || '+971 55 418 6086',
+          consigneeName: targetCustomerName,
+          consigneePhone: targetPhone,
+          consigneeAddress: targetAddress,
+          city: (inv as any)?.city || selectedCustomer?.city || 'United Arab Emirates',
+          totalPieces: targetItems.length || 1,
+          totalWeightKg: computedWeight,
+          declaredContents: 'Curated Grade-A Vintage Garments',
+          balanceDue: computedDue,
+          totalAmount: targetGrandTotal,
+          paidAmount: Number(advanceAmountPaid || (inv as any)?.paid_amount || 0)
+        });
+      }
+
+      // 3. Dispatch Tax Invoice directly via WhatsApp API with image
       const res = await WhatsAppService.sendInvoiceNotification({
         invoiceNo: targetInvNo,
         customerName: targetCustomerName,
@@ -1606,17 +1690,17 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         imageUrl: invoiceGraphicUrl
       });
 
-      // 3. If Airway Bill slip photo is attached, dispatch it too!
-      if (targetAwbPhoto) {
+      // 4. Dispatch companion Airway Bill Slip graphic image (no plain-text spam)
+      if (awbGraphicUrl) {
         await WhatsAppService.sendTextMessage(
           targetPhone,
-          `📦 Official Airway Bill / Consignment Slip for Invoice #${targetInvNo} (AWB: ${targetWaybill || 'N/A'})`,
-          targetAwbPhoto
-        ).catch(e => console.warn('AWB slip photo dispatch note:', e));
+          '',
+          awbGraphicUrl
+        ).catch(e => console.warn('AWB slip graphic dispatch note:', e));
       }
 
       if (res.success) {
-        showMsg(`✅ Invoice #${targetInvNo} ${targetAwbPhoto ? '& Airway Bill slip ' : ''}dispatched directly to WhatsApp (${targetPhone})!`);
+        showMsg(`✅ Invoice #${targetInvNo} & Airway Bill Cargo Slip (Prepaid/COD Verified) dispatched directly to WhatsApp (${targetPhone})!`);
       } else {
         showMsg(res.error || 'WhatsApp message queued or device not linked.', 'error');
       }
@@ -1705,7 +1789,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       `UNPOST Invoice ${invNo}?\n\n` +
       `• Restores all Raw Bales & Garment Pieces to stock\n` +
       `• Reverses General Ledger Journal Voucher & Ledgers\n` +
-      `• Removes Customer Khata balance\n` +
+      `• Removes Customer Registry balance\n` +
       `• Unlocks invoice for editing or deletion`
     );
     if (!confirmUnpost) return;
@@ -1857,7 +1941,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           <div className="text-base font-mono font-black text-blue-900 mt-0.5">👕 {logMetrics.totalPieces} pcs</div>
         </div>
         <div className="bg-white p-3 rounded-xl border border-amber-200 shadow-xs col-span-2 sm:col-span-1">
-          <div className="text-[10px] text-slate-500 uppercase font-bold">Khata Receivables Due</div>
+          <div className="text-[10px] text-slate-500 uppercase font-bold">Registry Receivables Due</div>
           <div className="text-base font-mono font-black text-purple-900 mt-0.5">AED {logMetrics.totalCreditDue.toFixed(2)}</div>
         </div>
       </div>
@@ -1919,12 +2003,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                 <tr>
                   <th className="py-2.5 px-3">Invoice #</th>
                   <th className="py-2.5 px-3">Date</th>
-                  <th className="py-2.5 px-3">Buyer Company (Khata)</th>
+                  <th className="py-2.5 px-3">Buyer Company (Registry)</th>
                   <th className="py-2.5 px-3">WhatsApp / Phone</th>
                   <th className="py-2.5 px-3">UAE TRN</th>
                   <th className="py-2.5 px-3 text-center">Items & Bales</th>
                   <th className="py-2.5 px-3 text-right">Billable (AED)</th>
-                  <th className="py-2.5 px-3 text-right">Khata Credit Due</th>
+                  <th className="py-2.5 px-3 text-right">Registry Credit Due</th>
                   <th className="py-2.5 px-3 text-center">Status</th>
                   <th className="py-2.5 px-3 text-right">Actions</th>
                 </tr>
@@ -2196,7 +2280,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Dual barcode gun scanning for Raw Bales & Sorted Garments with Khata relief
+                    Dual barcode gun scanning for Raw Bales & Sorted Garments with Registry relief
                   </p>
                 </div>
               </div>
@@ -2308,7 +2392,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                     <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                       <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 uppercase tracking-wide">
                         <User className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>Buyer / Corporate Client (Parties Khata)</span>
+                        <span>Buyer / Corporate Client (Parties Registry)</span>
                       </div>
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                         COA: {selectedCustomerCoaCode || '1130-00'}
@@ -2330,7 +2414,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                         disabled={status === 'POSTED'}
                         className="w-full bg-[#FAF4E6]/50 border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:bg-white focus:border-indigo-500 transition"
                       >
-                        <option value="">-- Choose Corporate Buyer / Khata --</option>
+                        <option value="">-- Choose Corporate Buyer / Registry --</option>
                         {(customerClients || []).map(c => {
                           const coaCode = c.coaAccountId || (c as any).coa_account_id;
                           return (
@@ -2352,7 +2436,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                             </span>
                           </div>
                           <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
-                            ACTIVE KHATA
+                            ACTIVE REGISTRY
                           </span>
                         </div>
 
@@ -2411,7 +2495,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
                         <div className="pt-2 border-t border-amber-200/70 flex items-center justify-between text-xs">
                           <div>
-                            <span className="text-slate-500 font-bold">Live Khata Balance: </span>
+                            <span className="text-slate-500 font-bold">Live Registry Balance: </span>
                             <span className={`font-mono font-bold ${Number(selectedCustomer.currentBalance) > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
                               AED {Number(selectedCustomer.currentBalance || 0).toFixed(2)}
                             </span>
@@ -2426,16 +2510,16 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                       </div>
                     ) : (
                       <div className="p-3 bg-amber-50/50 border border-dashed border-amber-200 rounded-lg text-center text-amber-800 text-xs">
-                        Please select a company from Parties Khata to display TRN, COA ledger link, delivery address, and credit parameters.
+                        Please select a company from Parties Registry to display TRN, COA ledger link, delivery address, and credit parameters.
                       </div>
                     )}
 
-                    {/* Assigned Courier & Logistics Partner (کوریئر کمپنی / لاجسٹکس کھاتہ) */}
+                    {/* Assigned Courier & Logistics Partner (کوریئر کمپنی / لاجسٹکس رجسٹری) */}
                     <div className="bg-[#FAF4E6]/40 rounded-xl p-3 border border-amber-300/80 space-y-2.5">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5 text-xs font-black uppercase text-amber-950">
                           <Truck className="w-3.5 h-3.5 text-amber-700" />
-                          <span>Assigned Courier / Logistics Partner (لاجسٹکس کھاتہ)</span>
+                          <span>Assigned Courier / Logistics Partner (لاجسٹکس رجسٹری)</span>
                         </div>
                         {selectedCourierCoaCode && (
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-amber-100 text-amber-900 border border-amber-300">
@@ -2546,7 +2630,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                           </div>
                           <div className="text-[10px] mt-1 text-slate-500">
                             {courierFeePayer === 'BUYER' ? (
-                              <span className="text-amber-800 font-semibold">ℹ️ Added to invoice bill total & customer khata.</span>
+                              <span className="text-amber-800 font-semibold">ℹ️ Added to invoice bill total & customer registry.</span>
                             ) : (
                               <span className="text-emerald-700 font-semibold">ℹ️ Free delivery to buyer; debited to Delivery Expense (5140-01).</span>
                             )}
@@ -2554,76 +2638,43 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                         </div>
                       </div>
 
-                      {/* Airway Bill (AWB) Physical Slip Photo Upload / Capture */}
-                      <div className="p-2.5 bg-white/90 rounded-lg border border-amber-200/90 space-y-2">
+                      {/* Automatic Companion Courier Airway Bill Cargo Slip (بولیصہ شحن) */}
+                      <div className="p-3 bg-gradient-to-r from-blue-50/70 via-indigo-50/50 to-slate-50 rounded-lg border-2 border-indigo-200/90 space-y-2">
                         <div className="flex items-center justify-between">
-                          <label className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
-                            <Camera className="w-3.5 h-3.5 text-amber-700" />
-                            <span>Airway Bill (AWB) Physical Slip / Photo (بلٹی تصویر):</span>
+                          <label className="text-[11px] font-bold text-indigo-950 flex items-center gap-1.5">
+                            <Truck className="w-4 h-4 text-indigo-700" />
+                            <span>⚡ Automatic Digital Courier Airway Bill Cargo Slip (بولیصہ شحن):</span>
                           </label>
-                          {airwayBillPhotoUrl && (
-                            <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                              ✓ Slip Attached
-                            </span>
-                          )}
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                            creditAmountDue <= 0 
+                              ? 'bg-emerald-100 text-emerald-900 border-emerald-300' 
+                              : 'bg-amber-100 text-amber-950 border-amber-300'
+                          }`}>
+                            {creditAmountDue <= 0 ? '✓ PREPAID / PAYMENT RECEIVED' : `⚠️ COD: AED ${creditAmountDue.toFixed(2)}`}
+                          </span>
                         </div>
 
-                        {airwayBillPhotoUrl ? (
-                          <div className="flex items-center gap-3 p-2 bg-amber-50/50 rounded border border-amber-200">
-                            <img
-                              src={airwayBillPhotoUrl}
-                              alt="AWB Slip"
-                              className="w-16 h-16 object-cover rounded border border-amber-300 shadow-2xs cursor-pointer hover:scale-105 transition"
-                              onClick={() => {
-                                const w = window.open('');
-                                if (w) {
-                                  w.document.write(`<img src="${airwayBillPhotoUrl}" style="max-width:100%; height:auto;" />`);
-                                }
-                              }}
-                            />
-                            <div className="flex-1 text-xs">
-                              <div className="font-bold text-slate-900">Physical AWB Slip Attached</div>
-                              <div className="text-[10px] text-slate-500">
-                                Dispatched together with invoice image on WhatsApp!
-                              </div>
-                            </div>
-                            {status !== 'POSTED' && (
-                              <button
-                                type="button"
-                                onClick={() => setAirwayBillPhotoUrl('')}
-                                className="px-2 py-1 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded border border-rose-200 cursor-pointer"
-                              >
-                                Remove
-                              </button>
-                            )}
+                        <div className="text-[11px] text-slate-700 space-y-1 bg-white p-2.5 rounded border border-indigo-100 shadow-2xs">
+                          <div className="flex justify-between items-center">
+                            <span className="font-semibold text-slate-500">AWB Tracking Barcode:</span>
+                            <span className="font-mono font-bold text-slate-900">{waybillNo || 'Scan or enter AWB barcode above'}</span>
                           </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <label className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-amber-300 rounded-lg text-xs font-bold text-amber-900 bg-amber-50/40 hover:bg-amber-100/60 transition cursor-pointer ${status === 'POSTED' ? 'opacity-50 pointer-events-none' : ''}`}>
-                              <Camera className="w-4 h-4 text-amber-700" />
-                              <Upload className="w-4 h-4 text-amber-700" />
-                              <span>Snap Photo or Upload AWB Slip</span>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                capture="environment"
-                                disabled={status === 'POSTED'}
-                                className="hidden"
-                                onChange={e => {
-                                  const file = e.target.files?.[0];
-                                  if (file) {
-                                    const reader = new FileReader();
-                                    reader.onload = evt => {
-                                      const res = evt.target?.result as string;
-                                      if (res) setAirwayBillPhotoUrl(res);
-                                    };
-                                    reader.readAsDataURL(file);
-                                  }
-                                }}
-                              />
-                            </label>
+                          <div className="flex justify-between items-center">
+                            <span className="font-semibold text-slate-500">Carrier Partner:</span>
+                            <span className="font-bold text-indigo-900">{selectedCourier?.name || 'Selected Logistics Partner'}</span>
                           </div>
-                        )}
+                          <div className="flex justify-between items-center pt-1 border-t border-slate-100">
+                            <span className="font-semibold text-slate-500">Doorstep Collection Directive:</span>
+                            <span className={`font-bold ${creditAmountDue <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                              {creditAmountDue <= 0 
+                                ? 'Zero Cash Collection (Settled via Wire / Advance)' 
+                                : `MANDATORY COD COLLECTION: AED ${creditAmountDue.toFixed(2)}`}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-500 pt-1 italic">
+                            💡 No photo upload required! The official high-contrast Airway Bill barcode slip is rendered and dispatched automatically with your WhatsApp invoice.
+                          </div>
+                        </div>
                       </div>
 
                       {selectedCourier ? (
@@ -2638,7 +2689,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                             </span>
                           </div>
                           <div className="flex items-center justify-between text-[11px] text-slate-600">
-                            <span className="text-slate-500 font-medium">Transporter Khata:</span>
+                            <span className="text-slate-500 font-medium">Transporter Registry:</span>
                             <span className="font-bold text-slate-900">{selectedCourier.name}</span>
                           </div>
                           <div className="flex items-center justify-between text-[10px] text-slate-500 border-t border-slate-100 pt-1">
@@ -2647,7 +2698,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                           </div>
                           {otherChargesTotal > 0 && (
                             <div className="flex items-center justify-between text-[11px] font-bold bg-amber-50/80 p-1.5 rounded border border-amber-200 text-amber-950">
-                              <span>Freight Credited to Courier Khata:</span>
+                              <span>Freight Credited to Courier Registry:</span>
                               <span className="font-mono text-emerald-700">AED {otherChargesTotal.toFixed(2)}</span>
                             </div>
                           )}
@@ -2772,7 +2823,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                     <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                       <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 uppercase tracking-wide">
                         <CreditCard className="w-3.5 h-3.5 text-purple-600" />
-                        <span>Payment Terms & Deferred Credit (Khata)</span>
+                        <span>Payment Terms & Deferred Credit (Registry)</span>
                       </div>
                       <span className="text-[10px] font-mono font-bold text-purple-800 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
                         Receivable
@@ -2788,7 +2839,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                           disabled={status === 'POSTED'}
                           className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1 text-xs font-semibold text-slate-800"
                         >
-                          <option value="CREDIT_ACCOUNT">Credit Khata Account</option>
+                          <option value="CREDIT_ACCOUNT">Credit Registry Account</option>
                           <option value="BANK_TRANSFER">Direct Bank Wire (IBAN)</option>
                           <option value="CASH">Cash in Hand (Counter)</option>
                           <option value="CARD_POS">POS Card Terminal</option>
@@ -2811,7 +2862,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                     </div>
 
                     <div className="p-2 bg-purple-50/60 rounded-lg border border-purple-100 flex items-center justify-between text-xs font-bold">
-                      <span className="text-purple-900">Remaining Balance Due (To Khata):</span>
+                      <span className="text-purple-900">Remaining Balance Due (To Registry):</span>
                       <span className="font-mono text-sm text-purple-950">AED {creditAmountDue.toFixed(2)}</span>
                     </div>
 
@@ -3198,7 +3249,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                       </div>
 
                       <div className="flex justify-between text-xs pt-1 border-t border-dashed border-amber-200 text-purple-900 font-bold">
-                        <span>Debit to Customer Khata (Credit Due):</span>
+                        <span>Debit to Customer Registry (Credit Due):</span>
                         <span className="font-mono">AED {creditAmountDue.toFixed(2)}</span>
                       </div>
                     </div>
@@ -3238,7 +3289,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                             >
                               {isSaving && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
                               <CheckCircle className="w-4 h-4" />
-                              <span>✅ Post & Dispatch (Deduct Inventory & Khata)</span>
+                              <span>✅ Post & Dispatch (Deduct Inventory & Registry)</span>
                             </button>
 
                             <button
@@ -3272,7 +3323,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                             >
                               {isSaving && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
                               <RefreshCw className="w-3.5 h-3.5" />
-                              <span>🔄 UNPOST INVOICE (Restore Stock & Reverse Khata)</span>
+                              <span>🔄 UNPOST INVOICE (Restore Stock & Reverse Registry)</span>
                             </button>
 
                             <button
@@ -3516,7 +3567,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                       <div className="text-slate-600">{selectedCustomer?.address || 'Industrial Area, Dubai, UAE'}</div>
                       <div className="text-slate-600">Contact: {selectedCustomer?.phone || 'N/A'}</div>
                       {selectedCustomerCoaCode && (
-                        <div className="text-[10px] font-mono text-indigo-800 font-semibold mt-0.5">COA Khata Sub-Ledger: {selectedCustomerCoaCode}</div>
+                        <div className="text-[10px] font-mono text-indigo-800 font-semibold mt-0.5">COA Registry Sub-Ledger: {selectedCustomerCoaCode}</div>
                       )}
                     </div>
                     <div className="text-right">

@@ -33,13 +33,13 @@ export const DEFAULT_BANK_ACCOUNTS: BankAccountConfig[] = [
   {
     id: 'bnk-rak-01',
     bankName: 'RAKBANK',
-    accountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
-    iban: 'AE24 0331 2345 6789 0123 456',
-    accountNumber: '1048291029301',
-    branchName: 'Dubai Downtown / Al Ain',
+    accountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C-S.P.C',
+    iban: 'AE76 0400 0001 4365 6279 001',
+    accountNumber: '0143656279001',
+    branchName: 'Al Ain',
     swiftBic: 'RAKBAEADXXX',
     currency: 'AED',
-    qrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%26bank%3DRAKBANK',
+    qrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=iban%3AAE760400000143656279001%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%20L.L.C-S.P.C%26bank%3DRAKBANK',
     isPrimary: true,
     linkedPosTerminalId: '12857001',
     coaAccountCode: '1120-02',
@@ -83,6 +83,10 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   trnTaxNo: 'TRN-100482910300003',
   trn_number: 'TRN-100482910300003',
   trnNumber: 'TRN-100482910300003',
+  tradeLicenseNumber: 'CN-5888545',
+  trade_license_number: 'CN-5888545',
+  customsCode: '',
+  customs_code: '',
   defaultCurrency: 'AED',
   logoUrl: '/vintage_logo.svg',
   phone: '+971554186086',
@@ -105,10 +109,11 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   },
   vatRatePercent: 5.0,
   globalStockAlertThreshold: 5,
-  bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%26bank%3DRAKBANK',
-  bankIban: 'AE24 0331 2345 6789 0123 456',
+  bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=iban%3AAE760400000143656279001%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%20L.L.C-S.P.C%26bank%3DRAKBANK',
+  bankIban: 'AE76 0400 0001 4365 6279 001',
   bankName: 'RAKBANK',
-  bankAccountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+  bankAccountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C-S.P.C',
+  bankAccountNumber: '0143656279001',
   bankAccounts: DEFAULT_BANK_ACCOUNTS,
   posTerminalConfig: DEFAULT_POS_TERMINAL_CONFIG,
   enableCod: true,
@@ -247,6 +252,8 @@ export class CompanyProfileService {
     const waOrdersNumber = data.whatsapp_orders_number || data.whatsapp_order_number || data.whatsappOrderNumber || DEFAULT_COMPANY_PROFILE.whatsappOrderNumber || '';
     const companyDisplayName = data.company_display_name || data.companyDisplayName || data.company_name || data.companyName || DEFAULT_COMPANY_PROFILE.companyName;
     const trnNum = data.trn_number || data.trnNumber || data.trn_tax_no || data.trnTaxNo || DEFAULT_COMPANY_PROFILE.trnTaxNo;
+    const tradeLicense = data.trade_license_number || data.tradeLicenseNumber || data.profile_data?.tradeLicenseNumber || data.profile_data?.trade_license_number || DEFAULT_COMPANY_PROFILE.tradeLicenseNumber || 'CN-5888545';
+    const customsCode = data.customs_code || data.customsCode || data.profile_data?.customsCode || data.profile_data?.customs_code || '';
     const addr1 = data.address_line_1 || data.address_line1 || data.addressLine1 || DEFAULT_COMPANY_PROFILE.addressLine1;
     const addr2 = data.address_line_2 || data.address_line2 || data.addressLine2 || DEFAULT_COMPANY_PROFILE.addressLine2;
     const city = data.city || DEFAULT_COMPANY_PROFILE.city || 'Al Ain, Abu Dhabi';
@@ -353,6 +360,10 @@ export class CompanyProfileService {
       trnTaxNo: trnNum,
       trn_number: trnNum,
       trnNumber: trnNum,
+      tradeLicenseNumber: tradeLicense,
+      trade_license_number: tradeLicense,
+      customsCode,
+      customs_code: customsCode,
       defaultCurrency: (data.default_currency || data.defaultCurrency || 'AED') as any,
       logoUrl: data.logo_url || data.logoUrl || DEFAULT_COMPANY_PROFILE.logoUrl,
       phone: corpPhone,
@@ -420,6 +431,8 @@ export class CompanyProfileService {
 
     const companyDisplayName = profile.company_display_name || profile.companyDisplayName || profile.companyName || DEFAULT_COMPANY_PROFILE.companyName;
     const trnNum = profile.trn_number || profile.trnNumber || profile.trnTaxNo || DEFAULT_COMPANY_PROFILE.trnTaxNo;
+    const tradeLicense = profile.trade_license_number || profile.tradeLicenseNumber || DEFAULT_COMPANY_PROFILE.tradeLicenseNumber || 'CN-5888545';
+    const customsCode = profile.customs_code || profile.customsCode || '';
     const addr1 = profile.address_line_1 || profile.addressLine1 || DEFAULT_COMPANY_PROFILE.addressLine1;
     const addr2 = profile.address_line_2 || profile.addressLine2 || DEFAULT_COMPANY_PROFILE.addressLine2;
     const city = profile.city || DEFAULT_COMPANY_PROFILE.city;
@@ -440,6 +453,8 @@ export class CompanyProfileService {
       country,
       trn_tax_no: trnNum,
       trn_number: trnNum,
+      trade_license_number: tradeLicense,
+      customs_code: customsCode,
       phone: corpPhone,
       corporate_phone: corpPhone,
       email: corpEmail,
@@ -476,6 +491,10 @@ export class CompanyProfileService {
         virtualHostVideoUrl: profile.virtual_host_video_url || profile.virtualHostVideoUrl || '/mazi_video.mp4',
         company_display_name: companyDisplayName,
         trn_number: trnNum,
+        tradeLicenseNumber: tradeLicense,
+        trade_license_number: tradeLicense,
+        customsCode: customsCode,
+        customs_code: customsCode,
         address_line_1: addr1,
         address_line_2: addr2,
         city,

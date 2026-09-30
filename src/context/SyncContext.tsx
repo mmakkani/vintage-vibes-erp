@@ -24,6 +24,8 @@ export interface DeltaSyncPayload {
   timestamp: number;
 }
 
+const sentAutoInvoiceTimestamps = new Map<string, number>();
+
 export type SyncModuleKey = 'finance' | 'purchase' | 'sales' | 'inventory' | 'registry' | string;
 
 export interface SyncVersions {
@@ -384,23 +386,36 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
           if (table === 'sales_invoices' || table === 'purchase_invoices') {
             const isNowPosted = newRecord.status === 'POSTED' || newRecord.status === 'PAID';
             const wasPosted = oldRecord?.status === 'POSTED' || oldRecord?.status === 'PAID';
-            if (isNowPosted && !wasPosted) {
-              const recipientPhone = newRecord.customer_phone || newRecord.party_phone || newRecord.phone || newRecord.supplier_phone;
-              if (recipientPhone) {
-                import('../services/whatsappService.ts').then(({ WhatsAppService }) => {
-                  WhatsAppService.sendInvoiceNotification({
-                    invoiceNo: newRecord.invoice_no || newRecord.invoiceNo || String(newRecord.id).slice(0, 8),
-                    type: table === 'purchase_invoices' ? 'PURCHASE' : 'SALES',
-                    customerName: newRecord.customer_name || newRecord.party_name || newRecord.supplier_name,
-                    customerPhone: recipientPhone,
-                    totalAmount: Number(newRecord.total_amount || newRecord.total || 0),
-                    currency: newRecord.currency || 'AED',
-                    subtotal: Number(newRecord.subtotal || 0),
-                    taxAmount: Number(newRecord.tax_amount || newRecord.tax || 0),
-                    invoiceDate: newRecord.invoice_date || (newRecord.created_at ? String(newRecord.created_at).slice(0, 10) : undefined),
-                    items: Array.isArray(newRecord.items) ? newRecord.items : []
-                  }).catch(err => console.warn('[Auto-Invoicing Notice]:', err?.message));
-                }).catch(() => {});
+            
+            // STRICT RULE: B2B wholesale invoices are dispatched manually via high-res A4 graphic + AWB slip (no auto-plain-text spam)
+            const isB2bInvoice = 
+              newRecord.channel === 'WHOLESALE_B2B' || 
+              String(newRecord.invoice_no || '').startsWith('B2B-') || 
+              String(newRecord.invoiceNo || '').startsWith('B2B-');
+
+            if (isNowPosted && !wasPosted && !isB2bInvoice) {
+              const invKey = `${table}:${newRecord.id || newRecord.invoice_no || newRecord.invoiceNo}`;
+              const lastSent = sentAutoInvoiceTimestamps.get(invKey) || 0;
+              const now = Date.now();
+              if (now - lastSent > 10 * 60 * 1000) { // 10 minute cooldown per invoice
+                sentAutoInvoiceTimestamps.set(invKey, now);
+                const recipientPhone = newRecord.customer_phone || newRecord.party_phone || newRecord.phone || newRecord.supplier_phone;
+                if (recipientPhone) {
+                  import('../services/whatsappService.ts').then(({ WhatsAppService }) => {
+                    WhatsAppService.sendInvoiceNotification({
+                      invoiceNo: newRecord.invoice_no || newRecord.invoiceNo || String(newRecord.id).slice(0, 8),
+                      type: table === 'purchase_invoices' ? 'PURCHASE' : 'SALES',
+                      customerName: newRecord.customer_name || newRecord.party_name || newRecord.supplier_name,
+                      customerPhone: recipientPhone,
+                      totalAmount: Number(newRecord.total_amount || newRecord.total || 0),
+                      currency: newRecord.currency || 'AED',
+                      subtotal: Number(newRecord.subtotal || 0),
+                      taxAmount: Number(newRecord.tax_amount || newRecord.tax || 0),
+                      invoiceDate: newRecord.invoice_date || (newRecord.created_at ? String(newRecord.created_at).slice(0, 10) : undefined),
+                      items: Array.isArray(newRecord.items) ? newRecord.items : []
+                    }).catch(err => console.warn('[Auto-Invoicing Notice]:', err?.message));
+                  }).catch(() => {});
+                }
               }
             }
           }

@@ -74,6 +74,10 @@ export interface CompanyProfile {
   trnTaxNo: string;
   trn_number?: string;
   trnNumber?: string;
+  tradeLicenseNumber?: string;
+  trade_license_number?: string;
+  customsCode?: string;
+  customs_code?: string;
   defaultCurrency: CurrencyCode;
   logoUrl: string;
   phone: string;

@@ -24,10 +24,12 @@ import {
   AlertTriangle,
   BellRing,
   AlertCircle,
-  Crown
+  Crown,
+  MessageSquare
 } from 'lucide-react';
 import { User } from '../../auth/auth.types.ts';
 import { BaleYieldAnalyticsWidget } from './BaleYieldAnalyticsWidget.tsx';
+import { ExecutiveWhatsAppDigestModal } from './ExecutiveWhatsAppDigestModal.tsx';
 import { safeFetchJson } from '../../../utils/fetchUtils.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { DashboardService, getSafeFxRates, DEFAULT_FX_RATES } from '../../../services/dashboardService.ts';
@@ -63,6 +65,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
   const [stockAlerts, setStockAlerts] = useState<StockAlertItem[]>(() => cachedMainDashboardStockAlerts || []);
   const [grailAlerts, setGrailAlerts] = useState<any[]>(() => cachedMainDashboardGrails || []);
   const [globalThreshold, setGlobalThreshold] = useState<number>(() => cachedMainDashboardThreshold);
+  const [isWhatsAppDigestOpen, setIsWhatsAppDigestOpen] = useState<boolean>(false);
   const [kpiData, setKpiData] = useState(() => cachedMainDashboardKpi || {
     totalInventoryValueAED: 0,
     totalBalesInStock: 0,
@@ -322,7 +325,20 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
               className="px-3 py-2 rounded-xl border border-amber-300 bg-white hover:bg-amber-50 text-slate-900 text-xs font-bold uppercase tracking-wider shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Users className="w-4 h-4 text-amber-700" />
-              <span>Customer / Khata Registry</span>
+              <span>Customer / Registry</span>
+            </motion.button>
+
+            {/* Executive WhatsApp Daily Digest Trigger */}
+            <motion.button
+              type="button"
+              whileHover={{ scale: 1.04, y: -1 }}
+              whileTap={{ scale: 0.96 }}
+              onClick={() => setIsWhatsAppDigestOpen(true)}
+              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-700 to-teal-800 hover:from-emerald-500 hover:to-teal-700 text-white text-xs font-black uppercase tracking-wider shadow-md hover:shadow-lg transition-all flex items-center gap-1.5 cursor-pointer ring-2 ring-emerald-400/50"
+              title="Open Executive Daily Digest (Purchases, Multi-Channel Sales, Liquidity & Couriers) for WhatsApp"
+            >
+              <MessageSquare className="w-4 h-4 text-emerald-200" />
+              <span>📱 Executive WhatsApp Digest</span>
             </motion.button>
 
             {/* 3D Royal Gold Wax Seal Certification Stamp */}
@@ -732,6 +748,12 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Executive WhatsApp Daily Digest Modal */}
+      <ExecutiveWhatsAppDigestModal
+        isOpen={isWhatsAppDigestOpen}
+        onClose={() => setIsWhatsAppDigestOpen(false)}
+      />
     </div>
   );
 };
