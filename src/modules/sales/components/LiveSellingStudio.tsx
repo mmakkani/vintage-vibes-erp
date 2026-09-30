@@ -10,6 +10,7 @@ import { ThermalBarcodeSticker, StickerData } from '../../../components/ThermalB
 import { LiveStreamService } from '../../../services/liveStreamService.ts';
 import { soundEffects } from '../../../utils/soundEffects.ts';
 import { VintageGrailCertificateModal, GrailCertificateData } from '../../../components/VintageGrailCertificateModal.tsx';
+import { WhatsAppService } from '../../../services/whatsappService.ts';
 import {
   Radio,
   Video,
@@ -268,6 +269,36 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     country: string;
     courierNote: string;
   } | null>(null);
+  const [sendingDirectWa, setSendingDirectWa] = useState<string | null>(null);
+
+  const handleSendLiveWhatsAppDirect = async (phone: string, text: string, label: string) => {
+    let targetPhone = (phone || '').trim();
+    if (!WhatsAppService.isValidPhoneNumber(targetPhone)) {
+      const input = prompt(`Enter Buyer WhatsApp Number for ${activeBuyerHandle || 'Buyer'} (+971... / +92...):`, '+971');
+      if (!input) return;
+      targetPhone = input.trim();
+      setActiveBuyerPhone(targetPhone);
+    }
+    const cleanPhone = WhatsAppService.sanitizePhoneNumber(targetPhone);
+    if (!cleanPhone || !WhatsAppService.isValidPhoneNumber(cleanPhone)) {
+      alert('Please ensure buyer has a valid WhatsApp phone number.');
+      return;
+    }
+    setSendingDirectWa(label);
+    try {
+      const res = await WhatsAppService.sendTextMessage(cleanPhone, text);
+      if (res && res.success) {
+        setClaimFeedback({ text: `✅ Dispatched ${label} directly to buyer's WhatsApp!`, type: 'success' });
+      } else {
+        alert(res?.error || 'WhatsApp device not linked. Opening WhatsApp Web instead...');
+        window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`, '_blank');
+      }
+    } catch (e: any) {
+      window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`, '_blank');
+    } finally {
+      setSendingDirectWa(null);
+    }
+  };
 
   // Available stock pieces (strictly IN_STOCK, unsold)
   const availablePieces = useMemo(() => {
@@ -3047,16 +3078,29 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     </div>
 
                     <div className="pt-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={sendingDirectWa === 'Order Summary'}
+                        onClick={() => handleSendLiveWhatsAppDirect(
+                          activeBuyerPhone,
+                          generateOrderSummaryWhatsAppText(selectedHubBuyer),
+                          'Order Summary'
+                        )}
+                        className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>{sendingDirectWa === 'Order Summary' ? 'Sending...' : 'Send Summary (WhatsApp)'}</span>
+                      </button>
                       <a
                         href={`https://wa.me/${activeBuyerPhone.replace(/\D/g, '')}?text=${encodeURIComponent(
                           generateOrderSummaryWhatsAppText(selectedHubBuyer)
                         )}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors"
+                        className="p-2 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-300 text-emerald-800 cursor-pointer"
+                        title="Open WhatsApp Web in new tab"
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
-                        <span>Open WhatsApp Summary</span>
                       </a>
                       <button
                         type="button"
@@ -3085,16 +3129,29 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     </div>
 
                     <div className="pt-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={sendingDirectWa === 'Location Request'}
+                        onClick={() => handleSendLiveWhatsAppDirect(
+                          activeBuyerPhone,
+                          generateRequestLocationWhatsAppText(selectedHubBuyer),
+                          'Location Request'
+                        )}
+                        className="flex-1 py-2 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>{sendingDirectWa === 'Location Request' ? 'Sending...' : 'Send Location Request (WhatsApp)'}</span>
+                      </button>
                       <a
                         href={`https://wa.me/${activeBuyerPhone.replace(/\D/g, '')}?text=${encodeURIComponent(
                           generateRequestLocationWhatsAppText(selectedHubBuyer)
                         )}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="flex-1 py-2 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors"
+                        className="p-2 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-300 text-blue-800 cursor-pointer"
+                        title="Open WhatsApp Web in new tab"
                       >
-                        <Send className="w-3.5 h-3.5" />
-                        <span>Send Location Request</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
                       </a>
                       <button
                         type="button"
@@ -3269,16 +3326,28 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 className="w-full text-xs font-mono bg-white p-2.5 rounded-lg border border-emerald-300 text-stone-900 focus:outline-none"
               />
 
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-[11px] text-emerald-800 font-semibold">Direct Customer Link:</span>
+              <div className="flex items-center justify-between pt-1 gap-2">
+                <button
+                  type="button"
+                  disabled={sendingDirectWa === 'Finalized Order'}
+                  onClick={() => handleSendLiveWhatsAppDirect(
+                    activeBuyerPhone || '',
+                    finalizedResult.whatsAppMessage || '',
+                    'Finalized Order'
+                  )}
+                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{sendingDirectWa === 'Finalized Order' ? 'Sending...' : 'Send via Linked WhatsApp'}</span>
+                </button>
                 <a
-                  href={`https://wa.me/?text=${encodeURIComponent(finalizedResult.whatsAppMessage || '')}`}
+                  href={`https://wa.me/${(activeBuyerPhone || '').replace(/\D/g, '')}?text=${encodeURIComponent(finalizedResult.whatsAppMessage || '')}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-xs"
+                  className="px-3 py-1.5 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-extrabold text-xs flex items-center gap-1.5 shadow-xs"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
-                  <span>Open WhatsApp Web Chat</span>
+                  <span>Web Chat</span>
                 </a>
               </div>
             </div>

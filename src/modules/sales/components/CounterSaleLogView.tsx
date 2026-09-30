@@ -206,15 +206,62 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
 
   // WhatsApp E-Receipt (Direct Socket Dispatch via Railway Bridge with fallback)
   const handleSendWhatsApp = async (inv: SalesInvoice) => {
-    const client = clients.find(c => c.id === inv.customerId);
-    let rawPhone = (client?.phone || inv.customerPhone || '').trim();
-    if (!rawPhone) {
-      const input = prompt('Enter Customer WhatsApp Number (+971... / +92...)', '+971');
-      if (!input) return;
-      rawPhone = input;
+    // 1. Prioritize customer's direct phone on this specific invoice
+    let rawPhone = (inv.customerPhone || '').trim();
+
+    // 2. If not valid, check client party ONLY if it's a real valid phone (exclude Walk-In placeholder)
+    if (!WhatsAppService.isValidPhoneNumber(rawPhone)) {
+      const client = clients.find(c => c.id === inv.customerId || c.id === inv.clientId);
+      if (client?.phone && WhatsAppService.isValidPhoneNumber(client.phone)) {
+        rawPhone = client.phone.trim();
+      }
     }
+
+    // 3. If still not valid, fetch real customer_phone from live pos_sales or sales_invoices by invoiceNo
+    if (!WhatsAppService.isValidPhoneNumber(rawPhone) && inv.invoiceNo) {
+      try {
+        const { data: posData } = await supabase
+          .from('pos_sales')
+          .select('customer_phone')
+          .eq('invoice_number', inv.invoiceNo)
+          .maybeSingle();
+        if (posData?.customer_phone && WhatsAppService.isValidPhoneNumber(posData.customer_phone)) {
+          rawPhone = posData.customer_phone.trim();
+        } else {
+          const { data: sinvData } = await supabase
+            .from('sales_invoices')
+            .select('customer_phone')
+            .eq('invoice_no', inv.invoiceNo)
+            .maybeSingle();
+          if (sinvData?.customer_phone && WhatsAppService.isValidPhoneNumber(sinvData.customer_phone)) {
+            rawPhone = sinvData.customer_phone.trim();
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 4. If still missing or dummy, prompt cashier for this specific customer's WhatsApp number
+    if (!WhatsAppService.isValidPhoneNumber(rawPhone)) {
+      const custLabel = inv.customerName || 'Customer';
+      const input = prompt(
+        `Enter WhatsApp Number for ${custLabel} (+971... / +92...):`,
+        '+971'
+      );
+      if (!input) return;
+      rawPhone = input.trim();
+
+      // Persist entered phone to DB and local invoice so future dispatches never ask again
+      if (WhatsAppService.isValidPhoneNumber(rawPhone) && inv.invoiceNo) {
+        try {
+          await supabase.from('pos_sales').update({ customer_phone: rawPhone }).eq('invoice_number', inv.invoiceNo);
+          await supabase.from('sales_invoices').update({ customer_phone: rawPhone }).eq('invoice_no', inv.invoiceNo);
+          inv.customerPhone = rawPhone;
+        } catch (_) {}
+      }
+    }
+
     const cleanPhone = WhatsAppService.sanitizePhoneNumber(rawPhone);
-    if (!cleanPhone) {
+    if (!cleanPhone || !WhatsAppService.isValidPhoneNumber(cleanPhone)) {
       alert('Valid customer phone number is required.');
       return;
     }
@@ -512,7 +559,13 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
                         {inv.postedBy || 'Counter Cashier'}
                       </td>
                       <td className="py-2.5 px-3 font-sans text-slate-900 font-medium">
-                        {inv.customerName || 'Walk-In Customer'}
+                        <div>{inv.customerName || 'Walk-In Customer'}</div>
+                        {inv.customerPhone && WhatsAppService.isValidPhoneNumber(inv.customerPhone) && (
+                          <div className="text-[10px] text-emerald-700 font-mono font-bold flex items-center gap-1 mt-0.5">
+                            <span>📱</span>
+                            <span>{inv.customerPhone}</span>
+                          </div>
+                        )}
                       </td>
                       <td className="py-2.5 px-3 text-center">
                         <span className="px-2 py-0.5 bg-slate-100 text-slate-800 rounded font-bold text-[10px]">

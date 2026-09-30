@@ -64,13 +64,18 @@ export const RetailCustomerStatementModal: React.FC<RetailCustomerStatementModal
   });
 
   // Handle WhatsApp Statement Dispatch
-  const handleSendWhatsAppStatement = () => {
-    const phone = customer.phone?.trim();
-    if (!phone) {
-      alert('This customer does not have a phone number registered.');
-      return;
+  const handleSendWhatsAppStatement = async () => {
+    let phone = customer.phone?.trim();
+    if (!phone || !WhatsAppService.isValidPhoneNumber(phone)) {
+      const input = prompt(`Enter WhatsApp number for ${customer.name || 'Customer'} (+971... / +92...):`, '+971');
+      if (!input) return;
+      phone = input.trim();
     }
     const cleanPhone = WhatsAppService.sanitizePhoneNumber(phone);
+    if (!cleanPhone || !WhatsAppService.isValidPhoneNumber(cleanPhone)) {
+      alert('Valid customer phone number is required.');
+      return;
+    }
     const dateToday = new Date().toLocaleDateString('en-GB');
 
     const recentInvoicesSummary = invoices.slice(0, 5).map(inv => {
@@ -78,7 +83,7 @@ export const RetailCustomerStatementModal: React.FC<RetailCustomerStatementModal
       return `• #${inv.invoiceNo} (${d}): AED ${Number(inv.totalAmount || 0).toFixed(2)} [${inv.paymentMethod || 'PAID'}]`;
     }).join('\n');
 
-    const message = encodeURIComponent(
+    const rawMessage = 
       `🧾 *VINTAGE VIBES DUBAI — RETAIL CUSTOMER STATEMENT*\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
       `*Customer:* ${customer.name}\n` +
@@ -93,9 +98,17 @@ export const RetailCustomerStatementModal: React.FC<RetailCustomerStatementModal
       `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
       (recentInvoicesSummary ? `📦 *Recent Invoices:*\n${recentInvoicesSummary}\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n` : '') +
       `Thank you for being our valued customer!\n` +
-      `For inquiries or support: +971 55 418 6086`
-    );
+      `For inquiries or support: +971 55 418 6086`;
 
+    try {
+      const res = await WhatsAppService.sendTextMessage(cleanPhone, rawMessage);
+      if (res && res.success) {
+        alert(`✅ Statement sent directly to +${cleanPhone} via WhatsApp!`);
+        return;
+      }
+    } catch (_) {}
+
+    const message = encodeURIComponent(rawMessage);
     window.open(`https://wa.me/${cleanPhone}?text=${message}`, '_blank');
   };
 

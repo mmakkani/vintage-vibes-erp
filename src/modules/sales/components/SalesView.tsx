@@ -21,6 +21,7 @@ import { PartiesService } from '../../../services/partiesService.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { Pagination } from '../../../components/Pagination.tsx';
 import { VINTAGE_VIBES_GOLD_SEAL_POS_BASE64 } from '../../../assets/vintageGoldSeal.ts';
+import { WhatsAppService } from '../../../services/whatsappService.ts';
 
 import {
   ShoppingCart,
@@ -166,11 +167,59 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
     }
   });
 
-  const sendWhatsAppNotification = (inv: SalesInvoice) => {
-    const client = (clients || []).find(c => c.id === inv.customerId);
-    const phone = (client?.phone || inv.customerPhone || '').replace(/[^0-9]/g, '');
+  const sendWhatsAppNotification = async (inv: SalesInvoice) => {
+    // 1. Prioritize customer's direct phone on this invoice
+    let rawPhone = (inv.customerPhone || '').trim();
+
+    // 2. If not valid, check client party ONLY if it's a real valid phone (exclude Walk-In placeholder)
+    if (!WhatsAppService.isValidPhoneNumber(rawPhone)) {
+      const client = (clients || []).find(c => c.id === inv.clientId || c.id === inv.customerId);
+      if (client?.phone && WhatsAppService.isValidPhoneNumber(client.phone)) {
+        rawPhone = client.phone.trim();
+      }
+    }
+
+    // 3. If still not valid, fetch real customer_phone from live sales_invoices by invoiceNo or id
+    if (!WhatsAppService.isValidPhoneNumber(rawPhone) && (inv.id || inv.invoiceNo)) {
+      try {
+        const { data: sinvData } = await supabase
+          .from('sales_invoices')
+          .select('customer_phone')
+          .or(`id.eq.${inv.id || '00000000-0000-0000-0000-000000000000'},invoice_no.eq.${inv.invoiceNo}`)
+          .maybeSingle();
+        if (sinvData?.customer_phone && WhatsAppService.isValidPhoneNumber(sinvData.customer_phone)) {
+          rawPhone = sinvData.customer_phone.trim();
+        }
+      } catch (_) {}
+    }
+
+    // 4. If still missing or dummy, prompt user for this specific client's WhatsApp number
+    if (!WhatsAppService.isValidPhoneNumber(rawPhone)) {
+      const custLabel = inv.customerName || 'Client';
+      const input = prompt(
+        `Enter WhatsApp Number for "${custLabel}" (+971... / +92...):`,
+        '+971'
+      );
+      if (!input) return;
+      rawPhone = input.trim();
+
+      // Persist entered phone to DB and local invoice so future dispatches never ask again
+      if (WhatsAppService.isValidPhoneNumber(rawPhone) && inv.invoiceNo) {
+        try {
+          await supabase.from('sales_invoices').update({ customer_phone: rawPhone }).eq('invoice_no', inv.invoiceNo);
+          inv.customerPhone = rawPhone;
+        } catch (_) {}
+      }
+    }
+
+    const cleanPhone = WhatsAppService.sanitizePhoneNumber(rawPhone);
+    if (!cleanPhone || !WhatsAppService.isValidPhoneNumber(cleanPhone)) {
+      alert('Valid customer phone number is required.');
+      return;
+    }
+
     const itemsCount = Array.isArray(inv?.items) ? inv.items.length : 0;
-    const text = encodeURIComponent(
+    const msgText = 
       `🚚 *VINTAGE VIBES DUBAI - B2B DISPATCH ADVICE*\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `📄 *Invoice No:* ${inv.invoiceNo}\n` +
@@ -181,9 +230,20 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `📍 *Warehouse:* Al Quoz Industrial 3, Dubai\n` +
       `📞 *Support:* +971 4 883 9120\n` +
-      `Thank you for your valued business!`
-    );
-    const url = phone ? `https://wa.me/${phone}?text=${text}` : `https://wa.me/?text=${text}`;
+      `_Thank you for your valued business!_`;
+
+    try {
+      const res = await WhatsAppService.sendTextMessage(cleanPhone, msgText);
+      if (res && res.success) {
+        alert(`✅ B2B Dispatch Advice sent directly to +${cleanPhone} via WhatsApp!`);
+        return;
+      }
+    } catch (e) {
+      console.warn('[SalesView] Direct socket dispatch fallback:', e);
+    }
+
+    const text = encodeURIComponent(msgText);
+    const url = cleanPhone ? `https://wa.me/${cleanPhone}?text=${text}` : `https://wa.me/?text=${text}`;
     window.open(url, '_blank');
   };
 
@@ -873,7 +933,15 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                   {invoices.map(inv => (
                     <tr key={inv.id} className="hover:bg-blue-50/40 transition-colors">
                       <td className="px-3 py-2 font-mono font-bold text-blue-900">{inv.invoiceNo}</td>
-                      <td className="px-3 py-2 font-medium text-slate-800">{inv.customerName}</td>
+                      <td className="px-3 py-2 font-medium text-slate-800">
+                        <div>{inv.customerName}</div>
+                        {inv.customerPhone && WhatsAppService.isValidPhoneNumber(inv.customerPhone) && (
+                          <div className="text-[10px] text-emerald-700 font-mono font-bold flex items-center gap-1 mt-0.5">
+                            <span>📱</span>
+                            <span>{inv.customerPhone}</span>
+                          </div>
+                        )}
+                      </td>
                       <td className="px-3 py-2 font-mono text-slate-500">{inv.salesGatePassNo || 'Direct'}</td>
                       <td className="px-3 py-2 text-slate-600">{inv.date}</td>
                       <td className="px-3 py-2">

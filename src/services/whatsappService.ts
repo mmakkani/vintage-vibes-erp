@@ -56,6 +56,28 @@ export class WhatsAppService {
   }
 
   /**
+   * Validates if a phone number is an authentic dialable number (rejects all-zeros, dummy walk-in placeholders)
+   */
+  public static isValidPhoneNumber(phone?: string | null): boolean {
+    if (!phone) return false;
+    const digits = String(phone).replace(/\D/g, '');
+    if (digits.length < 8 || digits.length > 15) return false;
+    if (/^0+$/.test(digits)) return false;
+    if (new Set(digits.split('')).size <= 1) return false;
+
+    // Strip common country code prefixes
+    const withoutCc = digits.replace(/^(971|92|91|966|965|968|973|974|1|44)/, '').replace(/^0+/, '');
+    if (!withoutCc || /^0+$/.test(withoutCc) || new Set(withoutCc.split('')).size <= 1) return false;
+
+    // Check if remaining payload has too many trailing zeros (e.g. 500000000 -> 50 followed by 7 zeros)
+    if (/^5\d0{6,}$/.test(withoutCc)) return false;
+    if (/^3\d0{7,}$/.test(withoutCc)) return false;
+
+    if (['12345678', '123456789', '1234567890', '987654321'].includes(digits)) return false;
+    return true;
+  }
+
+  /**
    * Fetches the current WhatsApp Gateway configuration from PostgreSQL / Serverless API
    */
   public static async getGatewayConfig(): Promise<any> {
@@ -127,9 +149,9 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
   public static async sendInvoiceNotification(payload: InvoiceNotificationPayload): Promise<WhatsAppSendResult> {
     try {
       const cleanPhone = this.sanitizePhoneNumber(payload?.customerPhone);
-      if (!cleanPhone || cleanPhone.length < 7) {
-        console.warn('[WhatsAppService] Skipping invoice notification: recipient phone number is missing or invalid.');
-        return { success: false, error: 'Recipient phone number is missing or invalid.' };
+      if (!cleanPhone || !this.isValidPhoneNumber(cleanPhone)) {
+        console.warn('[WhatsAppService] Skipping invoice notification: recipient phone number is missing, placeholder, or invalid:', payload?.customerPhone);
+        return { success: false, error: 'Recipient phone number is missing, placeholder, or invalid.' };
       }
 
       const formattedText = this.formatInvoiceMessage(payload);
@@ -195,8 +217,8 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
   public static async sendTextMessage(to: string, text: string, imageUrl?: string): Promise<WhatsAppSendResult> {
     try {
       const cleanPhone = this.sanitizePhoneNumber(to);
-      if (!cleanPhone) {
-        return { success: false, error: 'Valid recipient phone number is required.' };
+      if (!cleanPhone || !this.isValidPhoneNumber(cleanPhone)) {
+        return { success: false, error: 'Valid recipient phone number is required (placeholder/dummy numbers are rejected).' };
       }
 
       const res = await fetch('/api/marketing/whatsapp/send-message', {

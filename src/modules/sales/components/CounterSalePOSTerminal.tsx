@@ -1507,7 +1507,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       setIsScanning(false);
 
       // 5. Automated Marketing WhatsApp Invoice Slip (Background task)
-      if (customerPhoneForSlip) {
+      if (customerPhoneForSlip && WhatsAppService.isValidPhoneNumber(customerPhoneForSlip)) {
         const firstPiece = completedCart?.[0]?.piece || completedPieces?.[0];
         let pieceImageUrl = 
           firstPiece?.frontImageUrl || 
@@ -1653,10 +1653,10 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     if (!checkoutSuccessData) return;
     const inv = checkoutSuccessData.invoice;
     let phone = (inv.customerPhone || selectedCustomer?.phone || '').trim();
-    if (!phone) {
-      const input = prompt('Enter Customer WhatsApp Number (+971...)', '+971');
+    if (!WhatsAppService.isValidPhoneNumber(phone)) {
+      const input = prompt(`Enter WhatsApp number for ${inv.customerName || selectedCustomer?.name || 'Customer'} (+971... / +92...):`, '+971');
       if (!input) return;
-      phone = input;
+      phone = input.trim();
     }
 
     const firstItem = inv.items?.[0] || checkoutSuccessData.cartSnapshot?.[0];
@@ -1749,18 +1749,43 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     });
   };
 
-  // WhatsApp Gift Slip (No Prices)
-  const handleSendWhatsAppGiftReceipt = () => {
+  // WhatsApp Gift Slip (No Prices) - Direct Socket Dispatch with fallback
+  const handleSendWhatsAppGiftReceipt = async () => {
     if (!checkoutSuccessData) return;
     const inv = checkoutSuccessData.invoice;
-    const phone = (selectedCustomer?.phone || prompt('Enter WhatsApp Number for Gift Slip (+971...)', '+971') || '').replace(/[^0-9]/g, '');
-    if (!phone) return;
+    let phone = (inv.customerPhone || selectedCustomer?.phone || '').trim();
+    if (!WhatsAppService.isValidPhoneNumber(phone)) {
+      const input = prompt('Enter WhatsApp Number for Gift Slip (+971... / +92...):', '+971');
+      if (!input) return;
+      phone = input.trim();
+    }
+    const cleanPhone = WhatsAppService.sanitizePhoneNumber(phone);
+    if (!cleanPhone || !WhatsAppService.isValidPhoneNumber(cleanPhone)) {
+      alert('Valid customer phone number is required.');
+      return;
+    }
+
+    const firstPiece = checkoutSuccessData.pieces?.[0];
+    let pieceImageUrl = 
+      firstPiece?.frontImageUrl ||
+      (firstPiece as any)?.front_image_url ||
+      (firstPiece as any)?.frontImage ||
+      (firstPiece as any)?.front_image ||
+      (firstPiece as any)?.images?.[0] ||
+      firstPiece?.imageUrl;
+
+    if (!pieceImageUrl && firstPiece?.barcode) {
+      try {
+        const { data: dbP } = await supabase.from('inventory_pieces').select('front_image_url').eq('barcode', firstPiece.barcode).maybeSingle();
+        if (dbP?.front_image_url) pieceImageUrl = dbP.front_image_url;
+      } catch (_) {}
+    }
 
     const itemsSummary = (Array.isArray(checkoutSuccessData?.pieces) ? checkoutSuccessData.pieces : []).map((p: any) => `• ${p.brandName} ${p.itemName} (${p.sizeScanned || 'M'}) [SKU: ${p.barcode}]`).join('\n');
-    const msg = encodeURIComponent(
-      `🎁 *${activeProfile?.companyName || 'VINTAGE VIBES DUBAI'} - GIFT SLIP*\n` +
+    const msgText = 
+      `🎁 *${activeProfile?.companyName || 'VINTAGE VIBES DUBAI'} - OFFICIAL GIFT SLIP*\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
-      `📄 *Gift Ref:* ${inv.invoiceNo}\n` +
+      `📄 *Gift Ref:* #${inv.invoiceNo}\n` +
       `📅 *Date:* ${inv.date}\n` +
       (giftMessage ? `💌 *Gift Note:* "${giftMessage}"\n` : '') +
       `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -1769,10 +1794,22 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       `★ *14-DAY EXCHANGE POLICY* ★\n` +
       `• Exchange permitted within 14 days with tags attached.\n` +
       `• No cash refund. Prices hidden for recipient.\n` +
-      `Store: ${activeProfile?.address_line_1 || activeProfile?.addressLine1 || 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, UAE'}\n` +
-      `Enjoy your vintage grail!`
-    );
-    window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
+      `📍 Store: ${activeProfile?.address_line_1 || activeProfile?.addressLine1 || 'House 14 Street 4 - Al Jimi - Al Nudood, Al Ain, UAE'}\n` +
+      `_Enjoy your vintage grail!_ 🛍️✨`;
+
+    try {
+      const res = await WhatsAppService.sendTextMessage(cleanPhone, msgText, pieceImageUrl);
+      if (res && res.success) {
+        alert(`✅ Gift Slip sent directly to +${cleanPhone} via WhatsApp!`);
+        return;
+      }
+    } catch (err: any) {
+      console.warn('[POS Gift Slip] Direct socket fallback:', err?.message || err);
+    }
+
+    // Fallback to browser wa.me link
+    const msg = encodeURIComponent(msgText);
+    window.open(`https://wa.me/${cleanPhone}?text=${msg}`, '_blank');
   };
 
   return (

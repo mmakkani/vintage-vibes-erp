@@ -9,8 +9,12 @@ import {
   Phone,
   Truck,
   DollarSign,
-  Package
+  Package,
+  Send,
+  Loader2
 } from 'lucide-react';
+import { WhatsAppService } from '../../../services/whatsappService.ts';
+import { supabase } from '../../../supabaseClient.ts';
 
 interface WhatsAppOrderModalProps {
   invoice: SalesInvoice;
@@ -21,8 +25,13 @@ export const WhatsAppOrderModal: React.FC<WhatsAppOrderModalProps> = ({
   invoice,
   onClose
 }) => {
-  const [phone, setPhone] = useState(invoice.customerPhone || '');
+  const initialPhone = WhatsAppService.isValidPhoneNumber(invoice.customerPhone)
+    ? (invoice.customerPhone || '')
+    : '';
+  const [phone, setPhone] = useState(initialPhone);
   const [copied, setCopied] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState<string | null>(null);
 
   // Generate formatted WhatsApp message
   const generateMessage = () => {
@@ -86,6 +95,39 @@ Please reply *"CONFIRMED"* or send your live Google Maps location pin so ${couri
     navigator.clipboard.writeText(messageText);
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
+  };
+
+  const handleSendDirect = async () => {
+    const cleanPhone = WhatsAppService.sanitizePhoneNumber(phone);
+    if (!cleanPhone || !WhatsAppService.isValidPhoneNumber(cleanPhone)) {
+      alert('Please enter a valid phone number with country code (+971 / +92).');
+      return;
+    }
+    setIsSending(true);
+    setSendSuccess(null);
+    try {
+      const res = await WhatsAppService.sendTextMessage(cleanPhone, messageText);
+      if (res && res.success) {
+        setSendSuccess('Sent to WhatsApp!');
+        if (invoice.id || invoice.invoiceNo) {
+          try {
+            await supabase.from('sales_invoices').update({ customer_phone: cleanPhone }).eq('invoice_no', invoice.invoiceNo);
+            invoice.customerPhone = cleanPhone;
+          } catch (_) {}
+        }
+        setTimeout(() => {
+          onClose();
+        }, 1500);
+      } else {
+        alert(res?.error || 'WhatsApp device not linked. Opening WhatsApp Web instead...');
+        handleOpenWhatsApp();
+      }
+    } catch (err: any) {
+      console.warn('[WhatsAppOrderModal] Direct send error:', err);
+      handleOpenWhatsApp();
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const handleOpenWhatsApp = () => {
@@ -179,16 +221,39 @@ Please reply *"CONFIRMED"* or send your live Google Maps location pin so ${couri
           <div className="flex items-center gap-2">
             <button
               onClick={onClose}
-              className="px-3.5 py-2 rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold text-xs"
+              className="px-3 py-2 rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold text-xs"
             >
               Cancel
             </button>
             <button
               onClick={handleOpenWhatsApp}
-              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/20 transition-colors cursor-pointer"
+              className="px-3 py-2 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Open WhatsApp Web in new tab"
             >
-              <ExternalLink className="w-4 h-4" />
-              <span>Open in WhatsApp</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Web Chat</span>
+            </button>
+            <button
+              onClick={handleSendDirect}
+              disabled={isSending}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+            >
+              {isSending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Sending...</span>
+                </>
+              ) : sendSuccess ? (
+                <>
+                  <CheckCircle className="w-4 h-4" />
+                  <span>{sendSuccess}</span>
+                </>
+              ) : (
+                <>
+                  <Send className="w-4 h-4" />
+                  <span>Send via Linked WhatsApp</span>
+                </>
+              )}
             </button>
           </div>
         </div>
