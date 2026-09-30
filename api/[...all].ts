@@ -4138,13 +4138,48 @@ RULES FOR YOUR RESPONSE:
     }
 
     // 0c. Dhamaka 1: Automated Tax Invoice WhatsApp Dispatch
-    if ((pathname.endsWith('/whatsapp/send-invoice') || pathname.endsWith('/marketing/whatsapp/send-invoice')) && method === 'POST') {
-      const { to, text, invoiceNo, customerName, totalAmount, currency } = body || {};
+    if ((pathname.endsWith('/whatsapp/send-invoice') || pathname.endsWith('/marketing/whatsapp/send-invoice') || pathname.endsWith('/whatsapp/send-slip')) && method === 'POST') {
+      const { to, text, invoiceNo, customerName, totalAmount, currency, imageUrl } = body || {};
       if (!to) {
         return res.status(400).json({ success: false, error: 'Recipient phone number is required.' });
       }
 
-      const result = await sendMetaCloudWhatsAppMessage(to, text);
+      const cleanTo = String(to).replace(/\D/g, '');
+
+      // 1. Primary: Dispatch via Live Persistent WhatsApp Bridge (Railway / Baileys Socket)
+      const currentCfg = await getWhatsappGatewayConfigFromDb().catch(() => ({}));
+      const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
+
+      if (bridgeUrl) {
+        try {
+          const bridgeRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: cleanTo,
+              text,
+              imageUrl
+            }),
+            signal: AbortSignal.timeout(8000)
+          });
+          if (bridgeRes.ok) {
+            const bridgeData = await bridgeRes.json().catch(() => ({}));
+            if (bridgeData.success) {
+              return res.status(200).json({
+                success: true,
+                message: `Invoice #${invoiceNo || ''} dispatched via Linked WhatsApp Socket!`,
+                messageId: bridgeData.messageId,
+                method: 'BAILEYS_PERSISTENT_BRIDGE'
+              });
+            }
+          }
+        } catch (bridgeErr: any) {
+          console.warn('[Vercel send-invoice] Bridge dispatch warning:', bridgeErr?.message);
+        }
+      }
+
+      // 2. Fallback: Meta Cloud API
+      const result = await sendMetaCloudWhatsAppMessage(cleanTo, text, imageUrl);
       if (result.success) {
         return res.status(200).json({
           success: true,
@@ -4155,10 +4190,96 @@ RULES FOR YOUR RESPONSE:
       } else {
         return res.status(400).json({
           success: false,
-          error: result.error || 'Failed to dispatch WhatsApp invoice',
+          error: result.error || 'Failed to dispatch WhatsApp invoice. Please ensure WhatsApp device is linked.',
           details: result.metaData
         });
       }
+    }
+
+    // 0c-1. Direct WhatsApp Message Dispatch
+    if ((pathname.endsWith('/whatsapp/send-message') || pathname.endsWith('/marketing/whatsapp/send-message')) && method === 'POST') {
+      const { to, text, imageUrl } = body || {};
+      if (!to || !text) {
+        return res.status(400).json({ success: false, error: 'Recipient phone number and text are required.' });
+      }
+
+      const cleanTo = String(to).replace(/\D/g, '');
+      const currentCfg = await getWhatsappGatewayConfigFromDb().catch(() => ({}));
+      const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
+
+      if (bridgeUrl) {
+        try {
+          const bridgeRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ to: cleanTo, text, imageUrl }),
+            signal: AbortSignal.timeout(8000)
+          });
+          if (bridgeRes.ok) {
+            const bridgeData = await bridgeRes.json().catch(() => ({}));
+            if (bridgeData.success) {
+              return res.status(200).json({ success: true, messageId: bridgeData.messageId, method: 'BAILEYS_PERSISTENT_BRIDGE' });
+            }
+          }
+        } catch (_) {}
+      }
+
+      const result = await sendMetaCloudWhatsAppMessage(cleanTo, text, imageUrl);
+      if (result.success) {
+        return res.status(200).json({ success: true, messageId: result.metaData?.messages?.[0]?.id });
+      }
+      return res.status(400).json({ success: false, error: result.error || 'WhatsApp device not linked.' });
+    }
+
+    // 0c-2. Storefront Concierge Inquiry
+    if ((pathname.endsWith('/whatsapp/storefront-inquiry') || pathname.endsWith('/marketing/whatsapp/storefront-inquiry')) && method === 'POST') {
+      const { customerName, customerPhone, message, pieceId, pieceTitle, piecePrice, imageUrl } = body || {};
+      if (!customerPhone) {
+        return res.status(400).json({ success: false, error: 'Customer phone number is required.' });
+      }
+
+      const cleanCustPhone = String(customerPhone).replace(/\D/g, '');
+      const currentCfg = await getWhatsappGatewayConfigFromDb().catch(() => ({}));
+      const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
+      const adminPhone = '923022190822';
+
+      const formattedInquiry =
+        `🌟 *NEW STOREFRONT INQUIRY — VINTAGE VIBES*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `👤 *Customer:* ${customerName || 'Storefront Visitor'}\n` +
+        `📱 *Phone:* +${cleanCustPhone}\n` +
+        (pieceTitle ? `👕 *Garment:* ${pieceTitle}\n` : '') +
+        (pieceId ? `🏷️ *SKU / Barcode:* ${pieceId}\n` : '') +
+        (piecePrice ? `💰 *Price:* AED ${Number(piecePrice).toLocaleString()}\n` : '') +
+        `💬 *Inquiry:* ${message || 'Customer is inquiring about this piece.'}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `_Dispatched via Vintage Vibes Live Concierge_`;
+
+      if (bridgeUrl) {
+        try {
+          await fetch(`${bridgeUrl.replace(/\/$/, '')}/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ to: adminPhone, text: formattedInquiry, imageUrl }),
+            signal: AbortSignal.timeout(8000)
+          }).catch(() => {});
+
+          await fetch(`${bridgeUrl.replace(/\/$/, '')}/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: cleanCustPhone,
+              text: `Hello ${customerName || 'Valued Collector'}! 👋\n\nThank you for reaching out to *Vintage Vibes Dubai* regarding ${pieceTitle ? `"${pieceTitle}"` : 'our vintage archive'}.\nOur concierge team has received your inquiry and will reply shortly! 🛍️✨\n\n📍 Showroom: Al Quoz Industrial 3, Dubai\n🌐 Catalog: https://vintagevibesgk.com`,
+              imageUrl
+            }),
+            signal: AbortSignal.timeout(8000)
+          }).catch(() => {});
+
+          return res.status(200).json({ success: true, message: 'Inquiry dispatched to concierge desk.' });
+        } catch (_) {}
+      }
+
+      return res.status(200).json({ success: true, message: 'Inquiry received.' });
     }
 
     // 0d. Backend Gateway Audit (Real vs Mock Endpoints Transparency)
