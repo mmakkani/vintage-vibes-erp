@@ -26,9 +26,12 @@ import {
   ChevronDown,
   Clock,
   RotateCcw,
-  Trash2
+  Trash2,
+  Loader2
 } from 'lucide-react';
 import { SalesService } from '../../../services/salesService.ts';
+import { WhatsAppService } from '../../../services/whatsappService.ts';
+import { supabase } from '../../../supabaseClient.ts';
 
 interface CounterSaleLogViewProps {
   invoices: SalesInvoice[];
@@ -52,6 +55,7 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
   const [selectedInvoice, setSelectedInvoice] = useState<SalesInvoice | null>(null);
   const [showEmbeddedPos, setShowEmbeddedPos] = useState(false);
   const [companyProfile, setCompanyProfile] = useState<any>(null);
+  const [sendingWhatsAppId, setSendingWhatsAppId] = useState<string | null>(null);
 
   useEffect(() => {
     CompanyProfileService.getCompanyProfile().then(setCompanyProfile).catch(() => {});
@@ -200,10 +204,77 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
     }
   };
 
-  // WhatsApp E-Receipt
-  const handleSendWhatsApp = (inv: SalesInvoice) => {
+  // WhatsApp E-Receipt (Direct Socket Dispatch via Railway Bridge with fallback)
+  const handleSendWhatsApp = async (inv: SalesInvoice) => {
     const client = clients.find(c => c.id === inv.customerId);
-    const phone = (client?.phone || inv.customerPhone || prompt('Customer WhatsApp Number (+971...)', '+971') || '').replace(/[^0-9]/g, '');
+    let rawPhone = (client?.phone || inv.customerPhone || '').trim();
+    if (!rawPhone) {
+      const input = prompt('Enter Customer WhatsApp Number (+971... / +92...)', '+971');
+      if (!input) return;
+      rawPhone = input;
+    }
+    const cleanPhone = WhatsAppService.sanitizePhoneNumber(rawPhone);
+    if (!cleanPhone) {
+      alert('Valid customer phone number is required.');
+      return;
+    }
+
+    setSendingWhatsAppId(inv.id);
+
+    try {
+      // 1. Resolve Piece Image
+      const firstItem = Array.isArray(inv?.items) ? inv.items[0] : null;
+      let pieceImageUrl = (firstItem as any)?.imageUrl || (firstItem as any)?.frontImageUrl || (firstItem as any)?.front_image_url;
+
+      if (!pieceImageUrl && firstItem?.barcode) {
+        const matchedStock = (stockPieces || []).find(p => p.barcode === firstItem.barcode || p.id === (firstItem as any)?.pieceId);
+        pieceImageUrl = matchedStock?.frontImageUrl || (matchedStock as any)?.front_image_url || (matchedStock as any)?.frontImage;
+      }
+
+      // If still missing, check database for this barcode
+      if (!pieceImageUrl && firstItem?.barcode) {
+        try {
+          const { data: dbPiece } = await supabase
+            .from('inventory_pieces')
+            .select('front_image_url')
+            .eq('barcode', firstItem.barcode)
+            .maybeSingle();
+          if (dbPiece?.front_image_url) {
+            pieceImageUrl = dbPiece.front_image_url;
+          }
+        } catch (_) {}
+      }
+
+      // 2. Dispatch via Unified WhatsApp Engine
+      const res = await WhatsAppService.sendInvoiceNotification({
+        invoiceNo: inv.invoiceNo,
+        type: 'SALES',
+        customerName: inv.customerName || client?.name || 'Valued Collector',
+        customerPhone: cleanPhone,
+        totalAmount: Number(inv.totalAmount || 0),
+        subtotal: Number(inv.subTotal || 0),
+        taxAmount: Number(inv.vatAmount || 0),
+        currency: inv.currency || 'AED',
+        invoiceDate: inv.date,
+        imageUrl: pieceImageUrl,
+        items: (Array.isArray(inv?.items) ? inv.items : []).map((it: any) => ({
+          name: it.description || it.itemName || it.name || 'Garment Item',
+          quantity: Number(it.quantity || it.qty || 1),
+          price: Number(it.finalAmount || it.unitPrice || 0)
+        }))
+      });
+
+      if (res && res.success) {
+        alert(`✅ Digital tax receipt sent to +${cleanPhone} via WhatsApp!`);
+        return;
+      }
+    } catch (err: any) {
+      console.warn('[CounterSaleLogView] Direct socket dispatch note:', err?.message || err);
+    } finally {
+      setSendingWhatsAppId(null);
+    }
+
+    // 3. Fallback: Browser wa.me link if socket dispatch fails
     const itemsSummary = (Array.isArray(inv?.items) ? inv.items : []).map((it: any) => `• ${it?.description || 'Item'} — AED ${it?.finalAmount || it?.unitPrice || 0}`).join('\n');
     const text = encodeURIComponent(
       `🛍️ *VINTAGE VIBES DUBAI - POS E-RECEIPT*\n` +
@@ -214,15 +285,15 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `${itemsSummary}\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
-      `Subtotal: AED ${inv.subTotal.toFixed(2)}\n` +
-      `UAE VAT (5%): AED ${inv.vatAmount.toFixed(2)}\n` +
-      `*TOTAL PAID: AED ${inv.totalAmount.toFixed(2)}*\n` +
+      `Subtotal: AED ${Number(inv.subTotal || 0).toFixed(2)}\n` +
+      `UAE VAT (5%): AED ${Number(inv.vatAmount || 0).toFixed(2)}\n` +
+      `*TOTAL PAID: AED ${Number(inv.totalAmount || 0).toFixed(2)}*\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `TRN: 100482910300003\n` +
       `Store: Al Quoz Industrial 3, Dubai\n` +
       `Thank you for your visit!`
     );
-    window.open(`https://wa.me/${phone}?text=${text}`, '_blank');
+    window.open(`https://wa.me/${cleanPhone}?text=${text}`, '_blank');
   };
 
   return (
@@ -493,11 +564,16 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
                           </button>
                           <button
                             type="button"
+                            disabled={sendingWhatsAppId === inv.id}
                             onClick={() => handleSendWhatsApp(inv)}
-                            className="p-1 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded transition cursor-pointer"
-                            title="Send WhatsApp Receipt"
+                            className="p-1 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded transition cursor-pointer disabled:opacity-50"
+                            title="Send WhatsApp Receipt Direct to Customer"
                           >
-                            <MessageCircle className="w-3.5 h-3.5" />
+                            {sendingWhatsAppId === inv.id ? (
+                              <Loader2 className="w-3.5 h-3.5 text-emerald-600 animate-spin" />
+                            ) : (
+                              <MessageCircle className="w-3.5 h-3.5" />
+                            )}
                           </button>
                           <button
                             type="button"

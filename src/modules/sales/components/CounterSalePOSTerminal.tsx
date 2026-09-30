@@ -1415,6 +1415,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         customer_phone: selectedCustomer?.phone || '',
         items: cart.map(c => {
           const itemCost = Number(c?.cogsCost ?? (c?.piece as any)?.cost_price ?? (c?.piece as any)?.calculatedCostPrice ?? (c?.piece as any)?.cogsCost ?? 0);
+          const pImg = c.piece?.frontImageUrl || (c.piece as any)?.front_image_url || (c.piece as any)?.frontImage || (c.piece as any)?.front_image || c.piece?.imageUrl || (c.piece as any)?.image_url || (c.piece as any)?.global_insights?.front_photo_url || (c.piece as any)?.globalInsights?.front_photo_url || '';
           return {
             barcode: c.piece.barcode,
             pieceId: c.piece.id,
@@ -1425,7 +1426,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             finalAmount: c.sellingPrice - c.discount,
             calculatedCostPrice: itemCost,
             cost_price: itemCost,
-            cogsCost: itemCost
+            cogsCost: itemCost,
+            imageUrl: pImg
           };
         }),
         subtotal: subtotalAmt,
@@ -1463,14 +1465,19 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         vatAmount: vatAmt,
         totalAmount: totalAmt,
         paymentMethod: effectivePaymentMode,
-        items: completedCart.map(c => ({
-          barcode: c.piece.barcode,
-          description: `${c.piece.brandName} ${c.piece.itemName}`,
-          unitPrice: c.sellingPrice,
-          discount: c.discount,
-          finalAmount: c.sellingPrice - c.discount,
-          weightKg: c.piece.weightKg || 0.45
-        }))
+        items: completedCart.map(c => {
+          const pImg = c.piece?.frontImageUrl || (c.piece as any)?.front_image_url || (c.piece as any)?.frontImage || (c.piece as any)?.front_image || c.piece?.imageUrl || (c.piece as any)?.image_url || (c.piece as any)?.global_insights?.front_photo_url || (c.piece as any)?.globalInsights?.front_photo_url || '';
+          return {
+            barcode: c.piece.barcode,
+            pieceId: c.piece.id,
+            description: `${c.piece.brandName} ${c.piece.itemName}`,
+            unitPrice: c.sellingPrice,
+            discount: c.discount,
+            finalAmount: c.sellingPrice - c.discount,
+            weightKg: c.piece.weightKg || 0.45,
+            imageUrl: pImg
+          };
+        })
       };
 
       setCheckoutSuccessData({
@@ -1501,25 +1508,45 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       // 5. Automated Marketing WhatsApp Invoice Slip (Background task)
       if (customerPhoneForSlip) {
-        const firstPiece = completedCart?.[0]?.piece;
-        const pieceImageUrl = firstPiece?.images?.[0] || firstPiece?.imageUrl || (firstPiece as any)?.global_insights?.front_photo_url || (firstPiece as any)?.globalInsights?.front_photo_url;
-        WhatsAppService.sendInvoiceNotification({
-          invoiceNo: invoiceNum,
-          type: 'SALES',
-          customerName: customerNameForSlip,
-          customerPhone: customerPhoneForSlip,
-          totalAmount: totalAmt,
-          subtotal: subtotalAmt,
-          taxAmount: vatAmt,
-          currency: 'AED',
-          invoiceDate: new Date().toISOString(),
-          imageUrl: pieceImageUrl,
-          items: completedCart.map(c => ({
-            name: `${c.piece.brandName} ${c.piece.itemName}`,
-            quantity: 1,
-            price: c.sellingPrice - c.discount
-          }))
-        }).catch(err => console.warn('[POS Checkout] Auto-WhatsApp dispatch note:', err));
+        const firstPiece = completedCart?.[0]?.piece || completedPieces?.[0];
+        let pieceImageUrl = 
+          firstPiece?.frontImageUrl || 
+          (firstPiece as any)?.front_image_url || 
+          (firstPiece as any)?.frontImage || 
+          (firstPiece as any)?.front_image || 
+          firstPiece?.images?.[0] || 
+          firstPiece?.imageUrl || 
+          (firstPiece as any)?.image_url || 
+          (firstPiece as any)?.global_insights?.front_photo_url || 
+          (firstPiece as any)?.globalInsights?.front_photo_url;
+
+        (async () => {
+          if (!pieceImageUrl && (firstPiece?.barcode || completedCart?.[0]?.piece?.barcode)) {
+            const bc = firstPiece?.barcode || completedCart?.[0]?.piece?.barcode;
+            try {
+              const { data: dbP } = await supabase.from('inventory_pieces').select('front_image_url').eq('barcode', bc).maybeSingle();
+              if (dbP?.front_image_url) pieceImageUrl = dbP.front_image_url;
+            } catch (_) {}
+          }
+
+          WhatsAppService.sendInvoiceNotification({
+            invoiceNo: invoiceNum,
+            type: 'SALES',
+            customerName: customerNameForSlip,
+            customerPhone: customerPhoneForSlip,
+            totalAmount: totalAmt,
+            subtotal: subtotalAmt,
+            taxAmount: vatAmt,
+            currency: 'AED',
+            invoiceDate: new Date().toISOString(),
+            imageUrl: pieceImageUrl,
+            items: completedCart.map(c => ({
+              name: `${c.piece.brandName} ${c.piece.itemName}`,
+              quantity: 1,
+              price: c.sellingPrice - c.discount
+            }))
+          }).catch(err => console.warn('[POS Checkout] Auto-WhatsApp dispatch note:', err));
+        })();
       }
 
       // 6. Automatic 80mm Thermal Receipt Print (Decoupled in microtask so print popup never blocks POS)
@@ -1633,7 +1660,29 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
     }
 
     const firstItem = inv.items?.[0] || checkoutSuccessData.cartSnapshot?.[0];
-    const pieceImageUrl = (firstItem as any)?.piece?.images?.[0] || (firstItem as any)?.imageUrl || (firstItem as any)?.piece?.imageUrl;
+    const firstPiece = checkoutSuccessData.pieces?.[0];
+    let pieceImageUrl = 
+      (firstItem as any)?.imageUrl ||
+      (firstItem as any)?.frontImageUrl ||
+      firstPiece?.frontImageUrl ||
+      (firstPiece as any)?.front_image_url ||
+      (firstPiece as any)?.frontImage ||
+      (firstPiece as any)?.front_image ||
+      (firstPiece as any)?.images?.[0] ||
+      firstPiece?.imageUrl ||
+      (firstItem as any)?.piece?.frontImageUrl ||
+      (firstItem as any)?.piece?.front_image_url ||
+      (firstItem as any)?.piece?.frontImage ||
+      (firstPiece as any)?.global_insights?.front_photo_url ||
+      (firstPiece as any)?.globalInsights?.front_photo_url;
+
+    if (!pieceImageUrl && (firstPiece?.barcode || (firstItem as any)?.barcode)) {
+      const bc = firstPiece?.barcode || (firstItem as any)?.barcode;
+      try {
+        const { data: dbP } = await supabase.from('inventory_pieces').select('front_image_url').eq('barcode', bc).maybeSingle();
+        if (dbP?.front_image_url) pieceImageUrl = dbP.front_image_url;
+      } catch (_) {}
+    }
 
     // 1. Unified Background Socket Dispatch (Direct to Customer Phone)
     try {
