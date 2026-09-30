@@ -278,7 +278,7 @@ export const SocialAssetGeneratorTab: React.FC = () => {
   const handleDownloadSinglePng = () => {
     if (!canvasRef.current || !activePreviewPiece) return;
     const link = document.createElement('a');
-    link.download = `VINTAGE_${activePreviewPiece.barcode}_${settings.aspectRatio.replace(':', 'x')}.png`;
+    link.download = `VINTAGE_${activePreviewPiece.barcode}_${(settings.aspectRatio || '1:1').replace(':', 'x')}.png`;
     link.href = canvasRef.current.toDataURL('image/png');
     link.click();
   };

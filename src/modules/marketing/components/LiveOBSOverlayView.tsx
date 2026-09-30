@@ -35,8 +35,8 @@ export const LiveOBSOverlayView: React.FC = () => {
         PurchaseService.getPieces()
       ]);
 
-      const normalizedBoothId = boothId.replace('-', '_');
-      const currentBooth = liveBooths.find(b => b.id === boothId || b.id === normalizedBoothId || b.id.replace('_', '-') === boothId) || liveBooths[0];
+      const normalizedBoothId = (boothId || '').replace('-', '_');
+      const currentBooth = (liveBooths || []).find(b => b?.id === boothId || b?.id === normalizedBoothId || (b?.id && b.id.replace('_', '-') === boothId)) || liveBooths?.[0];
       const inStock = (allPieces || []).filter((p: PieceBreakdownItem) => !p.isSold && p.status === 'IN_STOCK');
       const matched = inStock.find((p: PieceBreakdownItem) => p.barcode === currentBooth?.active_product_sku || p.id === currentBooth?.active_product_sku) || inStock[0] || null;
 

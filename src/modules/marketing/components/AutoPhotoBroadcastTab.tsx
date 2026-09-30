@@ -873,7 +873,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
               <div className="flex items-center gap-2">
                 <Mic className="w-4 h-4 text-emerald-400" />
                 <span className="text-slate-200">Opening Hype Voice Note:</span>
-                <span className="font-bold text-white italic">"{activeCampaign.voiceNoteText.slice(0, 70)}..."</span>
+                <span className="font-bold text-white italic">"{String(activeCampaign.voiceNoteText || '').slice(0, 70)}..."</span>
               </div>
               <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-900 text-emerald-300 border border-emerald-400/40">
                 {activeCampaign.voiceNoteStatus === 'SENT' ? '✅ VOICE NOTE SENT' : '⏳ PENDING DISPATCH'}
@@ -2140,7 +2140,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
               <Layers className="w-4 h-4 text-amber-700" />
               <h4 className="font-bold text-sm text-slate-900">Live Photo Queue Dispatch Telemetry</h4>
               <span className="text-xs bg-amber-200 text-amber-900 font-mono px-2 py-0.5 rounded-full font-bold">
-                {activeCampaign.items.length} Items in Queue
+                {(activeCampaign.items || []).length} Items in Queue
               </span>
             </div>
             <span className="text-xs font-mono text-slate-500">
@@ -2163,7 +2163,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
-                {activeCampaign.items.map((item, idx) => {
+                {(activeCampaign.items || []).map((item, idx) => {
                   const piece = item.piece || (item as any);
                   const barcode = piece?.barcode || (item as any)?.barcode || '—';
                   const title = piece?.itemName || (item as any)?.itemName || 'Garment Piece';
@@ -2206,8 +2206,8 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
                     <td className="py-2.5 px-3 font-mono text-[11px] text-slate-500">
                       {item.sentAt || '—'}
                     </td>
-                    <td className="py-2.5 px-3 text-[11px] font-mono text-slate-500 max-w-xs truncate" title={item.caption}>
-                      {item.caption.replace(/\n/g, ' ')}
+                    <td className="py-2.5 px-3 text-[11px] font-mono text-slate-500 max-w-xs truncate" title={item.caption || ''}>
+                      {(item.caption || '').replace(/\n/g, ' ') || '—'}
                     </td>
                   </tr>
                     );

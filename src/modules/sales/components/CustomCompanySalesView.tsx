@@ -1444,8 +1444,10 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
       // Line 11 & 12: Courier COD In-Transit Transfer (if balance due and courier assigned)
       if (creditAmountDue > 0 && selectedCourier) {
-        const codClearingAcc = (coaAccounts || []).find(a => a.code === '1128-01' || a.code === '1128-00');
-        const codCode = codClearingAcc?.code || '1128-00';
+        // Strictly select Tier 3 Transaction Account 1128-01, never Tier 2 Sub-Folder 1128-00
+        const codClearingAcc = (coaAccounts || []).find(a => a.code === '1128-01')
+          || (coaAccounts || []).find(a => a.code === '1128' && a.parent_id);
+        const codCode = codClearingAcc?.code || '1128-01';
         const codName = codClearingAcc?.name || 'Courier COD Clearing (Pending Remittance)';
         voucherLines.push({
           accountId: codClearingAcc?.id || codCode,

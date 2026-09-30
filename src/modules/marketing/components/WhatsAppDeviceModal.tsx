@@ -120,7 +120,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
       // Connect to SSE stream if available for zero-latency updates
       let eventSource: EventSource | null = null;
       try {
-        const streamUrl = `${bridgeUrl.replace(/\/$/, '')}/events`;
+        const streamUrl = `${(bridgeUrl || '').replace(/\/$/, '')}/events`;
         eventSource = new EventSource(streamUrl);
         eventSource.onmessage = (event) => {
           try {
@@ -192,7 +192,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
     setVerificationError(null);
     setVerificationSuccess(null);
 
-    const cleanDigits = manualPhone.replace(/\D/g, '');
+    const cleanDigits = (manualPhone || '').replace(/\D/g, '');
     if (!cleanDigits || cleanDigits.length < 8) {
       setVerificationError('Please enter a valid mobile number with country code (e.g. 971554186086 or 923001234567).');
       return;
@@ -316,7 +316,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
 
   // Test send via Meta Cloud API
   const handleTestMetaSend = async () => {
-    const target = metaTestPhone.replace(/\D/g, '') || manualPhone.replace(/\D/g, '');
+    const target = (metaTestPhone || '').replace(/\D/g, '') || (manualPhone || '').replace(/\D/g, '');
     if (!target) {
       setVerificationError('Please enter a recipient test phone number.');
       return;

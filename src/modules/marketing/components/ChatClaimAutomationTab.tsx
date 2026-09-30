@@ -675,7 +675,7 @@ export const ChatClaimAutomationTab: React.FC = () => {
                   onClick={() => setSimComment(`MINE ${p.barcode}`)}
                   className="text-[10px] font-mono bg-slate-800 hover:bg-slate-700 text-amber-300 px-2 py-0.5 rounded border border-slate-700 transition cursor-pointer"
                 >
-                  MINE {p.barcode} ({p.itemName.slice(0, 18)}...)
+                  MINE {p.barcode} ({String(p.itemName || '').slice(0, 18)}...)
                 </button>
               ))}
               <button

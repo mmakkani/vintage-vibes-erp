@@ -1619,6 +1619,144 @@ async function runSecurityGateTests() {
     );
   }
 
+  // ========================================================================
+  // GATE 14: COA 1128 COURIER COD CLEARING & GENERAL LEDGER INTEGRITY
+  // ========================================================================
+  console.log('\n--- GATE 14: COA 1128 COURIER COD CLEARING & GENERAL LEDGER INTEGRITY ---');
+
+  // 1. Static AST/Source Code check on CustomCompanySalesView.tsx
+  const b2bSalesPath = path.resolve(process.cwd(), 'src/modules/sales/components/CustomCompanySalesView.tsx');
+  const b2bSalesContent = fs.readFileSync(b2bSalesPath, 'utf-8');
+  assert(
+    b2bSalesContent.includes("a.code === '1128-01'") && !b2bSalesContent.includes("const codCode = codClearingAcc?.code || '1128-00'"),
+    'CustomCompanySalesView.tsx strictly binds COD In-Transit posting to Transaction Account 1128-01 (never Sub-Folder 1128-00)'
+  );
+
+  // 2. Static AST/Source Code check on CourierCODReconciliation.tsx
+  const reconcilerPath = path.resolve(process.cwd(), 'src/modules/finance/components/CourierCODReconciliation.tsx');
+  const reconcilerContent = fs.readFileSync(reconcilerPath, 'utf-8');
+  assert(
+    reconcilerContent.includes("a.code === '1128-01'") && reconcilerContent.includes('GL: 1128-01'),
+    'CourierCODReconciliation.tsx explicitly tracks and renders GL: 1128-01 Transaction Account badge'
+  );
+  assert(
+    reconcilerContent.includes('/api/sales/custom-b2b/invoices'),
+    'CourierCODReconciliation.tsx includes custom B2B sales invoices in COD parcel loader'
+  );
+
+  // 3. Database Integrity check for COA 1128 and General Ledger
+  const testPgClient = await getPgClient();
+  if (testPgClient) {
+    try {
+      const coaCheck = await testPgClient.query(`
+        SELECT code, current_balance, parent_code, parent_id
+        FROM chart_of_accounts
+        WHERE code IN ('1128-00', '1128-01')
+        ORDER BY code ASC;
+      `);
+      const row00 = coaCheck.rows.find((r: any) => r.code === '1128-00');
+      const row01 = coaCheck.rows.find((r: any) => r.code === '1128-01');
+
+      assert(
+        Boolean(row00 && row01),
+        'Both COA 1128-00 (Folder) and 1128-01 (Transaction Account) exist in database'
+      );
+      assert(
+        parseFloat(row00?.current_balance || '0') === 0,
+        `COA 1128-00 Folder balance must be 0.00 (got ${row00?.current_balance})`
+      );
+      assert(
+        parseFloat(row01?.current_balance || '0') >= 18.5,
+        `COA 1128-01 Transaction account holds active COD in-transit balance (got ${row01?.current_balance})`
+      );
+
+      // General Ledger check: No rows with account_code 1128-00
+      const glCheck = await testPgClient.query(`
+        SELECT count(*)::int as count
+        FROM general_ledger
+        WHERE account_code = '1128-00';
+      `);
+      assert(
+        glCheck.rows[0]?.count === 0,
+        'General ledger has 0 direct entries on 1128-00 folder account (all routed to 1128-01)'
+      );
+    } finally {
+      try { await testPgClient.end(); } catch (_) {}
+    }
+  }
+
+  // ========================================================================
+  // GATE 15: MARKETING WHATSAPP MULTI-CHANNEL POSTGRESQL PERSISTENCE
+  // ========================================================================
+  console.log('\n--- GATE 15: MARKETING WHATSAPP MULTI-CHANNEL POSTGRESQL PERSISTENCE ---');
+
+  // 1. GET /api/marketing/whatsapp/channels returns 200 with authentic database channels
+  const { req: getReq, res: getRes } = createMockReqRes({
+    method: 'GET',
+    url: '/api/marketing/whatsapp/channels'
+  });
+  await allHandler(getReq, getRes);
+  const getResp = getRes.getResponse();
+  assert(
+    getResp.statusCode === 200 && getResp.body?.success === true && Array.isArray(getResp.body?.channels),
+    'GET /api/marketing/whatsapp/channels returns 200 and database channels array'
+  );
+
+  // 2. POST /api/marketing/whatsapp/channels inserts into PostgreSQL
+  const testJid = `120363${Date.now()}@newsletter`;
+  const { req: postReq, res: postRes } = createMockReqRes({
+    method: 'POST',
+    url: '/api/marketing/whatsapp/channels',
+    body: {
+      name: 'Automated CI Test VIP Drop Channel',
+      inviteLink: 'https://whatsapp.com/channel/0029Vb4q8jX5kg7J9YTEST',
+      jid: testJid
+    }
+  });
+  await allHandler(postReq, postRes);
+  const postResp = postRes.getResponse();
+  assert(
+    postResp.statusCode === 200 && postResp.body?.success === true && postResp.body?.channel?.jid === testJid,
+    'POST /api/marketing/whatsapp/channels inserts and returns new channel from PostgreSQL'
+  );
+
+  // 3. POST /api/marketing/whatsapp/channels/:jid/default sets default
+  const { req: defReq, res: defRes } = createMockReqRes({
+    method: 'POST',
+    url: `/api/marketing/whatsapp/channels/${encodeURIComponent(testJid)}/default`
+  });
+  await allHandler(defReq, defRes);
+  const defResp = defRes.getResponse();
+  assert(
+    defResp.statusCode === 200 && defResp.body?.success === true,
+    'POST /api/marketing/whatsapp/channels/:jid/default successfully updates default without crashing'
+  );
+
+  // 4. Reload simulation: GET returns channel with isDefault = true
+  const { req: reloadReq, res: reloadRes } = createMockReqRes({
+    method: 'GET',
+    url: '/api/marketing/whatsapp/channels'
+  });
+  await allHandler(reloadReq, reloadRes);
+  const reloadResp = reloadRes.getResponse();
+  const persistedChan = (reloadResp.body?.channels || []).find((c: any) => c.jid === testJid);
+  assert(
+    Boolean(persistedChan) && persistedChan?.isDefault === true,
+    'Refresh verification: Newly added channel persists in PostgreSQL with isDefault = true'
+  );
+
+  // 5. Cleanup test channel via DELETE
+  const { req: delReq, res: delRes } = createMockReqRes({
+    method: 'DELETE',
+    url: `/api/marketing/whatsapp/channels/${encodeURIComponent(testJid)}`
+  });
+  await allHandler(delReq, delRes);
+  const delResp = delRes.getResponse();
+  assert(
+    delResp.statusCode === 200 && delResp.body?.success === true,
+    'DELETE /api/marketing/whatsapp/channels/:jid successfully cleans up channel from PostgreSQL'
+  );
+
   console.log('\n======================================================');
   console.log(`  SECURITY & INTEGRITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('======================================================\n');

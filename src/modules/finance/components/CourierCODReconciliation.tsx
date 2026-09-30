@@ -50,9 +50,11 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
     return accounts.filter(a => a.code?.startsWith('111') || a.code?.startsWith('112') || a.sub_type?.includes('Bank') || a.sub_type?.includes('Cash') || a.name?.toLowerCase().includes('bank') || a.name?.toLowerCase().includes('cash'));
   }, [accounts]);
 
-  // Find Courier COD Clearing account from COA (1128)
+  // Find Courier COD Clearing account from COA (1128-01 Transaction Account)
   const codClearingAccount = useMemo(() => {
-    return accounts.find(a => a.code?.startsWith('1128') || a.name?.toLowerCase().includes('cod clearing')) || null;
+    return accounts.find(a => a.code === '1128-01')
+      || accounts.find(a => a.code?.startsWith('1128') && a.code !== '1128-00')
+      || null;
   }, [accounts]);
 
   const [settlementBankId, setSettlementBankId] = useState<string>(() => bankAccounts[0]?.id || '');
@@ -100,25 +102,65 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
     fetchCourierParties();
   }, []);
 
-  // Load invoices
+  // Load invoices (Both Retail and B2B Wholesale COD parcels)
   const loadCODInvoices = async () => {
     try {
       setLoading(true);
-      let data = await safeFetchJson<SalesInvoice[]>('/api/sales/invoices', undefined, 3, 300);
-      if (!Array.isArray(data) || data.length === 0) {
+      const [data, b2bData] = await Promise.all([
+        safeFetchJson<any[]>('/api/sales/invoices', undefined, 3, 300).catch(() => []),
+        safeFetchJson<any>('/api/sales/custom-b2b/invoices', undefined, 3, 300).catch(() => [])
+      ]);
+
+      const allRaw: any[] = [];
+      if (Array.isArray(data)) allRaw.push(...data);
+      if (b2bData && Array.isArray((b2bData as any).invoices)) allRaw.push(...(b2bData as any).invoices);
+      else if (Array.isArray(b2bData)) allRaw.push(...b2bData);
+
+      if (allRaw.length === 0) {
         try {
-          data = await SalesService.getSalesInvoices({ limit: 100 });
+          const direct = await SalesService.getSalesInvoices({ limit: 100 });
+          if (Array.isArray(direct)) allRaw.push(...direct);
         } catch (_) {}
       }
-      if (Array.isArray(data)) {
-        // Filter for COD orders (COD payment method, UNPAID_PENDING_COD, or orders with couriers assigned)
-        const codOrders = data.filter(inv => {
-          const pm = (inv.paymentMethod || '').toUpperCase();
-          const ps = (inv.paymentStatus || '').toUpperCase();
-          return pm === 'COD' || pm === 'CASH_ON_DELIVERY' || ps === 'UNPAID_PENDING_COD' || ps === 'PENDING' || Boolean(inv.courierPartner) || Boolean(inv.trackingNumber);
-        });
-        setInvoices(codOrders);
+
+      const dedupeMap = new Map<string, SalesInvoice>();
+      for (const raw of allRaw) {
+        if (!raw) continue;
+        const invNo = raw.invoiceNo || raw.invoice_no || String(raw.id || '');
+        if (!invNo) continue;
+
+        const courierPartner = raw.courierPartner || raw.courier_partner || raw.courier_partner_name || (raw.courier_partner_id === 'b42f8f14-cdda-4b12-9539-ed8fc3f66152' || raw.courier_partner_id === 75 ? 'Banana Express' : (raw.courier_partner_id ? `Courier #${raw.courier_partner_id}` : ''));
+        const trackingNumber = raw.trackingNumber || raw.tracking_number || raw.waybillNo || raw.waybill_no || '';
+        const paymentMethod = raw.paymentMethod || raw.payment_method || '';
+        const paymentStatus = raw.paymentStatus || raw.payment_status || '';
+        const customerName = raw.customerName || raw.customer_name || 'Customer';
+        const advPaid = Number(raw.advanceAmountPaid ?? raw.paidAmount ?? raw.paid_amount ?? 0);
+        const balDue = raw.balanceDue !== undefined ? Number(raw.balanceDue) : (raw.balance_due !== undefined ? Number(raw.balance_due) : (raw.creditAmountDue !== undefined ? Number(raw.creditAmountDue) : undefined));
+        const total = Number(raw.grandTotalAED || raw.total_amount || raw.totalAmount || 0);
+
+        const pm = (paymentMethod || '').toUpperCase();
+        const ps = (paymentStatus || '').toUpperCase();
+        const isCod = pm === 'COD' || pm === 'CASH_ON_DELIVERY' || ps === 'UNPAID_PENDING_COD' || ps === 'PENDING' || Boolean(courierPartner) || Boolean(trackingNumber);
+
+        if (isCod) {
+          const normalized: SalesInvoice = {
+            ...raw,
+            id: String(raw.id || invNo),
+            invoiceNo: invNo,
+            customerName,
+            courierPartner: courierPartner || (trackingNumber ? 'Banana Express' : ''),
+            trackingNumber,
+            paymentMethod,
+            paymentStatus,
+            advanceAmountPaid: advPaid,
+            balanceDue: balDue !== undefined ? balDue : (total > advPaid && advPaid > 0 ? total - advPaid : total),
+            grandTotalAED: total,
+            items: Array.isArray(raw.items) ? raw.items : (typeof raw.items === 'string' ? JSON.parse(raw.items || '[]') : [])
+          } as any;
+          dedupeMap.set(invNo, normalized);
+        }
       }
+      setInvoices(Array.from(dedupeMap.values()));
     } catch {
       // Graceful fallback
     } finally {
@@ -246,7 +288,7 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
 
       // Create a double-entry Voucher:
       // DEBIT: Bank Checking (1120-00) -> Cash inflow
-      // CREDIT: Courier COD Clearing In-Transit (1128-00)
+      // CREDIT: Courier COD Clearing In-Transit (1128-01 Transaction Account)
       const voucherPayload = {
         voucherNo: `VCH-COD-${Date.now().toString().slice(-6)}`,
         date: new Date().toISOString().slice(0, 10),
@@ -339,7 +381,7 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
             <h2 className="text-base font-black tracking-tight flex items-center gap-2">
               <span>Courier COD Clearing & Remittance Reconciler</span>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
-                GL: 1128-00
+                GL: 1128-01
               </span>
             </h2>
             <p className="text-xs text-slate-300">
