@@ -556,8 +556,11 @@ app.post('/send', requireAuth, async (req, res) => {
   try {
     let result;
     if (imageUrl) {
+      const imagePayload = typeof imageUrl === 'string' && imageUrl.startsWith('data:')
+        ? Buffer.from(imageUrl.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, ''), 'base64')
+        : { url: imageUrl };
       result = await sock.sendMessage(jid, {
-        image: { url: imageUrl },
+        image: imagePayload,
         caption: caption || text || ''
       });
     } else {

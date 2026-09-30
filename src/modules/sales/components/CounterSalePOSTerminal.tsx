@@ -48,6 +48,7 @@ import { PartiesService } from '../../../services/partiesService.ts';
 import { FinanceService } from '../../../services/financeService.ts';
 import { CrmService, CrmRetailCustomer } from '../../../services/crmService.ts';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
+import { generateReceiptGraphic } from '../../../utils/receiptGraphicGenerator.ts';
 import { openThermalLabelPrintWindow, openGiftReceiptPrintWindow, openPosThermalReceiptPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { useBarcodeScanner } from '../../../hooks/useBarcodeScanner.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
@@ -1529,6 +1530,38 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             } catch (_) {}
           }
 
+          let finalSlipGraphic = pieceImageUrl;
+          try {
+            const generatedSlip = await generateReceiptGraphic({
+              invoiceNo: invoiceNum,
+              date: new Date().toISOString(),
+              customerName: customerNameForSlip,
+              customerPhone: customerPhoneForSlip,
+              items: completedCart.map(c => ({
+                description: `${c.piece.brandName || ''} ${c.piece.itemName || ''}`.trim() || 'Garment Item',
+                barcode: c.piece.barcode,
+                weightKg: Number(c.piece.weightKg || (c.piece as any)?.weight || 0),
+                unitPrice: c.sellingPrice,
+                finalAmount: c.sellingPrice - c.discount
+              })),
+              subTotal: subtotalAmt,
+              discountAmount: discountTotal,
+              vatAmount: vatAmt,
+              totalAmount: totalAmt,
+              currency: 'AED',
+              paymentMethod: effectivePaymentMode,
+              garmentImageUrl: pieceImageUrl,
+              companyName: activeProfile?.companyName,
+              companyAddress: activeProfile?.address_line_1 || activeProfile?.addressLine1,
+              companyTrn: activeProfile?.trn_number || activeProfile?.trnTaxNo
+            });
+            if (generatedSlip) {
+              finalSlipGraphic = generatedSlip;
+            }
+          } catch (e) {
+            console.warn('[POS Auto-WhatsApp] Slip graphic generation note:', e);
+          }
+
           WhatsAppService.sendInvoiceNotification({
             invoiceNo: invoiceNum,
             type: 'SALES',
@@ -1539,7 +1572,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             taxAmount: vatAmt,
             currency: 'AED',
             invoiceDate: new Date().toISOString(),
-            imageUrl: pieceImageUrl,
+            imageUrl: finalSlipGraphic,
             items: completedCart.map(c => ({
               name: `${c.piece.brandName} ${c.piece.itemName}`,
               quantity: 1,
@@ -1684,6 +1717,38 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       } catch (_) {}
     }
 
+    let finalSlipGraphic = pieceImageUrl;
+    try {
+      const generatedSlip = await generateReceiptGraphic({
+        invoiceNo: inv.invoiceNo,
+        date: inv.date,
+        customerName: inv.customerName || selectedCustomer?.name || 'Walk-In Customer',
+        customerPhone: phone,
+        items: (inv.items || []).map((it: any) => ({
+          description: it.description || it.itemName || it.name || 'Garment Item',
+          barcode: it.barcode,
+          weightKg: Number(it.weightKg || it.weight || 0),
+          unitPrice: Number(it.unitPrice || it.price || 0),
+          finalAmount: Number(it.finalAmount || it.price || 0)
+        })),
+        subTotal: Number(inv.subTotal || 0),
+        discountAmount: Number(inv.discountAmount || 0),
+        vatAmount: Number(inv.vatAmount || 0),
+        totalAmount: Number(inv.totalAmount || 0),
+        currency: inv.currency || 'AED',
+        paymentMethod: inv.paymentMethod || 'CASH',
+        garmentImageUrl: pieceImageUrl,
+        companyName: activeProfile?.companyName,
+        companyAddress: activeProfile?.address_line_1 || activeProfile?.addressLine1,
+        companyTrn: activeProfile?.trn_number || activeProfile?.trnTaxNo
+      });
+      if (generatedSlip) {
+        finalSlipGraphic = generatedSlip;
+      }
+    } catch (e) {
+      console.warn('[POS Send WhatsApp] Slip graphic generation note:', e);
+    }
+
     // 1. Unified Background Socket Dispatch (Direct to Customer Phone)
     try {
       const res = await WhatsAppService.sendInvoiceNotification({
@@ -1696,7 +1761,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         taxAmount: inv.vatAmount,
         currency: inv.currency || 'AED',
         invoiceDate: new Date(inv.date).toISOString(),
-        imageUrl: pieceImageUrl,
+        imageUrl: finalSlipGraphic,
         items: inv.items?.map((it: any) => ({
           name: it.itemName || it.name,
           quantity: it.qty || it.quantity || 1,

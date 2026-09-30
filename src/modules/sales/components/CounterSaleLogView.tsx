@@ -32,6 +32,7 @@ import {
 import { SalesService } from '../../../services/salesService.ts';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
 import { supabase } from '../../../supabaseClient.ts';
+import { generateReceiptGraphic } from '../../../utils/receiptGraphicGenerator.ts';
 
 interface CounterSaleLogViewProps {
   invoices: SalesInvoice[];
@@ -292,6 +293,36 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
         } catch (_) {}
       }
 
+      // 1b. Generate Option 2 Digital Tax Receipt Slip Image (Embedding garment photo, TRN, items, & 3D Royal Wax Seal)
+      let finalSlipGraphic = pieceImageUrl;
+      try {
+        const generatedSlip = await generateReceiptGraphic({
+          invoiceNo: inv.invoiceNo,
+          date: inv.date,
+          customerName: inv.customerName || client?.name || 'Walk-In Customer',
+          customerPhone: cleanPhone,
+          items: (Array.isArray(inv?.items) ? inv.items : []).map((it: any) => ({
+            description: it.description || it.itemName || it.name || 'Garment Item',
+            barcode: it.barcode,
+            weightKg: Number(it.weightKg || it.weight_kg || 0),
+            unitPrice: Number(it.unitPrice || it.unit_price || 0),
+            finalAmount: Number(it.finalAmount || it.unitPrice || 0)
+          })),
+          subTotal: Number(inv.subTotal || 0),
+          discountAmount: Number(inv.discountAmount || 0),
+          vatAmount: Number(inv.vatAmount || 0),
+          totalAmount: Number(inv.totalAmount || 0),
+          currency: inv.currency || 'AED',
+          paymentMethod: inv.paymentMethod || 'CASH',
+          garmentImageUrl: pieceImageUrl
+        });
+        if (generatedSlip) {
+          finalSlipGraphic = generatedSlip;
+        }
+      } catch (genErr) {
+        console.warn('[CounterSaleLogView] Slip image generation fallback:', genErr);
+      }
+
       // 2. Dispatch via Unified WhatsApp Engine
       const res = await WhatsAppService.sendInvoiceNotification({
         invoiceNo: inv.invoiceNo,
@@ -303,7 +334,7 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
         taxAmount: Number(inv.vatAmount || 0),
         currency: inv.currency || 'AED',
         invoiceDate: inv.date,
-        imageUrl: pieceImageUrl,
+        imageUrl: finalSlipGraphic,
         items: (Array.isArray(inv?.items) ? inv.items : []).map((it: any) => ({
           name: it.description || it.itemName || it.name || 'Garment Item',
           quantity: Number(it.quantity || it.qty || 1),

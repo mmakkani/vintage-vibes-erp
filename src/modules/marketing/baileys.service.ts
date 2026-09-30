@@ -397,7 +397,10 @@ class BaileysManager extends EventEmitter {
         rawBuffer = input;
       } else if (typeof input === 'string') {
         const url = input.trim();
-        if (url.startsWith('http://') || url.startsWith('https://')) {
+        if (url.startsWith('data:')) {
+          const base64Data = url.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '');
+          rawBuffer = Buffer.from(base64Data, 'base64');
+        } else if (url.startsWith('http://') || url.startsWith('https://')) {
           const resp = await fetch(url, {
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'

@@ -22,6 +22,7 @@ import { PurchaseService } from '../../../services/purchaseService.ts';
 import { Pagination } from '../../../components/Pagination.tsx';
 import { VINTAGE_VIBES_GOLD_SEAL_POS_BASE64 } from '../../../assets/vintageGoldSeal.ts';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
+import { generateReceiptGraphic } from '../../../utils/receiptGraphicGenerator.ts';
 
 import {
   ShoppingCart,
@@ -232,10 +233,50 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
       `📞 *Support:* +971 4 883 9120\n` +
       `_Thank you for your valued business!_`;
 
+    // Generate Option 2 Digital Tax Receipt Slip Image with embedded garment photo, TRN, items, & 3D Royal Wax Seal
+    let receiptSlipImage: string | undefined = undefined;
     try {
-      const res = await WhatsAppService.sendTextMessage(cleanPhone, msgText);
+      const firstItem = Array.isArray(inv?.items) ? inv.items[0] : null;
+      let pieceImageUrl = (firstItem as any)?.imageUrl || (firstItem as any)?.frontImageUrl || (firstItem as any)?.front_image_url;
+      if (!pieceImageUrl && firstItem?.barcode) {
+        const matchedStock = (stockPieces || []).find(p => p.barcode === firstItem.barcode || p.id === (firstItem as any)?.pieceId);
+        pieceImageUrl = matchedStock?.frontImageUrl || (matchedStock as any)?.front_image_url;
+      }
+      if (!pieceImageUrl && firstItem?.barcode) {
+        try {
+          const { data: dbPiece } = await supabase.from('inventory_pieces').select('front_image_url').eq('barcode', firstItem.barcode).maybeSingle();
+          if (dbPiece?.front_image_url) pieceImageUrl = dbPiece.front_image_url;
+        } catch (_) {}
+      }
+
+      receiptSlipImage = await generateReceiptGraphic({
+        invoiceNo: inv.invoiceNo,
+        date: inv.date,
+        customerName: inv.customerName,
+        customerPhone: cleanPhone,
+        items: (Array.isArray(inv?.items) ? inv.items : []).map(it => ({
+          description: it.description || (it as any).itemName || 'Vintage Garment',
+          barcode: it.barcode,
+          weightKg: Number(it.weightKg || (it as any).weight_kg || 0),
+          unitPrice: Number(it.unitPrice || (it as any).unit_price || 0),
+          finalAmount: Number(it.finalAmount || (it as any).final_amount || it.unitPrice || 0)
+        })),
+        subTotal: Number(inv.subTotal ?? (inv as any).subtotal ?? 0),
+        discountAmount: Number(inv.discountAmount ?? (inv as any).discount_amount ?? 0),
+        vatAmount: Number(inv.vatAmount ?? (inv as any).tax_amount ?? 0),
+        totalAmount: Number(inv.totalAmount ?? (inv as any).total_amount ?? 0),
+        currency: inv.currency || 'AED',
+        paymentMethod: inv.paymentMethod || 'CASH',
+        garmentImageUrl: pieceImageUrl
+      });
+    } catch (e) {
+      console.warn('[SalesView] Receipt graphic generation notice:', e);
+    }
+
+    try {
+      const res = await WhatsAppService.sendTextMessage(cleanPhone, msgText, receiptSlipImage);
       if (res && res.success) {
-        alert(`✅ B2B Dispatch Advice sent directly to +${cleanPhone} via WhatsApp!`);
+        alert(`✅ Digital tax receipt slip sent directly to +${cleanPhone} via WhatsApp!`);
         return;
       }
     } catch (e) {
