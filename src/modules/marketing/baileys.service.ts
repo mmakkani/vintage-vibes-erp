@@ -468,6 +468,46 @@ class BaileysManager extends EventEmitter {
   }
 
   /**
+   * Returns any actively connected live session across all operators (admin or sales desk)
+   */
+  public getConnectedSession(): BaileysLiveSession | undefined {
+    for (const session of this.sessions.values()) {
+      if (session.sock && (session.status === 'CONNECTED' || (session.sock.user && !session.sock.ws?.isClosed))) {
+        return session;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Unified message and photo dispatcher used across ERP (POS, Invoicing, Storefront Inquiries)
+   */
+  public async sendUnifiedMessage(to: string, text: string, imageUrl?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    const session = this.getConnectedSession();
+    if (!session || !session.sock) {
+      return { success: false, error: 'No WhatsApp device is currently connected in ERP. Please link a device in Marketing or Setup.' };
+    }
+
+    const cleanDigits = to.replace(/\D/g, '');
+    if (!cleanDigits || cleanDigits.length < 7) {
+      return { success: false, error: 'Invalid recipient phone number.' };
+    }
+    const cleanJid = `${cleanDigits}@s.whatsapp.net`;
+
+    try {
+      if (imageUrl) {
+        const res = await this.sendImage(session.userId, cleanJid, imageUrl, text);
+        return { success: true, messageId: res?.key?.id };
+      } else {
+        const res = await this.sendMessage(session.userId, cleanJid, text);
+        return { success: true, messageId: res?.key?.id };
+      }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to dispatch WhatsApp message.' };
+    }
+  }
+
+  /**
    * Discover Channels (Newsletters) subscribed or administered by the connected WhatsApp socket
    */
   public async discoverChannels(userId: string): Promise<Array<{ id: string; name: string; role: string; inviteLink?: string }>> {

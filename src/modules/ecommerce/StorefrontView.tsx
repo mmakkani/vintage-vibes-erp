@@ -44,7 +44,8 @@ import {
   User,
   Wallet,
   Crown,
-  Cpu
+  Cpu,
+  Send
 } from 'lucide-react';
 import { Vintage3DLogo } from '../../components/Vintage3DLogo.tsx';
 import { CompanyName3D } from '../../components/CompanyName3D.tsx';
@@ -52,6 +53,7 @@ import { DubaiLiveSoukTicker } from '../../components/DubaiLiveSoukTicker.tsx';
 import { WinterMaaziStoryHero } from './WinterMaaziStoryHero.tsx';
 import { luxuryAudio } from '../../utils/luxuryAudio.ts';
 import { SalesService } from '../../services/salesService.ts';
+import { WhatsAppService } from '../../services/whatsappService.ts';
 import { supabase } from '../../supabaseClient.ts';
 import { pixelTracking } from '../../utils/pixelTracking.ts';
 import { isPieceEvicted } from '../../services/queryClient.ts';
@@ -477,6 +479,42 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     notes: ''
   });
   const [bountySubmitting, setBountySubmitting] = useState(false);
+
+  // Instant WhatsApp Concierge Modal State (No Web Login Needed)
+  const [isConciergeModalOpen, setIsConciergeModalOpen] = useState(false);
+  const [conciergeForm, setConciergeForm] = useState({
+    name: '',
+    phone: '',
+    message: ''
+  });
+  const [isSubmittingConcierge, setIsSubmittingConcierge] = useState(false);
+  const [conciergeSuccess, setConciergeSuccess] = useState(false);
+
+  const handleConciergeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!conciergeForm.phone.trim()) return;
+    setIsSubmittingConcierge(true);
+    try {
+      const res = await WhatsAppService.sendStorefrontInquiry({
+        customerName: conciergeForm.name.trim() || 'Store Visitor',
+        customerPhone: conciergeForm.phone.trim(),
+        message: conciergeForm.message.trim() || 'Inquiring about store catalog and vintage pieces.'
+      });
+      if (res.success) {
+        setConciergeSuccess(true);
+      } else {
+        const cleanNumber = (companyProfile?.whatsapp_orders_number || '971554186086').replace(/[^0-9]/g, '');
+        window.open(`https://wa.me/${cleanNumber}?text=${encodeURIComponent('Hello Vintage Vibes, I am ' + conciergeForm.name + ': ' + conciergeForm.message)}`, '_blank');
+        setIsConciergeModalOpen(false);
+      }
+    } catch (_) {
+      const cleanNumber = (companyProfile?.whatsapp_orders_number || '971554186086').replace(/[^0-9]/g, '');
+      window.open(`https://wa.me/${cleanNumber}?text=${encodeURIComponent('Hello Vintage Vibes, I am ' + conciergeForm.name + ': ' + conciergeForm.message)}`, '_blank');
+      setIsConciergeModalOpen(false);
+    } finally {
+      setIsSubmittingConcierge(false);
+    }
+  };
 
   // Vanishing piece animation tracking
   const [vanishingBarcodes, setVanishingBarcodes] = useState<string[]>([]);
@@ -2052,22 +2090,116 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         </button>
       )}
 
-      {(() => {
-        const cleanOwnerNumber = (companyProfile?.whatsapp_orders_number || (companyProfile as any)?.whatsappOrderNumber || '971554186086').replace(/[^0-9]/g, '');
-        return (
-          <a
-            href={`https://wa.me/${cleanOwnerNumber}?text=Hello%20Vintage%20Vibes,%20I%20have%20an%20inquiry%20regarding%20an%20item`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-[#25D366] hover:bg-[#20bd5a] text-white px-4 py-3 rounded-full shadow-2xl transition-all transform hover:scale-105 active:scale-95 group cursor-pointer"
-            aria-label="WhatsApp Us"
-          >
-            <MessageCircle className="w-6 h-6 fill-current" />
-            <span className="font-bold text-xs pr-1 hidden sm:inline">WhatsApp us</span>
-            <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
-          </a>
-        );
-      })()}
+      {/* FLOATING WHATSAPP VIP CONCIERGE BUTTON */}
+      <button
+        onClick={() => setIsConciergeModalOpen(true)}
+        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-[#25D366] hover:bg-[#20bd5a] text-white px-4 py-3 rounded-full shadow-2xl transition-all transform hover:scale-105 active:scale-95 group cursor-pointer border border-emerald-400/40"
+        aria-label="WhatsApp VIP Concierge"
+      >
+        <MessageCircle className="w-6 h-6 fill-current" />
+        <span className="font-bold text-xs pr-1 hidden sm:inline">WhatsApp us</span>
+        <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+      </button>
+
+      {/* 15. INSTANT WHATSAPP CONCIERGE MODAL (WITHOUT WEB LOGIN) */}
+      {isConciergeModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#FAF4E6] border border-amber-300/80 rounded-2xl max-w-md w-full p-5 shadow-2xl animate-in fade-in zoom-in-95 text-slate-900">
+            <div className="flex items-center justify-between border-b border-amber-200/80 pb-3 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-full bg-[#25D366] text-white shadow-xs">
+                  <MessageCircle className="w-5 h-5 fill-current" />
+                </div>
+                <div>
+                  <h3 className="font-serif font-black text-sm tracking-wide text-slate-950 uppercase">Vintage Vibes Concierge</h3>
+                  <p className="text-[11px] text-slate-600">Instant VIP inquiry • No WhatsApp Web login needed</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsConciergeModalOpen(false);
+                  setConciergeSuccess(false);
+                }}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {conciergeSuccess ? (
+              <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-5 text-center space-y-2.5">
+                <CheckCircle2 className="w-9 h-9 text-emerald-600 mx-auto" />
+                <p className="font-bold text-sm text-emerald-950">Inquiry Dispatched to Showroom!</p>
+                <p className="text-xs text-emerald-800 leading-relaxed">
+                  Our concierge team has received your request and will message your WhatsApp directly with piece details and photos.
+                </p>
+                <button
+                  onClick={() => {
+                    setConciergeSuccess(false);
+                    setIsConciergeModalOpen(false);
+                  }}
+                  className="mt-3 px-5 py-2.5 bg-emerald-600 text-white font-bold text-xs rounded-xl uppercase tracking-wider cursor-pointer hover:bg-emerald-500 shadow-md transition-all"
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleConciergeSubmit} className="space-y-3.5">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">Your Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Collector / Buyer Name"
+                    value={conciergeForm.name}
+                    onChange={e => setConciergeForm(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full px-3 py-2 text-xs bg-white border border-amber-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">WhatsApp Number (+971... / +92...)</label>
+                  <input
+                    type="tel"
+                    required
+                    placeholder="+971 50 123 4567"
+                    value={conciergeForm.phone}
+                    onChange={e => setConciergeForm(prev => ({ ...prev, phone: e.target.value }))}
+                    className="w-full px-3 py-2 text-xs bg-white border border-amber-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">Inquiry / Vintage Garment Request</label>
+                  <textarea
+                    rows={3}
+                    placeholder="E.g., Inquiring about sizing on rare 90s Carhartt jacket or sizing guidance..."
+                    value={conciergeForm.message}
+                    onChange={e => setConciergeForm(prev => ({ ...prev, message: e.target.value }))}
+                    className="w-full px-3 py-2 text-xs bg-white border border-amber-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isSubmittingConcierge}
+                  className="w-full py-3 bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>{isSubmittingConcierge ? 'Dispatching to Concierge...' : 'Send Instant WhatsApp Inquiry'}</span>
+                </button>
+                <div className="pt-2 border-t border-amber-200/60 text-center">
+                  <a
+                    href={`https://wa.me/${(companyProfile?.whatsapp_orders_number || (companyProfile as any)?.whatsappOrderNumber || '971554186086').replace(/[^0-9]/g, '')}?text=Hello%20Vintage%20Vibes,%20I%20have%20an%20inquiry`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] text-emerald-800 hover:text-emerald-950 font-semibold underline"
+                  >
+                    Or open directly in WhatsApp Web / App →
+                  </a>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 14. MULTI-ITEM CART DRAWER */}
       <CartDrawer

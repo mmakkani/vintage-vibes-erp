@@ -1501,6 +1501,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
 
       // 5. Automated Marketing WhatsApp Invoice Slip (Background task)
       if (customerPhoneForSlip) {
+        const firstPiece = completedCart?.[0]?.piece;
+        const pieceImageUrl = firstPiece?.images?.[0] || firstPiece?.imageUrl || (firstPiece as any)?.global_insights?.front_photo_url || (firstPiece as any)?.globalInsights?.front_photo_url;
         WhatsAppService.sendInvoiceNotification({
           invoiceNo: invoiceNum,
           type: 'SALES',
@@ -1511,6 +1513,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           taxAmount: vatAmt,
           currency: 'AED',
           invoiceDate: new Date().toISOString(),
+          imageUrl: pieceImageUrl,
           items: completedCart.map(c => ({
             name: `${c.piece.brandName} ${c.piece.itemName}`,
             quantity: 1,
@@ -1619,7 +1622,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
   };
 
   // WhatsApp Digital E-Receipt
-  const handleSendWhatsAppReceipt = () => {
+  const handleSendWhatsAppReceipt = async () => {
     if (!checkoutSuccessData) return;
     const inv = checkoutSuccessData.invoice;
     let phone = (inv.customerPhone || selectedCustomer?.phone || '').trim();
@@ -1629,6 +1632,35 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       phone = input;
     }
 
+    const firstItem = inv.items?.[0] || checkoutSuccessData.cartSnapshot?.[0];
+    const pieceImageUrl = (firstItem as any)?.piece?.images?.[0] || (firstItem as any)?.imageUrl || (firstItem as any)?.piece?.imageUrl;
+
+    // 1. Unified Background Socket Dispatch (Direct to Customer Phone)
+    try {
+      const res = await WhatsAppService.sendInvoiceNotification({
+        invoiceNo: inv.invoiceNo,
+        type: 'SALES',
+        customerName: inv.customerName,
+        customerPhone: phone,
+        totalAmount: inv.totalAmount,
+        subtotal: inv.subTotal,
+        taxAmount: inv.vatAmount,
+        currency: inv.currency || 'AED',
+        invoiceDate: new Date(inv.date).toISOString(),
+        imageUrl: pieceImageUrl,
+        items: inv.items?.map((it: any) => ({
+          name: it.itemName || it.name,
+          quantity: it.qty || it.quantity || 1,
+          price: it.price || it.sellingPrice || 0
+        }))
+      });
+      if (res && res.success) {
+        alert(`✅ Digital tax receipt sent to ${phone} via WhatsApp!`);
+        return;
+      }
+    } catch (_) {}
+
+    // 2. Fallback to browser wa.me link
     const url = buildWhatsAppReceiptUrl({
       phone,
       invoiceNo: inv.invoiceNo,

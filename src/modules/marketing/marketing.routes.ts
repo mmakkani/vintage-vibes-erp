@@ -1020,3 +1020,192 @@ marketingRouter.post('/auto-invoice/generate-from-claim', (req, res) => {
   }
   return res.json(result);
 });
+
+// ==================== UNIFIED WHATSAPP CROSS-ERP ENGINE ("EK CHHATRI") ====================
+
+// 1. Connection status across the ERP
+marketingRouter.get('/whatsapp/status', (req, res) => {
+  const session = baileysManager.getConnectedSession();
+  const allSessions = Array.from((baileysManager as any).sessions.values()) as any[];
+  const activeCount = allSessions.filter(s => s.status === 'CONNECTED').length;
+
+  return res.json({
+    success: true,
+    connected: Boolean(session && (session.status === 'CONNECTED' || (session.sock?.user && !session.sock?.ws?.isClosed))),
+    status: session?.status || 'DISCONNECTED',
+    phoneNumber: session?.phoneNumber || null,
+    userId: session?.userId || 'usr-admin-1',
+    activeDevicesCount: activeCount,
+    engine: 'BAILEYS_SOCKET_UNIFIED'
+  });
+});
+
+// 2. Cross-ERP Auto Tax Invoice & Receipt Dispatch (Used by POS Checkout & Sales Log)
+marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (req, res) => {
+  try {
+    const { to, text, invoiceNo, customerName, totalAmount, currency, imageUrl } = req.body || {};
+    if (!to) {
+      return res.status(400).json({ success: false, error: 'Recipient phone number is required.' });
+    }
+
+    const cleanPhone = String(to).replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 7) {
+      return res.status(400).json({ success: false, error: 'Valid phone number is required (at least 7 digits).' });
+    }
+
+    // Attempt 1: Direct dispatch via actively linked Baileys socket (Zero Meta Cost)
+    const socketResult = await baileysManager.sendUnifiedMessage(cleanPhone, text || `Tax Invoice #${invoiceNo}`, imageUrl);
+    if (socketResult.success) {
+      return res.json({
+        success: true,
+        message: `Tax invoice #${invoiceNo || ''} dispatched via Linked WhatsApp.`,
+        messageId: socketResult.messageId,
+        method: 'BAILEYS_SOCKET'
+      });
+    }
+
+    // Attempt 2: Fallback to Meta Cloud API if configured
+    const gwCfg = marketingService.getWhatsAppGatewayConfig();
+    const metaToken = gwCfg?.accessToken || gwCfg?.metaCloudToken || (process.env as any).META_WA_TOKEN;
+    const phoneId = gwCfg?.phoneNumberId || (process.env as any).META_PHONE_NUMBER_ID;
+
+    if (metaToken && phoneId) {
+      try {
+        const metaRes = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${metaToken}`
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: cleanPhone,
+            type: 'text',
+            text: { body: text || `Tax Invoice #${invoiceNo}` }
+          })
+        });
+        const metaData = await metaRes.json().catch(() => ({}));
+        if (metaRes.ok && metaData.messages?.[0]?.id) {
+          return res.json({
+            success: true,
+            message: `Dispatched via Meta Cloud API`,
+            messageId: metaData.messages[0].id,
+            method: 'META_CLOUD_API'
+          });
+        }
+      } catch (metaErr: any) {
+        console.warn('[Marketing Route] Meta Cloud fallback warning:', metaErr?.message);
+      }
+    }
+
+    return res.status(400).json({
+      success: false,
+      error: socketResult.error || 'WhatsApp device is not connected. Please scan QR code in ERP.'
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to dispatch invoice' });
+  }
+});
+
+// 3. Direct Message & Photo Dispatch (Used across ERP modules)
+marketingRouter.post('/whatsapp/send-message', async (req, res) => {
+  try {
+    const { to, text, imageUrl } = req.body || {};
+    if (!to || !text) {
+      return res.status(400).json({ success: false, error: 'Recipient phone number and text are required.' });
+    }
+
+    const cleanPhone = String(to).replace(/\D/g, '');
+    const result = await baileysManager.sendUnifiedMessage(cleanPhone, text, imageUrl);
+    if (result.success) {
+      return res.json({ success: true, messageId: result.messageId, method: 'BAILEYS_SOCKET' });
+    }
+
+    return res.status(400).json({ success: false, error: result.error });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to dispatch WhatsApp message' });
+  }
+});
+
+// 4. Storefront Instant Concierge Inquiry (Without Customer Web Login)
+marketingRouter.post('/whatsapp/storefront-inquiry', async (req, res) => {
+  try {
+    const { customerName, customerPhone, message, pieceId, pieceTitle, piecePrice, imageUrl } = req.body || {};
+    if (!customerPhone) {
+      return res.status(400).json({ success: false, error: 'Customer phone number is required.' });
+    }
+
+    const cleanCustPhone = String(customerPhone).replace(/\D/g, '');
+    if (!cleanCustPhone || cleanCustPhone.length < 7) {
+      return res.status(400).json({ success: false, error: 'Valid customer phone number required.' });
+    }
+
+    const session = baileysManager.getConnectedSession();
+    const adminPhone = (session?.phoneNumber || '971554186086').replace(/\D/g, '');
+
+    const formattedInquiry =
+      `🌟 *NEW STOREFRONT INQUIRY — VINTAGE VIBES*\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `👤 *Customer:* ${customerName || 'Storefront Visitor'}\n` +
+      `📱 *Phone:* +${cleanCustPhone}\n` +
+      (pieceTitle ? `👕 *Garment:* ${pieceTitle}\n` : '') +
+      (pieceId ? `🏷️ *SKU / Barcode:* ${pieceId}\n` : '') +
+      (piecePrice ? `💰 *Price:* AED ${Number(piecePrice).toLocaleString()}\n` : '') +
+      `💬 *Inquiry:* ${message || 'Customer is inquiring about this piece.'}\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `_Dispatched via Vintage Vibes Live Concierge_`;
+
+    // 1. Send inquiry notification with piece photo to Admin / Sales Desk
+    if (adminPhone) {
+      await baileysManager.sendUnifiedMessage(adminPhone, formattedInquiry, imageUrl).catch(() => {});
+    }
+
+    // 2. Send instant acknowledgement to Customer
+    const customerAck =
+      `Hello ${customerName || 'Valued Collector'}! 👋\n\n` +
+      `Thank you for reaching out to *Vintage Vibes Dubai* regarding ${pieceTitle ? `"${pieceTitle}"` : 'our vintage archive'}.\n\n` +
+      `Our concierge team has received your inquiry and will reply to this chat shortly! 🛍️✨\n\n` +
+      `📍 *Showroom:* Al Quoz Industrial 3, Dubai\n` +
+      `🌐 *Catalog:* https://vintagevibesgk.com`;
+
+    const custResult = await baileysManager.sendUnifiedMessage(cleanCustPhone, customerAck, imageUrl).catch(() => null);
+
+    return res.json({
+      success: true,
+      message: 'Inquiry successfully processed.',
+      dispatchedToAdmin: true,
+      dispatchedToCustomer: Boolean(custResult?.success)
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to process storefront inquiry' });
+  }
+});
+
+// 5. Executive Daily Digest Direct Send (Used by Header WhatsApp Modal)
+marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
+  try {
+    const { to, reportText } = req.body || {};
+    const session = baileysManager.getConnectedSession();
+    const targetPhone = (to || session?.phoneNumber || '971554186086').replace(/\D/g, '');
+
+    if (!targetPhone) {
+      return res.status(400).json({ success: false, error: 'Recipient phone number is required.' });
+    }
+
+    const textToSend = reportText ||
+      `📊 *VINTAGE VIBES DUBAI — DAILY EXECUTIVE DIGEST*\n` +
+      `📅 Date: ${new Date().toLocaleDateString('en-GB')}\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🏢 Entity: Vintage Vibes General Trading L.L.C SPC\n` +
+      `📍 Location: Al Quoz Industrial 3, Dubai\n` +
+      `💰 Currency: AED\n\n` +
+      `System Status: Live & Operational.\n` +
+      `Dispatched via Unified WhatsApp Engine.`;
+
+    const result = await baileysManager.sendUnifiedMessage(targetPhone, textToSend);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to send daily digest' });
+  }
+});

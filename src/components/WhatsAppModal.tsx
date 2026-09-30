@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { MessageSquare, Copy, CheckCircle, X } from 'lucide-react';
+import { MessageSquare, Copy, CheckCircle, X, Send } from 'lucide-react';
+import { WhatsAppService } from '../services/whatsappService.ts';
 
 interface WhatsAppModalProps {
   isOpen: boolean;
@@ -9,6 +10,8 @@ interface WhatsAppModalProps {
 export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose }) => {
   const [reportText, setReportText] = useState('');
   const [copied, setCopied] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -40,6 +43,25 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
     setTimeout(() => setCopied(false), 3000);
   };
 
+  const handleSendDirectWhatsApp = async () => {
+    if (!reportText) return;
+    setIsSending(true);
+    setSendSuccess(null);
+    try {
+      const res = await WhatsAppService.sendDailyDigest(reportText);
+      if (res.success) {
+        setSendSuccess('Sent to WhatsApp!');
+        setTimeout(() => setSendSuccess(null), 4000);
+      } else {
+        alert(res.error || 'WhatsApp device not connected. You can still use Copy to Clipboard.');
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Failed to dispatch to WhatsApp');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
       <div className="bg-white rounded max-w-lg w-full p-3.5 sm:p-4 shadow-xl border border-slate-300 animate-in fade-in zoom-in-95">
@@ -65,17 +87,27 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
         <div className="mt-3 flex justify-end gap-2 border-t border-slate-200 pt-2.5">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] uppercase tracking-wider"
+            className="px-3 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] uppercase tracking-wider cursor-pointer"
           >
             Close
           </button>
           <button
             id="btn-copy-whatsapp-modal"
             onClick={handleCopy}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[10px] uppercase tracking-wider shadow-xs transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-800 text-white font-bold text-[10px] uppercase tracking-wider shadow-xs transition-colors cursor-pointer"
           >
             {copied ? <CheckCircle className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{copied ? 'Copied!' : 'Copy to Clipboard'}</span>
+            <span>{copied ? 'Copied!' : 'Copy'}</span>
+          </button>
+          <button
+            id="btn-send-whatsapp-direct"
+            onClick={handleSendDirectWhatsApp}
+            disabled={isSending}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] uppercase tracking-wider shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+            title="Send directly to linked admin WhatsApp"
+          >
+            <Send className="w-3.5 h-3.5" />
+            <span>{isSending ? 'Sending...' : sendSuccess || 'Send to My WhatsApp'}</span>
           </button>
         </div>
       </div>

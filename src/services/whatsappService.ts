@@ -27,6 +27,7 @@ export interface InvoiceNotificationPayload {
     unit_price?: number;
     total?: number;
   }>;
+  imageUrl?: string;
 }
 
 export interface WhatsAppSendResult {
@@ -126,34 +127,14 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
   public static async sendInvoiceNotification(payload: InvoiceNotificationPayload): Promise<WhatsAppSendResult> {
     try {
       const cleanPhone = this.sanitizePhoneNumber(payload?.customerPhone);
-      if (!cleanPhone || cleanPhone.length < 8) {
+      if (!cleanPhone || cleanPhone.length < 7) {
         console.warn('[WhatsAppService] Skipping invoice notification: recipient phone number is missing or invalid.');
         return { success: false, error: 'Recipient phone number is missing or invalid.' };
       }
 
-      // Check whether Meta Official WhatsApp Cloud API is configured in this environment
-      const envMetaToken =
-        (typeof import.meta !== 'undefined' && ((import.meta as any).env?.VITE_META_WA_TOKEN || (import.meta as any).env?.VITE_WHATSAPP_TOKEN)) ||
-        (typeof process !== 'undefined' && (process.env?.META_WA_TOKEN || process.env?.WHATSAPP_ACCESS_TOKEN || process.env?.WHATSAPP_API_TOKEN));
-
-      const gatewayConfig = await this.getGatewayConfig().catch(() => null);
-      const hasActiveCredentials = Boolean(
-        envMetaToken ||
-        gatewayConfig?.accessToken ||
-        gatewayConfig?.metaCloudToken ||
-        gatewayConfig?.apiKey ||
-        gatewayConfig?.token
-      );
-
-      // If credentials are not configured, suppress network error and return early
-      if (!hasActiveCredentials) {
-        console.warn('[WhatsAppService] Meta Cloud WhatsApp API credentials not configured in environment. Skipping automatic invoice dispatch.');
-        return { success: false, message: 'WhatsApp API credentials not configured in environment.' };
-      }
-
       const formattedText = this.formatInvoiceMessage(payload);
 
-      // 1. Primary: Dispatch via dedicated serverless backend route
+      // 1. Primary: Dispatch via Unified WhatsApp Engine (Baileys Linked Phone or Meta Cloud Fallback)
       const res = await fetch('/api/marketing/whatsapp/send-invoice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -164,17 +145,18 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
           invoiceNo: payload.invoiceNo,
           customerName: payload.customerName,
           totalAmount: payload.totalAmount,
-          currency: payload.currency || 'AED'
+          currency: payload.currency || 'AED',
+          imageUrl: payload.imageUrl
         })
       }).catch(() => null);
 
       if (res && res.ok) {
         const data = await res.json().catch(() => ({}));
-        console.log(`[WhatsAppService] Successfully dispatched invoice #${payload.invoiceNo} to ${cleanPhone} via Meta Cloud API.`);
+        console.log(`[WhatsAppService] Successfully dispatched invoice #${payload.invoiceNo} to ${cleanPhone} via Unified WhatsApp.`);
         return { success: true, message: data.message, messageId: data.messageId };
       }
 
-      // 2. Fallback: try Meta Cloud send endpoint directly
+      // 2. Fallback: try Meta Cloud send endpoint directly if available
       const fallbackRes = await fetch('/api/marketing/whatsapp/meta-cloud-send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -191,7 +173,7 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
       }
 
       const errData = res ? await res.json().catch(() => ({})) : {};
-      const errorMsg = errData.error || errData.message || 'WhatsApp gateway inactive or unconfigured';
+      const errorMsg = errData.error || errData.message || 'WhatsApp gateway inactive or device not linked';
       console.warn(`[WhatsAppService] WhatsApp invoice notification skipped: ${errorMsg}`);
       return { success: false, error: errorMsg };
     } catch (err: any) {
@@ -208,43 +190,119 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
   }
 
   /**
-   * Dispatches a direct text message via Meta Cloud API
+   * Dispatches a direct text message or photo via Unified WhatsApp Gateway
    */
-  public static async sendTextMessage(to: string, text: string): Promise<WhatsAppSendResult> {
+  public static async sendTextMessage(to: string, text: string, imageUrl?: string): Promise<WhatsAppSendResult> {
     try {
       const cleanPhone = this.sanitizePhoneNumber(to);
       if (!cleanPhone) {
         return { success: false, error: 'Valid recipient phone number is required.' };
       }
 
-      const envMetaToken =
-        (typeof import.meta !== 'undefined' && ((import.meta as any).env?.VITE_META_WA_TOKEN || (import.meta as any).env?.VITE_WHATSAPP_TOKEN)) ||
-        (typeof process !== 'undefined' && (process.env?.META_WA_TOKEN || process.env?.WHATSAPP_ACCESS_TOKEN));
+      const res = await fetch('/api/marketing/whatsapp/send-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ to: cleanPhone, text, imageUrl })
+      }).catch(() => null);
 
-      if (!envMetaToken) {
-        console.warn('[WhatsAppService] Meta Cloud WhatsApp API token not present in environment. Skipping text dispatch.');
-        return { success: false, message: 'WhatsApp token missing in environment.' };
+      if (res && res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return { success: true, message: data.message, messageId: data.messageId };
       }
 
-      const res = await fetch('/api/marketing/whatsapp/meta-cloud-send', {
+      // Fallback to meta-cloud-send if available
+      const fallbackRes = await fetch('/api/marketing/whatsapp/meta-cloud-send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ to: cleanPhone, text })
       }).catch(() => null);
 
-      if (!res) {
-        return { success: false, error: 'Network request failed' };
-      }
-
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
+      if (fallbackRes && fallbackRes.ok) {
+        const data = await fallbackRes.json().catch(() => ({}));
         return { success: true, message: data.message, messageId: data.metaData?.messages?.[0]?.id };
       }
-      return { success: false, error: data.error || 'Failed to send WhatsApp message' };
+
+      return { success: false, error: 'Failed to send WhatsApp message. Device not linked.' };
     } catch (err: any) {
       console.warn('[WhatsAppService] Silent catch sending text WhatsApp:', err?.message);
       return { success: false, error: err?.message || 'Network error' };
+    }
+  }
+
+  /**
+   * Check connection status of Unified WhatsApp Socket
+   */
+  public static async getWhatsAppStatus(): Promise<{ connected: boolean; phoneNumber?: string; status: string }> {
+    try {
+      const res = await fetch('/api/marketing/whatsapp/status');
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          connected: Boolean(data.connected),
+          phoneNumber: data.phoneNumber || undefined,
+          status: data.status || 'DISCONNECTED'
+        };
+      }
+    } catch (_) {}
+    return { connected: false, status: 'DISCONNECTED' };
+  }
+
+  /**
+   * Sends customer storefront inquiry with garment photo without requiring visitor to log into WhatsApp Web
+   */
+  public static async sendStorefrontInquiry(payload: {
+    customerName: string;
+    customerPhone: string;
+    message: string;
+    pieceId?: string;
+    pieceTitle?: string;
+    piecePrice?: number;
+    imageUrl?: string;
+  }): Promise<WhatsAppSendResult> {
+    try {
+      const cleanPhone = this.sanitizePhoneNumber(payload.customerPhone);
+      if (!cleanPhone || cleanPhone.length < 7) {
+        return { success: false, error: 'Valid phone number is required.' };
+      }
+
+      const res = await fetch('/api/marketing/whatsapp/storefront-inquiry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...payload,
+          customerPhone: cleanPhone
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        return { success: true, message: data.message || 'Inquiry dispatched to concierge desk.' };
+      }
+      return { success: false, error: data.error || 'Failed to submit inquiry' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error submitting inquiry' };
+    }
+  }
+
+  /**
+   * Sends the Executive Daily Digest directly to Admin WhatsApp
+   */
+  public static async sendDailyDigest(reportText: string, to?: string): Promise<WhatsAppSendResult> {
+    try {
+      const res = await fetch('/api/marketing/whatsapp/send-daily-digest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reportText, to })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        return { success: true, message: 'Daily digest dispatched to WhatsApp!' };
+      }
+      return { success: false, error: data.error || 'Failed to send daily digest' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error sending daily digest' };
     }
   }
 }
