@@ -647,11 +647,14 @@ export interface AirwayBillGraphicData {
   balanceDue: number;
   totalAmount?: number;
   paidAmount?: number;
+  shippingFee?: number;
+  shippingBearer?: string;
+  items?: { description: string; finalAmount?: number; unitPrice?: number }[];
 }
 
 function drawAwbBarcode(ctx: CanvasRenderingContext2D, codeStr: string, x: number, y: number, width: number, height: number) {
   ctx.save();
-  ctx.fillStyle = '#0f172a';
+  ctx.fillStyle = '#000000';
   const clean = codeStr.replace(/[^A-Za-z0-9]/g, '').toUpperCase() || 'AWB998877';
   let curX = x;
   const barUnit = width / (clean.length * 7 + 12);
@@ -685,11 +688,11 @@ function drawAwbBarcode(ctx: CanvasRenderingContext2D, codeStr: string, x: numbe
 
 /**
  * Automatically generates a high-contrast companion Courier Airway Bill Cargo Slip graphic.
- * Renders AWB barcode, shipper, consignee, declared weight, and prominent PREPAID vs COD directive.
+ * Renders in 4x6 standard vertical thermal shipping waybill card format matching physical waybills.
  */
 export async function generateAirwayBillGraphic(data: AirwayBillGraphicData): Promise<string> {
-  const width = 850;
-  const height = 620;
+  const width = 600;
+  const height = 900;
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -700,224 +703,336 @@ export async function generateAirwayBillGraphic(data: AirwayBillGraphicData): Pr
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, width, height);
 
-  // Outer Border
-  ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 3;
-  ctx.strokeRect(4, 4, width - 8, height - 8);
+  // Outer Border (crisp black 2.5px)
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 2.5;
+  ctx.strokeRect(8, 8, width - 16, height - 16);
 
-  // 1. Top Courier Header Banner
-  const topGrad = ctx.createLinearGradient(0, 0, width, 0);
-  topGrad.addColorStop(0, '#0f172a');
-  topGrad.addColorStop(0.7, '#1e293b');
-  topGrad.addColorStop(1, '#0f172a');
-  ctx.fillStyle = topGrad;
-  ctx.fillRect(4, 4, width - 8, 64);
+  // 1. Top Courier Bar (Carrier Pill & Priority)
+  const carrierName = (data.courierName || 'BANANA EXPRESS').toUpperCase();
+  ctx.font = '900 15px -apple-system, BlinkMacSystemFont, "Segoe UI", monospace, sans-serif';
+  const pillTextWidth = ctx.measureText(carrierName).width;
+  const pillW = Math.max(130, pillTextWidth + 24);
 
-  // Gold accent line under header
-  ctx.fillStyle = '#f59e0b';
-  ctx.fillRect(4, 68, width - 8, 4);
-
-  // Carrier Name & Title
+  // Black Courier Pill
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(18, 16, pillW, 30);
   ctx.fillStyle = '#ffffff';
-  ctx.textAlign = 'left';
-  ctx.font = '900 17px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  const carrierName = (data.courierName || 'EXPRESS LOGISTICS PARTNER').toUpperCase();
-  ctx.fillText(`🚚 ${carrierName} — CARGO WAYBILL SLIP`, 24, 34);
-
-  ctx.font = 'bold 11px monospace';
-  ctx.fillStyle = '#cbd5e1';
-  ctx.fillText('UAE DOMESTIC & GCC CONSIGNMENT DISPATCH • بوليصة الشحن الجوي السريع', 24, 52);
-
-  // Right Date / Time
-  ctx.textAlign = 'right';
-  ctx.fillStyle = '#fcd34d';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText(`DATE: ${data.date || new Date().toISOString().slice(0, 10)}`, width - 24, 34);
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '900 10.5px monospace';
-  ctx.fillText(`INV REF: #${data.invoiceNo}`, width - 24, 52);
-
-  // 2. Barcode & Tracking Number Box
-  let currentY = 82;
-  ctx.fillStyle = '#f8fafc';
-  ctx.fillRect(20, currentY, width - 40, 94);
-  ctx.strokeStyle = '#cbd5e1';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(20, currentY, width - 40, 94);
-
-  // Draw high-contrast barcode
-  const barcodeStr = data.awbNumber || `AWB-${data.invoiceNo}`;
-  drawAwbBarcode(ctx, barcodeStr, 40, currentY + 14, width - 80, 46);
-
-  // Human-readable Barcode Text
   ctx.textAlign = 'center';
+  ctx.fillText(carrierName, 18 + pillW / 2, 36);
+
+  // Subtitle under pill
+  ctx.textAlign = 'left';
   ctx.fillStyle = '#0f172a';
-  ctx.font = '900 17px monospace';
-  ctx.fillText(`AWB / TRACKING #: ${barcodeStr}`, width / 2, currentY + 80);
+  ctx.font = 'bold 9px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText('DOMESTIC / AIRWAY DISPATCH', 18, 56);
 
-  currentY += 106;
+  // Right Side Origin & Priority
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#64748b';
+  ctx.font = 'bold 9px monospace';
+  ctx.fillText('ORIGIN: DXB-UAE', width - 18, 28);
+  ctx.fillStyle = '#000000';
+  ctx.font = '900 14px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText('STD-PRIORITY', width - 18, 48);
 
-  // 3. Shipper & Consignee Two-Column Grid
-  const colW = (width - 50) / 2;
-  const colH = 138;
-
-  // Left: Shipper Box
-  ctx.fillStyle = '#ffffff';
-  ctx.strokeStyle = '#cbd5e1';
-  ctx.lineWidth = 1.5;
+  // Divider Line
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.roundRect ? ctx.roundRect(20, currentY, colW, colH, 6) : ctx.rect(20, currentY, colW, colH);
-  ctx.fill();
+  ctx.moveTo(8, 64);
+  ctx.lineTo(width - 8, 64);
   ctx.stroke();
 
-  // Shipper Header Tag
-  ctx.fillStyle = '#334155';
-  ctx.fillRect(20, currentY, colW, 24);
-  ctx.fillStyle = '#ffffff';
+  // 2. Barcode & Tracking Number Section
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(10, 66, width - 20, 96);
+
+  const barcodeStr = data.awbNumber || `AWB-${data.invoiceNo}`;
+  drawAwbBarcode(ctx, barcodeStr, 40, 76, width - 80, 52);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#000000';
+  ctx.font = '900 14px monospace';
+  ctx.fillText(`WAYBILL / TRACKING #${barcodeStr}`, width / 2, 150);
+
+  // Divider Line
+  ctx.beginPath();
+  ctx.moveTo(8, 164);
+  ctx.lineTo(width - 8, 164);
+  ctx.stroke();
+
+  // 3. Two-Column Parties Grid (Shipper vs Consignee)
+  const colW = (width - 24) / 2;
+  const gridTopY = 168;
+
+  // Left: Shipper
   ctx.textAlign = 'left';
-  ctx.font = '900 10.5px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.fillText('📤 SHIPPER / SENDER (المرسل)', 28, currentY + 16);
-
-  ctx.fillStyle = '#0f172a';
-  ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.fillText('VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C', 28, currentY + 42);
-
   ctx.fillStyle = '#475569';
-  ctx.font = '500 10px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.fillText('Downtown, Al Qaseedah Dist, 135 Khalifa Bin Zayed St', 28, currentY + 58);
-  ctx.fillText('Al Ain, Abu Dhabi, United Arab Emirates', 28, currentY + 74);
-  ctx.fillText('Tel: +971 55 418 6086 • Email: vintagevibe006@gmail.com', 28, currentY + 90);
-  ctx.font = 'bold 9.5px monospace';
-  ctx.fillStyle = '#1e293b';
-  ctx.fillText('Trade License: CN-5888545 • TRN: 100482910300003', 28, currentY + 108);
+  ctx.font = '900 9px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText('FROM (SHIPPER):', 18, gridTopY + 12);
 
-  // Right: Consignee Box
-  const rightX = 20 + colW + 10;
-  ctx.fillStyle = '#ffffff';
-  ctx.strokeStyle = '#0284c7';
-  ctx.lineWidth = 1.5;
+  ctx.fillStyle = '#000000';
+  ctx.font = '800 10.5px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(data.shipperName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C', 18, gridTopY + 28);
+
+  ctx.font = '500 9.5px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillStyle = '#1e293b';
+  ctx.fillText('Downtown, Al Qaseedah District', 18, gridTopY + 44);
+  ctx.fillText('135 Khalifa Bin Zayed Street, Alain UAE', 18, gridTopY + 58);
+  ctx.font = 'bold 9.5px monospace';
+  ctx.fillText('TRN: 100482910300003', 18, gridTopY + 74);
+  ctx.fillText('Trade License: CN-5888545', 18, gridTopY + 88);
+  ctx.font = '500 9.5px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(`Tel: ${data.shipperPhone || '+971 55 418 6086'}`, 18, gridTopY + 102);
+
+  // Vertical Divider
   ctx.beginPath();
-  ctx.roundRect ? ctx.roundRect(rightX, currentY, colW, colH, 6) : ctx.rect(rightX, currentY, colW, colH);
-  ctx.fill();
+  ctx.moveTo(8 + colW, 164);
+  ctx.lineTo(8 + colW, 290);
   ctx.stroke();
 
-  // Consignee Header Tag
-  ctx.fillStyle = '#0284c7';
-  ctx.fillRect(rightX, currentY, colW, 24);
-  ctx.fillStyle = '#ffffff';
-  ctx.textAlign = 'left';
-  ctx.font = '900 10.5px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.fillText('📥 CONSIGNEE / RECIPIENT (المرسل إليه)', rightX + 8, currentY + 16);
+  // Right: Consignee
+  const rightX = 18 + colW + 6;
+  ctx.fillStyle = '#475569';
+  ctx.font = '900 9px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText('TO (CONSIGNEE):', rightX, gridTopY + 12);
 
-  ctx.fillStyle = '#0f172a';
-  ctx.font = '900 13px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.fillText(data.consigneeName || 'Valued Corporate Buyer', rightX + 8, currentY + 44);
+  ctx.fillStyle = '#000000';
+  ctx.font = '900 12.5px -apple-system, BlinkMacSystemFont, sans-serif';
+  const cName = data.consigneeName || 'Valued Corporate Buyer';
+  ctx.fillText(cName.slice(0, 32), rightX, gridTopY + 28);
 
-  ctx.fillStyle = '#0369a1';
-  ctx.font = 'bold 12px monospace';
-  ctx.fillText(`📱 Tel: ${data.consigneePhone || 'N/A'}`, rightX + 8, currentY + 64);
+  ctx.fillStyle = '#1e40af';
+  ctx.font = 'bold 11.5px monospace';
+  ctx.fillText(`Tel: ${data.consigneePhone || 'N/A'}`, rightX, gridTopY + 46);
 
-  ctx.fillStyle = '#334155';
-  ctx.font = '600 10px -apple-system, BlinkMacSystemFont, sans-serif';
-  const cAddr = data.consigneeAddress || 'Customer Warehouse / Store Delivery Address';
-  ctx.fillText(cAddr.slice(0, 48), rightX + 8, currentY + 84);
-  if (cAddr.length > 48) {
-    ctx.fillText(cAddr.slice(48, 96), rightX + 8, currentY + 100);
+  ctx.fillStyle = '#1e293b';
+  ctx.font = '500 9.5px -apple-system, BlinkMacSystemFont, sans-serif';
+  const rawAddr = data.consigneeAddress || 'Customer Warehouse / Delivery Address';
+  ctx.fillText(rawAddr.slice(0, 36), rightX, gridTopY + 62);
+  if (rawAddr.length > 36) {
+    ctx.fillText(rawAddr.slice(36, 72), rightX, gridTopY + 76);
   }
-  ctx.font = 'bold 10px monospace';
-  ctx.fillStyle = '#0f172a';
-  ctx.fillText(`DESTINATION: ${data.city || 'United Arab Emirates'}`, rightX + 8, currentY + (cAddr.length > 48 ? 118 : 104));
 
-  currentY += colH + 12;
+  ctx.fillStyle = '#000000';
+  ctx.font = 'bold 9.5px monospace';
+  ctx.fillText(`DEST: ${data.city || 'United Arab Emirates'}`, rightX, gridTopY + (rawAddr.length > 36 ? 92 : 78));
 
-  // 4. Package Specs Bar
+  // Divider Line
+  ctx.beginPath();
+  ctx.moveTo(8, 290);
+  ctx.lineTo(width - 8, 290);
+  ctx.stroke();
+
+  // 4. Package & Items Section
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#000000';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText(`INVOICE: #${data.invoiceNo}`, 18, 308);
+
+  ctx.textAlign = 'right';
+  const piecesCount = data.totalPieces || (data.items && data.items.length) || 1;
+  ctx.fillText(`PIECES: ${piecesCount} PCS`, width - 18, 308);
+
+  // Specs pill bar
   ctx.fillStyle = '#f1f5f9';
-  ctx.fillRect(20, currentY, width - 40, 32);
+  ctx.fillRect(14, 316, width - 28, 24);
   ctx.strokeStyle = '#cbd5e1';
   ctx.lineWidth = 1;
-  ctx.strokeRect(20, currentY, width - 40, 32);
+  ctx.strokeRect(14, 316, width - 28, 24);
 
-  ctx.fillStyle = '#334155';
-  ctx.font = 'bold 10.5px -apple-system, BlinkMacSystemFont, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText(`📦 PACKAGES: ${data.totalPieces || 1} Piece(s)`, 32, currentY + 20);
-  ctx.fillText(`⚖️ WEIGHT: ${Number(data.totalWeightKg || 0).toFixed(1)} KG`, 220, currentY + 20);
-  ctx.fillText(`🏷️ CONTENTS: ${data.declaredContents || 'Authentic Vintage Apparel & Garments'}`, 410, currentY + 20);
-  ctx.textAlign = 'right';
-  ctx.font = 'bold 10.5px monospace';
-  ctx.fillStyle = '#0f172a';
-  ctx.fillText(`CARRIER: ${carrierName}`, width - 32, currentY + 20);
+  ctx.fillStyle = '#334155';
+  ctx.font = 'bold 9.5px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(`⚖️ WEIGHT: ${Number(data.totalWeightKg || 0).toFixed(1)} KG`, 24, 332);
+  ctx.fillText(`🏷️ CONTENTS: ${data.declaredContents || 'Authentic Vintage Garments'}`, 180, 332);
 
-  currentY += 44;
+  // Items listing
+  let itemY = 356;
+  const displayItems = (data.items && data.items.length > 0) ? data.items : [];
+  if (displayItems.length > 0) {
+    displayItems.slice(0, 4).forEach(it => {
+      ctx.fillStyle = '#1e293b';
+      ctx.font = '500 9.5px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'left';
+      const desc = it.description || 'Garment Item';
+      ctx.fillText(`• ${desc.slice(0, 52)}`, 20, itemY);
+      ctx.textAlign = 'right';
+      ctx.font = 'bold 9.5px monospace';
+      const amt = Number(it.finalAmount || it.unitPrice || 0);
+      ctx.fillText(`AED ${amt.toFixed(2)}`, width - 20, itemY);
+      itemY += 18;
+    });
+    if (displayItems.length > 4) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = 'italic 9px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(`+ ${displayItems.length - 4} more garments bundled in consignment`, 24, itemY);
+      itemY += 16;
+    }
+  } else {
+    ctx.fillStyle = '#1e293b';
+    ctx.font = '500 9.5px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('• Curated High-Grade Vintage Garments & Accessories Consignment', 20, itemY);
+    ctx.textAlign = 'right';
+    ctx.font = 'bold 9.5px monospace';
+    ctx.fillText(`AED ${Number(data.totalAmount || 0).toFixed(2)}`, width - 20, itemY);
+    itemY += 20;
+  }
 
-  // 5. High-Contrast Payment Directive Box (Prepaid vs Cash on Delivery)
+  // Divider Line
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(8, 452);
+  ctx.lineTo(width - 8, 452);
+  ctx.stroke();
+
+  // 5. High-Contrast COD vs PREPAID Box (Exact matches physical thermal waybill)
   const isPrepaid = Number(data.balanceDue || 0) <= 0;
-  const directiveBoxH = 110;
+  const codBoxY = 464;
+  const codBoxH = 120;
 
   if (isPrepaid) {
-    // PREPAID STAMP & BANNER (Green)
+    // PREPAID BOX (Green High-Contrast)
     ctx.fillStyle = '#f0fdf4';
+    ctx.fillRect(16, codBoxY, width - 32, codBoxH);
     ctx.strokeStyle = '#16a34a';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(16, codBoxY, width - 32, codBoxH);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#166534';
+    ctx.font = 'bold 10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('COLLECTION MODE:', 30, codBoxY + 26);
+
+    ctx.fillStyle = '#15803d';
+    ctx.font = '900 16px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('✅ PREPAID (DO NOT COLLECT CASH)', 30, codBoxY + 50);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#166534';
+    ctx.font = 'bold 10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('TOTAL TO COLLECT:', width - 30, codBoxY + 26);
+
+    ctx.fillStyle = '#15803d';
+    ctx.font = '900 24px monospace';
+    ctx.fillText('AED 0.00', width - 30, codBoxY + 54);
+
+    // Sub-row line
+    ctx.strokeStyle = '#bbf7d0';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect ? ctx.roundRect(20, currentY, width - 40, directiveBoxH, 8) : ctx.rect(20, currentY, width - 40, directiveBoxH);
-    ctx.fill();
+    ctx.moveTo(24, codBoxY + 70);
+    ctx.lineTo(width - 24, codBoxY + 70);
     ctx.stroke();
+
+    const shippingText = Number(data.shippingFee || 0) > 0 
+      ? `AED ${Number(data.shippingFee).toFixed(2)} (${data.shippingBearer === 'COMPANY' ? 'Absorbed by Company' : 'Charged to Client'})`
+      : 'Standard Delivery / Direct Delivery';
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#334155';
+    ctx.font = '500 9.5px monospace';
+    ctx.fillText(`Shipping: ${shippingText}`, 30, codBoxY + 90);
+    ctx.textAlign = 'right';
+    ctx.fillText('Status: PAID & SETTLED', width - 30, codBoxY + 90);
 
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#15803d';
-    ctx.font = '900 19px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText('✅ PREPAID / PAYMENT RECEIVED — DO NOT COLLECT CASH', width / 2, currentY + 36);
-
-    ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
     ctx.fillStyle = '#166534';
-    ctx.fillText('This consignment is settled in full. Courier must deliver with ZERO collection from consignee.', width / 2, currentY + 62);
-
-    ctx.font = 'bold 11.5px monospace';
-    ctx.fillStyle = '#0f172a';
-    ctx.fillText(`Invoice Total: AED ${Number(data.totalAmount || 0).toFixed(2)} (Settled via Bank Wire / Advance) • Balance Due: AED 0.00`, width / 2, currentY + 88);
+    ctx.font = 'bold 9px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('Consignment settled in full. Courier must deliver with ZERO doorstep cash collection.', width / 2, codBoxY + 110);
   } else {
-    // CASH ON DELIVERY (COD) MANDATORY COLLECTION (High Contrast Amber/Red)
+    // CASH ON DELIVERY (COD) BOX (Red High-Contrast)
     ctx.fillStyle = '#fffbeb';
+    ctx.fillRect(16, codBoxY, width - 32, codBoxH);
     ctx.strokeStyle = '#dc2626';
-    ctx.lineWidth = 3.5;
-    ctx.beginPath();
-    ctx.roundRect ? ctx.roundRect(20, currentY, width - 40, directiveBoxH, 8) : ctx.rect(20, currentY, width - 40, directiveBoxH);
-    ctx.fill();
-    ctx.stroke();
+    ctx.lineWidth = 3;
+    ctx.strokeRect(16, codBoxY, width - 32, codBoxH);
 
-    // Top warning band inside box
+    // Top warning band
     ctx.fillStyle = '#dc2626';
-    ctx.fillRect(20, currentY, width - 40, 28);
+    ctx.fillRect(16, codBoxY, width - 32, 24);
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
-    ctx.font = '900 13px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText('⚠️ CASH ON DELIVERY (COD) — MANDATORY CARGO COLLECTION AT DOORSTEP', width / 2, currentY + 19);
+    ctx.font = '900 11px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('⚠️ CASH ON DELIVERY (COD) — MANDATORY DOORSTEP COLLECTION', width / 2, codBoxY + 16);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#991b1b';
+    ctx.font = 'bold 10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('COLLECTION MODE:', 30, codBoxY + 44);
+
+    ctx.fillStyle = '#b91c1c';
+    ctx.font = '900 15px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('💵 CASH ON DELIVERY (COD)', 30, codBoxY + 68);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#991b1b';
+    ctx.font = 'bold 10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.fillText('TOTAL TO COLLECT:', width - 30, codBoxY + 44);
 
     const dueAmount = Number(data.balanceDue).toFixed(2);
     ctx.fillStyle = '#b91c1c';
     ctx.font = '900 24px monospace';
-    ctx.fillText(`AMOUNT TO COLLECT: AED ${dueAmount}`, width / 2, currentY + 66);
+    ctx.fillText(`AED ${dueAmount}`, width - 30, codBoxY + 70);
 
-    ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
+    // Sub-row line
+    ctx.strokeStyle = '#fecaca';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(24, codBoxY + 84);
+    ctx.lineTo(width - 24, codBoxY + 84);
+    ctx.stroke();
+
+    const shippingText = Number(data.shippingFee || 0) > 0 
+      ? `AED ${Number(data.shippingFee).toFixed(2)} (${data.shippingBearer === 'COMPANY' ? 'Absorbed by Company' : 'Charged to Client'})`
+      : 'Standard Courier Delivery';
+
+    ctx.textAlign = 'left';
     ctx.fillStyle = '#451a03';
-    ctx.fillText(`Invoice Total: AED ${Number(data.totalAmount || 0).toFixed(2)} • Advance Received: AED ${Number(data.paidAmount || 0).toFixed(2)} • Hand over package only upon payment`, width / 2, currentY + 92);
+    ctx.font = 'bold 9.5px monospace';
+    ctx.fillText(`Shipping: ${shippingText}`, 30, codBoxY + 102);
+    ctx.textAlign = 'right';
+    ctx.fillText(`Invoice Total: AED ${Number(data.totalAmount || 0).toFixed(2)}`, width - 30, codBoxY + 102);
   }
 
-  currentY += directiveBoxH + 14;
-
-  // 6. Footer Dispatch Verification
+  // 6. Delivery Instructions & Logistics Footer
+  let footY = 604;
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.moveTo(20, currentY);
-  ctx.lineTo(width - 20, currentY);
-  ctx.strokeStyle = '#e2e8f0';
-  ctx.lineWidth = 1;
+  ctx.moveTo(8, footY);
+  ctx.lineTo(width - 8, footY);
   ctx.stroke();
 
+  footY += 18;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#0f172a';
+  ctx.font = 'bold 10.5px monospace';
+  ctx.fillText(`COURIER PARTNER: ${carrierName}`, 18, footY);
+
+  ctx.textAlign = 'right';
+  ctx.fillText(`DATE: ${data.date || new Date().toISOString().slice(0, 10)}`, width - 18, footY);
+
+  footY += 16;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#475569';
+  ctx.font = '500 9px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText('Special Instructions: Hand over consignment strictly to consignee address.', 18, footY);
+  footY += 13;
+  ctx.fillText('In case of non-delivery, contact dispatch lead at +971 55 418 6086 or return consignment.', 18, footY);
+
+  // 7. Official Seal Graphic
+  drawRoyalWaxSeal(ctx, width - 68, 720, 36, data.date || new Date().toISOString().slice(0, 10));
+
+  // 8. Bottom Footer Notice
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#64748b';
-  ctx.font = '500 9.5px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.fillText('VERIFIED AIRWAY BILL CARGO SLIP • OFFICIAL DISPATCH LOGISTICS ATTACHMENT • VINTAGE VIBES ERP', width / 2, currentY + 14);
+  ctx.fillStyle = '#475569';
+  ctx.font = '900 8.5px monospace';
+  ctx.fillText('4X6 STANDARD THERMAL SHIPPING WAYBILL • VINTAGE VIBES CARGO DISPATCH', width / 2, 882);
 
   return canvas.toDataURL('image/jpeg', 0.95);
 }

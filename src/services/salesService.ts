@@ -527,7 +527,11 @@ export class SalesService {
       tax_amount: Number(inv.taxAmount || 0),
       total_amount: Number(inv.totalAmount || 0),
       status: inv.status || 'PAID',
-      items: inv.items || []
+      items: inv.items || [],
+      tracking_number: (inv as any).trackingNumber || (inv as any).tracking_number || (inv as any).waybillNo || null,
+      courier_partner_id: (inv as any).courierPartnerId || (inv as any).courier_partner_id || (inv as any).courierPartyId || (inv as any).courierId || null,
+      shipping_fee: Number((inv as any).shippingFee ?? (inv as any).shipping_fee ?? (inv as any).courierFee ?? 0),
+      shipping_bearer: (inv as any).shippingBearer || (inv as any).shipping_bearer || ((inv as any).courierFeePayer === 'COMPANY' || (inv as any).courierFeePayer === 'SELLER' ? 'COMPANY' : 'CUSTOMER') || 'CUSTOMER'
     };
 
     const { data, error } = await supabase
@@ -578,15 +582,36 @@ export class SalesService {
       totalAmount: Number(data.total_amount),
       status: data.status,
       items: data.items,
-      createdAt: data.created_at
-    };
+      createdAt: data.created_at,
+      courierPartnerId: data.courier_partner_id || '',
+      trackingNumber: data.tracking_number || '',
+      shippingFee: Number(data.shipping_fee || 0),
+      shippingBearer: data.shipping_bearer || 'CUSTOMER'
+    } as any;
   }
 
   public static async updateSalesInvoice(id: string, updates: Partial<SalesInvoice>): Promise<void> {
     const payload: any = {};
     if (updates.status !== undefined) payload.status = updates.status;
     if (updates.totalAmount !== undefined) payload.total_amount = Number(updates.totalAmount);
+    if (updates.subtotal !== undefined) payload.subtotal = Number(updates.subtotal);
+    if (updates.taxAmount !== undefined) payload.tax_amount = Number(updates.taxAmount);
     if (updates.items !== undefined) payload.items = updates.items;
+    if (updates.customerName !== undefined) payload.customer_name = updates.customerName;
+    if (updates.customerPhone !== undefined) payload.customer_phone = updates.customerPhone;
+    if (updates.invoiceNo !== undefined) payload.invoice_no = updates.invoiceNo;
+    if ((updates as any).trackingNumber !== undefined || (updates as any).tracking_number !== undefined) {
+      payload.tracking_number = (updates as any).trackingNumber ?? (updates as any).tracking_number;
+    }
+    if ((updates as any).courierPartnerId !== undefined || (updates as any).courier_partner_id !== undefined || (updates as any).courierId !== undefined) {
+      payload.courier_partner_id = (updates as any).courierPartnerId ?? (updates as any).courier_partner_id ?? (updates as any).courierId;
+    }
+    if ((updates as any).shippingFee !== undefined || (updates as any).shipping_fee !== undefined || (updates as any).courierFee !== undefined) {
+      payload.shipping_fee = Number((updates as any).shippingFee ?? (updates as any).shipping_fee ?? (updates as any).courierFee ?? 0);
+    }
+    if ((updates as any).shippingBearer !== undefined || (updates as any).shipping_bearer !== undefined || (updates as any).courierFeePayer !== undefined) {
+      payload.shipping_bearer = (updates as any).shippingBearer ?? (updates as any).shipping_bearer ?? (((updates as any).courierFeePayer === 'COMPANY' || (updates as any).courierFeePayer === 'SELLER') ? 'COMPANY' : 'CUSTOMER');
+    }
 
     const { error } = await supabase.from('sales_invoices').update(payload).eq('id', id);
     if (error) {

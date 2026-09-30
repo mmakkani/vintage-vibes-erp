@@ -4261,10 +4261,11 @@ RULES FOR YOUR RESPONSE:
     // 0c-1. Direct WhatsApp Message Dispatch
     if ((pathname.endsWith('/whatsapp/send-message') || pathname.endsWith('/marketing/whatsapp/send-message')) && method === 'POST') {
       const { to, text, imageUrl } = body || {};
-      if (!to || !text) {
-        return res.status(400).json({ success: false, error: 'Recipient phone number and text are required.' });
+      if (!to || (!text && !imageUrl)) {
+        return res.status(400).json({ success: false, error: 'Recipient phone number and either text or imageUrl are required.' });
       }
 
+      const effectiveText = text || (imageUrl ? '🚚 Courier Airway Bill Cargo Slip (بوليصة الشحن)' : '');
       const cleanTo = String(to).replace(/\D/g, '');
       const currentCfg = await getWhatsappGatewayConfigFromDb().catch(() => ({}));
       const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
@@ -4274,7 +4275,7 @@ RULES FOR YOUR RESPONSE:
           const bridgeRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/send`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ to: cleanTo, text, imageUrl }),
+            body: JSON.stringify({ to: cleanTo, text: effectiveText, imageUrl }),
             signal: AbortSignal.timeout(8000)
           });
           if (bridgeRes.ok) {
@@ -4286,7 +4287,7 @@ RULES FOR YOUR RESPONSE:
         } catch (_) {}
       }
 
-      const result = await sendMetaCloudWhatsAppMessage(cleanTo, text, imageUrl);
+      const result = await sendMetaCloudWhatsAppMessage(cleanTo, effectiveText, imageUrl);
       if (result.success) {
         return res.status(200).json({ success: true, messageId: result.metaData?.messages?.[0]?.id });
       }
@@ -13959,7 +13960,19 @@ ${courierLines}
                 status: String(row.status || 'DRAFT').toUpperCase(),
                 items: parsedItems,
                 shippingAddress: row.shipping_address || '',
-                createdAt: row.created_at
+                createdAt: row.created_at,
+                courierPartnerId: row.courier_partner_id ? String(row.courier_partner_id) : '',
+                courier_partner_id: row.courier_partner_id ? String(row.courier_partner_id) : '',
+                courierId: row.courier_partner_id ? String(row.courier_partner_id) : '',
+                trackingNumber: row.tracking_number || '',
+                tracking_number: row.tracking_number || '',
+                waybillNo: row.tracking_number || '',
+                shippingFee: Number(row.shipping_fee || 0),
+                shipping_fee: Number(row.shipping_fee || 0),
+                courierFee: Number(row.shipping_fee || 0),
+                shippingBearer: row.shipping_bearer || 'CUSTOMER',
+                shipping_bearer: row.shipping_bearer || 'CUSTOMER',
+                courierFeePayer: (row.shipping_bearer === 'COMPANY' || row.shipping_bearer === 'SELLER') ? 'SELLER' : 'BUYER'
               });
             }
 

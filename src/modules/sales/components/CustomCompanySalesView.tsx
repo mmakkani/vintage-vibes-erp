@@ -227,9 +227,17 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           ...row,
           invoiceNo: invNo,
           customerPhone: row.customer_phone || row.customerPhone || metaNotes.customerPhone || '',
-          courierFee: metaNotes.courierFee ?? row.courier_fee ?? 0,
-          courierFeePayer: metaNotes.courierFeePayer || 'BUYER',
-          waybillNo: metaNotes.waybillNo || row.waybill_no || row.tracking_no || '',
+          courierId: row.courier_partner_id || metaNotes.courierId || '',
+          courierPartnerId: row.courier_partner_id || metaNotes.courierPartnerId || '',
+          courier_partner_id: row.courier_partner_id || '',
+          trackingNumber: row.tracking_number || metaNotes.waybillNo || row.waybill_no || '',
+          tracking_number: row.tracking_number || '',
+          waybillNo: row.tracking_number || metaNotes.waybillNo || row.waybill_no || row.tracking_no || '',
+          shippingFee: Number(row.shipping_fee ?? metaNotes.courierFee ?? row.courier_fee ?? 0),
+          shipping_fee: Number(row.shipping_fee ?? metaNotes.courierFee ?? row.courier_fee ?? 0),
+          courierFee: Number(row.shipping_fee ?? metaNotes.courierFee ?? row.courier_fee ?? 0),
+          shippingBearer: row.shipping_bearer || (metaNotes.courierFeePayer === 'COMPANY' ? 'COMPANY' : 'CUSTOMER') || 'CUSTOMER',
+          courierFeePayer: (row.shipping_bearer === 'COMPANY' || metaNotes.courierFeePayer === 'COMPANY') ? 'SELLER' : 'BUYER',
           airwayBillPhotoUrl: metaNotes.airwayBillPhotoUrl || '',
           isB2BCustomSale: true,
           status: String(row.status || 'DRAFT').toUpperCase()
@@ -859,11 +867,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     setOtherCharges(prev => prev.filter(c => c.id !== id));
   };
 
-  // Generate B2B monthly sequence number: B2B-YYYYMM-01, B2B-YYYYMM-02...
+  // Generate B2B monthly sequence number: B2B-MMYYYY-01, B2B-MMYYYY-02... (e.g. B2B-092026-01)
   const generateNextB2BInvoiceNumber = async (): Promise<string> => {
     const now = new Date();
-    const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const prefix = `B2B-${yyyymm}-`;
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    const prefix = `B2B-${mm}${yyyy}-`;
 
     try {
       const [b2bRes, salesRes] = await Promise.all([
@@ -936,12 +945,27 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
     const matched = customerClients.find(c => c.id === targetCustId || (inv.customerName && c.name?.trim().toLowerCase() === inv.customerName.trim().toLowerCase()));
     setSelectedCustomerId(matched ? matched.id : targetCustId);
     setCustomerPhone(inv.customerPhone || (inv as any).phone || (inv as any).customer_phone || metaNotes.customerPhone || matched?.phone || '');
-    setSelectedCourierId((inv as any).courierId || (inv as any).courier_id || metaNotes.courierId || '');
-    setWaybillNo((inv as any).waybillNo || (inv as any).waybill_no || (inv as any).trackingNo || metaNotes.waybillNo || '');
-    setCourierFee(Number(metaNotes.courierFee ?? (inv as any).courierFee ?? (inv as any).courier_fee ?? 0));
-    setCourierFeePayer(metaNotes.courierFeePayer || (inv as any).courierFeePayer || 'BUYER');
+
+    const rawCourierId = (inv as any).courierPartnerId || (inv as any).courier_partner_id || (inv as any).courierId || (inv as any).courier_id || metaNotes.courierId || '';
+    const rawWaybill = (inv as any).trackingNumber || (inv as any).tracking_number || (inv as any).waybillNo || (inv as any).waybill_no || (inv as any).trackingNo || metaNotes.waybillNo || '';
+    const rawFee = Number((inv as any).shippingFee ?? (inv as any).shipping_fee ?? (inv as any).courierFee ?? (inv as any).courier_fee ?? metaNotes.courierFee ?? 0);
+    const rawBearer = (inv as any).shippingBearer || (inv as any).shipping_bearer || (inv as any).courierFeePayer || metaNotes.courierFeePayer || 'BUYER';
+    const payer = (rawBearer === 'COMPANY' || rawBearer === 'SELLER') ? 'SELLER' : 'BUYER';
+
+    let matchedCourier = courierParties.find(cp => cp.id === rawCourierId || cp.coaAccountId === rawCourierId || (rawCourierId && cp.name?.toLowerCase() === rawCourierId.toLowerCase()));
+    if (!matchedCourier && metaNotes.courierName) {
+      matchedCourier = courierParties.find(cp => cp.name?.toLowerCase() === metaNotes.courierName.toLowerCase());
+    }
+
+    setSelectedCourierId(matchedCourier ? matchedCourier.id : rawCourierId);
+    setWaybillNo(rawWaybill);
+    setCourierFee(rawFee);
+    setCourierFeePayer(payer);
     setAirwayBillPhotoUrl(metaNotes.airwayBillPhotoUrl || (inv as any).airwayBillPhotoUrl || '');
-    setInvoiceDate(inv.date);
+
+    const rawDate = inv.date || inv.invoiceDate || (inv as any).created_at || new Date().toISOString().slice(0, 10);
+    setInvoiceDate(String(rawDate).slice(0, 10));
+
     setStatus(inv.status as any || 'DRAFT');
     setTaxType(inv.taxType || 'MAINLAND_5_VAT');
     setExportCustomsDeclarationNo(inv.exportCustomsDeclarationNo || '');
@@ -1013,8 +1037,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           taxAmount: vatAmount,
           totalAmount: grandTotal,
           status: 'DRAFT',
-          items: items
-        }).catch(e => console.warn('B2B sales_invoices update note:', e));
+          items: items,
+          trackingNumber: waybillNo || null,
+          courierPartnerId: selectedCourierId || null,
+          shippingFee: Number(courierFee) || 0,
+          shippingBearer: courierFeePayer === 'BUYER' ? 'CUSTOMER' : 'COMPANY'
+        } as any).catch(e => console.warn('B2B sales_invoices update note:', e));
 
         await safeSupabaseCall(
           supabase
@@ -1062,8 +1090,12 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           taxAmount: vatAmount,
           totalAmount: grandTotal,
           status: 'DRAFT',
-          items: items
-        }).catch(e => console.warn('B2B sales_invoices sync note:', e));
+          items: items,
+          trackingNumber: waybillNo || null,
+          courierPartnerId: selectedCourierId || null,
+          shippingFee: Number(courierFee) || 0,
+          shippingBearer: courierFeePayer === 'BUYER' ? 'CUSTOMER' : 'COMPANY'
+        } as any).catch(e => console.warn('B2B sales_invoices sync note:', e));
 
         if (createdSInv?.id) {
           finalId = createdSInv.id;
@@ -1397,7 +1429,15 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
             courierFee,
             courierFeePayer,
             waybillNo,
-            airwayBillPhotoUrl
+            airwayBillPhotoUrl,
+            courierPartnerId: selectedCourierId,
+            courier_partner_id: selectedCourierId,
+            courierId: selectedCourierId,
+            trackingNumber: waybillNo,
+            tracking_number: waybillNo,
+            shippingFee: courierFee,
+            shipping_fee: courierFee,
+            shippingBearer: courierFeePayer === 'BUYER' ? 'CUSTOMER' : 'COMPANY'
           } : p);
         }
         return [{
@@ -1418,7 +1458,15 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           courierFee,
           courierFeePayer,
           waybillNo,
-          airwayBillPhotoUrl
+          airwayBillPhotoUrl,
+          courierPartnerId: selectedCourierId,
+          courier_partner_id: selectedCourierId,
+          courierId: selectedCourierId,
+          trackingNumber: waybillNo,
+          tracking_number: waybillNo,
+          shippingFee: courierFee,
+          shipping_fee: courierFee,
+          shippingBearer: courierFeePayer === 'BUYER' ? 'CUSTOMER' : 'COMPANY'
         } as SalesInvoice, ...prev];
       });
       refreshAllB2BData();
@@ -1560,10 +1608,16 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       targetGrandTotal = Number(inv.totalAmount || inv.grandTotalAED || 0);
       targetSubtotal = Number(inv.subTotal || inv.subtotal || 0);
       targetVat = Number(inv.vatAmount || inv.taxAmount || 0);
-      targetCourierFee = Number(meta.courierFee ?? (inv as any).courierFee ?? 0);
-      targetCourierPayer = meta.courierFeePayer || (inv as any).courierFeePayer || 'BUYER';
-      targetCourierName = meta.courierName || (inv as any).courierName || '';
-      targetWaybill = meta.waybillNo || (inv as any).waybillNo || (inv as any).trackingNo || '';
+      targetCourierFee = Number(meta.courierFee ?? (inv as any).shippingFee ?? (inv as any).shipping_fee ?? (inv as any).courierFee ?? 0);
+      targetCourierPayer = meta.courierFeePayer || (inv as any).shippingBearer || (inv as any).courierFeePayer || 'BUYER';
+      let cName = meta.courierName || (inv as any).courierName || '';
+      const cId = (inv as any).courierPartnerId || (inv as any).courier_partner_id || (inv as any).courierId || meta.courierId;
+      if (!cName && cId) {
+        const matchedC = courierParties.find(cp => cp.id === cId || cp.coaAccountId === cId || (cId && cp.name?.toLowerCase() === cId.toLowerCase()));
+        if (matchedC) cName = matchedC.name;
+      }
+      targetCourierName = cName;
+      targetWaybill = meta.waybillNo || (inv as any).trackingNumber || (inv as any).tracking_number || (inv as any).waybillNo || (inv as any).trackingNo || '';
       targetAwbPhoto = meta.airwayBillPhotoUrl || (inv as any).airwayBillPhotoUrl || '';
       targetTrn = inv.customerTrn || (inv as any).trnNo || matchedClient?.trnNo || '';
       targetAddress = inv.customerAddress || matchedClient?.address || '';
@@ -1653,17 +1707,17 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
 
       // 2. Automatically generate high-contrast companion Courier Airway Bill Cargo Slip
       let awbGraphicUrl = '';
-      if (targetWaybill || targetCourierName) {
-        const computedWeight = targetItems.reduce((acc, it) => acc + (Number(it.weightKg || it.grossWeightKg) || 0), 0);
-        const computedDue = (inv as any)?.balance_due !== undefined 
-          ? Number((inv as any).balance_due) 
-          : (creditAmountDue !== undefined ? Number(creditAmountDue) : (targetGrandTotal - Number(advanceAmountPaid || 0)));
+      const computedWeight = targetItems.reduce((acc, it) => acc + (Number(it.weightKg || it.grossWeightKg) || 0), 0);
+      const computedDue = (inv as any)?.balance_due !== undefined 
+        ? Number((inv as any).balance_due) 
+        : (creditAmountDue !== undefined ? Number(creditAmountDue) : (targetGrandTotal - Number(advanceAmountPaid || 0)));
 
+      if (targetWaybill || targetCourierName) {
         awbGraphicUrl = await generateAirwayBillGraphic({
           awbNumber: targetWaybill || `AWB-${targetInvNo}`,
           invoiceNo: targetInvNo,
           date: targetDate,
-          courierName: targetCourierName || 'Express Courier Partner',
+          courierName: targetCourierName || 'Banana Express',
           shipperName: liveProfile?.companyDisplayName || liveProfile?.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
           shipperAddress: liveProfile?.addressLine1 ? `${liveProfile.addressLine1}, ${liveProfile.addressLine2 || ''}` : 'Al Ain, UAE',
           shipperPhone: liveProfile?.corporatePhone || liveProfile?.phone || '+971 55 418 6086',
@@ -1676,7 +1730,14 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
           declaredContents: 'Curated Grade-A Vintage Garments',
           balanceDue: computedDue,
           totalAmount: targetGrandTotal,
-          paidAmount: Number(advanceAmountPaid || (inv as any)?.paid_amount || 0)
+          paidAmount: Number(advanceAmountPaid || (inv as any)?.paid_amount || 0),
+          shippingFee: targetCourierFee,
+          shippingBearer: targetCourierPayer === 'BUYER' ? 'CUSTOMER' : 'COMPANY',
+          items: targetItems.map(it => ({
+            description: it.description || it.itemName || it.name || it.barcode || 'Curated Garment',
+            finalAmount: Number(it.finalAmount || it.totalPrice || it.unitPrice || 0),
+            unitPrice: Number(it.unitPrice || 0)
+          }))
         });
       }
 
@@ -1690,11 +1751,21 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         imageUrl: invoiceGraphicUrl
       });
 
-      // 4. Dispatch companion Airway Bill Slip graphic image (no plain-text spam)
+      // 4. Dispatch companion Airway Bill Slip graphic image (separate message with clean caption)
       if (awbGraphicUrl) {
+        await new Promise(r => setTimeout(r, 800));
+
+        const isPrepaid = computedDue <= 0;
+        const awbCaption = `🚚 *COURIER AIRWAY BILL (بوليصة الشحن)*\n` +
+          `• Waybill / Tracking #: *${targetWaybill || 'N/A'}*\n` +
+          `• Carrier: *${targetCourierName || 'Banana Express'}*\n` +
+          `• Consignee: *${targetCustomerName}*\n` +
+          `• Invoice Ref: *#${targetInvNo}*\n` +
+          `• Status: *${isPrepaid ? '✅ PREPAID (Do Not Collect Cash)' : `💵 CASH ON DELIVERY (COD): AED ${computedDue.toFixed(2)}`}*`;
+
         await WhatsAppService.sendTextMessage(
           targetPhone,
-          '',
+          awbCaption,
           awbGraphicUrl
         ).catch(e => console.warn('AWB slip graphic dispatch note:', e));
       }
