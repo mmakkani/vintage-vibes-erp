@@ -1751,21 +1751,13 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
         imageUrl: invoiceGraphicUrl
       });
 
-      // 4. Dispatch companion Airway Bill Slip graphic image (separate message with clean caption)
+      // 4. Dispatch companion Airway Bill Slip graphic image (pure image, zero caption text per user directive)
       if (awbGraphicUrl) {
         await new Promise(r => setTimeout(r, 800));
 
-        const isPrepaid = computedDue <= 0;
-        const awbCaption = `🚚 *COURIER AIRWAY BILL (بوليصة الشحن)*\n` +
-          `• Waybill / Tracking #: *${targetWaybill || 'N/A'}*\n` +
-          `• Carrier: *${targetCourierName || 'Banana Express'}*\n` +
-          `• Consignee: *${targetCustomerName}*\n` +
-          `• Invoice Ref: *#${targetInvNo}*\n` +
-          `• Status: *${isPrepaid ? '✅ PREPAID (Do Not Collect Cash)' : `💵 CASH ON DELIVERY (COD): AED ${computedDue.toFixed(2)}`}*`;
-
         await WhatsAppService.sendTextMessage(
           targetPhone,
-          awbCaption,
+          '',
           awbGraphicUrl
         ).catch(e => console.warn('AWB slip graphic dispatch note:', e));
       }

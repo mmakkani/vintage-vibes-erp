@@ -4265,7 +4265,7 @@ RULES FOR YOUR RESPONSE:
         return res.status(400).json({ success: false, error: 'Recipient phone number and either text or imageUrl are required.' });
       }
 
-      const effectiveText = text || (imageUrl ? '🚚 Courier Airway Bill Cargo Slip (بوليصة الشحن)' : '');
+      const effectiveText = text || '';
       const cleanTo = String(to).replace(/\D/g, '');
       const currentCfg = await getWhatsappGatewayConfigFromDb().catch(() => ({}));
       const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
