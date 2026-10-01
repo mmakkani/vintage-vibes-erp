@@ -10815,6 +10815,140 @@ ${courierLines}
       }
     }
 
+    // ==================== SYSTEM ERROR TELEMETRY & AUTO-HEALING ====================
+    if (pathname.includes('/api/telemetry/report-error') || pathname.includes('/api/telemetry/errors')) {
+      if (pathname.includes('/api/telemetry/report-error') && method === 'POST') {
+        try {
+          const {
+            errorType,
+            errorMessage,
+            errorStack,
+            componentStack,
+            url,
+            routePath,
+            sourceFile,
+            lineNumber,
+            columnNumber,
+            userAgent,
+            sessionId,
+            username,
+            metadata
+          } = body || {};
+
+          if (!errorMessage) {
+            return res.status(400).json({ success: false, error: 'errorMessage is required' });
+          }
+
+          let client: any = null;
+          try { client = await borrowClient(); } catch (_) { client = await getPgClient(); }
+
+          if (client) {
+            try {
+              // Deduplication: check if same error on same route occurred within last 15 minutes
+              const existing = await client.query(`
+                SELECT id, occurrence_count FROM system_error_logs
+                WHERE error_message = $1 AND COALESCE(route_path, '') = COALESCE($2, '') AND status = 'PENDING'
+                  AND last_occurred_at > NOW() - INTERVAL '15 minutes'
+                ORDER BY id DESC LIMIT 1;
+              `, [errorMessage, routePath || null]);
+
+              if (existing.rows.length > 0) {
+                const targetId = existing.rows[0].id;
+                await client.query(`
+                  UPDATE system_error_logs
+                  SET occurrence_count = occurrence_count + 1,
+                      last_occurred_at = NOW(),
+                      metadata = $2
+                  WHERE id = $1;
+                `, [targetId, JSON.stringify(metadata || {})]);
+                if (typeof client.release === 'function') client.release();
+                return res.status(200).json({ success: true, deduped: true, id: targetId });
+              }
+
+              const insertRes = await client.query(`
+                INSERT INTO system_error_logs (
+                  error_type, error_message, error_stack, component_stack,
+                  url, route_path, source_file, line_number, column_number,
+                  user_agent, session_id, username, metadata, status,
+                  occurrence_count, last_occurred_at, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'PENDING', 1, NOW(), NOW())
+                RETURNING id;
+              `, [
+                errorType || 'FRONTEND_UNHANDLED',
+                errorMessage,
+                errorStack || null,
+                componentStack || null,
+                url || null,
+                routePath || null,
+                sourceFile || null,
+                lineNumber || null,
+                columnNumber || null,
+                userAgent || null,
+                sessionId || null,
+                username || 'anonymous',
+                JSON.stringify(metadata || {})
+              ]);
+
+              if (typeof client.release === 'function') client.release();
+              return res.status(200).json({ success: true, logged: true, id: insertRes.rows[0]?.id });
+            } catch (err: any) {
+              if (typeof client.release === 'function') client.release();
+              return res.status(200).json({ success: true, degraded: true, note: err?.message });
+            }
+          }
+          return res.status(200).json({ success: true, degraded: true });
+        } catch (_) {
+          return res.status(200).json({ success: true, degraded: true });
+        }
+      }
+
+      if (pathname.includes('/api/telemetry/errors/resolve') && method === 'POST') {
+        const { id, resolutionNotes } = body || {};
+        if (!id) return res.status(400).json({ success: false, error: 'Error id required' });
+
+        let client: any = null;
+        try { client = await borrowClient(); } catch (_) { client = await getPgClient(); }
+        if (client) {
+          try {
+            await client.query(`
+              UPDATE system_error_logs
+              SET status = 'RESOLVED',
+                  resolved_at = NOW(),
+                  resolution_notes = $2
+              WHERE id = $1;
+            `, [id, resolutionNotes || 'Resolved automatically by Antigravity']);
+            if (typeof client.release === 'function') client.release();
+            return res.status(200).json({ success: true, resolved: true, id });
+          } catch (e: any) {
+            if (typeof client.release === 'function') client.release();
+            return res.status(500).json({ success: false, error: e?.message });
+          }
+        }
+        return res.status(503).json({ success: false, error: 'Database unavailable' });
+      }
+
+      if (method === 'GET') {
+        let client: any = null;
+        try { client = await borrowClient(); } catch (_) { client = await getPgClient(); }
+        if (client) {
+          try {
+            const listRes = await client.query(`
+              SELECT * FROM system_error_logs
+              WHERE status = 'PENDING'
+              ORDER BY occurrence_count DESC, last_occurred_at DESC
+              LIMIT 100;
+            `);
+            if (typeof client.release === 'function') client.release();
+            return res.status(200).json({ success: true, errors: listRes.rows });
+          } catch (e: any) {
+            if (typeof client.release === 'function') client.release();
+            return res.status(500).json({ success: false, error: e?.message });
+          }
+        }
+        return res.status(200).json({ success: true, errors: [] });
+      }
+    }
+
     // ==================== ENTERPRISE AUDIT LOGS ====================
     if (pathname.includes('/api/audit') || pathname.endsWith('/audit')) {
       const token = extractAuthToken(req);

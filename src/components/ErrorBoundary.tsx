@@ -1,6 +1,7 @@
 import React from 'react';
 import { RefreshCw, ChevronDown, ChevronUp, ShieldAlert, Sparkles } from 'lucide-react';
 import { isChunkLoadError, purgeCachesAndServiceWorkers } from '../utils/lazyWithRetry.ts';
+import { TelemetryErrorService } from '../services/telemetryErrorService.ts';
 
 export interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -38,6 +39,11 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   override componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     this.setState({ errorInfo });
     console.error(`[ErrorBoundary - ${this.props.sectionName || 'Application'}] Captured Exception:`, error, errorInfo);
+
+    // Auto-report to central error registry for autonomous diagnostics
+    try {
+      TelemetryErrorService.reportReactCrash(error, errorInfo, this.props.sectionName);
+    } catch (_) {}
 
     // If chunk 404 / dynamic import error, attempt auto-reload once with 15s cooldown
     if (isChunkLoadError(error)) {

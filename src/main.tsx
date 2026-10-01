@@ -5,7 +5,9 @@ import App from './App.tsx';
 import {ErrorBoundary} from './components/ErrorBoundary.tsx';
 import './index.css';
 
-// Enterprise Shield: Intercept and neutralize third-party browser extension crashes (e.g. Rytr, Adobe, content.js)
+import { TelemetryErrorService } from './services/telemetryErrorService.ts';
+
+// Enterprise Shield: Intercept, neutralize third-party browser extension crashes and report real exceptions
 if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (event) => {
     const reason = event.reason;
@@ -22,7 +24,16 @@ if (typeof window !== 'undefined') {
     ) {
       event.preventDefault();
       event.stopImmediatePropagation();
+      return;
     }
+
+    TelemetryErrorService.reportError({
+      errorType: 'UNHANDLED_PROMISE_REJECTION',
+      errorMessage: msg || 'Unhandled Promise Rejection',
+      errorStack: stack,
+      sourceFile: reason?.fileName || undefined,
+      lineNumber: reason?.lineNumber || undefined
+    });
   });
 
   window.addEventListener('error', (event) => {
@@ -37,7 +48,17 @@ if (typeof window !== 'undefined') {
     ) {
       event.preventDefault();
       event.stopImmediatePropagation();
+      return;
     }
+
+    TelemetryErrorService.reportError({
+      errorType: 'WINDOW_GLOBAL_ERROR',
+      errorMessage: msg || 'Window Global Error',
+      errorStack: event.error?.stack || undefined,
+      sourceFile: filename || undefined,
+      lineNumber: event.lineno || undefined,
+      columnNumber: event.colno || undefined
+    });
   });
 }
 
