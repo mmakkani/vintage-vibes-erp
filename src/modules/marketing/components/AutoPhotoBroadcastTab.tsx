@@ -423,26 +423,43 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         ? selectedChannelJid
         : '120363431101986513@newsletter';
       const samplePiece = pieces.find(p => selectedPieceSkus.includes(p.barcode)) || pieces[0];
-      let img = samplePiece?.frontImageUrl || '/winter_maazi_story.png';
+      let img = samplePiece?.frontImageUrl || (samplePiece as any)?.front_image || '/winter_maazi_story.png';
       if (img.startsWith('/')) img = `https://vintagevibesgk.com${img}`;
 
-      // Generate luxury Storefront Postcard PNG
+      const sku = samplePiece?.barcode || 'VV-TEST-001';
+      const brand = samplePiece?.brandName || 'Vintage Archive';
+      const category = samplePiece?.itemName || samplePiece?.style || 'Curated Garment';
+      const price = samplePiece?.retailPriceAed || samplePiece?.estimatedPrice || 150;
+      const size = samplePiece?.sizeScanned || 'L';
+      const condition = samplePiece?.labelGrade || 'Grade A Vintage';
+      const hierarchy = [
+        (samplePiece as any)?.parentCategoryName || (samplePiece as any)?.parent_category_name || 'Curated Vault',
+        category,
+        (samplePiece as any)?.subCategory || (samplePiece as any)?.sub_category
+      ].filter(Boolean).join(' ➔ ');
+
+      // Generate luxury Storefront Inspector Postcard PNG strictly with raw photo
       let postcardImg = img;
       try {
         postcardImg = await generateStorefrontPostcardCanvas({
-          barcode: samplePiece?.barcode || 'VV-TEST-001',
-          brandName: samplePiece?.brandName || 'Vintage Archive',
-          itemName: samplePiece?.itemName || samplePiece?.style || 'Curated Garment',
-          sizeScanned: samplePiece?.sizeScanned || 'L',
-          labelGrade: samplePiece?.labelGrade || 'Grade A Vintage',
-          retailPriceAed: samplePiece?.retailPriceAed || samplePiece?.estimatedPrice || 150,
+          barcode: sku,
+          brandName: brand,
+          itemName: category,
+          style: samplePiece?.style || 'Double Stitch • Modern Commercial • Vintage Wash',
+          sizeScanned: size,
+          labelGrade: condition,
+          retailPriceAed: price,
           pitToPitInches: (samplePiece as any)?.pitToPitInches,
           lengthInches: (samplePiece as any)?.lengthInches,
           marketSegment: (samplePiece as any)?.marketSegment,
           isGrail: (samplePiece as any)?.isGrail,
-          shopLocation: samplePiece?.shopLocation || 'Al Ain Vault',
+          shopLocation: samplePiece?.shopLocation || 'Central Warehouse & Sorting Center',
           countryOfOrigin: samplePiece?.countryOfOrigin || 'Made in USA',
-          fitSilhouette: (samplePiece as any)?.fitSilhouette || 'Boxy Vintage Fit',
+          fitSilhouette: (samplePiece as any)?.fitSilhouette || 'Boxy 90s Fit',
+          hierarchy,
+          description: (samplePiece as any)?.ecommerceDescription || (samplePiece as any)?.ecommerce_description,
+          seoTags: (samplePiece as any)?.seoTags || (samplePiece as any)?.seo_tags,
+          weightKg: (samplePiece as any)?.weightKg || (samplePiece as any)?.weight_kg,
           frontImageUrl: img
         });
       } catch (cardErr) {
@@ -673,27 +690,49 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       const currentItem = campaign.items[i];
       let dispatchItem = { ...currentItem };
 
-      // Generate luxury Storefront Postcard PNG for the item
+      // Generate luxury Storefront Inspector Postcard PNG (strictly avoid card-in-card recursion)
       try {
         const pieceObj = pieces.find(p => p.barcode === currentItem.barcode || p.barcode === currentItem.pieceId);
-        const postcardDataUrl = await generateStorefrontPostcardCanvas({
-          barcode: currentItem.barcode || currentItem.pieceId || '',
-          brandName: currentItem.brand || pieceObj?.brandName || 'Vintage Archive',
-          itemName: currentItem.category || pieceObj?.itemName || pieceObj?.style || 'Curated Garment',
-          sizeScanned: currentItem.size || pieceObj?.sizeScanned || 'L',
-          labelGrade: currentItem.condition || pieceObj?.labelGrade || 'Grade A Vintage',
-          retailPriceAed: currentItem.price || pieceObj?.retailPriceAed || pieceObj?.estimatedPrice || 295,
-          pitToPitInches: (pieceObj as any)?.pitToPitInches,
-          lengthInches: (pieceObj as any)?.lengthInches,
-          marketSegment: (pieceObj as any)?.marketSegment,
-          isGrail: (pieceObj as any)?.isGrail,
-          shopLocation: pieceObj?.shopLocation || 'Al Ain Vault',
-          countryOfOrigin: pieceObj?.countryOfOrigin || 'Made in USA',
-          fitSilhouette: (pieceObj as any)?.fitSilhouette || 'Boxy Vintage Fit',
-          frontImageUrl: currentItem.imageUrl || pieceObj?.frontImageUrl
-        });
-        if (postcardDataUrl && postcardDataUrl.startsWith('data:image/')) {
-          dispatchItem.imageUrl = postcardDataUrl;
+        const rawPhoto = (currentItem as any).rawPhotoUrl || pieceObj?.frontImageUrl || (pieceObj as any)?.front_image;
+
+        // If currentItem.imageUrl is already a rendered postcard data URL, reuse it directly!
+        if (currentItem.imageUrl && currentItem.imageUrl.startsWith('data:image/') && (currentItem as any).isPostcardRendered) {
+          dispatchItem.imageUrl = currentItem.imageUrl;
+        } else {
+          const targetPhoto = rawPhoto || ((currentItem.imageUrl && !currentItem.imageUrl.startsWith('data:image/')) ? currentItem.imageUrl : '/winter_maazi_story.png');
+          const brand = currentItem.brand || pieceObj?.brandName || 'Vintage Archive';
+          const category = currentItem.category || pieceObj?.itemName || pieceObj?.style || 'Curated Garment';
+          const hierarchy = [
+            (pieceObj as any)?.parentCategoryName || (pieceObj as any)?.parent_category_name || 'Curated Vault',
+            category,
+            (pieceObj as any)?.subCategory || (pieceObj as any)?.sub_category
+          ].filter(Boolean).join(' ➔ ');
+
+          const postcardDataUrl = await generateStorefrontPostcardCanvas({
+            barcode: currentItem.barcode || currentItem.pieceId || '',
+            brandName: brand,
+            itemName: category,
+            style: pieceObj?.style || 'Double Stitch • Modern Commercial • Vintage Wash',
+            sizeScanned: currentItem.size || pieceObj?.sizeScanned || 'L',
+            labelGrade: currentItem.condition || pieceObj?.labelGrade || 'Grade A Vintage',
+            retailPriceAed: currentItem.price || pieceObj?.retailPriceAed || pieceObj?.estimatedPrice || 295,
+            pitToPitInches: (pieceObj as any)?.pitToPitInches,
+            lengthInches: (pieceObj as any)?.lengthInches,
+            marketSegment: (pieceObj as any)?.marketSegment,
+            isGrail: (pieceObj as any)?.isGrail,
+            shopLocation: pieceObj?.shopLocation || 'Central Warehouse & Sorting Center',
+            countryOfOrigin: pieceObj?.countryOfOrigin || 'Made in USA',
+            fitSilhouette: (pieceObj as any)?.fitSilhouette || 'Boxy 90s Fit',
+            hierarchy,
+            description: (pieceObj as any)?.ecommerceDescription || (pieceObj as any)?.ecommerce_description,
+            seoTags: (pieceObj as any)?.seoTags || (pieceObj as any)?.seo_tags,
+            weightKg: (pieceObj as any)?.weightKg || (pieceObj as any)?.weight_kg,
+            frontImageUrl: targetPhoto
+          });
+          if (postcardDataUrl && postcardDataUrl.startsWith('data:image/')) {
+            dispatchItem.imageUrl = postcardDataUrl;
+            (dispatchItem as any).isPostcardRendered = true;
+          }
         }
       } catch (genErr) {
         console.warn('[Broadcaster] Postcard canvas rendering fallback:', genErr);
@@ -807,14 +846,19 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       const selectedPieceObjects = pieces.filter(p => selectedPieceSkus.includes(p.barcode));
       const targetPieces = selectedPieceObjects.length > 0 ? selectedPieceObjects : pieces.slice(0, 6);
       const piecesData = await Promise.all(targetPieces.map(async (p, idx) => {
-        let img = p.frontImageUrl || '/winter_maazi_story.png';
+        let img = p.frontImageUrl || (p as any)?.front_image || '/winter_maazi_story.png';
         if (img.startsWith('/')) img = `https://vintagevibesgk.com${img}`;
         const sku = p.barcode || `SKU-${idx + 1}`;
-        const brand = p.brandName || 'Vintage';
-        const category = p.itemName || p.style || 'Garment';
+        const brand = p.brandName || 'Vintage Archive';
+        const category = p.itemName || p.style || 'Curated Garment';
         const price = p.retailPriceAed || p.estimatedPrice || 120;
         const size = p.sizeScanned || 'L';
         const condition = p.labelGrade || 'Grade A+ (Pristine)';
+        const hierarchy = [
+          (p as any)?.parentCategoryName || (p as any)?.parent_category_name || 'Curated Vault',
+          category,
+          (p as any)?.subCategory || (p as any)?.sub_category
+        ].filter(Boolean).join(' ➔ ');
 
         let postcardImg = img;
         try {
@@ -822,6 +866,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
             barcode: sku,
             brandName: brand,
             itemName: category,
+            style: p.style || 'Double Stitch • Modern Commercial • Vintage Wash',
             sizeScanned: size,
             labelGrade: condition,
             retailPriceAed: price,
@@ -829,10 +874,14 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
             lengthInches: (p as any)?.lengthInches,
             marketSegment: (p as any)?.marketSegment,
             isGrail: (p as any)?.isGrail,
-            shopLocation: p.shopLocation || 'Al Ain Vault',
+            shopLocation: p.shopLocation || 'Central Warehouse & Sorting Center',
             countryOfOrigin: p.countryOfOrigin || 'Made in USA',
-            fitSilhouette: (p as any)?.fitSilhouette || 'Boxy Vintage Fit',
-            frontImageUrl: img
+            fitSilhouette: (p as any)?.fitSilhouette || 'Boxy 90s Fit',
+            hierarchy,
+            description: (p as any)?.ecommerceDescription || (p as any)?.ecommerce_description,
+            seoTags: (p as any)?.seoTags || (p as any)?.seo_tags,
+            weightKg: (p as any)?.weightKg || (p as any)?.weight_kg,
+            frontImageUrl: img // Strictly the pristine raw studio photo!
           });
         } catch (_) {}
 
@@ -844,6 +893,8 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
           size,
           condition,
           imageUrl: postcardImg,
+          rawPhotoUrl: img,
+          isPostcardRendered: true,
           caption: `🔥 *${brand} - ${category}* (${size})\n` +
             `💰 *AED ${Number(price).toLocaleString()}*\n\n` +
             `💳 *Instant Storefront Checkout:*\n` +
@@ -2390,7 +2441,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
                       <td className="py-2.5 px-3 font-mono text-slate-400">{idx + 1}</td>
                       <td className="py-2.5 px-3">
                         <img
-                          src={item.imageUrl || (item as any)?.imageMediaUrl || piece?.frontImageUrl || (piece as any)?.front_image_url || '/winter_maazi_story.png'}
+                          src={(item as any)?.rawPhotoUrl || piece?.frontImageUrl || (piece as any)?.front_image || (piece as any)?.front_image_url || item.imageUrl || (item as any)?.imageMediaUrl || '/winter_maazi_story.png'}
                           alt={barcode}
                           className="w-10 h-10 rounded-lg object-cover border border-slate-200 bg-white shadow-2xs"
                           onError={(e) => {
