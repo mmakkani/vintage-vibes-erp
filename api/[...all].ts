@@ -11602,8 +11602,17 @@ ${courierLines}
           const { title, targetAudience, targetChatId, customerPhones, pieceIds, piecesData, voiceNoteEnabled, voiceNotePresetId, customVoiceNoteText, intervalSeconds } = body || {};
 
           let resolvedChatId = (targetChatId || '').trim();
-          if (!resolvedChatId || resolvedChatId === 'CHANNEL' || resolvedChatId.startsWith('chan-') || !resolvedChatId.includes('@newsletter') || resolvedChatId.includes('0029VbEAAML89indIXn39f00')) {
-            resolvedChatId = '120363431101986513@newsletter';
+          const isDirectPhone = Boolean(
+            (Array.isArray(customerPhones) && customerPhones.length > 0) ||
+            targetAudience?.includes('Phone Directory') ||
+            targetAudience?.includes('Directory') ||
+            (resolvedChatId && !resolvedChatId.includes('@newsletter') && !resolvedChatId.includes('0029VbEA') && resolvedChatId !== 'CHANNEL' && !resolvedChatId.startsWith('chan-'))
+          );
+
+          if (!isDirectPhone) {
+            if (!resolvedChatId || resolvedChatId === 'CHANNEL' || resolvedChatId.startsWith('chan-') || !resolvedChatId.includes('@newsletter') || resolvedChatId.includes('0029VbEAAML89indIXn39f00')) {
+              resolvedChatId = '120363431101986513@newsletter';
+            }
           }
 
           // Build queue items with valid image URLs and conversion captions
@@ -11702,13 +11711,10 @@ ${courierLines}
           return res.status(200).json(newCamp);
         }
 
-        // 7c. Dispatch Single Item (Photo + Caption to WhatsApp Channel or Group)
+        // 7c. Dispatch Single Item (Photo + Caption to WhatsApp Channel or Group or Direct Customer Phones)
         if (pathname.endsWith('/dispatch-item') && method === 'POST') {
-          const { campaignId, itemIndex, targetChatId, item } = body || {};
+          const { campaignId, itemIndex, targetChatId, customerPhones, item } = body || {};
           let targetJid = (targetChatId || item?.targetChatId || '').trim();
-          if (!targetJid || targetJid === 'CHANNEL' || targetJid.startsWith('chan-') || !targetJid.includes('@newsletter') || targetJid.includes('0029VbEAAML89indIXn39f00') || targetJid.includes('120363000000000000')) {
-            targetJid = '120363431101986513@newsletter';
-          }
 
           let imgUrl = item?.imageUrl || item?.frontImageUrl || 'https://vintagevibesgk.com/winter_maazi_story.png';
           if (imgUrl.startsWith('/')) imgUrl = `https://vintagevibesgk.com${imgUrl}`;
@@ -11716,43 +11722,119 @@ ${courierLines}
 
           const bridgeUrl = process.env.RAILWAY_WORKER_URL || 'https://vintage-vibes-erp-production.up.railway.app';
           let dispatchSuccess = false;
-          let messageId = null;
-          let errorMsg = null;
+          let messageId: string | null = null;
+          let errorMsg: string | null = null;
 
-          try {
-            const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/post-channel`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                channelJid: targetJid,
-                imageUrl: imgUrl,
-                caption
-              }),
-              signal: AbortSignal.timeout(15000)
-            });
-            const bData = await bRes.json().catch(() => ({}));
-            if (bRes.ok && (bData.success || bData.messageId)) {
-              dispatchSuccess = true;
-              messageId = bData.messageId || `msg-${Date.now()}`;
-            } else {
-              errorMsg = bData.error || 'Failed to dispatch via WhatsApp bridge';
+          // 1. Determine destination type: Direct Customer Phone(s) vs WhatsApp Channel
+          let directPhones: string[] = [];
+          if (Array.isArray(customerPhones) && customerPhones.length > 0) {
+            directPhones = customerPhones.filter(Boolean);
+          }
+
+          let campRow: any = null;
+          if (client && campaignId) {
+            try {
+              const cRes = await client.query('SELECT * FROM marketing_broadcast_campaigns WHERE id = $1 LIMIT 1;', [campaignId]);
+              if (cRes.rowCount && cRes.rowCount > 0) {
+                campRow = cRes.rows[0];
+                if (directPhones.length === 0 && campRow.customer_phones) {
+                  const dbPhones = Array.isArray(campRow.customer_phones) ? campRow.customer_phones : (typeof campRow.customer_phones === 'string' ? JSON.parse(campRow.customer_phones) : []);
+                  if (Array.isArray(dbPhones) && dbPhones.length > 0) {
+                    directPhones = dbPhones.filter(Boolean);
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+
+          const isDirectAudience = directPhones.length > 0 ||
+            (targetJid && !targetJid.includes('@newsletter') && !targetJid.includes('0029VbEA') && targetJid !== 'CHANNEL' && !targetJid.startsWith('chan-') && !targetJid.startsWith('Multi-Direct')) ||
+            Boolean(campRow?.target_audience?.includes('Phone Directory') || campRow?.target_audience?.includes('Directory'));
+
+          if (isDirectAudience) {
+            // Direct to customer phone(s) via bridge /send
+            if (directPhones.length === 0 && targetJid && !targetJid.startsWith('Multi-Direct')) {
+              directPhones = [targetJid];
             }
-          } catch (netErr: any) {
-            errorMsg = netErr?.message || 'Network delay connecting to WhatsApp bridge';
+            if (directPhones.length === 0 && campRow?.target_chat_id && !campRow.target_chat_id.includes('@newsletter')) {
+              directPhones = [campRow.target_chat_id];
+            }
+
+            let anySuccess = false;
+            let lastErr = null;
+            const msgIds: string[] = [];
+
+            for (const phone of directPhones) {
+              const cleanPhone = String(phone).replace(/\D/g, '');
+              if (!cleanPhone || cleanPhone.length < 7) continue;
+
+              try {
+                const sendRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/send`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    to: cleanPhone,
+                    imageUrl: imgUrl,
+                    caption
+                  }),
+                  signal: AbortSignal.timeout(15000)
+                });
+                const sData = await sendRes.json().catch(() => ({}));
+                if (sendRes.ok && (sData.success || sData.messageId)) {
+                  anySuccess = true;
+                  if (sData.messageId) msgIds.push(sData.messageId);
+                } else {
+                  lastErr = sData.error || 'Failed to dispatch via WhatsApp bridge';
+                }
+              } catch (nErr: any) {
+                lastErr = nErr?.message || 'Network delay connecting to WhatsApp bridge';
+              }
+            }
+
+            dispatchSuccess = anySuccess;
+            messageId = msgIds.join(',') || (anySuccess ? `msg-${Date.now()}` : null);
+            errorMsg = anySuccess ? null : (lastErr || 'No valid recipients reached');
+          } else {
+            // Channel Broadcast via bridge /post-channel
+            if (!targetJid || targetJid === 'CHANNEL' || targetJid.startsWith('chan-') || !targetJid.includes('@newsletter') || targetJid.includes('0029VbEAAML89indIXn39f00') || targetJid.includes('120363000000000000')) {
+              targetJid = '120363431101986513@newsletter';
+            }
+
+            try {
+              const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/post-channel`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  channelJid: targetJid,
+                  imageUrl: imgUrl,
+                  caption
+                }),
+                signal: AbortSignal.timeout(15000)
+              });
+              const bData = await bRes.json().catch(() => ({}));
+              if (bRes.ok && (bData.success || bData.messageId)) {
+                dispatchSuccess = true;
+                messageId = bData.messageId || `msg-${Date.now()}`;
+              } else {
+                errorMsg = bData.error || 'Failed to dispatch via WhatsApp bridge';
+              }
+            } catch (netErr: any) {
+              errorMsg = netErr?.message || 'Network delay connecting to WhatsApp bridge';
+            }
           }
 
           // Update PostgreSQL record
           let updatedCampaign: any = null;
           if (client && campaignId) {
             try {
-              const campRes = await client.query('SELECT * FROM marketing_broadcast_campaigns WHERE id = $1 LIMIT 1;', [campaignId]);
-              if (campRes.rowCount && campRes.rowCount > 0) {
-                const cRow = campRes.rows[0];
+              const cRow = campRow || (await client.query('SELECT * FROM marketing_broadcast_campaigns WHERE id = $1 LIMIT 1;', [campaignId])).rows?.[0];
+              if (cRow) {
                 const rawItems = Array.isArray(cRow.items) ? cRow.items : (typeof cRow.items === 'string' ? JSON.parse(cRow.items) : []);
                 const idx = Number(itemIndex) || 0;
                 if (rawItems[idx]) {
                   rawItems[idx].status = dispatchSuccess ? 'SENT' : 'FAILED';
                   rawItems[idx].sentAt = new Date().toISOString();
+                  if (messageId) rawItems[idx].messageId = messageId;
                   if (errorMsg) rawItems[idx].error = errorMsg;
                 }
                 const newSent = Number(cRow.sent_count || 0) + (dispatchSuccess ? 1 : 0);

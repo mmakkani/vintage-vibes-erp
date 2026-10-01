@@ -660,6 +660,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
             campaignId: campaign.id,
             itemIndex: i,
             targetChatId: destinationJid,
+            customerPhones: campaign.customerPhones,
             item: currentItem
           })
         });
