@@ -442,10 +442,10 @@ async function getChannelsFromPg(): Promise<WhatsAppChannelItem[]> {
     const res = await client.query('SELECT * FROM whatsapp_channels ORDER BY is_default DESC, created_at ASC');
     if (res.rows.length === 0) {
       const defChan: WhatsAppChannelItem = {
-        id: 'chan-default-vv',
-        name: 'Vintage Vibes UAE Official VIP Channel',
-        jid: '120363000000000000@newsletter',
-        inviteLink: 'https://whatsapp.com/channel/0029Vb4q8jX5kg7J9Y2z3a',
+        id: 'chan-vintage-vip',
+        name: 'Vintage',
+        jid: '120363431101986513@newsletter',
+        inviteLink: 'https://whatsapp.com/channel/0029VbEAAML89indIXn39f00',
         role: 'ADMIN',
         verifiedAdmin: true,
         isDefault: true

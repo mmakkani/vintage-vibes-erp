@@ -1087,9 +1087,9 @@ let whatsappGatewayConfig = {
   autoEvictSoldPieces: true,
   notifyOnClaim: true,
   channelConfig: {
-    channelInviteLink: 'https://whatsapp.com/channel/0029Vb4q8jX5kg7J9Y2z3a',
-    channelJid: '120363000000000000@newsletter',
-    channelTitle: 'Vintage Vibes UAE Official VIP Channel',
+    channelInviteLink: 'https://whatsapp.com/channel/0029VbEAAML89indIXn39f00',
+    channelJid: '120363431101986513@newsletter',
+    channelTitle: 'Vintage',
     verifiedAdmin: true
   }
 };
@@ -1261,14 +1261,14 @@ async function callGeminiSalesAgent(prompt: string, apiKey: string): Promise<str
 
 let channelsList: WhatsAppChannelItem[] = [
   {
-    id: 'chan-default-1',
-    name: 'Vintage Vibes UAE Official VIP Channel',
-    jid: '120363000000000000@newsletter',
-    inviteLink: 'https://whatsapp.com/channel/0029Vb4q8jX5kg7J9Y2z3a',
+    id: 'chan-vintage-vip',
+    name: 'Vintage',
+    jid: '120363431101986513@newsletter',
+    inviteLink: 'https://whatsapp.com/channel/0029VbEAAML89indIXn39f00',
     isDefault: true,
     role: 'ADMIN',
     verifiedAdmin: true,
-    subscribers: 1420
+    subscribers: 1
   }
 ];
 
@@ -11639,6 +11639,7 @@ ${courierLines}
                 size,
                 condition,
                 imageUrl: img,
+                imageMediaUrl: img,
                 caption,
                 status: 'PENDING'
               };
@@ -11705,7 +11706,7 @@ ${courierLines}
         if (pathname.endsWith('/dispatch-item') && method === 'POST') {
           const { campaignId, itemIndex, targetChatId, item } = body || {};
           let targetJid = (targetChatId || item?.targetChatId || '').trim();
-          if (!targetJid || targetJid === 'CHANNEL' || targetJid.startsWith('chan-') || !targetJid.includes('@newsletter') || targetJid.includes('0029VbEAAML89indIXn39f00')) {
+          if (!targetJid || targetJid === 'CHANNEL' || targetJid.startsWith('chan-') || !targetJid.includes('@newsletter') || targetJid.includes('0029VbEAAML89indIXn39f00') || targetJid.includes('120363000000000000')) {
             targetJid = '120363431101986513@newsletter';
           }
 

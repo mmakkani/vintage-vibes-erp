@@ -42,11 +42,81 @@ if (!fs.existsSync(AUTH_DIR)) {
   fs.mkdirSync(AUTH_DIR, { recursive: true });
 }
 
+// Self-healing patch to ensure WhatsApp Channel newsletter media upload utilizes /m1/ CDN routing
+function ensureBaileysNewsletterPatched() {
+  try {
+    const candidateDirs = [
+      path.join(process.cwd(), 'node_modules', '@whiskeysockets', 'baileys'),
+      path.join(__dirname, '..', 'node_modules', '@whiskeysockets', 'baileys'),
+      path.join(__dirname, 'node_modules', '@whiskeysockets', 'baileys')
+    ];
+    const baileysDir = candidateDirs.find(d => fs.existsSync(d));
+    if (!baileysDir) return;
+
+    // 1. Defaults/index.js
+    const defaultsPath = path.join(baileysDir, 'lib', 'Defaults', 'index.js');
+    if (fs.existsSync(defaultsPath)) {
+      let defaultsContent = fs.readFileSync(defaultsPath, 'utf8');
+      if (!defaultsContent.includes('NEWSLETTER_MEDIA_PATH_MAP')) {
+        defaultsContent = defaultsContent.replace(
+          /export const MEDIA_PATH_MAP = \{[\s\S]*?\};/,
+          (match) => `${match}\nexport const NEWSLETTER_MEDIA_PATH_MAP = {\n    image: '/newsletter/newsletter-image',\n    video: '/newsletter/newsletter-video',\n    document: '/newsletter/newsletter-document',\n    audio: '/newsletter/newsletter-audio',\n    sticker: '/newsletter/newsletter-image',\n    'thumbnail-link': '/newsletter/newsletter-thumbnail-link'\n};`
+        );
+        fs.writeFileSync(defaultsPath, defaultsContent, 'utf8');
+      }
+    }
+
+    // 2. Utils/messages-media.js
+    const mediaPath = path.join(baileysDir, 'lib', 'Utils', 'messages-media.js');
+    if (fs.existsSync(mediaPath)) {
+      let mediaContent = fs.readFileSync(mediaPath, 'utf8');
+      let changed = false;
+      if (!mediaContent.includes('NEWSLETTER_MEDIA_PATH_MAP')) {
+        mediaContent = mediaContent.replace('MEDIA_PATH_MAP }', 'MEDIA_PATH_MAP, NEWSLETTER_MEDIA_PATH_MAP }');
+        changed = true;
+      }
+      if (!mediaContent.includes('newsletter ? NEWSLETTER_MEDIA_PATH_MAP')) {
+        mediaContent = mediaContent.replace(
+          'async (filePath, { mediaType, fileEncSha256B64, timeoutMs }) =>',
+          'async (filePath, { mediaType, fileEncSha256B64, timeoutMs, newsletter }) =>'
+        );
+        mediaContent = mediaContent.replace(
+          'const url = `https://${hostname}${MEDIA_PATH_MAP[mediaType]}/${fileEncSha256B64}?auth=${auth}&token=${fileEncSha256B64}`;',
+          'const pathMap = newsletter ? NEWSLETTER_MEDIA_PATH_MAP : MEDIA_PATH_MAP;\n            const targetPath = (pathMap && pathMap[mediaType]) || MEDIA_PATH_MAP[mediaType];\n            const url = `https://${hostname}${targetPath}/${fileEncSha256B64}?auth=${auth}&token=${fileEncSha256B64}`;'
+        );
+        changed = true;
+      }
+      if (changed) {
+        fs.writeFileSync(mediaPath, mediaContent, 'utf8');
+      }
+    }
+
+    // 3. Utils/messages.js
+    const msgsPath = path.join(baileysDir, 'lib', 'Utils', 'messages.js');
+    if (fs.existsSync(msgsPath)) {
+      let msgsContent = fs.readFileSync(msgsPath, 'utf8');
+      if (!msgsContent.includes('newsletterDirectPath')) {
+        msgsContent = msgsContent.replace(
+          /const \{ mediaUrl, directPath \} = await options\.upload\(filePath, \{[\s\S]*?\}\);[\s\S]*?await fs\.unlink\(filePath\);/,
+          `const { mediaUrl, directPath } = await options.upload(filePath, {\n            fileEncSha256B64: fileSha256B64,\n            mediaType: mediaType,\n            timeoutMs: options.mediaUploadTimeoutMs,\n            newsletter: isNewsletter\n        });\n        await fs.unlink(filePath);\n        const newsletterDirectPath = directPath ? directPath.replace(/^\\/o1\\//, '/m1/') : directPath;\n        const newsletterMediaUrl = mediaUrl ? mediaUrl.replace('/o1/', '/m1/') : mediaUrl;`
+        );
+        msgsContent = msgsContent.replace('url: mediaUrl,', 'url: newsletterMediaUrl,');
+        msgsContent = msgsContent.replace('directPath,', 'directPath: newsletterDirectPath,');
+        fs.writeFileSync(msgsPath, msgsContent, 'utf8');
+      }
+    }
+    console.log('[WhatsApp Bridge] Baileys newsletter media /m1/ CDN patch verified.');
+  } catch (patchErr) {
+    console.warn('[WhatsApp Bridge] Auto-patch notice:', patchErr?.message);
+  }
+}
+ensureBaileysNewsletterPatched();
+
 // In-memory debug log buffer for live diagnostics
 const logBuffer = [];
 function logRecord(level, args) {
   const time = new Date().toISOString().slice(11, 19);
-  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  const msg = args.map(a => a instanceof Error ? (a.stack || a.message) : (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
   logBuffer.push(`[${time}] [${level}] ${msg}`);
   if (logBuffer.length > 250) logBuffer.shift();
 }
@@ -645,12 +715,18 @@ app.post('/post-channel', requireAuth, async (req, res) => {
       if (imageBuffer && Buffer.isBuffer(imageBuffer)) {
         result = await sock.sendMessage(targetJid, {
           image: imageBuffer,
-          caption: caption || ''
+          caption: caption || '',
+          mimetype: 'image/jpeg'
+        }, {
+          additionalAttributes: { mediatype: 'image' }
         });
       } else {
         result = await sock.sendMessage(targetJid, {
           image: { url: imageUrl },
-          caption: caption || ''
+          caption: caption || '',
+          mimetype: 'image/jpeg'
+        }, {
+          additionalAttributes: { mediatype: 'image' }
         });
       }
     } else {
@@ -666,11 +742,20 @@ app.post('/post-channel', requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error(`[WhatsApp Bridge] Channel post error to ${targetJid}:`, err);
-    // If sending with image failed, fallback to text message with photo link so broadcast doesn't halt
+    // If sending with native image failed, fallback to drop card with direct photo link so broadcast doesn't halt
     if (imageUrl && !caption?.includes(imageUrl)) {
       try {
-        console.log(`[WhatsApp Bridge] Attempting text fallback for channel post...`);
-        const fallbackText = `${caption || ''}\n\n📸 *Garment Photo:* ${imageUrl}`;
+        console.log(`[WhatsApp Bridge] Attempting drop card fallback for channel post...`);
+        let fallbackText = caption || '';
+        if (!fallbackText.includes(imageUrl)) {
+          fallbackText = fallbackText.replace(
+            /(💳 \*1-Tap Instant Checkout)/,
+            `📸 *Direct High-Res Photo:*\n👉 ${imageUrl}\n\n$1`
+          );
+          if (!fallbackText.includes(imageUrl)) {
+            fallbackText = `${fallbackText}\n\n📸 *Direct High-Res Photo:*\n👉 ${imageUrl}`;
+          }
+        }
         const fbResult = await sock.sendMessage(targetJid, { text: fallbackText });
         return res.json({
           success: true,
@@ -678,9 +763,11 @@ app.post('/post-channel', requireAuth, async (req, res) => {
           channelJid: targetJid,
           fallbackMode: 'TEXT_WITH_PHOTO_LINK'
         });
-      } catch (_) {}
+      } catch (fbErr) {
+        console.error(`[WhatsApp Bridge] Channel fallback error to ${targetJid}:`, fbErr?.message || fbErr);
+      }
     }
-    return res.status(500).json({ success: false, error: err?.message });
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to dispatch channel post' });
   }
 });
 

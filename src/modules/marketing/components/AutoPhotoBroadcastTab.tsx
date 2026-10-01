@@ -724,11 +724,12 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         ? `VIP Phone Directory (${selectedCustomerList.length} Customers)`
         : (customChatId || 'VIP Group');
 
-      const activeChannelJid = (channelConfig?.channelJid && !channelConfig.channelJid.includes('0029VbEAAML89indIXn39f00') && channelConfig.channelJid.includes('@newsletter'))
+      const matchedChannel = channels.find(c => c.id === selectedChannelJid || c.jid === selectedChannelJid) || channels.find(c => c.isDefault) || channels[0];
+      const activeChannelJid = (matchedChannel?.jid && matchedChannel.jid.includes('@newsletter') && !matchedChannel.jid.includes('120363000000000000'))
+        ? matchedChannel.jid
+        : (channelConfig?.channelJid && !channelConfig.channelJid.includes('0029VbEAAML89indIXn39f00') && !channelConfig.channelJid.includes('120363000000000000') && channelConfig.channelJid.includes('@newsletter'))
         ? channelConfig.channelJid
-        : (selectedChannelJid && !selectedChannelJid.includes('0029VbEAAML89indIXn39f00') && selectedChannelJid.includes('@newsletter'))
-        ? selectedChannelJid
-        : (channels.find(c => c.jid && !c.jid.includes('0029VbEAAML89indIXn39f00'))?.jid || '120363431101986513@newsletter');
+        : '120363431101986513@newsletter';
 
       if (audienceMode === 'CHANNEL' && (!activeChannelJid || !activeChannelJid.includes('@newsletter'))) {
         alert('Please connect or select a valid WhatsApp Channel before broadcasting.');
@@ -2315,9 +2316,15 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
                       <td className="py-2.5 px-3 font-mono text-slate-400">{idx + 1}</td>
                       <td className="py-2.5 px-3">
                         <img
-                          src={item.imageMediaUrl || (piece as any)?.front_photo_url || ''}
-                          alt=""
-                          className="w-10 h-10 rounded-lg object-cover border border-slate-200 bg-white"
+                          src={item.imageUrl || (item as any)?.imageMediaUrl || piece?.frontImageUrl || (piece as any)?.front_image_url || '/winter_maazi_story.png'}
+                          alt={barcode}
+                          className="w-10 h-10 rounded-lg object-cover border border-slate-200 bg-white shadow-2xs"
+                          onError={(e) => {
+                            const target = e.target as HTMLImageElement;
+                            if (!target.src.includes('winter_maazi_story.png')) {
+                              target.src = '/winter_maazi_story.png';
+                            }
+                          }}
                         />
                       </td>
                       <td className="py-2.5 px-3 font-mono font-bold text-slate-900">{barcode}</td>
