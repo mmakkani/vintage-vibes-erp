@@ -3,6 +3,7 @@ import { marketingService } from './marketing.service.ts';
 import { baileysManager } from './baileys.service.ts';
 import { WhatsAppChannelItem } from './marketing.types.ts';
 import { getPgClient } from '../../db/pgPool.ts';
+import { relationalStore } from '../../db/relationalStore.ts';
 
 export const marketingRouter = Router();
 export const publicFeedRouter = Router();
