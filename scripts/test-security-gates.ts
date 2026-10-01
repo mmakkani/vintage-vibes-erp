@@ -1781,6 +1781,26 @@ async function runSecurityGateTests() {
     'Target WhatsApp Channel has verifiedAdmin: true write permission'
   );
 
+  // Intercept external worker bridge network calls for deterministic CI verification
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input: any, init?: any) => {
+    const urlStr = typeof input === 'string' ? input : (input?.url || '');
+    if (urlStr.includes('/post-channel')) {
+      return new Response(JSON.stringify({
+        success: true,
+        messageId: '3EB0E8A14BAEB1274FD98D',
+        channelJid: '120363431101986513@newsletter'
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (urlStr.includes('/send')) {
+      return new Response(JSON.stringify({
+        success: true,
+        messageId: '3EB0E8A14BAEB1274FD98D'
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return originalFetch(input, init);
+  };
+
   // 2. Real Photo Delivery via POST /api/marketing/whatsapp/channels/test-post
   const { req: testPostReq, res: testPostRes } = createMockReqRes({
     method: 'POST',
@@ -1960,6 +1980,8 @@ async function runSecurityGateTests() {
     broadcastTabContent.includes('isPausedRef') && broadcastTabContent.includes('isAbortedRef'),
     'AutoPhotoBroadcastTab.tsx implements instant reactive pause/abort control refs'
   );
+
+  globalThis.fetch = originalFetch;
 
   console.log('\n======================================================');
   console.log(`  SECURITY & INTEGRITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
