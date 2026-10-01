@@ -431,8 +431,14 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         body: JSON.stringify({
           channelJid: activeJid,
           channelInviteLink: channelConfig?.channelInviteLink || tempChannelLink || 'https://whatsapp.com/channel/0029VbEAAML89indIXn39f00',
-          imageUrl: img,
-          caption: `🔥 *Vintage Vibes VIP Drop - Verified Test Photo*\n🏷️ *SKU:* ${samplePiece?.barcode || 'VV-TEST-001'}\n💰 *Price:* ${samplePiece?.retailPriceAed || 150} AED\n\n_⚡ Verified Channel Drop by Vintage Vibe UAE_`
+          caption: `🔥 *Vintage Vibes VIP Drop - Verified Test Photo*\n` +
+            `🏷️ *SKU:* ${samplePiece?.barcode || 'VV-TEST-001'}\n` +
+            `📏 *Size:* ${samplePiece?.sizeScanned || 'L'} | *Condition:* ${samplePiece?.labelGrade || 'Grade A Vintage'}\n` +
+            `💰 *Price:* ${samplePiece?.retailPriceAed || 150} AED\n\n` +
+            `📸 *High-Res Garment Photo:*\n👉 ${img}\n\n` +
+            `💳 *1-Tap Instant Checkout:*\n👉 https://vintagevibesgk.com/?checkout=${encodeURIComponent(samplePiece?.barcode || 'VV-TEST-001')}\n\n` +
+            `💬 *1-Click WhatsApp Claim:*\n👉 https://wa.me/923022190822?text=MINE%20${encodeURIComponent(samplePiece?.barcode || 'VV-TEST-001')}\n\n` +
+            `_⚡ Verified Channel Drop by Vintage Vibe UAE_`
         })
       });
       const data = await res.json();
@@ -772,6 +778,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
             `🏷️ *SKU:* ${sku}\n` +
             `📏 *Size:* ${size} | *Condition:* ${condition}\n` +
             `💰 *Price:* ${price} AED\n\n` +
+            `📸 *High-Res Garment Photo:*\n👉 ${img}\n\n` +
             `💳 *1-Tap Instant Checkout:*\n👉 https://vintagevibesgk.com/?checkout=${encodeURIComponent(sku)}\n\n` +
             `💬 *1-Click WhatsApp Claim:*\n👉 https://wa.me/923022190822?text=MINE%20${encodeURIComponent(sku)}\n\n` +
             `_⚡ Verified Live Drop by Vintage Vibe UAE_`

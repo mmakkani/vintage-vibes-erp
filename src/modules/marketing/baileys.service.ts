@@ -772,13 +772,23 @@ class BaileysManager extends EventEmitter {
       const bridgeUrl = process.env.RAILWAY_WORKER_URL || 'https://vintage-vibes-erp-production.up.railway.app';
       console.log(`[Baileys postToChannel] Local socket not connected. Forwarding to worker bridge: ${bridgeUrl}`);
       try {
+        let channelCaption = cleanCaption;
+        if (payload.imageUrl && !channelCaption.includes(payload.imageUrl)) {
+          channelCaption = channelCaption.replace(
+            /(💳 \*1-Tap Instant Checkout|💳 \*Instant Mobile Checkout)/,
+            `📸 *High-Res Garment Photo:*\n👉 ${payload.imageUrl}\n\n$1`
+          );
+          if (!channelCaption.includes(payload.imageUrl)) {
+            channelCaption = `${channelCaption}\n\n📸 *High-Res Garment Photo:*\n👉 ${payload.imageUrl}`;
+          }
+        }
+
         const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/post-channel`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             channelJid: targetJid,
-            imageUrl: payload.imageUrl,
-            caption: cleanCaption
+            caption: channelCaption
           }),
           signal: AbortSignal.timeout(15000)
         });

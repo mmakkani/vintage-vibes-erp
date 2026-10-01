@@ -693,47 +693,20 @@ app.post('/post-channel', requireAuth, async (req, res) => {
   }
 
   try {
-    let result;
-    if (imageUrl) {
-      let imageBuffer = null;
-      if (typeof imageUrl === 'string' && imageUrl.startsWith('data:image/')) {
-        try {
-          const base64Data = imageUrl.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '');
-          imageBuffer = Buffer.from(base64Data, 'base64');
-        } catch (_) {}
-      } else if (typeof imageUrl === 'string' && imageUrl.startsWith('http')) {
-        try {
-          const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(8000) });
-          if (imgRes.ok) {
-            imageBuffer = Buffer.from(await imgRes.arrayBuffer());
-          }
-        } catch (fetchErr) {
-          console.warn('[WhatsApp Bridge] Could not fetch image for buffer, falling back to URL payload:', fetchErr?.message);
-        }
+    let finalCaption = caption || '';
+    if (imageUrl && !finalCaption.includes(imageUrl)) {
+      finalCaption = finalCaption.replace(
+        /(💳 \*1-Tap Instant Checkout|💳 \*Instant Mobile Checkout)/,
+        `📸 *High-Res Garment Photo:*\n👉 ${imageUrl}\n\n$1`
+      );
+      if (!finalCaption.includes(imageUrl)) {
+        finalCaption = `${finalCaption}\n\n📸 *High-Res Garment Photo:*\n👉 ${imageUrl}`;
       }
-
-      if (imageBuffer && Buffer.isBuffer(imageBuffer)) {
-        result = await sock.sendMessage(targetJid, {
-          image: imageBuffer,
-          caption: caption || '',
-          mimetype: 'image/jpeg'
-        }, {
-          additionalAttributes: { mediatype: 'image' }
-        });
-      } else {
-        result = await sock.sendMessage(targetJid, {
-          image: { url: imageUrl },
-          caption: caption || '',
-          mimetype: 'image/jpeg'
-        }, {
-          additionalAttributes: { mediatype: 'image' }
-        });
-      }
-    } else {
-      result = await sock.sendMessage(targetJid, {
-        text: caption || ''
-      });
     }
+
+    result = await sock.sendMessage(targetJid, {
+      text: finalCaption
+    });
 
     return res.json({
       success: true,
