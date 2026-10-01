@@ -858,9 +858,10 @@ class BaileysManager extends EventEmitter {
 
     // 3. Fallback: Format drop post card with direct photo link so photo is ALWAYS viewable in channel feed
     let dropCardText = cleanCaption;
-    if (payload.imageUrl && !dropCardText.includes(payload.imageUrl)) {
+    const isHttpUrl = typeof payload.imageUrl === 'string' && payload.imageUrl.startsWith('http');
+    if (isHttpUrl && !dropCardText.includes(payload.imageUrl)) {
       dropCardText = dropCardText.replace(
-        /(💳 \*1-Tap Instant Checkout)/,
+        /(💳 \*1-Tap Instant Checkout|💳 \*Instant Storefront Checkout)/,
         `📸 *Direct High-Res Photo:*\n👉 ${payload.imageUrl}\n\n$1`
       );
     }

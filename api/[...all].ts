@@ -4870,24 +4870,18 @@ RULES FOR YOUR RESPONSE:
         let postImg = imageUrl || 'https://vintagevibesgk.com/winter_maazi_story.png';
         if (postImg.startsWith('/')) postImg = `https://vintagevibesgk.com${postImg}`;
 
-        let testCaption = caption || (
-          `🔥 *Vintage Vibes VIP Drop - Verified Test Photo*\n` +
+        let testCaption = (caption || (
+          `🔥 *Vintage Vibes VIP Drop*\n` +
           `🏷️ *SKU:* VV-VIP-TEST-001\n` +
-          `📏 *Size:* L | *Condition:* Grade A Vintage\n` +
-          `💰 *Price:* 150 AED\n\n` +
-          `📸 *High-Res Garment Photo:*\n👉 ${postImg}\n\n` +
-          `💳 *Instant Mobile Checkout:*\n` +
+          `💰 *Price:* AED 150\n\n` +
+          `💳 *1-Tap Instant Checkout:*\n` +
           `👉 https://vintagevibesgk.com/?checkout=VV-VIP-TEST-001\n\n` +
           `💬 *1-Click WhatsApp Claim:*\n` +
-          `👉 https://wa.me/923022190822?text=MINE%20VV-VIP-TEST-001\n\n` +
-          `_⚡ Verified Drop by Vintage Vibe UAE_`
-        );
-        if (postImg && !testCaption.includes(postImg)) {
-          testCaption = testCaption.replace(
-            /(💳 \*Instant Mobile Checkout|💳 \*1-Tap)/,
-            `📸 *High-Res Garment Photo:*\n👉 ${postImg}\n\n$1`
-          );
-        }
+          `👉 https://wa.me/923022190822?text=MINE%20VV-VIP-TEST-001`
+        ))
+          .replace(/data:image\/[^;]+;base64,[^\s]+/g, '')
+          .replace(/📸\s*\*High-Res Garment Photo:\*[\s\S]*?(?=\n\n|$)/g, '')
+          .trim();
 
         const bridgeUrl = process.env.RAILWAY_WORKER_URL || 'https://vintage-vibes-erp-production.up.railway.app';
         try {
@@ -4896,6 +4890,7 @@ RULES FOR YOUR RESPONSE:
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               channelJid: targetJid,
+              imageUrl: postImg,
               caption: testCaption
             }),
             signal: AbortSignal.timeout(15000)
@@ -11807,18 +11802,12 @@ ${courierLines}
             }
 
             // For WhatsApp Newsletters/Channels:
-            // Embed high-res photo link in drop card so WhatsApp renders the rich image preview.
-            // Omit raw binary imageUrl so Railway worker dispatches as rich text, which Meta accepts 100% reliably.
-            let channelCaption = caption;
-            if (imgUrl && !channelCaption.includes(imgUrl)) {
-              channelCaption = channelCaption.replace(
-                /(💳 \*1-Tap Instant Checkout|💳 \*Instant Mobile Checkout)/,
-                `📸 *High-Res Garment Photo:*\n👉 ${imgUrl}\n\n$1`
-              );
-              if (!channelCaption.includes(imgUrl)) {
-                channelCaption = `${channelCaption}\n\n📸 *High-Res Garment Photo:*\n👉 ${imgUrl}`;
-              }
-            }
+            // Clean caption to avoid base64 data dumps and pass native imageUrl (postcard PNG)
+            let channelCaption = (caption || '')
+              .replace(/data:image\/[^;]+;base64,[^\s]+/g, '')
+              .replace(/📸\s*\*High-Res Garment Photo:\*[\s\S]*?(?=\n\n|$)/g, '')
+              .replace(/📸\s*\*Direct High-Res Photo:\*[\s\S]*?(?=\n\n|$)/g, '')
+              .trim();
 
             try {
               const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/post-channel`, {
@@ -11826,6 +11815,7 @@ ${courierLines}
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   channelJid: targetJid,
+                  imageUrl: imgUrl,
                   caption: channelCaption
                 }),
                 signal: AbortSignal.timeout(15000)

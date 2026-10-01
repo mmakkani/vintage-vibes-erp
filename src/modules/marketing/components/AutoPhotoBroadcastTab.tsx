@@ -38,6 +38,7 @@ import {
 import { PieceBreakdownItem, InwardGatePass } from '../../purchase/purchase.types.ts';
 import { Party } from '../../parties/parties.types.ts';
 import { AutoBroadcastCampaign, WhatsAppDeviceSession, WhatsAppChannelItem } from '../marketing.types.ts';
+import { generateStorefrontPostcardCanvas } from '../../../utils/storefrontPostcardGenerator.ts';
 import { WhatsAppDeviceModal } from './WhatsAppDeviceModal.tsx';
 import { SocialLiveConnectModal } from './SocialLiveConnectModal.tsx';
 import { PurchaseService } from '../../../services/purchaseService.ts';
@@ -425,20 +426,40 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       let img = samplePiece?.frontImageUrl || '/winter_maazi_story.png';
       if (img.startsWith('/')) img = `https://vintagevibesgk.com${img}`;
 
+      // Generate luxury Storefront Postcard PNG
+      let postcardImg = img;
+      try {
+        postcardImg = await generateStorefrontPostcardCanvas({
+          barcode: samplePiece?.barcode || 'VV-TEST-001',
+          brandName: samplePiece?.brandName || 'Vintage Archive',
+          itemName: samplePiece?.itemName || samplePiece?.style || 'Curated Garment',
+          sizeScanned: samplePiece?.sizeScanned || 'L',
+          labelGrade: samplePiece?.labelGrade || 'Grade A Vintage',
+          retailPriceAed: samplePiece?.retailPriceAed || samplePiece?.estimatedPrice || 150,
+          pitToPitInches: (samplePiece as any)?.pitToPitInches,
+          lengthInches: (samplePiece as any)?.lengthInches,
+          marketSegment: (samplePiece as any)?.marketSegment,
+          isGrail: (samplePiece as any)?.isGrail,
+          shopLocation: samplePiece?.shopLocation || 'Al Ain Vault',
+          countryOfOrigin: samplePiece?.countryOfOrigin || 'Made in USA',
+          fitSilhouette: (samplePiece as any)?.fitSilhouette || 'Boxy Vintage Fit',
+          frontImageUrl: img
+        });
+      } catch (cardErr) {
+        console.warn('Postcard generation fallback to raw image:', cardErr);
+      }
+
       const res = await fetch('/api/marketing/whatsapp/channels/test-post', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           channelJid: activeJid,
           channelInviteLink: channelConfig?.channelInviteLink || tempChannelLink || 'https://whatsapp.com/channel/0029VbEAAML89indIXn39f00',
-          caption: `🔥 *Vintage Vibes VIP Drop - Verified Test Photo*\n` +
-            `🏷️ *SKU:* ${samplePiece?.barcode || 'VV-TEST-001'}\n` +
-            `📏 *Size:* ${samplePiece?.sizeScanned || 'L'} | *Condition:* ${samplePiece?.labelGrade || 'Grade A Vintage'}\n` +
-            `💰 *Price:* ${samplePiece?.retailPriceAed || 150} AED\n\n` +
-            `📸 *High-Res Garment Photo:*\n👉 ${img}\n\n` +
-            `💳 *1-Tap Instant Checkout:*\n👉 https://vintagevibesgk.com/?checkout=${encodeURIComponent(samplePiece?.barcode || 'VV-TEST-001')}\n\n` +
-            `💬 *1-Click WhatsApp Claim:*\n👉 https://wa.me/923022190822?text=MINE%20${encodeURIComponent(samplePiece?.barcode || 'VV-TEST-001')}\n\n` +
-            `_⚡ Verified Channel Drop by Vintage Vibe UAE_`
+          imageUrl: postcardImg,
+          caption: `🔥 *${samplePiece?.brandName || 'Vintage Archive'} - ${samplePiece?.itemName || samplePiece?.style || 'Curated Garment'}* (${samplePiece?.sizeScanned || 'L'})\n` +
+            `💰 *AED ${samplePiece?.retailPriceAed || samplePiece?.estimatedPrice || 150}*\n\n` +
+            `💳 *Instant Storefront Checkout:*\n` +
+            `👉 https://vintagevibesgk.com/?checkout=${encodeURIComponent(samplePiece?.barcode || 'VV-TEST-001')}`
         })
       });
       const data = await res.json();
@@ -650,11 +671,39 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       if (isAbortedRef.current) break;
 
       const currentItem = campaign.items[i];
+      let dispatchItem = { ...currentItem };
+
+      // Generate luxury Storefront Postcard PNG for the item
+      try {
+        const pieceObj = pieces.find(p => p.barcode === currentItem.barcode || p.barcode === currentItem.pieceId);
+        const postcardDataUrl = await generateStorefrontPostcardCanvas({
+          barcode: currentItem.barcode || currentItem.pieceId || '',
+          brandName: currentItem.brand || pieceObj?.brandName || 'Vintage Archive',
+          itemName: currentItem.category || pieceObj?.itemName || pieceObj?.style || 'Curated Garment',
+          sizeScanned: currentItem.size || pieceObj?.sizeScanned || 'L',
+          labelGrade: currentItem.condition || pieceObj?.labelGrade || 'Grade A Vintage',
+          retailPriceAed: currentItem.price || pieceObj?.retailPriceAed || pieceObj?.estimatedPrice || 295,
+          pitToPitInches: (pieceObj as any)?.pitToPitInches,
+          lengthInches: (pieceObj as any)?.lengthInches,
+          marketSegment: (pieceObj as any)?.marketSegment,
+          isGrail: (pieceObj as any)?.isGrail,
+          shopLocation: pieceObj?.shopLocation || 'Al Ain Vault',
+          countryOfOrigin: pieceObj?.countryOfOrigin || 'Made in USA',
+          fitSilhouette: (pieceObj as any)?.fitSilhouette || 'Boxy Vintage Fit',
+          frontImageUrl: currentItem.imageUrl || pieceObj?.frontImageUrl
+        });
+        if (postcardDataUrl && postcardDataUrl.startsWith('data:image/')) {
+          dispatchItem.imageUrl = postcardDataUrl;
+        }
+      } catch (genErr) {
+        console.warn('[Broadcaster] Postcard canvas rendering fallback:', genErr);
+      }
+
       // Mark sending in UI
       setActiveCampaign(prev => {
         if (!prev) return null;
         const copyItems = [...(prev.items || [])];
-        if (copyItems[i]) copyItems[i] = { ...copyItems[i], status: 'SENDING' };
+        if (copyItems[i]) copyItems[i] = { ...copyItems[i], status: 'SENDING', imageUrl: dispatchItem.imageUrl };
         return { ...prev, items: copyItems };
       });
 
@@ -667,7 +716,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
             itemIndex: i,
             targetChatId: destinationJid,
             customerPhones: campaign.customerPhones,
-            item: currentItem
+            item: dispatchItem
           })
         });
 
@@ -754,9 +803,10 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         ? selectedCustomerList.map(c => c.phone).filter(Boolean) as string[]
         : undefined;
 
-      // Extract real piece details with verified absolute image URLs
+      // Extract real piece details with verified absolute image URLs and luxury Storefront Postcard PNGs
       const selectedPieceObjects = pieces.filter(p => selectedPieceSkus.includes(p.barcode));
-      const piecesData = (selectedPieceObjects.length > 0 ? selectedPieceObjects : pieces.slice(0, 6)).map((p, idx) => {
+      const targetPieces = selectedPieceObjects.length > 0 ? selectedPieceObjects : pieces.slice(0, 6);
+      const piecesData = await Promise.all(targetPieces.map(async (p, idx) => {
         let img = p.frontImageUrl || '/winter_maazi_story.png';
         if (img.startsWith('/')) img = `https://vintagevibesgk.com${img}`;
         const sku = p.barcode || `SKU-${idx + 1}`;
@@ -764,7 +814,27 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         const category = p.itemName || p.style || 'Garment';
         const price = p.retailPriceAed || p.estimatedPrice || 120;
         const size = p.sizeScanned || 'L';
-        const condition = p.labelGrade || 'Grade A Vintage';
+        const condition = p.labelGrade || 'Grade A+ (Pristine)';
+
+        let postcardImg = img;
+        try {
+          postcardImg = await generateStorefrontPostcardCanvas({
+            barcode: sku,
+            brandName: brand,
+            itemName: category,
+            sizeScanned: size,
+            labelGrade: condition,
+            retailPriceAed: price,
+            pitToPitInches: (p as any)?.pitToPitInches,
+            lengthInches: (p as any)?.lengthInches,
+            marketSegment: (p as any)?.marketSegment,
+            isGrail: (p as any)?.isGrail,
+            shopLocation: p.shopLocation || 'Al Ain Vault',
+            countryOfOrigin: p.countryOfOrigin || 'Made in USA',
+            fitSilhouette: (p as any)?.fitSilhouette || 'Boxy Vintage Fit',
+            frontImageUrl: img
+          });
+        } catch (_) {}
 
         return {
           barcode: sku,
@@ -773,17 +843,13 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
           price,
           size,
           condition,
-          imageUrl: img,
-          caption: `🔥 *${brand} - ${category}*\n` +
-            `🏷️ *SKU:* ${sku}\n` +
-            `📏 *Size:* ${size} | *Condition:* ${condition}\n` +
-            `💰 *Price:* ${price} AED\n\n` +
-            `📸 *High-Res Garment Photo:*\n👉 ${img}\n\n` +
-            `💳 *1-Tap Instant Checkout:*\n👉 https://vintagevibesgk.com/?checkout=${encodeURIComponent(sku)}\n\n` +
-            `💬 *1-Click WhatsApp Claim:*\n👉 https://wa.me/923022190822?text=MINE%20${encodeURIComponent(sku)}\n\n` +
-            `_⚡ Verified Live Drop by Vintage Vibe UAE_`
+          imageUrl: postcardImg,
+          caption: `🔥 *${brand} - ${category}* (${size})\n` +
+            `💰 *AED ${Number(price).toLocaleString()}*\n\n` +
+            `💳 *Instant Storefront Checkout:*\n` +
+            `👉 https://vintagevibesgk.com/?checkout=${encodeURIComponent(sku)}`
         };
-      });
+      }));
 
       const res = await fetch('/api/marketing/broadcast-campaign/start', {
         method: 'POST',

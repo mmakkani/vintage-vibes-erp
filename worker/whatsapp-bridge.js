@@ -693,20 +693,36 @@ app.post('/post-channel', requireAuth, async (req, res) => {
   }
 
   try {
-    let finalCaption = caption || '';
-    if (imageUrl && !finalCaption.includes(imageUrl)) {
-      finalCaption = finalCaption.replace(
-        /(💳 \*1-Tap Instant Checkout|💳 \*Instant Mobile Checkout)/,
-        `📸 *High-Res Garment Photo:*\n👉 ${imageUrl}\n\n$1`
-      );
-      if (!finalCaption.includes(imageUrl)) {
-        finalCaption = `${finalCaption}\n\n📸 *High-Res Garment Photo:*\n👉 ${imageUrl}`;
-      }
-    }
+    // Sanitize caption: eliminate any raw base64 noise or redundant injected photo links
+    let cleanCaption = (caption || '')
+      .replace(/data:image\/[a-zA-Z0-9.+]+;base64,[^\s]+/g, '')
+      .replace(/📸\s*\*High-Res Garment Photo:\*[\s\S]*?(?=\n\n|$)/g, '')
+      .replace(/📸\s*\*Direct High-Res Photo:\*[\s\S]*?(?=\n\n|$)/g, '')
+      .trim();
 
-    result = await sock.sendMessage(targetJid, {
-      text: finalCaption
-    });
+    let result;
+    if (imageUrl) {
+      const imagePayload = typeof imageUrl === 'string' && imageUrl.startsWith('data:')
+        ? Buffer.from(imageUrl.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, ''), 'base64')
+        : (typeof imageUrl === 'string' && imageUrl.startsWith('http') ? { url: imageUrl } : imageUrl);
+
+      try {
+        console.log(`[WhatsApp Bridge] Dispatching native photo to channel ${targetJid}`);
+        result = await sock.sendMessage(targetJid, {
+          image: imagePayload,
+          caption: cleanCaption
+        });
+      } catch (imgErr) {
+        console.warn(`[WhatsApp Bridge] Channel image dispatch failed (${imgErr?.message}), falling back to text:`, imgErr?.message || imgErr);
+        result = await sock.sendMessage(targetJid, {
+          text: cleanCaption
+        });
+      }
+    } else {
+      result = await sock.sendMessage(targetJid, {
+        text: cleanCaption
+      });
+    }
 
     return res.json({
       success: true,
@@ -714,32 +730,7 @@ app.post('/post-channel', requireAuth, async (req, res) => {
       channelJid: targetJid
     });
   } catch (err) {
-    console.error(`[WhatsApp Bridge] Channel post error to ${targetJid}:`, err);
-    // If sending with native image failed, fallback to drop card with direct photo link so broadcast doesn't halt
-    if (imageUrl && !caption?.includes(imageUrl)) {
-      try {
-        console.log(`[WhatsApp Bridge] Attempting drop card fallback for channel post...`);
-        let fallbackText = caption || '';
-        if (!fallbackText.includes(imageUrl)) {
-          fallbackText = fallbackText.replace(
-            /(💳 \*1-Tap Instant Checkout)/,
-            `📸 *Direct High-Res Photo:*\n👉 ${imageUrl}\n\n$1`
-          );
-          if (!fallbackText.includes(imageUrl)) {
-            fallbackText = `${fallbackText}\n\n📸 *Direct High-Res Photo:*\n👉 ${imageUrl}`;
-          }
-        }
-        const fbResult = await sock.sendMessage(targetJid, { text: fallbackText });
-        return res.json({
-          success: true,
-          messageId: fbResult?.key?.id,
-          channelJid: targetJid,
-          fallbackMode: 'TEXT_WITH_PHOTO_LINK'
-        });
-      } catch (fbErr) {
-        console.error(`[WhatsApp Bridge] Channel fallback error to ${targetJid}:`, fbErr?.message || fbErr);
-      }
-    }
+    console.error(`[WhatsApp Bridge] Channel post fatal error to ${targetJid}:`, err);
     return res.status(500).json({ success: false, error: err?.message || 'Failed to dispatch channel post' });
   }
 });
