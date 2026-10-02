@@ -54,7 +54,7 @@ export const getPgClient = (): pg.Pool => {
     pool = new Pool({
       connectionString: targetUrl,
       ssl: { rejectUnauthorized: false },
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: 10000,
       max: 15
     });
 
@@ -95,7 +95,7 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
         connectionString: DEFAULT_DB_URL,
         max: 15,
         ssl: { rejectUnauthorized: false },
-        connectionTimeoutMillis: 5000
+        connectionTimeoutMillis: 10000
       });
       fallbackPool.on('error', (err: any) => {
         console.warn('[pgPool] Idle fallback client notice:', err?.message || err);
@@ -181,7 +181,7 @@ export async function withDb<T>(fn: (client: pg.PoolClient) => Promise<T>): Prom
         connectionString: DEFAULT_DB_URL,
         max: 15,
         ssl: { rejectUnauthorized: false },
-        connectionTimeoutMillis: 5000
+        connectionTimeoutMillis: 10000
       });
       fallbackPool.on('error', (err: any) => {
         console.warn('[pgPool] Idle fallback client notice:', err?.message || err);
