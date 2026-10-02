@@ -106,17 +106,6 @@ export async function createSessionToken(user: { id: string; username: string; r
     const client = await getPgClient();
     if (client) {
       await client.query(`
-        CREATE TABLE IF NOT EXISTS public.user_sessions (
-          token TEXT PRIMARY KEY,
-          user_id TEXT NOT NULL,
-          username TEXT NOT NULL,
-          role TEXT NOT NULL,
-          expires_at TIMESTAMPTZ NOT NULL,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          revoked_at TIMESTAMPTZ
-        );
-      `).catch(() => {});
-      await client.query(`
         INSERT INTO public.user_sessions (token, user_id, username, role, expires_at)
         VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
         ON CONFLICT (token) DO UPDATE

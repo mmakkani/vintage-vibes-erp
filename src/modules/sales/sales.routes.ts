@@ -71,18 +71,16 @@ salesRouter.post('/gate-passes/:id/convert-invoice', (req, res) => {
 });
 
 salesRouter.get('/invoices', async (req, res) => {
-  let client: Client | null = null;
   try {
-    client = await getDbClient();
     const query = `
       SELECT si.*,
              p.name as courier_partner_name,
              p.company_name as courier_company_name
       FROM sales_invoices si
-      LEFT JOIN parties p ON (p.party_id = si.courier_partner_id OR p.id::text = si.courier_partner_id::text)
+      LEFT JOIN parties p ON p.id = si.courier_partner_id
       ORDER BY si.created_at DESC;
     `;
-    const result = await client.query(query);
+    const result = await withDb(async (dbClient) => dbClient.query(query));
     const rows = result.rows || [];
     const mapped = rows.map((row: any) => {
       let parsedItems: any[] = [];
@@ -158,8 +156,6 @@ salesRouter.get('/invoices', async (req, res) => {
     } catch (_) {
       return res.json(SalesController.getInvoices());
     }
-  } finally {
-    if (client) await client.end().catch(() => {});
   }
 });
 

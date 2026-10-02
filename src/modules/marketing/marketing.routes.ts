@@ -372,17 +372,11 @@ marketingRouter.post('/whatsapp/config', async (req, res) => {
     const client = await getPgClient();
     if (client) {
       await client.query(`
-        CREATE TABLE IF NOT EXISTS whatsapp_gateway_config (
-          id VARCHAR(64) PRIMARY KEY,
-          config JSONB NOT NULL,
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
         INSERT INTO whatsapp_gateway_config (id, config, updated_at)
         VALUES ('default', $1, NOW())
         ON CONFLICT (id) DO UPDATE
         SET config = $1, updated_at = NOW();
       `, [JSON.stringify(updated)]);
-      await client.end();
     }
   } catch (err) {
     console.warn('[Marketing WhatsApp Config Save Notice]:', err);
@@ -418,28 +412,14 @@ marketingRouter.post('/whatsapp/test-bridge', async (req, res) => {
 });
 
 // ==================== MULTI-CHANNEL WHATSAPP MANAGEMENT (SQL PERSISTENT) ====================
-async function ensureChannelsTable(client: Client): Promise<void> {
-  await client.query(`
-    CREATE TABLE IF NOT EXISTS whatsapp_channels (
-      id VARCHAR(128) PRIMARY KEY,
-      name VARCHAR(255) NOT NULL,
-      jid VARCHAR(255) NOT NULL,
-      invite_link TEXT,
-      role VARCHAR(64) DEFAULT 'ADMIN',
-      verified_admin BOOLEAN DEFAULT TRUE,
-      is_default BOOLEAN DEFAULT FALSE,
-      subscribers_count INT DEFAULT 0,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
+async function ensureChannelsTable(_client?: any): Promise<void> {
+  // Schema creation moved to migration: supabase/migrations/20261002_performance_optimization.sql
 }
 
 async function getChannelsFromPg(): Promise<WhatsAppChannelItem[]> {
   try {
     const client = await getPgClient();
     if (!client) return [];
-    await ensureChannelsTable(client);
     const res = await client.query('SELECT * FROM whatsapp_channels ORDER BY is_default DESC, created_at ASC');
     if (res.rows.length === 0) {
       const defChan: WhatsAppChannelItem = {
@@ -456,10 +436,8 @@ async function getChannelsFromPg(): Promise<WhatsAppChannelItem[]> {
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (id) DO NOTHING;
       `, [defChan.id, defChan.name, defChan.jid, defChan.inviteLink, defChan.role, defChan.verifiedAdmin, defChan.isDefault]);
-      await client.end();
       return [defChan];
     }
-    await client.end();
     return res.rows.map(row => ({
       id: row.id,
       name: row.name,
@@ -480,7 +458,6 @@ async function saveChannelToPg(channel: WhatsAppChannelItem): Promise<void> {
   try {
     const client = await getPgClient();
     if (!client) return;
-    await ensureChannelsTable(client);
     await client.query(`
       INSERT INTO whatsapp_channels (id, name, jid, invite_link, role, verified_admin, is_default, subscribers_count, updated_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
@@ -503,7 +480,6 @@ async function saveChannelToPg(channel: WhatsAppChannelItem): Promise<void> {
       channel.isDefault ?? false,
       channel.subscribers || 0
     ]);
-    await client.end();
   } catch (err) {
     console.warn('[SQL Channel Save Notice]:', err);
   }
@@ -513,9 +489,7 @@ async function deleteChannelFromPg(idOrJid: string): Promise<void> {
   try {
     const client = await getPgClient();
     if (!client) return;
-    await ensureChannelsTable(client);
     await client.query('DELETE FROM whatsapp_channels WHERE id = $1 OR jid = $1', [idOrJid]);
-    await client.end();
   } catch (err) {
     console.warn('[SQL Channel Delete Notice]:', err);
   }
@@ -525,10 +499,8 @@ async function setDefaultChannelInPg(idOrJid: string): Promise<void> {
   try {
     const client = await getPgClient();
     if (!client) return;
-    await ensureChannelsTable(client);
     await client.query('UPDATE whatsapp_channels SET is_default = FALSE');
     await client.query('UPDATE whatsapp_channels SET is_default = TRUE WHERE id = $1 OR jid = $1', [idOrJid]);
-    await client.end();
   } catch (err) {
     console.warn('[SQL Channel Set Default Notice]:', err);
   }

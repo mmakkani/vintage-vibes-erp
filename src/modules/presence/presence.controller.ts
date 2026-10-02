@@ -43,7 +43,6 @@ export const PresenceController = {
           WHERE last_heartbeat > NOW() - INTERVAL '45 seconds'
           ORDER BY last_heartbeat DESC;
         `);
-        await client.end();
 
         return res.status(200).json({
           success: true,
@@ -51,7 +50,6 @@ export const PresenceController = {
           users: activeRes.rows
         });
       } catch (err: any) {
-        try { await client.end(); } catch (_) {}
         const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         console.error('[Presence Heartbeat Error]', {
           correlationId,
@@ -91,14 +89,12 @@ export const PresenceController = {
           WHERE last_heartbeat > NOW() - INTERVAL '45 seconds'
           ORDER BY last_heartbeat DESC;
         `);
-        await client.end();
         return res.status(200).json({
           success: true,
           onlineCount: activeRes.rows.length,
           users: activeRes.rows
         });
       } catch (err: any) {
-        try { await client.end(); } catch (_) {}
         const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         console.error('[Presence getOnlineUsers Error]', {
           correlationId,
@@ -136,10 +132,8 @@ export const PresenceController = {
         } else if (username) {
           await client.query('DELETE FROM user_presences WHERE username = $1;', [username]);
         }
-        await client.end();
         return res.status(200).json({ success: true });
       } catch (err: any) {
-        try { await client.end(); } catch (_) {}
       }
     }
     return res.status(200).json({ success: true });

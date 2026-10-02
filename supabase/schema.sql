@@ -1052,3 +1052,41 @@ CREATE TABLE IF NOT EXISTS public.visiting_cards (
 CREATE INDEX IF NOT EXISTS idx_visiting_cards_company ON public.visiting_cards(company_name);
 CREATE INDEX IF NOT EXISTS idx_visiting_cards_phone ON public.visiting_cards(phone);
 CREATE INDEX IF NOT EXISTS idx_visiting_cards_created ON public.visiting_cards(created_at DESC);
+
+-- ============================================================================
+-- 24. AUTHENTICATION USER SESSIONS (PERSISTENT LOGINS)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.user_sessions (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    username TEXT NOT NULL,
+    role TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON public.user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON public.user_sessions(expires_at);
+
+-- ============================================================================
+-- 25. MARKETING & WHATSAPP GATEWAY CONFIG
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.whatsapp_gateway_config (
+    id VARCHAR(64) PRIMARY KEY,
+    config JSONB NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.whatsapp_channels (
+    id VARCHAR(128) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    jid VARCHAR(255) NOT NULL,
+    invite_link TEXT,
+    role VARCHAR(64) DEFAULT 'ADMIN',
+    verified_admin BOOLEAN DEFAULT TRUE,
+    is_default BOOLEAN DEFAULT FALSE,
+    subscribers_count INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_channels_jid ON public.whatsapp_channels(jid);
