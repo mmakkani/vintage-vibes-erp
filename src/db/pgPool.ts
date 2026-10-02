@@ -55,7 +55,7 @@ export const getPgClient = (): pg.Pool => {
       connectionString: targetUrl,
       ssl: { rejectUnauthorized: false },
       connectionTimeoutMillis: 5000,
-      max: 5
+      max: 15
     });
 
     pool.on('error', (err: any) => {
@@ -93,7 +93,7 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
     try {
       const fallbackPool = new Pool({
         connectionString: DEFAULT_DB_URL,
-        max: 5,
+        max: 15,
         ssl: { rejectUnauthorized: false },
         connectionTimeoutMillis: 5000
       });
@@ -179,7 +179,7 @@ export async function withDb<T>(fn: (client: pg.PoolClient) => Promise<T>): Prom
     try {
       const fallbackPool = new Pool({
         connectionString: DEFAULT_DB_URL,
-        max: 5,
+        max: 15,
         ssl: { rejectUnauthorized: false },
         connectionTimeoutMillis: 5000
       });
