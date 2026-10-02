@@ -22,13 +22,9 @@ declare global {
   }
 }
 
-const supabaseUrl = resolveEnv(
-  'SUPABASE_URL',
-  'VITE_SUPABASE_URL',
-  'https://wjjelqsrivnyiybarfmo.supabase.co'
-);
+const defaultCloudUrl = 'https://wjjelqsrivnyiybarfmo.supabase.co';
 
-const supabaseKey = resolveEnv(
+const rawKey = resolveEnv(
   'SUPABASE_SERVICE_ROLE_KEY',
   'VITE_SUPABASE_ANON_KEY',
   ''
@@ -37,6 +33,29 @@ const supabaseKey = resolveEnv(
   'VITE_SUPABASE_ANON_KEY',
   ''
 );
+
+export const isPlaceholderKey =
+  !rawKey ||
+  rawKey === 'anon-key-placeholder' ||
+  rawKey === 'your_supabase_anon_public_key' ||
+  rawKey.startsWith('your_supabase_') ||
+  !rawKey.startsWith('eyJ');
+
+const configuredUrl = resolveEnv(
+  'SUPABASE_URL',
+  'VITE_SUPABASE_URL',
+  defaultCloudUrl
+);
+
+// In local browser development or when cloud key is a placeholder, route requests to local Express
+// PostgREST proxy so that database queries connect directly to PostgreSQL without 401 Unauthorized errors.
+const localOrigin =
+  typeof window !== 'undefined' && window.location && window.location.origin
+    ? window.location.origin
+    : (typeof process !== 'undefined' && process.env && (process.env.APP_URL || `http://localhost:${process.env.PORT || 3000}`)) || 'http://localhost:3000';
+
+const supabaseUrl = isPlaceholderKey ? localOrigin : configuredUrl;
+const supabaseKey = isPlaceholderKey ? 'local-dev-bypass-key' : rawKey;
 
 function setupClient(client: SupabaseClient): SupabaseClient {
   const originalRpc = client.rpc.bind(client);

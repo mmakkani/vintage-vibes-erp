@@ -25,6 +25,7 @@ import { eventHub } from './src/server/events.ts';
 import { BotDetector } from './src/server/botDetector.ts';
 import { Client } from 'pg';
 import { createClient } from '@supabase/supabase-js';
+import { withDb } from './src/db/pgPool.ts';
 import { ecommerceRouter } from './src/modules/ecommerce/ecommerce.routes.ts';
 import { sortingRouter } from './src/modules/sorting/sorting.routes.ts';
 import { applyCorsHeaders, isOriginAllowed } from './src/server/authValidator.ts';
@@ -221,7 +222,7 @@ async function startServer() {
   });
 
   // Database RPC Proxy Endpoint (executes PostgreSQL stored procedures directly)
-  app.post('/api/rpc/:fnName', async (req, res) => {
+  app.post(['/api/rpc/:fnName', '/rest/v1/rpc/:fnName'], async (req, res) => {
     const { fnName } = req.params;
     const body = req.body || {};
     let dbClient: Client | null = null;
@@ -286,6 +287,268 @@ async function startServer() {
       return res.status(400).json({ data: null, error: { message: err?.message || 'RPC execution failed' } });
     } finally {
       if (dbClient) await dbClient.end().catch(() => {});
+    }
+  });
+
+  // ============================================================================
+  // PostgREST REST API Compatibility Layer (/rest/v1/:table)
+  // Transparently handles client-side Supabase REST queries directly against PostgreSQL
+  // ============================================================================
+  app.get('/rest/v1/:table', async (req, res) => {
+    const rawTable = req.params.table;
+    const table = (rawTable || '').replace(/[^a-zA-Z0-9_]/g, '');
+    if (!table) return res.status(400).json({ error: 'Invalid table name' });
+
+    try {
+      let selectClause = '*';
+      if (req.query.select && typeof req.query.select === 'string' && req.query.select !== '*') {
+        const cols = req.query.select
+          .split(',')
+          .map(c => c.trim())
+          .filter(c => /^[a-zA-Z0-9_]+$/.test(c))
+          .map(c => `"${c}"`);
+        if (cols.length > 0) selectClause = cols.join(', ');
+      }
+
+      const whereParts: string[] = [];
+      const params: any[] = [];
+      let paramIdx = 1;
+
+      for (const [key, val] of Object.entries(req.query)) {
+        if (['select', 'order', 'limit', 'offset', 'columns', 'on_conflict'].includes(key)) continue;
+
+        // Support or=(col1.ilike.%v1%,col2.ilike.%v2%)
+        if (key === 'or' && typeof val === 'string') {
+          const rawOr = val.replace(/^\(|\)$/g, '');
+          const clauses = rawOr.split(',').map(c => c.trim());
+          const orSqlParts: string[] = [];
+          for (const c of clauses) {
+            const m = c.match(/^([a-zA-Z0-9_]+)\.(eq|neq|gt|gte|lt|lte|like|ilike)\.(.*)$/i);
+            if (m) {
+              const opMap: Record<string, string> = {
+                eq: '=', neq: '!=', gt: '>', gte: '>=', lt: '<', lte: '<=', like: 'LIKE', ilike: 'ILIKE'
+              };
+              orSqlParts.push(`"${m[1]}" ${opMap[m[2].toLowerCase()]} $${paramIdx++}`);
+              params.push(m[3]);
+            }
+          }
+          if (orSqlParts.length > 0) {
+            whereParts.push(`(${orSqlParts.join(' OR ')})`);
+          }
+          continue;
+        }
+
+        if (!/^[a-zA-Z0-9_]+$/.test(key)) continue;
+        if (typeof val !== 'string') continue;
+
+        if (val.startsWith('eq.')) {
+          whereParts.push(`"${key}" = $${paramIdx++}`);
+          params.push(val.slice(3));
+        } else if (val.startsWith('neq.')) {
+          whereParts.push(`"${key}" != $${paramIdx++}`);
+          params.push(val.slice(4));
+        } else if (val.startsWith('gt.')) {
+          whereParts.push(`"${key}" > $${paramIdx++}`);
+          params.push(val.slice(3));
+        } else if (val.startsWith('gte.')) {
+          whereParts.push(`"${key}" >= $${paramIdx++}`);
+          params.push(val.slice(4));
+        } else if (val.startsWith('lt.')) {
+          whereParts.push(`"${key}" < $${paramIdx++}`);
+          params.push(val.slice(3));
+        } else if (val.startsWith('lte.')) {
+          whereParts.push(`"${key}" <= $${paramIdx++}`);
+          params.push(val.slice(4));
+        } else if (val.startsWith('like.')) {
+          whereParts.push(`"${key}" LIKE $${paramIdx++}`);
+          params.push(val.slice(5));
+        } else if (val.startsWith('ilike.')) {
+          whereParts.push(`"${key}" ILIKE $${paramIdx++}`);
+          params.push(val.slice(6));
+        } else if (val === 'is.null') {
+          whereParts.push(`"${key}" IS NULL`);
+        } else if (val === 'is.not.null') {
+          whereParts.push(`"${key}" IS NOT NULL`);
+        } else if (val.startsWith('in.(') && val.endsWith(')')) {
+          const items = val.slice(4, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
+          whereParts.push(`"${key}" = ANY($${paramIdx++})`);
+          params.push(items);
+        }
+      }
+
+      let orderClause = '';
+      if (req.query.order && typeof req.query.order === 'string') {
+        const parts = req.query.order.split(',').map(p => p.trim());
+        const validOrders: string[] = [];
+        for (const p of parts) {
+          const m = p.match(/^([a-zA-Z0-9_]+)(?:\.(asc|desc))?(?:\.(nullsfirst|nullslast))?$/i);
+          if (m) {
+            const col = `"${m[1]}"`;
+            const dir = m[2] ? m[2].toUpperCase() : 'ASC';
+            const nulls = m[3] ? (m[3].toLowerCase() === 'nullsfirst' ? ' NULLS FIRST' : ' NULLS LAST') : '';
+            validOrders.push(`${col} ${dir}${nulls}`);
+          }
+        }
+        if (validOrders.length > 0) {
+          orderClause = `ORDER BY ${validOrders.join(', ')}`;
+        }
+      }
+
+      let limitClause = '';
+      if (req.query.limit) {
+        const l = parseInt(req.query.limit as string, 10);
+        if (!isNaN(l) && l > 0) limitClause = `LIMIT ${l}`;
+      }
+
+      let offsetClause = '';
+      if (req.query.offset) {
+        const o = parseInt(req.query.offset as string, 10);
+        if (!isNaN(o) && o >= 0) offsetClause = `OFFSET ${o}`;
+      }
+
+      const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+      const sql = `SELECT ${selectClause} FROM public."${table}" ${whereClause} ${orderClause} ${limitClause} ${offsetClause}`.trim();
+
+      const result = await withDb(async (client) => {
+        return await client.query(sql, params);
+      });
+
+      const acceptHeader = req.headers['accept'] || '';
+      res.setHeader('Content-Range', `0-${Math.max(0, result.rows.length - 1)}/${result.rows.length}`);
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+
+      if (typeof acceptHeader === 'string' && acceptHeader.includes('application/vnd.pgrst.object+json')) {
+        return res.status(200).json(result.rows[0] || null);
+      }
+      return res.status(200).json(result.rows);
+    } catch (err: any) {
+      console.error(`[REST Proxy GET /rest/v1/${table} Error]:`, err?.message || err);
+      return res.status(500).json({ error: err?.message || 'Database query error' });
+    }
+  });
+
+  app.post('/rest/v1/:table', async (req, res) => {
+    const rawTable = req.params.table;
+    const table = (rawTable || '').replace(/[^a-zA-Z0-9_]/g, '');
+    if (!table) return res.status(400).json({ error: 'Invalid table name' });
+
+    try {
+      const payload = req.body;
+      const rows = Array.isArray(payload) ? payload : [payload];
+      if (rows.length === 0) return res.status(201).json([]);
+
+      const sample = rows[0] || {};
+      const cols = Object.keys(sample).filter(k => /^[a-zA-Z0-9_]+$/.test(k));
+      if (cols.length === 0) return res.status(400).json({ error: 'No valid columns provided' });
+
+      const colNamesSql = cols.map(c => `"${c}"`).join(', ');
+      const insertedRows: any[] = [];
+
+      await withDb(async (client) => {
+        for (const row of rows) {
+          const params = cols.map(c => row[c] === undefined ? null : (typeof row[c] === 'object' && row[c] !== null ? JSON.stringify(row[c]) : row[c]));
+          const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
+          const sql = `INSERT INTO public."${table}" (${colNamesSql}) VALUES (${placeholders}) RETURNING *;`;
+          const r = await client.query(sql, params);
+          if (r.rows.length > 0) insertedRows.push(r.rows[0]);
+        }
+      });
+
+      const acceptHeader = req.headers['accept'] || '';
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      if (typeof acceptHeader === 'string' && acceptHeader.includes('application/vnd.pgrst.object+json')) {
+        return res.status(201).json(insertedRows[0] || null);
+      }
+      return res.status(201).json(insertedRows);
+    } catch (err: any) {
+      console.error(`[REST Proxy POST /rest/v1/${table} Error]:`, err?.message || err);
+      return res.status(500).json({ error: err?.message || 'Database insert error' });
+    }
+  });
+
+  app.patch('/rest/v1/:table', async (req, res) => {
+    const rawTable = req.params.table;
+    const table = (rawTable || '').replace(/[^a-zA-Z0-9_]/g, '');
+    if (!table) return res.status(400).json({ error: 'Invalid table name' });
+
+    try {
+      const updates = req.body || {};
+      const updateCols = Object.keys(updates).filter(k => /^[a-zA-Z0-9_]+$/.test(k));
+      if (updateCols.length === 0) return res.status(400).json({ error: 'No update columns provided' });
+
+      const whereParts: string[] = [];
+      const params: any[] = [];
+      let paramIdx = 1;
+
+      const setParts: string[] = [];
+      for (const col of updateCols) {
+        const val = updates[col];
+        setParts.push(`"${col}" = $${paramIdx++}`);
+        params.push(typeof val === 'object' && val !== null ? JSON.stringify(val) : val);
+      }
+
+      for (const [key, val] of Object.entries(req.query)) {
+        if (['select', 'order', 'limit', 'offset', 'columns', 'on_conflict'].includes(key)) continue;
+        if (!/^[a-zA-Z0-9_]+$/.test(key)) continue;
+        if (typeof val !== 'string') continue;
+
+        if (val.startsWith('eq.')) {
+          whereParts.push(`"${key}" = $${paramIdx++}`);
+          params.push(val.slice(3));
+        } else if (val.startsWith('neq.')) {
+          whereParts.push(`"${key}" != $${paramIdx++}`);
+          params.push(val.slice(4));
+        }
+      }
+
+      const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+      const sql = `UPDATE public."${table}" SET ${setParts.join(', ')} ${whereClause} RETURNING *;`;
+
+      const result = await withDb(async (client) => {
+        return await client.query(sql, params);
+      });
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      return res.status(200).json(result.rows);
+    } catch (err: any) {
+      console.error(`[REST Proxy PATCH /rest/v1/${table} Error]:`, err?.message || err);
+      return res.status(500).json({ error: err?.message || 'Database update error' });
+    }
+  });
+
+  app.delete('/rest/v1/:table', async (req, res) => {
+    const rawTable = req.params.table;
+    const table = (rawTable || '').replace(/[^a-zA-Z0-9_]/g, '');
+    if (!table) return res.status(400).json({ error: 'Invalid table name' });
+
+    try {
+      const whereParts: string[] = [];
+      const params: any[] = [];
+      let paramIdx = 1;
+
+      for (const [key, val] of Object.entries(req.query)) {
+        if (['select', 'order', 'limit', 'offset', 'columns', 'on_conflict'].includes(key)) continue;
+        if (!/^[a-zA-Z0-9_]+$/.test(key)) continue;
+        if (typeof val !== 'string') continue;
+
+        if (val.startsWith('eq.')) {
+          whereParts.push(`"${key}" = $${paramIdx++}`);
+          params.push(val.slice(3));
+        }
+      }
+
+      const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+      const sql = `DELETE FROM public."${table}" ${whereClause} RETURNING *;`;
+
+      const result = await withDb(async (client) => {
+        return await client.query(sql, params);
+      });
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      return res.status(200).json(result.rows);
+    } catch (err: any) {
+      console.error(`[REST Proxy DELETE /rest/v1/${table} Error]:`, err?.message || err);
+      return res.status(500).json({ error: err?.message || 'Database delete error' });
     }
   });
 

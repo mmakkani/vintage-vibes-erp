@@ -526,41 +526,54 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
     // Initialize single global Supabase Realtime WebSocket channel subscribing to schema 'public', event '*' ONCE
     try {
       if (!channelRef.current) {
-        const channel = supabase
-          .channel('global_supabase_realtime_sync')
-          .on(
-            'postgres_changes',
-            { event: '*', schema: 'public' },
-            (payload: any) => {
-              handleRealtimeChange(payload);
-            }
-          )
-          .subscribe((status: string) => {
-            if (unmounted) return;
-            // Strictly log statuses: SUBSCRIBED, CHANNEL_ERROR, TIMED_OUT, CLOSED
-            console.log(`[GlobalRealtimeManager] Status: ${status}`);
+        const activeKey = (supabase as any)?.supabaseKey || '';
+        const isPlaceholder =
+          !activeKey ||
+          activeKey === 'anon-key-placeholder' ||
+          activeKey === 'local-dev-bypass-key' ||
+          activeKey.startsWith('your_supabase_') ||
+          !activeKey.startsWith('eyJ');
 
-            if (status === 'SUBSCRIBED') {
-              setIsLiveConnected(true);
-              // Reconnect Handling: Automatically trigger a background refetch of active queries to recover missed changes
-              if (hasDisconnectedRef.current) {
-                // Guard the reconnect: reset flag immediately before triggers to prevent recursive loop storms
-                hasDisconnectedRef.current = false;
-                console.log('[GlobalRealtimeManager] Reconnected to Realtime. Refetching active queries to recover missed changes...');
-                queryClient.refetchQueries().catch(() => {});
-                triggerGlobalSyncRef.current?.();
-                if (onGlobalRefreshRef.current) {
-                  Promise.resolve(onGlobalRefreshRef.current()).catch(() => {});
-                }
+        if (isPlaceholder) {
+          console.log('[GlobalRealtimeManager] Local Dev Mode: Using inter-tab storage sync & server SSE (Cloud Realtime WebSocket paused until valid VITE_SUPABASE_ANON_KEY is provided in .env).');
+          setIsLiveConnected(true);
+        } else {
+          const channel = supabase
+            .channel('global_supabase_realtime_sync')
+            .on(
+              'postgres_changes',
+              { event: '*', schema: 'public' },
+              (payload: any) => {
+                handleRealtimeChange(payload);
               }
-            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-              setIsLiveConnected(false);
-              hasDisconnectedRef.current = true;
-              console.warn(`[GlobalRealtimeManager] Disconnected (${status}). Automatic background recovery queued for reconnect.`);
-            }
-          });
+            )
+            .subscribe((status: string) => {
+              if (unmounted) return;
+              // Strictly log statuses: SUBSCRIBED, CHANNEL_ERROR, TIMED_OUT, CLOSED
+              console.log(`[GlobalRealtimeManager] Status: ${status}`);
 
-        channelRef.current = channel;
+              if (status === 'SUBSCRIBED') {
+                setIsLiveConnected(true);
+                // Reconnect Handling: Automatically trigger a background refetch of active queries to recover missed changes
+                if (hasDisconnectedRef.current) {
+                  // Guard the reconnect: reset flag immediately before triggers to prevent recursive loop storms
+                  hasDisconnectedRef.current = false;
+                  console.log('[GlobalRealtimeManager] Reconnected to Realtime. Refetching active queries to recover missed changes...');
+                  queryClient.refetchQueries().catch(() => {});
+                  triggerGlobalSyncRef.current?.();
+                  if (onGlobalRefreshRef.current) {
+                    Promise.resolve(onGlobalRefreshRef.current()).catch(() => {});
+                  }
+                }
+              } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                setIsLiveConnected(false);
+                hasDisconnectedRef.current = true;
+                console.warn(`[GlobalRealtimeManager] Disconnected (${status}). Automatic background recovery queued for reconnect.`);
+              }
+            });
+
+          channelRef.current = channel;
+        }
       }
     } catch (rtErr) {
       console.warn('[GlobalRealtimeManager] Realtime subscription notice:', rtErr);
