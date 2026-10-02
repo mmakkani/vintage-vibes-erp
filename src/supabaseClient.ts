@@ -60,6 +60,43 @@ const supabaseKey = isPlaceholderKey ? 'local-dev-bypass-key' : rawKey;
 function setupClient(client: SupabaseClient): SupabaseClient {
   const originalRpc = client.rpc.bind(client);
 
+  if (isPlaceholderKey) {
+    // In local dev mode without cloud Supabase Realtime server, provide a safe mock channel
+    // to prevent browser WebSocket connection errors to ws://localhost:3000/realtime/v1/websocket
+    const createMockChannel = (channelName: string) => {
+      const mockChannel: any = {
+        name: channelName,
+        topic: `realtime:${channelName}`,
+        state: 'joined',
+        on: () => mockChannel,
+        subscribe: (callback?: (status: string) => void) => {
+          if (typeof callback === 'function') {
+            setTimeout(() => callback('SUBSCRIBED'), 0);
+          }
+          return mockChannel;
+        },
+        unsubscribe: () => Promise.resolve('ok'),
+        send: () => Promise.resolve('ok'),
+        track: () => Promise.resolve('ok'),
+        untrack: () => Promise.resolve('ok'),
+        push: () => ({ receive: () => {} })
+      };
+      return mockChannel;
+    };
+
+    client.channel = createMockChannel as any;
+    client.removeChannel = (() => Promise.resolve('ok')) as any;
+    client.removeAllChannels = (() => Promise.resolve([])) as any;
+    client.getChannels = (() => []) as any;
+
+    try {
+      if ((client as any).realtime) {
+        (client as any).realtime.connect = () => {};
+        (client as any).realtime.disconnect = () => {};
+      }
+    } catch (_) {}
+  }
+
   // Transparently fallback to PostgreSQL Express RPC if cloud Supabase anon key is placeholder or rejects
   client.rpc = (async (fnName: string, args?: any, options?: any) => {
     try {

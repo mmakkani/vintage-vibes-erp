@@ -640,6 +640,60 @@ export async function secureFetch(
   return rawFetch.apply(window, [input, effectiveInit]);
 }
 
+let devTokenFetchPromise: Promise<string | null> | null = null;
+
+/**
+ * In local development mode on localhost, ensures a valid cryptographic session token exists.
+ * If missing, silently exchanges default dev admin credentials with /api/auth/login.
+ */
+export async function ensureDevAuthToken(forceRefresh = false): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+  const isLocal =
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname.endsWith('.localhost');
+  if (!isLocal) return null;
+
+  if (!forceRefresh) {
+    const existing = localStorage.getItem('vv_auth_token') || localStorage.getItem('session_token');
+    if (existing && existing.trim()) return existing.trim();
+  }
+
+  if (devTokenFetchPromise && !forceRefresh) return devTokenFetchPromise;
+
+  devTokenFetchPromise = (async () => {
+    try {
+      const rawFetch = (window as any).__originalFetch || window.fetch;
+      const res = await rawFetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'admin123' })
+      });
+      if (res && res.ok) {
+        const data = await res.json();
+        const tok = data?.token || data?.user?.token;
+        if (tok) {
+          localStorage.setItem('vv_auth_token', tok);
+          const stored = localStorage.getItem('vintage_erp_logged_user');
+          if (stored) {
+            try {
+              const u = JSON.parse(stored);
+              u.token = tok;
+              localStorage.setItem('vintage_erp_logged_user', JSON.stringify(u));
+            } catch (_) {}
+          }
+          return tok;
+        }
+      }
+    } catch (_) {}
+    return null;
+  })().finally(() => {
+    devTokenFetchPromise = null;
+  });
+
+  return devTokenFetchPromise;
+}
+
 /**
  * Centralized Secure JSON Query utility.
  * Sends authenticated requests with retry support and direct database query fallback.
@@ -654,6 +708,16 @@ export async function safeFetchJson<T = any>(
 
   // 1. Primary Network Request
   if (typeof window !== 'undefined') {
+    const isLocal =
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname.endsWith('.localhost');
+
+    const currentToken = localStorage.getItem('vv_auth_token') || localStorage.getItem('session_token');
+    if (!currentToken && isLocal && (url.includes('/api/finance/') || url.includes('/api/hr/') || url.includes('/api/audit/'))) {
+      await ensureDevAuthToken();
+    }
+
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const res = await secureFetch(url, options);
@@ -662,6 +726,14 @@ export async function safeFetchJson<T = any>(
           return data as T;
         }
         if (res.status === 401 || res.status === 403) {
+          if (res.status === 401 && isLocal && attempt === 0) {
+            try {
+              localStorage.removeItem('vv_auth_token');
+              localStorage.removeItem('session_token');
+            } catch (_) {}
+            await ensureDevAuthToken(true);
+            continue;
+          }
           // Session requires refresh or permissions; fallback seamlessly to direct Supabase client
           break;
         }
@@ -806,4 +878,6 @@ export function initUniversalFetchInterceptor() {
 // Auto-run interceptor on load
 if (typeof window !== 'undefined') {
   initUniversalFetchInterceptor();
+  ensureDevAuthToken().catch(() => {});
 }
+

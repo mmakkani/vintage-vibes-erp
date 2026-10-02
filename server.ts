@@ -193,6 +193,15 @@ async function startServer() {
   });
 
   // Enterprise Modular API Routes
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      const loginHandler = (await import('./api/auth/login.ts')).default;
+      return loginHandler(req, res);
+    } catch (err: any) {
+      console.error('[Auth Login Route Error]', err);
+      res.status(500).json({ success: false, error: 'Internal login error' });
+    }
+  });
   app.use('/api/auth', authRouter);
   app.use('/api/setup', setupRouter);
   app.use('/api/finance', financeRouter);

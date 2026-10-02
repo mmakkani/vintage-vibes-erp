@@ -581,7 +581,16 @@ export default function App() {
       } else if (tab === 'parties') {
         PartiesService.getPartiesPaginated(1, 10).catch(() => {});
       } else if (tab === 'hr') {
-        HrService.getEmployees(false).catch(() => {});
+        const hasAuth = !!(
+          typeof localStorage !== 'undefined' && (
+            localStorage.getItem('vv_auth_token') ||
+            localStorage.getItem('session_token') ||
+            localStorage.getItem('vintage_erp_logged_user')
+          )
+        );
+        if (hasAuth) {
+          HrService.getEmployees(false).catch(() => {});
+        }
       }
       window.dispatchEvent(new CustomEvent('vv:prefetch-tab', { detail: { tab, subTab } }));
     } catch {}
