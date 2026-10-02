@@ -21,7 +21,7 @@ import { AccessDeniedNotice } from './components/AccessDeniedNotice.tsx';
 import { GoldenCursorDust } from './components/GoldenCursorDust.tsx';
 import { useIdleTimer } from './hooks/useIdleTimer.ts';
 import { isTabAccessible, getAccessibleTabs } from './modules/auth/utils/permissionUtils.ts';
-import { CompanyProfileService, SetupService, AuthService, DeviceService, PresenceService, PurchaseService, SalesService, FinanceService, PartiesService, HrService, DEFAULT_BANK_ACCOUNTS, DEFAULT_POS_TERMINAL_CONFIG } from './services/index.ts';
+import { CompanyProfileService, SetupService, AuthService, DeviceService, PresenceService, PurchaseService, SalesService, FinanceService, PartiesService, HrService, AuditService, DEFAULT_BANK_ACCOUNTS, DEFAULT_POS_TERMINAL_CONFIG } from './services/index.ts';
 import { MasterDataCache } from './services/masterDataCache.ts';
 import { IOSInstallBanner } from './components/IOSInstallBanner.tsx';
 import { ModuleMaintenanceGuard } from './components/ModuleMaintenanceGuard.tsx';
@@ -45,6 +45,21 @@ const CounterSalePOSTerminal = lazyWithRetry(() => import('./modules/sales/compo
 const MarketingAutomationView = lazyWithRetry(() => import('./modules/marketing/components/MarketingAutomationView.tsx').then(m => ({ default: m.MarketingAutomationView })));
 const LiveOBSOverlayView = lazyWithRetry(() => import('./modules/marketing/components/LiveOBSOverlayView.tsx').then(m => ({ default: m.LiveOBSOverlayView })));
 const ExecutiveCommandCenterModal = lazyWithRetry(() => import('./components/ExecutiveCommandCenterModal.tsx').then(m => ({ default: m.ExecutiveCommandCenterModal })));
+
+// Zero-Second Instant Tab Pre-warming Map: Allows instantaneous (0ms) tab switching without Suspense fallback delay
+const viewLoaders: Record<string, () => Promise<any> | void> = {
+  purchase: () => (PurchaseView as any).preload?.(),
+  sales: () => (SalesView as any).preload?.(),
+  finance: () => (FinanceView as any).preload?.(),
+  ledger: () => (FinanceView as any).preload?.(),
+  parties: () => (PartiesView as any).preload?.(),
+  hr: () => (HRView as any).preload?.(),
+  setup: () => (SetupView as any).preload?.(),
+  audit: () => (AuditView as any).preload?.(),
+  access: () => (AccessControlView as any).preload?.(),
+  marketing: () => (MarketingAutomationView as any).preload?.(),
+  storefront: () => (StorefrontView as any).preload?.()
+};
 
 const ModuleLoadingFallback: React.FC<{ name?: string }> = ({ name }) => (
   <div className="flex flex-col items-center justify-center py-24 px-4 min-h-[380px]">
@@ -546,6 +561,14 @@ export default function App() {
     }
 
     setActiveTabState(targetTab);
+    setVisitedTabs(prev => {
+      if (prev.has(targetTab)) return prev;
+      const next = new Set(prev);
+      next.add(targetTab);
+      return next;
+    });
+    viewLoaders[targetTab]?.();
+
     try {
       localStorage.setItem('vintage_erp_active_tab', targetTab);
       const url = new URL(window.location.href);
@@ -570,16 +593,24 @@ export default function App() {
   // Silent SWR background RAM cache warming on hover
   const handlePrefetchTab = useCallback((tab: ActiveTab, subTab?: string) => {
     try {
+      // 1. Immediately pre-load module chunk in memory
+      viewLoaders[tab]?.();
+
+      // 2. Pre-fetch primary relational data streams
       if (tab === 'purchase') {
         PurchaseService.getInwardGatePasses(false).catch(() => {});
         PurchaseService.getInventoryPieces(100, false).catch(() => {});
       } else if (tab === 'sales') {
         SalesService.getSalesInvoicesPaginated(1, 10).catch(() => {});
         SalesService.getSalesGatePasses().catch(() => {});
-      } else if (tab === 'finance') {
+      } else if (tab === 'finance' || tab === 'ledger') {
         FinanceService.getChartOfAccounts(false).catch(() => {});
       } else if (tab === 'parties') {
         PartiesService.getPartiesPaginated(1, 10).catch(() => {});
+      } else if (tab === 'audit') {
+        AuditService.getAuditLogsPaginated({ page: 1, pageSize: 10 }).catch(() => {});
+      } else if (tab === 'setup') {
+        MasterDataCache.revalidate().catch(() => {});
       } else if (tab === 'hr') {
         const hasAuth = !!(
           typeof localStorage !== 'undefined' && (
@@ -614,6 +645,25 @@ export default function App() {
   // Pre-warm master setup cache on application mount
   useEffect(() => {
     MasterDataCache.revalidate().catch(() => {});
+  }, []);
+
+  // Zero-Second Instant Tab Acceleration: Pre-warm all module chunks in memory during browser idle time
+  useEffect(() => {
+    const idlePreload = () => {
+      const tabs = ['audit', 'finance', 'parties', 'hr', 'sales', 'purchase', 'setup', 'marketing', 'access'];
+      tabs.forEach((tab, index) => {
+        setTimeout(() => {
+          viewLoaders[tab]?.();
+        }, 100 + index * 80);
+      });
+    };
+    if (typeof window !== 'undefined') {
+      if ('requestIdleCallback' in window) {
+        (window as any).requestIdleCallback(idlePreload, { timeout: 2500 });
+      } else {
+        setTimeout(idlePreload, 600);
+      }
+    }
   }, []);
 
   // Global Keyboard Shortcut: Shift + E to launch Executive TV Command Center
@@ -1158,7 +1208,7 @@ export default function App() {
           <Suspense fallback={<ModuleLoadingFallback name={activeTab.toUpperCase()} />}>
             {/* Executive Dashboard */}
             <div id="keepalive-tab-dashboard" className={activeTab === 'dashboard' ? 'block' : 'hidden'} key="keepalive-tab-dashboard">
-              {visitedTabs.has('dashboard') && isTabAccessible('dashboard', currentUser) && (
+              {(activeTab === 'dashboard' || visitedTabs.has('dashboard')) && isTabAccessible('dashboard', currentUser) && (
                 <ErrorBoundary sectionName="Executive Dashboard">
                   <MainDashboardView
                     onNavigateTab={tab => setActiveTab(tab as ActiveTab)}
@@ -1170,7 +1220,7 @@ export default function App() {
 
             {/* Purchase & Container Inward Module */}
             <div id="keepalive-tab-purchase" className={activeTab === 'purchase' ? 'block' : 'hidden'} key="keepalive-tab-purchase">
-              {visitedTabs.has('purchase') && (
+              {(activeTab === 'purchase' || visitedTabs.has('purchase')) && (
                 <ErrorBoundary sectionName="Purchase & Container Inward Module">
                   <PurchaseView
                     onRefreshAll={refreshGlobalData}
@@ -1183,7 +1233,7 @@ export default function App() {
 
             {/* Sales, Barcode & Dispatch Module */}
             <div id="keepalive-tab-sales" className={activeTab === 'sales' ? 'block' : 'hidden'} key="keepalive-tab-sales">
-              {visitedTabs.has('sales') && (
+              {(activeTab === 'sales' || visitedTabs.has('sales')) && (
                 <ErrorBoundary sectionName="Sales, Barcode & Dispatch Module">
                   <ModuleMaintenanceGuard
                     moduleKey="sales"
@@ -1203,7 +1253,7 @@ export default function App() {
 
             {/* Marketing & AI Automation Module */}
             <div id="keepalive-tab-marketing" className={activeTab === 'marketing' ? 'block' : 'hidden'} key="keepalive-tab-marketing">
-              {visitedTabs.has('marketing') && (
+              {(activeTab === 'marketing' || visitedTabs.has('marketing')) && (
                 <ErrorBoundary sectionName="Marketing & AI Automation Module">
                   <MarketingAutomationView
                     onRefreshAll={refreshGlobalData}
@@ -1215,7 +1265,7 @@ export default function App() {
 
             {/* Financial Accounts & COA Module */}
             <div id="keepalive-tab-finance" className={activeTab === 'finance' ? 'block' : 'hidden'} key="keepalive-tab-finance">
-              {visitedTabs.has('finance') && (
+              {(activeTab === 'finance' || visitedTabs.has('finance')) && (
                 <ErrorBoundary sectionName="Financial Accounts & COA Module">
                   <FinanceView
                     onRefreshAll={refreshGlobalData}
@@ -1230,7 +1280,7 @@ export default function App() {
 
             {/* General Ledger & Vouchers Module */}
             <div id="keepalive-tab-ledger" className={activeTab === 'ledger' ? 'block' : 'hidden'} key="keepalive-tab-ledger">
-              {visitedTabs.has('ledger') && (
+              {(activeTab === 'ledger' || visitedTabs.has('ledger')) && (
                 <ErrorBoundary sectionName="General Ledger & Vouchers Module">
                   <FinanceView
                     onRefreshAll={refreshGlobalData}
@@ -1245,7 +1295,7 @@ export default function App() {
 
             {/* Parties & Khata Ledger Module */}
             <div id="keepalive-tab-parties" className={activeTab === 'parties' ? 'block' : 'hidden'} key="keepalive-tab-parties">
-              {visitedTabs.has('parties') && (
+              {(activeTab === 'parties' || visitedTabs.has('parties')) && (
                 <ErrorBoundary sectionName="Parties & Khata Ledger Module">
                   <PartiesView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
                 </ErrorBoundary>
@@ -1254,7 +1304,7 @@ export default function App() {
 
             {/* HR, Vault & Payroll Module */}
             <div id="keepalive-tab-hr" className={activeTab === 'hr' ? 'block' : 'hidden'} key="keepalive-tab-hr">
-              {visitedTabs.has('hr') && (
+              {(activeTab === 'hr' || visitedTabs.has('hr')) && (
                 <ErrorBoundary sectionName="HR, Vault & Payroll Module">
                   <ModuleMaintenanceGuard
                     moduleKey="hr_payroll"
@@ -1270,7 +1320,7 @@ export default function App() {
 
             {/* Global Master Setup & Configuration Module */}
             <div id="keepalive-tab-setup" className={activeTab === 'setup' ? 'block' : 'hidden'} key="keepalive-tab-setup">
-              {visitedTabs.has('setup') && (
+              {(activeTab === 'setup' || visitedTabs.has('setup')) && (
                 !isTabAccessible('setup', currentUser) ? (
                   <AccessDeniedNotice
                     moduleName="Global Master Setup & Configuration"
@@ -1344,7 +1394,7 @@ export default function App() {
 
             {/* System Audit Trail & Compliance Module */}
             <div id="keepalive-tab-audit" className={activeTab === 'audit' ? 'block' : 'hidden'} key="keepalive-tab-audit">
-              {visitedTabs.has('audit') && (
+              {(activeTab === 'audit' || visitedTabs.has('audit')) && (
                 <ErrorBoundary sectionName="System Audit Trail & Compliance Module">
                   <AuditView onRefreshAll={refreshGlobalData} currentUserRole={currentUser.role} />
                 </ErrorBoundary>
@@ -1353,7 +1403,7 @@ export default function App() {
 
             {/* Access Control Module */}
             <div id="keepalive-tab-access" className={activeTab === 'access' ? 'block' : 'hidden'} key="keepalive-tab-access">
-              {visitedTabs.has('access') && (
+              {(activeTab === 'access' || visitedTabs.has('access')) && (
                 !isTabAccessible('access', currentUser) ? (
                   <AccessDeniedNotice
                     moduleName="Access Control & Authority Matrix (RBAC)"

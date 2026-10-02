@@ -190,14 +190,9 @@ export const Navigation: React.FC<NavigationProps> = ({
   // Strictly filter tabs according to user's permissions and role
   const visibleTabs = allTabs.filter(tab => (currentUser ? isTabAccessible(tab.id, currentUser) : true));
 
-  // Trigger SWR Pre-Fetch on Hover (100ms Debounce to prevent mouse sweep query storms)
+  // Trigger Instant SWR Pre-Fetch on Hover (0ms Chunk Preload, immediate memory warming)
   const handleItemHover = useCallback((tabId: ActiveTab, subTabId?: string) => {
-    if (hoverDebounceRef.current) {
-      clearTimeout(hoverDebounceRef.current);
-    }
-    hoverDebounceRef.current = setTimeout(() => {
-      onPrefetchTab?.(tabId, subTabId);
-    }, 100);
+    onPrefetchTab?.(tabId, subTabId);
   }, [onPrefetchTab]);
 
   const handleOpenDropdown = (tabId: ActiveTab, e: React.MouseEvent<HTMLElement>) => {
@@ -331,6 +326,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   <button
                     type="button"
                     id={`nav-tab-${tab.id}`}
+                    onMouseEnter={() => onPrefetchTab?.(tab.id)}
                     onClick={() => {
                       if (hoverDebounceRef.current) clearTimeout(hoverDebounceRef.current);
                       if (menuCloseTimeoutRef.current) clearTimeout(menuCloseTimeoutRef.current);

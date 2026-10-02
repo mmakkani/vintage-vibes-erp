@@ -40,18 +40,48 @@ export async function purgeCachesAndServiceWorkers(): Promise<void> {
   }
 }
 
+export type PreloadableComponent<T extends React.ComponentType<any>> = React.LazyExoticComponent<T> & {
+  preload: () => Promise<any>;
+};
+
 /**
- * Wraps dynamic component imports with automatic reload on deployment chunk failure.
- * When a new deployment occurs on Vercel, previous chunk hashes are removed from the server.
- * If a client tries to lazy-load an outdated chunk, this catches the failure, clears
- * the service worker and browser cache, and reloads once to fetch the fresh deployment bundle.
+ * Wraps dynamic component imports with automatic reload on deployment chunk failure
+ * and provides .preload() capability so tabs can be pre-warmed in 0 milliseconds.
  */
 export function lazyWithRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T } | any>
-): React.LazyExoticComponent<T> {
-  return React.lazy(async () => {
+): PreloadableComponent<T> {
+  let preloadedModule: any = null;
+  let factoryPromise: Promise<any> | null = null;
+
+  const preload = () => {
+    if (!factoryPromise) {
+      factoryPromise = (async () => {
+        try {
+          const mod = await factory();
+          preloadedModule = mod && mod.default ? mod : { default: mod };
+          return preloadedModule;
+        } catch (err: any) {
+          factoryPromise = null;
+          throw err;
+        }
+      })();
+    }
+    // Pre-initialize React's internal lazy exotic state so Suspense never activates
     try {
-      const module = await factory();
+      if ((Component as any)?._init && (Component as any)?._payload) {
+        (Component as any)._init((Component as any)._payload);
+      }
+    } catch (_) {}
+    return factoryPromise;
+  };
+
+  const Component = React.lazy(async () => {
+    if (preloadedModule) {
+      return preloadedModule;
+    }
+    try {
+      const module = await preload();
       return module.default ? module : { default: module };
     } catch (error: any) {
       console.warn('[Vite Chunk Retry] Dynamic chunk load failed (likely new deployment):', error);
@@ -73,4 +103,7 @@ export function lazyWithRetry<T extends React.ComponentType<any>>(
       throw error;
     }
   });
+
+  (Component as any).preload = preload;
+  return Component as PreloadableComponent<T>;
 }
