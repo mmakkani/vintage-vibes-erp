@@ -9913,11 +9913,12 @@ ${courierLines}
     // 2. Gate Passes & Consignment Bales
     if (pathname.includes('/purchase/gate-passes') || pathname.includes('/bales')) {
       if (method === 'GET') {
-        const client = await getPgClient();
+        let client: any = null;
+        try { client = await borrowClient(); } catch (_) { client = await getPgClient(); }
         if (client) {
           try {
             const q = await client.query('SELECT * FROM inward_gate_passes ORDER BY created_at DESC;');
-            await client.end();
+            if (typeof client.release === 'function') client.release();
             if (q.rows && q.rows.length > 0) {
               const mapped = q.rows.map((row: any) => ({
                 id: String(row.id),
@@ -9942,7 +9943,7 @@ ${courierLines}
               return res.status(200).json(mapped);
             }
           } catch (e) {
-            try { await client.end(); } catch (_) {}
+            if (typeof client.release === 'function') client.release();
           }
         }
 
@@ -10128,14 +10129,15 @@ ${courierLines}
 
     // 4. Inventory Sorted Pieces
     if (pathname.includes('/purchase/pieces') || pathname.includes('/purchase/inventory')) {
-      const client = await getPgClient();
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) { client = await getPgClient(); }
       if (client) {
         try {
           const q = await client.query('SELECT * FROM inventory_pieces ORDER BY created_at DESC LIMIT 500;');
-          await client.end();
+          if (typeof client.release === 'function') client.release();
           if (q.rows && q.rows.length > 0) return res.status(200).json(q.rows);
         } catch (e) {
-          try { await client.end(); } catch (_) {}
+          if (typeof client.release === 'function') client.release();
         }
       }
       const { data } = await supabaseAdmin.from('inventory_pieces').select('*').order('created_at', { ascending: false }).limit(500);
@@ -10144,17 +10146,18 @@ ${courierLines}
 
     // 5. Setup Master Catalogs (Categories, Labels, Sizes, Brands, Shops)
     if (pathname.includes('/setup/categories')) {
-      const client = await getPgClient();
+      let client: any = null;
+      try { client = await borrowClient(); } catch (_) { client = await getPgClient(); }
       if (client) {
         try {
-          const q = await client.query('SELECT * FROM category_masters ORDER BY name ASC;');
-          await client.end();
+          const q = await client.query('SELECT * FROM product_categories ORDER BY name ASC;');
+          if (typeof client.release === 'function') client.release();
           if (q.rows && q.rows.length > 0) return res.status(200).json(q.rows);
         } catch (e) {
-          try { await client.end(); } catch (_) {}
+          if (typeof client.release === 'function') client.release();
         }
       }
-      const { data } = await supabaseAdmin.from('category_masters').select('*').order('name');
+      const { data } = await supabaseAdmin.from('product_categories').select('*').order('name');
       return res.status(200).json(data || []);
     }
 

@@ -142,7 +142,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       setSizesList(sizes);
     } else {
       fetch('/api/setup/sizes')
-        .then(r => r.json())
+        .then(r => r.ok ? r.json() : [])
         .then(data => {
           if (Array.isArray(data) && data.length > 0) setSizesList(data);
         })
@@ -153,7 +153,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       setLabelsList(labels);
     } else {
       fetch('/api/setup/labels')
-        .then(r => r.json())
+        .then(r => r.ok ? r.json() : [])
         .then(data => {
           if (Array.isArray(data) && data.length > 0) setLabelsList(data);
         })
@@ -226,11 +226,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       setInternalBales(allBales);
     } else {
       fetch('/api/purchase/gate-passes')
-        .then(r => r.json())
+        .then(r => r.ok ? r.json() : [])
         .then(data => {
           if (Array.isArray(data) && data.length > 0) {
             setInternalBales(data);
-            setSelectedBaleId(prev => prev || data[0].id);
+            setSelectedBaleId(prev => prev || data[0]?.id || '');
           }
         })
         .catch(() => {});
@@ -238,7 +238,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   }, [allBales]);
 
   // Active selected bale (either passed in or selected from dropdown/scanner)
-  const [selectedBaleId, setSelectedBaleId] = useState<string>(initialBale?.id || allBales[0]?.id || '');
+  const [selectedBaleId, setSelectedBaleId] = useState<string>(initialBale?.id || allBales?.[0]?.id || '');
   const [baleBarcodeScanInput, setBaleBarcodeScanInput] = useState('');
 
   // Update selected bale if initialBale changes or effectiveBales loads

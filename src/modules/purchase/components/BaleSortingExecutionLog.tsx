@@ -59,13 +59,13 @@ export const getBaleDerivedState = (bale: any) => {
 };
 
 export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = ({
-  bales,
-  invoices,
-  parties,
-  items,
-  brands,
-  labels,
-  shops,
+  bales = [],
+  invoices = [],
+  parties = [],
+  items = [],
+  brands = [],
+  labels = [],
+  shops = [],
   onOpenSortingTerminal,
   onRefresh,
   onDeleteBale
@@ -102,15 +102,16 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
 
   // Factory-wide Sorting KPIs
   const kpis = useMemo(() => {
-    const totalBales = bales.length;
-    const totalGrossKg = bales.reduce((sum, b) => sum + (Number(b.totalBaleWeight ?? (b as any).total_bale_weight ?? (b as any).weightKg ?? (b as any).weight_kg ?? 0) || 0), 0);
+    const safeBales = (bales || []).filter(Boolean);
+    const totalBales = safeBales.length;
+    const totalGrossKg = safeBales.reduce((sum, b) => sum + (Number(b?.totalBaleWeight ?? (b as any)?.total_bale_weight ?? (b as any)?.weightKg ?? (b as any)?.weight_kg ?? 0) || 0), 0);
     const totalGrossGrams = Math.round(totalGrossKg * 1000);
 
-    const totalSortedKg = bales.reduce((sum, b) => sum + (Number(b.brokenDownWeight ?? (b as any).broken_down_weight ?? 0) || 0), 0);
+    const totalSortedKg = safeBales.reduce((sum, b) => sum + (Number(b?.brokenDownWeight ?? (b as any)?.broken_down_weight ?? 0) || 0), 0);
     const totalSortedGrams = Math.round(totalSortedKg * 1000);
 
     const totalRemainingGrams = Math.max(0, totalGrossGrams - totalSortedGrams);
-    const totalPieces = bales.reduce((sum, b) => sum + (b.pieces?.length || b.pieceCount || (b as any).piece_count || 0), 0);
+    const totalPieces = safeBales.reduce((sum, b) => sum + (b?.pieces?.length || b?.pieceCount || (b as any)?.piece_count || 0), 0);
 
     const overallProgressPercent = totalGrossGrams > 0
       ? Math.min(100, Math.round((totalSortedGrams / totalGrossGrams) * 100))
@@ -119,7 +120,7 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
     let completedBales = 0;
     let inProgressBales = 0;
 
-    bales.forEach(b => {
+    safeBales.forEach(b => {
       const state = getBaleDerivedState(b);
       if (state.isCompleted) completedBales++;
       else if (state.isInProgress) inProgressBales++;
@@ -151,13 +152,13 @@ export const BaleSortingExecutionLog: React.FC<BaleSortingExecutionLogProps> = (
 
   // Master Filtered Rows
   const filteredBales = useMemo(() => {
-    return bales.filter(bale => {
+    return (bales || []).filter(Boolean).filter(bale => {
       const term = searchTerm.toLowerCase().trim();
-      const bCode = (bale.baleCode || (bale as any).bale_code || '').toLowerCase();
-      const gpNo = (bale.gatePassNo || (bale as any).gate_pass_no || (bale as any).pass_no || '').toLowerCase();
-      const invNo = (bale.purchaseInvoiceNo || (bale as any).purchase_invoice_no || '').toLowerCase();
-      const sup = (bale.supplierName || (bale as any).supplier_name || '').toLowerCase();
-      const cat = (bale.baleCategory || (bale as any).bale_category || '').toLowerCase();
+      const bCode = (bale?.baleCode || (bale as any)?.bale_code || '').toLowerCase();
+      const gpNo = (bale?.gatePassNo || (bale as any)?.gate_pass_no || (bale as any)?.pass_no || '').toLowerCase();
+      const invNo = (bale?.purchaseInvoiceNo || (bale as any)?.purchase_invoice_no || '').toLowerCase();
+      const sup = (bale?.supplierName || (bale as any)?.supplier_name || '').toLowerCase();
+      const cat = (bale?.baleCategory || (bale as any)?.bale_category || '').toLowerCase();
 
       const codeMatch = bCode.includes(term) || gpNo.includes(term);
       const invMatch = invNo.includes(term);

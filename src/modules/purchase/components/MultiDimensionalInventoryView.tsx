@@ -43,8 +43,8 @@ interface MultiDimensionalInventoryViewProps {
 type ViewDimension = 'ITEM' | 'BRAND' | 'CATEGORY' | 'BALE_AUDIT';
 
 export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryViewProps> = ({
-  pieces,
-  bales,
+  pieces = [],
+  bales = [],
   onPrintSticker,
   onSelectBale,
   onRefresh,
@@ -238,7 +238,8 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   // Map of bale ID / gatepass ID to bale info for reverse trace
   const baleMap = useMemo(() => {
     const map = new Map<string, InwardGatePass>();
-    bales.forEach(b => {
+    (bales || []).forEach(b => {
+      if (!b) return;
       map.set(b.id, b);
       if (b.gatePassNo) map.set(b.gatePassNo, b);
       if (b.baleCode) map.set(b.baleCode, b);
@@ -248,7 +249,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
 
   // Effective pieces with pessimistic delta cache injection for real-time reactivity
   const effectivePieces = useMemo(() => {
-    return pieces.map(p => {
+    return (pieces || []).filter(Boolean).map(p => {
       const delta = deltaUpdates[p.id];
       return delta ? { ...p, ...delta } : p;
     });
@@ -258,7 +259,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   const distinctBrands = useMemo(() => {
     const set = new Set<string>();
     effectivePieces.forEach(p => {
-      if (p.brandName) set.add(p.brandName);
+      if (p?.brandName) set.add(p.brandName);
     });
     return Array.from(set).sort();
   }, [effectivePieces]);
@@ -398,21 +399,21 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   const handleExportCSV = () => {
     const headers = ['SKU_Barcode', 'Description', 'Brand', 'Grade', 'Size', 'Origin', 'Weight_Grams', 'Weight_KG', 'Cost_per_Gram_AED', 'Unit_Cost_AED', 'Target_Retail_AED', 'Margin_Pct', 'Status', 'Bale_Ref'];
     const rows = filteredPieces.map(p => {
-      const g = p.weightGrams || Math.round((p.weightKg || 0) * 1000);
+      const g = Number(p.weightGrams || Math.round((Number(p.weightKg || 0)) * 1000));
       const kg = (g / 1000).toFixed(3);
-      const cost = (p.calculatedCostPrice || 0).toFixed(2);
-      const price = (p.estimatedPrice || 0).toFixed(2);
-      const margin = p.estimatedPrice && p.estimatedPrice > 0 ? Math.round(((p.estimatedPrice - (p.calculatedCostPrice || 0)) / p.estimatedPrice) * 100) : 0;
+      const cost = Number(p.calculatedCostPrice || p.costPrice || 0).toFixed(2);
+      const price = Number(p.estimatedPrice || p.retailPriceAed || 0).toFixed(2);
+      const margin = Number(price) > 0 ? Math.round(((Number(price) - Number(cost)) / Number(price)) * 100) : 0;
       return [
-        `"${p.barcode}"`,
-        `"${p.itemName.replace(/"/g, '""')}"`,
+        `"${p.barcode || ''}"`,
+        `"${(p.itemName || 'Garment Piece').replace(/"/g, '""')}"`,
         `"${p.brandName || ''}"`,
         `"${p.labelGrade || ''}"`,
         `"${p.sizeScanned || ''}"`,
         `"${p.countryOfOrigin || ''}"`,
         g,
         kg,
-        (p.costPerGram || 0).toFixed(4),
+        Number(p.costPerGram || 0).toFixed(4),
         cost,
         price,
         `${margin}%`,
@@ -700,11 +701,11 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                   </tr>
                 ) : (
                   paginatedPieces.map(piece => {
-                    const grams = piece.weightGrams || Math.round((piece.weightKg || 0) * 1000);
-                    const cost = piece.calculatedCostPrice || piece.costPrice || 0;
-                    const price = piece.estimatedPrice || piece.retailPriceAed || 0;
+                    const grams = Number(piece.weightGrams || Math.round((Number(piece.weightKg || 0)) * 1000));
+                    const cost = Number(piece.calculatedCostPrice || piece.costPrice || 0);
+                    const price = Number(piece.estimatedPrice || piece.retailPriceAed || 0);
                     const margin = price > 0 ? Math.round(((price - cost) / price) * 100) : 0;
-                    const cpg = piece.costPerGram || (grams > 0 ? cost / grams : 0);
+                    const cpg = Number(piece.costPerGram || (grams > 0 ? cost / grams : 0));
                     const frontImg = piece.frontImageUrl || (piece as any).front_image || (piece as any).front_image_url;
                     const backImg = piece.backImageUrl || (piece as any).back_image || (piece as any).back_image_url;
                     const tagImg = piece.tagImageUrl || (piece as any).tag_image || (piece as any).tag_image_url;
@@ -755,14 +756,14 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="text-slate-900 font-semibold">{piece.itemName}</div>
+                          <div className="text-slate-900 font-semibold">{piece.itemName || 'Garment Piece'}</div>
                           <div className="text-[11px] text-slate-400 font-normal">
                             {piece.style || 'Standard vintage'}
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <span className="font-semibold text-slate-800">{piece.brandName}</span>
-                          <div className="text-[11px] text-slate-500">{piece.labelGrade}</div>
+                          <span className="font-semibold text-slate-800">{piece.brandName || 'Vintage'}</span>
+                          <div className="text-[11px] text-slate-500">{piece.labelGrade || 'Regular'}</div>
                         </td>
                         <td className="px-4 py-3">
                           <span className="font-mono font-semibold text-slate-800">{piece.sizeScanned || 'L'}</span>
@@ -1053,7 +1054,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                     <div className="flex items-center gap-4 text-xs font-mono">
                       <div>
                         <span className="text-[10px] text-slate-400 uppercase block">Base Cost / g</span>
-                        <span className="font-bold text-indigo-600">AED {bg.costPerGram.toFixed(4)}</span>
+                        <span className="font-bold text-indigo-600">AED {Number(bg.costPerGram || 0).toFixed(4)}</span>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 uppercase block">Pieces Sorted</span>
@@ -1061,11 +1062,11 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 uppercase block">Total Batch Cost</span>
-                        <span className="font-bold text-slate-900">AED {bg.costAed.toFixed(2)}</span>
+                        <span className="font-bold text-slate-900">AED {Number(bg.costAed || 0).toFixed(2)}</span>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 uppercase block">Target Value</span>
-                        <span className="font-bold text-emerald-600">AED {bg.retailAed.toFixed(2)}</span>
+                        <span className="font-bold text-emerald-600">AED {Number(bg.retailAed || 0).toFixed(2)}</span>
                       </div>
                     </div>
                   </div>
@@ -1088,14 +1089,14 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-mono">
                         {bg.pieces.map(p => {
-                          const g = p.weightGrams || Math.round((p.weightKg || 0) * 1000);
-                          const cost = p.calculatedCostPrice || 0;
-                          const price = p.estimatedPrice || 0;
+                          const g = Number(p.weightGrams || Math.round((Number(p.weightKg || 0)) * 1000));
+                          const cost = Number(p.calculatedCostPrice || p.costPrice || 0);
+                          const price = Number(p.estimatedPrice || p.retailPriceAed || 0);
                           const frontImg = p.frontImageUrl || (p as any).front_image || (p as any).front_image_url;
                           const backImg = p.backImageUrl || (p as any).back_image || (p as any).back_image_url;
                           const tagImg = p.tagImageUrl || (p as any).tag_image || (p as any).tag_image_url;
                           return (
-                            <tr key={p.id} className="hover:bg-slate-50/50">
+                            <tr key={p.id || p.barcode} className="hover:bg-slate-50/50">
                               <td className="px-3 py-2 font-bold text-indigo-600">{p.barcode}</td>
                               <td className="px-3 py-2 text-center">
                                 <div className="flex items-center justify-center gap-1">
@@ -1131,8 +1132,8 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                                   )}
                                 </div>
                               </td>
-                              <td className="px-3 py-2 font-sans font-medium text-slate-900">{p.itemName}</td>
-                              <td className="px-3 py-2 font-sans text-slate-700">{p.brandName} ({p.sizeScanned || 'L'})</td>
+                              <td className="px-3 py-2 font-sans font-medium text-slate-900">{p.itemName || 'Garment Piece'}</td>
+                              <td className="px-3 py-2 font-sans text-slate-700">{p.brandName || 'Vintage'} ({p.sizeScanned || 'L'})</td>
                               <td className="px-3 py-2">{g} g</td>
                               <td className="px-3 py-2 font-bold text-slate-900">AED {cost.toFixed(2)}</td>
                               <td className="px-3 py-2 font-bold text-emerald-600">AED {price.toFixed(2)}</td>
