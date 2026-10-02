@@ -67,12 +67,6 @@ export function lazyWithRetry<T extends React.ComponentType<any>>(
         }
       })();
     }
-    // Pre-initialize React's internal lazy exotic state so Suspense never activates
-    try {
-      if ((Component as any)?._init && (Component as any)?._payload) {
-        (Component as any)._init((Component as any)._payload);
-      }
-    } catch (_) {}
     return factoryPromise;
   };
 
