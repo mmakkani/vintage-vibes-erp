@@ -310,8 +310,9 @@ async function startServer() {
 
     try {
       let selectClause = '*';
-      if (req.query.select && typeof req.query.select === 'string' && req.query.select !== '*') {
-        const cols = req.query.select
+      const rawSelect = typeof req.query.select === 'string' ? req.query.select.trim() : '';
+      if (rawSelect && rawSelect !== '*' && !rawSelect.includes('*') && !rawSelect.includes('(')) {
+        const cols = rawSelect
           .split(',')
           .map(c => c.trim())
           .filter(c => /^[a-zA-Z0-9_]+$/.test(c))

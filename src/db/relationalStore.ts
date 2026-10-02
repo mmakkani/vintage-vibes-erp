@@ -6527,9 +6527,9 @@ class RelationalStore {
         l.voucherNo,
         l.accountCode,
         `"${(l.accountName || '').replace(/"/g, '""')}"`,
-        l.debitAmount.toFixed(2),
-        l.creditAmount.toFixed(2),
-        l.balanceAfter.toFixed(2),
+        (Number(l.debitAmount) || 0).toFixed(2),
+        (Number(l.creditAmount) || 0).toFixed(2),
+        (Number(l.balanceAfter) || 0).toFixed(2),
         `"${(l.narration || '').replace(/"/g, '""')}"`
       ].join(','));
     }
@@ -6539,18 +6539,19 @@ class RelationalStore {
     lines.push('--- SECTION 2: SALES SUPPLY LEDGER (OUTPUT VAT) ---');
     lines.push('InvoiceDate,InvoiceNumber,CustomerName,CustomerTRN,LineDescription,TaxableAmountAED,VATRatePercent,VATAmountAED,GrossAmountAED');
     for (const inv of relevantSales) {
-      for (const item of inv.items) {
-        const itemVat = item.lineTotal * 0.05;
+      for (const item of (inv.items || [])) {
+        const lineTotal = Number(item.lineTotal) || 0;
+        const itemVat = lineTotal * 0.05;
         lines.push([
           inv.date,
           inv.invoiceNo,
           `"${(inv.clientName || '').replace(/"/g, '""')}"`,
           inv.clientTrn || 'UNREGISTERED',
           `"${(item.description || '').replace(/"/g, '""')}"`,
-          item.lineTotal.toFixed(2),
+          lineTotal.toFixed(2),
           '5.00',
           itemVat.toFixed(2),
-          (item.lineTotal + itemVat).toFixed(2)
+          (lineTotal + itemVat).toFixed(2)
         ].join(','));
       }
     }
@@ -6560,25 +6561,30 @@ class RelationalStore {
     lines.push('--- SECTION 3: PURCHASE LEDGER (INPUT VAT RECOVERABLE) ---');
     lines.push('InvoiceDate,InvoiceNumber,SupplierName,SupplierTRN,Description,TaxableAmountAED,VATRatePercent,VATAmountAED,GrossAmountAED');
     for (const pinv of relevantPurchases) {
+      const net = Number(pinv.netAmount ?? pinv.subTotal ?? 0);
+      const vat = Number(pinv.vatAmount ?? 0);
+      const gross = Number(pinv.grossAmount ?? pinv.totalAmount ?? (net + vat));
       lines.push([
         pinv.date,
         pinv.invoiceNo,
         `"${(pinv.supplierName || '').replace(/"/g, '""')}"`,
         pinv.supplierTrn || 'IMPORT-REVERSE-CHARGE',
         `"${(pinv.notes || 'Bulk Vintage Bale Inward Purchase').replace(/"/g, '""')}"`,
-        pinv.netAmount.toFixed(2),
+        net.toFixed(2),
         '5.00',
-        pinv.vatAmount.toFixed(2),
-        pinv.grossAmount.toFixed(2)
+        vat.toFixed(2),
+        gross.toFixed(2)
       ].join(','));
     }
     lines.push('');
 
     // Section 5: VAT Summary
     lines.push('--- SECTION 4: FTA VAT RETURN BOX SUMMARY ---');
-    lines.push(`Box 1a: Standard Rated Supplies Total (AED),${relevantSales.reduce((s, i) => s + i.netAmount, 0).toFixed(2)}`);
+    const salesTaxable = relevantSales.reduce((s, i) => s + (Number(i.netAmount ?? i.subTotal ?? 0)), 0);
+    const purchasesTaxable = relevantPurchases.reduce((s, i) => s + (Number(i.netAmount ?? i.subTotal ?? 0)), 0);
+    lines.push(`Box 1a: Standard Rated Supplies Total (AED),${salesTaxable.toFixed(2)}`);
     lines.push(`Box 1b: Output VAT Total (AED),${totalOutputVat.toFixed(2)}`);
-    lines.push(`Box 9a: Standard Rated Purchases Total (AED),${relevantPurchases.reduce((s, i) => s + i.netAmount, 0).toFixed(2)}`);
+    lines.push(`Box 9a: Standard Rated Purchases Total (AED),${purchasesTaxable.toFixed(2)}`);
     lines.push(`Box 9b: Recoverable Input VAT Total (AED),${totalInputVat.toFixed(2)}`);
     lines.push(`Box 14: Net VAT Payable/(Refundable) to FTA (AED),${netVatPayable.toFixed(2)}`);
 

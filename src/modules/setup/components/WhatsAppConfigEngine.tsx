@@ -430,12 +430,12 @@ export const WhatsAppConfigEngine: React.FC<WhatsAppConfigEngineProps> = ({ onSa
                     min="3"
                     max="10"
                     step="1"
-                    value={config.safeThrottleSeconds}
+                    value={config.safeThrottleSeconds ?? 4}
                     onChange={e => setConfig({ ...config, safeThrottleSeconds: Number(e.target.value) })}
                     className="flex-1 accent-emerald-600"
                   />
                   <span className="font-mono font-bold text-emerald-800 text-sm">
-                    {config.safeThrottleSeconds}s
+                    {config.safeThrottleSeconds ?? 4}s
                   </span>
                 </div>
                 <span className="text-[10px] text-slate-400 block mt-0.5">Recommended: 4s to prevent bans</span>
@@ -445,7 +445,7 @@ export const WhatsAppConfigEngine: React.FC<WhatsAppConfigEngineProps> = ({ onSa
                 <label className="flex items-center gap-2 cursor-pointer text-slate-700">
                   <input
                     type="checkbox"
-                    checked={config.autoEvictSoldPieces}
+                    checked={Boolean(config.autoEvictSoldPieces)}
                     onChange={e => setConfig({ ...config, autoEvictSoldPieces: e.target.checked })}
                     className="w-4 h-4 accent-emerald-600 rounded"
                   />
@@ -458,7 +458,7 @@ export const WhatsAppConfigEngine: React.FC<WhatsAppConfigEngineProps> = ({ onSa
                 <label className="flex items-center gap-2 cursor-pointer text-slate-700">
                   <input
                     type="checkbox"
-                    checked={config.notifyOnClaim}
+                    checked={Boolean(config.notifyOnClaim)}
                     onChange={e => setConfig({ ...config, notifyOnClaim: e.target.checked })}
                     className="w-4 h-4 accent-emerald-600 rounded"
                   />
