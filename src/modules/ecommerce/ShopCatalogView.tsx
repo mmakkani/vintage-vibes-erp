@@ -82,6 +82,16 @@ const SORT_OPTIONS = [
   { id: 'grails', label: '👑 Grails & Rarities First' }
 ];
 
+// High-Speed SWR RAM Cache & Piece Store for 0-Second Instant Catalog Filtering
+interface CatalogCacheEntry {
+  pieces: PieceBreakdownItem[];
+  total: number;
+  totalPages: number;
+  timestamp: number;
+}
+const clientCatalogCache = new Map<string, CatalogCacheEntry>();
+const allDiscoveredPieces = new Map<string, PieceBreakdownItem>();
+
 export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
   categories,
   initialCategory = 'ALL',
@@ -200,9 +210,65 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
     }
   }, [initialSearch]);
 
-  // Fetch paginated inventory
+  // Fetch paginated inventory with 0-Second SWR RAM Cache & Optimistic Filtering
   const fetchProducts = async () => {
-    setIsLoading(true);
+    const cacheKey = `${selectedCategory}|${searchQuery.trim()}|${selectedSize}|${effectiveMinPrice}|${effectiveMaxPrice}|${selectedSegment}|${selectedCollectionId}|${sortBy}|${currentPage}|${pageSize}`;
+
+    // 1. Instant Cache HIT (0ms): If previously loaded, immediately render from RAM
+    const cached = clientCatalogCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < 120_000)) {
+      setPieces(cached.pieces);
+      setTotalItems(cached.total);
+      setTotalPages(cached.totalPages);
+      setIsLoading(false);
+    } else if (allDiscoveredPieces.size > 0) {
+      // 2. Instant Optimistic Filtering (0ms): Filter all discovered pieces in memory
+      const allArr = Array.from(allDiscoveredPieces.values());
+      const optimistic = allArr.filter(p => {
+        if (selectedCategory && selectedCategory !== 'ALL') {
+          const catLower = selectedCategory.toLowerCase();
+          const match = (p.itemName || '').toLowerCase().includes(catLower) ||
+                        (p.style || '').toLowerCase().includes(catLower) ||
+                        (p.parentCategoryName || '').toLowerCase().includes(catLower) ||
+                        (p.subCategory || '').toLowerCase().includes(catLower);
+          if (!match) return false;
+        }
+        if (selectedSize && selectedSize !== 'ALL') {
+          if ((p.sizeScanned || '').toUpperCase() !== selectedSize.toUpperCase()) return false;
+        }
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase().trim();
+          const match = (p.itemName || '').toLowerCase().includes(q) ||
+                        (p.brandName || '').toLowerCase().includes(q) ||
+                        (p.barcode || '').toLowerCase().includes(q) ||
+                        (p.style || '').toLowerCase().includes(q);
+          if (!match) return false;
+        }
+        if (effectiveMinPrice !== null) {
+          const price = p.retailPriceAed || p.estimatedPrice || 0;
+          if (price < effectiveMinPrice) return false;
+        }
+        if (effectiveMaxPrice !== null) {
+          const price = p.retailPriceAed || p.estimatedPrice || 0;
+          if (price > effectiveMaxPrice) return false;
+        }
+        return true;
+      });
+
+      if (optimistic.length > 0) {
+        setPieces(optimistic.slice(0, pageSize));
+        setTotalItems(optimistic.length);
+        setTotalPages(Math.max(1, Math.ceil(optimistic.length / pageSize)));
+        setIsLoading(false);
+      } else if (pieces.length === 0) {
+        setIsLoading(true);
+      }
+    } else {
+      if (pieces.length === 0) {
+        setIsLoading(true);
+      }
+    }
+
     try {
       const params = new URLSearchParams();
       params.set('page', String(currentPage));
@@ -237,18 +303,36 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
         // Check if response is paginated object
         if (payload && Array.isArray(payload.data)) {
           const sanitized = payload.data.filter((p: any) => !isPieceEvicted(p.barcode) && !isPieceEvicted(p.id));
+          sanitized.forEach((p: any) => allDiscoveredPieces.set(p.barcode || p.id, p));
+          const totalCount = payload.total || sanitized.length;
+          const pages = payload.totalPages || Math.ceil(totalCount / pageSize) || 1;
           setPieces(sanitized);
-          setTotalItems(payload.total || sanitized.length);
-          setTotalPages(payload.totalPages || Math.ceil((payload.total || sanitized.length) / pageSize) || 1);
+          setTotalItems(totalCount);
+          setTotalPages(pages);
+          clientCatalogCache.set(cacheKey, {
+            pieces: sanitized,
+            total: totalCount,
+            totalPages: pages,
+            timestamp: Date.now()
+          });
           return;
         } else if (Array.isArray(payload)) {
           // Fallback array handling
           const filtered = payload.filter(p => !p.isSold && p.status === 'IN_STOCK' && !isPieceEvicted(p.barcode) && !isPieceEvicted(p.id) && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
-          setTotalItems(filtered.length);
-          const computedTotalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-          setTotalPages(computedTotalPages);
+          filtered.forEach((p: any) => allDiscoveredPieces.set(p.barcode || p.id, p));
+          const totalCount = filtered.length;
+          const computedTotalPages = Math.max(1, Math.ceil(totalCount / pageSize));
           const offset = (currentPage - 1) * pageSize;
-          setPieces(filtered.slice(offset, offset + pageSize));
+          const paged = filtered.slice(offset, offset + pageSize);
+          setTotalItems(totalCount);
+          setTotalPages(computedTotalPages);
+          setPieces(paged);
+          clientCatalogCache.set(cacheKey, {
+            pieces: paged,
+            total: totalCount,
+            totalPages: computedTotalPages,
+            timestamp: Date.now()
+          });
           return;
         }
       }
@@ -320,10 +404,18 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
           createdAt: r.created_at
         }));
         const sanitizedMapped = mapped.filter((p: any) => !isPieceEvicted(p.barcode) && !isPieceEvicted(p.id));
-        setPieces(sanitizedMapped as PieceBreakdownItem[]);
+        sanitizedMapped.forEach((p: any) => allDiscoveredPieces.set(p.barcode || p.id, p));
         const countVal = supaCount || sanitizedMapped.length;
+        const computedPages = Math.max(1, Math.ceil(countVal / pageSize));
+        setPieces(sanitizedMapped as PieceBreakdownItem[]);
         setTotalItems(countVal);
-        setTotalPages(Math.max(1, Math.ceil(countVal / pageSize)));
+        setTotalPages(computedPages);
+        clientCatalogCache.set(cacheKey, {
+          pieces: sanitizedMapped as PieceBreakdownItem[],
+          total: countVal,
+          totalPages: computedPages,
+          timestamp: Date.now()
+        });
       } else {
         setPieces([]);
         setTotalItems(0);
@@ -331,9 +423,11 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
       }
     } catch (err) {
       console.warn('ShopCatalogView fetch error:', err);
-      setPieces([]);
-      setTotalItems(0);
-      setTotalPages(1);
+      if (pieces.length === 0) {
+        setPieces([]);
+        setTotalItems(0);
+        setTotalPages(1);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -1057,7 +1151,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                 </div>
               </div>
             )
-          ) : isLoading ? (
+          ) : isLoading && pieces.length === 0 ? (
             <div className="py-28 flex flex-col items-center justify-center text-slate-600 bg-white/60 rounded-2xl border-2 border-dashed border-amber-300">
               <RefreshCw className="w-8 h-8 text-amber-600 animate-spin mb-3" />
               <p className="font-extrabold text-slate-900 text-sm">Loading 1-of-1 Vault Archive...</p>
@@ -1081,26 +1175,33 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-              {pieces.map(piece => (
-                <ProductCard
-                  key={piece.id || piece.barcode}
-                  piece={piece}
-                  isVanishing={vanishingBarcodes.includes(piece.barcode)}
-                  isInCart={cart.some(c => c.barcode === piece.barcode)}
-                  onAddToCart={onAddToCart}
-                  onInstantBuy={onInstantBuy}
-                  onInspectTag={onInspectTag}
-                  onInspectGarment={onInspectGarment}
-                  onOpenFitGuide={onOpenFitGuide}
-                  isB2B={isB2B}
-                />
-              ))}
+            <div className="relative">
+              {isLoading && (
+                <div className="absolute -top-3 left-0 right-0 h-1 bg-amber-200 overflow-hidden z-20 rounded-full">
+                  <div className="w-full h-full bg-amber-600 animate-pulse" />
+                </div>
+              )}
+              <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6 transition-opacity duration-200 ${isLoading ? 'opacity-80' : 'opacity-100'}`}>
+                {pieces.map(piece => (
+                  <ProductCard
+                    key={piece.id || piece.barcode}
+                    piece={piece}
+                    isVanishing={vanishingBarcodes.includes(piece.barcode)}
+                    isInCart={cart.some(c => c.barcode === piece.barcode)}
+                    onAddToCart={onAddToCart}
+                    onInstantBuy={onInstantBuy}
+                    onInspectTag={onInspectTag}
+                    onInspectGarment={onInspectGarment}
+                    onOpenFitGuide={onOpenFitGuide}
+                    isB2B={isB2B}
+                  />
+                ))}
+              </div>
             </div>
           )}
 
           {/* PAGINATION COMPONENT */}
-          {!isLoading && selectedCategory !== 'WHOLESALE_BALES' && totalItems > 0 && (
+          {selectedCategory !== 'WHOLESALE_BALES' && totalItems > 0 && (
             <div className="pt-4">
               <Pagination
                 currentPage={currentPage}

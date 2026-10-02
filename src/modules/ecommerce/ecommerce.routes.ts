@@ -11,11 +11,29 @@ interface ProductsCacheEntry {
   data: any[];
   timestamp: number;
 }
-const PRODUCTS_CACHE_TTL_MS = 15_000; // 15s cache TTL
+const PRODUCTS_CACHE_TTL_MS = 60_000; // 60s cache TTL
 const productsCache = new Map<string, ProductsCacheEntry>();
 
 export const clearProductsCache = () => {
   productsCache.clear();
+};
+
+let lastReservationCleanup = 0;
+const maybeCleanupExpiredReservations = (client: any) => {
+  const now = Date.now();
+  if (now - lastReservationCleanup > 60_000) {
+    lastReservationCleanup = now;
+    client.query(`
+      UPDATE inventory_pieces
+      SET status = 'IN_STOCK', reserved_until = NULL, updated_at = NOW()
+      WHERE barcode IN (
+        SELECT barcode FROM cart_reservations WHERE is_active = true AND expires_at <= NOW()
+      ) AND status = 'RESERVED' AND (is_sold = false OR is_sold IS NULL);
+      UPDATE cart_reservations 
+      SET is_active = false 
+      WHERE is_active = true AND expires_at <= NOW();
+    `).catch(() => {});
+  }
 };
 
 // -------------------------------------------------------------
@@ -47,20 +65,8 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
     }
 
     const formatted = await withDb(async (client) => {
-      // Expire stale cart reservations
-      // Deactivate expired cart reservations and restore pieces to IN_STOCK if not sold
-      await client.query(`
-        UPDATE inventory_pieces
-        SET status = 'IN_STOCK', reserved_until = NULL, updated_at = NOW()
-        WHERE barcode IN (
-          SELECT barcode FROM cart_reservations WHERE is_active = true AND expires_at <= NOW()
-        ) AND status = 'RESERVED' AND (is_sold = false OR is_sold IS NULL);
-      `).catch(() => {});
-      await client.query(`
-        UPDATE cart_reservations 
-        SET is_active = false 
-        WHERE is_active = true AND expires_at <= NOW()
-      `).catch(() => {});
+      // Non-blocking background cart reservation cleanup (throttled to at most once per 60s)
+      maybeCleanupExpiredReservations(client);
 
       // Query active in-stock pieces with any active cart lock (strictly excluding WIP_LAUNDRY and non-ecommerce pieces)
       let query = `
