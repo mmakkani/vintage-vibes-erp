@@ -64,7 +64,9 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
       return res.json(cached.data);
     }
 
-    const formatted = await withDb(async (client) => {
+    let formatted: any = null;
+    try {
+      formatted = await withDb(async (client) => {
       // Non-blocking background cart reservation cleanup (throttled to at most once per 60s)
       maybeCleanupExpiredReservations(client);
 
@@ -226,6 +228,9 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
       }
       return null;
     });
+    } catch (dbErr: any) {
+      console.warn('[Ecommerce Products] Direct PG query error/timeout, falling back seamlessly to Supabase REST:', dbErr?.message);
+    }
 
     if (formatted) {
       productsCache.set(cacheKey, { data: formatted as any, timestamp: Date.now() });

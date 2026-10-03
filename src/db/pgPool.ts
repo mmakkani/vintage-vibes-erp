@@ -54,8 +54,12 @@ export const getPgClient = (): pg.Pool => {
     pool = new Pool({
       connectionString: targetUrl,
       ssl: { rejectUnauthorized: false },
-      connectionTimeoutMillis: 10000,
-      max: 15
+      connectionTimeoutMillis: 25000,
+      idleTimeoutMillis: 30000,
+      min: 2,
+      max: 15,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000
     });
 
     pool.on('error', (err: any) => {
@@ -94,8 +98,10 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
       const fallbackPool = new Pool({
         connectionString: DEFAULT_DB_URL,
         max: 15,
+        min: 1,
         ssl: { rejectUnauthorized: false },
-        connectionTimeoutMillis: 10000
+        connectionTimeoutMillis: 15000,
+        keepAlive: true
       });
       fallbackPool.on('error', (err: any) => {
         console.warn('[pgPool] Idle fallback client notice:', err?.message || err);
@@ -139,18 +145,19 @@ export async function executeSupabaseRestFallback(sqlText: string, _params: any[
 
     // 2. Extract table name for SELECT queries
     if (lower.startsWith('select')) {
-      const match = trimmed.match(/from\s+([a-zA-Z0-9_\.]+)/i);
+      const match = trimmed.match(/\bfrom\s+([a-zA-Z0-9_\."]+)/i);
       if (match && match[1]) {
         let tableName = match[1].replace(/^(public\.)/, '').trim();
-        // Remove quotes or aliases
-        tableName = tableName.replace(/["'`]/g, '');
+        tableName = tableName.replace(/["'`()]/g, '').trim();
 
-        console.log(`[pgPool Fallback] Routing SELECT query on "${tableName}" via Supabase REST client`);
-        const { data, error } = await supabase.from(tableName).select('*').limit(200);
-        if (!error && Array.isArray(data)) {
-          return { rows: data, rowCount: data.length };
-        } else if (error) {
-          console.warn(`[pgPool Fallback] Supabase REST error on ${tableName}:`, error.message);
+        if (tableName) {
+          console.log(`[pgPool Fallback] Routing SELECT query on "${tableName}" via Supabase REST client`);
+          const { data, error } = await supabase.from(tableName).select('*').limit(200);
+          if (!error && Array.isArray(data)) {
+            return { rows: data, rowCount: data.length };
+          } else if (error) {
+            console.warn(`[pgPool Fallback] Supabase REST error on ${tableName}:`, error.message);
+          }
         }
       }
     }
@@ -175,33 +182,16 @@ export async function withDb<T>(fn: (client: pg.PoolClient) => Promise<T>): Prom
   try {
     client = await p.connect();
   } catch (connErr: any) {
-    console.error('[pgPool] Primary connection failed, attempting transaction pooler fallback:', connErr?.message);
-    try {
-      const fallbackPool = new Pool({
-        connectionString: DEFAULT_DB_URL,
-        max: 15,
-        ssl: { rejectUnauthorized: false },
-        connectionTimeoutMillis: 10000
-      });
-      fallbackPool.on('error', (err: any) => {
-        console.warn('[pgPool] Idle fallback client notice:', err?.message || err);
-      });
-      fallbackPool.end = (async () => {}) as any;
-      pool = fallbackPool;
-      client = await fallbackPool.connect();
-    } catch (fbErr: any) {
-      console.error('[pgPool CRITICAL] All PostgreSQL pool connections failed. Attempting fallback query using direct Supabase REST client (@supabase/supabase-js) so data is never completely blocked:', fbErr?.message || fbErr);
-
-      // Create a resilient client proxy that executes queries using Supabase REST
-      isFallbackClient = true;
-      const fallbackClient = {
-        query: async (sqlText: string, params: any[] = []) => {
-          return await executeSupabaseRestFallback(sqlText, params);
-        },
-        release: () => {}
-      };
-      return await fn(fallbackClient as any);
-    }
+    console.error('[pgPool] Primary connection failed, switching to resilient fallback:', connErr?.message);
+    // Avoid double 10-second timeout cascade: immediately execute query via Supabase REST
+    isFallbackClient = true;
+    const fallbackClient = {
+      query: async (sqlText: string, params: any[] = []) => {
+        return await executeSupabaseRestFallback(sqlText, params);
+      },
+      release: () => {}
+    };
+    return await fn(fallbackClient as any);
   }
 
   try {

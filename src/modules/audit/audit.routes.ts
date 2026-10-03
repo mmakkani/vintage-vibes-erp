@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { AuditController } from './audit.controller.ts';
 import { AuditService } from '../../services/auditService.ts';
 import { withDb } from '../../db/pgPool.ts';
-import { verifyAuthToken, checkModulePermission } from '../../server/authValidator.ts';
+import { verifyAuthToken, checkModulePermission, extractAuthToken } from '../../server/authValidator.ts';
 
 export const auditRouter = Router();
 
@@ -83,7 +83,8 @@ async function fetchAuditLogsFromPgPaginated(options: { page: number; pageSize: 
 auditRouter.get(['/', '/logs'], async (req, res) => {
   const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}`;
   const authHeader = (req.headers.authorization as string) || (req.headers['authorization'] as string) || '';
-  const authResult = await verifyAuthToken(authHeader);
+  const token = extractAuthToken(req) || authHeader;
+  const authResult = await verifyAuthToken(token);
 
   if (!authResult.valid || !authResult.user) {
     return res.status(401).json({

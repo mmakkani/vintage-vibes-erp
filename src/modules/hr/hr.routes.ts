@@ -231,7 +231,8 @@ async function generateNextEmpCode(client: Client): Promise<string> {
 hrRouter.get('/employees', async (req, res) => {
   const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}`;
   const authHeader = (req.headers.authorization as string) || (req.headers['authorization'] as string) || '';
-  const authResult = await verifyAuthToken(authHeader);
+  const token = extractAuthToken(req) || authHeader;
+  const authResult = await verifyAuthToken(token);
 
   if (!authResult.valid || !authResult.user) {
     return res.status(401).json({
@@ -252,8 +253,8 @@ hrRouter.get('/employees', async (req, res) => {
 
   try {
     const data = await withDb(async (client) => {
-      // Ensure existing empty string emails are converted to NULL to prevent unique index conflicts
-      await client.query("UPDATE employees SET email = NULL WHERE email = '' OR email = ' ';").catch(() => {});
+      // Non-blocking background email cleanup to avoid locking employee rows during read
+      client.query("UPDATE employees SET email = NULL WHERE email = '' OR email = ' ';").catch(() => {});
 
       let result: any;
       try {

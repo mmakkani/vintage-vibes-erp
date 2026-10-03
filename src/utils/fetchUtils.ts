@@ -811,6 +811,17 @@ export function initUniversalFetchInterceptor() {
 
   const authenticatedFetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+    if (typeof url === 'string') {
+      const isLocal =
+        typeof window !== 'undefined' &&
+        (window.location.hostname === 'localhost' ||
+         window.location.hostname === '127.0.0.1' ||
+         window.location.hostname.endsWith('.localhost'));
+      const hasToken = typeof localStorage !== 'undefined' && (localStorage.getItem('vv_auth_token') || localStorage.getItem('session_token'));
+      if (!hasToken && isLocal && (url.includes('/api/hr/') || url.includes('/api/audit/') || url.includes('/api/finance/'))) {
+        await ensureDevAuthToken();
+      }
+    }
     const effectiveInit = typeof url === 'string' ? attachAuthHeader(url, init) : init;
     return rawFetch.apply(window, [input, effectiveInit]);
   };
@@ -820,6 +831,15 @@ export function initUniversalFetchInterceptor() {
   window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
     if (typeof url === 'string' && isAllowedApiDestination(url)) {
+      const isLocal =
+        typeof window !== 'undefined' &&
+        (window.location.hostname === 'localhost' ||
+         window.location.hostname === '127.0.0.1' ||
+         window.location.hostname.endsWith('.localhost'));
+      const hasToken = typeof localStorage !== 'undefined' && (localStorage.getItem('vv_auth_token') || localStorage.getItem('session_token'));
+      if (!hasToken && isLocal && (url.includes('/api/hr/') || url.includes('/api/audit/') || url.includes('/api/finance/'))) {
+        await ensureDevAuthToken();
+      }
       const effectiveInit = attachAuthHeader(url, init);
       // 1. Try real server HTTP request first
       try {
