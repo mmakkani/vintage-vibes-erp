@@ -4,25 +4,13 @@ import { supabase } from '../../supabaseClient.ts';
 import { PartiesController } from './parties.controller.ts';
 import { visitingCardsRouter } from './visitingCards.routes.ts';
 import { PartyType } from '../../types/common.types.ts';
-import { withDb } from '../../db/pgPool.ts';
+import { withDb, borrowClient } from '../../db/pgPool.ts';
 
 export const partiesRouter = Router();
 partiesRouter.use('/visiting-cards', visitingCardsRouter);
 
 const getDbClient = async () => {
-  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-  try {
-    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-    if (match) {
-      let [_, user, rawPwd, host, port, rest] = match;
-      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
-      dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
-    }
-  } catch (e) {}
-
-  const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-  await client.connect();
-  return client;
+  return await borrowClient();
 };
 
 // -------------------------------------------------------------
@@ -61,13 +49,13 @@ partiesRouter.get('/', async (req, res) => {
           COALESCE(s.count, 0)::int as sales_count,
           COALESCE(gl.count, 0)::int as gl_count
         FROM parties p
-        ${typeClause}
         LEFT JOIN view_coa_live_balances b1 ON b1.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND b1.party_id::text = p.party_id::text)
         LEFT JOIN view_coa_live_balances b2 ON p.coa_account_id IS NOT NULL AND b2.account_id::text = p.coa_account_id::text
         LEFT JOIN khata_counts k ON k.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND k.party_id::text = p.party_id::text)
         LEFT JOIN pur_counts pur ON pur.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND pur.party_id::text = p.party_id::text)
         LEFT JOIN sales_counts s ON s.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND s.party_id::text = p.party_id::text)
         LEFT JOIN gl_counts gl ON gl.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND gl.party_id::text = p.party_id::text)
+        ${typeClause}
         ORDER BY p.name ASC;
       `;
 

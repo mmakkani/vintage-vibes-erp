@@ -1,27 +1,14 @@
 import { Router } from 'express';
-import { Client } from 'pg';
 import { SalesController } from './sales.controller.ts';
 import { SalesService } from '../../services/salesService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
-import { withDb } from '../../db/pgPool.ts';
+import { withDb, borrowClient } from '../../db/pgPool.ts';
 import { executePessimisticClaim, executeReleaseLock } from '../liveStreaming/liveStreaming.routes.ts';
 
 export const salesRouter = Router();
 
-const getDbClient = async (): Promise<Client> => {
-  const DEFAULT_DB_URL = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL;
-  try {
-    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-    if (match) {
-      let [_, user, rawPwd, host, port, rest] = match;
-      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
-      dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
-    }
-  } catch (_) {}
-  const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-  await client.connect();
-  return client;
+const getDbClient = async (): Promise<any> => {
+  return await borrowClient();
 };
 
 salesRouter.get('/gate-passes', (req, res) => {

@@ -1,23 +1,11 @@
 import { Router } from 'express';
-import { Client } from 'pg';
 import { supabase } from '../../supabaseClient.ts';
+import { borrowClient } from '../../db/pgPool.ts';
 
 export const visitingCardsRouter = Router();
 
 const getDbClient = async () => {
-  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-  try {
-    const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-    if (match) {
-      let [_, user, rawPwd, host, port, rest] = match;
-      if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
-      dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
-    }
-  } catch (e) {}
-
-  const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-  await client.connect();
-  return client;
+  return await borrowClient();
 };
 
 const mapCardRow = (row: any) => ({

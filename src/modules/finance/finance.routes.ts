@@ -4,20 +4,14 @@ import { Client } from 'pg';
 import { FinanceController } from './finance.controller.ts';
 import { FinanceService } from '../../services/financeService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
-import { withDb, sanitizeDbUrl, DEFAULT_DB_URL } from '../../db/pgPool.ts';
+import { withDb, borrowClient, sanitizeDbUrl, DEFAULT_DB_URL } from '../../db/pgPool.ts';
 import { insertVoucherPg } from './voucherPgService.ts';
 import { verifyAuthToken, checkModulePermission, extractAuthToken } from '../../server/authValidator.ts';
 
 export const financeRouter = Router();
 
-async function getDbClient(): Promise<Client> {
-  const dbUrl = sanitizeDbUrl(process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL);
-  const client = new Client({
-    connectionString: dbUrl,
-    ssl: { rejectUnauthorized: false }
-  });
-  await client.connect();
-  return client;
+async function getDbClient(): Promise<any> {
+  return await borrowClient();
 }
 
 async function ensureAccountTypes(client: Client): Promise<void> {

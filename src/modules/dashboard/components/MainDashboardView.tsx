@@ -50,6 +50,36 @@ interface StockAlertItem {
   severity: 'CRITICAL' | 'WARNING';
 }
 
+interface MainDashboardSnapshot {
+  kpiData: any;
+  stockAlerts: StockAlertItem[];
+  grailAlerts: any[];
+  globalThreshold: number;
+  timestamp: number;
+}
+
+const DASHBOARD_SNAPSHOT_STORAGE_KEY = 'vv_main_dashboard_snapshot_v3';
+
+function getStoredSnapshot(): MainDashboardSnapshot | null {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    const raw = localStorage.getItem(DASHBOARD_SNAPSHOT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.kpiData && typeof parsed.kpiData.totalInventoryValueAED === 'number') {
+      return parsed;
+    }
+  } catch (_) {}
+  return null;
+}
+
+function saveStoredSnapshot(snapshot: MainDashboardSnapshot) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    localStorage.setItem(DASHBOARD_SNAPSHOT_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch (_) {}
+}
+
 let cachedMainDashboardKpi: any = null;
 let cachedMainDashboardStockAlerts: StockAlertItem[] | null = null;
 let cachedMainDashboardGrails: any[] | null = null;
@@ -61,12 +91,14 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
   onNavigateTab,
   currentUser
 }) => {
-  const [loading, setLoading] = useState(() => !cachedMainDashboardKpi);
-  const [stockAlerts, setStockAlerts] = useState<StockAlertItem[]>(() => cachedMainDashboardStockAlerts || []);
-  const [grailAlerts, setGrailAlerts] = useState<any[]>(() => cachedMainDashboardGrails || []);
-  const [globalThreshold, setGlobalThreshold] = useState<number>(() => cachedMainDashboardThreshold);
+  const initialSnapshot = getStoredSnapshot();
+
+  const [loading, setLoading] = useState<boolean>(() => !cachedMainDashboardKpi && !initialSnapshot);
+  const [stockAlerts, setStockAlerts] = useState<StockAlertItem[]>(() => cachedMainDashboardStockAlerts || initialSnapshot?.stockAlerts || []);
+  const [grailAlerts, setGrailAlerts] = useState<any[]>(() => cachedMainDashboardGrails || initialSnapshot?.grailAlerts || []);
+  const [globalThreshold, setGlobalThreshold] = useState<number>(() => cachedMainDashboardThreshold || initialSnapshot?.globalThreshold || 20);
   const [isWhatsAppDigestOpen, setIsWhatsAppDigestOpen] = useState<boolean>(false);
-  const [kpiData, setKpiData] = useState(() => cachedMainDashboardKpi || {
+  const [kpiData, setKpiData] = useState(() => cachedMainDashboardKpi || initialSnapshot?.kpiData || {
     totalInventoryValueAED: 0,
     totalBalesInStock: 0,
     totalSortedPcs: 0,
@@ -95,58 +127,25 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
         return;
       }
       try {
-        const [liveKpis, purchaseInvoicesRes, gatePassesRes, salesRes, partiesRes, financeRes, currRes, itemsRes, companyRes, grailsRes] = await Promise.all([
+        const [liveKpis, gatePassesRes, partiesRes, currRes, itemsRes, companyRes, grailsRes] = await Promise.all([
           DashboardService.getLiveKPIs().catch(() => null),
-          safeFetchJson<any[]>('/api/purchase/invoices', undefined, 3, 300),
-          safeFetchJson<any[]>('/api/purchase/gate-passes', undefined, 3, 300),
-          safeFetchJson<any[]>('/api/sales/invoices', undefined, 3, 300),
-          safeFetchJson<any[]>('/api/parties', undefined, 3, 300),
-          safeFetchJson<any>('/api/finance/reports', undefined, 3, 300),
-          safeFetchJson<any[]>('/api/setup/currency', undefined, 3, 300),
-          safeFetchJson<any[]>('/api/setup/items', undefined, 3, 300),
-          safeFetchJson<any>('/api/setup/company', undefined, 3, 300),
-          safeFetchJson<any[]>('/api/purchase/grails', undefined, 2, 300)
+          safeFetchJson<any[]>('/api/purchase/gate-passes?limit=5', undefined, 2, 200).catch(() => null),
+          safeFetchJson<any[]>('/api/parties?type=CUSTOMER', undefined, 2, 200).catch(() => null),
+          safeFetchJson<any[]>('/api/setup/currency', undefined, 2, 200).catch(() => null),
+          safeFetchJson<any[]>('/api/setup/items', undefined, 2, 200).catch(() => null),
+          safeFetchJson<any>('/api/setup/company', undefined, 2, 200).catch(() => null),
+          safeFetchJson<any[]>('/api/purchase/grails', undefined, 2, 200).catch(() => null)
         ]);
 
         if (companyRes?.globalStockAlertThreshold) {
           setGlobalThreshold(companyRes.globalStockAlertThreshold);
         }
 
-        let computedInventoryValue = 0;
-        let computedBalesCount = 0;
-        let computedSortedPcs = 0;
-        let computedPayables = 0;
-
-        if (Array.isArray(gatePassesRes) && gatePassesRes.length > 0) {
-          computedBalesCount = gatePassesRes.length;
-          for (const gp of gatePassesRes) {
-            computedInventoryValue += (gp.totalBaleCost || gp.totalCost || 0);
-            if (Array.isArray(gp.pieces)) {
-              computedSortedPcs += gp.pieces.length;
-            }
-          }
-        }
-
-        if (Array.isArray(purchaseInvoicesRes) && purchaseInvoicesRes.length > 0) {
-          for (const pi of purchaseInvoicesRes) {
-            computedPayables += (pi.balanceDueAED || pi.grandTotalAED || 0);
-            if (computedInventoryValue === 0) {
-              computedInventoryValue += (pi.grandTotalAED || 0);
-            }
-          }
-        }
-
-        let computedRevenue = 0;
-        if (Array.isArray(salesRes) && salesRes.length > 0) {
-          computedRevenue = salesRes.reduce((acc: number, inv: any) => acc + (inv.grandTotalAED || 0), 0);
-        }
-
         let computedReceivables = 0;
         const clientKhatasArr: any[] = [];
         if (Array.isArray(partiesRes) && partiesRes.length > 0) {
-          const customers = partiesRes.filter((p: any) => p.type === 'CUSTOMER' || p.category === 'Client');
-          for (const c of customers) {
-            const bal = c.balanceAED || c.balance || 0;
+          for (const c of partiesRes) {
+            const bal = c.balanceAED || c.balance || c.currentBalance || 0;
             computedReceivables += bal;
             clientKhatasArr.push({
               name: c.name || c.partyName || 'Client',
@@ -157,30 +156,30 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
           }
         }
 
-        // Merge with live database KPIs from chart_of_accounts, inward_gate_passes, inventory_pieces, journal_entries
+        // Live database KPIs from chart_of_accounts, inward_gate_passes, inventory_pieces, journal_entries
         const finalInventoryValue = (liveKpis && liveKpis.totalInventoryValueAED > 0)
           ? liveKpis.totalInventoryValueAED
-          : (computedInventoryValue > 0 ? computedInventoryValue : (liveKpis?.totalInventoryValueAED || 0));
+          : (kpiData.totalInventoryValueAED || 0);
 
         const finalBalesCount = (liveKpis && liveKpis.totalBalesInStock > 0)
           ? liveKpis.totalBalesInStock
-          : (computedBalesCount > 0 ? computedBalesCount : (liveKpis?.totalBalesInStock || 0));
+          : (kpiData.totalBalesInStock || 0);
 
         const finalSortedPcs = (liveKpis && liveKpis.totalSortedPcs > 0)
           ? liveKpis.totalSortedPcs
-          : (computedSortedPcs > 0 ? computedSortedPcs : (liveKpis?.totalSortedPcs || 0));
+          : (kpiData.totalSortedPcs || 0);
 
         const finalRevenue = (liveKpis && liveKpis.monthRevenueAED > 0)
           ? liveKpis.monthRevenueAED
-          : (computedRevenue > 0 ? computedRevenue : (liveKpis?.monthRevenueAED || 0));
+          : (kpiData.monthRevenueAED || 0);
 
         const finalReceivables = (liveKpis && liveKpis.receivablesKhataAED > 0)
           ? liveKpis.receivablesKhataAED
-          : (computedReceivables > 0 ? computedReceivables : (liveKpis?.receivablesKhataAED || 0));
+          : (computedReceivables > 0 ? computedReceivables : (kpiData.receivablesKhataAED || 0));
 
         const finalPayables = (liveKpis && liveKpis.payablesKhataAED > 0)
           ? liveKpis.payablesKhataAED
-          : (computedPayables > 0 ? computedPayables : (liveKpis?.payablesKhataAED || 0));
+          : (kpiData.payablesKhataAED || 0);
 
         let finalWorkingCapital = finalInventoryValue + finalReceivables - finalPayables;
         if (finalInventoryValue === 0 && finalReceivables === 0 && finalPayables === 0) {
@@ -198,7 +197,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
               pcs: `${Array.isArray(gp.pieces) ? gp.pieces.length : (gp.piecesCount || 0)} Verified Pcs`,
               status: gp.status || 'POSTED'
             }))
-          : [];
+          : (kpiData.recentGatePasses || []);
 
         const newKpi = {
           totalInventoryValueAED: finalInventoryValue,
@@ -210,11 +209,12 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
           netWorkingCapitalAED: finalWorkingCapital,
           currencyRates: safeRates,
           recentGatePasses: recentGatePassesArr,
-          clientKhatas: clientKhatasArr
+          clientKhatas: clientKhatasArr.length > 0 ? clientKhatasArr : (kpiData.clientKhatas || [])
         };
         setKpiData(newKpi);
         cachedMainDashboardKpi = newKpi;
 
+        let triggeredStockAlerts: StockAlertItem[] = stockAlerts;
         if (itemsRes && Array.isArray(itemsRes)) {
           const triggered: StockAlertItem[] = [];
           for (const item of itemsRes) {
@@ -235,23 +235,25 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
           }
           setStockAlerts(triggered);
           cachedMainDashboardStockAlerts = triggered;
+          triggeredStockAlerts = triggered;
         }
 
+        let finalGrails = grailAlerts;
         if (Array.isArray(grailsRes) && grailsRes.length > 0) {
           setGrailAlerts(grailsRes);
           cachedMainDashboardGrails = grailsRes;
-        } else {
-          try {
-            const pieces = await PurchaseService.getInventoryPieces(100);
-            const foundGrails = (pieces || []).filter(p => p.isGrail || ['Antique', 'Grails', 'Boutique'].includes(p.marketSegment || ''));
-            if (foundGrails.length > 0) {
-              setGrailAlerts(foundGrails.slice(0, 6));
-              cachedMainDashboardGrails = foundGrails.slice(0, 6);
-            }
-          } catch (_) {}
+          finalGrails = grailsRes;
         }
 
         lastMainDashboardFetchTime = Date.now();
+
+        saveStoredSnapshot({
+          kpiData: newKpi,
+          stockAlerts: triggeredStockAlerts,
+          grailAlerts: finalGrails,
+          globalThreshold: companyRes?.globalStockAlertThreshold || globalThreshold,
+          timestamp: lastMainDashboardFetchTime
+        });
       } catch {
         // Fallback gracefully on network retry
       } finally {

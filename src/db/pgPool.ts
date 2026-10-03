@@ -91,6 +91,19 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
         console.warn('[pgPool] Borrowed client notice:', err?.message || err);
       });
     }
+
+    // Make release idempotent and alias client.end to release so legacy routes safely return client to pool
+    let released = false;
+    const origRelease = cl.release.bind(cl);
+    const safeRelease = () => {
+      if (!released) {
+        released = true;
+        try { origRelease(); } catch (_) {}
+      }
+    };
+    cl.release = safeRelease;
+    (cl as any).end = async () => safeRelease();
+
     return cl;
   } catch (connErr: any) {
     console.error('[pgPool] Primary pool connect failed, trying fallback pool:', connErr?.message);
@@ -121,6 +134,18 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
           console.warn('[pgPool] Fallback borrowed client notice:', err?.message || err);
         });
       }
+
+      let fbReleased = false;
+      const origFbRelease = fbClient.release.bind(fbClient);
+      const safeFbRelease = () => {
+        if (!fbReleased) {
+          fbReleased = true;
+          try { origFbRelease(); } catch (_) {}
+        }
+      };
+      fbClient.release = safeFbRelease;
+      (fbClient as any).end = async () => safeFbRelease();
+
       return fbClient;
     } catch (fbErr: any) {
       console.error('[pgPool] Fallback pool connect also failed:', fbErr?.message);

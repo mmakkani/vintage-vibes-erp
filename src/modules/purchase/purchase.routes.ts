@@ -139,8 +139,10 @@ purchaseRouter.get(['/gate-passes', '/bales', '/'], async (req, res) => {
     'Surrogate-Control': 'no-store'
   });
   try {
+    const limitParam = req.query.limit ? parseInt(String(req.query.limit), 10) : null;
+    const limitSql = limitParam && limitParam > 0 ? ` LIMIT ${limitParam}` : '';
     const list = await withDb(async (client) => {
-      const q = await client.query('SELECT igp.*, bs.status as session_status, bs.total_pieces as session_pieces, bs.sorted_grams as session_sorted_grams FROM inward_gate_passes igp LEFT JOIN bale_sessions bs ON bs.bale_id::text = igp.id::text ORDER BY igp.created_at DESC;');
+      const q = await client.query(`SELECT igp.*, bs.status as session_status, bs.total_pieces as session_pieces, bs.sorted_grams as session_sorted_grams FROM inward_gate_passes igp LEFT JOIN bale_sessions bs ON bs.bale_id::text = igp.id::text ORDER BY igp.created_at DESC${limitSql};`);
       if (q.rows) {
         return q.rows.map((row: any) => {
           const grossKg = Number(row.total_bale_weight ?? row.weight_kg ?? 0);

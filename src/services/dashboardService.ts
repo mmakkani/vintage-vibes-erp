@@ -51,14 +51,35 @@ export const getSafeFxRates = (rates?: any[]): Array<{ code: string; symbol: str
   });
 };
 
+const DASHBOARD_METRICS_STORAGE_KEY = 'vv_dashboard_metrics_cache_v2';
+
 export class DashboardService {
   private static _cachedMetrics: DashboardMetrics | null = null;
   private static _lastFetchTime = 0;
-  private static readonly TTL_MS = 20 * 1000; // 20 seconds cache
+  private static readonly TTL_MS = 30 * 1000; // 30 seconds cache
+
+  public static getStoredMetrics(): DashboardMetrics | null {
+    if (this._cachedMetrics) return this._cachedMetrics;
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const stored = localStorage.getItem(DASHBOARD_METRICS_STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && typeof parsed.monthRevenueAED === 'number') {
+            this._cachedMetrics = parsed;
+            this._lastFetchTime = parsed._timestamp || 0;
+            return parsed;
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
 
   public static async getLiveKPIs(force = false): Promise<DashboardMetrics> {
-    if (!force && this._cachedMetrics && Date.now() - this._lastFetchTime < this.TTL_MS) {
-      return this._cachedMetrics;
+    const existing = this.getStoredMetrics();
+    if (!force && existing && Date.now() - this._lastFetchTime < this.TTL_MS) {
+      return existing;
     }
 
     try {
@@ -241,9 +262,19 @@ export class DashboardService {
 
       this._cachedMetrics = metrics;
       this._lastFetchTime = Date.now();
+
+      if (typeof window !== 'undefined' && window.localStorage) {
+        try {
+          localStorage.setItem(DASHBOARD_METRICS_STORAGE_KEY, JSON.stringify({ ...metrics, _timestamp: this._lastFetchTime }));
+        } catch (_) {}
+      }
+
       return metrics;
     } catch (err) {
       console.warn('[DashboardService] getLiveKPIs exception:', err);
+      const fallback = this.getStoredMetrics();
+      if (fallback) return fallback;
+
       return {
         totalInventoryValueAED: 0,
         totalBalesInStock: 0,

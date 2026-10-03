@@ -23,7 +23,6 @@ import { devicesRouter } from './src/modules/devices/devices.routes.ts';
 import { presenceRouter } from './src/modules/presence/presence.routes.ts';
 import { eventHub } from './src/server/events.ts';
 import { BotDetector } from './src/server/botDetector.ts';
-import { Client } from 'pg';
 import { createClient } from '@supabase/supabase-js';
 import { withDb } from './src/db/pgPool.ts';
 import { ecommerceRouter } from './src/modules/ecommerce/ecommerce.routes.ts';
@@ -61,31 +60,26 @@ async function recordExpressThreat(analysis: any, req: any) {
     }
   }
 
-  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&uselibpqcompat=true';
-  if (dbUrl.includes('.pooler.supabase.com:5432')) {
-    dbUrl = dbUrl.replace('.pooler.supabase.com:5432', '.pooler.supabase.com:6543');
-  }
   try {
-    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-    await client.connect();
-    await client.query(`
-      INSERT INTO device_installations (
-        device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit, city, country, last_active_at
-      ) VALUES ($1, null, $2, $3, $4, $5, $6, false, 'BLOCKED', 'BAD_BOT', $7, 0, 'Global', 'Global', NOW())
-      ON CONFLICT (device_id) DO UPDATE
-      SET last_active_at = NOW(),
-          ip_address = EXCLUDED.ip_address,
-          install_status = 'BLOCKED',
-          bot_type = 'BAD_BOT',
-          block_reason = EXCLUDED.block_reason;
-    `, [deviceId, `[BAD BOT] ${analysis.botName}`, ip, 'Bad Bot / Exploit Scanner', analysis.botName, rawUa, reason]);
+    await withDb(async (client) => {
+      await client.query(`
+        INSERT INTO device_installations (
+          device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit, city, country, last_active_at
+        ) VALUES ($1, null, $2, $3, $4, $5, $6, false, 'BLOCKED', 'BAD_BOT', $7, 0, 'Global', 'Global', NOW())
+        ON CONFLICT (device_id) DO UPDATE
+        SET last_active_at = NOW(),
+            ip_address = EXCLUDED.ip_address,
+            install_status = 'BLOCKED',
+            bot_type = 'BAD_BOT',
+            block_reason = EXCLUDED.block_reason;
+      `, [deviceId, `[BAD BOT] ${analysis.botName}`, ip, 'Bad Bot / Exploit Scanner', analysis.botName, rawUa, reason]);
 
-    await client.query(`
-      INSERT INTO security_threat_logs (
-        ip_address, country, isp_org, user_agent, request_method, request_url, headers, raw_payload, threat_type, created_at
-      ) VALUES ($1, 'Global', 'Automated Host / Public IP', $2, $3, $4, $5, $6, $7, NOW());
-    `, [ip, rawUa, reqMethod, reqUrl, JSON.stringify(safeHeaders), rawPayloadStr, threatType]);
-    await client.end();
+      await client.query(`
+        INSERT INTO security_threat_logs (
+          ip_address, country, isp_org, user_agent, request_method, request_url, headers, raw_payload, threat_type, created_at
+        ) VALUES ($1, 'Global', 'Automated Host / Public IP', $2, $3, $4, $5, $6, $7, NOW());
+      `, [ip, rawUa, reqMethod, reqUrl, JSON.stringify(safeHeaders), rawPayloadStr, threatType]);
+    });
   } catch (_) {
     try {
       await supabaseAdmin.from('security_threat_logs').insert({
@@ -234,68 +228,52 @@ async function startServer() {
   app.post(['/api/rpc/:fnName', '/rest/v1/rpc/:fnName'], async (req, res) => {
     const { fnName } = req.params;
     const body = req.body || {};
-    let dbClient: Client | null = null;
     try {
-      let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&uselibpqcompat=true';
-      if (dbUrl.includes('.pooler.supabase.com:5432')) {
-        dbUrl = dbUrl.replace('.pooler.supabase.com:5432', '.pooler.supabase.com:6543');
-      }
-      try {
-        const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
-        if (match) {
-          let [_, user, rawPwd, host, port, rest] = match;
-          if (rawPwd.startsWith('[') && rawPwd.endsWith(']')) rawPwd = rawPwd.slice(1, -1);
-          dbUrl = `postgresql://${user}:${encodeURIComponent(decodeURIComponent(rawPwd))}@${host}${port || ''}${rest}`;
-        }
-      } catch (e) {}
+      const output = await withDb(async (dbClient) => {
+        if (fnName === 'create_party_with_coa') {
+          const p_name = body.p_name;
+          const p_type = (body.p_type === 'CLIENT' ? 'CUSTOMER' : body.p_type) || 'CUSTOMER';
+          const p_phone = body.p_phone || null;
+          const p_trn = body.p_trn || null;
+          const p_credit_limit = Number(body.p_credit_limit) || 0;
+          let p_inventory_account_id = body.p_inventory_account_id || null;
+          const p_expense_account = body.p_expense_account || null;
 
-      dbClient = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-      await dbClient.connect();
-
-      if (fnName === 'create_party_with_coa') {
-        const p_name = body.p_name;
-        const p_type = (body.p_type === 'CLIENT' ? 'CUSTOMER' : body.p_type) || 'CUSTOMER';
-        const p_phone = body.p_phone || null;
-        const p_trn = body.p_trn || null;
-        const p_credit_limit = Number(body.p_credit_limit) || 0;
-        let p_inventory_account_id = body.p_inventory_account_id || null;
-        const p_expense_account = body.p_expense_account || null;
-
-        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (p_inventory_account_id && !UUID_REGEX.test(p_inventory_account_id)) {
-          try {
-            const coaCheck = await dbClient.query('SELECT id FROM public.chart_of_accounts WHERE code = $1 LIMIT 1', [p_inventory_account_id]);
-            if (coaCheck.rows.length > 0 && UUID_REGEX.test(coaCheck.rows[0].id)) {
-              p_inventory_account_id = coaCheck.rows[0].id;
-            } else {
+          const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          if (p_inventory_account_id && !UUID_REGEX.test(p_inventory_account_id)) {
+            try {
+              const coaCheck = await dbClient.query('SELECT id FROM public.chart_of_accounts WHERE code = $1 LIMIT 1', [p_inventory_account_id]);
+              if (coaCheck.rows.length > 0 && UUID_REGEX.test(coaCheck.rows[0].id)) {
+                p_inventory_account_id = coaCheck.rows[0].id;
+              } else {
+                p_inventory_account_id = null;
+              }
+            } catch {
               p_inventory_account_id = null;
             }
-          } catch {
-            p_inventory_account_id = null;
           }
-        }
 
-        const result = await dbClient.query(
-          `SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6, $7) as data;`,
-          [p_name, p_type, p_phone, p_trn, p_credit_limit, p_inventory_account_id, p_expense_account]
-        );
-        const data = result.rows[0]?.data;
-        return res.json({ data, error: null });
-      } else {
-        const keys = Object.keys(body);
-        const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
-        const values = keys.map(k => body[k]);
-        const result = await dbClient.query(
-          `SELECT public.${fnName}(${placeholders}) as data;`,
-          values
-        );
-        return res.json({ data: result.rows[0]?.data, error: null });
-      }
+          const result = await dbClient.query(
+            `SELECT public.create_party_with_coa($1, $2, $3, $4, $5, $6, $7) as data;`,
+            [p_name, p_type, p_phone, p_trn, p_credit_limit, p_inventory_account_id, p_expense_account]
+          );
+          const data = result.rows[0]?.data;
+          return { data, error: null };
+        } else {
+          const keys = Object.keys(body);
+          const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
+          const values = keys.map(k => body[k]);
+          const result = await dbClient.query(
+            `SELECT public.${fnName}(${placeholders}) as data;`,
+            values
+          );
+          return { data: result.rows[0]?.data, error: null };
+        }
+      });
+      return res.json(output);
     } catch (err: any) {
       console.error(`[RPC Proxy] Error executing ${fnName}:`, err?.message || err);
       return res.status(400).json({ data: null, error: { message: err?.message || 'RPC execution failed' } });
-    } finally {
-      if (dbClient) await dbClient.end().catch(() => {});
     }
   });
 
