@@ -640,14 +640,14 @@ export class FinanceService {
       }
     }
 
-    const isIdUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
-    if (isIdUuid) {
-      await supabase.from('chart_of_accounts').update({ is_active: isActive }).or(`id.eq.${id}${code ? `,code.eq.${code}` : ''}`);
-    } else {
-      await supabase.from('chart_of_accounts').update({ is_active: isActive }).or(`code.eq.${id}${code ? `,code.eq.${code}` : ''}`);
-    }
+    try {
+      await supabase.from('coa_accounts').update({ is_active: isActive }).or(`id.eq.${id}${code ? `,code.eq.${code}` : ''}`);
+    } catch (_) {}
     try {
       await supabase.from('accounts').update({ is_active: isActive }).or(`account_id.eq.${id}${code ? `,account_code.eq.${code}` : ''}`);
+    } catch (_) {}
+    try {
+      await supabase.from('chart_of_accounts').update({ is_deleted: !isActive }).or(`id.eq.${id}${code ? `,code.eq.${code}` : ''}`);
     } catch (_) {}
     this.clearCoaCache();
     return { success: true, is_active: isActive };

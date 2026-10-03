@@ -6623,11 +6623,16 @@ ${courierLines}
               newActiveState = currentVal === undefined ? false : !currentVal;
             }
 
-            await client.query('BEGIN').catch(() => {});
-            await client.query('UPDATE accounts SET is_active = $1 WHERE account_id::text = $2 OR account_code = $2', [newActiveState, targetAccId]).catch(() => {});
-            await client.query('UPDATE chart_of_accounts SET is_active = $1 WHERE id::text = $2 OR code = $2', [newActiveState, targetAccId]).catch(() => {});
-            await client.query('UPDATE coa_accounts SET is_active = $1 WHERE id::text = $2 OR code = $2', [newActiveState, targetAccId]).catch(() => {});
-            await client.query('COMMIT').catch(() => {});
+            await client.query('BEGIN');
+            try {
+              await client.query('UPDATE accounts SET is_active = $1 WHERE account_id::text = $2 OR account_code = $2', [newActiveState, targetAccId]);
+              await client.query('UPDATE coa_accounts SET is_active = $1 WHERE id = $2 OR code = $2', [newActiveState, targetAccId]);
+              await client.query('UPDATE chart_of_accounts SET is_deleted = NOT $1 WHERE code = $2 OR id::text = $2', [newActiveState, targetAccId]).catch(() => {});
+              await client.query('COMMIT');
+            } catch (txErr) {
+              await client.query('ROLLBACK').catch(() => {});
+              throw txErr;
+            }
 
             return res.status(200).json({ success: true, is_active: newActiveState, isActive: newActiveState });
           } catch (err: any) {
@@ -6641,8 +6646,11 @@ ${courierLines}
         // Supabase Admin fallback
         try {
           const newActive = typeof reqActive === 'boolean' ? reqActive : false;
-          await supabaseAdmin.from('chart_of_accounts').update({ is_active: newActive }).or(`id.eq.${targetAccId},code.eq.${targetAccId}`);
+          await supabaseAdmin.from('coa_accounts').update({ is_active: newActive }).or(`id.eq.${targetAccId},code.eq.${targetAccId}`);
           await supabaseAdmin.from('accounts').update({ is_active: newActive }).or(`account_id.eq.${targetAccId},account_code.eq.${targetAccId}`);
+          try {
+            await supabaseAdmin.from('chart_of_accounts').update({ is_deleted: !newActive }).or(`id.eq.${targetAccId},code.eq.${targetAccId}`);
+          } catch {}
           return res.status(200).json({ success: true, is_active: newActive, isActive: newActive });
         } catch (sbErr: any) {
           return res.status(500).json({ error: sbErr.message });
@@ -8687,7 +8695,30 @@ ${courierLines}
         if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
         try {
           const invRes = await client.query(`
-            SELECT si.*,
+            SELECT si.id,
+                   si.invoice_no,
+                   si.client_id,
+                   si.customer_name,
+                   si.customer_phone,
+                   si.invoice_date,
+                   si.channel,
+                   si.payment_method,
+                   si.payment_status,
+                   si.payment_reference,
+                   si.shipping_address,
+                   si.city,
+                   si.courier_partner_id,
+                   si.tracking_number,
+                   si.shipping_fee,
+                   si.shipping_bearer,
+                   si.order_id,
+                   si.subtotal,
+                   si.discount_amount,
+                   si.tax_amount,
+                   si.total_amount,
+                   si.status,
+                   si.items,
+                   si.created_at,
                    b2b.paid_amount as b2b_paid_amount,
                    b2b.balance_due as b2b_balance_due,
                    b2b.payment_terms as b2b_payment_terms,

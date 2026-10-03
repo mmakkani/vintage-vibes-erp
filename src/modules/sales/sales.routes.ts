@@ -73,7 +73,30 @@ salesRouter.post('/gate-passes/:id/convert-invoice', (req, res) => {
 salesRouter.get('/invoices', async (req, res) => {
   try {
     const query = `
-      SELECT si.*,
+      SELECT si.id,
+             si.invoice_no,
+             si.client_id,
+             si.customer_name,
+             si.customer_phone,
+             si.invoice_date,
+             si.channel,
+             si.payment_method,
+             si.payment_status,
+             si.payment_reference,
+             si.shipping_address,
+             si.city,
+             si.courier_partner_id,
+             si.tracking_number,
+             si.shipping_fee,
+             si.shipping_bearer,
+             si.order_id,
+             si.subtotal,
+             si.discount_amount,
+             si.tax_amount,
+             si.total_amount,
+             si.status,
+             si.items,
+             si.created_at,
              p.name as courier_partner_name,
              p.company_name as courier_company_name
       FROM sales_invoices si

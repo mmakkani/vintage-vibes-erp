@@ -435,50 +435,55 @@ financeRouter.delete('/coa/:id', async (req, res) => {
 // PATCH /api/finance/coa/:id/toggle-active - Toggle Active/Inactive Status
 financeRouter.patch('/coa/:id/toggle-active', async (req, res) => {
   const { id } = req.params;
-  let client: Client | null = null;
   try {
-    client = await getDbClient();
     const reqActive = req.body?.is_active ?? req.body?.isActive;
 
-    let newActiveState: boolean;
-    if (typeof reqActive === 'boolean') {
-      newActiveState = reqActive;
-    } else {
-      // Lookup current state
-      const curr = await client.query(
-        'SELECT is_active FROM accounts WHERE account_id::text = $1 OR account_code = $1 LIMIT 1',
-        [id]
-      ).catch(() => ({ rows: [] }));
-      const currentVal = curr.rows[0]?.is_active;
-      newActiveState = currentVal === undefined ? false : !currentVal;
-    }
+    const result = await withDb(async (client) => {
+      let newActiveState: boolean;
+      if (typeof reqActive === 'boolean') {
+        newActiveState = reqActive;
+      } else {
+        // Lookup current state from accounts or coa_accounts
+        const curr = await client.query(
+          'SELECT is_active FROM accounts WHERE account_id::text = $1 OR account_code = $1 LIMIT 1',
+          [id]
+        ).catch(() => ({ rows: [] }));
+        const currentVal = curr.rows[0]?.is_active;
+        newActiveState = currentVal === undefined ? false : !currentVal;
+      }
 
-    await client.query('BEGIN').catch(() => {});
-    await client.query(
-      'UPDATE accounts SET is_active = $1 WHERE account_id::text = $2 OR account_code = $2',
-      [newActiveState, id]
-    ).catch(() => {});
-    await client.query(
-      'UPDATE chart_of_accounts SET is_active = $1 WHERE id::text = $2 OR code = $2',
-      [newActiveState, id]
-    ).catch(() => {});
-    await client.query(
-      'UPDATE coa_accounts SET is_active = $1 WHERE id::text = $2 OR code = $2',
-      [newActiveState, id]
-    ).catch(() => {});
-    await client.query('COMMIT').catch(() => {});
+      await client.query('BEGIN');
+      try {
+        await client.query(
+          'UPDATE accounts SET is_active = $1 WHERE account_id::text = $2 OR account_code = $2',
+          [newActiveState, id]
+        );
+        await client.query(
+          'UPDATE coa_accounts SET is_active = $1 WHERE id = $2 OR code = $2',
+          [newActiveState, id]
+        );
+        // chart_of_accounts uses is_deleted for soft-delete/archive semantics (never is_active)
+        await client.query(
+          'UPDATE chart_of_accounts SET is_deleted = NOT $1 WHERE code = $2 OR id::text = $2',
+          [newActiveState, id]
+        ).catch(() => {});
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      }
+
+      return newActiveState;
+    });
 
     return res.status(200).json({
       success: true,
-      is_active: newActiveState,
-      isActive: newActiveState
+      is_active: result,
+      isActive: result
     });
   } catch (err: any) {
-    if (client) await client.query('ROLLBACK').catch(() => {});
     console.error('[Finance PATCH /coa/:id/toggle-active] Error:', err.message);
     return res.status(500).json({ error: err.message || 'Failed to update account status' });
-  } finally {
-    if (client) await client.end().catch(() => {});
   }
 });
 
