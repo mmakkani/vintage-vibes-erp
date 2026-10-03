@@ -28,6 +28,14 @@ export async function executeClientFallback<T = any>(
   // Direct Supabase Query Dispatch for GET requests
   if (method === 'GET') {
     try {
+      if (url.includes('/api/presence')) {
+        return {
+          success: true,
+          degraded: true,
+          onlineCount: 1,
+          users: []
+        } as any;
+      }
       if (url.includes('/dashboard-kpis')) {
         const { DashboardService } = await import('../services/dashboardService.ts');
         return (await DashboardService.getLiveKPIs()) as any;
@@ -346,6 +354,15 @@ export async function executeClientFallback<T = any>(
         try {
           bodyData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
         } catch (_) {}
+      }
+
+      if (url.includes('/api/presence')) {
+        return {
+          success: true,
+          degraded: true,
+          onlineCount: 1,
+          users: []
+        } as any;
       }
 
       if (url.includes('/counter-sale/checkout')) {
@@ -869,6 +886,12 @@ export function initUniversalFetchInterceptor() {
         }
         if (isAuthRoute && (res.status === 401 || res.status === 403)) {
           return res;
+        }
+        if (url.includes('/api/presence')) {
+          return new Response(JSON.stringify({ success: true, degraded: true, onlineCount: 1, users: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          });
         }
       } catch (_) {
         // Network offline or server unreachable, proceed to client fallback

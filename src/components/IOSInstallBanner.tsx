@@ -1,20 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { DeviceService } from '../services/deviceService.ts';
+import { usePWAInstall } from '../hooks/usePWAInstall.ts';
 
 const DISMISSED_KEY = 'vintage_pwa_prompt_dismissed_until';
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 export const IOSInstallBanner: React.FC = () => {
+  const { isInstallable, isInstalled: pwaInstalled, install } = usePWAInstall();
   const [showBanner, setShowBanner] = useState(false);
   const [showGuideModal, setShowGuideModal] = useState(false);
   const [registeredIp, setRegisteredIp] = useState<string>('');
-  const [deviceModel, setDeviceModel] = useState<string>('iPhone');
+  const [deviceModel, setDeviceModel] = useState<string>('Device');
+  const [isIOSDevice, setIsIOSDevice] = useState(false);
   const [profileDownloaded, setProfileDownloaded] = useState(false);
 
   useEffect(() => {
     // 1. Detect device & standalone mode
     const info = DeviceService.detectDeviceInfo();
     setDeviceModel(info.deviceModel);
+    setIsIOSDevice(info.isIOS);
 
     // 2. Auto-register device and capture IP in PostgreSQL
     DeviceService.registerDevice().then((res) => {
@@ -27,11 +31,16 @@ export const IOSInstallBanner: React.FC = () => {
     const handleOpenModal = () => setShowGuideModal(true);
     window.addEventListener('open_ios_install_guide', handleOpenModal);
 
-    // 4. Test mode via URL parameter: ?ios_install=1
-    const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-    const forceShow = urlParams?.get('ios_install') === '1';
+    return () => {
+      window.removeEventListener('open_ios_install_guide', handleOpenModal);
+    };
+  }, []);
 
-    // 5. Check 30-day dismissal persistence
+  useEffect(() => {
+    // Test mode via URL parameter: ?ios_install=1 or ?pwa_install=1
+    const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const forceShow = urlParams?.get('ios_install') === '1' || urlParams?.get('pwa_install') === '1';
+
     let isDismissed = false;
     try {
       const dismissedUntil = localStorage.getItem(DISMISSED_KEY);
@@ -40,15 +49,20 @@ export const IOSInstallBanner: React.FC = () => {
       }
     } catch {}
 
-    // 6. Only show slim top banner if on iOS, not standalone, and not dismissed
-    if ((info.isIOS && !info.isStandalone && !isDismissed) || forceShow) {
-      setShowBanner(true);
-    }
+    const isStandalone = typeof window !== 'undefined' && (
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as any).standalone === true ||
+      pwaInstalled
+    );
 
-    return () => {
-      window.removeEventListener('open_ios_install_guide', handleOpenModal);
-    };
-  }, []);
+    if (forceShow) {
+      setShowBanner(true);
+    } else if (!isStandalone && !isDismissed && (isIOSDevice || isInstallable)) {
+      setShowBanner(true);
+    } else {
+      setShowBanner(false);
+    }
+  }, [isIOSDevice, isInstallable, pwaInstalled]);
 
   const handleDismiss = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -61,15 +75,23 @@ export const IOSInstallBanner: React.FC = () => {
 
   const handleDirectInstall = (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
-    setProfileDownloaded(true);
-    setShowGuideModal(true);
-    // Trigger native iOS configuration profile download
-    window.location.href = '/api/ios/install';
+    if (isIOSDevice) {
+      setProfileDownloaded(true);
+      setShowGuideModal(true);
+      // Trigger native iOS configuration profile download
+      window.location.href = '/api/ios/install';
+    } else {
+      install().then((success) => {
+        if (success) {
+          setShowBanner(false);
+        }
+      });
+    }
   };
 
   return (
     <>
-      {/* Slim, Non-Intrusive Top Banner (Never blocks bottom navigation) */}
+      {/* Slim, Non-Intrusive Top Banner (Never blocks navigation) */}
       {showBanner && (
         <aside
           aria-label="Install App Banner"
@@ -86,7 +108,9 @@ export const IOSInstallBanner: React.FC = () => {
             />
             <div className="truncate text-xs">
               <span className="font-bold text-amber-300">Install Vintage Vibes App</span>
-              <span className="hidden sm:inline text-slate-300 text-[11px] ml-1.5">• 1-Click Apple Profile Install</span>
+              <span className="hidden sm:inline text-slate-300 text-[11px] ml-1.5">
+                {isIOSDevice ? '• 1-Click Apple Profile Install' : '• High-Speed Desktop & Offline App'}
+              </span>
             </div>
           </div>
 
@@ -99,7 +123,7 @@ export const IOSInstallBanner: React.FC = () => {
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
-              <span>Direct Install</span>
+              <span>{isIOSDevice ? 'Direct Install' : 'Install App'}</span>
             </button>
             <button
               type="button"

@@ -702,9 +702,9 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
             </div>
 
             <div className="space-y-2.5">
-              {kpiData.clientKhatas.map(ck => (
+              {kpiData.clientKhatas.map((ck: any, idx: number) => (
                 <motion.div
-                  key={ck.name}
+                  key={ck.id || `${ck.name || 'client'}-${idx}`}
                   whileHover={{ scale: 1.02, x: 2 }}
                   transition={{ duration: 0.15 }}
                   className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/60 flex items-center justify-between shadow-2xs"

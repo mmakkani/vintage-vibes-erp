@@ -2,12 +2,18 @@ import React, { useState } from 'react';
 import { Download, Smartphone, X, CheckCircle2 } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall.ts';
 
-export const PWAInstallButton: React.FC = () => {
+interface PWAInstallButtonProps {
+  className?: string;
+  variant?: 'header' | 'default';
+}
+
+export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ className, variant = 'header' }) => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
 
-  // If already running as an installed PWA, hide the button
+  // If already running as an installed PWA, hide the button in header
   if (isInstalled) {
+    if (variant === 'header') return null;
     return (
       <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-900/40 border border-emerald-500/30 text-emerald-300 text-xs font-mono">
         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
@@ -18,11 +24,26 @@ export const PWAInstallButton: React.FC = () => {
 
   // Chromium / Android / Desktop flow
   if (isInstallable) {
+    if (variant === 'header') {
+      return (
+        <button
+          id="pwa-install-btn"
+          type="button"
+          onClick={install}
+          className={`btn-3d btn-3d-amber h-7 px-2 sm:px-2.5 text-[10.5px] font-bold uppercase tracking-wider rounded-lg flex items-center gap-1.5 shadow-2xs cursor-pointer whitespace-nowrap ${className || ''}`}
+          title="Install Vintage Vibe ERP as Desktop / Mobile App"
+        >
+          <Download className="w-3.5 h-3.5 text-amber-950 shrink-0" />
+          <span className="hidden md:inline">Install App</span>
+        </button>
+      );
+    }
     return (
       <button
         id="pwa-install-btn"
+        type="button"
         onClick={install}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 active:translate-y-0.5 text-slate-950 text-xs font-bold shadow-[0_3px_0_#b45309,0_4px_8px_rgba(0,0,0,0.3)] transition-all cursor-pointer whitespace-nowrap"
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 active:translate-y-0.5 text-slate-950 text-xs font-bold shadow-[0_3px_0_#b45309,0_4px_8px_rgba(0,0,0,0.3)] transition-all cursor-pointer whitespace-nowrap ${className || ''}`}
         title="Install Vintage Vibe ERP as Desktop / Mobile App"
       >
         <Download className="w-3.5 h-3.5 text-slate-950" />
@@ -37,11 +58,17 @@ export const PWAInstallButton: React.FC = () => {
       <>
         <button
           id="pwa-install-ios-btn"
+          type="button"
           onClick={() => setShowIOSGuide(true)}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gradient-to-b from-amber-400 to-amber-600 text-slate-950 text-xs font-bold shadow-[0_2px_0_#b45309] hover:brightness-110 active:translate-y-0.5 cursor-pointer whitespace-nowrap"
+          className={
+            variant === 'header'
+              ? `btn-3d btn-3d-amber h-7 px-2 sm:px-2.5 text-[10.5px] font-bold uppercase tracking-wider rounded-lg flex items-center gap-1.5 shadow-2xs cursor-pointer whitespace-nowrap ${className || ''}`
+              : `flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gradient-to-b from-amber-400 to-amber-600 text-slate-950 text-xs font-bold shadow-[0_2px_0_#b45309] hover:brightness-110 active:translate-y-0.5 cursor-pointer whitespace-nowrap ${className || ''}`
+          }
+          title="Add Vintage Vibe ERP to Home Screen"
         >
-          <Smartphone className="w-3.5 h-3.5" />
-          <span>Add to Home</span>
+          <Smartphone className="w-3.5 h-3.5 text-amber-950 shrink-0" />
+          <span className="hidden md:inline">Add to Home</span>
         </button>
 
         {showIOSGuide && (

@@ -11,6 +11,7 @@ import { VipThemeToggle } from './VipThemeToggle.tsx';
 import { GoldCoinFlipper3D } from './GoldCoinFlipper3D.tsx';
 import { ActiveTab } from './Navigation.tsx';
 import { useSync } from '../context/SyncContext.tsx';
+import { PWAInstallButton } from './PWAInstallButton.tsx';
 
 interface HeaderProps {
   companyProfile: CompanyProfile;
@@ -303,6 +304,9 @@ export const Header: React.FC<HeaderProps> = ({
                 <span>Update App</span>
               </button>
             )}
+
+            {/* PWA 1-Click Install Button (Desktop & Mobile) */}
+            <PWAInstallButton />
 
             {/* WhatsApp Daily Summary Action */}
             <button
