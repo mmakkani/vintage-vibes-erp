@@ -77,7 +77,7 @@ salesRouter.get('/invoices', async (req, res) => {
              p.name as courier_partner_name,
              p.company_name as courier_company_name
       FROM sales_invoices si
-      LEFT JOIN parties p ON p.id = si.courier_partner_id
+      LEFT JOIN parties p ON p.party_id = si.courier_partner_id
       ORDER BY si.created_at DESC;
     `;
     const result = await withDb(async (dbClient) => dbClient.query(query));

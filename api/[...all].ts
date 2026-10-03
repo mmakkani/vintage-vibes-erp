@@ -4941,21 +4941,6 @@ RULES FOR YOUR RESPONSE:
         const client = await getPgClient();
         if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
         try {
-          await client.query(`
-            CREATE TABLE IF NOT EXISTS whatsapp_channels (
-              id TEXT PRIMARY KEY,
-              name TEXT NOT NULL,
-              jid TEXT NOT NULL UNIQUE,
-              invite_link TEXT,
-              role TEXT DEFAULT 'ADMIN',
-              verified_admin BOOLEAN DEFAULT TRUE,
-              is_default BOOLEAN DEFAULT FALSE,
-              subscribers_count INT DEFAULT 1,
-              created_at TIMESTAMPTZ DEFAULT NOW(),
-              updated_at TIMESTAMPTZ DEFAULT NOW()
-            );
-          `);
-
           const countRes = await client.query(`SELECT count(*)::int as count FROM whatsapp_channels;`);
           const isFirst = (countRes.rows[0]?.count || 0) === 0;
 
@@ -5015,20 +5000,6 @@ RULES FOR YOUR RESPONSE:
         const client = await getPgClient();
         if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
         try {
-          await client.query(`
-            CREATE TABLE IF NOT EXISTS whatsapp_channels (
-              id TEXT PRIMARY KEY,
-              name TEXT NOT NULL,
-              jid TEXT NOT NULL UNIQUE,
-              invite_link TEXT,
-              role TEXT DEFAULT 'ADMIN',
-              verified_admin BOOLEAN DEFAULT TRUE,
-              is_default BOOLEAN DEFAULT FALSE,
-              subscribers_count INT DEFAULT 1,
-              created_at TIMESTAMPTZ DEFAULT NOW(),
-              updated_at TIMESTAMPTZ DEFAULT NOW()
-            );
-          `);
           const allRes = await client.query(`SELECT * FROM whatsapp_channels ORDER BY is_default DESC, created_at ASC;`);
           const channels = allRes.rows.map(ch => ({
             id: ch.id,
@@ -8724,7 +8695,7 @@ ${courierLines}
                    p.company_name as courier_company_name
             FROM sales_invoices si
             LEFT JOIN b2b_sales b2b ON (b2b.b2b_invoice_number = si.invoice_no OR b2b.id::text = si.id::text)
-            LEFT JOIN parties p ON (p.party_id::text = si.courier_partner_id::text OR p.id::text = si.courier_partner_id::text)
+            LEFT JOIN parties p ON p.party_id = si.courier_partner_id
             ORDER BY si.created_at DESC;
           `);
           const mapped = invRes.rows.map((row: any) => {
