@@ -113,6 +113,10 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
   const [pieces, setPieces] = useState<PieceBreakdownItem[]>([]);
   const [bales, setBales] = useState<InwardGatePass[]>([]);
   const [activeCampaign, setActiveCampaign] = useState<AutoBroadcastCampaign | null>(null);
+  const activeCampaignRef = useRef<AutoBroadcastCampaign | null>(null);
+  useEffect(() => {
+    activeCampaignRef.current = activeCampaign;
+  }, [activeCampaign]);
   const [campaignHistory, setCampaignHistory] = useState<AutoBroadcastCampaign[]>([]);
   const [isProcessingAction, setIsProcessingAction] = useState<boolean>(false);
 
@@ -275,8 +279,14 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       })
       .subscribe();
 
-    // Fast 3-second fallback interval
+    // Adaptive fallback polling: Polls fast (3s) only if an active campaign is running; otherwise polls every 15s (paused if tab is hidden)
+    let pollCount = 0;
     const interval = setInterval(async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      pollCount++;
+      const isRunning = activeCampaignRef.current?.status === 'RUNNING';
+      if (!isRunning && pollCount % 5 !== 0) return;
+
       try {
         const [campRes, devRes] = await Promise.all([
           fetch('/api/marketing/broadcast-campaign/status'),

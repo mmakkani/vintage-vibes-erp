@@ -612,11 +612,13 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       }
     }, 5 * 60 * 1000);
 
-    // SQL-backed presence tracking timer (every 12 seconds)
+    // SQL-backed presence tracking timer (every 30 seconds, paused when tab hidden)
     refreshPresenceRef.current?.();
     const presenceInterval = setInterval(() => {
-      if (!unmounted) refreshPresenceRef.current?.();
-    }, 12000);
+      if (!unmounted && document.visibilityState !== 'hidden') {
+        refreshPresenceRef.current?.();
+      }
+    }, 30000);
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {

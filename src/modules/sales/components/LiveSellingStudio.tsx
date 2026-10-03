@@ -1939,9 +1939,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 </div>
 
                 <div className="grid grid-cols-5 gap-1 text-[9px]">
-                  {(editDestinations || []).map(d => (
+                  {(editDestinations || []).map((d, index) => (
                     <div
-                      key={d.id}
+                      key={d.id || `${d.platform}-${index}`}
                       className={`p-1 rounded border text-center transition-all ${
                         d.enabled
                           ? 'bg-stone-850 border-emerald-500/50 text-emerald-300 font-bold'
@@ -1979,9 +1979,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
               {/* Scrollable Comments List */}
               <div className="flex-1 p-3 overflow-y-auto space-y-2.5">
-                {(comments || []).map(c => (
+                {(comments || []).map((c, cIdx) => (
                   <div
-                    key={c.id}
+                    key={c.id || `cmt-${c.platform}-${c.timestamp || cIdx}`}
                     className={`p-2.5 rounded-xl border transition-all text-xs ${
                       c.isClaimIntent
                         ? 'bg-amber-50/80 border-amber-300 ring-1 ring-amber-200'

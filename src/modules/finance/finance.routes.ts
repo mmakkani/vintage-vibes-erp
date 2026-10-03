@@ -403,19 +403,19 @@ financeRouter.delete('/coa/:id', async (req, res) => {
     }
 
     // Safe to delete: Delete from chart_of_accounts, accounts, and coa_accounts
-    await client.query('BEGIN').catch(() => {});
     if (accountCode) {
-      await client.query('DELETE FROM chart_of_accounts WHERE id::text = $1 OR code = $2', [id, accountCode]).catch(() => {});
-      await client.query('DELETE FROM accounts WHERE account_id::text = $1 OR account_code = $2', [id, accountCode]).catch(() => {});
-      await client.query('DELETE FROM coa_accounts WHERE id::text = $1 OR code = $2', [id, accountCode]).catch(() => {});
-    } else {
-      await client.query('DELETE FROM chart_of_accounts WHERE id::text = $1', [id]).catch(() => {});
-      await client.query('DELETE FROM accounts WHERE account_id::text = $1', [id]).catch(() => {});
-      await client.query('DELETE FROM coa_accounts WHERE id::text = $1', [id]).catch(() => {});
+      await client.query('DELETE FROM chart_of_accounts WHERE code = $1', [accountCode]).catch(() => {});
+      await client.query('DELETE FROM accounts WHERE account_code = $1', [accountCode]).catch(() => {});
+      await client.query('DELETE FROM coa_accounts WHERE code = $1', [accountCode]).catch(() => {});
+    }
+    if (id) {
+      await client.query('DELETE FROM chart_of_accounts WHERE id::text = $1 OR code = $1', [id]).catch(() => {});
+      await client.query('DELETE FROM accounts WHERE account_id::text = $1 OR account_code = $1', [id]).catch(() => {});
+      await client.query('DELETE FROM coa_accounts WHERE id = $1 OR code = $1', [id]).catch(() => {});
     }
     if (accountUuid && accountUuid !== id) {
       await client.query('DELETE FROM chart_of_accounts WHERE id::text = $1', [accountUuid]).catch(() => {});
-      await client.query('DELETE FROM coa_accounts WHERE id::text = $1', [accountUuid]).catch(() => {});
+      await client.query('DELETE FROM coa_accounts WHERE id = $1', [accountUuid]).catch(() => {});
     }
     await client.query('COMMIT').catch(() => {});
 
@@ -448,7 +448,14 @@ financeRouter.patch('/coa/:id/toggle-active', async (req, res) => {
           'SELECT is_active FROM accounts WHERE account_id::text = $1 OR account_code = $1 LIMIT 1',
           [id]
         ).catch(() => ({ rows: [] }));
-        const currentVal = curr.rows[0]?.is_active;
+        let currentVal = curr.rows[0]?.is_active;
+        if (currentVal === undefined) {
+          const coaCurr = await client.query(
+            'SELECT is_active FROM coa_accounts WHERE id = $1 OR code = $1 LIMIT 1',
+            [id]
+          ).catch(() => ({ rows: [] }));
+          currentVal = coaCurr.rows[0]?.is_active;
+        }
         newActiveState = currentVal === undefined ? false : !currentVal;
       }
 

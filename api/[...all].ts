@@ -78,6 +78,7 @@ function verifySignature(expected: string, actual: string): boolean {
 
 const activeSessions = new Map<string, { userId: string; username: string; role: string; expiresAt: number }>();
 const revokedTokens = new Set<string>();
+let cachedMarketingCampaignStatus: { data: any; time: number } | null = null;
 
 function extractAuthToken(req: any): string {
   if (!req) return '';
@@ -1137,18 +1138,31 @@ async function saveWhatsappGatewayConfigToDb(newConfig: typeof whatsappGatewayCo
   if (!client) return;
   try {
     await client.query(`
-      CREATE TABLE IF NOT EXISTS whatsapp_gateway_config (
-        id VARCHAR(64) PRIMARY KEY,
-        config JSONB NOT NULL,
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
       INSERT INTO whatsapp_gateway_config (id, config, updated_at)
       VALUES ('default', $1, NOW())
       ON CONFLICT (id) DO UPDATE
       SET config = $1, updated_at = NOW();
     `, [JSON.stringify(newConfig)]);
-  } catch (err) {
-    console.warn('[Serverless WhatsApp Config Save Notice]:', err);
+  } catch (err: any) {
+    if (err?.code === '42P01') {
+      try {
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS whatsapp_gateway_config (
+            id VARCHAR(64) PRIMARY KEY,
+            config JSONB NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          INSERT INTO whatsapp_gateway_config (id, config, updated_at)
+          VALUES ('default', $1, NOW())
+          ON CONFLICT (id) DO UPDATE
+          SET config = $1, updated_at = NOW();
+        `, [JSON.stringify(newConfig)]);
+      } catch (retryErr) {
+        console.warn('[Serverless WhatsApp Config Save Fallback Notice]:', retryErr);
+      }
+    } else {
+      console.warn('[Serverless WhatsApp Config Save Notice]:', err);
+    }
   } finally {
     try { await client.end(); } catch (_) {}
   }
@@ -1360,19 +1374,30 @@ async function persistSessionToSupabase(session: WhatsAppDeviceSession) {
   try {
     const client = await getPgClient();
     if (!client) return;
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS whatsapp_sessions (
-        user_id VARCHAR(64) PRIMARY KEY,
-        session_data JSONB NOT NULL,
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    await client.query(`
-      INSERT INTO whatsapp_sessions (user_id, session_data, updated_at)
-      VALUES ($1, $2, NOW())
-      ON CONFLICT (user_id) DO UPDATE
-      SET session_data = $2, updated_at = NOW();
-    `, [session.userId, JSON.stringify(session)]);
+    try {
+      await client.query(`
+        INSERT INTO whatsapp_sessions (user_id, session_data, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (user_id) DO UPDATE
+        SET session_data = $2, updated_at = NOW();
+      `, [session.userId, JSON.stringify(session)]);
+    } catch (err: any) {
+      if (err?.code === '42P01') {
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS whatsapp_sessions (
+            user_id VARCHAR(64) PRIMARY KEY,
+            session_data JSONB NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          INSERT INTO whatsapp_sessions (user_id, session_data, updated_at)
+          VALUES ($1, $2, NOW())
+          ON CONFLICT (user_id) DO UPDATE
+          SET session_data = $2, updated_at = NOW();
+        `, [session.userId, JSON.stringify(session)]);
+      } else {
+        throw err;
+      }
+    }
     await client.end().catch(() => {});
   } catch (err: any) {
     console.warn('[Supabase WhatsApp Session Save Notice]:', err?.message);
@@ -4102,26 +4127,42 @@ RULES FOR YOUR RESPONSE:
       const logClient = await getPgClient();
       if (logClient) {
         try {
-          await logClient.query(`
-            CREATE TABLE IF NOT EXISTS marketing_claim_logs (
-              id VARCHAR(64) PRIMARY KEY,
-              customer_name VARCHAR(255),
-              platform VARCHAR(64),
-              raw_comment TEXT,
-              action_taken TEXT,
-              status VARCHAR(32),
-              created_at TIMESTAMPTZ DEFAULT NOW()
-            );
-            INSERT INTO marketing_claim_logs (id, customer_name, platform, raw_comment, action_taken, status, created_at)
-            VALUES ($1, $2, 'WHATSAPP_AI_AGENT', $3, $4, $5, NOW())
-            ON CONFLICT (id) DO NOTHING;
-          `, [
-            `wapp-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            `WhatsApp +${senderPhone}`,
-            userText.slice(0, 500),
-            aiResponseText.slice(0, 500),
-            sendResult.success ? 'AI_REPLIED' : 'FAILED_SEND'
-          ]);
+          try {
+            await logClient.query(`
+              INSERT INTO marketing_claim_logs (id, customer_name, platform, raw_comment, action_taken, status, created_at)
+              VALUES ($1, $2, 'WHATSAPP_AI_AGENT', $3, $4, $5, NOW())
+              ON CONFLICT (id) DO NOTHING;
+            `, [
+              `wapp-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              `WhatsApp +${senderPhone}`,
+              userText.slice(0, 500),
+              aiResponseText.slice(0, 500),
+              sendResult.success ? 'AI_REPLIED' : 'FAILED_SEND'
+            ]);
+          } catch (insertErr: any) {
+            if (insertErr?.code === '42P01') {
+              await logClient.query(`
+                CREATE TABLE IF NOT EXISTS marketing_claim_logs (
+                  id VARCHAR(64) PRIMARY KEY,
+                  customer_name VARCHAR(255),
+                  platform VARCHAR(64),
+                  raw_comment TEXT,
+                  action_taken TEXT,
+                  status VARCHAR(32),
+                  created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                INSERT INTO marketing_claim_logs (id, customer_name, platform, raw_comment, action_taken, status, created_at)
+                VALUES ($1, $2, 'WHATSAPP_AI_AGENT', $3, $4, $5, NOW())
+                ON CONFLICT (id) DO NOTHING;
+              `, [
+                `wapp-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                `WhatsApp +${senderPhone}`,
+                userText.slice(0, 500),
+                aiResponseText.slice(0, 500),
+                sendResult.success ? 'AI_REPLIED' : 'FAILED_SEND'
+              ]);
+            }
+          }
         } catch (_) {
         } finally {
           try { await logClient.end(); } catch (_) {}
@@ -6329,15 +6370,23 @@ ${courierLines}
           } catch (accInsErr: any) {
             try {
               const insCoa = await client.query(`
-                INSERT INTO public.chart_of_accounts (code, name, type, classification, is_active, is_transactional, tier_level)
-                VALUES ($1, $2, $3, $3, $4, $5, $6)
+                INSERT INTO public.chart_of_accounts (code, name, type, classification, is_deleted, tier_level)
+                VALUES ($1, $2, $3, $3, NOT $4, $5)
                 ON CONFLICT (code) DO UPDATE
                 SET name = EXCLUDED.name,
                     type = EXCLUDED.type,
-                    is_active = EXCLUDED.is_active
+                    is_deleted = EXCLUDED.is_deleted
                 RETURNING *
-              `, [code, name, normType, isActive, isTransactional, tierLevel]);
+              `, [code, name, normType, isActive, tierLevel]);
               r = insCoa.rows[0];
+
+              await client.query(`
+                INSERT INTO public.coa_accounts (id, code, name, type, is_active, tier_level)
+                VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5)
+                ON CONFLICT (code) DO UPDATE
+                SET name = EXCLUDED.name,
+                    is_active = EXCLUDED.is_active;
+              `, [code, name, normType, isActive, tierLevel]).catch(() => {});
             } catch (coaInsErr: any) {
               console.warn('[Serverless COA] Insert into accounts & chart_of_accounts notice:', accInsErr?.message, coaInsErr?.message);
               r = { account_id: code, account_code: code, account_name: name, is_active: isActive, is_transactional: isTransactional, account_level: tierLevel };
@@ -6619,7 +6668,14 @@ ${courierLines}
                 'SELECT is_active FROM accounts WHERE account_id::text = $1 OR account_code = $1 LIMIT 1',
                 [targetAccId]
               ).catch(() => ({ rows: [] }));
-              const currentVal = curr.rows[0]?.is_active;
+              let currentVal = curr.rows[0]?.is_active;
+              if (currentVal === undefined) {
+                const coaCurr = await client.query(
+                  'SELECT is_active FROM coa_accounts WHERE id = $1 OR code = $1 LIMIT 1',
+                  [targetAccId]
+                ).catch(() => ({ rows: [] }));
+                currentVal = coaCurr.rows[0]?.is_active;
+              }
               newActiveState = currentVal === undefined ? false : !currentVal;
             }
 
@@ -10742,11 +10798,13 @@ ${courierLines}
                     city = EXCLUDED.city,
                     country = EXCLUDED.country;
               `, [safeSessionId, userId || null, safeUsername, displayName || safeUsername, role || 'OPERATOR', deviceType || 'Web Client', ip, loc.city, loc.country]);
-              await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '45 seconds';");
+              if (Math.random() < 0.05) {
+                await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '90 seconds';").catch(() => {});
+              }
               const activeRes = await client.query(`
                 SELECT session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat, city, country
                 FROM user_presences
-                WHERE last_heartbeat > NOW() - INTERVAL '45 seconds'
+                WHERE last_heartbeat > NOW() - INTERVAL '90 seconds'
                 ORDER BY last_heartbeat DESC;
               `);
               if (typeof client.release === 'function') client.release();
@@ -10803,11 +10861,13 @@ ${courierLines}
         try { client = await borrowClient(); } catch (_) { client = await getPgClient(); }
         if (client) {
           try {
-            await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '45 seconds';");
+            if (Math.random() < 0.05) {
+              await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '90 seconds';").catch(() => {});
+            }
             const activeRes = await client.query(`
               SELECT session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat, city, country
               FROM user_presences
-              WHERE last_heartbeat > NOW() - INTERVAL '45 seconds'
+              WHERE last_heartbeat > NOW() - INTERVAL '90 seconds'
               ORDER BY last_heartbeat DESC;
             `);
             if (typeof client.release === 'function') client.release();
@@ -11701,6 +11761,11 @@ ${courierLines}
       if (pathname.includes('/marketing/broadcast-campaign')) {
         // 7a. Get Campaign Status
         if (pathname.endsWith('/status')) {
+          const now = Date.now();
+          if (cachedMarketingCampaignStatus && now - cachedMarketingCampaignStatus.time < 3000) {
+            if (client) { try { await client.end(); } catch (_) {} }
+            return res.status(200).json(cachedMarketingCampaignStatus.data);
+          }
           if (client) {
             try {
               const resRows = await client.query('SELECT * FROM marketing_broadcast_campaigns ORDER BY started_at DESC LIMIT 20;');
@@ -11727,13 +11792,15 @@ ${courierLines}
               }));
               const current = campaigns.find(c => c.status === 'RUNNING' || c.status === 'PAUSED') || null;
               const history = campaigns.filter(c => c.status !== 'RUNNING' && c.status !== 'PAUSED');
-              return res.status(200).json({
+              const payload = {
                 current,
                 history,
                 campaign: current,
                 isBroadcasting: Boolean(current && current.status === 'RUNNING'),
                 status: current?.status || 'IDLE'
-              });
+              };
+              cachedMarketingCampaignStatus = { data: payload, time: now };
+              return res.status(200).json(payload);
             } catch (err) {
               try { await client.end(); } catch (_) {}
             }
@@ -11828,6 +11895,7 @@ ${courierLines}
             items
           };
 
+          cachedMarketingCampaignStatus = null;
           if (client) {
             try {
               // Supercede any existing running campaign
@@ -12038,6 +12106,7 @@ ${courierLines}
 
         // 7d. Pause Campaign
         if (pathname.endsWith('/pause') && method === 'POST') {
+          cachedMarketingCampaignStatus = null;
           if (client) {
             try {
               await client.query("UPDATE marketing_broadcast_campaigns SET status = 'PAUSED' WHERE status = 'RUNNING';");
@@ -12051,6 +12120,7 @@ ${courierLines}
 
         // 7e. Resume Campaign
         if (pathname.endsWith('/resume') && method === 'POST') {
+          cachedMarketingCampaignStatus = null;
           if (client) {
             try {
               await client.query("UPDATE marketing_broadcast_campaigns SET status = 'RUNNING' WHERE status = 'PAUSED';");
@@ -12064,6 +12134,7 @@ ${courierLines}
 
         // 7f. Abort Campaign
         if (pathname.endsWith('/abort') && method === 'POST') {
+          cachedMarketingCampaignStatus = null;
           if (client) {
             try {
               await client.query("UPDATE marketing_broadcast_campaigns SET status = 'ABORTED', completed_at = NOW() WHERE status IN ('RUNNING', 'PAUSED');");

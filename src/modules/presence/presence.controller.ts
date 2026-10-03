@@ -33,14 +33,16 @@ export const PresenceController = {
           ip
         ]);
 
-        // Clean up stale sessions (> 45s)
-        await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '45 seconds';").catch(() => {});
+        // Clean up stale sessions (> 90s) - Throttled: only 5% of heartbeats trigger cleanup to prevent lock contention
+        if (Math.random() < 0.05) {
+          await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '90 seconds';").catch(() => {});
+        }
 
         // Fetch active online users
         const activeRes = await client.query(`
           SELECT session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat
           FROM user_presences
-          WHERE last_heartbeat > NOW() - INTERVAL '45 seconds'
+          WHERE last_heartbeat > NOW() - INTERVAL '90 seconds'
           ORDER BY last_heartbeat DESC;
         `);
 
@@ -94,11 +96,13 @@ export const PresenceController = {
     const client = await getPgClient();
     if (client) {
       try {
-        await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '45 seconds';").catch(() => {});
+        if (Math.random() < 0.05) {
+          await client.query("DELETE FROM user_presences WHERE last_heartbeat < NOW() - INTERVAL '90 seconds';").catch(() => {});
+        }
         const activeRes = await client.query(`
           SELECT session_id, user_id, username, display_name, role, device_type, ip_address, last_heartbeat
           FROM user_presences
-          WHERE last_heartbeat > NOW() - INTERVAL '45 seconds'
+          WHERE last_heartbeat > NOW() - INTERVAL '90 seconds'
           ORDER BY last_heartbeat DESC;
         `);
         return res.status(200).json({
