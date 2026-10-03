@@ -4,6 +4,7 @@ import { supabase } from '../../supabaseClient.ts';
 import { PartiesController } from './parties.controller.ts';
 import { visitingCardsRouter } from './visitingCards.routes.ts';
 import { PartyType } from '../../types/common.types.ts';
+import { withDb } from '../../db/pgPool.ts';
 
 export const partiesRouter = Router();
 partiesRouter.use('/visiting-cards', visitingCardsRouter);
@@ -29,59 +30,58 @@ const getDbClient = async () => {
 // -------------------------------------------------------------
 partiesRouter.get('/', async (req, res) => {
   const { type } = req.query as { type?: string };
-  let client: Client | null = null;
 
   try {
-    client = await getDbClient();
-
-    let query = 'SELECT * FROM parties';
-    const params: any[] = [];
-    if (type && type !== 'ALL') {
-      query += ' WHERE UPPER(type) = UPPER($1)';
-      params.push(type);
-    }
-    query += ' ORDER BY name ASC;';
-
-    const partiesRes = await client.query(query, params);
-    const liveBalancesRes = await client.query('SELECT party_id, account_id, current_balance FROM view_coa_live_balances;').catch(() => ({ rows: [] }));
-    const khataCountsRes = await client.query('SELECT party_id, COUNT(*) as count FROM party_khata_logs GROUP BY party_id;').catch(() => ({ rows: [] }));
-    const purCountsRes = await client.query('SELECT supplier_id as party_id, COUNT(*) as count FROM purchase_invoices GROUP BY supplier_id;').catch(() => ({ rows: [] }));
-    const salesCountsRes = await client.query('SELECT client_id as party_id, COUNT(*) as count FROM sales_invoices GROUP BY client_id;').catch(() => ({ rows: [] }));
-    const glCountsRes = await client.query('SELECT party_id, COUNT(*) as count FROM general_ledger WHERE party_id IS NOT NULL GROUP BY party_id;').catch(() => ({ rows: [] }));
-
-    if (partiesRes.rows) {
-      if (partiesRes.rows.length === 0) {
-        return res.json([]);
+    const mapped = await withDb(async (client) => {
+      let typeClause = '';
+      const params: any[] = [];
+      if (type && type !== 'ALL') {
+        typeClause = 'WHERE UPPER(p.type) = UPPER($1)';
+        params.push(type);
       }
-      const liveBalancesMap = new Map<string, number>();
-      (liveBalancesRes.rows || []).forEach((row: any) => {
-        if (row.party_id) liveBalancesMap.set(String(row.party_id), Number(row.current_balance || 0));
-        if (row.account_id) liveBalancesMap.set(String(row.account_id), Number(row.current_balance || 0));
-      });
 
-      const khataMap = new Map<string, number>();
-      (khataCountsRes.rows || []).forEach((r: any) => khataMap.set(String(r.party_id), Number(r.count || 0)));
+      const unifiedQuery = `
+        WITH khata_counts AS (
+          SELECT party_id, COUNT(*) as count FROM party_khata_logs GROUP BY party_id
+        ),
+        pur_counts AS (
+          SELECT supplier_id as party_id, COUNT(*) as count FROM purchase_invoices GROUP BY supplier_id
+        ),
+        sales_counts AS (
+          SELECT client_id as party_id, COUNT(*) as count FROM sales_invoices GROUP BY client_id
+        ),
+        gl_counts AS (
+          SELECT party_id, COUNT(*) as count FROM general_ledger WHERE party_id IS NOT NULL GROUP BY party_id
+        )
+        SELECT 
+          p.*,
+          COALESCE(b1.current_balance, b2.current_balance, p.current_balance, 0) as live_bal,
+          COALESCE(k.count, 0)::int as khata_count,
+          COALESCE(pur.count, 0)::int as pur_count,
+          COALESCE(s.count, 0)::int as sales_count,
+          COALESCE(gl.count, 0)::int as gl_count
+        FROM parties p
+        ${typeClause}
+        LEFT JOIN view_coa_live_balances b1 ON b1.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND b1.party_id::text = p.party_id::text)
+        LEFT JOIN view_coa_live_balances b2 ON p.coa_account_id IS NOT NULL AND b2.account_id::text = p.coa_account_id::text
+        LEFT JOIN khata_counts k ON k.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND k.party_id::text = p.party_id::text)
+        LEFT JOIN pur_counts pur ON pur.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND pur.party_id::text = p.party_id::text)
+        LEFT JOIN sales_counts s ON s.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND s.party_id::text = p.party_id::text)
+        LEFT JOIN gl_counts gl ON gl.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND gl.party_id::text = p.party_id::text)
+        ORDER BY p.name ASC;
+      `;
 
-      const purMap = new Map<string, number>();
-      (purCountsRes.rows || []).forEach((r: any) => purMap.set(String(r.party_id), Number(r.count || 0)));
+      const partiesRes = await client.query(unifiedQuery, params);
+      if (!partiesRes.rows || partiesRes.rows.length === 0) {
+        return [];
+      }
 
-      const salesMap = new Map<string, number>();
-      (salesCountsRes.rows || []).forEach((r: any) => salesMap.set(String(r.party_id), Number(r.count || 0)));
-
-      const glMap = new Map<string, number>();
-      (glCountsRes.rows || []).forEach((r: any) => glMap.set(String(r.party_id), Number(r.count || 0)));
-
-      const mapped = partiesRes.rows.map((row: any) => {
-        const liveBal = liveBalancesMap.has(String(row.id))
-          ? liveBalancesMap.get(String(row.id))!
-          : (row.coa_account_id && liveBalancesMap.has(String(row.coa_account_id))
-            ? liveBalancesMap.get(String(row.coa_account_id))!
-            : Number(row.current_balance ?? 0));
-
-        const khataCount = khataMap.get(String(row.id)) || 0;
-        const purCount = purMap.get(String(row.id)) || 0;
-        const salesCount = salesMap.get(String(row.id)) || 0;
-        const glCount = glMap.get(String(row.id)) || 0;
+      return partiesRes.rows.map((row: any) => {
+        const liveBal = Number(row.live_bal ?? row.current_balance ?? 0);
+        const khataCount = Number(row.khata_count || 0);
+        const purCount = Number(row.pur_count || 0);
+        const salesCount = Number(row.sales_count || 0);
+        const glCount = Number(row.gl_count || 0);
         const totalEntries = khataCount + purCount + salesCount + glCount;
         const hasEntries = totalEntries > 0 || Math.abs(liveBal) > 0.001;
 
@@ -129,13 +129,11 @@ partiesRouter.get('/', async (req, res) => {
           createdAt: row.created_at || new Date().toISOString()
         };
       });
+    });
 
-      return res.json(mapped);
-    }
+    return res.json(mapped);
   } catch (err: any) {
     console.error('Error querying PostgreSQL parties in /api/parties:', err.message);
-  } finally {
-    if (client) await client.end().catch(() => {});
   }
 
   // Fallback to Supabase client
