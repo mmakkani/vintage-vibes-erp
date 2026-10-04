@@ -697,10 +697,13 @@ export class PurchaseService {
       // 0. Primary cascade deletion via FinanceService
       await FinanceService.cascadeDeleteVouchersForDocument(invoiceNo, { docType: 'PURCHASE' });
 
-      // 1. Fetch matching vouchers from financial_vouchers
+      // 1. Fetch matching vouchers from financial_vouchers using indexed database-level filter
+      const target = invoiceNo.toUpperCase();
+      const targetClean = cleanInvNo.toUpperCase();
       const { data: fvList } = await supabase
         .from('financial_vouchers')
-        .select('id, voucher_no, reference, reference_no, narration');
+        .select('id, voucher_no, reference, reference_no, narration')
+        .or(`reference.ilike.%${cleanInvNo}%,reference_no.ilike.%${cleanInvNo}%,narration.ilike.%${cleanInvNo}%,voucher_no.ilike.%${cleanInvNo}%`);
 
       const matchedVouchers: { id: string; voucher_no: string }[] = [];
       if (fvList && fvList.length > 0) {
@@ -708,8 +711,6 @@ export class PurchaseService {
           const vRef = String(v.reference || v.reference_no || '').toUpperCase();
           const vNo = String(v.voucher_no || '').toUpperCase();
           const vNarr = String(v.narration || '').toUpperCase();
-          const target = invoiceNo.toUpperCase();
-          const targetClean = cleanInvNo.toUpperCase();
 
           if (
             vRef.includes(target) ||
@@ -724,7 +725,7 @@ export class PurchaseService {
         }
       }
 
-      // 2. Cascade delete journal entries FIRST, then voucher entries and ledgers for each matched voucher
+      // 2. Cascade delete journal entries FIRST, then parallelize voucher entries and ledgers for each matched voucher
       for (const mv of matchedVouchers) {
         const cleanId = mv.id;
         const vNo = mv.voucher_no;
@@ -734,18 +735,12 @@ export class PurchaseService {
           await supabase.from('journal_entries').delete().eq('voucher_id', cleanId);
         } catch (_) {}
 
-        try {
-          await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
-        } catch (_) {}
-        try {
-          await supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
-        } catch (_) {}
-        try {
-          await supabase.from('financial_vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
-        } catch (_) {}
-        try {
-          await supabase.from('vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
-        } catch (_) {}
+        await Promise.allSettled([
+          supabase.from('voucher_entries').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`),
+          supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`),
+          supabase.from('financial_vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`),
+          supabase.from('vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`)
+        ]);
       }
 
       // 4. Delete party_khata_logs for this invoice
@@ -1310,44 +1305,50 @@ export class PurchaseService {
     PurchaseService._convertingInvoiceIds.add(cleanId);
 
     try {
-      // 1. Fetch invoice and its line items
-      const { data: invRows, error: invError } = await supabase
-        .from('purchase_invoices')
-        .select('*')
-        .eq('id', cleanId)
-        .limit(1);
+      // 1. Fetch invoice and its line items in parallel
+      const [invRes, itemRes] = await Promise.all([
+        supabase
+          .from('purchase_invoices')
+          .select('*')
+          .eq('id', cleanId)
+          .limit(1),
+        supabase
+          .from('purchase_invoice_items')
+          .select('*')
+          .eq('invoice_id', cleanId)
+      ]);
+
+      const invRows = invRes.data;
+      const invError = invRes.error;
 
       if (invError || !invRows || invRows.length === 0) {
         throw new Error(`Invoice with ID ${cleanId} not found`);
       }
 
-    const invoice = invRows[0];
-    const invoiceNo = invoice.invoice_no || `PUR-${Date.now().toString().slice(-6)}`;
+      const invoice = invRows[0];
+      const invoiceNo = invoice.invoice_no || `PUR-${Date.now().toString().slice(-6)}`;
 
-    // Guardrail 1: Check if invoice is already marked converted in DB
-    if (invoice.converted_to_inward) {
-      throw new Error(`Inward Gate Pass has already been generated for invoice "${invoiceNo}". Duplicate generation is blocked.`);
-    }
+      // Guardrail 1: Check if invoice is already marked converted in DB
+      if (invoice.converted_to_inward) {
+        throw new Error(`Inward Gate Pass has already been generated for invoice "${invoiceNo}". Duplicate generation is blocked.`);
+      }
 
-    // Guardrail 2: Check if inward passes or sorting bales already exist for this invoice in DB
-    const { data: existingPasses } = await supabase
-      .from('inward_gate_passes')
-      .select('id, pass_no, gate_pass_no')
-      .or(`purchase_invoice_id.eq.${invoice.id},purchase_invoice_no.eq.${invoiceNo}`);
+      // Guardrail 2: Check if inward passes or sorting bales already exist for this invoice in DB
+      const { data: existingPasses } = await supabase
+        .from('inward_gate_passes')
+        .select('id, pass_no, gate_pass_no')
+        .or(`purchase_invoice_id.eq.${invoice.id},purchase_invoice_no.eq.${invoiceNo}`);
 
-    if (existingPasses && existingPasses.length > 0) {
-      // Sync flag in DB so UI remains locked
-      await supabase
-        .from('purchase_invoices')
-        .update({ converted_to_inward: true, status: 'POSTED' })
-        .eq('id', invoice.id);
-      throw new Error(`Inward Gate Pass (${existingPasses.length} bale(s)) already exists for invoice "${invoiceNo}". Duplicate generation is blocked.`);
-    }
+      if (existingPasses && existingPasses.length > 0) {
+        // Sync flag in DB so UI remains locked
+        await supabase
+          .from('purchase_invoices')
+          .update({ converted_to_inward: true, status: 'POSTED' })
+          .eq('id', invoice.id);
+        throw new Error(`Inward Gate Pass (${existingPasses.length} bale(s)) already exists for invoice "${invoiceNo}". Duplicate generation is blocked.`);
+      }
 
-    const { data: itemRows } = await supabase
-      .from('purchase_invoice_items')
-      .select('*')
-      .eq('invoice_id', invoiceId);
+      const itemRows = itemRes.data || [];
 
     const currency = (invoice.currency || 'AED').toUpperCase();
     const exchangeRate = Number(invoice.exchange_rate) || (currency === 'USD' ? 3.6725 : 1);
@@ -1492,12 +1493,23 @@ export class PurchaseService {
     // 4. POST TO COA (STAGE 1 COMMERCIAL INVOICE & STAGE 2 INWARD GATE PASS TRANSFER)
     let createdInwardVoucher: any = null;
     try {
-      // Step 4A: Check if Stage 1 Commercial Invoice voucher exists (Dr 1140-01 Raw Material / Cr Supplier)
-      const { data: existingPinv } = await supabase
-        .from('financial_vouchers')
-        .select('id, voucher_no')
-        .eq('reference', `PINV-${invoiceNo}`)
-        .limit(1);
+      // Step 4A & 4B: Parallel check for Stage 1 (Commercial Inv) and Stage 2 (Inward Transfer) vouchers
+      const cleanInvNo = invoiceNo.replace(/[^a-zA-Z0-9]/g, '');
+      const [existingPinvRes, existingInwTransferRes] = await Promise.all([
+        supabase
+          .from('financial_vouchers')
+          .select('id, voucher_no')
+          .eq('reference', `PINV-${invoiceNo}`)
+          .limit(1),
+        supabase
+          .from('financial_vouchers')
+          .select('id, voucher_no')
+          .or(`reference.eq.INWARD-${invoiceNo},reference.eq.INW-${invoiceNo},voucher_no.ilike.JV-INW-TRF-%${cleanInvNo}%,voucher_no.ilike.JV-INW-%${cleanInvNo}%`)
+          .limit(1)
+      ]);
+
+      const existingPinv = existingPinvRes.data;
+      const existingInwTransfer = existingInwTransferRes.data;
 
       if (!existingPinv || existingPinv.length === 0) {
         // If Stage 1 was never posted, auto-post it now so Raw Material Unsorted and Supplier AP are recognized
@@ -1507,14 +1519,6 @@ export class PurchaseService {
           console.warn('[convertToInwardGatePass] Auto-posting Stage 1 commercial invoice notice:', stage1Err);
         }
       }
-
-      // Step 4B: Check if Stage 2 Inward Transfer voucher already exists (Dr 1150-01 WIP / Cr 1140-01 Raw Material)
-      const cleanInvNo = invoiceNo.replace(/[^a-zA-Z0-9]/g, '');
-      const { data: existingInwTransfer } = await supabase
-        .from('financial_vouchers')
-        .select('id, voucher_no')
-        .or(`reference.eq.INWARD-${invoiceNo},reference.eq.INW-${invoiceNo},voucher_no.ilike.JV-INW-TRF-%${cleanInvNo}%,voucher_no.ilike.JV-INW-%${cleanInvNo}%`)
-        .limit(1);
 
       if (existingInwTransfer && existingInwTransfer.length > 0) {
         console.log(`Inward transfer voucher already exists for ${invoiceNo}: ${existingInwTransfer[0].voucher_no}. Skipping duplicate voucher creation.`);

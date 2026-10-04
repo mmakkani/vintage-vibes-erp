@@ -137,6 +137,20 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
 
   const isFetchingRef = useRef(false);
   const queuedForceRef = useRef(false);
+  const debouncedRefreshAllRef = useRef<any>(null);
+
+  const debouncedRefreshAll = useCallback(() => {
+    if (debouncedRefreshAllRef.current) clearTimeout(debouncedRefreshAllRef.current);
+    debouncedRefreshAllRef.current = setTimeout(() => {
+      onRefreshAll();
+    }, 4000);
+  }, [onRefreshAll]);
+
+  useEffect(() => {
+    return () => {
+      if (debouncedRefreshAllRef.current) clearTimeout(debouncedRefreshAllRef.current);
+    };
+  }, []);
 
   const fetchPurchaseData = useCallback(async (force = false) => {
     if (isFetchingRef.current) {
@@ -146,10 +160,13 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
     isFetchingRef.current = true;
     setIsLoading(true);
     try {
+      const shouldFetchPieces = (activeSubTab === 'inventory' || activeSubTab === 'sorting_terminal');
       const [balesRes, invRes, piecesRes, partiesRes, presetsRes] = await Promise.all([
         PurchaseService.getInwardGatePasses(force).catch((err) => { console.warn('Gate pass sync warning:', err); return []; }),
         PurchaseService.getPurchaseInvoices(force).catch((err) => { console.warn('Purchase invoice sync warning:', err); return []; }),
-        PurchaseService.getInventoryPieces(1000, force).catch((err) => { console.warn('Inventory pieces sync warning:', err); return []; }),
+        shouldFetchPieces
+          ? PurchaseService.getInventoryPieces(1000, force).catch((err) => { console.warn('Inventory pieces sync warning:', err); return []; })
+          : Promise.resolve(null),
         PartiesService.getParties().catch((err) => { console.warn('Parties sync warning:', err); return []; }),
         PurchaseService.getBalePresets().catch((err) => { console.warn('Presets sync warning:', err); return []; })
       ]);
@@ -169,25 +186,27 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
       if (Array.isArray(invRes)) {
         setInvoices(invRes);
       }
-      let livePieces = Array.isArray(piecesRes) ? piecesRes : [];
-      const invoiceCount = Array.isArray(invRes) ? invRes.length : 0;
-      const baleCount = Array.isArray(balesRes) ? balesRes.length : 0;
-      if (invoiceCount === 0 && baleCount === 0 && livePieces.length > 0) {
-        PurchaseService.purgeOrphanedInventory().catch(() => ({ deletedCount: 0 }));
-        livePieces = [];
-      } else if (invoiceCount > 0 || baleCount > 0) {
-        const validInvoiceIds = new Set((invRes || []).map((i: any) => String(i.id)));
-        const validBaleIds = new Set((balesRes || []).map((b: any) => String(b.id)));
-        const cleanPieces = livePieces.filter(p => {
-          const gId = String(p.gatePassId || '');
-          return gId && (validBaleIds.has(gId) || validInvoiceIds.has(gId));
-        });
-        if (cleanPieces.length !== livePieces.length) {
+      if (piecesRes !== null) {
+        let livePieces = Array.isArray(piecesRes) ? piecesRes : [];
+        const invoiceCount = Array.isArray(invRes) ? invRes.length : 0;
+        const baleCount = Array.isArray(balesRes) ? balesRes.length : 0;
+        if (invoiceCount === 0 && baleCount === 0 && livePieces.length > 0) {
           PurchaseService.purgeOrphanedInventory().catch(() => ({ deletedCount: 0 }));
-          livePieces = cleanPieces;
+          livePieces = [];
+        } else if (invoiceCount > 0 || baleCount > 0) {
+          const validInvoiceIds = new Set((invRes || []).map((i: any) => String(i.id)));
+          const validBaleIds = new Set((balesRes || []).map((b: any) => String(b.id)));
+          const cleanPieces = livePieces.filter(p => {
+            const gId = String(p.gatePassId || '');
+            return gId && (validBaleIds.has(gId) || validInvoiceIds.has(gId));
+          });
+          if (cleanPieces.length !== livePieces.length) {
+            PurchaseService.purgeOrphanedInventory().catch(() => ({ deletedCount: 0 }));
+            livePieces = cleanPieces;
+          }
         }
+        setInventoryPieces(livePieces);
       }
-      setInventoryPieces(livePieces);
 
       if (Array.isArray(partiesRes)) {
         setParties(partiesRes);
@@ -218,10 +237,10 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         fetchPurchaseData(true);
       }
     }
-  }, []);
+  }, [activeSubTab]);
 
   useEffect(() => {
-    fetchPurchaseData(true);
+    fetchPurchaseData(false);
   }, [fetchPurchaseData, syncVersion]);
 
   // Handle open sorting terminal modal
@@ -243,7 +262,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
       const next = exists ? prev.map(p => p.barcode === piece.barcode ? piece : p) : [piece, ...prev];
       return next;
     });
-    onRefreshAll();
+    debouncedRefreshAll();
   };
 
   // Handle piece deleted
@@ -256,7 +275,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
       const next = prev.filter(p => p.id !== pieceId);
       return next;
     });
-    onRefreshAll();
+    debouncedRefreshAll();
   };
 
   // Handle piece updated (e.g. Restocked from Laundry WIP to active In Stock)

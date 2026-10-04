@@ -324,16 +324,17 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
     try {
       const res = await fetch('/api/setup/whatsapp-report');
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data.reportText) {
+      const text = data.reportText || data.messageText || (typeof data.data === 'string' ? data.data : '') || '';
+      if (res.ok && text) {
         return {
           success: true,
-          reportText: data.reportText,
+          reportText: text,
           metrics: data.metrics
         };
       }
       return {
         success: false,
-        reportText: data.reportText || '',
+        reportText: text || '',
         error: data.error || 'Failed to fetch daily digest report'
       };
     } catch (err: any) {

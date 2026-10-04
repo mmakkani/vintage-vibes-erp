@@ -1081,7 +1081,23 @@ setupRouter.post(['/sizes/:id/unpost', '/size-master/:id/unpost'], (req, res) =>
 });
 
 setupRouter.get('/whatsapp-report', (req, res) => {
-  return res.json(SetupController.getWhatsAppDailyReport());
+  try {
+    const report = SetupController.getWhatsAppDailyReport();
+    return res.json({
+      success: true,
+      reportText: report?.messageText || '',
+      messageText: report?.messageText || '',
+      waDeepLink: report?.waDeepLink || '',
+      data: report
+    });
+  } catch (err: any) {
+    return res.status(200).json({
+      success: false,
+      error: err?.message || 'Failed to generate WhatsApp report',
+      reportText: '',
+      messageText: ''
+    });
+  }
 });
 
 // WhatsApp Dual-Engine Architecture Config (Baileys vs Meta Cloud API)
