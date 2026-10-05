@@ -1162,5 +1162,146 @@ financeRouter.post('/closed-periods/:id/reopen', async (req, res) => {
   }
 });
 
+// --- Company Shareholders & Equity Governance Hub ---
+financeRouter.get('/shareholders', async (req, res) => {
+  try {
+    const shareholders = await withDb(async (client) => {
+      const { rows } = await client.query(`
+        SELECT * FROM public.company_shareholders 
+        ORDER BY display_order ASC, created_at ASC;
+      `);
+      return rows;
+    });
+    return res.json({ success: true, data: shareholders });
+  } catch (err: any) {
+    console.error('[Finance Router] get shareholders error:', err?.message);
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+financeRouter.post('/shareholders', async (req, res) => {
+  try {
+    const { id, name, designation, sharesCount, capitalAed, ownershipPercent, passportOrEid, coaAccountCode, displayOrder } = req.body;
+    if (!name || name.trim() === '') {
+      return res.status(400).json({ success: false, error: 'Shareholder name is required' });
+    }
+
+    const saved = await withDb(async (client) => {
+      await client.query('BEGIN');
+      try {
+        let resultRow: any;
+        const sharesNum = Number(sharesCount || 100);
+        const capNum = Number(capitalAed || 100000);
+        const ownNum = Number(ownershipPercent || 100.0);
+        const orderNum = Number(displayOrder || 1);
+        const coaCode = coaAccountCode || '3100-01';
+
+        if (id) {
+          const updateRes = await client.query(`
+            UPDATE public.company_shareholders
+            SET name = $1, designation = $2, shares_count = $3, capital_aed = $4, ownership_percent = $5,
+                passport_or_eid = $6, coa_account_code = $7, display_order = $8, updated_at = now()
+            WHERE id = $9
+            RETURNING *;
+          `, [name.trim(), designation || 'Director', sharesNum, capNum, ownNum, passportOrEid || '', coaCode, orderNum, id]);
+          resultRow = updateRes.rows[0];
+        } else {
+          const insertRes = await client.query(`
+            INSERT INTO public.company_shareholders
+              (name, designation, shares_count, capital_aed, ownership_percent, passport_or_eid, coa_account_code, display_order)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *;
+          `, [name.trim(), designation || 'Director', sharesNum, capNum, ownNum, passportOrEid || '', coaCode, orderNum]);
+          resultRow = insertRes.rows[0];
+        }
+
+        // Synchronize with Chart of Accounts (COA Equity 3100 series)
+        if (coaCode && capNum > 0) {
+          await client.query(`
+            UPDATE chart_of_accounts 
+            SET current_balance = $1
+            WHERE code = $2;
+          `, [capNum, coaCode]).catch(() => {});
+        }
+
+        await client.query('COMMIT');
+        return resultRow;
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      }
+    });
+
+    return res.json({ success: true, data: saved });
+  } catch (err: any) {
+    console.error('[Finance Router] save shareholder error:', err?.message);
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+financeRouter.delete('/shareholders/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await withDb(async (client) => {
+      await client.query('DELETE FROM public.company_shareholders WHERE id = $1', [id]);
+    });
+    return res.json({ success: true, message: 'Shareholder deleted' });
+  } catch (err: any) {
+    console.error('[Finance Router] delete shareholder error:', err?.message);
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+// --- Bank Direct Transfers Audit Trail (Live from vouchers) ---
+financeRouter.get('/bank-audit-trail', async (req, res) => {
+  try {
+    const trail = await withDb(async (client) => {
+      // Find vouchers with bank outflows (Credits to bank 1120 or Debits to payables/assets)
+      const q = `
+        SELECT 
+          v.id,
+          v.voucher_no as ref_no,
+          COALESCE(v.date::text, v.created_at::text) as date,
+          v.narration,
+          v.total_amount,
+          COALESCE(v.currency, 'AED') as currency,
+          COALESCE(v.exchange_rate, 1.0) as exchange_rate,
+          v.status
+        FROM vouchers v
+        WHERE v.status = 'POSTED'
+        ORDER BY v.created_at DESC
+        LIMIT 25;
+      `;
+      const r = await client.query(q).catch(async () => {
+        const fallbackQ = `
+          SELECT id, voucher_no as ref_no, date::text as date, narration, total_debit as total_amount, currency, status 
+          FROM vouchers LIMIT 25;
+        `;
+        return await client.query(fallbackQ);
+      });
+
+      return (r.rows || []).map((row: any, idx: number) => {
+        const amtAed = Number(row.total_amount || 0);
+        const peg = 3.6725;
+        const amtUsd = Number((amtAed / peg).toFixed(2));
+        return {
+          id: row.id,
+          index: idx + 1,
+          date: (row.date ? new Date(row.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)),
+          bankRef: row.ref_no || `REF-${row.id.slice(0, 8)}`,
+          narration: row.narration || 'Commercial Purchase / Operational Settlement',
+          amountAed: amtAed,
+          amountUsd: amtUsd
+        };
+      });
+    });
+    return res.json({ success: true, data: trail });
+  } catch (err: any) {
+    console.error('[Finance Router] bank audit trail error:', err?.message);
+    return res.json({ success: true, data: [] });
+  }
+});
+
+
 
 

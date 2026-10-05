@@ -2131,5 +2131,71 @@ export class FinanceService {
       throw new Error(error.message);
     }
   }
+
+  // --- Company Shareholders & Equity Governance ---
+  public static async getShareholders(): Promise<any[]> {
+    if (typeof window !== 'undefined') {
+      try {
+        const res = await safeFetchJson<any>('/api/finance/shareholders', { credentials: 'include' });
+        if (res?.success && Array.isArray(res.data)) {
+          return res.data;
+        }
+      } catch (_) {}
+    }
+    const { data } = await supabase
+      .from('company_shareholders')
+      .select('*')
+      .order('display_order', { ascending: true });
+    return data || [];
+  }
+
+  public static async saveShareholder(payload: {
+    id?: string;
+    name: string;
+    designation: string;
+    sharesCount: number;
+    capitalAed: number;
+    ownershipPercent: number;
+    passportOrEid?: string;
+    coaAccountCode?: string;
+    displayOrder?: number;
+  }): Promise<any> {
+    if (typeof window !== 'undefined') {
+      const res = await safeFetchJson<any>('/api/finance/shareholders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include'
+      });
+      if (res?.success && res.data) {
+        return res.data;
+      }
+    }
+    throw new Error('Failed to save shareholder');
+  }
+
+  public static async deleteShareholder(id: string): Promise<boolean> {
+    if (typeof window !== 'undefined') {
+      const res = await safeFetchJson<any>(`/api/finance/shareholders/${id}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      return Boolean(res?.success);
+    }
+    return false;
+  }
+
+  // --- Bank Audit Trail ---
+  public static async getBankAuditTrail(): Promise<any[]> {
+    if (typeof window !== 'undefined') {
+      try {
+        const res = await safeFetchJson<any>('/api/finance/bank-audit-trail', { credentials: 'include' });
+        if (res?.success && Array.isArray(res.data)) {
+          return res.data;
+        }
+      } catch (_) {}
+    }
+    return [];
+  }
 }
 
