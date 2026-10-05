@@ -1198,6 +1198,11 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   const handleCreateVoucher = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (isPeriodLocked(voucherDate)) {
+      showMsg(`Cannot post voucher: The selected date (${voucherDate}) falls within a closed & locked fiscal period.`, 'error');
+      return;
+    }
+
     let finalLines: { accountId: string; debitAmount: number; creditAmount: number; memo: string }[] = [];
     let finalTotalDebit = 0;
     let finalTotalCredit = 0;
@@ -1393,8 +1398,19 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
   };
 
   const isPeriodLocked = (voucherDate?: string) => {
-    if (!companyProfile?.isFinancialLocked || !companyProfile?.financialLockDate || !voucherDate) return false;
-    return voucherDate <= companyProfile.financialLockDate;
+    if (!voucherDate) return false;
+    if (companyProfile?.isFinancialLocked && companyProfile?.financialLockDate && voucherDate <= companyProfile.financialLockDate) {
+      return true;
+    }
+    try {
+      const closedRaw = localStorage.getItem('vintage_erp_closed_periods');
+      if (closedRaw) {
+        const closedList: any[] = JSON.parse(closedRaw);
+        const hit = closedList.find((p: any) => p.isLocked && voucherDate >= p.startDate && voucherDate <= p.endDate);
+        if (hit) return true;
+      }
+    } catch {}
+    return false;
   };
 
   const handleOpenEditVoucher = (v: Voucher) => {
