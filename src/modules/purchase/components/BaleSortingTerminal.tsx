@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { supabase } from '../../../supabaseClient.ts';
+import { uploadMediaToSupabase } from '../../../lib/supabase.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { InwardGatePass, PieceBreakdownItem, PurchaseInvoice } from '../purchase.types.ts';
 import { ItemMaster, BrandMaster, LabelGrade, ShopMaster, CategoryMaster, SizeMaster, ProductCategory, CollectionMaster } from '../../setup/setup.types.ts';
@@ -12,6 +13,7 @@ import { CameraTagScannerModal, ExtractedTagData } from './CameraTagScannerModal
 import { StudioPhotoCaptureModal } from './StudioPhotoCaptureModal.tsx';
 import { BaleProfitHorizonGauge } from './BaleProfitHorizonGauge.tsx';
 import { compressImage } from '../../../utils/imageCompressor.ts';
+import { ImageOptimizer } from '../../../utils/imageOptimizer.ts';
 import { getDefaultSellingPrice } from '../../../utils/geminiVintageValuation.ts';
 import { sanitizeString, sanitizeNullableString } from '../../../utils/sanitizeString.ts';
 import {
@@ -361,6 +363,36 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const [pitToPit, setPitToPit] = useState<string>('');
   const [lengthInches, setLengthInches] = useState<string>('');
   const [activeGrailAlert, setActiveGrailAlert] = useState<ExtractedTagData | null>(null);
+
+  // Background Cloud Storage Uploader for instant zero-latency UI preview + permanent CDN storage
+  const handleProcessAndUploadImage = async (
+    file: File,
+    slot: 'front' | 'back' | 'tag',
+    setter: (val: string | undefined) => void
+  ) => {
+    try {
+      const compressed = await compressImage(file, 1280, 0.85);
+      setter(compressed); // Immediate visual preview in terminal
+      const prefix = `piece_${activeBale?.baleCode || activeBale?.id || 'bale'}_${Date.now()}`;
+      uploadMediaToSupabase(compressed, `${prefix}_${slot}.jpg`).then(res => {
+        if (res.success && res.publicUrl) {
+          setter(res.publicUrl);
+        }
+      }).catch(err => {
+        console.warn(`[Supabase Storage] Background upload warning for ${slot}:`, err);
+      });
+    } catch {
+      const r = new FileReader();
+      r.onload = () => {
+        const raw = r.result as string;
+        setter(raw);
+        uploadMediaToSupabase(raw, `piece_${slot}_${Date.now()}.jpg`).then(res => {
+          if (res.success && res.publicUrl) setter(res.publicUrl);
+        }).catch(() => {});
+      };
+      r.readAsDataURL(file);
+    }
+  };
 
   // Auto print toggle with local persistence
   const [autoPrintThermalOnAdd, setAutoPrintThermalOnAdd] = useState<boolean>(() => {
@@ -1107,6 +1139,60 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }, 0);
     const startSeq = Math.max(pieces.length, maxSeq);
 
+    // Upload photos to Supabase Storage Bucket (vintage-vibes-media) to keep PostgreSQL rows ultra-lightweight
+    let resolvedFrontUrl: string | null = frontImageUrl || null;
+    let resolvedBackUrl: string | null = backImageUrl || null;
+    let resolvedTagUrl: string | null = tagImageUrl || null;
+    let resolvedMeasurementUrl: string | null = measurementImageUrl || null;
+    let resolvedWidthTapeUrl: string | null = widthTapeImageUrl || null;
+
+    try {
+      const uploadPromises: Promise<void>[] = [];
+      const prefix = `${activeBaleId || 'bale'}_${Date.now()}`;
+
+      if (frontImageUrl && frontImageUrl.startsWith('data:')) {
+        uploadPromises.push(
+          uploadMediaToSupabase(frontImageUrl, `${prefix}_front.jpg`).then(res => {
+            if (res.success && res.publicUrl) resolvedFrontUrl = res.publicUrl;
+          })
+        );
+      }
+      if (backImageUrl && backImageUrl.startsWith('data:')) {
+        uploadPromises.push(
+          uploadMediaToSupabase(backImageUrl, `${prefix}_back.jpg`).then(res => {
+            if (res.success && res.publicUrl) resolvedBackUrl = res.publicUrl;
+          })
+        );
+      }
+      if (tagImageUrl && tagImageUrl.startsWith('data:')) {
+        uploadPromises.push(
+          uploadMediaToSupabase(tagImageUrl, `${prefix}_tag.jpg`).then(res => {
+            if (res.success && res.publicUrl) resolvedTagUrl = res.publicUrl;
+          })
+        );
+      }
+      if (measurementImageUrl && measurementImageUrl.startsWith('data:')) {
+        uploadPromises.push(
+          uploadMediaToSupabase(measurementImageUrl, `${prefix}_meas.jpg`).then(res => {
+            if (res.success && res.publicUrl) resolvedMeasurementUrl = res.publicUrl;
+          })
+        );
+      }
+      if (widthTapeImageUrl && widthTapeImageUrl.startsWith('data:')) {
+        uploadPromises.push(
+          uploadMediaToSupabase(widthTapeImageUrl, `${prefix}_width.jpg`).then(res => {
+            if (res.success && res.publicUrl) resolvedWidthTapeUrl = res.publicUrl;
+          })
+        );
+      }
+
+      if (uploadPromises.length > 0) {
+        await Promise.all(uploadPromises);
+      }
+    } catch (uploadErr) {
+      console.warn('[BaleSortingTerminal] Cloud Storage upload non-blocking warning:', uploadErr);
+    }
+
     const pieceGlobalInsights = {
       ...(globalInsights || {}),
       ...(pitToPit || lengthInches ? {
@@ -1115,8 +1201,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           length: lengthInches || (globalInsights as any)?.measurements?.length || ''
         }
       } : {}),
-      ...(measurementImageUrl ? { measurement_image_url: measurementImageUrl, length_tape_image_url: measurementImageUrl } : {}),
-      ...(widthTapeImageUrl ? { width_tape_image_url: widthTapeImageUrl } : {})
+      ...(resolvedMeasurementUrl ? { measurement_image_url: resolvedMeasurementUrl, length_tape_image_url: resolvedMeasurementUrl } : {}),
+      ...(resolvedWidthTapeUrl ? { width_tape_image_url: resolvedWidthTapeUrl } : {})
     };
     const effectiveGlobalInsights = Object.keys(pieceGlobalInsights).length > 0 ? pieceGlobalInsights : null;
 
@@ -1160,9 +1246,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         cost_price: calculatedPieceCost,
         selling_price: effectiveSellingPrice,
         quality_grade: sanitizeString(selectedGrade, 32),
-        front_image: frontImageUrl || null,
-        back_image: backImageUrl || null,
-        tag_image: tagImageUrl || null,
+        front_image: resolvedFrontUrl || null,
+        back_image: resolvedBackUrl || null,
+        tag_image: resolvedTagUrl || null,
         era: sanitizeString(era || '1990s Vintage', 32),
         market_segment: sanitizeString(marketSegment || 'Vintage', 64),
         is_grail: finalGrailStatus,
@@ -1190,9 +1276,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         size_scanned: sanitizeString(sizeScanned, 32),
         country_of_origin: sanitizeNullableString(countryOfOrigin, 64),
         style: sanitizeNullableString(styleNotes || brandTitle, 64),
-        front_image_url: frontImageUrl || '',
-        back_image_url: backImageUrl || '',
-        tag_image_url: tagImageUrl || '',
+        front_image_url: resolvedFrontUrl || '',
+        back_image_url: resolvedBackUrl || '',
+        tag_image_url: resolvedTagUrl || '',
         is_sold: false,
         status: sanitizeString(pieceStatus, 32),
         market_segment: sanitizeString(marketSegment || 'Vintage', 64),
@@ -1230,9 +1316,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         sizeScanned,
         countryOfOrigin,
         style: styleNotes || brandTitle,
-        frontImageUrl,
-        backImageUrl,
-        tagImageUrl,
+        frontImageUrl: resolvedFrontUrl,
+        backImageUrl: resolvedBackUrl,
+        tagImageUrl: resolvedTagUrl,
         era: era || '1990s Vintage',
         marketSegment: marketSegment || 'Vintage',
         isGrail: finalGrailStatus,
@@ -2456,14 +2542,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                               onChange={async e => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  try {
-                                    const compressed = await compressImage(file, 1280, 0.85);
-                                    setFrontImageUrl(compressed);
-                                  } catch {
-                                    const r = new FileReader();
-                                    r.onload = () => setFrontImageUrl(r.result as string);
-                                    r.readAsDataURL(file);
-                                  }
+                                  await handleProcessAndUploadImage(file, 'front', setFrontImageUrl);
                                 }
                                 e.target.value = '';
                               }}
@@ -2481,14 +2560,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                               onChange={async e => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  try {
-                                    const compressed = await compressImage(file, 1280, 0.85);
-                                    setFrontImageUrl(compressed);
-                                  } catch {
-                                    const r = new FileReader();
-                                    r.onload = () => setFrontImageUrl(r.result as string);
-                                    r.readAsDataURL(file);
-                                  }
+                                  await handleProcessAndUploadImage(file, 'front', setFrontImageUrl);
                                 }
                                 e.target.value = '';
                               }}
@@ -2586,14 +2658,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                               onChange={async e => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  try {
-                                    const compressed = await compressImage(file, 1280, 0.85);
-                                    setBackImageUrl(compressed);
-                                  } catch {
-                                    const r = new FileReader();
-                                    r.onload = () => setBackImageUrl(r.result as string);
-                                    r.readAsDataURL(file);
-                                  }
+                                  await handleProcessAndUploadImage(file, 'back', setBackImageUrl);
                                 }
                                 e.target.value = '';
                               }}
@@ -2611,14 +2676,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                               onChange={async e => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  try {
-                                    const compressed = await compressImage(file, 1280, 0.85);
-                                    setBackImageUrl(compressed);
-                                  } catch {
-                                    const r = new FileReader();
-                                    r.onload = () => setBackImageUrl(r.result as string);
-                                    r.readAsDataURL(file);
-                                  }
+                                  await handleProcessAndUploadImage(file, 'back', setBackImageUrl);
                                 }
                                 e.target.value = '';
                               }}
@@ -2716,14 +2774,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                               onChange={async e => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  try {
-                                    const compressed = await compressImage(file, 1280, 0.85);
-                                    setTagImageUrl(compressed);
-                                  } catch {
-                                    const r = new FileReader();
-                                    r.onload = () => setTagImageUrl(r.result as string);
-                                    r.readAsDataURL(file);
-                                  }
+                                  await handleProcessAndUploadImage(file, 'tag', setTagImageUrl);
                                 }
                                 e.target.value = '';
                               }}
@@ -2741,14 +2792,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                               onChange={async e => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  try {
-                                    const compressed = await compressImage(file, 1280, 0.85);
-                                    setTagImageUrl(compressed);
-                                  } catch {
-                                    const r = new FileReader();
-                                    r.onload = () => setTagImageUrl(r.result as string);
-                                    r.readAsDataURL(file);
-                                  }
+                                  await handleProcessAndUploadImage(file, 'tag', setTagImageUrl);
                                 }
                                 e.target.value = '';
                               }}
@@ -3816,29 +3860,32 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             <div className="flex items-center justify-center gap-1.5">
                               {frontImg && (
                                 <img
-                                  src={frontImg}
+                                  src={ImageOptimizer.getThumbnailUrl(frontImg, 80, 70)}
                                   alt="Front"
                                   title="Front Photo - Click to Enlarge"
                                   onClick={() => setPreviewLightboxImage(frontImg)}
                                   className="w-7 h-7 object-cover rounded border border-slate-700 hover:border-emerald-400 cursor-pointer hover:scale-125 transition shadow-xs"
+                                  loading="lazy"
                                 />
                               )}
                               {backImg && (
                                 <img
-                                  src={backImg}
+                                  src={ImageOptimizer.getThumbnailUrl(backImg, 80, 70)}
                                   alt="Back"
                                   title="Back Photo - Click to Enlarge"
                                   onClick={() => setPreviewLightboxImage(backImg)}
                                   className="w-7 h-7 object-cover rounded border border-slate-700 hover:border-indigo-400 cursor-pointer hover:scale-125 transition shadow-xs"
+                                  loading="lazy"
                                 />
                               )}
                               {tagImg && (
                                 <img
-                                  src={tagImg}
+                                  src={ImageOptimizer.getThumbnailUrl(tagImg, 80, 70)}
                                   alt="Tag"
                                   title="Tag OCR Photo - Click to Enlarge"
                                   onClick={() => setPreviewLightboxImage(tagImg)}
                                   className="w-7 h-7 object-cover rounded border border-amber-600 hover:border-amber-400 cursor-pointer hover:scale-125 transition shadow-xs"
+                                  loading="lazy"
                                 />
                               )}
                               {!frontImg && !backImg && !tagImg && (
@@ -4114,6 +4161,36 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               setTagImageUrl(tag);
               setMeasurementImageUrl(lengthTape || measurement);
               setWidthTapeImageUrl(widthTape);
+
+              // Background upload to Supabase Storage Bucket (vintage-vibes-media)
+              const prefix = `piece_${activeBale?.baleCode || activeBale?.id || 'garment'}_${Date.now()}`;
+              if (front && front.startsWith('data:')) {
+                uploadMediaToSupabase(front, `${prefix}_front.jpg`).then(r => {
+                  if (r.success && r.publicUrl) setFrontImageUrl(r.publicUrl);
+                }).catch(() => {});
+              }
+              if (back && back.startsWith('data:')) {
+                uploadMediaToSupabase(back, `${prefix}_back.jpg`).then(r => {
+                  if (r.success && r.publicUrl) setBackImageUrl(r.publicUrl);
+                }).catch(() => {});
+              }
+              if (tag && tag.startsWith('data:')) {
+                uploadMediaToSupabase(tag, `${prefix}_tag.jpg`).then(r => {
+                  if (r.success && r.publicUrl) setTagImageUrl(r.publicUrl);
+                }).catch(() => {});
+              }
+              const lengthOrMeas = lengthTape || measurement;
+              if (lengthOrMeas && lengthOrMeas.startsWith('data:')) {
+                uploadMediaToSupabase(lengthOrMeas, `${prefix}_meas.jpg`).then(r => {
+                  if (r.success && r.publicUrl) setMeasurementImageUrl(r.publicUrl);
+                }).catch(() => {});
+              }
+              if (widthTape && widthTape.startsWith('data:')) {
+                uploadMediaToSupabase(widthTape, `${prefix}_width.jpg`).then(r => {
+                  if (r.success && r.publicUrl) setWidthTapeImageUrl(r.publicUrl);
+                }).catch(() => {});
+              }
+
               if (appraisalData) {
                 handleApplyExtractedTag(appraisalData);
               }

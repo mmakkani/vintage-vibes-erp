@@ -24,15 +24,15 @@ declare global {
 
 const defaultCloudUrl = 'https://wjjelqsrivnyiybarfmo.supabase.co';
 
-const rawKey = resolveEnv(
-  'SUPABASE_SERVICE_ROLE_KEY',
-  'VITE_SUPABASE_ANON_KEY',
-  ''
-) || resolveEnv(
-  'SUPABASE_ANON_KEY',
-  'VITE_SUPABASE_ANON_KEY',
-  ''
-);
+function isValidJwt(k: string): boolean {
+  return typeof k === 'string' && k.startsWith('eyJ') && !k.includes('placeholder') && !k.startsWith('your_supabase_');
+}
+
+const envServiceKey = resolveEnv('SUPABASE_SERVICE_ROLE_KEY', 'VITE_SUPABASE_SERVICE_ROLE_KEY', '');
+const envAnonKey = resolveEnv('SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY', '');
+
+const rawKey = isValidJwt(envServiceKey) ? envServiceKey : (isValidJwt(envAnonKey) ? envAnonKey : (envServiceKey || envAnonKey || ''));
+
 
 export const isPlaceholderKey =
   !rawKey ||
