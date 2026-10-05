@@ -957,4 +957,210 @@ financeRouter.get('/yield-analytics', async (req, res) => {
   }
 });
 
+// ========================================================
+// STATUTORY FISCAL YEARS & PERIOD CLOSING DATABASE APIS
+// ========================================================
+
+financeRouter.get('/fiscal-years', async (_req, res) => {
+  try {
+    const data = await withDb(async (client) => {
+      const result = await client.query('SELECT * FROM public.fiscal_years ORDER BY year ASC');
+      return result.rows.map(row => ({
+        id: String(row.id),
+        year: Number(row.year),
+        title: row.title,
+        startDate: typeof row.start_date === 'string' ? row.start_date.slice(0, 10) : new Date(row.start_date).toISOString().slice(0, 10),
+        endDate: typeof row.end_date === 'string' ? row.end_date.slice(0, 10) : new Date(row.end_date).toISOString().slice(0, 10),
+        status: row.status || 'OPEN',
+        notes: row.notes || ''
+      }));
+    });
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    console.error('[Finance Router] get fiscal years error:', err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch fiscal years' });
+  }
+});
+
+financeRouter.post('/fiscal-years', async (req, res) => {
+  try {
+    const { year, title, startDate, endDate, notes } = req.body;
+    if (!year || !startDate || !endDate) {
+      return res.status(400).json({ success: false, error: 'Year, Start Date, and End Date are required.' });
+    }
+    const created = await withDb(async (client) => {
+      const result = await client.query(
+        `INSERT INTO public.fiscal_years (year, title, start_date, end_date, status, notes)
+         VALUES ($1, $2, $3, $4, 'OPEN', $5)
+         RETURNING *`,
+        [Number(year), title || `Fiscal Year ${year}`, startDate, endDate, notes || '']
+      );
+      const row = result.rows[0];
+      return {
+        id: String(row.id),
+        year: Number(row.year),
+        title: row.title,
+        startDate: typeof row.start_date === 'string' ? row.start_date.slice(0, 10) : new Date(row.start_date).toISOString().slice(0, 10),
+        endDate: typeof row.end_date === 'string' ? row.end_date.slice(0, 10) : new Date(row.end_date).toISOString().slice(0, 10),
+        status: row.status || 'OPEN',
+        notes: row.notes || ''
+      };
+    });
+    return res.json({ success: true, data: created });
+  } catch (err: any) {
+    console.error('[Finance Router] create fiscal year error:', err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to create fiscal year' });
+  }
+});
+
+financeRouter.get('/closed-periods', async (_req, res) => {
+  try {
+    const data = await withDb(async (client) => {
+      const result = await client.query('SELECT * FROM public.fiscal_closed_periods ORDER BY start_date DESC');
+      return result.rows.map(row => ({
+        id: String(row.id),
+        periodName: row.period_name,
+        periodType: row.period_type,
+        startDate: typeof row.start_date === 'string' ? row.start_date.slice(0, 10) : new Date(row.start_date).toISOString().slice(0, 10),
+        endDate: typeof row.end_date === 'string' ? row.end_date.slice(0, 10) : new Date(row.end_date).toISOString().slice(0, 10),
+        closedAt: row.closed_at ? new Date(row.closed_at).toISOString() : new Date().toISOString(),
+        closedBy: row.closed_by,
+        totalRevenue: Number(row.total_revenue || 0),
+        totalCogs: Number(row.total_cogs || 0),
+        grossProfit: Number(row.gross_profit || 0),
+        operatingExpenses: Number(row.operating_expenses || 0),
+        netProfit: Number(row.net_profit || 0),
+        retainedEarningsBalance: Number(row.retained_earnings_balance || 0),
+        isLocked: row.is_locked !== false,
+        closingVoucherNo: row.closing_voucher_no,
+        hashChecksum: row.hash_checksum
+      }));
+    });
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    console.error('[Finance Router] get closed periods error:', err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch closed periods' });
+  }
+});
+
+financeRouter.post('/closed-periods', async (req, res) => {
+  try {
+    const record = req.body;
+    if (!record.startDate || !record.endDate || !record.periodName) {
+      return res.status(400).json({ success: false, error: 'Period details are incomplete' });
+    }
+
+    const saved = await withDb(async (client) => {
+      await client.query('BEGIN');
+      try {
+        // Find COA Retained Earnings account
+        const coaRes = await client.query(
+          "SELECT id, account_code, account_name FROM coa_accounts WHERE account_code LIKE '3200%' OR account_name ILIKE '%Retained Earnings%' LIMIT 1"
+        );
+        let retainedEarningsAcc = coaRes.rows[0];
+        if (!retainedEarningsAcc) {
+          const eqRes = await client.query("SELECT id, account_code, account_name FROM coa_accounts WHERE account_code LIKE '3%' LIMIT 1");
+          retainedEarningsAcc = eqRes.rows[0];
+        }
+
+        // Insert Closed Period Record
+        const insertRes = await client.query(
+          `INSERT INTO public.fiscal_closed_periods 
+            (period_name, period_type, start_date, end_date, closed_at, closed_by, total_revenue, total_cogs, gross_profit, operating_expenses, net_profit, retained_earnings_balance, is_locked, closing_voucher_no, hash_checksum)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, $13, $14)
+           RETURNING *`,
+          [
+            record.periodName,
+            record.periodType || 'ANNUAL',
+            record.startDate,
+            record.endDate,
+            record.closedAt || new Date().toISOString(),
+            record.closedBy || 'Authorized Officer',
+            Number(record.totalRevenue || 0),
+            Number(record.totalCogs || 0),
+            Number(record.grossProfit || 0),
+            Number(record.operatingExpenses || 0),
+            Number(record.netProfit || 0),
+            Number(record.retainedEarningsBalance || record.netProfit || 0),
+            record.closingVoucherNo || `JV-CLOSE-${record.startDate}-${record.endDate}`,
+            record.hashChecksum || `SHA256-${Date.now()}`
+          ]
+        );
+
+        // Record closing journal entry if netProfit is non-zero and retainedEarnings account exists
+        const netProfit = Number(record.netProfit || 0);
+        if (netProfit !== 0 && retainedEarningsAcc) {
+          const voucherId = crypto.randomUUID();
+          const vNo = record.closingVoucherNo || `JV-CLOSE-${record.startDate.replace(/-/g, '')}-${record.endDate.replace(/-/g, '')}`;
+          const narration = `Statutory Fiscal Year Closing Transfer to Retained Earnings (${record.periodName})`;
+
+          await client.query(
+            `INSERT INTO vouchers (id, voucher_no, voucher_date, voucher_type, reference_no, narration, total_debit, total_credit, status, is_auto, created_by)
+             VALUES ($1, $2, $3, 'JOURNAL', $4, $5, $6, $7, 'POSTED', true, $8)
+             ON CONFLICT (voucher_no) DO UPDATE SET narration = EXCLUDED.narration`,
+            [
+              voucherId,
+              vNo,
+              record.endDate,
+              'FISCAL-CLOSE',
+              narration,
+              Math.abs(netProfit),
+              Math.abs(netProfit),
+              record.closedBy || 'System Audit'
+            ]
+          );
+
+          await client.query(
+            `INSERT INTO voucher_entries (voucher_id, account_id, debit_amount, credit_amount, memo)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              voucherId,
+              retainedEarningsAcc.id,
+              netProfit < 0 ? Math.abs(netProfit) : 0,
+              netProfit > 0 ? Math.abs(netProfit) : 0,
+              `Rollover Net Profit to ${retainedEarningsAcc.account_name} (${retainedEarningsAcc.account_code})`
+            ]
+          );
+        }
+
+        await client.query('COMMIT');
+        return insertRes.rows[0];
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      }
+    });
+
+    return res.json({ success: true, data: saved });
+  } catch (err: any) {
+    console.error('[Finance Router] close period error:', err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to close period' });
+  }
+});
+
+financeRouter.post('/closed-periods/:id/reopen', async (req, res) => {
+  try {
+    const { pin } = req.body;
+    if (pin !== '0099') {
+      return res.status(403).json({ success: false, error: 'Unauthorized: Invalid Master PIN override.' });
+    }
+    const { id } = req.params;
+    await withDb(async (client) => {
+      const r = await client.query('SELECT closing_voucher_no FROM public.fiscal_closed_periods WHERE id = $1', [id]);
+      if (r.rows.length > 0) {
+        const vNo = r.rows[0].closing_voucher_no;
+        if (vNo) {
+          await client.query('DELETE FROM public.vouchers WHERE voucher_no = $1', [vNo]);
+        }
+      }
+      await client.query('DELETE FROM public.fiscal_closed_periods WHERE id = $1', [id]);
+    });
+    return res.json({ success: true, message: 'Period re-opened successfully.' });
+  } catch (err: any) {
+    console.error('[Finance Router] reopen period error:', err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to reopen period' });
+  }
+});
+
+
 

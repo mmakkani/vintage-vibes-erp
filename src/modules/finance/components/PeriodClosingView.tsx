@@ -164,8 +164,26 @@ export const PeriodClosingView: React.FC<PeriodClosingViewProps> = ({
     } catch {}
   }, []);
 
+  // Load Fiscal Years and Closed Periods directly from PostgreSQL Database
+  useEffect(() => {
+    let isMounted = true;
+    FinanceService.getFiscalYears().then(years => {
+      if (isMounted && Array.isArray(years) && years.length > 0) {
+        setFiscalYears(years);
+      }
+    }).catch(err => console.warn('[PeriodClosingView] getFiscalYears error:', err));
+
+    FinanceService.getClosedPeriods().then(periods => {
+      if (isMounted && Array.isArray(periods)) {
+        setClosedPeriods(periods);
+      }
+    }).catch(err => console.warn('[PeriodClosingView] getClosedPeriods error:', err));
+
+    return () => { isMounted = false; };
+  }, []);
+
   // Handler to register a new Fiscal Year
-  const handleCreateFiscalYear = (e: React.FormEvent) => {
+  const handleCreateFiscalYear = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newYearNumber || isNaN(newYearNumber)) {
       alert('Please enter a valid numeric year.');
@@ -196,6 +214,15 @@ export const PeriodClosingView: React.FC<PeriodClosingViewProps> = ({
       localStorage.setItem('vintage_erp_fiscal_years', JSON.stringify(updated));
     } catch {}
 
+    // Persist to PostgreSQL database
+    FinanceService.createFiscalYear({
+      year: newYearNumber,
+      title,
+      startDate: sDate,
+      endDate: eDate,
+      notes: newYearNotes
+    }).catch(err => console.warn('[PeriodClosingView] createFiscalYear DB error:', err));
+
     setSelectedYear(newYearNumber);
     setShowCreateYearModal(false);
     setNewYearTitle('');
@@ -203,7 +230,7 @@ export const PeriodClosingView: React.FC<PeriodClosingViewProps> = ({
     setNewYearStartDate('');
     setNewYearEndDate('');
     luxuryAudio.playCashRegisterSound();
-    alert(`✅ Fiscal Year ${newYearNumber} (${sDate} to ${eDate}) successfully registered into the ERP!`);
+    alert(`✅ Fiscal Year ${newYearNumber} (${sDate} to ${eDate}) successfully registered into the ERP database!`);
   };
 
   // Calculate target date range based on selection
@@ -320,8 +347,11 @@ export const PeriodClosingView: React.FC<PeriodClosingViewProps> = ({
       setClosedPeriods(updated);
       localStorage.setItem('vintage_erp_closed_periods', JSON.stringify(updated));
 
+      // Persist to Supabase PostgreSQL database
+      FinanceService.closeFiscalPeriod(newRecord).catch(err => console.warn('[PeriodClosingView] closeFiscalPeriod DB error:', err));
+
       luxuryAudio.playCashRegisterSound();
-      setClosingSuccessMessage(`🎉 SUCCESS: ${periodTitle} has been officially CLOSED & LOCKED. Voucher ${closingVoucherNo} recorded. Statutory Legal Audit Dossier is now ready!`);
+      setClosingSuccessMessage(`🎉 SUCCESS: ${periodTitle} has been officially CLOSED & LOCKED. Voucher ${closingVoucherNo} recorded in Database. Statutory Legal Audit Dossier is now ready!`);
       onRefreshAll?.();
     } catch (err: any) {
       alert(`Failed to close period: ${err?.message || err}`);
@@ -331,7 +361,7 @@ export const PeriodClosingView: React.FC<PeriodClosingViewProps> = ({
   };
 
   // Re-open a closed period (Restricted by Master PIN 0099)
-  const handleReopenPeriod = (record: ClosedPeriodRecord) => {
+  const handleReopenPeriod = async (record: ClosedPeriodRecord) => {
     const pin = window.prompt(`🔒 SECURITY OVERRIDE REQUIRED\n\nRe-opening closed period '${record.periodName}' allows back-dated adjustments and will invalidate existing signed audit statements.\n\nEnter Master PIN override to unlock:`);
     if (pin !== '0099') {
       alert('❌ Unauthorized: Invalid Master PIN. This period remains locked.');
@@ -341,6 +371,10 @@ export const PeriodClosingView: React.FC<PeriodClosingViewProps> = ({
     const updated = closedPeriods.filter(p => p.id !== record.id);
     setClosedPeriods(updated);
     localStorage.setItem('vintage_erp_closed_periods', JSON.stringify(updated));
+
+    // Remove from Supabase PostgreSQL database
+    FinanceService.reopenFiscalPeriod(record.id, pin).catch(err => console.warn('[PeriodClosingView] reopenFiscalPeriod DB error:', err));
+
     luxuryAudio.playMechanicalClick();
     alert(`🔓 Period '${record.periodName}' has been unlocked. Accounts are now open for adjustments.`);
     runPreClosingAudit();

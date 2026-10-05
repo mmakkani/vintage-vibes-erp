@@ -59,6 +59,99 @@ export class FinanceService {
     }
   }
 
+  // --- Fiscal Years Database Service ---
+  public static async getFiscalYears(): Promise<any[]> {
+    if (typeof window !== 'undefined') {
+      try {
+        const res = await safeFetchJson<{ success: boolean; data: any[] }>('/api/finance/fiscal-years');
+        if (res && res.success && Array.isArray(res.data) && res.data.length > 0) {
+          localStorage.setItem('vintage_erp_fiscal_years', JSON.stringify(res.data));
+          return res.data;
+        }
+      } catch (err) {
+        console.warn('[FinanceService] getFiscalYears API notice:', err);
+      }
+      try {
+        const saved = localStorage.getItem('vintage_erp_fiscal_years');
+        if (saved) return JSON.parse(saved);
+      } catch (_) {}
+    }
+    return [];
+  }
+
+  public static async createFiscalYear(fyData: { year: number; title: string; startDate: string; endDate: string; notes?: string }): Promise<any> {
+    if (typeof window !== 'undefined') {
+      try {
+        const res = await safeFetchMutation<{ success: boolean; data: any }>('/api/finance/fiscal-years', {
+          method: 'POST',
+          body: JSON.stringify(fyData)
+        });
+        if (res && res.success && res.data) {
+          return res.data;
+        }
+      } catch (err) {
+        console.warn('[FinanceService] createFiscalYear API notice:', err);
+      }
+    }
+    return fyData;
+  }
+
+  // --- Fiscal Closed Periods Database Service ---
+  public static async getClosedPeriods(): Promise<any[]> {
+    if (typeof window !== 'undefined') {
+      try {
+        const res = await safeFetchJson<{ success: boolean; data: any[] }>('/api/finance/closed-periods');
+        if (res && res.success && Array.isArray(res.data)) {
+          const clean = res.data.filter((p: any) => p.id !== 'close-fy2024');
+          localStorage.setItem('vintage_erp_closed_periods', JSON.stringify(clean));
+          return clean;
+        }
+      } catch (err) {
+        console.warn('[FinanceService] getClosedPeriods API notice:', err);
+      }
+      try {
+        const saved = localStorage.getItem('vintage_erp_closed_periods');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) return parsed.filter((p: any) => p.id !== 'close-fy2024');
+        }
+      } catch (_) {}
+    }
+    return [];
+  }
+
+  public static async closeFiscalPeriod(record: any): Promise<any> {
+    if (typeof window !== 'undefined') {
+      try {
+        const res = await safeFetchMutation<{ success: boolean; data: any }>('/api/finance/closed-periods', {
+          method: 'POST',
+          body: JSON.stringify(record)
+        });
+        if (res && res.success && res.data) {
+          return res.data;
+        }
+      } catch (err) {
+        console.warn('[FinanceService] closeFiscalPeriod API notice:', err);
+      }
+    }
+    return record;
+  }
+
+  public static async reopenFiscalPeriod(id: string, pin: string): Promise<boolean> {
+    if (typeof window !== 'undefined') {
+      try {
+        const res = await safeFetchMutation<{ success: boolean }>('/api/finance/closed-periods/' + id + '/reopen', {
+          method: 'POST',
+          body: JSON.stringify({ pin })
+        });
+        return Boolean(res && res.success);
+      } catch (err) {
+        console.warn('[FinanceService] reopenFiscalPeriod API notice:', err);
+      }
+    }
+    return false;
+  }
+
   // --- Vouchers Paginated ---
   public static async getVouchersPaginated(options?: {
     page?: number;

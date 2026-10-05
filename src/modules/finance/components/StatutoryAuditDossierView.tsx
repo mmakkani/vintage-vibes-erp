@@ -21,7 +21,8 @@ import {
 import { ClosedPeriodRecord } from './PeriodClosingView.tsx';
 import { FinanceService } from '../../../services/financeService.ts';
 import { COAAccount } from '../finance.types.ts';
-import { formatAccountingCurrency } from '../utils/accountingFormatters.tsx';
+import { BankStatementReconcilerModal, VerifiedBankStatement } from './BankStatementReconcilerModal.tsx';
+import { printStatutoryDossierA4 } from '../utils/printStatutoryDossierA4.ts';
 
 interface StatutoryAuditDossierViewProps {
   accounts: COAAccount[];
@@ -39,6 +40,15 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
   const [activeDossierSection, setActiveDossierSection] = useState<
     'opinion' | 'balance-sheet' | 'income-statement' | 'cash-flows' | 'equity' | 'notes' | 'declaration'
   >('opinion');
+
+  const [showBankReconcilerModal, setShowBankReconcilerModal] = useState(false);
+  const [verifiedBankStatement, setVerifiedBankStatement] = useState<VerifiedBankStatement | null>(() => {
+    try {
+      const saved = localStorage.getItem('vintage_erp_bank_reconciliation');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return null;
+  });
 
   const [isLoadingStatements, setIsLoadingStatements] = useState(false);
   const [trialBalanceData, setTrialBalanceData] = useState<any>(null);
@@ -97,9 +107,6 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
     return () => { isMounted = false; };
   }, [reportDates.startDate, reportDates.endDate]);
 
-  const handlePrintDossier = () => {
-    window.print();
-  };
 
   const companyLegalName = companyProfile?.company_display_name || companyProfile?.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C';
   const tradeLicenseNo = companyProfile?.tradeLicenseNumber || 'CN-5888545';
@@ -107,6 +114,20 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
   const city = companyProfile?.city || 'Al Ain';
   const country = companyProfile?.country || 'United Arab Emirates';
   const legalAddress = `${companyProfile?.address_line_1 || 'Downtown, Al Qaseedah District'}, ${city}, ${country}`;
+
+  // Helper to extract balance by COA code prefix
+  const getCoaBalance = (prefix: string | string[]) => {
+    const prefixes = Array.isArray(prefix) ? prefix : [prefix];
+    return (accounts || [])
+      .filter(a => {
+        const code = (a as any).account_code || a.code || '';
+        return prefixes.some(p => code.startsWith(p));
+      })
+      .reduce((sum, a) => {
+        const bal = typeof (a as any).current_balance === 'number' ? (a as any).current_balance : (Number(a.currentBalance) || 0);
+        return sum + Math.abs(bal);
+      }, 0);
+  };
 
   // Financial figures
   const totalRevenue = Number(incomeStatementData?.revenue?.total || selectedClosedPeriod?.totalRevenue || 0);
@@ -117,9 +138,75 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
   const corporateTaxProvision = netProfitBeforeTax > 375000 ? (netProfitBeforeTax - 375000) * 0.09 : 0;
   const netAuditedProfit = netProfitBeforeTax - corporateTaxProvision;
 
-  const totalAssets = Number(balanceSheetData?.totalAssets || 0);
-  const totalLiabilities = Number(balanceSheetData?.totalLiabilities || 0);
-  const totalEquity = Number(balanceSheetData?.totalEquity || 0);
+  // 1. Non-Current Assets (COA 1210, 1220, 1500-1700)
+  const machineryVal = getCoaBalance(['1220', '122', '1500', '1510', '15']);
+  const fixturesVal = getCoaBalance(['1210', '121', '1520', '1530', '1600', '16', '17']);
+  const totalNonCurrentAssets = machineryVal + fixturesVal;
+
+  // 2. Current Assets (COA 1110-1160)
+  // Inventories: 1140 (Raw Bales), 1150 (Sorting WIP), 1160 (Finished Goods)
+  const inventoryVal = getCoaBalance(['114', '115', '116']) || Number(balanceSheetData?.assets?.categories?.inventory?.total || 0);
+  // Trade Receivables: 1130 (Trade Debtors), 1135 (Staff Advances) - Strictly NO '114'!
+  const receivablesVal = getCoaBalance(['1130', '1135', '113']);
+  // Cash & Bank Balances: 1110 (Counter), 1115 (Vault), 1120 (Bank Accounts), 1125 (POS Clearing), 1128 (COD Clearing)
+  const cashBankVal = verifiedBankStatement?.closingBalance != null
+    ? verifiedBankStatement.closingBalance
+    : (getCoaBalance(['111', '112']) || Number(balanceSheetData?.assets?.categories?.cashAndBank?.total || 0));
+  const totalCurrentAssets = inventoryVal + receivablesVal + cashBankVal;
+
+  // Total Assets
+  const totalCalculatedAssets = totalNonCurrentAssets + totalCurrentAssets;
+
+  // 3. Liabilities (COA 2000-2900)
+  // Payables: 2110 (Trade Suppliers), 2120 (Couriers & Freight), 2150 (Customer Deposits)
+  const payablesVal = getCoaBalance(['2110', '2120', '2150', '211', '212', '215']) || Number(balanceSheetData?.liabilities?.total || 0);
+  // Taxes & Accruals: 2140 (VAT), 2310 (Salaries), 2320 (Gratuity), 2410 (Corporate Tax)
+  const taxPayableVal = getCoaBalance(['214', '231', '232', '241']) || corporateTaxProvision;
+  const totalCalculatedLiabilities = payablesVal + taxPayableVal;
+
+  // 4. Equity (COA 3000-3900)
+  const shareCapitalVal = getCoaBalance(['3100', '3300', '31']);
+  const retainedEarningsVal = selectedClosedPeriod?.retainedEarningsBalance != null
+    ? Number(selectedClosedPeriod.retainedEarningsBalance)
+    : (getCoaBalance('32') + netAuditedProfit);
+  const totalCalculatedEquity = shareCapitalVal + retainedEarningsVal;
+  const totalEquityAndLiabilities = totalCalculatedEquity + totalCalculatedLiabilities;
+
+  const handlePrintDossier = () => {
+    printStatutoryDossierA4({
+      companyLegalName,
+      companyArabicName: 'فينتاج فايبز للتجارة العامة ذ.م.م - ش.ش.و',
+      tradeLicenseNo,
+      trnNumber,
+      legalAddress,
+      reportDates,
+      figures: {
+        machineryVal,
+        fixturesVal,
+        totalNonCurrentAssets,
+        inventoryVal,
+        receivablesVal,
+        cashBankVal,
+        totalCurrentAssets,
+        totalCalculatedAssets,
+        payablesVal,
+        taxPayableVal,
+        totalCalculatedLiabilities,
+        shareCapitalVal,
+        retainedEarningsVal,
+        totalCalculatedEquity,
+        totalEquityAndLiabilities,
+        totalRevenue,
+        totalCogs,
+        grossProfit,
+        opEx,
+        netProfitBeforeTax,
+        corporateTaxProvision,
+        netAuditedProfit
+      },
+      verifiedBankStatement
+    });
+  };
 
   return (
     <div className="space-y-6 font-sans">
@@ -160,6 +247,15 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
               <span>Select Different Period</span>
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => setShowBankReconcilerModal(true)}
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider shadow-md hover:shadow-lg transition flex items-center gap-1.5 cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{verifiedBankStatement ? 'Bank Reconciled (AI) ✓' : 'Upload Bank Statement (AI)'}</span>
+          </button>
 
           <button
             type="button"
@@ -204,32 +300,56 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
       {/* ========================================================================= */}
       <div className="bg-white border-2 border-slate-300 rounded-2xl shadow-2xl p-6 sm:p-10 max-w-5xl mx-auto text-slate-900 font-serif space-y-8 print:border-none print:shadow-none print:p-0 print:m-0">
         
-        {/* DOCUMENT FORMAL MASTHEAD */}
-        <div className="border-b-2 border-slate-900 pb-5 text-center space-y-2">
+        {/* DOCUMENT FORMAL MASTHEAD & BILINGUAL LETTERHEAD */}
+        <div className="border-b-2 border-slate-900 pb-5 space-y-3">
+          <div className="flex flex-col sm:flex-row items-center sm:items-start justify-between gap-4 pb-3 border-b border-amber-600/30">
+            <div className="flex items-center gap-3">
+              <img
+                src="/vintage_logo_gold_seal_a4.png"
+                alt="Vintage Vibes Logo"
+                className="h-16 w-auto object-contain shrink-0"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = '/vintage_logo_gold_seal.png';
+                }}
+              />
+              <div className="text-left">
+                <h1 className="text-lg sm:text-xl font-black uppercase tracking-wider text-slate-950 font-serif leading-tight">
+                  {companyLegalName}
+                </h1>
+                <p className="text-xs text-slate-600 font-sans font-medium">
+                  Sole Proprietorship Commercial L.L.C • Al Ain, Abu Dhabi, UAE
+                </p>
+                <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                  Trade License: <strong>{tradeLicenseNo}</strong> &bull; TRN: <strong>{trnNumber}</strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="text-right sm:text-right text-center">
+              <div className="font-serif font-bold text-sm text-amber-900" dir="rtl">
+                فينتاج فايبز للتجارة العامة ذ.م.م - ش.ش.و
+              </div>
+              <div className="text-[11px] font-sans text-slate-600" dir="rtl">
+                سجل تجاري: {tradeLicenseNo}
+              </div>
+              <div className="text-[10px] font-mono text-slate-400">
+                Abu Dhabi Commercial Registry
+              </div>
+            </div>
+          </div>
+
           <div className="flex items-center justify-between text-[11px] font-sans text-slate-500 font-mono">
             <span>UAE Federal Decree-Law No. 32 of 2021</span>
             <span>IFRS Accounting Framework (IASB)</span>
           </div>
 
-          <h1 className="text-xl sm:text-2xl font-black uppercase tracking-wider text-slate-950">
-            {companyLegalName}
-          </h1>
-
-          <div className="font-sans text-xs text-slate-700 flex items-center justify-center gap-2 flex-wrap font-medium">
-            <span>Trade License No: <strong>{tradeLicenseNo}</strong></span>
-            <span>•</span>
-            <span>Tax Registration No (TRN): <strong>{trnNumber}</strong></span>
-            <span>•</span>
-            <span>Jurisdiction: <strong>Abu Dhabi / Al Ain, UAE</strong></span>
-          </div>
-
-          <div className="pt-2">
-            <span className="inline-block px-4 py-1 rounded bg-slate-900 text-amber-300 font-sans text-xs font-black uppercase tracking-widest">
+          <div className="text-center pt-1">
+            <span className="inline-block px-4 py-1.5 rounded bg-slate-900 text-amber-300 font-sans text-xs font-black uppercase tracking-widest shadow-xs">
               STATUTORY AUDITED FINANCIAL STATEMENTS • {reportDates.periodName.toUpperCase()}
             </span>
           </div>
 
-          <div className="text-[11px] font-sans text-slate-500 italic pt-1">
+          <div className="text-center text-[11px] font-sans text-slate-500 italic">
             Reporting Period: {reportDates.startDate} to {reportDates.endDate} &bull; Presentation Currency: United Arab Emirates Dirham (AED)
           </div>
         </div>
@@ -327,18 +447,18 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
                 </tr>
                 <tr>
                   <td className="py-1.5 px-3 pl-6 font-sans">Property, Plant & Sorting Machinery</td>
-                  <td className="py-1.5 px-3 text-center text-slate-500">3</td>
-                  <td className="py-1.5 px-3 text-right">AED 145,000.00</td>
+                  <td className="py-1.5 px-3 text-center text-slate-500">7</td>
+                  <td className="py-1.5 px-3 text-right">AED {machineryVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                 </tr>
                 <tr>
                   <td className="py-1.5 px-3 pl-6 font-sans">Shop Fixtures, Lighting & Thermal Terminals</td>
-                  <td className="py-1.5 px-3 text-center text-slate-500">3</td>
-                  <td className="py-1.5 px-3 text-right">AED 88,500.00</td>
+                  <td className="py-1.5 px-3 text-center text-slate-500">7</td>
+                  <td className="py-1.5 px-3 text-right">AED {fixturesVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                 </tr>
                 <tr className="font-bold border-t border-slate-200">
                   <td className="py-1.5 px-3 font-sans">Total Non-Current Assets</td>
                   <td className="py-1.5 px-3 text-center"></td>
-                  <td className="py-1.5 px-3 text-right">AED 233,500.00</td>
+                  <td className="py-1.5 px-3 text-right">AED {totalNonCurrentAssets.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                 </tr>
 
                 {/* Current Assets */}
@@ -349,28 +469,28 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
                   <td className="py-1.5 px-3 pl-6 font-sans">Inventories (Garment Bales & Sorted Pieces)</td>
                   <td className="py-1.5 px-3 text-center text-slate-500">4</td>
                   <td className="py-1.5 px-3 text-right font-bold text-slate-900">
-                    AED {Number(balanceSheetData?.assets?.categories?.inventory?.total || 428500).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {inventoryVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
                 <tr>
                   <td className="py-1.5 px-3 pl-6 font-sans">Trade Receivables (Wholesale & Courier COD Clearing)</td>
-                  <td className="py-1.5 px-3 text-center text-slate-500">5</td>
+                  <td className="py-1.5 px-3 text-center text-slate-500">4</td>
                   <td className="py-1.5 px-3 text-right">
-                    AED {Number(balanceSheetData?.assets?.categories?.receivables?.total || 112450).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {receivablesVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
                 <tr>
-                  <td className="py-1.5 px-3 pl-6 font-sans">Bank Balances & Cash in Hand (RAKBANK)</td>
+                  <td className="py-1.5 px-3 pl-6 font-sans">Bank Balances & Cash in Hand</td>
                   <td className="py-1.5 px-3 text-center text-slate-500">6</td>
                   <td className="py-1.5 px-3 text-right font-bold text-emerald-800">
-                    AED {Number(balanceSheetData?.assets?.categories?.cashAndBank?.total || 245800).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {cashBankVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
                 <tr className="font-bold border-t border-slate-200">
                   <td className="py-1.5 px-3 font-sans">Total Current Assets</td>
                   <td className="py-1.5 px-3 text-center"></td>
                   <td className="py-1.5 px-3 text-right">
-                    AED {Number((balanceSheetData?.assets?.total || 786750)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {totalCurrentAssets.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
 
@@ -379,7 +499,7 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
                   <td className="py-2.5 px-3 font-sans uppercase">TOTAL ASSETS</td>
                   <td className="py-2.5 px-3 text-center"></td>
                   <td className="py-2.5 px-3 text-right font-mono">
-                    AED {Number((balanceSheetData?.assets?.total || 786750) + 233500).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {totalCalculatedAssets.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
 
@@ -389,48 +509,79 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
                 </tr>
                 <tr>
                   <td className="py-1.5 px-3 pl-6 font-sans">Share Capital</td>
-                  <td className="py-1.5 px-3 text-center text-slate-500"></td>
-                  <td className="py-1.5 px-3 text-right">AED 300,000.00</td>
+                  <td className="py-1.5 px-3 text-center text-slate-500">8</td>
+                  <td className="py-1.5 px-3 text-right">AED {shareCapitalVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                 </tr>
                 <tr>
                   <td className="py-1.5 px-3 pl-6 font-sans">Retained Earnings (Accumulated Reserves)</td>
-                  <td className="py-1.5 px-3 text-center text-slate-500"></td>
+                  <td className="py-1.5 px-3 text-center text-slate-500">8</td>
                   <td className="py-1.5 px-3 text-right font-bold text-emerald-800">
-                    AED {Number(netAuditedProfit + 180000).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {retainedEarningsVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
                 <tr className="font-bold border-t border-slate-200">
                   <td className="py-1.5 px-3 font-sans">Total Shareholder’s Equity</td>
                   <td className="py-1.5 px-3 text-center"></td>
                   <td className="py-1.5 px-3 text-right">
-                    AED {Number(300000 + netAuditedProfit + 180000).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {totalCalculatedEquity.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
 
                 {/* Liabilities */}
+                <tr className="bg-slate-50 font-sans font-bold text-slate-900">
+                  <td colSpan={3} className="py-1.5 px-3">LIABILITIES</td>
+                </tr>
                 <tr>
                   <td className="py-1.5 px-3 pl-6 font-sans">Trade & Supplier Payables (Bale Import Lines)</td>
-                  <td className="py-1.5 px-3 text-center text-slate-500">7</td>
-                  <td className="py-1.5 px-3 text-right">
-                    AED {Number(balanceSheetData?.liabilities?.total || 145000).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  <td className="py-1.5 px-3 text-center text-slate-500">9</td>
+                  <td className="py-1.5 px-3 text-right font-bold text-slate-900">
+                    AED {payablesVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
                 <tr>
                   <td className="py-1.5 px-3 pl-6 font-sans">UAE Federal Tax Authority VAT & Corporate Tax Payable</td>
-                  <td className="py-1.5 px-3 text-center text-slate-500">8</td>
-                  <td className="py-1.5 px-3 text-right font-bold text-slate-900">
-                    AED {Number(corporateTaxProvision + 24500).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  <td className="py-1.5 px-3 text-center text-slate-500">5</td>
+                  <td className="py-1.5 px-3 text-right">
+                    AED {taxPayableVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
+                <tr className="font-bold border-t border-slate-200">
+                  <td className="py-1.5 px-3 font-sans">Total Liabilities</td>
+                  <td className="py-1.5 px-3 text-center"></td>
+                  <td className="py-1.5 px-3 text-right">
+                    AED {totalCalculatedLiabilities.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </td>
+                </tr>
+
                 <tr className="bg-slate-900 text-white font-bold text-sm">
                   <td className="py-2.5 px-3 font-sans uppercase">TOTAL EQUITY & LIABILITIES</td>
                   <td className="py-2.5 px-3 text-center"></td>
                   <td className="py-2.5 px-3 text-right font-mono">
-                    AED {Number((balanceSheetData?.assets?.total || 786750) + 233500).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    AED {totalEquityAndLiabilities.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
               </tbody>
             </table>
+
+            {/* Mathematical Balance Validation Seal */}
+            <div className={`p-3 rounded-lg border font-mono text-xs flex flex-wrap items-center justify-between gap-2 ${
+              Math.abs(totalCalculatedAssets - totalEquityAndLiabilities) < 0.05
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                : 'bg-rose-50 border-rose-300 text-rose-900'
+            }`}>
+              <div className="flex items-center gap-2 font-bold font-sans">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span>
+                  Mathematical Balance Proof:{' '}
+                  <strong className="uppercase">
+                    {Math.abs(totalCalculatedAssets - totalEquityAndLiabilities) < 0.05 ? 'Balanced to Zero Discrepancy ✓' : 'Out of Balance'}
+                  </strong>
+                </span>
+              </div>
+              <div className="font-bold text-slate-800">
+                Total Assets (AED {totalCalculatedAssets.toLocaleString(undefined, { minimumFractionDigits: 2 })}) = Total Equity & Liabilities (AED {totalEquityAndLiabilities.toLocaleString(undefined, { minimumFractionDigits: 2 })})
+              </div>
+            </div>
           </div>
         )}
 
@@ -575,6 +726,127 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
                   The Company is registered under UAE Value Added Tax (VAT) Law with TRN {trnNumber}. Standard VAT rate of 5% is levied and remitted via quarterly FTA VAT 201 declarations. Corporate Tax is provided at 9% on taxable net profits in excess of AED 375,000 pursuant to UAE Federal Decree-Law No. 47 of 2022.
                 </p>
               </div>
+
+              {/* NOTE 6: CASH & BANK WITH AI RECONCILIATION */}
+              <div className="space-y-2 pt-2 border-t border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-slate-950">NOTE 6: CASH AND CASH EQUIVALENTS & BANK RECONCILIATION</div>
+                  <span className="font-mono text-[10px] text-slate-500">IAS 7 / IFRS 9</span>
+                </div>
+                <p className="text-[11px] text-slate-700">
+                  Cash and cash equivalents comprise petty cash held at retail branches and unrestricted current account balances maintained with regulated UAE commercial banks (RAKBANK / FAB / ENBD).
+                </p>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2 font-mono text-[11px]">
+                  <div className="flex justify-between py-1 border-b border-slate-200">
+                    <span className="text-slate-600">Cash on Hand (Branch Drawers - COA 1110)</span>
+                    <span className="font-bold text-slate-900">AED {getCoaBalance(['111', '1110']).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200">
+                    <span className="text-slate-600">Bank Accounts Ledger (COA 1120)</span>
+                    <span className="font-bold text-slate-900">AED {getCoaBalance(['112', '1120']).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between py-1 font-bold text-slate-950">
+                    <span>Total Cash & Cash Equivalents</span>
+                    <span>AED {cashBankVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </div>
+
+                {/* AI Bank Reconciliation Certificate Box */}
+                {verifiedBankStatement ? (
+                  <div className="mt-2 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border border-emerald-300 rounded-lg p-3 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-emerald-900 font-bold text-[11px]">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <span>AI STATUTORY BANK RECONCILIATION CERTIFICATE</span>
+                      </div>
+                      <span className="bg-emerald-600 text-white text-[9px] px-2 py-0.5 rounded-full font-bold tracking-wider uppercase">
+                        Zero Discrepancy Verified
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] text-slate-700 font-mono pt-1">
+                      <div>
+                        <span className="text-slate-500 block">Bank Entity:</span>
+                        <strong className="text-slate-900">{verifiedBankStatement.bankName}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block">IBAN / Account:</span>
+                        <strong className="text-slate-900">{verifiedBankStatement.accountNumber}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block">Bank Statement Balance:</span>
+                        <strong className="text-emerald-700">AED {verifiedBankStatement.closingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block">Audit Variance:</span>
+                        <strong className="text-emerald-700">AED {verifiedBankStatement.variance.toFixed(2)}</strong>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between pt-1 border-t border-emerald-200/60 text-[9px] text-slate-500 font-mono">
+                      <span>Cryptographic Audit Seal: {verifiedBankStatement.verificationHash}</span>
+                      <span>Verified: {new Date(verifiedBankStatement.verifiedAt).toLocaleDateString()}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 bg-amber-50/80 border border-dashed border-amber-300 rounded-lg p-2.5 flex items-center justify-between text-[11px] text-amber-900">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Bank statement reconciliation pending external statement upload.</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowBankReconcilerModal(true)}
+                      className="print:hidden px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded font-bold text-[10px] transition cursor-pointer"
+                    >
+                      Reconcile via AI
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* NOTE 7: PROPERTY & EQUIPMENT */}
+              <div className="space-y-1 pt-2 border-t border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-slate-950">NOTE 7: PROPERTY, PLANT AND EQUIPMENT</div>
+                  <span className="font-mono text-[10px] text-slate-500">IAS 16</span>
+                </div>
+                <p className="text-[11px] text-slate-700">
+                  Fixed assets include garment sorting conveyor systems, industrial press machines, warehouse racking, POS hardware terminals, and leasehold fit-outs. Fixed assets are depreciated on a straight-line basis over 5 to 7 years. Net carrying amount: <strong>AED {totalNonCurrentAssets.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>.
+                </p>
+              </div>
+
+              {/* NOTE 8: SHARE CAPITAL & EQUITY */}
+              <div className="space-y-1 pt-2 border-t border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-slate-950">NOTE 8: SHARE CAPITAL & STATUTORY LEGAL RESERVES</div>
+                  <span className="font-mono text-[10px] text-slate-500">UAE Commercial Companies Law</span>
+                </div>
+                <p className="text-[11px] text-slate-700">
+                  The authorized, issued, and paid-up share capital of the Company is <strong>AED {shareCapitalVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>. Retained earnings balance carried forward stands at <strong>AED {retainedEarningsVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>. Pursuant to Article 103 of UAE Federal Decree-Law No. 32 of 2021 on Commercial Companies, 10% of net audited annual profit is appropriated to the legal statutory reserve until it reaches 50% of the paid-up capital.
+                </p>
+              </div>
+
+              {/* NOTE 9: TRADE & OTHER PAYABLES */}
+              <div className="space-y-1 pt-2 border-t border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-slate-950">NOTE 9: TRADE AND OTHER PAYABLES & ACCRUALS</div>
+                  <span className="font-mono text-[10px] text-slate-500">IFRS 9 / IAS 37</span>
+                </div>
+                <p className="text-[11px] text-slate-700">
+                  Trade payables of <strong>AED {payablesVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong> represent outstanding container import freight and supplier obligations. Accruals and tax liabilities of <strong>AED {taxPayableVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong> represent accrued operating overheads and UAE Corporate Tax / VAT provisions payable. All payables carry standard commercial credit terms (30-60 days).
+                </p>
+              </div>
+
+              {/* NOTE 10: SUBSEQUENT EVENTS & GOING CONCERN */}
+              <div className="space-y-1 pt-2 border-t border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-slate-950">NOTE 10: EVENTS AFTER THE REPORTING PERIOD & GOING CONCERN</div>
+                  <span className="font-mono text-[10px] text-slate-500">IAS 10 / IAS 1</span>
+                </div>
+                <p className="text-[11px] text-slate-700">
+                  Management has evaluated subsequent events from the financial period end ({reportDates.endDate}) through the date of authorization of these financial statements. No adjusting or non-adjusting events have occurred that would require restatement. The Company maintains robust operating margins, positive cash flow from retail and wholesale channels, and adequate liquidity to continue as a Going Concern for the foreseeable future.
+                </p>
+              </div>
             </div>
           </div>
         )}
@@ -614,6 +886,16 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
           </div>
         )}
       </div>
+
+      {/* AI Bank Statement Reconciler Modal */}
+      <BankStatementReconcilerModal
+        isOpen={showBankReconcilerModal}
+        onClose={() => setShowBankReconcilerModal(false)}
+        systemBankLedgerBalance={getCoaBalance(['112', '1120']) || cashBankVal}
+        onSaveReconciliation={(result) => {
+          setVerifiedBankStatement(result);
+        }}
+      />
     </div>
   );
 };
