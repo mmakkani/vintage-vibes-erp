@@ -8,6 +8,8 @@ import { CustomReportBuilder } from './CustomReportBuilder.tsx';
 import { RecurringVouchersView } from './RecurringVouchersView.tsx';
 import { TaxComplianceView } from './TaxComplianceView.tsx';
 import { CourierCODReconciliation } from './CourierCODReconciliation.tsx';
+import { PeriodClosingView, ClosedPeriodRecord } from './PeriodClosingView.tsx';
+import { StatutoryAuditDossierView } from './StatutoryAuditDossierView.tsx';
 import { useSync } from '../../../context/SyncContext.tsx';
 import { VoucherInputSchema, validateWithZod } from '../../../validation/schemas.ts';
 import { safeFetchJson } from '../../../utils/fetchUtils.ts';
@@ -216,7 +218,7 @@ COARow.displayName = 'COARow';
 interface FinanceViewProps {
   onRefreshAll: () => void;
   currentUserRole: string;
-  initialSubTab?: 'coa' | 'vouchers' | 'cod-reconciliation' | 'recurring-vouchers' | 'budgeting' | 'tax-compliance' | 'ledger' | 'trial-balance' | 'income-statement' | 'custom-reports' | 'balance-sheet';
+  initialSubTab?: 'coa' | 'vouchers' | 'cod-reconciliation' | 'recurring-vouchers' | 'budgeting' | 'tax-compliance' | 'ledger' | 'trial-balance' | 'income-statement' | 'custom-reports' | 'balance-sheet' | 'period-closing' | 'legal-audit';
   maintenanceModules?: Record<string, boolean>;
   companyProfile?: any;
 }
@@ -241,8 +243,10 @@ interface SingleVoucherLineItem {
 export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentUserRole, initialSubTab = 'coa', maintenanceModules, companyProfile }) => {
   const { syncVersion, lastDelta, acquireLock, releaseLock, notifyMutation } = useSync('finance');
 
+  const [selectedClosedPeriodForDossier, setSelectedClosedPeriodForDossier] = useState<ClosedPeriodRecord | null>(null);
+
   const [subTab, setSubTabState] = useState<
-    'coa' | 'vouchers' | 'cod-reconciliation' | 'recurring-vouchers' | 'budgeting' | 'tax-compliance' | 'ledger' | 'trial-balance' | 'income-statement' | 'custom-reports' | 'balance-sheet'
+    'coa' | 'vouchers' | 'cod-reconciliation' | 'recurring-vouchers' | 'budgeting' | 'tax-compliance' | 'ledger' | 'trial-balance' | 'income-statement' | 'custom-reports' | 'balance-sheet' | 'period-closing' | 'legal-audit'
   >(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
@@ -1778,6 +1782,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
             { id: 'income-statement', label: 'Income Statement (P&L)', icon: <TrendingUp className="w-3.5 h-3.5" /> },
             { id: 'custom-reports', label: 'Custom Report Builder', icon: <FileSpreadsheet className="w-3.5 h-3.5" /> },
             { id: 'balance-sheet', label: 'Balance Sheet', icon: <Landmark className="w-3.5 h-3.5" /> },
+            { id: 'period-closing', label: 'Period Closing', icon: <Lock className="w-3.5 h-3.5" /> },
+            { id: 'legal-audit', label: 'Statutory Audit Dossier', icon: <FileText className="w-3.5 h-3.5" /> },
             { id: 'tax-compliance', label: 'UAE Tax & Corporate Tax', icon: <ShieldCheck className="w-3.5 h-3.5" /> }
           ].map(tab => (
             <button
@@ -3155,6 +3161,33 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           ======================================================== */}
       {subTab === 'tax-compliance' && (
         <TaxComplianceView onRefreshAll={loadData} />
+      )}
+
+      {/* ========================================================
+          SUBTAB 11: FINANCIAL PERIOD CLOSING & FISCAL LOCKDOWN
+          ======================================================== */}
+      {subTab === 'period-closing' && (
+        <PeriodClosingView
+          accounts={accounts}
+          currentUserRole={currentUserRole}
+          onNavigateToAuditDossier={(period) => {
+            setSelectedClosedPeriodForDossier(period);
+            setSubTab('legal-audit');
+          }}
+          onRefreshAll={loadData}
+        />
+      )}
+
+      {/* ========================================================
+          SUBTAB 12: STATUTORY LEGAL FINANCIAL AUDIT DOSSIER
+          ======================================================== */}
+      {subTab === 'legal-audit' && (
+        <StatutoryAuditDossierView
+          accounts={accounts}
+          selectedClosedPeriod={selectedClosedPeriodForDossier}
+          companyProfile={companyProfile}
+          onNavigateToClosing={() => setSubTab('period-closing')}
+        />
       )}
 
 
