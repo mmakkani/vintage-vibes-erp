@@ -856,18 +856,23 @@ financeRouter.get('/vat-return-201', async (req, res) => {
     let endDate = req.query.endDate as string;
 
     if (!startDate || !endDate) {
-      if (quarter === '2026-Q1') {
-        startDate = '2026-01-01';
-        endDate = '2026-03-31';
-      } else if (quarter === '2026-Q2') {
-        startDate = '2026-04-01';
-        endDate = '2026-06-30';
-      } else if (quarter === '2026-Q3') {
-        startDate = '2026-07-01';
-        endDate = '2026-09-30';
-      } else if (quarter === '2026-Q4') {
-        startDate = '2026-10-01';
-        endDate = '2026-12-31';
+      const match = quarter.match(/^(\d{4})-Q([1-4])$/);
+      if (match) {
+        const y = parseInt(match[1], 10);
+        const qNum = parseInt(match[2], 10);
+        if (qNum === 1) {
+          startDate = `${y}-01-01`;
+          endDate = `${y}-03-31`;
+        } else if (qNum === 2) {
+          startDate = `${y}-04-01`;
+          endDate = `${y}-06-30`;
+        } else if (qNum === 3) {
+          startDate = `${y}-07-01`;
+          endDate = `${y}-09-30`;
+        } else if (qNum === 4) {
+          startDate = `${y}-10-01`;
+          endDate = `${y}-12-31`;
+        }
       } else {
         startDate = '2026-07-01';
         endDate = '2026-09-30';

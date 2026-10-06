@@ -49,19 +49,22 @@ interface CorporateTaxEstimate {
   applicableTaxBracket: string;
 }
 
-const QUARTER_PRESETS = [
-  { id: '2026-Q1', label: 'Q1 2026', range: 'Jan 01 - Mar 31, 2026', start: '2026-01-01', end: '2026-03-31', due: '2026-04-28' },
-  { id: '2026-Q2', label: 'Q2 2026', range: 'Apr 01 - Jun 30, 2026', start: '2026-04-01', end: '2026-06-30', due: '2026-07-28' },
-  { id: '2026-Q3', label: 'Q3 2026', range: 'Jul 01 - Sep 30, 2026', start: '2026-07-01', end: '2026-09-30', due: '2026-10-28' },
-  { id: '2026-Q4', label: 'Q4 2026', range: 'Oct 01 - Dec 31, 2026', start: '2026-10-01', end: '2026-12-31', due: '2027-01-28' },
+const getQuarterPresets = (year: number) => [
+  { id: `${year}-Q1`, label: `Q1 ${year}`, range: `Jan 01 - Mar 31, ${year}`, start: `${year}-01-01`, end: `${year}-03-31`, due: `${year}-04-28` },
+  { id: `${year}-Q2`, label: `Q2 ${year}`, range: `Apr 01 - Jun 30, ${year}`, start: `${year}-04-01`, end: `${year}-06-30`, due: `${year}-07-28` },
+  { id: `${year}-Q3`, label: `Q3 ${year}`, range: `Jul 01 - Sep 30, ${year}`, start: `${year}-07-01`, end: `${year}-09-30`, due: `${year}-10-28` },
+  { id: `${year}-Q4`, label: `Q4 ${year}`, range: `Oct 01 - Dec 31, ${year}`, start: `${year}-10-01`, end: `${year}-12-31`, due: `${year + 1}-01-28` },
   { id: 'CUSTOM', label: 'Custom Window', range: 'User Range', start: '', end: '', due: '' }
 ];
 
 export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshAll }) => {
-  // Quarter selector state (Default Q3 2026 where live purchase invoice PUR-09-2026-0005 exists)
+  // Tax Year & Quarter state (Default 2026-Q3 where live purchase invoice PUR-09-2026-0005 exists)
+  const [vatYear, setVatYear] = useState<number>(2026);
   const [selectedQuarter, setSelectedQuarter] = useState<string>('2026-Q3');
   const [startDate, setStartDate] = useState<string>('2026-07-01');
   const [endDate, setEndDate] = useState<string>('2026-09-30');
+
+  const quarterPresets = getQuarterPresets(vatYear);
 
   // VAT 201 Return Data
   const [loadingVat, setLoadingVat] = useState<boolean>(false);
@@ -146,10 +149,24 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
     fetchEstimate();
   }, [taxYear]);
 
+  // Handle Year Change
+  const handleYearChange = (newYear: number) => {
+    setVatYear(newYear);
+    const qSuffix = selectedQuarter.includes('-Q') ? selectedQuarter.split('-Q')[1] : '3';
+    const newQId = `${newYear}-Q${qSuffix}`;
+    setSelectedQuarter(newQId);
+    const presets = getQuarterPresets(newYear);
+    const found = presets.find(q => q.id === newQId);
+    if (found) {
+      setStartDate(found.start);
+      setEndDate(found.end);
+    }
+  };
+
   // Handle Quarter Selection Change
   const handleSelectQuarter = (qid: string) => {
     setSelectedQuarter(qid);
-    const found = QUARTER_PRESETS.find(q => q.id === qid);
+    const found = quarterPresets.find(q => q.id === qid);
     if (found && found.id !== 'CUSTOM') {
       setStartDate(found.start);
       setEndDate(found.end);
@@ -384,12 +401,28 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
 
         {/* Quarter Selection Navigation Tabs */}
         <div className="flex flex-wrap items-center justify-between gap-3 bg-stone-50 p-2.5 rounded-xl border border-stone-200 text-xs">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-bold text-stone-600 uppercase tracking-wide mr-2 flex items-center gap-1">
-              <Calendar className="w-3.5 h-3.5 text-stone-500" />
-              Tax Period:
-            </span>
-            {QUARTER_PRESETS.map((q) => (
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center space-x-1.5 mr-1 bg-white px-2 py-1 rounded-lg border border-stone-200">
+              <span className="text-[11px] font-bold text-stone-600 uppercase tracking-wide flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-stone-500" />
+                Year:
+              </span>
+              <select
+                value={vatYear}
+                onChange={e => handleYearChange(Number(e.target.value))}
+                className="bg-transparent font-bold text-xs text-stone-900 cursor-pointer focus:outline-none"
+              >
+                <option value={2023}>2023</option>
+                <option value={2024}>2024</option>
+                <option value={2025}>2025</option>
+                <option value={2026}>2026</option>
+                <option value={2027}>2027</option>
+                <option value={2028}>2028</option>
+                <option value={2029}>2029</option>
+                <option value={2030}>2030</option>
+              </select>
+            </div>
+            {quarterPresets.map((q) => (
               <button
                 key={q.id}
                 onClick={() => handleSelectQuarter(q.id)}
