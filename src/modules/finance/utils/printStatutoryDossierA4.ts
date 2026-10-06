@@ -1,5 +1,6 @@
 import { VerifiedBankStatement } from '../components/BankStatementReconcilerModal.tsx';
 import { CompanyShareholder } from '../components/ShareholderGovernanceModal.tsx';
+import { generateQrCodeSvgString } from '../../setup/thermal/thermalPopupManager.ts';
 
 export interface ThreeYearFigures {
   turnover: number;
@@ -213,6 +214,10 @@ export function printStatutoryDossierA4(data: StatutoryDossierPrintData): Window
   const statementBal = verifiedBankStatement?.closingBalance != null ? verifiedBankStatement.closingBalance : figures.cashBankVal;
   const ledgerBal = figures.cashBankVal;
   const bankReconciliationVariance = Math.abs(statementBal - ledgerBal);
+
+  // Digital Audit Attestation URL & Vector QR Code
+  const verificationUrl = `https://vintagevibe.ae/audit/verify?hash=${reportDates.checksum}&period=${encodeURIComponent(reportDates.periodName)}&trn=${encodeURIComponent(trnNumber)}`;
+  const qrCodeSvg = generateQrCodeSvgString(verificationUrl, 76);
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -1210,15 +1215,38 @@ export function printStatutoryDossierA4(data: StatutoryDossierPrintData): Window
       `).join('')}
     </div>
 
-    <!-- 14. Cryptographic Hash Seal -->
-    <div style="margin-top: 10px; border-top: 1px solid #e2e8f0; padding-top: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 7.5px; color: #64748b; font-family: monospace;">
-      <div>
-        <strong>SHA-256 DIGITAL CHECKSUM:</strong> ${reportDates.checksum}<br/>
-        <span>STATUS: CERTIFIED AUDITED DOSSIER &bull; ZERO RECONCILIATION DISCREPANCY</span>
+    <!-- 14. Official Digital Audit Seal & QR Verification -->
+    <div style="margin-top: 12px; border-top: 2px solid #0f172a; padding-top: 8px; display: flex; justify-content: space-between; align-items: center; gap: 14px;">
+      <!-- Digital Medallion Seal -->
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <img
+          src="/vintage_vibes_seal.svg"
+          alt="Official Audit Seal"
+          style="width: 74px; height: 74px; object-fit: contain; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.15)); shrink-0;"
+          onerror="this.onerror=null; this.src='/vintage_logo_gold_seal_a4.png';"
+        />
+        <div>
+          <div style="font-size: 10px; font-weight: 900; text-transform: uppercase; color: #0f172a; letter-spacing: 0.04em; font-family: 'Times New Roman', Georgia, serif;">
+            OFFICIAL STATUTORY AUDIT & ATTESTATION SEAL
+          </div>
+          <div style="font-size: 8px; color: #b45309; font-weight: bold; margin: 1px 0;">
+            VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C &bull; AL AIN JURISDICTION
+          </div>
+          <div style="font-size: 7.5px; color: #475569; font-family: monospace; line-height: 1.35;">
+            SHA-256 CHECKSUM: ${reportDates.checksum}<br/>
+            STATUS: <strong style="color: #047857;">CERTIFIED AUDITED STATUTORY DOSSIER &bull; ZERO DISCREPANCY</strong>
+          </div>
+        </div>
       </div>
-      <div style="text-align: right; border: 1px solid #cbd5e1; padding: 3px 6px; border-radius: 3px; background: #f8fafc;">
-        <strong>OFFICIAL AUDIT SEAL</strong><br/>
-        VALIDATED AGAINST LIVE ERP LEDGER
+
+      <!-- Vector QR Code Matrix -->
+      <div style="display: flex; flex-direction: column; align-items: center; border: 1.5px solid #0f172a; padding: 4px; border-radius: 4px; background: #ffffff; shrink-0;">
+        <div style="width: 68px; height: 68px; display: flex; align-items: center; justify-content: center;">
+          ${qrCodeSvg}
+        </div>
+        <div style="font-size: 6.5px; font-weight: bold; font-family: monospace; text-align: center; margin-top: 2px; color: #0f172a; letter-spacing: 0.02em;">
+          SCAN TO VERIFY AUDIT
+        </div>
       </div>
     </div>
 

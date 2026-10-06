@@ -37,24 +37,51 @@ body {
    "Jesay mouse lay jayen ubhray" - Pop-out physical 3D mechanics
    ========================================================================== */
 
-/* Universal 3D Elevation for ALL Interactive Buttons */
-button:not(:disabled):not([class*="bg-transparent"]):not([class*="btn-flat"]):not([class*="p-0"]) {
+/* Universal 3D Elevation for ALL Interactive Buttons (Exclude Viewport-Fixed Floating Buttons) */
+button:not(:disabled):not([class*="bg-transparent"]):not([class*="btn-flat"]):not([class*="p-0"]):not([class*="fixed"]) {
   position: relative;
   transition: transform 0.16s cubic-bezier(0.34, 1.4, 0.64, 1), box-shadow 0.16s ease, filter 0.16s ease;
   transform: translateY(0) scale(1);
   will-change: transform, box-shadow;
 }
 
-button:not(:disabled):not([class*="bg-transparent"]):not([class*="btn-flat"]):not([class*="p-0"]):hover {
+button:not(:disabled):not([class*="bg-transparent"]):not([class*="btn-flat"]):not([class*="p-0"]):not([class*="fixed"]):hover {
   transform: translateY(-3.5px) scale(1.025);
   box-shadow: 0 6px 0 rgba(0, 0, 0, 0.2), 0 12px 20px rgba(0, 0, 0, 0.18);
   filter: brightness(1.06);
 }
 
-button:not(:disabled):not([class*="bg-transparent"]):not([class*="btn-flat"]):not([class*="p-0"]):active {
+button:not(:disabled):not([class*="bg-transparent"]):not([class*="btn-flat"]):not([class*="p-0"]):not([class*="fixed"]):active {
   transform: translateY(2px) scale(0.975);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.12);
   filter: brightness(0.96);
+}
+
+/* Viewport-Fixed Floating Action Controls (Strictly preserve viewport pinning and compact width) */
+button[class*="fixed"],
+.fixed-floating-btn {
+  position: fixed !important;
+  width: max-content !important;
+  max-width: fit-content !important;
+  z-index: 9999 !important;
+  align-self: flex-end;
+}
+
+/* Centered Architect Signature Card Action Buttons (Direct Chat & Architecture) */
+div:has(> a[href*="923022190822"]) {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: center !important;
+  align-items: center !important;
+  width: 100% !important;
+  text-align: center !important;
+}
+
+div:has(> a[href*="923022190822"]) > a {
+  display: inline-flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  text-align: center !important;
 }
 
 /* Dedicated .btn-3d Class Family with Custom Metallic Colors */

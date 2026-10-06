@@ -19,7 +19,8 @@ import {
   DollarSign,
   Users,
   Check,
-  ArrowRight
+  ArrowRight,
+  QrCode
 } from 'lucide-react';
 import { ClosedPeriodRecord } from './PeriodClosingView.tsx';
 import { FinanceService } from '../../../services/financeService.ts';
@@ -27,6 +28,8 @@ import { COAAccount } from '../finance.types.ts';
 import { BankStatementReconcilerModal, VerifiedBankStatement } from './BankStatementReconcilerModal.tsx';
 import { printStatutoryDossierA4 } from '../utils/printStatutoryDossierA4.ts';
 import { ShareholderGovernanceModal, CompanyShareholder } from './ShareholderGovernanceModal.tsx';
+import { QRCodeSVG } from 'qrcode.react';
+import { RoyalWaxSeal } from '../../../components/RoyalWaxSeal.tsx';
 
 interface StatutoryAuditDossierViewProps {
   accounts: COAAccount[];
@@ -1380,13 +1383,67 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
                     ))}
                   </div>
 
-                  {/* Cryptographic Hash Seal */}
-                  <div className="mt-4 pt-3 border-t border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[10px] font-mono text-slate-500">
-                    <div>
-                      <span className="font-bold text-slate-700">SHA-256 DIGITAL CHECKSUM:</span> {reportDates.checksum}
+                  {/* Visual Digital Audit Seal & Dynamic QR Code Verification */}
+                  <div className="mt-6 p-5 rounded-2xl bg-gradient-to-r from-slate-950 via-slate-900 to-amber-950/40 border-2 border-amber-500/50 shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 text-white">
+                    {/* Left: Interactive Royal Wax & Metallic Gold Medallion Seal */}
+                    <div className="flex items-center gap-4">
+                      <div className="relative shrink-0 flex items-center justify-center">
+                        <img
+                          src="/vintage_vibes_seal.svg"
+                          alt="Vintage Vibes Official Gold Seal"
+                          className="w-24 h-24 object-contain filter drop-shadow-[0_4px_12px_rgba(245,158,11,0.4)]"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = '/vintage_logo_gold_seal_a4.png';
+                          }}
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center opacity-90 scale-75">
+                          <RoyalWaxSeal
+                            sealText="AUDITED"
+                            subText="VINTAGE VIBES"
+                            size="sm"
+                            approver="DIRECTOR"
+                            isAnimated={false}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono flex items-center gap-1">
+                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>STATUTORY DIGITAL AUDIT SEAL</span>
+                          </span>
+                          <span className="text-[10px] font-mono text-amber-300">
+                            AL AIN &bull; ABU DHABI JURISDICTION
+                          </span>
+                        </div>
+                        <div className="text-sm font-black font-serif text-white uppercase tracking-wide">
+                          Attested & Sealed by Corporate Governance Board
+                        </div>
+                        <div className="text-[11px] text-slate-300 font-sans">
+                          Digitally signed and mathematically reconciled against live ERP General Ledger.
+                        </div>
+                        <div className="text-[10px] font-mono text-amber-400/90 break-all">
+                          SHA-256 HASH: {reportDates.checksum}
+                        </div>
+                      </div>
                     </div>
-                    <div className="px-2 py-0.5 bg-slate-100 border border-slate-300 rounded text-slate-700 font-bold">
-                      STATUS: CERTIFIED AUDITED DOSSIER &bull; ZERO VARIANCE
+
+                    {/* Right: Dynamic High-Contrast QR Code */}
+                    <div className="shrink-0 flex flex-col items-center bg-white p-3 rounded-xl shadow-lg border-2 border-amber-400 text-slate-950">
+                      <QRCodeSVG
+                        value={`https://vintagevibe.ae/audit/verify?hash=${reportDates.checksum}&period=${encodeURIComponent(reportDates.periodName)}&trn=${encodeURIComponent(trnNumber)}`}
+                        size={84}
+                        level="M"
+                        includeMargin={false}
+                      />
+                      <div className="mt-1.5 text-center">
+                        <span className="text-[9px] font-black font-mono tracking-tighter uppercase block text-slate-900">
+                          SCAN TO VERIFY AUDIT
+                        </span>
+                        <span className="text-[7.5px] font-mono text-slate-500 block">
+                          FTA / COURT REGISTRY
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>

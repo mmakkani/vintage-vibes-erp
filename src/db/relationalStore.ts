@@ -2606,27 +2606,53 @@ class RelationalStore {
     }
 
     // 2. Automated Balanced Dual-Entry COA Voucher for Bulk Bale Purchase
-    // Debit: 1140-01 (Raw Material Unsorted)
-    // Credit: 2110-01 (Accounts Payable - Trade Suppliers)
+    // If VAT is present:
+    // Debit: 1140-01 (Raw Material Unsorted) for Net Goods Cost
+    // Debit: 2140-02 (UAE VAT Input Tax Recoverable 5%) for VAT Amount
+    // Credit: 2110-01 (Accounts Payable - Trade Suppliers) for Total Payable
+    const vatAed = Number((invoice.vatAmount || invoice.taxAmount || 0) * (invoice.exchangeRate || 1.0));
+    const netGoodsAed = Number((totalAed - vatAed).toFixed(2));
     const rawBaleInvAcc = this.getOrCreateAccount('1140-01', 'Raw Material Unsorted', 'ASSET');
     const apAcc = this.getOrCreateAccount('2110-01', 'Accounts Payable - Trade Suppliers', 'LIABILITY');
+    const vatInputAcc = this.getOrCreateAccount('2140-02', 'UAE VAT Input Tax Recoverable (5%)', 'LIABILITY');
 
     const nextIdx = this.vouchers.length + 1;
     const voucherNo = `JV-PUR-${String(nextIdx).padStart(4, '0')}`;
     const voucherId = `vch-pur-${invoice.id}`;
-    const voucher: Voucher = {
-      id: voucherId,
-      voucherNo,
-      voucherType: 'JOURNAL',
-      date: invoice.date || new Date().toISOString().slice(0, 10),
-      currency: 'AED',
-      exchangeRate: 1.0,
-      referenceNo: invoice.invoiceNo,
-      narration: `Bulk Bale Purchase Invoice ${invoice.invoiceNo} from ${invoice.supplierName || 'Trade Supplier'}`,
-      status: 'POSTED',
-      postedAt: new Date().toISOString(),
-      postedBy,
-      lines: [
+
+    const purchaseLines: VoucherLine[] = [];
+    if (vatAed > 0 && netGoodsAed > 0) {
+      purchaseLines.push(
+        {
+          id: `line-pur-${invoice.id}-dr-goods`,
+          accountId: rawBaleInvAcc.id,
+          accountCode: rawBaleInvAcc.code,
+          accountName: rawBaleInvAcc.name,
+          debitAmount: netGoodsAed,
+          creditAmount: 0,
+          narration: `Raw Bulk Bale Inward (Net Cost): Invoice ${invoice.invoiceNo}`
+        },
+        {
+          id: `line-pur-${invoice.id}-dr-vat`,
+          accountId: vatInputAcc.id,
+          accountCode: vatInputAcc.code,
+          accountName: vatInputAcc.name,
+          debitAmount: vatAed,
+          creditAmount: 0,
+          narration: `UAE VAT 5% Input Tax Recoverable: Invoice ${invoice.invoiceNo}`
+        },
+        {
+          id: `line-pur-${invoice.id}-cr`,
+          accountId: supplier?.accountMap?.payableAccountId || apAcc.id,
+          accountCode: apAcc.code,
+          accountName: supplier ? `Accounts Payable - ${supplier.name}` : apAcc.name,
+          debitAmount: 0,
+          creditAmount: totalAed,
+          narration: `Trade Supplier Payable: Invoice ${invoice.invoiceNo}`
+        }
+      );
+    } else {
+      purchaseLines.push(
         {
           id: `line-pur-${invoice.id}-dr`,
           accountId: rawBaleInvAcc.id,
@@ -2645,7 +2671,22 @@ class RelationalStore {
           creditAmount: totalAed,
           narration: `Trade Supplier Payable: Invoice ${invoice.invoiceNo}`
         }
-      ]
+      );
+    }
+
+    const voucher: Voucher = {
+      id: voucherId,
+      voucherNo,
+      voucherType: 'JOURNAL',
+      date: invoice.date || new Date().toISOString().slice(0, 10),
+      currency: 'AED',
+      exchangeRate: 1.0,
+      referenceNo: invoice.invoiceNo,
+      narration: `Bulk Bale Purchase Invoice ${invoice.invoiceNo} from ${invoice.supplierName || 'Trade Supplier'}`,
+      status: 'POSTED',
+      postedAt: new Date().toISOString(),
+      postedBy,
+      lines: purchaseLines
     };
 
     const { newLedgers, updatedAccounts } = FinanceEngine.postVoucherToLedger(

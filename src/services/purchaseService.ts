@@ -418,6 +418,67 @@ export class PurchaseService {
     };
   }
 
+  public static async resolveVatInputAccount(): Promise<{ accountId: string; accountCode: string; accountName: string }> {
+    let vatInputAccountId = '';
+    let vatInputAccountCode = '2140-02';
+    let vatInputAccountName = 'UAE VAT Input Tax Recoverable (5%)';
+
+    try {
+      // 1. Check chart_of_accounts by code 2140-02, 1310-01, 1170-01
+      const { data: chartMatches } = await supabase
+        .from('chart_of_accounts')
+        .select('id, code, name')
+        .in('code', ['2140-02', '1310-01', '1170-01'])
+        .limit(1);
+
+      if (chartMatches && chartMatches.length > 0) {
+        return {
+          accountId: String(chartMatches[0].id),
+          accountCode: chartMatches[0].code || '2140-02',
+          accountName: chartMatches[0].name || vatInputAccountName
+        };
+      }
+
+      // 2. Check coa_accounts by code
+      const { data: coaMatches } = await supabase
+        .from('coa_accounts')
+        .select('id, code, name')
+        .in('code', ['2140-02', '1310-01', '1170-01'])
+        .limit(1);
+
+      if (coaMatches && coaMatches.length > 0) {
+        return {
+          accountId: String(coaMatches[0].id),
+          accountCode: coaMatches[0].code || '2140-02',
+          accountName: coaMatches[0].name || vatInputAccountName
+        };
+      }
+
+      // 3. Check by name
+      const { data: nameMatch } = await supabase
+        .from('chart_of_accounts')
+        .select('id, code, name')
+        .ilike('name', '%input vat%')
+        .limit(1);
+
+      if (nameMatch && nameMatch.length > 0) {
+        return {
+          accountId: String(nameMatch[0].id),
+          accountCode: nameMatch[0].code,
+          accountName: nameMatch[0].name
+        };
+      }
+    } catch (e) {
+      console.warn('[PurchaseService] Error resolving VAT input account:', e);
+    }
+
+    return {
+      accountId: 'acc-2140-02',
+      accountCode: vatInputAccountCode,
+      accountName: vatInputAccountName
+    };
+  }
+
   private static _postingInvoiceIds: Set<string> = new Set<string>();
   private static _convertingInvoiceIds: Set<string> = new Set<string>();
 
@@ -509,19 +570,50 @@ export class PurchaseService {
         throw new Error("Inventory account '1140-01' not found in Chart of Accounts. Please configure it in COA first.");
       }
 
-      // Stage 1 Journal Voucher: Dr 1140-01 (Raw Material Unsorted) / Cr Supplier Liability Account (Strict Registry Account)
+      // Stage 1 Journal Voucher:
+      // If VAT is present:
+      // Dr 1140-01 (Raw Material Unsorted) for Net Goods Cost
+      // Dr 2140-02 (UAE VAT Input Tax Recoverable 5%) for VAT Amount
+      // Cr Supplier Liability Account for Gross Total Payable
+      const vatAmountOriginal = Number(invoice.vat_amount ?? invoice.tax_amount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0);
+      const vatAmountAed = currency === 'AED' ? vatAmountOriginal : Number((vatAmountOriginal * exchangeRate).toFixed(2));
+      const netGoodsAed = Number((invoiceTotalAed - vatAmountAed).toFixed(2));
+
       const pinvUniqueSuffix = `${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-      createdVoucher = await FinanceService.addVoucher({
-        voucherNo: `JV-PINV-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${pinvUniqueSuffix}`,
-        date: invoice.invoice_date || invoice.issue_date || new Date().toISOString().slice(0, 10),
-        type: 'JOURNAL',
-        reference: `PINV-${invoiceNo}`,
-        narration: `Commercial Purchase Invoice Posted: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
-        totalDebit: invoiceTotalAed,
-        totalCredit: invoiceTotalAed,
-        status: 'POSTED',
-        createdBy: 'System (Commercial Invoice)',
-        lines: [
+
+      const voucherLines: any[] = [];
+      if (vatAmountAed > 0 && netGoodsAed > 0) {
+        const vatCoa = await PurchaseService.resolveVatInputAccount();
+        voucherLines.push(
+          {
+            accountId: rawInvAccountId,
+            accountCode: '1140-01',
+            accountName: rawInvAccountName,
+            debitAmount: netGoodsAed,
+            creditAmount: 0,
+            memo: `Commercial Purchase Invoice (Net Cost): ${invoiceNo}`
+          },
+          {
+            accountId: vatCoa.accountId,
+            accountCode: vatCoa.accountCode,
+            accountName: vatCoa.accountName,
+            debitAmount: vatAmountAed,
+            creditAmount: 0,
+            memo: `UAE VAT 5% Input Tax Recoverable: ${invoiceNo}`
+          },
+          {
+            accountId: supplierCoa.accountId,
+            accountCode: supplierCoa.accountCode,
+            accountName: supplierCoa.accountName,
+            partyId: supplierCoa.partyId,
+            partyName: supplierCoa.partyName,
+            debitAmount: 0,
+            creditAmount: invoiceTotalAed,
+            memo: `Supplier Payable: ${supplierName} for ${invoiceNo}`
+          }
+        );
+      } else {
+        voucherLines.push(
           {
             accountId: rawInvAccountId,
             accountCode: '1140-01',
@@ -540,7 +632,20 @@ export class PurchaseService {
             creditAmount: invoiceTotalAed,
             memo: `Supplier Payable: ${supplierName} for ${invoiceNo}`
           }
-        ]
+        );
+      }
+
+      createdVoucher = await FinanceService.addVoucher({
+        voucherNo: `JV-PINV-${invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}-${pinvUniqueSuffix}`,
+        date: invoice.invoice_date || invoice.issue_date || new Date().toISOString().slice(0, 10),
+        type: 'JOURNAL',
+        reference: `PINV-${invoiceNo}`,
+        narration: `Commercial Purchase Invoice Posted: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
+        totalDebit: invoiceTotalAed,
+        totalCredit: invoiceTotalAed,
+        status: 'POSTED',
+        createdBy: 'System (Commercial Invoice)',
+        lines: voucherLines
       });
 
       // Update supplier balance in parties table
