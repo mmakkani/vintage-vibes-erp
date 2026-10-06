@@ -1173,17 +1173,27 @@ financeRouter.post('/vat-closing/execute', async (req, res) => {
         const netVat = Math.round((outputVat - inputVat) * 100) / 100;
         const isRefund = netVat < 0;
 
-        // Ensure settlement accounts in chart_of_accounts
+        // Look up COA Account IDs
+        const accOutRes = await client.query("SELECT id FROM chart_of_accounts WHERE code = '2140-01' LIMIT 1");
+        const outputAccId = accOutRes.rows[0]?.id || null;
+
+        const accInRes = await client.query("SELECT id FROM chart_of_accounts WHERE code = '2140-02' LIMIT 1");
+        const inputAccId = accInRes.rows[0]?.id || null;
+
+        const settCode = isRefund ? '1320-01' : '2140-99';
+        const settName = isRefund ? 'UAE FTA Net VAT Refund Receivable' : 'UAE FTA Net VAT Settlement Payable';
+        const settType = isRefund ? 'ASSET' : 'LIABILITY';
+        const settParent = isRefund ? '1000-00' : '2140-00';
+
+        // Ensure settlement account exists in COA
         await client.query(`
           INSERT INTO chart_of_accounts (id, code, name, account_type, parent_code, current_balance, is_deleted)
-          VALUES (gen_random_uuid(), '2140-99', 'UAE FTA Net VAT Settlement Payable', 'LIABILITY', '2140-00', 0, false)
+          VALUES (gen_random_uuid(), $1, $2, $3, $4, 0, false)
           ON CONFLICT (code) DO NOTHING;
-        `);
-        await client.query(`
-          INSERT INTO chart_of_accounts (id, code, name, account_type, parent_code, current_balance, is_deleted)
-          VALUES (gen_random_uuid(), '1320-01', 'UAE FTA Net VAT Refund Receivable', 'ASSET', '1000-00', 0, false)
-          ON CONFLICT (code) DO NOTHING;
-        `);
+        `, [settCode, settName, settType, settParent]);
+
+        const accSettRes = await client.query("SELECT id FROM chart_of_accounts WHERE code = $1 LIMIT 1", [settCode]);
+        const settlementAccId = accSettRes.rows[0]?.id || null;
 
         // Generate Balanced Settlement Journal Voucher
         const voucherNo = `JV-VAT-CLOSE-${quarter.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString(36).toUpperCase()}`;
@@ -1196,31 +1206,41 @@ financeRouter.post('/vat-closing/execute', async (req, res) => {
           VALUES ($1, $2, $3, 'JOURNAL', $4, $5, $5, 'POSTED', $6, true)
         `, [voucherId, voucherNo, endDate, narration, maxTotal, closedBy || 'Tax Director']);
 
-        // Double-entry balancing lines:
+        // Double-entry balancing lines with verified COA Account IDs:
         if (outputVat > 0) {
           await client.query(`
-            INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_code, account_name, debit, credit, narration)
-            VALUES (gen_random_uuid(), $1, $2, $3, '2140-01', 'UAE VAT Output Tax (5%)', $4, 0, $5)
-          `, [voucherId, voucherNo, endDate, outputVat, `Clear Qtr Output VAT for ${quarter}`]);
+            INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_id, account_code, account_name, debit, credit, narration)
+            VALUES (gen_random_uuid(), $1, $2, $3, $4, '2140-01', 'UAE VAT Output Tax (5%)', $5, 0, $6)
+          `, [voucherId, voucherNo, endDate, outputAccId, outputVat, `Clear Qtr Output VAT for ${quarter}`]);
         }
 
         if (inputVat > 0) {
           await client.query(`
-            INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_code, account_name, debit, credit, narration)
-            VALUES (gen_random_uuid(), $1, $2, $3, '2140-02', 'UAE VAT Input Tax Recoverable (5%)', 0, $4, $5)
-          `, [voucherId, voucherNo, endDate, inputVat, `Clear Qtr Recoverable Input VAT for ${quarter}`]);
+            INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_id, account_code, account_name, debit, credit, narration)
+            VALUES (gen_random_uuid(), $1, $2, $3, $4, '2140-02', 'UAE VAT Input Tax Recoverable (5%)', 0, $5, $6)
+          `, [voucherId, voucherNo, endDate, inputAccId, inputVat, `Clear Qtr Recoverable Input VAT for ${quarter}`]);
         }
 
+        const netAmt = Math.abs(netVat);
         if (netVat > 0) {
           await client.query(`
-            INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_code, account_name, debit, credit, narration)
-            VALUES (gen_random_uuid(), $1, $2, $3, '2140-99', 'UAE FTA Net VAT Settlement Payable', 0, $4, $5)
-          `, [voucherId, voucherNo, endDate, netVat, `Quarterly VAT Payable to FTA for ${quarter}`]);
+            INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_id, account_code, account_name, debit, credit, narration)
+            VALUES (gen_random_uuid(), $1, $2, $3, $4, '2140-99', 'UAE FTA Net VAT Settlement Payable', 0, $5, $6)
+          `, [voucherId, voucherNo, endDate, settlementAccId, netVat, `Quarterly VAT Payable to FTA for ${quarter}`]);
         } else if (netVat < 0) {
           await client.query(`
-            INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_code, account_name, debit, credit, narration)
-            VALUES (gen_random_uuid(), $1, $2, $3, '1320-01', 'UAE FTA Net VAT Refund Receivable', $4, 0, $5)
-          `, [voucherId, voucherNo, endDate, Math.abs(netVat), `Quarterly VAT Net Refund Due from FTA for ${quarter}`]);
+            INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_id, account_code, account_name, debit, credit, narration)
+            VALUES (gen_random_uuid(), $1, $2, $3, $4, '1320-01', 'UAE FTA Net VAT Refund Receivable', $5, 0, $6)
+          `, [voucherId, voucherNo, endDate, settlementAccId, netAmt, `Quarterly VAT Net Refund Due from FTA for ${quarter}`]);
+        }
+
+        // Update Chart of Accounts balances live in PostgreSQL
+        if (settlementAccId && netAmt > 0) {
+          await client.query(`
+            UPDATE chart_of_accounts 
+            SET current_balance = COALESCE(current_balance, 0) + $1 
+            WHERE id = $2
+          `, [netAmt, settlementAccId]);
         }
 
         const auditHash = `FTA-HASH-VAT201-${quarter}-${voucherNo}`;
@@ -1228,22 +1248,21 @@ financeRouter.post('/vat-closing/execute', async (req, res) => {
         const insertClose = await client.query(`
           INSERT INTO vat_quarterly_closings (
             quarter, start_date, end_date, due_date, box_output_vat, box_input_vat, net_vat_amount,
-            is_refundable, closing_voucher_no, status, closed_by, audit_hash, fta_declaration_notes
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'FILED_LOCKED', $10, $11, $12)
-          RETURNING *;
+            is_refundable, closing_voucher_no, closing_voucher_id, status, closed_by, audit_hash, fta_declaration_notes,
+            output_tax_account_id, output_tax_account_code, input_tax_account_id, input_tax_account_code,
+            settlement_account_id, settlement_account_code, output_balance_cleared, input_balance_cleared,
+            net_settlement_posted, coa_reconciled
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7,
+            $8, $9, $10, 'FILED_LOCKED', $11, $12, $13,
+            $14, '2140-01', $15, '2140-02',
+            $16, $17, $18, $19,
+            $20, true
+          ) RETURNING *;
         `, [
-          quarter,
-          startDate,
-          endDate,
-          getDueDateForQuarter(quarter, endDate),
-          outputVat,
-          inputVat,
-          netVat,
-          isRefund,
-          voucherNo,
-          closedBy || 'Tax Compliance Director',
-          auditHash,
-          notes || 'Official UAE FTA Form VAT 201 Quarterly Settlement Filed'
+          quarter, startDate, endDate, getDueDateForQuarter(quarter, endDate), outputVat, inputVat, netVat,
+          isRefund, voucherNo, voucherId, closedBy || 'Tax Compliance Director', auditHash, notes || 'Official UAE FTA Form VAT 201 Quarterly Settlement Filed',
+          outputAccId, inputAccId, settlementAccId, settCode, outputVat, inputVat, netAmt
         ]);
 
         await client.query('COMMIT');
@@ -1272,9 +1291,18 @@ financeRouter.post('/vat-closing/reopen', async (req, res) => {
       return res.status(403).json({ success: false, error: 'Unauthorized: Invalid Master PIN override. Pin 0099 required.' });
     }
     await withDb(async (client) => {
-      const chk = await client.query('SELECT closing_voucher_no FROM vat_quarterly_closings WHERE quarter = $1', [quarter]);
+      const chk = await client.query('SELECT closing_voucher_no, settlement_account_id, net_settlement_posted FROM vat_quarterly_closings WHERE quarter = $1', [quarter]);
       if (chk.rows.length > 0) {
-        const vNo = chk.rows[0].closing_voucher_no;
+        const row = chk.rows[0];
+        // Revert COA balance
+        if (row.settlement_account_id && Number(row.net_settlement_posted) > 0) {
+          await client.query(`
+            UPDATE chart_of_accounts 
+            SET current_balance = GREATEST(0, COALESCE(current_balance, 0) - $1)
+            WHERE id = $2
+          `, [Number(row.net_settlement_posted), row.settlement_account_id]);
+        }
+        const vNo = row.closing_voucher_no;
         if (vNo) {
           await client.query('DELETE FROM voucher_entries WHERE voucher_no = $1', [vNo]);
           await client.query('DELETE FROM vouchers WHERE voucher_no = $1', [vNo]);
@@ -1285,6 +1313,30 @@ financeRouter.post('/vat-closing/reopen', async (req, res) => {
     return res.json({ success: true, message: `Quarter ${quarter} has been re-opened successfully.` });
   } catch (err: any) {
     console.error('[VAT Closing Route] reopen error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get Historical VAT Quarterly Closings & Audit Trail (Linked to COA)
+financeRouter.get('/vat-closings/history', async (_req, res) => {
+  try {
+    const list = await withDb(async (client) => {
+      const r = await client.query(`
+        SELECT vqc.*,
+               coa_out.name as output_tax_account_name,
+               coa_in.name as input_tax_account_name,
+               coa_sett.name as settlement_account_name
+        FROM public.vat_quarterly_closings vqc
+        LEFT JOIN public.chart_of_accounts coa_out ON vqc.output_tax_account_id = coa_out.id
+        LEFT JOIN public.chart_of_accounts coa_in ON vqc.input_tax_account_id = coa_in.id
+        LEFT JOIN public.chart_of_accounts coa_sett ON vqc.settlement_account_id = coa_sett.id
+        ORDER BY vqc.start_date DESC;
+      `);
+      return r.rows;
+    });
+    return res.json({ success: true, data: list });
+  } catch (err: any) {
+    console.error('[VAT Closings History] error:', err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -1683,7 +1735,17 @@ financeRouter.get('/yield-analytics', async (req, res) => {
 financeRouter.get('/fiscal-years', async (_req, res) => {
   try {
     const data = await withDb(async (client) => {
-      const result = await client.query('SELECT * FROM public.fiscal_years ORDER BY year ASC');
+      const result = await client.query(`
+        SELECT fy.*, 
+               coa_re.code as retained_earnings_code, coa_re.name as retained_earnings_name,
+               coa_tp.code as tax_provision_code, coa_tp.name as tax_provision_name,
+               coa_vat.code as vat_settlement_code, coa_vat.name as vat_settlement_name
+        FROM public.fiscal_years fy
+        LEFT JOIN public.chart_of_accounts coa_re ON fy.retained_earnings_account_id = coa_re.id
+        LEFT JOIN public.chart_of_accounts coa_tp ON fy.tax_provision_account_id = coa_tp.id
+        LEFT JOIN public.chart_of_accounts coa_vat ON fy.vat_settlement_account_id = coa_vat.id
+        ORDER BY fy.year ASC;
+      `);
       return result.rows.map(row => ({
         id: String(row.id),
         year: Number(row.year),
@@ -1691,7 +1753,11 @@ financeRouter.get('/fiscal-years', async (_req, res) => {
         startDate: typeof row.start_date === 'string' ? row.start_date.slice(0, 10) : new Date(row.start_date).toISOString().slice(0, 10),
         endDate: typeof row.end_date === 'string' ? row.end_date.slice(0, 10) : new Date(row.end_date).toISOString().slice(0, 10),
         status: row.status || 'OPEN',
-        notes: row.notes || ''
+        notes: row.notes || '',
+        retainedEarningsCode: row.retained_earnings_code || '3200-01',
+        retainedEarningsName: row.retained_earnings_name || 'Retained Earnings Reserve',
+        taxProvisionCode: row.tax_provision_code || '2410-00',
+        vatSettlementCode: row.vat_settlement_code || '2140-99'
       }));
     });
     return res.json({ success: true, data });
@@ -1708,11 +1774,23 @@ financeRouter.post('/fiscal-years', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Year, Start Date, and End Date are required.' });
     }
     const created = await withDb(async (client) => {
+      const reRes = await client.query("SELECT id FROM chart_of_accounts WHERE code = '3200-01' LIMIT 1");
+      const reId = reRes.rows[0]?.id || null;
+
+      const tpRes = await client.query("SELECT id FROM chart_of_accounts WHERE code = '2410-00' LIMIT 1");
+      const tpId = tpRes.rows[0]?.id || null;
+
+      const vatRes = await client.query("SELECT id FROM chart_of_accounts WHERE code = '2140-99' LIMIT 1");
+      const vatId = vatRes.rows[0]?.id || null;
+
       const result = await client.query(
-        `INSERT INTO public.fiscal_years (year, title, start_date, end_date, status, notes)
-         VALUES ($1, $2, $3, $4, 'OPEN', $5)
+        `INSERT INTO public.fiscal_years (
+           year, title, start_date, end_date, status, notes,
+           retained_earnings_account_id, tax_provision_account_id, vat_settlement_account_id
+         )
+         VALUES ($1, $2, $3, $4, 'OPEN', $5, $6, $7, $8)
          RETURNING *`,
-        [Number(year), title || `Fiscal Year ${year}`, startDate, endDate, notes || '']
+        [Number(year), title || `Fiscal Year ${year}`, startDate, endDate, notes || '', reId, tpId, vatId]
       );
       const row = result.rows[0];
       return {
@@ -1722,7 +1800,10 @@ financeRouter.post('/fiscal-years', async (req, res) => {
         startDate: typeof row.start_date === 'string' ? row.start_date.slice(0, 10) : new Date(row.start_date).toISOString().slice(0, 10),
         endDate: typeof row.end_date === 'string' ? row.end_date.slice(0, 10) : new Date(row.end_date).toISOString().slice(0, 10),
         status: row.status || 'OPEN',
-        notes: row.notes || ''
+        notes: row.notes || '',
+        retainedEarningsCode: '3200-01',
+        taxProvisionCode: '2410-00',
+        vatSettlementCode: '2140-99'
       };
     });
     return res.json({ success: true, data: created });

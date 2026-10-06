@@ -6157,6 +6157,31 @@ ${courierLines}
       }
     }
 
+    // Statutory Tax Compliance, UAE VAT 201 Returns, Quarterly Closings & Fiscal Years
+    if (
+      pathname.startsWith('/api/finance/vat-') ||
+      pathname.startsWith('/api/finance/fiscal-years') ||
+      pathname.startsWith('/api/finance/fta-faf') ||
+      pathname.startsWith('/api/finance/corporate-tax') ||
+      pathname.startsWith('/api/finance/post-corporate-tax') ||
+      pathname.startsWith('/api/finance/statutory')
+    ) {
+      try {
+        const { financeRouter } = await import('../src/modules/finance/finance.routes.ts');
+        req.url = rawUrl.replace(/^\/api\/finance/, '');
+        return financeRouter(req, res, (err: any) => {
+          if (err) {
+            console.error('[Gateway Finance Router Error]:', err);
+            return res.status(500).json({ success: false, error: err.message || 'Finance router error' });
+          }
+          return res.status(404).json({ success: false, error: 'Endpoint not found in finance router' });
+        });
+      } catch (fErr: any) {
+        console.error('[Gateway Finance Import Error]:', fErr);
+        return res.status(500).json({ success: false, error: fErr.message });
+      }
+    }
+
     // Chart of Accounts (COA)
     if (pathname === '/api/finance/coa' || pathname.endsWith('/finance/coa') || pathname.includes('/finance/coa')) {
       const token = extractAuthToken(req);

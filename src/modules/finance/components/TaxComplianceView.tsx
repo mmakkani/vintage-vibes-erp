@@ -18,7 +18,10 @@ import {
   HelpCircle,
   Check,
   ArrowRight,
-  ChevronRight
+  ChevronRight,
+  Plus,
+  History,
+  FileCheck2
 } from 'lucide-react';
 import { printVat201ReturnA4, Vat201ReturnPrintData } from '../utils/printVat201ReturnA4.ts';
 
@@ -87,6 +90,20 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
   const [estimate, setEstimate] = useState<CorporateTaxEstimate | null>(null);
   const [postingProvision, setPostingProvision] = useState<boolean>(false);
 
+  // Registered Fiscal Years from DB
+  const [fiscalYears, setFiscalYears] = useState<number[]>([2023, 2024, 2025, 2026, 2027, 2028]);
+  const [createYearModalOpen, setCreateYearModalOpen] = useState<boolean>(false);
+  const [newYearNumber, setNewYearNumber] = useState<number>(2028);
+  const [newYearTitle, setNewYearTitle] = useState<string>('Fiscal Year 2028');
+  const [newYearStartDate, setNewYearStartDate] = useState<string>('2028-01-01');
+  const [newYearEndDate, setNewYearEndDate] = useState<string>('2028-12-31');
+  const [newYearNotes, setNewYearNotes] = useState<string>('');
+  const [creatingYear, setCreatingYear] = useState<boolean>(false);
+
+  // VAT Quarterly Closings History Log
+  const [closingsHistory, setClosingsHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
+
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Fetch Live VAT 201 Return from Postgres
@@ -139,6 +156,83 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
     }
   };
 
+  const fetchFiscalYears = async () => {
+    try {
+      const res = await fetch('/api/finance/fiscal-years');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+          const yrs = json.data.map((fy: any) => Number(fy.year)).filter((y: number) => !isNaN(y));
+          const merged = Array.from(new Set([...yrs, 2023, 2024, 2025, 2026, 2027, 2028])).sort((a, b) => a - b);
+          setFiscalYears(merged);
+        }
+      }
+    } catch (e) {}
+  };
+
+  const fetchClosingsHistory = async () => {
+    try {
+      setLoadingHistory(true);
+      const res = await fetch('/api/finance/vat-closings/history');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          setClosingsHistory(json.data);
+        }
+      }
+    } catch (e) {
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const handleCreateFiscalYear = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setCreatingYear(true);
+      const res = await fetch('/api/finance/fiscal-years', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          year: newYearNumber,
+          title: newYearTitle || `Fiscal Year ${newYearNumber}`,
+          startDate: newYearStartDate || `${newYearNumber}-01-01`,
+          endDate: newYearEndDate || `${newYearNumber}-12-31`,
+          notes: newYearNotes || 'Statutory UAE VAT & Financial Year'
+        })
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setStatusMessage({ type: 'success', text: `Registered ${json.data?.title || 'New Fiscal Year'} successfully in database!` });
+        setCreateYearModalOpen(false);
+        fetchFiscalYears();
+        handleYearChange(newYearNumber);
+      } else {
+        setStatusMessage({ type: 'error', text: json.error || 'Failed to register fiscal year.' });
+      }
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: err.message || 'Error registering fiscal year.' });
+    } finally {
+      setCreatingYear(false);
+    }
+  };
+
+  const printHistoricalReturn = async (row: any) => {
+    try {
+      const sDate = typeof row.start_date === 'string' ? row.start_date.slice(0, 10) : new Date(row.start_date).toISOString().slice(0, 10);
+      const eDate = typeof row.end_date === 'string' ? row.end_date.slice(0, 10) : new Date(row.end_date).toISOString().slice(0, 10);
+      const res = await fetch(`/api/finance/vat-return-201?quarter=${row.quarter}&startDate=${sDate}&endDate=${eDate}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data) {
+          printVat201ReturnA4(json.data);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to print historical VAT return:', err);
+    }
+  };
+
   // Initial & Dependency Load
   useEffect(() => {
     fetchVat201Return();
@@ -148,6 +242,11 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
   useEffect(() => {
     fetchEstimate();
   }, [taxYear]);
+
+  useEffect(() => {
+    fetchFiscalYears();
+    fetchClosingsHistory();
+  }, []);
 
   // Handle Year Change
   const handleYearChange = (newYear: number) => {
@@ -196,6 +295,7 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
         });
         setClosingModalOpen(false);
         fetchVat201Return();
+        fetchClosingsHistory();
         onRefreshAll();
       } else {
         setStatusMessage({ type: 'error', text: data.error || 'Failed to close quarterly VAT period.' });
@@ -232,6 +332,7 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
         setReopenModalOpen(false);
         setReopenPin('');
         fetchVat201Return();
+        fetchClosingsHistory();
         onRefreshAll();
       } else {
         setStatusMessage({ type: 'error', text: data.error || 'Failed to reopen period.' });
@@ -412,15 +513,26 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
                 onChange={e => handleYearChange(Number(e.target.value))}
                 className="bg-transparent font-bold text-xs text-stone-900 cursor-pointer focus:outline-none"
               >
-                <option value={2023}>2023</option>
-                <option value={2024}>2024</option>
-                <option value={2025}>2025</option>
-                <option value={2026}>2026</option>
-                <option value={2027}>2027</option>
-                <option value={2028}>2028</option>
-                <option value={2029}>2029</option>
-                <option value={2030}>2030</option>
+                {fiscalYears.map(yr => (
+                  <option key={yr} value={yr}>{yr}</option>
+                ))}
               </select>
+              <button
+                type="button"
+                onClick={() => {
+                  const nextYr = Math.max(...fiscalYears, new Date().getFullYear()) + 1;
+                  setNewYearNumber(nextYr);
+                  setNewYearTitle(`Fiscal Year ${nextYr}`);
+                  setNewYearStartDate(`${nextYr}-01-01`);
+                  setNewYearEndDate(`${nextYr}-12-31`);
+                  setCreateYearModalOpen(true);
+                }}
+                className="ml-1 flex items-center space-x-0.5 px-1.5 py-0.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded font-bold text-[10px] transition-colors cursor-pointer"
+                title="Register New Fiscal Year in Database"
+              >
+                <Plus className="w-3 h-3 text-amber-700" />
+                <span>Add Year</span>
+              </button>
             </div>
             {quarterPresets.map((q) => (
               <button
@@ -459,6 +571,30 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
               className="bg-white border border-stone-300 rounded px-2 py-1 text-xs font-mono"
             />
           </div>
+        </div>
+
+        {/* COA Architecture & Integration Badge */}
+        <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-stone-100/80 border border-stone-200 rounded-lg text-[11px] text-stone-700">
+          <div className="flex items-center space-x-2">
+            <span className="font-bold text-stone-900 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              COA Live Integration:
+            </span>
+            <span className="bg-white px-2 py-0.5 rounded border border-stone-200 font-mono text-[10.5px]">
+              Output: <strong>2140-01</strong>
+            </span>
+            <span className="text-stone-400">➔</span>
+            <span className="bg-white px-2 py-0.5 rounded border border-stone-200 font-mono text-[10.5px]">
+              Input Recoverable: <strong>2140-02</strong>
+            </span>
+            <span className="text-stone-400">➔</span>
+            <span className="bg-white px-2 py-0.5 rounded border border-stone-200 font-mono text-[10.5px]">
+              Settlement: <strong>2140-99</strong> (Payable) / <strong>1320-01</strong> (Refund)
+            </span>
+          </div>
+          <span className="text-stone-500 text-[10.5px] italic">
+            Automated double-entry posting to General Ledger via Chart of Accounts
+          </span>
         </div>
 
         {/* 4 KPI Summary Cards */}
@@ -738,6 +874,137 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
             </div>
           </div>
         </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* SECTION 1.5: VAT QUARTERLY CLOSINGS & SETTLEMENT AUDIT LOG               */}
+      {/* ========================================================================= */}
+      <div className="bg-white rounded-xl border border-stone-200 shadow-xs p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-stone-200 pb-3">
+          <div className="flex items-center space-x-2">
+            <History className="w-5 h-5 text-amber-600" />
+            <h3 className="font-bold text-base text-stone-900">
+              VAT Quarterly Period Closings & Settlement Audit Log
+            </h3>
+            <span className="bg-stone-100 text-stone-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-stone-300">
+              سجل إقفال الفترات الضريبية
+            </span>
+          </div>
+          <span className="text-xs text-stone-500 font-mono">
+            {closingsHistory.length} Period{closingsHistory.length === 1 ? '' : 's'} Officially Filed & Locked
+          </span>
+        </div>
+
+        {closingsHistory.length === 0 ? (
+          <div className="p-8 text-center bg-stone-50 rounded-xl border border-dashed border-stone-300">
+            <FileCheck2 className="w-10 h-10 text-stone-400 mx-auto mb-2" />
+            <h4 className="font-bold text-sm text-stone-800">No Quarterly Tax Periods Closed Yet</h4>
+            <p className="text-xs text-stone-500 max-w-md mx-auto mt-1">
+              When a 3-month VAT period ends, click <strong>"Execute Quarterly VAT Closing"</strong> above to generate the balanced settlement journal voucher and permanently archive the audit record here.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto border border-stone-200 rounded-xl">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-stone-100 text-stone-700 text-[11px] font-bold border-b border-stone-200 uppercase">
+                  <th className="py-2.5 px-3">Quarter</th>
+                  <th className="py-2.5 px-3">Period Window</th>
+                  <th className="py-2.5 px-3 text-right">Output VAT (AED)</th>
+                  <th className="py-2.5 px-3 text-right">Recoverable Input (AED)</th>
+                  <th className="py-2.5 px-3 text-right">Net Settlement</th>
+                  <th className="py-2.5 px-3">COA Ledger Accounts</th>
+                  <th className="py-2.5 px-3">Closing Voucher</th>
+                  <th className="py-2.5 px-3">Filed By / Date</th>
+                  <th className="py-2.5 px-3">Status</th>
+                  <th className="py-2.5 px-3 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-stone-100 font-mono">
+                {closingsHistory.map((row: any) => {
+                  const outVat = Number(row.box_output_vat || 0);
+                  const inVat = Number(row.box_input_vat || 0);
+                  const netVat = Number(row.net_vat_amount || (outVat - inVat));
+                  const isRefund = row.is_refundable || netVat < 0;
+                  const sDate = typeof row.start_date === 'string' ? row.start_date.slice(0, 10) : new Date(row.start_date).toISOString().slice(0, 10);
+                  const eDate = typeof row.end_date === 'string' ? row.end_date.slice(0, 10) : new Date(row.end_date).toISOString().slice(0, 10);
+                  const closedAt = row.closed_at ? new Date(row.closed_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A';
+
+                  return (
+                    <tr key={row.id || row.quarter} className="hover:bg-amber-50/20 text-stone-800">
+                      <td className="py-2.5 px-3 font-bold text-stone-900 font-sans">
+                        <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded text-[11px] font-mono font-bold">
+                          {row.quarter}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-stone-600 text-[11px]">
+                        {sDate} → {eDate}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-semibold">
+                        {outVat.toFixed(2)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-semibold text-emerald-700">
+                        {inVat.toFixed(2)}
+                      </td>
+                      <td className={`py-2.5 px-3 text-right font-bold ${isRefund ? 'text-blue-700' : 'text-amber-950'}`}>
+                        AED {Math.abs(netVat).toFixed(2)} {isRefund ? '(Refund)' : '(Payable)'}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-[10px]">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-stone-600">
+                            Dr: <strong className="text-stone-900">{row.output_tax_account_code || '2140-01'}</strong>
+                          </span>
+                          <span className="text-stone-600">
+                            Cr: <strong className="text-stone-900">{row.input_tax_account_code || '2140-02'}</strong>
+                          </span>
+                          <span className={isRefund ? 'text-blue-700 font-bold' : 'text-amber-900 font-bold'}>
+                            Net: {row.settlement_account_code || (isRefund ? '1320-01' : '2140-99')}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className="font-mono text-[11px] font-bold text-stone-900 bg-stone-100 px-2 py-0.5 rounded border border-stone-200">
+                          {row.closing_voucher_no || 'JV-VAT-CLOSE'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 font-sans text-[11px] text-stone-600">
+                        <div className="font-semibold text-stone-800">{row.closed_by || 'Tax Director'}</div>
+                        <div className="text-[10px] text-stone-400 font-mono">{closedAt}</div>
+                      </td>
+                      <td className="py-2.5 px-3 font-sans">
+                        <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-300">
+                          <Lock className="w-3 h-3 text-emerald-700" />
+                          FILED & LOCKED
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <div className="flex items-center justify-center gap-1.5 font-sans">
+                          <button
+                            onClick={() => printHistoricalReturn(row)}
+                            className="p-1.5 rounded bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors cursor-pointer"
+                            title="Print Official A4 Return for this quarter"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-stone-800" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedQuarter(row.quarter);
+                              setReopenModalOpen(true);
+                            }}
+                            className="p-1.5 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors cursor-pointer"
+                            title="Re-open period (Requires PIN 0099)"
+                          >
+                            <Unlock className="w-3.5 h-3.5 text-rose-600" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* ========================================================================= */}
@@ -1075,6 +1342,107 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
                 {executingReopen ? 'Unlocking...' : 'Authorize Unlock'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: REGISTER NEW STATUTORY FISCAL YEAR                                 */}
+      {/* ========================================================================= */}
+      {createYearModalOpen && (
+        <div className="fixed inset-0 z-50 bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-stone-300 space-y-4">
+            <div className="flex items-center space-x-2 text-stone-900 border-b border-stone-200 pb-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-600 text-white flex items-center justify-center">
+                <Plus className="w-4 h-4" />
+              </div>
+              <h3 className="font-black text-base">Register New Fiscal / Tax Year</h3>
+            </div>
+
+            <form onSubmit={handleCreateFiscalYear} className="space-y-3 text-xs">
+              <div>
+                <label className="text-[11px] font-bold text-stone-700 block mb-1">Fiscal Year (Number):</label>
+                <input
+                  type="number"
+                  min={2020}
+                  max={2040}
+                  value={newYearNumber}
+                  onChange={e => {
+                    const yr = Number(e.target.value);
+                    setNewYearNumber(yr);
+                    setNewYearTitle(`Fiscal Year ${yr}`);
+                    setNewYearStartDate(`${yr}-01-01`);
+                    setNewYearEndDate(`${yr}-12-31`);
+                  }}
+                  className="w-full bg-stone-50 border border-stone-300 rounded-lg p-2 font-mono font-bold text-stone-900"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-stone-700 block mb-1">Year Title / Label:</label>
+                <input
+                  type="text"
+                  value={newYearTitle}
+                  onChange={e => setNewYearTitle(e.target.value)}
+                  placeholder="e.g. Fiscal Year 2028"
+                  className="w-full bg-stone-50 border border-stone-300 rounded-lg p-2 font-semibold text-stone-900"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] font-bold text-stone-700 block mb-1">Start Date:</label>
+                  <input
+                    type="date"
+                    value={newYearStartDate}
+                    onChange={e => setNewYearStartDate(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-300 rounded-lg p-2 font-mono text-stone-900"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-stone-700 block mb-1">End Date:</label>
+                  <input
+                    type="date"
+                    value={newYearEndDate}
+                    onChange={e => setNewYearEndDate(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-300 rounded-lg p-2 font-mono text-stone-900"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-stone-700 block mb-1">Notes / Statutory Reference:</label>
+                <input
+                  type="text"
+                  value={newYearNotes}
+                  onChange={e => setNewYearNotes(e.target.value)}
+                  placeholder="e.g. UAE VAT & Corporate Tax Accounting Period"
+                  className="w-full bg-stone-50 border border-stone-300 rounded-lg p-2 text-stone-900"
+                />
+              </div>
+
+              <div className="flex items-center justify-end space-x-2 pt-3 border-t border-stone-200">
+                <button
+                  type="button"
+                  onClick={() => setCreateYearModalOpen(false)}
+                  className="px-4 py-2 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingYear}
+                  className="px-5 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow hover:shadow-md cursor-pointer flex items-center space-x-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>{creatingYear ? 'Saving...' : 'Register Fiscal Year'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
