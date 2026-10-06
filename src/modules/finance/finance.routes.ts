@@ -836,29 +836,743 @@ financeRouter.post('/recurring-vouchers/run-all', (req, res) => {
   return res.json(result);
 });
 
-// --- UAE FTA Audit File (FAF) ---
-financeRouter.get('/fta-faf', (req, res) => {
-  const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
-  const result = FinanceController.generateFtaAuditFile(startDate, endDate);
-  return res.json(result);
-});
-
-// --- UAE Corporate Tax (9%) ---
-financeRouter.get('/corporate-tax/estimate', (req, res) => {
-  const taxYear = req.query.taxYear ? Number(req.query.taxYear) : 2026;
-  const result = FinanceController.calculateCorporateTaxEstimate(taxYear);
-  return res.json(result);
-});
-
-financeRouter.post('/corporate-tax/provision', (req, res) => {
-  const taxYear = req.body.taxYear ? Number(req.body.taxYear) : 2026;
-  const postedBy = req.body.postedBy || 'Tax Compliance Officer';
-  const result = FinanceController.postCorporateTaxProvision(taxYear, postedBy);
-  if (!result.success) {
-    return res.status(400).json(result);
+// --- UAE FTA Form VAT 201 Quarterly Filing & Period Closing Engine ---
+function getDueDateForQuarter(quarter: string, endDateStr: string): string {
+  try {
+    const end = new Date(endDateStr);
+    const year = end.getFullYear();
+    const month = end.getMonth();
+    const nextMonth = new Date(year, month + 1, 28);
+    return nextMonth.toISOString().slice(0, 10);
+  } catch (e) {
+    return '2026-10-28';
   }
-  return res.json(result);
+}
+
+financeRouter.get('/vat-return-201', async (req, res) => {
+  try {
+    const quarter = (req.query.quarter as string) || '2026-Q3';
+    let startDate = req.query.startDate as string;
+    let endDate = req.query.endDate as string;
+
+    if (!startDate || !endDate) {
+      if (quarter === '2026-Q1') {
+        startDate = '2026-01-01';
+        endDate = '2026-03-31';
+      } else if (quarter === '2026-Q2') {
+        startDate = '2026-04-01';
+        endDate = '2026-06-30';
+      } else if (quarter === '2026-Q3') {
+        startDate = '2026-07-01';
+        endDate = '2026-09-30';
+      } else if (quarter === '2026-Q4') {
+        startDate = '2026-10-01';
+        endDate = '2026-12-31';
+      } else {
+        startDate = '2026-07-01';
+        endDate = '2026-09-30';
+      }
+    }
+
+    const data = await withDb(async (client) => {
+      // 1. Company Profile
+      const company = {
+        legalName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+        arabicName: 'فينتيج فايبز للتجارة العامة ذ.م.م',
+        trn: '100482910300003',
+        tradeLicenseNo: 'CN-5888545',
+        address: 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE',
+        phone: '+971554186086',
+        giban: 'AE76 0400 0001 4365 6279 001'
+      };
+
+      try {
+        const cpRes = await client.query('SELECT * FROM company_profile LIMIT 1');
+        if (cpRes.rows.length > 0) {
+          const row = cpRes.rows[0];
+          const prof = row.profile_data || {};
+          company.legalName = row.company_display_name || prof.companyName || company.legalName;
+          company.trn = (row.trn_number || prof.trnTaxNo || company.trn).replace(/^TRN-/, '');
+          company.tradeLicenseNo = row.trade_license_number || prof.tradeLicenseNumber || company.tradeLicenseNo;
+          company.address = [row.address_line_1, row.address_line_2, row.city, row.country].filter(Boolean).join(', ') || company.address;
+          company.phone = row.corporate_phone || prof.phone || company.phone;
+          if (row.bank_accounts && Array.isArray(row.bank_accounts) && row.bank_accounts.length > 0) {
+            company.giban = row.bank_accounts[0].iban || company.giban;
+          }
+        }
+      } catch (e: any) {
+        console.warn('[VAT 201] Company profile warning:', e.message);
+      }
+
+      // 2. Check if Quarter is Closed
+      let isClosed = false;
+      let closingVoucherNo: string | null = null;
+      let closedAt: string | null = null;
+      let closedBy: string | null = null;
+
+      try {
+        const closeRes = await client.query(`
+          SELECT * FROM vat_quarterly_closings WHERE quarter = $1
+        `, [quarter]);
+        if (closeRes.rows.length > 0) {
+          isClosed = true;
+          closingVoucherNo = closeRes.rows[0].closing_voucher_no;
+          closedAt = closeRes.rows[0].closed_at ? new Date(closeRes.rows[0].closed_at).toISOString() : null;
+          closedBy = closeRes.rows[0].closed_by;
+        }
+      } catch (e: any) {}
+
+      // 3. Sales / Supplies by Emirate (Box 1a - 1g)
+      const emirates = [
+        { emirate: 'Abu Dhabi', code: 'AD', netAmount: 0, vatAmount: 0 },
+        { emirate: 'Dubai', code: 'DXB', netAmount: 0, vatAmount: 0 },
+        { emirate: 'Sharjah', code: 'SHJ', netAmount: 0, vatAmount: 0 },
+        { emirate: 'Ajman', code: 'AJM', netAmount: 0, vatAmount: 0 },
+        { emirate: 'Umm Al Quwain', code: 'UAQ', netAmount: 0, vatAmount: 0 },
+        { emirate: 'Ras Al Khaimah', code: 'RAK', netAmount: 0, vatAmount: 0 },
+        { emirate: 'Fujairah', code: 'FUJ', netAmount: 0, vatAmount: 0 }
+      ];
+
+      // Live sales invoices
+      let salesInvoicesList: any[] = [];
+      try {
+        const sRes = await client.query(`
+          SELECT * FROM sales_invoices 
+          WHERE invoice_date >= $1 AND invoice_date <= $2
+        `, [startDate, endDate]);
+        salesInvoicesList = sRes.rows || [];
+      } catch (e) {}
+
+      // Live storefront orders
+      let ordersList: any[] = [];
+      try {
+        const oRes = await client.query(`
+          SELECT * FROM orders 
+          WHERE created_at::date >= $1::date AND created_at::date <= $2::date
+            AND (payment_status = 'PAID' OR status IN ('CONFIRMED', 'DELIVERED', 'POSTED'))
+        `, [startDate, endDate]);
+        ordersList = oRes.rows || [];
+      } catch (e) {}
+
+      salesInvoicesList.forEach((inv) => {
+        const net = Number(inv.net_amount ?? inv.subtotal ?? 0);
+        const vat = Number(inv.vat_amount ?? (net * 0.05));
+        const city = String(inv.customer_city || inv.emirate || '').toLowerCase();
+        let targetEm = emirates.find(e => city.includes(e.emirate.toLowerCase()) || city.includes(e.code.toLowerCase()));
+        if (!targetEm) targetEm = emirates[1]; // default Dubai
+        targetEm.netAmount += net;
+        targetEm.vatAmount += vat;
+      });
+
+      ordersList.forEach((ord) => {
+        const total = Number(ord.total_amount || 0);
+        const net = Math.round((total / 1.05) * 100) / 100;
+        const vat = Math.round((total - net) * 100) / 100;
+        const city = String(ord.city || '').toLowerCase();
+        let targetEm = emirates.find(e => city.includes(e.emirate.toLowerCase()) || city.includes(e.code.toLowerCase()));
+        if (!targetEm) targetEm = emirates[1]; // default Dubai
+        targetEm.netAmount += net;
+        targetEm.vatAmount += vat;
+      });
+
+      const box1_standardRatedSupplies = Math.round(emirates.reduce((sum, e) => sum + e.netAmount, 0) * 100) / 100;
+      const box1_outputVat = Math.round(emirates.reduce((sum, e) => sum + e.vatAmount, 0) * 100) / 100;
+      const box2_taxExemptSupplies = 0;
+      const box3_zeroRatedSupplies = 0;
+      const box4_goodsImportedReverseCharge = 0;
+      const box12_totalDueTax = box1_outputVat;
+
+      // 4. Purchases / Expenses (Box 9 - 11)
+      let purchasesList: any[] = [];
+      try {
+        const pRes = await client.query(`
+          SELECT * FROM purchase_invoices 
+          WHERE invoice_date >= $1 AND invoice_date <= $2
+        `, [startDate, endDate]);
+        purchasesList = pRes.rows || [];
+      } catch (e) {}
+
+      let box9_standardRatedPurchases = 0;
+      let box9_recoverableInputVat = 0;
+
+      purchasesList.forEach((pinv) => {
+        const net = Number(pinv.subtotal ?? pinv.gross_amount ?? pinv.net_amount ?? 0);
+        const vat = Number(pinv.tax_amount ?? pinv.vat_amount ?? (net * 0.05));
+        box9_standardRatedPurchases += net;
+        box9_recoverableInputVat += vat;
+      });
+
+      box9_standardRatedPurchases = Math.round(box9_standardRatedPurchases * 100) / 100;
+      box9_recoverableInputVat = Math.round(box9_recoverableInputVat * 100) / 100;
+      const box10_reverseChargePurchases = 0;
+      const box13_totalRecoverableTax = box9_recoverableInputVat;
+
+      // 5. Net VAT Calculation (Box 14 & Box 16)
+      const netVat = Math.round((box12_totalDueTax - box13_totalRecoverableTax) * 100) / 100;
+      const isRefundable = netVat < 0;
+      const payableAmount = netVat > 0 ? netVat : 0;
+      const refundableAmount = netVat < 0 ? Math.abs(netVat) : 0;
+
+      // 6. General Ledger Reconciliation (Account 2140-01 and 2140-02)
+      let glOutputBalance = 0;
+      let glInputBalance = 0;
+
+      try {
+        const glRes = await client.query(`
+          SELECT account_code,
+                 SUM(COALESCE(debit, 0)) as total_debit,
+                 SUM(COALESCE(credit, 0)) as total_credit
+          FROM voucher_entries
+          WHERE (account_code = '2140-01' OR account_code = '2140-02')
+            AND date >= $1 AND date <= $2
+            AND NOT (narration LIKE 'VAT Period Closing Settlement%')
+          GROUP BY account_code;
+        `, [startDate, endDate]);
+
+        for (const row of glRes.rows) {
+          if (row.account_code === '2140-01') {
+            glOutputBalance = Number(row.total_credit || 0) - Number(row.total_debit || 0);
+          } else if (row.account_code === '2140-02') {
+            glInputBalance = Number(row.total_debit || 0) - Number(row.total_credit || 0);
+          }
+        }
+      } catch (e: any) {}
+
+      // If GL output balance is zero and box1_outputVat is zero, variance is 0.00
+      const outputVariance = Math.round((box1_outputVat - glOutputBalance) * 100) / 100;
+      const inputVariance = Math.round((box9_recoverableInputVat - glInputBalance) * 100) / 100;
+      const isReconciled = Math.abs(outputVariance) < 0.01 && Math.abs(inputVariance) < 0.01;
+
+      return {
+        company,
+        period: {
+          quarter,
+          startDate,
+          endDate,
+          dueDate: getDueDateForQuarter(quarter, endDate),
+          isClosed,
+          closingVoucherNo,
+          closedAt,
+          closedBy
+        },
+        boxes: {
+          box1_standardRatedSupplies,
+          box1_outputVat,
+          box1_emirates: emirates,
+          box2_taxExemptSupplies,
+          box3_zeroRatedSupplies,
+          box4_goodsImportedReverseCharge,
+          box12_totalDueTax,
+          box9_standardRatedPurchases,
+          box9_recoverableInputVat,
+          box10_reverseChargePurchases,
+          box13_totalRecoverableTax,
+          box14_totalDueTax: box12_totalDueTax,
+          box15_totalRecoverableTax: box13_totalRecoverableTax,
+          box16_netVatPayableOrRefundable: netVat,
+          isRefundable,
+          payableAmount,
+          refundableAmount
+        },
+        reconciliation: {
+          glOutputBalance,
+          glInputBalance,
+          outputVariance,
+          inputVariance,
+          isReconciled
+        },
+        purchaseCount: purchasesList.length,
+        salesCount: salesInvoicesList.length + ordersList.length
+      };
+    });
+
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    console.error('[VAT 201 Route] error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
+
+// Execute Quarterly VAT Period Closing & Balanced Settlement Voucher
+financeRouter.post('/vat-closing/execute', async (req, res) => {
+  try {
+    const { quarter, startDate, endDate, closedBy, notes } = req.body;
+    if (!quarter || !startDate || !endDate) {
+      return res.status(400).json({ success: false, error: 'Quarter, start date, and end date are required' });
+    }
+
+    const saved = await withDb(async (client) => {
+      await client.query('BEGIN');
+      try {
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS public.vat_quarterly_closings (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            quarter TEXT NOT NULL UNIQUE,
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            due_date DATE,
+            box_output_vat NUMERIC DEFAULT 0,
+            box_input_vat NUMERIC DEFAULT 0,
+            net_vat_amount NUMERIC DEFAULT 0,
+            is_refundable BOOLEAN DEFAULT false,
+            closing_voucher_no TEXT,
+            status TEXT DEFAULT 'FILED_LOCKED',
+            closed_by TEXT,
+            closed_at TIMESTAMPTZ DEFAULT now(),
+            audit_hash TEXT,
+            fta_declaration_notes TEXT,
+            created_at TIMESTAMPTZ DEFAULT now()
+          );
+        `);
+
+        // Check if already closed
+        const chk = await client.query('SELECT * FROM vat_quarterly_closings WHERE quarter = $1', [quarter]);
+        if (chk.rows.length > 0) {
+          throw new Error(`Quarter ${quarter} is already closed and filed with voucher ${chk.rows[0].closing_voucher_no}. Reopen first if changes are required.`);
+        }
+
+        // Live GL balances
+        const glRes = await client.query(`
+          SELECT account_code,
+                 SUM(COALESCE(debit, 0)) as total_debit,
+                 SUM(COALESCE(credit, 0)) as total_credit
+          FROM voucher_entries
+          WHERE (account_code = '2140-01' OR account_code = '2140-02')
+            AND date >= $1 AND date <= $2
+            AND NOT (narration LIKE 'VAT Period Closing Settlement%')
+          GROUP BY account_code;
+        `, [startDate, endDate]);
+
+        let outputVat = 0;
+        let inputVat = 0;
+
+        for (const row of glRes.rows) {
+          if (row.account_code === '2140-01') {
+            outputVat = Number(row.total_credit || 0) - Number(row.total_debit || 0);
+          } else if (row.account_code === '2140-02') {
+            inputVat = Number(row.total_debit || 0) - Number(row.total_credit || 0);
+          }
+        }
+
+        if (inputVat === 0) {
+          const pinvRes = await client.query(`
+            SELECT SUM(COALESCE(NULLIF(tax_amount, 0), vat_amount, 0)) as sum_vat
+            FROM purchase_invoices
+            WHERE invoice_date >= $1 AND invoice_date <= $2;
+          `, [startDate, endDate]);
+          inputVat = Number(pinvRes.rows[0]?.sum_vat || 0);
+        }
+
+        outputVat = Math.round(outputVat * 100) / 100;
+        inputVat = Math.round(inputVat * 100) / 100;
+        const netVat = Math.round((outputVat - inputVat) * 100) / 100;
+        const isRefund = netVat < 0;
+
+        // Ensure settlement accounts in chart_of_accounts
+        await client.query(`
+          INSERT INTO chart_of_accounts (id, code, name, account_type, parent_code, current_balance, is_deleted)
+          VALUES (gen_random_uuid(), '2140-99', 'UAE FTA Net VAT Settlement Payable', 'LIABILITY', '2140-00', 0, false)
+          ON CONFLICT (code) DO NOTHING;
+        `);
+        await client.query(`
+          INSERT INTO chart_of_accounts (id, code, name, account_type, parent_code, current_balance, is_deleted)
+          VALUES (gen_random_uuid(), '1320-01', 'UAE FTA Net VAT Refund Receivable', 'ASSET', '1000-00', 0, false)
+          ON CONFLICT (code) DO NOTHING;
+        `);
+
+        // Generate Balanced Settlement Journal Voucher
+        const voucherNo = `JV-VAT-CLOSE-${quarter.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString(36).toUpperCase()}`;
+        const voucherId = `vouch-vat-${Date.now()}`;
+        const narration = `VAT Period Closing Settlement for ${quarter} (${startDate} to ${endDate}): Output VAT AED ${outputVat.toFixed(2)}, Input VAT AED ${inputVat.toFixed(2)}, Net ${isRefund ? 'Refund' : 'Payable'} AED ${Math.abs(netVat).toFixed(2)}`;
+        const maxTotal = Math.max(outputVat, inputVat, Math.abs(netVat), 1);
+
+        await client.query(`
+          INSERT INTO vouchers (id, voucher_no, date, type, narration, total_debit, total_credit, status, created_by, is_auto)
+          VALUES ($1, $2, $3, 'JOURNAL', $4, $5, $5, 'POSTED', $6, true)
+        `, [voucherId, voucherNo, endDate, narration, maxTotal, closedBy || 'Tax Director']);
+
+        // Double-entry balancing lines:
+        if (outputVat > 0) {
+          await client.query(`
+            INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_code, account_name, debit, credit, narration)
+            VALUES (gen_random_uuid(), $1, $2, $3, '2140-01', 'UAE VAT Output Tax (5%)', $4, 0, $5)
+          `, [voucherId, voucherNo, endDate, outputVat, `Clear Qtr Output VAT for ${quarter}`]);
+        }
+
+        if (inputVat > 0) {
+          await client.query(`
+            INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_code, account_name, debit, credit, narration)
+            VALUES (gen_random_uuid(), $1, $2, $3, '2140-02', 'UAE VAT Input Tax Recoverable (5%)', 0, $4, $5)
+          `, [voucherId, voucherNo, endDate, inputVat, `Clear Qtr Recoverable Input VAT for ${quarter}`]);
+        }
+
+        if (netVat > 0) {
+          await client.query(`
+            INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_code, account_name, debit, credit, narration)
+            VALUES (gen_random_uuid(), $1, $2, $3, '2140-99', 'UAE FTA Net VAT Settlement Payable', 0, $4, $5)
+          `, [voucherId, voucherNo, endDate, netVat, `Quarterly VAT Payable to FTA for ${quarter}`]);
+        } else if (netVat < 0) {
+          await client.query(`
+            INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_code, account_name, debit, credit, narration)
+            VALUES (gen_random_uuid(), $1, $2, $3, '1320-01', 'UAE FTA Net VAT Refund Receivable', $4, 0, $5)
+          `, [voucherId, voucherNo, endDate, Math.abs(netVat), `Quarterly VAT Net Refund Due from FTA for ${quarter}`]);
+        }
+
+        const auditHash = `FTA-HASH-VAT201-${quarter}-${voucherNo}`;
+
+        const insertClose = await client.query(`
+          INSERT INTO vat_quarterly_closings (
+            quarter, start_date, end_date, due_date, box_output_vat, box_input_vat, net_vat_amount,
+            is_refundable, closing_voucher_no, status, closed_by, audit_hash, fta_declaration_notes
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'FILED_LOCKED', $10, $11, $12)
+          RETURNING *;
+        `, [
+          quarter,
+          startDate,
+          endDate,
+          getDueDateForQuarter(quarter, endDate),
+          outputVat,
+          inputVat,
+          netVat,
+          isRefund,
+          voucherNo,
+          closedBy || 'Tax Compliance Director',
+          auditHash,
+          notes || 'Official UAE FTA Form VAT 201 Quarterly Settlement Filed'
+        ]);
+
+        await client.query('COMMIT');
+        return {
+          closing: insertClose.rows[0],
+          voucherNo
+        };
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      }
+    });
+
+    return res.json({ success: true, data: saved });
+  } catch (err: any) {
+    console.error('[VAT Closing Route] execute error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Re-open Quarterly VAT Period (Master PIN 0099 Required)
+financeRouter.post('/vat-closing/reopen', async (req, res) => {
+  try {
+    const { quarter, pin } = req.body;
+    if (pin !== '0099') {
+      return res.status(403).json({ success: false, error: 'Unauthorized: Invalid Master PIN override. Pin 0099 required.' });
+    }
+    await withDb(async (client) => {
+      const chk = await client.query('SELECT closing_voucher_no FROM vat_quarterly_closings WHERE quarter = $1', [quarter]);
+      if (chk.rows.length > 0) {
+        const vNo = chk.rows[0].closing_voucher_no;
+        if (vNo) {
+          await client.query('DELETE FROM voucher_entries WHERE voucher_no = $1', [vNo]);
+          await client.query('DELETE FROM vouchers WHERE voucher_no = $1', [vNo]);
+        }
+        await client.query('DELETE FROM vat_quarterly_closings WHERE quarter = $1', [quarter]);
+      }
+    });
+    return res.json({ success: true, message: `Quarter ${quarter} has been re-opened successfully.` });
+  } catch (err: any) {
+    console.error('[VAT Closing Route] reopen error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- UAE FTA Audit File (FAF v1.0) Live Exporter ---
+financeRouter.get('/fta-faf', async (req, res) => {
+  try {
+    const startDate = (req.query.startDate as string) || '2026-01-01';
+    const endDate = (req.query.endDate as string) || new Date().toISOString().split('T')[0];
+
+    const result = await withDb(async (client) => {
+      // 1. Company Profile
+      let companyName = 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C';
+      let trnTaxNo = '100482910300003';
+      try {
+        const cp = await client.query('SELECT * FROM company_profile LIMIT 1');
+        if (cp.rows.length > 0) {
+          companyName = cp.rows[0].company_display_name || companyName;
+          trnTaxNo = (cp.rows[0].trn_number || trnTaxNo).replace(/^TRN-/, '');
+        }
+      } catch (e) {}
+
+      // 2. Live General Ledger transactions within date range
+      const ledgersRes = await client.query(`
+        SELECT ve.date, ve.voucher_no, ve.account_code, ve.account_name, ve.debit, ve.credit, ve.narration
+        FROM voucher_entries ve
+        WHERE ve.date >= $1 AND ve.date <= $2
+        ORDER BY ve.date ASC, ve.voucher_no ASC;
+      `, [startDate, endDate]);
+      const ledgers = ledgersRes.rows || [];
+
+      // 3. Live Sales Invoices
+      const salesRes = await client.query(`
+        SELECT invoice_no, invoice_date as date, customer_name, customer_trn, subtotal, vat_amount, total_amount
+        FROM sales_invoices
+        WHERE invoice_date >= $1 AND invoice_date <= $2;
+      `, [startDate, endDate]);
+      const sales = salesRes.rows || [];
+
+      // 4. Live Purchase Invoices
+      const purRes = await client.query(`
+        SELECT invoice_no, invoice_date as date, supplier_name, subtotal, 
+               COALESCE(NULLIF(tax_amount, 0), vat_amount, 0) as vat_amount,
+               total_amount, notes
+        FROM purchase_invoices
+        WHERE invoice_date >= $1 AND invoice_date <= $2;
+      `, [startDate, endDate]);
+      const purchases = purRes.rows || [];
+
+      const totalOutputVat = sales.reduce((sum: number, s: any) => sum + (Number(s.vat_amount) || 0), 0);
+      const totalInputVat = purchases.reduce((sum: number, p: any) => sum + (Number(p.vat_amount) || 0), 0);
+      const netVatPayable = totalOutputVat - totalInputVat;
+
+      const lines: string[] = [];
+      lines.push('=== FEDERAL TAX AUTHORITY (FTA) UAE - VAT AUDIT FILE (FAF v1.0) ===');
+      lines.push(`Taxable Person Name (EN),${companyName.replace(/,/g, ' ')}`);
+      lines.push('Taxable Person Name (AR),فينتيج فايبز للتجارة العامة ذ.م.م');
+      lines.push(`Tax Registration Number (TRN),${trnTaxNo}`);
+      lines.push('Tax Agency Name,Federal Tax Authority - UAE');
+      lines.push(`Audit Period Start,${startDate}`);
+      lines.push(`Audit Period End,${endDate}`);
+      lines.push('Functional Currency,AED');
+      lines.push(`FAF Export Timestamp,${new Date().toISOString()}`);
+      lines.push('');
+
+      lines.push('--- SECTION 1: GENERAL LEDGER TRANSACTIONS ---');
+      lines.push('TransactionDate,VoucherNumber,AccountCode,AccountName,DebitAmountAED,CreditAmountAED,Narration');
+      for (const l of ledgers) {
+        lines.push([
+          (l.date ? new Date(l.date).toISOString().slice(0, 10) : startDate),
+          l.voucher_no || '',
+          l.account_code || '',
+          `"${(l.account_name || '').replace(/"/g, '""')}"`,
+          (Number(l.debit) || 0).toFixed(2),
+          (Number(l.credit) || 0).toFixed(2),
+          `"${(l.narration || '').replace(/"/g, '""')}"`
+        ].join(','));
+      }
+      lines.push('');
+
+      lines.push('--- SECTION 2: SALES SUPPLY LEDGER (OUTPUT VAT) ---');
+      lines.push('InvoiceDate,InvoiceNumber,CustomerName,CustomerTRN,TaxableAmountAED,VATRatePercent,VATAmountAED,GrossAmountAED');
+      for (const inv of sales) {
+        const net = Number(inv.subtotal || 0);
+        const vat = Number(inv.vat_amount || 0);
+        lines.push([
+          (inv.date ? new Date(inv.date).toISOString().slice(0, 10) : startDate),
+          inv.invoice_no,
+          `"${(inv.customer_name || 'Walk-in Retail Client').replace(/"/g, '""')}"`,
+          inv.customer_trn || 'UNREGISTERED',
+          net.toFixed(2),
+          '5.00',
+          vat.toFixed(2),
+          (Number(inv.total_amount) || (net + vat)).toFixed(2)
+        ].join(','));
+      }
+      lines.push('');
+
+      lines.push('--- SECTION 3: PURCHASE LEDGER (INPUT VAT RECOVERABLE) ---');
+      lines.push('InvoiceDate,InvoiceNumber,SupplierName,SupplierTRN,TaxableAmountAED,VATRatePercent,VATAmountAED,GrossAmountAED');
+      for (const pinv of purchases) {
+        const net = Number(pinv.subtotal || 0);
+        const vat = Number(pinv.vat_amount || 0);
+        lines.push([
+          (pinv.date ? new Date(pinv.date).toISOString().slice(0, 10) : startDate),
+          pinv.invoice_no,
+          `"${(pinv.supplier_name || 'Bulk Vintage Bale Supplier').replace(/"/g, '""')}"`,
+          'IMPORT-REVERSE-CHARGE',
+          net.toFixed(2),
+          '5.00',
+          vat.toFixed(2),
+          (Number(pinv.total_amount) || (net + vat)).toFixed(2)
+        ].join(','));
+      }
+      lines.push('');
+
+      lines.push('--- SECTION 4: FTA VAT RETURN BOX SUMMARY ---');
+      const salesTaxable = sales.reduce((s: number, i: any) => s + (Number(i.subtotal) || 0), 0);
+      const purchasesTaxable = purchases.reduce((s: number, i: any) => s + (Number(i.subtotal) || 0), 0);
+      lines.push(`Box 1a: Standard Rated Supplies Total (AED),${salesTaxable.toFixed(2)}`);
+      lines.push(`Box 1b: Output VAT Total (AED),${totalOutputVat.toFixed(2)}`);
+      lines.push(`Box 9a: Standard Rated Purchases Total (AED),${purchasesTaxable.toFixed(2)}`);
+      lines.push(`Box 9b: Recoverable Input VAT Total (AED),${totalInputVat.toFixed(2)}`);
+      lines.push(`Box 14: Net VAT Payable/(Refundable) to FTA (AED),${netVatPayable.toFixed(2)}`);
+
+      return {
+        success: true,
+        fileName: `FTA_FAF_AUDIT_${trnTaxNo}_${startDate}_${endDate}.csv`,
+        csvContent: lines.join('\r\n'),
+        summary: {
+          totalOutputVat,
+          totalInputVat,
+          netVatPayable,
+          salesCount: sales.length,
+          purchaseCount: purchases.length,
+          glLinesCount: ledgers.length
+        }
+      };
+    });
+
+    return res.json(result);
+  } catch (err: any) {
+    console.error('[FTA-FAF Route] error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- UAE Corporate Tax (9%) Live Estimation from Postgres COA ---
+financeRouter.get('/corporate-tax/estimate', async (req, res) => {
+  try {
+    const taxYear = req.query.taxYear ? Number(req.query.taxYear) : 2026;
+
+    const result = await withDb(async (client) => {
+      // Query revenue accounts (4000 series) and expense accounts (5000 series)
+      const coaRes = await client.query(`
+        SELECT code, current_balance, account_type
+        FROM chart_of_accounts
+        WHERE code LIKE '4%' OR code LIKE '5%' OR code = '2410-00' OR code = '2410-01';
+      `);
+
+      let revenues = 0;
+      let expenses = 0;
+      let existingProvisionBalance = 0;
+
+      for (const row of coaRes.rows) {
+        const bal = Math.abs(Number(row.current_balance) || 0);
+        if (row.code.startsWith('4')) {
+          revenues += bal;
+        } else if (row.code.startsWith('5') && row.code !== '5510-00') {
+          expenses += bal;
+        } else if (row.code === '2410-00' || row.code === '2410-01') {
+          existingProvisionBalance += bal;
+        }
+      }
+
+      const accountingNetProfit = Math.max(0, revenues - expenses);
+      const statutoryExemptionThreshold = 375000;
+      const qualifyingTaxableProfit = Math.max(0, accountingNetProfit - statutoryExemptionThreshold);
+      const taxRatePercent = qualifyingTaxableProfit > 0 ? 9.0 : 0.0;
+      const estimatedCorporateTaxAed = Math.round(qualifyingTaxableProfit * 0.09 * 100) / 100;
+      const additionalProvisionRequired = Math.max(0, estimatedCorporateTaxAed - existingProvisionBalance);
+      const applicableTaxBracket = accountingNetProfit <= statutoryExemptionThreshold
+        ? '0% Bracket (Within AED 375,000 Small Business Exemption)'
+        : '9% Standard UAE Corporate Tax on Profit > AED 375,000';
+
+      return {
+        taxYear,
+        totalRevenue: revenues,
+        totalExpenses: expenses,
+        accountingNetProfit,
+        statutoryExemptionThreshold,
+        qualifyingTaxableProfit,
+        taxRatePercent,
+        estimatedCorporateTaxAed,
+        existingProvisionBalance,
+        additionalProvisionRequired,
+        applicableTaxBracket
+      };
+    });
+
+    return res.json(result);
+  } catch (err: any) {
+    console.error('[Corporate Tax Estimate] error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+financeRouter.post('/corporate-tax/provision', async (req, res) => {
+  try {
+    const taxYear = req.body.taxYear ? Number(req.body.taxYear) : 2026;
+    const postedBy = req.body.postedBy || 'Tax Compliance Officer';
+
+    const result = await withDb(async (client) => {
+      await client.query('BEGIN');
+      try {
+        // Compute live liability
+        const coaRes = await client.query(`
+          SELECT code, current_balance
+          FROM chart_of_accounts
+          WHERE code LIKE '4%' OR code LIKE '5%' OR code = '2410-00';
+        `);
+
+        let revenues = 0;
+        let expenses = 0;
+        let existingProv = 0;
+        for (const row of coaRes.rows) {
+          const bal = Math.abs(Number(row.current_balance) || 0);
+          if (row.code.startsWith('4')) revenues += bal;
+          else if (row.code.startsWith('5') && row.code !== '5510-00') expenses += bal;
+          else if (row.code === '2410-00') existingProv += bal;
+        }
+
+        const netProfit = Math.max(0, revenues - expenses);
+        const taxable = Math.max(0, netProfit - 375000);
+        const taxAed = Math.round(taxable * 0.09 * 100) / 100;
+        const needed = Math.max(0, taxAed - existingProv);
+
+        if (needed <= 0) {
+          throw new Error('Corporate tax provision is already fully funded.');
+        }
+
+        // Ensure 5510-00 and 2410-00 exist
+        await client.query(`
+          INSERT INTO chart_of_accounts (id, code, name, account_type, current_balance, is_deleted)
+          VALUES (gen_random_uuid(), '5510-00', 'Corporate Tax Expense (9% FTA)', 'EXPENSE', 0, false)
+          ON CONFLICT (code) DO NOTHING;
+        `);
+        await client.query(`
+          INSERT INTO chart_of_accounts (id, code, name, account_type, current_balance, is_deleted)
+          VALUES (gen_random_uuid(), '2410-00', 'Provision for Corporate Tax (9% FTA)', 'LIABILITY', 0, false)
+          ON CONFLICT (code) DO NOTHING;
+        `);
+
+        const vNo = `JV-CORP-TAX-${taxYear}-${Date.now().toString(36).toUpperCase()}`;
+        const vId = `vouch-corptax-${Date.now()}`;
+        const vDate = `${taxYear}-12-31`;
+
+        await client.query(`
+          INSERT INTO vouchers (id, voucher_no, date, type, narration, total_debit, total_credit, status, created_by, is_auto)
+          VALUES ($1, $2, $3, 'JOURNAL', $4, $5, $5, 'POSTED', $6, true)
+        `, [vId, vNo, vDate, `Annual Provision for UAE Corporate Tax (9%) for FY ${taxYear}`, needed, postedBy]);
+
+        await client.query(`
+          INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_code, account_name, debit, credit, narration)
+          VALUES (gen_random_uuid(), $1, $2, $3, '5510-00', 'Corporate Tax Expense (9% FTA)', $4, 0, $5)
+        `, [vId, vNo, vDate, needed, `Tax expense accrual for FY ${taxYear}`]);
+
+        await client.query(`
+          INSERT INTO voucher_entries (id, voucher_id, voucher_no, date, account_code, account_name, debit, credit, narration)
+          VALUES (gen_random_uuid(), $1, $2, $3, '2410-00', 'Provision for Corporate Tax (9% FTA)', 0, $4, $5)
+        `, [vId, vNo, vDate, needed, `Tax provision liability for FY ${taxYear}`]);
+
+        await client.query('COMMIT');
+        return {
+          success: true,
+          voucher: {
+            voucherNo: vNo,
+            totalDebit: needed
+          }
+        };
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      }
+    });
+
+    return res.json(result);
+  } catch (err: any) {
+    console.error('[Corporate Tax Provision] error:', err.message);
+    return res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 
 // --- Bale Yield & Container ROI Analytics (Live Warehouse ROI Engine) ---
 financeRouter.get('/yield-analytics', async (req, res) => {
