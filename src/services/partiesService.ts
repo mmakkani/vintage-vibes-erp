@@ -505,6 +505,31 @@ export class PartiesService {
   }
 
   /**
+   * Updates existing retail CRM customer strictly in `public.crm_retail_customers`.
+   */
+  public static async updateRetailCustomer(id: string, customer: {
+    name: string;
+    phone?: string;
+    email?: string;
+    company?: string;
+    address?: string;
+    customer_type?: string;
+  }): Promise<Party> {
+    const { CrmService } = await import('./crmService.ts');
+    const updated = await CrmService.updateCrmCustomer(id, customer);
+    return updated as unknown as Party;
+  }
+
+  /**
+   * Deletes retail CRM customer strictly from `public.crm_retail_customers`.
+   * Enforces that customer has zero transactions before deletion.
+   */
+  public static async deleteRetailCustomer(id: string): Promise<void> {
+    const { CrmService } = await import('./crmService.ts');
+    await CrmService.deleteCrmCustomer(id);
+  }
+
+  /**
    * Fetches retail CRM customers specifically from `public.crm_retail_customers`,
    * completely isolated from formal corporate B2B suppliers and wholesale ledger parties.
    */

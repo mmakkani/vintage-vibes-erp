@@ -397,6 +397,214 @@ partiesRouter.get('/retail/:id/transactions', async (req, res) => {
 });
 
 // -------------------------------------------------------------
+// 1f. PUT /api/parties/retail/:id - Edit / Update Retail CRM Customer
+// -------------------------------------------------------------
+partiesRouter.put('/retail/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, phone, email, company, address, customer_type } = req.body;
+
+  const cleanName = String(name || '').trim();
+  if (!cleanName) {
+    return res.status(400).json({ error: 'Customer name is required' });
+  }
+
+  const cleanPhone = phone ? String(phone).trim() : null;
+  const cleanEmail = email ? String(email).trim() : null;
+  const cleanCompany = company ? String(company).trim() : cleanName;
+  const cleanAddress = address ? String(address).trim() : null;
+  const cleanCustomerType = customer_type && ['RETAIL', 'B2B_RESELLER'].includes(String(customer_type).toUpperCase())
+    ? String(customer_type).toUpperCase()
+    : undefined;
+
+  let client: Client | null = null;
+  try {
+    client = await getDbClient();
+
+    // Verify existence
+    const checkRes = await client.query('SELECT * FROM public.crm_retail_customers WHERE id = $1', [id]);
+    if (checkRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Retail customer not found' });
+    }
+
+    const updateQuery = cleanCustomerType
+      ? `UPDATE public.crm_retail_customers
+         SET name = $1, phone = $2, email = $3, company = $4, address = $5, customer_type = $6
+         WHERE id = $7 RETURNING *`
+      : `UPDATE public.crm_retail_customers
+         SET name = $1, phone = $2, email = $3, company = $4, address = $5
+         WHERE id = $6 RETURNING *`;
+
+    const params = cleanCustomerType
+      ? [cleanName, cleanPhone, cleanEmail, cleanCompany, cleanAddress, cleanCustomerType, id]
+      : [cleanName, cleanPhone, cleanEmail, cleanCompany, cleanAddress, id];
+
+    const result = await client.query(updateQuery, params);
+    const updated = result.rows[0];
+
+    const walletBal = Number(updated.wallet_balance || 0);
+    return res.json({
+      success: true,
+      data: {
+        id: String(updated.id),
+        code: `CRM-${String(updated.id).slice(0, 6).toUpperCase()}`,
+        name: updated.name,
+        company_name: updated.company || updated.name,
+        type: 'CUSTOMER',
+        party_type: (updated.customer_type === 'B2B_RESELLER' ? 'B2B_RESELLER' : 'RETAIL'),
+        customer_type: updated.customer_type || 'RETAIL',
+        vip_tier: updated.vip_tier || 'BRONZE',
+        wallet_balance: walletBal,
+        walletBalance: walletBal,
+        auth_id: updated.auth_id || null,
+        phone: updated.phone || '',
+        email: updated.email || '',
+        address: updated.address || '',
+        current_balance: walletBal,
+        credit_limit: 0,
+        is_active: true,
+        coa_account_id: updated.customer_type === 'B2B_RESELLER' ? '1130-01' : '1130-05',
+        account_map: { receivableAccountId: updated.customer_type === 'B2B_RESELLER' ? '1130-01' : '1130-05' },
+        totalOrders: Number(updated.total_orders || 0),
+        totalSpent: Number(updated.total_spent || 0),
+        lastOrderDate: updated.created_at || null,
+        createdAt: updated.created_at || new Date().toISOString(),
+        created_at: updated.created_at || new Date().toISOString()
+      }
+    });
+  } catch (err: any) {
+    console.error('[PartiesRouter] Failed to update retail customer via PG:', err.message);
+    try {
+      const updateData: any = {
+        name: cleanName,
+        phone: cleanPhone,
+        email: cleanEmail,
+        company: cleanCompany,
+        address: cleanAddress
+      };
+      if (cleanCustomerType) updateData.customer_type = cleanCustomerType;
+
+      const { data, error } = await supabase
+        .from('crm_retail_customers')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      const walletBal = Number(data.wallet_balance || 0);
+      return res.json({
+        success: true,
+        data: {
+          id: String(data.id),
+          code: `CRM-${String(data.id).slice(0, 6).toUpperCase()}`,
+          name: data.name,
+          company_name: data.company || data.name,
+          type: 'CUSTOMER',
+          party_type: (data.customer_type === 'B2B_RESELLER' ? 'B2B_RESELLER' : 'RETAIL'),
+          customer_type: data.customer_type || 'RETAIL',
+          vip_tier: data.vip_tier || 'BRONZE',
+          wallet_balance: walletBal,
+          walletBalance: walletBal,
+          auth_id: data.auth_id || null,
+          phone: data.phone || '',
+          email: data.email || '',
+          address: data.address || '',
+          current_balance: walletBal,
+          credit_limit: 0,
+          is_active: true,
+          coa_account_id: data.customer_type === 'B2B_RESELLER' ? '1130-01' : '1130-05',
+          account_map: { receivableAccountId: data.customer_type === 'B2B_RESELLER' ? '1130-01' : '1130-05' },
+          totalOrders: Number(data.total_orders || 0),
+          totalSpent: Number(data.total_spent || 0),
+          lastOrderDate: data.created_at || null,
+          createdAt: data.created_at || new Date().toISOString(),
+          created_at: data.created_at || new Date().toISOString()
+        }
+      });
+    } catch (sbErr: any) {
+      return res.status(500).json({ error: sbErr.message || 'Failed to update retail customer' });
+    }
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// -------------------------------------------------------------
+// 1g. DELETE /api/parties/retail/:id - Delete Retail CRM Customer (Integrity Checked)
+// -------------------------------------------------------------
+partiesRouter.delete('/retail/:id', async (req, res) => {
+  const { id } = req.params;
+  let client: Client | null = null;
+  try {
+    client = await getDbClient();
+
+    // 1. Fetch customer to check financial metrics & phone
+    const custRes = await client.query('SELECT * FROM public.crm_retail_customers WHERE id = $1', [id]);
+    if (custRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Retail customer not found' });
+    }
+
+    const customer = custRes.rows[0];
+    const totalOrders = Number(customer.total_orders || 0);
+    const totalSpent = Number(customer.total_spent || 0);
+    const walletBalance = Number(customer.wallet_balance || 0);
+
+    if (totalOrders > 0 || totalSpent > 0 || walletBalance > 0) {
+      return res.status(400).json({
+        error: `Cannot delete retail customer: Customer has existing transactions (Orders: ${totalOrders}, Total Spent: AED ${totalSpent}, Wallet: AED ${walletBalance}).`
+      });
+    }
+
+    // 2. Check orders table
+    const ordersRes = await client.query('SELECT COUNT(*) as count FROM public.orders WHERE customer_id = $1', [id]).catch(() => ({ rows: [{ count: 0 }] }));
+    if (Number(ordersRes.rows[0]?.count || 0) > 0) {
+      return res.status(400).json({
+        error: `Cannot delete retail customer: Customer has ${ordersRes.rows[0].count} registered orders.`
+      });
+    }
+
+    // 3. Check wallet transactions table
+    const walletTxRes = await client.query('SELECT COUNT(*) as count FROM public.customer_wallet_transactions WHERE customer_id = $1', [id]).catch(() => ({ rows: [{ count: 0 }] }));
+    if (Number(walletTxRes.rows[0]?.count || 0) > 0) {
+      return res.status(400).json({
+        error: `Cannot delete retail customer: Customer has existing wallet transactions.`
+      });
+    }
+
+    // 4. Check sales invoices (by client_id or customer_phone)
+    const phone = customer.phone ? customer.phone.trim() : '';
+    const invoiceRes = await client.query(
+      `SELECT COUNT(*) as count FROM public.sales_invoices 
+       WHERE client_id = $1::text OR (customer_phone IS NOT NULL AND customer_phone != '' AND customer_phone = $2)`,
+      [id, phone]
+    ).catch(() => ({ rows: [{ count: 0 }] }));
+
+    if (Number(invoiceRes.rows[0]?.count || 0) > 0) {
+      return res.status(400).json({
+        error: `Cannot delete retail customer: Customer has ${invoiceRes.rows[0].count} sales invoice(s).`
+      });
+    }
+
+    // 5. Safe to delete
+    await client.query('DELETE FROM public.crm_retail_customers WHERE id = $1', [id]);
+
+    return res.json({ success: true, message: 'Retail customer deleted successfully', id });
+  } catch (err: any) {
+    console.error('[PartiesRouter] Failed to delete retail customer via PG:', err.message);
+    try {
+      // Fallback Supabase deletion
+      const { error } = await supabase.from('crm_retail_customers').delete().eq('id', id);
+      if (error) throw error;
+      return res.json({ success: true, message: 'Retail customer deleted successfully', id });
+    } catch (sbErr: any) {
+      return res.status(500).json({ error: sbErr.message || 'Failed to delete retail customer' });
+    }
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// -------------------------------------------------------------
 // 2. GET /api/parties/:id - View single party with financial stats
 // -------------------------------------------------------------
 partiesRouter.get('/:id', async (req, res) => {

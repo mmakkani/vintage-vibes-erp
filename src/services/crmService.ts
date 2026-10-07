@@ -473,6 +473,107 @@ export class CrmService {
     return { success: true, newBalance: newBal };
   }
 
+  /**
+   * Updates an existing Retail CRM customer strictly in public.crm_retail_customers
+   */
+  public static async updateCrmCustomer(id: string, customer: {
+    name: string;
+    phone?: string;
+    email?: string;
+    company?: string;
+    address?: string;
+    customer_type?: string;
+  }): Promise<CrmRetailCustomer> {
+    const cleanName = String(customer.name || '').trim();
+    if (!cleanName) throw new Error('Customer name is required');
+
+    // 1. Try server endpoint
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const res = await rawFetch(`/api/parties/retail/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: cleanName,
+            phone: customer.phone,
+            email: customer.email,
+            company: customer.company,
+            address: customer.address,
+            customer_type: customer.customer_type
+          })
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.data) return json.data;
+        } else {
+          const err = await res.json().catch(() => ({}));
+          if (err.error) throw new Error(err.error);
+        }
+      } catch (err: any) {
+        if (err.message && !err.message.includes('fetch')) {
+          throw err;
+        }
+      }
+    }
+
+    // 2. Direct Supabase fallback
+    const updatePayload: any = {
+      name: cleanName,
+      phone: customer.phone ? customer.phone.trim() : null,
+      email: customer.email ? customer.email.trim() : null,
+      company: customer.company ? customer.company.trim() : cleanName,
+      address: customer.address ? customer.address.trim() : null
+    };
+    if (customer.customer_type) {
+      updatePayload.customer_type = customer.customer_type;
+    }
+
+    const { data, error } = await supabase
+      .from('crm_retail_customers')
+      .update(updatePayload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update retail customer: ${error.message}`);
+    }
+
+    return this.formatCustomer(data);
+  }
+
+  /**
+   * Deletes a Retail CRM customer strictly from public.crm_retail_customers
+   * Validates that customer has no prior transactions or orders before deletion
+   */
+  public static async deleteCrmCustomer(id: string): Promise<void> {
+    if (!id) throw new Error('Customer ID is required');
+
+    // 1. Try server endpoint (which performs all database-level transaction checks)
+    if (typeof window !== 'undefined') {
+      const rawFetch = (window as any).__originalFetch || window.fetch;
+      const res = await rawFetch(`/api/parties/retail/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to delete retail customer');
+      }
+      return;
+    }
+
+    // 2. Direct Supabase deletion
+    const { error } = await supabase
+      .from('crm_retail_customers')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      throw new Error(`Failed to delete retail customer: ${error.message}`);
+    }
+  }
+
   public static async getCustomerByAuthId(authId: string): Promise<CrmRetailCustomer | null> {
     if (!authId) return null;
     try {

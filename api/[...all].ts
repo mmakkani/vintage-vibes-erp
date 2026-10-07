@@ -7653,6 +7653,195 @@ ${courierLines}
 
           return res.status(200).json([]);
         }
+
+        // 5. PUT /api/parties/retail/:id - Edit Retail CRM Customer
+        if (retailCustomerId && !retailAction && method === 'PUT') {
+          const { name, phone, email, company, address, customer_type } = body || {};
+          const cleanName = String(name || '').trim();
+          if (!cleanName) {
+            return res.status(400).json({ error: 'Customer name is required' });
+          }
+          const cleanPhone = phone ? String(phone).trim() : null;
+          const cleanEmail = email ? String(email).trim() : null;
+          const cleanCompany = company ? String(company).trim() : cleanName;
+          const cleanAddress = address ? String(address).trim() : null;
+          const cleanCustomerType = customer_type && ['RETAIL', 'B2B_RESELLER'].includes(String(customer_type).toUpperCase())
+            ? String(customer_type).toUpperCase()
+            : undefined;
+
+          const client = await getPgClient();
+          if (client) {
+            try {
+              const checkRes = await client.query('SELECT * FROM public.crm_retail_customers WHERE id = $1', [retailCustomerId]);
+              if (checkRes.rows.length === 0) {
+                await client.end();
+                return res.status(404).json({ error: 'Retail customer not found' });
+              }
+
+              const updateQuery = cleanCustomerType
+                ? `UPDATE public.crm_retail_customers
+                   SET name = $1, phone = $2, email = $3, company = $4, address = $5, customer_type = $6
+                   WHERE id = $7 RETURNING *`
+                : `UPDATE public.crm_retail_customers
+                   SET name = $1, phone = $2, email = $3, company = $4, address = $5
+                   WHERE id = $6 RETURNING *`;
+
+              const params = cleanCustomerType
+                ? [cleanName, cleanPhone, cleanEmail, cleanCompany, cleanAddress, cleanCustomerType, retailCustomerId]
+                : [cleanName, cleanPhone, cleanEmail, cleanCompany, cleanAddress, retailCustomerId];
+
+              const result = await client.query(updateQuery, params);
+              await client.end();
+              const updated = result.rows[0];
+              const walletBal = Number(updated.wallet_balance || 0);
+
+              return res.status(200).json({
+                success: true,
+                data: {
+                  ...formatParty(updated),
+                  code: `CRM-${String(updated.id).slice(0, 6).toUpperCase()}`,
+                  party_type: (updated.customer_type === 'B2B_RESELLER' ? 'B2B_RESELLER' : 'RETAIL'),
+                  customer_type: updated.customer_type || 'RETAIL',
+                  vip_tier: updated.vip_tier || 'BRONZE',
+                  wallet_balance: walletBal,
+                  walletBalance: walletBal,
+                  current_balance: walletBal,
+                  currentBalance: walletBal,
+                  auth_id: updated.auth_id || null,
+                  phone: updated.phone || '',
+                  email: updated.email || '',
+                  address: updated.address || '',
+                  totalOrders: Number(updated.total_orders || 0),
+                  totalSpent: Number(updated.total_spent || 0),
+                  lastOrderDate: updated.created_at || null
+                }
+              });
+            } catch (err: any) {
+              try { await client.end(); } catch (_) {}
+              console.warn('[Serverless Parties] Error updating retail party via PG:', err?.message);
+            }
+          }
+
+          // Fallback Supabase
+          try {
+            const updateData: any = {
+              name: cleanName,
+              phone: cleanPhone,
+              email: cleanEmail,
+              company: cleanCompany,
+              address: cleanAddress
+            };
+            if (cleanCustomerType) updateData.customer_type = cleanCustomerType;
+
+            const { data, error } = await supabaseAdmin
+              .from('crm_retail_customers')
+              .update(updateData)
+              .eq('id', retailCustomerId)
+              .select()
+              .single();
+
+            if (error) throw error;
+            const walletBal = Number(data.wallet_balance || 0);
+            return res.status(200).json({
+              success: true,
+              data: {
+                ...formatParty(data),
+                code: `CRM-${String(data.id).slice(0, 6).toUpperCase()}`,
+                party_type: (data.customer_type === 'B2B_RESELLER' ? 'B2B_RESELLER' : 'RETAIL'),
+                customer_type: data.customer_type || 'RETAIL',
+                vip_tier: data.vip_tier || 'BRONZE',
+                wallet_balance: walletBal,
+                walletBalance: walletBal,
+                current_balance: walletBal,
+                currentBalance: walletBal,
+                auth_id: data.auth_id || null,
+                phone: data.phone || '',
+                email: data.email || '',
+                address: data.address || '',
+                totalOrders: Number(data.total_orders || 0),
+                totalSpent: Number(data.total_spent || 0),
+                lastOrderDate: data.created_at || null
+              }
+            });
+          } catch (sbErr: any) {
+            return res.status(500).json({ error: sbErr.message || 'Failed to update retail customer' });
+          }
+        }
+
+        // 6. DELETE /api/parties/retail/:id - Delete Retail CRM Customer (Integrity Checked)
+        if (retailCustomerId && !retailAction && method === 'DELETE') {
+          const client = await getPgClient();
+          if (client) {
+            try {
+              const custRes = await client.query('SELECT * FROM public.crm_retail_customers WHERE id = $1', [retailCustomerId]);
+              if (custRes.rows.length === 0) {
+                await client.end();
+                return res.status(404).json({ error: 'Retail customer not found' });
+              }
+
+              const customer = custRes.rows[0];
+              const totalOrders = Number(customer.total_orders || 0);
+              const totalSpent = Number(customer.total_spent || 0);
+              const walletBalance = Number(customer.wallet_balance || 0);
+
+              if (totalOrders > 0 || totalSpent > 0 || walletBalance > 0) {
+                await client.end();
+                return res.status(400).json({
+                  error: `Cannot delete retail customer: Customer has existing transactions (Orders: ${totalOrders}, Total Spent: AED ${totalSpent}, Wallet: AED ${walletBalance}).`
+                });
+              }
+
+              // Check orders
+              const ordersRes = await client.query('SELECT COUNT(*) as count FROM public.orders WHERE customer_id = $1', [retailCustomerId]).catch(() => ({ rows: [{ count: 0 }] }));
+              if (Number(ordersRes.rows[0]?.count || 0) > 0) {
+                await client.end();
+                return res.status(400).json({
+                  error: `Cannot delete retail customer: Customer has ${ordersRes.rows[0].count} registered orders.`
+                });
+              }
+
+              // Check wallet transactions
+              const walletTxRes = await client.query('SELECT COUNT(*) as count FROM public.customer_wallet_transactions WHERE customer_id = $1', [retailCustomerId]).catch(() => ({ rows: [{ count: 0 }] }));
+              if (Number(walletTxRes.rows[0]?.count || 0) > 0) {
+                await client.end();
+                return res.status(400).json({
+                  error: `Cannot delete retail customer: Customer has existing wallet transactions.`
+                });
+              }
+
+              // Check sales invoices
+              const phone = customer.phone ? customer.phone.trim() : '';
+              const invoiceRes = await client.query(
+                `SELECT COUNT(*) as count FROM public.sales_invoices 
+                 WHERE client_id = $1::text OR (customer_phone IS NOT NULL AND customer_phone != '' AND customer_phone = $2)`,
+                [retailCustomerId, phone]
+              ).catch(() => ({ rows: [{ count: 0 }] }));
+
+              if (Number(invoiceRes.rows[0]?.count || 0) > 0) {
+                await client.end();
+                return res.status(400).json({
+                  error: `Cannot delete retail customer: Customer has ${invoiceRes.rows[0].count} sales invoice(s).`
+                });
+              }
+
+              await client.query('DELETE FROM public.crm_retail_customers WHERE id = $1', [retailCustomerId]);
+              await client.end();
+              return res.status(200).json({ success: true, message: 'Retail customer deleted successfully', id: retailCustomerId });
+            } catch (err: any) {
+              try { await client.end(); } catch (_) {}
+              console.warn('[Serverless Parties] Error deleting retail party via PG:', err?.message);
+            }
+          }
+
+          // Fallback Supabase
+          try {
+            const { error } = await supabaseAdmin.from('crm_retail_customers').delete().eq('id', retailCustomerId);
+            if (error) throw error;
+            return res.status(200).json({ success: true, message: 'Retail customer deleted successfully', id: retailCustomerId });
+          } catch (sbErr: any) {
+            return res.status(500).json({ error: sbErr.message || 'Failed to delete retail customer' });
+          }
+        }
       }
 
       // Sub-route: /api/parties/:id/khata or /api/parties/:id/transaction

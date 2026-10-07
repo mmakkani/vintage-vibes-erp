@@ -48,6 +48,7 @@ import { extractVisitingCardDetails, VisitingCardOcrResult } from '../services/v
 import { Pagination } from '../../../components/Pagination.tsx';
 import { RetailCustomerStatementModal } from './RetailCustomerStatementModal.tsx';
 import { NewRetailCustomerModal } from './NewRetailCustomerModal.tsx';
+import { EditRetailCustomerModal } from './EditRetailCustomerModal.tsx';
 
 const KNOWN_ACCOUNT_UUIDS: Record<string, string> = {
   '1130-00': '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7',
@@ -119,6 +120,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   const [showNewRetailModal, setShowNewRetailModal] = useState(false);
   const [showRetailStatementModal, setShowRetailStatementModal] = useState(false);
   const [selectedRetailCustomer, setSelectedRetailCustomer] = useState<Party | null>(null);
+  const [editingRetailCustomer, setEditingRetailCustomer] = useState<Party | null>(null);
+  const [showEditRetailModal, setShowEditRetailModal] = useState(false);
   const [retailCustomerInvoices, setRetailCustomerInvoices] = useState<any[]>([]);
   const [isLoadingStatement, setIsLoadingStatement] = useState(false);
 
@@ -592,6 +595,36 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       setRetailCustomerInvoices([]);
     } finally {
       setIsLoadingStatement(false);
+    }
+  };
+
+  const handleEditRetailCustomer = (cust: Party) => {
+    setEditingRetailCustomer(cust);
+    setShowEditRetailModal(true);
+  };
+
+  const handleDeleteRetailCustomer = async (cust: Party) => {
+    const ordersCount = Number((cust as any).totalOrders || 0);
+    const spentAmt = Number((cust as any).totalSpent || 0);
+    const walletBal = Number((cust as any).wallet_balance || (cust as any).walletBalance || 0);
+    const hasTransactions = ordersCount > 0 || spentAmt > 0 || walletBal > 0;
+
+    if (hasTransactions) {
+      toast.error(`Cannot delete customer "${cust.name}": Customer has existing transactions or orders.`);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete retail customer "${cust.name}"?\n\nCode: ${cust.code || 'N/A'}\nPhone: ${cust.phone || 'N/A'}\n\nThis will permanently remove this customer from the CRM Registry.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await PartiesService.deleteRetailCustomer(cust.id);
+      setRetailCustomers(prev => prev.filter(c => c.id !== cust.id));
+      toast.success(`Retail customer "${cust.name}" deleted successfully.`);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete retail customer.');
     }
   };
 
@@ -2341,6 +2374,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
             {filteredRetailCustomers.map(cust => {
               const ordersCount = Number((cust as any).totalOrders || 0);
               const spentAmt = Number((cust as any).totalSpent || 0);
+              const walletBal = Number((cust as any).wallet_balance || (cust as any).walletBalance || 0);
+              const hasTransactions = ordersCount > 0 || spentAmt > 0 || walletBal > 0;
 
               return (
                 <div
@@ -2411,15 +2446,48 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   </div>
 
                   {/* Actions */}
-                  <div className="pt-3 mt-3 border-t border-slate-100">
+                  <div className="pt-3 mt-3 border-t border-slate-100 flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => openRetailCustomerStatement(cust)}
-                      className="w-full py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
+                      className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
                     >
                       <FileText className="w-3.5 h-3.5" />
-                      <span>Customer Statement (Khata)</span>
+                      <span>Statement</span>
                       <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
+                    </button>
+
+                    {/* EDIT CUSTOMER */}
+                    <button
+                      type="button"
+                      onClick={() => handleEditRetailCustomer(cust)}
+                      title={`Edit ${cust.name}`}
+                      className="py-2 px-2.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300 text-slate-700 hover:text-indigo-600 transition cursor-pointer flex items-center justify-center shadow-2xs"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* DELETE CUSTOMER (DISABLED IF TRANSACTIONS EXIST) */}
+                    <button
+                      type="button"
+                      disabled={hasTransactions}
+                      onClick={() => !hasTransactions && handleDeleteRetailCustomer(cust)}
+                      title={
+                        hasTransactions
+                          ? `Cannot delete: ${cust.name} has existing orders or transactions`
+                          : `Delete ${cust.name}`
+                      }
+                      className={`py-2 px-2.5 rounded-lg border transition flex items-center justify-center shadow-2xs ${
+                        hasTransactions
+                          ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed opacity-60"
+                          : "border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:border-rose-300 cursor-pointer"
+                      }`}
+                    >
+                      {hasTransactions ? (
+                        <Lock className="w-3.5 h-3.5 text-slate-400" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      )}
                     </button>
                   </div>
                 </div>
@@ -4486,6 +4554,21 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
           if (saved) {
             toast.success(`Retail customer ${saved.name} (${saved.code}) registered!`);
           }
+        }}
+      />
+
+      {/* EDIT RETAIL CUSTOMER MODAL */}
+      <EditRetailCustomerModal
+        isOpen={showEditRetailModal}
+        onClose={() => {
+          setShowEditRetailModal(false);
+          setEditingRetailCustomer(null);
+        }}
+        customer={editingRetailCustomer}
+        onSuccess={updated => {
+          setRetailCustomers(prev => prev.map(c => c.id === updated.id ? updated : c));
+          toast.success(`Retail customer "${updated.name}" updated successfully!`);
+          loadRetailCustomers();
         }}
       />
 
