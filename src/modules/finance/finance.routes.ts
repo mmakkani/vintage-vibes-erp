@@ -1370,19 +1370,30 @@ financeRouter.get('/fta-faf', async (req, res) => {
 
       // 3. Live Sales Invoices
       const salesRes = await client.query(`
-        SELECT invoice_no, invoice_date as date, customer_name, customer_trn, subtotal, vat_amount, total_amount
-        FROM sales_invoices
-        WHERE invoice_date >= $1 AND invoice_date <= $2;
+        SELECT s.invoice_no, s.invoice_date as date, 
+               COALESCE(s.customer_name, p.name, 'Walk-in Retail Client') as customer_name,
+               COALESCE(p.trn_no, p.tin_or_ntn, 'UNREGISTERED') as customer_trn,
+               COALESCE(s.subtotal, 0) as subtotal, 
+               COALESCE(s.tax_amount, 0) as vat_amount, 
+               COALESCE(s.total_amount, 0) as total_amount
+        FROM sales_invoices s
+        LEFT JOIN parties p ON (p.id::text = s.client_id::text OR p.party_id::text = s.client_id::text)
+        WHERE s.invoice_date >= $1 AND s.invoice_date <= $2;
       `, [startDate, endDate]);
       const sales = salesRes.rows || [];
 
       // 4. Live Purchase Invoices
       const purRes = await client.query(`
-        SELECT invoice_no, invoice_date as date, supplier_name, subtotal, 
-               COALESCE(NULLIF(tax_amount, 0), vat_amount, 0) as vat_amount,
-               total_amount, notes
-        FROM purchase_invoices
-        WHERE invoice_date >= $1 AND invoice_date <= $2;
+        SELECT pinv.invoice_no, pinv.invoice_date as date, 
+               COALESCE(pinv.supplier_name, p_sup.name, 'Bulk Vintage Bale Supplier') as supplier_name,
+               COALESCE(p_sup.trn_no, p_sup.tin_or_ntn, 'IMPORT-REVERSE-CHARGE') as supplier_trn,
+               COALESCE(pinv.subtotal, pinv.gross_amount, 0) as subtotal, 
+               COALESCE(NULLIF(pinv.tax_amount, 0), pinv.vat_amount, 0) as vat_amount,
+               COALESCE(pinv.total_amount, pinv.net_amount, 0) as total_amount, 
+               pinv.notes
+        FROM purchase_invoices pinv
+        LEFT JOIN parties p_sup ON (p_sup.id::text = pinv.supplier_id::text OR p_sup.party_id::text = pinv.supplier_id::text)
+        WHERE pinv.invoice_date >= $1 AND pinv.invoice_date <= $2;
       `, [startDate, endDate]);
       const purchases = purRes.rows || [];
 
@@ -1444,7 +1455,7 @@ financeRouter.get('/fta-faf', async (req, res) => {
           (pinv.date ? new Date(pinv.date).toISOString().slice(0, 10) : startDate),
           pinv.invoice_no,
           `"${(pinv.supplier_name || 'Bulk Vintage Bale Supplier').replace(/"/g, '""')}"`,
-          'IMPORT-REVERSE-CHARGE',
+          pinv.supplier_trn || 'IMPORT-REVERSE-CHARGE',
           net.toFixed(2),
           '5.00',
           vat.toFixed(2),
