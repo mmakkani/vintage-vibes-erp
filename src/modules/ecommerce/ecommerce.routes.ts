@@ -540,6 +540,39 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           }
         }
 
+        // If not found in crm_retail_customers (e.g. guest checkout), auto-create customer in CRM
+        if (!resolvedCustomerId && (customerPhone || customerEmail || customerName)) {
+          const cleanName = (customerName || 'Online Collector').trim();
+          const cleanPhone = (customerPhone || '').trim() || null;
+          const cleanEmail = (customerEmail || '').trim() || null;
+          const cleanAddr = (shippingAddress || city || '').trim() || null;
+          const insCustRes = await client.query(`
+            INSERT INTO public.crm_retail_customers (
+              name, phone, email, address, company, total_spent, total_orders, channel, customer_type, vip_tier, wallet_balance
+            ) VALUES (
+              $1, $2, $3, $4, $1, $5, 1, 'STOREFRONT', $6, 'BRONZE', 0.00
+            ) RETURNING id
+          `, [cleanName, cleanPhone, cleanEmail, cleanAddr, totalAmount, resolvedCustomerType]);
+          if (insCustRes.rows.length > 0) {
+            resolvedCustomerId = insCustRes.rows[0].id;
+          }
+        } else if (resolvedCustomerId) {
+          // Increment total orders and total spent for existing customer, update channel & address
+          await client.query(`
+            UPDATE public.crm_retail_customers
+            SET total_orders = COALESCE(total_orders, 0) + 1,
+                total_spent = COALESCE(total_spent, 0) + $1,
+                channel = CASE 
+                  WHEN channel = 'POS_COUNTER' THEN 'OMNICHANNEL'
+                  WHEN channel IS NULL OR channel = '' THEN 'STOREFRONT'
+                  ELSE channel
+                END,
+                address = COALESCE(NULLIF(address, ''), $2),
+                email = COALESCE(NULLIF(email, ''), $3)
+            WHERE id = $4
+          `, [totalAmount, (shippingAddress || city || '').trim() || null, (customerEmail || '').trim() || null, resolvedCustomerId]);
+        }
+
         // 4. Compute Wallet deduction
         const requestedWallet = Math.max(0, Number(walletAmountUsed) || 0);
         const effectiveWalletUsed = Math.min(requestedWallet, currentWalletBal, totalAmount);
@@ -625,14 +658,15 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
         const invoiceNo = `SINV-${Date.now().toString().slice(-6)}`;
         await client.query(`
           INSERT INTO sales_invoices (
-            id, invoice_no, customer_name, customer_phone, invoice_date, channel, 
+            id, invoice_no, client_id, customer_name, customer_phone, invoice_date, channel, 
             payment_method, payment_status, payment_reference, shipping_address, city,
             subtotal, discount_amount, tax_amount, total_amount, status, items, order_id, created_at
-          ) VALUES ($1, $2, $3, $4, CURRENT_DATE, 'ECOMMERCE', $5, $6, $7, $8, $9, $10, 0, 0, $11, 'DRAFT', $12, $13, NOW())
+          ) VALUES ($1, $2, $3, $4, $5, CURRENT_DATE, 'ECOMMERCE', $6, $7, $8, $9, $10, $11, 0, 0, $12, 'DRAFT', $13, $14, NOW())
           ON CONFLICT (id) DO NOTHING;
         `, [
           invoiceId,
           invoiceNo,
+          resolvedCustomerId,
           customerName,
           customerPhone,
           isFullyWalletPaid ? 'STORE_CREDIT' : (paymentMethod || 'COD'),

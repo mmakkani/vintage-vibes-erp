@@ -117,6 +117,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   const [retailCustomers, setRetailCustomers] = useState<Party[]>([]);
   const [isLoadingRetail, setIsLoadingRetail] = useState(false);
   const [retailSearch, setRetailSearch] = useState('');
+  const [retailChannelFilter, setRetailChannelFilter] = useState<'ALL' | 'POS_COUNTER' | 'LIVE_STREAM' | 'STOREFRONT' | 'B2B_RESELLER'>('ALL');
+  const [retailPage, setRetailPage] = useState(1);
+  const [retailPageSize, setRetailPageSize] = useState(15);
   const [showNewRetailModal, setShowNewRetailModal] = useState(false);
   const [showRetailStatementModal, setShowRetailStatementModal] = useState(false);
   const [selectedRetailCustomer, setSelectedRetailCustomer] = useState<Party | null>(null);
@@ -1482,18 +1485,42 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
   }, [visitingCards, cardSearch]);
 
   const filteredRetailCustomers = useMemo(() => {
+    let list = retailCustomers;
+
+    // Channel Filtering
+    if (retailChannelFilter !== 'ALL') {
+      if (retailChannelFilter === 'B2B_RESELLER') {
+        list = list.filter(c => (c as any).customer_type === 'B2B_RESELLER' || (c as any).party_type === 'B2B_RESELLER');
+      } else if (retailChannelFilter === 'STOREFRONT') {
+        list = list.filter(c => (c as any).channel === 'STOREFRONT' || (c as any).auth_id);
+      } else if (retailChannelFilter === 'LIVE_STREAM') {
+        list = list.filter(c => (c as any).channel === 'LIVE_STREAM');
+      } else if (retailChannelFilter === 'POS_COUNTER') {
+        list = list.filter(c => (c as any).channel === 'POS_COUNTER' || !(c as any).channel);
+      }
+    }
+
+    // Search Query Filtering
     const q = retailSearch.trim().toLowerCase();
-    if (!q) return retailCustomers;
-    return retailCustomers.filter(c => {
-      const name = (c.name || '').toLowerCase();
-      const comp = ((c as any).company_name || '').toLowerCase();
-      const ph = (c.phone || '').toLowerCase();
-      const em = (c.email || '').toLowerCase();
-      const cd = (c.code || '').toLowerCase();
-      const addr = (c.address || '').toLowerCase();
-      return name.includes(q) || comp.includes(q) || ph.includes(q) || em.includes(q) || cd.includes(q) || addr.includes(q);
-    });
-  }, [retailCustomers, retailSearch]);
+    if (q) {
+      list = list.filter(c => {
+        const name = (c.name || '').toLowerCase();
+        const comp = ((c as any).company_name || (c as any).company || '').toLowerCase();
+        const ph = (c.phone || '').toLowerCase();
+        const em = (c.email || '').toLowerCase();
+        const cd = (c.code || '').toLowerCase();
+        const addr = (c.address || '').toLowerCase();
+        return name.includes(q) || comp.includes(q) || ph.includes(q) || em.includes(q) || cd.includes(q) || addr.includes(q);
+      });
+    }
+
+    return list;
+  }, [retailCustomers, retailSearch, retailChannelFilter]);
+
+  const paginatedRetailCustomers = useMemo(() => {
+    const startIndex = (retailPage - 1) * retailPageSize;
+    return filteredRetailCustomers.slice(startIndex, startIndex + retailPageSize);
+  }, [filteredRetailCustomers, retailPage, retailPageSize]);
 
   return (
     <div className="space-y-3">
@@ -2319,21 +2346,60 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
             </div>
           </div>
 
+          {/* Channel Tabs */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 mt-3 pt-3 border-t border-slate-100">
+            {[
+              { id: 'ALL', label: 'All Channels', icon: '👥', count: retailCustomers.length },
+              { id: 'POS_COUNTER', label: 'POS Counter', icon: '🛍️', count: retailCustomers.filter(c => (c as any).channel === 'POS_COUNTER' || !(c as any).channel).length },
+              { id: 'LIVE_STREAM', label: 'Live Stream', icon: '🎥', count: retailCustomers.filter(c => (c as any).channel === 'LIVE_STREAM').length },
+              { id: 'STOREFRONT', label: 'Storefront (Web)', icon: '🌐', count: retailCustomers.filter(c => (c as any).channel === 'STOREFRONT' || (c as any).auth_id).length },
+              { id: 'B2B_RESELLER', label: 'B2B Resellers', icon: '🏢', count: retailCustomers.filter(c => (c as any).customer_type === 'B2B_RESELLER' || (c as any).party_type === 'B2B_RESELLER').length }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setRetailChannelFilter(tab.id as any);
+                  setRetailPage(1);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition cursor-pointer ${
+                  retailChannelFilter === tab.id
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                }`}
+              >
+                <span>{tab.icon}</span>
+                <span>{tab.label}</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                  retailChannelFilter === tab.id ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {tab.count}
+                </span>
+              </button>
+            ))}
+          </div>
+
           {/* Search & Metrics Bar */}
-          <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="mt-2.5 flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="relative w-full sm:w-80">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
               <input
                 type="text"
                 value={retailSearch}
-                onChange={e => setRetailSearch(e.target.value)}
+                onChange={e => {
+                  setRetailSearch(e.target.value);
+                  setRetailPage(1);
+                }}
                 placeholder="Search by customer name, phone, code..."
                 className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-emerald-600 text-slate-800"
               />
               {retailSearch && (
                 <button
                   type="button"
-                  onClick={() => setRetailSearch('')}
+                  onClick={() => {
+                    setRetailSearch('');
+                    setRetailPage(1);
+                  }}
                   className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs"
                 >
                   ✕
@@ -2342,16 +2408,16 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
             </div>
 
             <div className="flex items-center gap-3 text-xs font-semibold text-slate-500 self-end sm:self-auto flex-wrap">
-              <span>Total Customers: <strong className="text-slate-800">{retailCustomers.length}</strong></span>
+              <span>Showing: <strong className="text-slate-800">{filteredRetailCustomers.length}</strong> of {retailCustomers.length}</span>
               <span>•</span>
-              <span>Total Orders: <strong className="text-indigo-700">{retailCustomers.reduce((s, c) => s + (Number((c as any).totalOrders) || 0), 0)}</strong></span>
+              <span>Total Orders: <strong className="text-indigo-700">{filteredRetailCustomers.reduce((s, c) => s + (Number((c as any).totalOrders) || 0), 0)}</strong></span>
               <span>•</span>
-              <span>Total Retail Sales: <strong className="text-emerald-700">AED {retailCustomers.reduce((s, c) => s + (Number((c as any).totalSpent) || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
+              <span>Total Sales: <strong className="text-emerald-700">AED {filteredRetailCustomers.reduce((s, c) => s + (Number((c as any).totalSpent) || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
             </div>
           </div>
         </div>
 
-        {/* Retail Customers Grid */}
+        {/* Retail Customers Grid (5 per line on desktop) */}
         {isLoadingRetail ? (
           <div className="p-12 text-center bg-white rounded-xl border border-slate-200">
             <Loader2 className="w-6 h-6 animate-spin text-emerald-600 mx-auto mb-2" />
@@ -2370,91 +2436,114 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {filteredRetailCustomers.map(cust => {
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
+            {paginatedRetailCustomers.map(cust => {
               const ordersCount = Number((cust as any).totalOrders || 0);
               const spentAmt = Number((cust as any).totalSpent || 0);
               const walletBal = Number((cust as any).wallet_balance || (cust as any).walletBalance || 0);
               const hasTransactions = ordersCount > 0 || spentAmt > 0 || walletBal > 0;
+              const channel = (cust as any).channel || ((cust as any).auth_id ? 'STOREFRONT' : 'POS_COUNTER');
 
               return (
                 <div
                   key={cust.id}
-                  className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs hover:shadow-md transition flex flex-col justify-between"
+                  className="bg-white rounded-xl border border-slate-200 p-3 shadow-2xs hover:shadow-md hover:border-emerald-300 transition flex flex-col justify-between"
                 >
-                  <div className="space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 font-bold flex items-center justify-center text-xs border border-emerald-100">
+                  <div className="space-y-1.5">
+                    <div className="flex items-start justify-between gap-1.5">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 font-extrabold flex items-center justify-center text-[11px] border border-emerald-100 shrink-0">
                           {cust.name.slice(0, 2).toUpperCase()}
                         </div>
-                        <div>
-                          <h3 className="text-xs font-bold text-slate-900 line-clamp-1">{cust.name}</h3>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-100">
+                        <div className="min-w-0">
+                          <h3 className="text-xs font-bold text-slate-900 truncate" title={cust.name}>{cust.name}</h3>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <span className="font-mono text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-100 shrink-0">
                               {cust.code}
                             </span>
-                            <span className="text-[10px] text-slate-400 font-mono">1130-05</span>
+                            <span className="text-[9px] text-slate-400 font-mono truncate">1130-05</span>
                           </div>
                         </div>
                       </div>
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
-                        RETAIL
-                      </span>
+                      <div className="shrink-0">
+                        {channel === 'LIVE_STREAM' ? (
+                          <span className="px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+                            🎥 LIVE
+                          </span>
+                        ) : channel === 'STOREFRONT' ? (
+                          <span className="px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase tracking-wider bg-sky-50 text-sky-700 border border-sky-200">
+                            🌐 WEB
+                          </span>
+                        ) : channel === 'OMNICHANNEL' ? (
+                          <span className="px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-200">
+                            🔄 OMNI
+                          </span>
+                        ) : (cust as any).customer_type === 'B2B_RESELLER' ? (
+                          <span className="px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            🏢 B2B
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            🛍️ POS
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="space-y-1 text-xs text-slate-600 pt-1 border-t border-slate-100">
+                    <div className="space-y-1 text-[11px] text-slate-600 pt-1.5 border-t border-slate-100">
                       {cust.phone ? (
-                        <div className="flex items-center justify-between">
-                          <span className="flex items-center gap-1.5 text-slate-500 text-[11px]">
-                            <Phone className="w-3 h-3 text-emerald-600" />
-                            <span>{cust.phone}</span>
+                        <div className="flex items-center justify-between text-[10.5px]">
+                          <span className="flex items-center gap-1 text-slate-600 truncate">
+                            <Phone className="w-3 h-3 text-emerald-600 shrink-0" />
+                            <span className="truncate">{cust.phone}</span>
                           </span>
                           <a
                             href={`https://wa.me/${cust.phone.replace(/\D/g, '')}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[10px] font-bold text-emerald-600 hover:underline flex items-center gap-0.5"
+                            className="text-[9.5px] font-bold text-emerald-600 hover:underline flex items-center gap-0.5 shrink-0"
                           >
-                            <span>WhatsApp</span>
+                            <span>WA</span>
                             <ExternalLink className="w-2.5 h-2.5" />
                           </a>
                         </div>
                       ) : (
-                        <div className="text-[11px] text-slate-400 italic">No phone registered</div>
+                        <div className="text-[10px] text-slate-400 italic">No phone registered</div>
                       )}
 
-                      {cust.address && (
-                        <div className="flex items-center gap-1.5 text-slate-500 text-[11px] truncate">
-                          <MapPin className="w-3 h-3 text-amber-500 shrink-0" />
+                      {cust.address ? (
+                        <div className="flex items-center gap-1 text-slate-500 text-[10px] truncate" title={cust.address}>
+                          <MapPin className="w-2.5 h-2.5 text-amber-500 shrink-0" />
                           <span className="truncate">{cust.address}</span>
                         </div>
-                      )}
+                      ) : null}
                     </div>
 
                     {/* Spend & Order Stats */}
-                    <div className="grid grid-cols-2 gap-2 bg-slate-50 rounded-lg p-2 border border-slate-100 text-center font-mono">
+                    <div className="grid grid-cols-2 gap-1 bg-slate-50 rounded-lg p-1.5 border border-slate-100 text-center font-mono">
                       <div>
-                        <div className="text-[10px] text-slate-500 uppercase">Orders</div>
-                        <div className="text-xs font-bold text-indigo-700">{ordersCount}</div>
+                        <div className="text-[9px] text-slate-400 uppercase">Orders</div>
+                        <div className="text-[11px] font-bold text-indigo-700">{ordersCount}</div>
                       </div>
                       <div>
-                        <div className="text-[10px] text-slate-500 uppercase">Total Spend</div>
-                        <div className="text-xs font-bold text-emerald-700">AED {spentAmt.toFixed(2)}</div>
+                        <div className="text-[9px] text-slate-400 uppercase">Spend</div>
+                        <div className="text-[11px] font-bold text-emerald-700 truncate">
+                          AED {spentAmt.toFixed(0)}
+                        </div>
                       </div>
                     </div>
                   </div>
 
                   {/* Actions */}
-                  <div className="pt-3 mt-3 border-t border-slate-100 flex items-center gap-2">
+                  <div className="pt-2 mt-2 border-t border-slate-100 flex items-center gap-1.5">
                     <button
                       type="button"
                       onClick={() => openRetailCustomerStatement(cust)}
-                      className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
+                      className="flex-1 py-1.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 shadow-2xs transition cursor-pointer"
                     >
-                      <FileText className="w-3.5 h-3.5" />
+                      <FileText className="w-3 h-3" />
                       <span>Statement</span>
-                      <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
+                      <ArrowRight className="w-3 h-3 ml-0.5" />
                     </button>
 
                     {/* EDIT CUSTOMER */}
@@ -2462,9 +2551,9 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       type="button"
                       onClick={() => handleEditRetailCustomer(cust)}
                       title={`Edit ${cust.name}`}
-                      className="py-2 px-2.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300 text-slate-700 hover:text-indigo-600 transition cursor-pointer flex items-center justify-center shadow-2xs"
+                      className="py-1.5 px-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300 text-slate-700 hover:text-indigo-600 transition cursor-pointer flex items-center justify-center shadow-2xs"
                     >
-                      <Pencil className="w-3.5 h-3.5" />
+                      <Pencil className="w-3 h-3" />
                     </button>
 
                     {/* DELETE CUSTOMER (DISABLED IF TRANSACTIONS EXIST) */}
@@ -2477,22 +2566,41 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                           ? `Cannot delete: ${cust.name} has existing orders or transactions`
                           : `Delete ${cust.name}`
                       }
-                      className={`py-2 px-2.5 rounded-lg border transition flex items-center justify-center shadow-2xs ${
+                      className={`py-1.5 px-2 rounded-lg border transition flex items-center justify-center shadow-2xs ${
                         hasTransactions
                           ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed opacity-60"
                           : "border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:border-rose-300 cursor-pointer"
                       }`}
                     >
                       {hasTransactions ? (
-                        <Lock className="w-3.5 h-3.5 text-slate-400" />
+                        <Lock className="w-3 h-3 text-slate-400" />
                       ) : (
-                        <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                        <Trash2 className="w-3 h-3 text-rose-600" />
                       )}
                     </button>
                   </div>
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Pagination Bar */}
+        {filteredRetailCustomers.length > 0 && (
+          <div className="bg-white rounded-xl border border-slate-200 p-2 shadow-xs">
+            <Pagination
+              currentPage={retailPage}
+              totalPages={Math.ceil(filteredRetailCustomers.length / retailPageSize) || 1}
+              totalItems={filteredRetailCustomers.length}
+              pageSize={retailPageSize}
+              onPageChange={newPage => setRetailPage(newPage)}
+              onPageSizeChange={newSize => {
+                setRetailPageSize(newSize);
+                setRetailPage(1);
+              }}
+              isLoading={isLoadingRetail}
+              itemLabel="customers"
+            />
           </div>
         )}
       </div>

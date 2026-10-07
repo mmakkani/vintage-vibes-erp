@@ -1543,29 +1543,73 @@ liveStreamingRouter.post('/finalize-session', async (req, res) => {
   if (client && result.invoice) {
     try {
       const inv = result.invoice;
+      const bPhone = (customerPhone || inv.customerPhone || '').trim();
+      const bName = (inv.customerName || buyerHandle || 'Live Stream Buyer').trim();
+      const totalAmt = Number(inv.totalAmount || 0);
+
+      // Auto-feed / link customer into public.crm_retail_customers
+      let liveCustomerId: string | null = null;
+      if (bPhone || bName) {
+        const existingCust = await client.query(
+          `SELECT id FROM public.crm_retail_customers 
+           WHERE (phone = $1 AND phone IS NOT NULL AND phone != '') 
+              OR name ILIKE $2 
+           LIMIT 1`,
+          [bPhone, bName]
+        );
+        if (existingCust.rows.length > 0) {
+          liveCustomerId = existingCust.rows[0].id;
+          await client.query(`
+            UPDATE public.crm_retail_customers
+            SET total_orders = COALESCE(total_orders, 0) + 1,
+                total_spent = COALESCE(total_spent, 0) + $1,
+                channel = CASE 
+                  WHEN channel = 'POS_COUNTER' THEN 'OMNICHANNEL'
+                  WHEN channel IS NULL OR channel = '' THEN 'LIVE_STREAM'
+                  ELSE channel
+                END,
+                address = COALESCE(NULLIF(address, ''), $2),
+                phone = COALESCE(NULLIF(phone, ''), $3)
+            WHERE id = $4
+          `, [totalAmt, (shippingAddress || '').trim() || null, bPhone || null, liveCustomerId]);
+        } else {
+          const newCust = await client.query(`
+            INSERT INTO public.crm_retail_customers (
+              name, phone, company, address, total_spent, total_orders, channel, customer_type, vip_tier, wallet_balance
+            ) VALUES (
+              $1, $2, $1, $3, $4, 1, 'LIVE_STREAM', 'RETAIL', 'BRONZE', 0.00
+            ) RETURNING id
+          `, [bName, bPhone || null, (shippingAddress || '').trim() || null, totalAmt]);
+          if (newCust.rows.length > 0) {
+            liveCustomerId = newCust.rows[0].id;
+          }
+        }
+      }
+
       await client.query(`
         INSERT INTO sales_invoices (
-          id, invoice_no, customer_name, customer_phone, invoice_date,
+          id, invoice_no, client_id, customer_name, customer_phone, invoice_date,
           channel, payment_method, payment_status, shipping_address,
           subtotal, discount_amount, tax_amount, total_amount, status,
           items, shipping_fee, shipping_bearer, created_at
         ) VALUES (
-          $1, $2, $3, $4, CURRENT_DATE,
-          'LIVE_STREAM', $5, 'PENDING_COD', $6,
-          $7, 0, $8, $9, 'DRAFT',
-          $10::jsonb, 0, 'Customer Bears', NOW()
+          $1, $2, $3, $4, $5, CURRENT_DATE,
+          'LIVE_STREAM', $6, 'PENDING_COD', $7,
+          $8, 0, $9, $10, 'DRAFT',
+          $11::jsonb, 0, 'Customer Bears', NOW()
         ) ON CONFLICT (id) DO UPDATE
-        SET status = 'DRAFT', items = EXCLUDED.items, total_amount = EXCLUDED.total_amount;
+        SET status = 'DRAFT', client_id = EXCLUDED.client_id, items = EXCLUDED.items, total_amount = EXCLUDED.total_amount;
       `, [
         inv.id,
         inv.invoiceNo,
-        inv.customerName,
-        inv.customerPhone,
+        liveCustomerId,
+        bName,
+        bPhone,
         inv.paymentMethod || 'COD',
         shippingAddress || 'Dubai, UAE Delivery',
         inv.subTotal,
         inv.vatAmount,
-        inv.totalAmount,
+        totalAmt,
         JSON.stringify(inv.items)
       ]);
     } catch (e) {
