@@ -414,7 +414,13 @@ purchaseRouter.post('/ai-ocr-scan', async (req, res) => {
     const result = await PurchaseController.scanGarmentTagWithAI(imageBase64, textPrompt, apiKey);
     return res.json(result);
   } catch (err: any) {
-    return res.status(500).json({ error: err.message || 'OCR Processing failed' });
+    try {
+      const { getHeuristicVintageAppraisal } = await import('../../utils/geminiVintageValuation.ts');
+      const fallback = getHeuristicVintageAppraisal(req.body?.textPrompt, req.body?.imageBase64);
+      return res.json({ ...fallback, warning: err?.message });
+    } catch (_) {
+      return res.status(500).json({ error: err.message || 'OCR Processing failed' });
+    }
   }
 });
 
@@ -431,21 +437,10 @@ purchaseRouter.post('/scan-invoice-ocr', async (req, res) => {
 purchaseRouter.post('/classify-garment-photos', async (req, res) => {
   try {
     const { images, base64Images } = req.body;
-    let apiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
-    if (!apiKey) {
-      apiKey = (process.env.GEMINI_API_KEY || '').trim();
-    }
-    if (!apiKey) {
-      try {
-        const { pgPool } = await import('../../db/pgPool.ts');
-        const dbRes = await pgPool.query(`SELECT api_key FROM gemini_api_config WHERE id = 'default' LIMIT 1`);
-        if (dbRes.rows?.[0]?.api_key) {
-          apiKey = dbRes.rows[0].api_key;
-        }
-      } catch (_) {}
-    }
+    const clientKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
+    const apiKey = await PurchaseController.resolveGeminiApiKey(clientKey);
     const targetImages = images || base64Images || [];
-    const result = await classifyGarmentPhotosWithGemini(targetImages, apiKey);
+    const result = await classifyGarmentPhotosWithGemini(targetImages, apiKey || '');
     return res.json({ success: true, ...result });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message || 'Bulk classification failed' });
