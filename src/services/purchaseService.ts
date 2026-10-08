@@ -2719,6 +2719,7 @@ export class PurchaseService {
       .from('inventory_pieces')
       .update({
         status: 'IN_STOCK',
+        is_sold: false,
         ready_for_ecommerce: true
       })
       .eq('id', id);

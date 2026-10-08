@@ -569,6 +569,39 @@ export class SalesService {
       }
     }
 
+    // Customer Khata logging for credit / posted sales
+    const customerPartyId = inv.client_id || inv.clientId;
+    if (customerPartyId && (inv.status === 'PAID' || inv.status === 'POSTED')) {
+      try {
+        const totalAmt = Number(inv.total_amount ?? inv.totalAmount ?? 0);
+        if (totalAmt > 0) {
+          const { data: ptyRow } = await supabase.from('parties').select('current_balance').eq('id', customerPartyId).maybeSingle();
+          if (ptyRow) {
+            const currentPartyBal = Number(ptyRow.current_balance ?? 0);
+            const updatedPartyBal = currentPartyBal + totalAmt;
+
+            await supabase.from('parties').update({
+              current_balance: updatedPartyBal
+            }).eq('id', customerPartyId);
+
+            const { PartiesService } = await import('./partiesService.ts');
+            await PartiesService.addKhataLog({
+              partyId: customerPartyId,
+              date: inv.invoice_date || inv.invoiceDate || new Date().toISOString().slice(0, 10),
+              reference: invoiceNo,
+              description: `Sales Invoice ${invoiceNo}`,
+              debit: totalAmt,
+              credit: 0,
+              runningBalance: updatedPartyBal,
+              notes: `Sales Invoice: ${invoiceNo}`
+            });
+          }
+        }
+      } catch (khataErr) {
+        console.warn('[SalesService] Notice logging customer party khata on create:', khataErr);
+      }
+    }
+
     if (typeof window !== 'undefined') {
       try {
         window.dispatchEvent(new CustomEvent('vv:entity-mutated', {
@@ -644,6 +677,55 @@ export class SalesService {
             supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD', updated_at: new Date().toISOString() }).in('barcode', pieceIds).eq('is_sold', false)
           ]).catch(err => console.warn('[SalesService] Error marking items SOLD on invoice update:', err));
         }
+      }
+
+      // Customer Khata logging on status update to POSTED / PAID
+      try {
+        const { data: fullInv } = await supabase
+          .from('sales_invoices')
+          .select('id, invoice_no, client_id, total_amount, invoice_date')
+          .eq('id', id)
+          .maybeSingle();
+
+        if (fullInv && fullInv.client_id) {
+          const cId = fullInv.client_id;
+          const totalAmt = Number(fullInv.total_amount || updates.totalAmount || 0);
+          const invNo = fullInv.invoice_no || id;
+          if (totalAmt > 0) {
+            const { data: existingLog } = await supabase
+              .from('party_khata_logs')
+              .select('id')
+              .eq('party_id', cId)
+              .eq('reference', invNo)
+              .maybeSingle();
+
+            if (!existingLog) {
+              const { data: ptyRow } = await supabase.from('parties').select('current_balance').eq('id', cId).maybeSingle();
+              if (ptyRow) {
+                const currentPartyBal = Number(ptyRow.current_balance ?? 0);
+                const updatedPartyBal = currentPartyBal + totalAmt;
+
+                await supabase.from('parties').update({
+                  current_balance: updatedPartyBal
+                }).eq('id', cId);
+
+                const { PartiesService } = await import('./partiesService.ts');
+                await PartiesService.addKhataLog({
+                  partyId: cId,
+                  date: fullInv.invoice_date || new Date().toISOString().slice(0, 10),
+                  reference: invNo,
+                  description: `Sales Invoice ${invNo}`,
+                  debit: totalAmt,
+                  credit: 0,
+                  runningBalance: updatedPartyBal,
+                  notes: `Sales Invoice Finalized: ${invNo}`
+                });
+              }
+            }
+          }
+        }
+      } catch (khataErr) {
+        console.warn('[SalesService] Notice logging customer khata on invoice update:', khataErr);
       }
     }
   }
@@ -922,8 +1004,14 @@ export class SalesService {
         throw new Error(delErr.message || 'Failed to delete sales invoice');
       }
 
-      // STEP 6: COA Sync (Fix 22P02)
-      // If calling sync_coa_current_balances or updating COA, ensure you use .eq('account_code', code) / .eq('code', code) NOT .eq('id', code)
+      // STEP 6: Purge party_khata_logs and sync party balance
+      try {
+        await supabase
+          .from('party_khata_logs')
+          .delete()
+          .or(`reference.eq.${invoiceNo},reference.eq.${cleanId},notes.ilike.%${invoiceNo}%`);
+      } catch (_) {}
+
       if (invoice?.client_id) {
         try {
           await FinanceService.recalculatePartyBalance(invoice.client_id);

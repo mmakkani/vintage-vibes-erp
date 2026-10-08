@@ -4620,7 +4620,7 @@ class RelationalStore {
         status: 'POSTED',
         currency: 'AED',
         exchangeRate: 1.0,
-        subTotal: discountedSubtotal,
+        subTotal: subTotal,
         discountAmount: discount,
         vatAmount,
         totalAmount: grandTotal,

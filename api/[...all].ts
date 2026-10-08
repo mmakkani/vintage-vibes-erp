@@ -9389,11 +9389,15 @@ ${courierLines}
 
           const isCompanyBorne = (invRow.shipping_bearer || 'CUSTOMER').toString().toUpperCase().includes('COMPANY');
           const vatAmount = Number(invRow.tax_amount || (subtotal * 0.05).toFixed(2));
+          const discountAmount = Number(invRow.discount_amount || 0);
           const lines: any[] = [];
 
           if (isCompanyBorne) {
-            // Company pays shipping as an operating expense, customer only pays order subtotal + vat
+            // Company pays shipping as an operating expense, customer only pays order subtotal + vat - discount
             lines.push({ code: '1128-01', name: `Courier COD Clearing (${courierName})`, debit: totalAmount, credit: 0, desc: `Courier COD Clearing / Customer Receivable - ${invRow.invoice_no}` });
+            if (discountAmount > 0) {
+              lines.push({ code: '4110-02', name: 'Sales Discounts Allowed', debit: discountAmount, credit: 0, desc: `Sales Discount Allowed - ${invRow.invoice_no}` });
+            }
             if (shippingFee > 0) {
               lines.push({ code: '5140-01', name: 'Courier & Freight Delivery Expense', debit: shippingFee, credit: 0, desc: 'Courier Delivery Expense (Company Absorbed)' });
               lines.push({ code: courierCoaCode, name: `${courierName} Payable`, debit: 0, credit: shippingFee, desc: `${courierName} Delivery Fee Payable` });
@@ -9405,6 +9409,9 @@ ${courierLines}
           } else {
             // Customer bears shipping: Courier collects full amount at doorstep
             lines.push({ code: '1128-01', name: `Courier COD Clearing (${courierName})`, debit: totalAmount, credit: 0, desc: `Courier COD Clearing / Total Collectible - ${invRow.invoice_no}` });
+            if (discountAmount > 0) {
+              lines.push({ code: '4110-02', name: 'Sales Discounts Allowed', debit: discountAmount, credit: 0, desc: `Sales Discount Allowed - ${invRow.invoice_no}` });
+            }
             if (shippingFee > 0) {
               lines.push({ code: courierCoaCode, name: `${courierName} Payable`, debit: 0, credit: shippingFee, desc: `${courierName} Delivery Fee Payable` });
             }
@@ -9557,6 +9564,12 @@ ${courierLines}
           }
 
           const invRow = invRes.rows[0];
+          if (invRow.status === 'POSTED') {
+            return res.status(400).json({
+              success: false,
+              error: `Strict Post-Lock: Invoice ${invRow.invoice_no || targetId} is finalized and POSTED. You must UNPOST it to DRAFT before deleting.`
+            });
+          }
           let items: any[] = [];
           if (Array.isArray(invRow.items)) items = invRow.items;
           else if (typeof invRow.items === 'string') {
@@ -9654,6 +9667,21 @@ ${courierLines}
         } catch (cancelErr: any) {
           console.error('[Sales Invoice Cancel Error]', cancelErr);
           return res.status(500).json({ success: false, error: cancelErr.message || 'Failed to cancel invoice' });
+        } finally {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+
+      // Sales Gate Passes (Serverless list handler)
+      if (pathname.includes('/sales/gate-passes') && method === 'GET') {
+        const client = await getPgClient();
+        if (!client) return res.status(500).json({ success: false, error: 'Database unavailable' });
+        try {
+          const gpRes = await client.query(`SELECT * FROM sales_gate_passes ORDER BY created_at DESC;`);
+          return res.status(200).json(gpRes.rows || []);
+        } catch (gpErr: any) {
+          console.error('[Sales Gate Passes GET Error]', gpErr);
+          return res.status(200).json([]);
         } finally {
           try { await client.end(); } catch (_) {}
         }

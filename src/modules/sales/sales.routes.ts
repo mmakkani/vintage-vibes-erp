@@ -352,8 +352,7 @@ const handleUpdateDraftInvoice = async (req: any, res: any) => {
             payment_reference = $11,
             shipping_address = $12,
             customer_phone = $13,
-            customer_name = $14,
-            updated_at = NOW()
+            customer_name = $14
         WHERE id::text = $15 OR invoice_no = $15
       `, [
         JSON.stringify(updatedInv.items || []),
@@ -519,7 +518,7 @@ salesRouter.post('/invoices/:id/unpost', async (req, res) => {
 
 salesRouter.delete('/invoices/:id', async (req, res) => {
   const { id } = req.params;
-  let client: Client | null = null;
+  let client: PoolClient | any = null;
   try {
     // 1. STRICT POST-LOCK CHECK: Verify in relationalStore
     const relInv = relationalStore.getSalesInvoices().find(
@@ -1646,6 +1645,41 @@ salesRouter.post('/live/release-lock', async (req, res) => {
     return res.status(400).json({ error: result.error });
   }
   return res.json(result);
+});
+
+salesRouter.post(['/release-stuck-pieces', '/live/release-stuck-pieces'], async (req, res) => {
+  let client: PoolClient | any = null;
+  try {
+    try {
+      relationalStore.sweepExpiredReservations();
+    } catch (_) {}
+
+    client = await getDbClient();
+    if (client) {
+      const q = await client.query(`
+        UPDATE inventory_pieces
+        SET status = 'IN_STOCK',
+            locked_by_buyer = NULL,
+            locked_by_booth = NULL,
+            locked_by_station = NULL,
+            lock_expires_at = NULL,
+            reserved_until = NULL,
+            is_sold = false,
+            updated_at = NOW()
+        WHERE (status = 'RESERVED' OR (lock_expires_at IS NOT NULL AND lock_expires_at < EXTRACT(EPOCH FROM NOW()) * 1000))
+          AND (is_sold = false OR is_sold IS NULL)
+        RETURNING barcode;
+      `);
+      const count = q.rowCount || 0;
+      return res.json({ success: true, message: `Successfully released ${count} stuck piece lock(s) back to active stock.`, releasedCount: count });
+    }
+    return res.json({ success: true, message: 'Stuck locks released.' });
+  } catch (err: any) {
+    console.error('Error releasing stuck piece locks:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to release stuck pieces' });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
 });
 
 salesRouter.post('/live/simulate-comment', async (req, res) => {

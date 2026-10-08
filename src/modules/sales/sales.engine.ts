@@ -74,7 +74,8 @@ export class SalesEngine {
     }
 
     const invoiceItems: SalesInvoiceItem[] = gatePass.items.map(item => {
-      const discount = Number(((item.unitPrice * item.discountPercent) / 100).toFixed(2));
+      const discountPercent = Number(item.discountPercent || 0);
+      const discount = Number(((item.unitPrice * discountPercent) / 100).toFixed(2));
       const finalAmount = Number((item.unitPrice - discount).toFixed(2));
       return {
         id: `sii-${item.barcode}-${Date.now()}`,
@@ -97,10 +98,10 @@ export class SalesEngine {
       invoiceNo,
       salesGatePassId: gatePass.id,
       salesGatePassNo: gatePass.gatePassNo,
-      customerId: customer.id,
-      customerName: customer.name,
-      customerPhone: customer.phone,
-      customerTrn: customer.trnNo,
+      customerId: customer?.id || '',
+      customerName: customer?.name || gatePass.customerName || 'Wholesale Client',
+      customerPhone: customer?.phone || '',
+      customerTrn: customer?.trnNo || '',
       date: new Date().toISOString().slice(0, 10),
       status: 'DRAFT',
       currency: 'AED',
@@ -282,7 +283,7 @@ export class SalesEngine {
     const totalCredit = Number(lines.reduce((s, l) => s + l.creditAmount, 0).toFixed(2));
 
     return {
-      voucherNo: `JV-SLS-${invoice.invoiceNo.replace(/[^a-zA-Z0-9]/g, '')}`,
+      voucherNo: `JV-SLS-${String(invoice.invoiceNo || Date.now()).replace(/[^a-zA-Z0-9]/g, '')}`,
       type: 'JV',
       date: invoice.date,
       narration: `Automated COA & COGS posting for Live Sale Invoice ${invoice.invoiceNo} (${invoice.customerName}, ${invoice.items.length} garments, AED ${invoice.totalAmount})`,
@@ -336,7 +337,7 @@ export class SalesEngine {
       lines.push({
         id: `line-ret-rev-${params.returnNo}`,
         accountId: revAccountId,
-        accountCode: '',
+        accountCode: '4110-01',
         accountName: 'Retail Scanned Pieces Sales Revenue (Return Reversal)',
         debitAmount: Number(params.totalSaleRefunded.toFixed(2)),
         creditAmount: 0,
@@ -347,7 +348,7 @@ export class SalesEngine {
       lines.push({
         id: `line-ret-ar-${params.returnNo}`,
         accountId: arAccountId,
-        accountCode: '',
+        accountCode: '1130-00',
         accountName: `Accounts Receivable - ${params.customerName}`,
         debitAmount: 0,
         creditAmount: Number(params.totalSaleRefunded.toFixed(2)),
@@ -361,7 +362,7 @@ export class SalesEngine {
       lines.push({
         id: `line-ret-inv-${params.returnNo}`,
         accountId: invAccountId,
-        accountCode: '',
+        accountCode: '1160-01',
         accountName: 'Vintage Bales & Garment Stock Asset',
         debitAmount: Number(params.totalCOGSReversed.toFixed(2)),
         creditAmount: 0,
@@ -372,7 +373,7 @@ export class SalesEngine {
       lines.push({
         id: `line-ret-cogs-${params.returnNo}`,
         accountId: cogsAccountId,
-        accountCode: '',
+        accountCode: '5100-02',
         accountName: 'Cost of Goods Sold (Bales Consumption)',
         debitAmount: 0,
         creditAmount: Number(params.totalCOGSReversed.toFixed(2)),
@@ -385,7 +386,7 @@ export class SalesEngine {
       lines.push({
         id: `line-ret-courier-exp-${params.returnNo}`,
         accountId: shippingExpAccountId,
-        accountCode: '',
+        accountCode: '5140-01',
         accountName: 'Courier & RTO Shipping Operating Expense',
         debitAmount: Number(params.courierReturnCharge.toFixed(2)),
         creditAmount: 0,
@@ -395,7 +396,7 @@ export class SalesEngine {
       lines.push({
         id: `line-ret-courier-pay-${params.returnNo}`,
         accountId: courierPayableAccountId,
-        accountCode: '',
+        accountCode: '2120-00',
         accountName: `Courier Partners Payable (${params.courierPartner})`,
         debitAmount: 0,
         creditAmount: Number(params.courierReturnCharge.toFixed(2)),

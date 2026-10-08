@@ -317,13 +317,15 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
     };
 
     try {
-      const [clientsRes, stockRes] = await Promise.all([
+      const [clientsRes, stockRes, gatePassesRes] = await Promise.all([
         PartiesService.getParties().then(pts => pts.filter(p => p.type === 'CLIENT' || p.type === 'CUSTOMER' || !p.type || (p as any).party_type === 'CLIENT' || (p as any).party_type === 'CUSTOMER')).catch(() => []),
-        PurchaseService.getInventoryPieces().then(pcs => pcs.filter(p => !p.isSold && (p.status === 'IN_STOCK' || p.status === 'RESERVED'))).catch(() => [])
+        PurchaseService.getInventoryPieces().then(pcs => pcs.filter(p => !p.isSold && (p.status === 'IN_STOCK' || p.status === 'RESERVED'))).catch(() => []),
+        safeFetch('/api/sales/gate-passes').catch(() => [])
       ]);
 
       if (Array.isArray(clientsRes)) setClients(clientsRes);
       if (Array.isArray(stockRes)) setStockPieces(stockRes);
+      if (Array.isArray(gatePassesRes)) setGatePasses(gatePassesRes);
 
       if (Array.isArray(clientsRes) && clientsRes.length > 0 && !newGatePassCustomer) {
         setNewGatePassCustomer(clientsRes[0].id);

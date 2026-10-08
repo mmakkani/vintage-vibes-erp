@@ -1505,8 +1505,41 @@ liveStreamingRouter.post('/webhook/simulate-comment', async (req, res) => {
 
 
 // Reservation Timeout Engine: sweep expired reservations
-liveStreamingRouter.post('/sweep-reservations', (req, res) => {
+liveStreamingRouter.post('/sweep-reservations', async (req, res) => {
   const result = relationalStore.sweepExpiredReservations();
+  let client: any = null;
+  try {
+    client = await getPgClient();
+    if (client) {
+      const q = await client.query(`
+        UPDATE inventory_pieces
+        SET status = 'IN_STOCK',
+            locked_by_buyer = NULL,
+            locked_by_booth = NULL,
+            locked_by_station = NULL,
+            lock_expires_at = NULL,
+            reserved_until = NULL,
+            is_sold = false,
+            updated_at = NOW()
+        WHERE status = 'RESERVED'
+          AND lock_expires_at IS NOT NULL
+          AND lock_expires_at < EXTRACT(EPOCH FROM NOW()) * 1000
+          AND (is_sold = false OR is_sold IS NULL)
+        RETURNING barcode;
+      `);
+      if (q.rowCount && q.rowCount > 0) {
+        result.sweptCount = Math.max(result.sweptCount || 0, q.rowCount);
+      }
+    }
+  } catch (dbErr) {
+    console.warn('Notice sweeping expired reservations in PostgreSQL:', dbErr);
+  } finally {
+    if (client) {
+      if (typeof client.release === 'function') client.release();
+      else if (typeof client.end === 'function') await client.end().catch(() => {});
+    }
+  }
+
   if (result.sweptCount > 0) {
     eventHub.broadcast({
       type: 'ENTITY_MUTATED',
