@@ -17,6 +17,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
+import { CompanyProfileService } from '../../../services/companyProfileService.ts';
 
 interface ExecutiveWhatsAppDigestModalProps {
   isOpen: boolean;
@@ -31,7 +32,7 @@ export const ExecutiveWhatsAppDigestModal: React.FC<ExecutiveWhatsAppDigestModal
   const [sending, setSending] = useState(false);
   const [reportText, setReportText] = useState('');
   const [metrics, setMetrics] = useState<any>(null);
-  const [targetPhone, setTargetPhone] = useState('+971 55 418 6086');
+  const [targetPhone, setTargetPhone] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
   const [sendSuccessMsg, setSendSuccessMsg] = useState('');
   const [sendErrorMsg, setSendErrorMsg] = useState('');
@@ -61,6 +62,9 @@ export const ExecutiveWhatsAppDigestModal: React.FC<ExecutiveWhatsAppDigestModal
   useEffect(() => {
     if (isOpen) {
       fetchDigest();
+      CompanyProfileService.getCompanyProfile().then(p => {
+        if (p?.phone) setTargetPhone(p.phone);
+      }).catch(() => {});
     }
   }, [isOpen]);
 

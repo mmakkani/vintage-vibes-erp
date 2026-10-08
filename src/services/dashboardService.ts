@@ -96,7 +96,8 @@ export class DashboardService {
         salesRes,
         revenueRes,
         pendingVouchersRes,
-        pendingGatePassesRes
+        pendingGatePassesRes,
+        activeStaffRes
       ] = await Promise.all([
         // 1. Payables Khata: Sum current_balance from chart_of_accounts where parent_code is 2110-00 or 2120-00
         supabase
@@ -104,11 +105,11 @@ export class DashboardService {
           .select('current_balance, code, parent_code')
           .or('parent_code.eq.2110-00,parent_code.eq.2120-00,code.like.2110-%,code.like.2120-%'),
 
-        // 2. Receivables Khata: Sum current_balance from chart_of_accounts where parent_code is 1130-00
+        // 2. Receivables Khata: Sum current_balance from chart_of_accounts where parent_code is 1120-00 (Trade Debtors) or 1130-00 (Prepayments/Advances)
         supabase
           .from('chart_of_accounts')
           .select('current_balance, code, parent_code')
-          .or('parent_code.eq.1130-00,code.like.1130-%'),
+          .or('parent_code.eq.1120-00,code.like.1120-%,parent_code.eq.1130-00,code.like.1130-%'),
 
         // 3. Inventory: Landed costs from inward_gate_passes (unopened, non-deleted)
         supabase
@@ -164,7 +165,13 @@ export class DashboardService {
         supabase
           .from('inward_gate_passes')
           .select('id', { count: 'exact', head: true })
-          .or('status.eq.DRAFT,status.eq.UNOPENED')
+          .or('status.eq.DRAFT,status.eq.UNOPENED'),
+
+        // 9. Active Staff Count
+        supabase
+          .from('employees')
+          .select('id', { count: 'exact', head: true })
+          .eq('is_active', true)
       ]);
 
       // Calculate Payables Khata
@@ -247,6 +254,8 @@ export class DashboardService {
       const unpostedVouchersCount = pendingVouchersRes.count || 0;
       const awaitingGatePassesCount = pendingGatePassesRes.count || 0;
 
+      const activeStaffCount = typeof activeStaffRes?.count === 'number' ? activeStaffRes.count : 0;
+
       const metrics: DashboardMetrics = {
         totalInventoryValueAED,
         totalBalesInStock,
@@ -257,7 +266,7 @@ export class DashboardService {
         netWorkingCapitalAED,
         unpostedVouchersCount,
         awaitingGatePassesCount,
-        activeStaffCount: 1
+        activeStaffCount
       };
 
       this._cachedMetrics = metrics;
@@ -285,7 +294,7 @@ export class DashboardService {
         netWorkingCapitalAED: 0,
         unpostedVouchersCount: 0,
         awaitingGatePassesCount: 0,
-        activeStaffCount: 1
+        activeStaffCount: 0
       };
     }
   }

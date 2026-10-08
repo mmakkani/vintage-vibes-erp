@@ -319,9 +319,13 @@ export async function executeClientFallback<T = any>(
 
       if (url.includes('/whatsapp-report')) {
         const comp: any = await CompanyProfileService.getCompanyProfile();
+        const text = `*${comp?.companyName || comp?.company_name || 'VINTAGE VIBES'} - STATUS REPORT*\nGenerated: ${new Date().toLocaleString()}\nStatus: Cloud Database Online`;
         return {
           success: true,
-          report: `*${comp?.companyName || comp?.company_name || 'VINTAGE VIBES'} - STATUS REPORT*\nGenerated: ${new Date().toLocaleString()}\nStatus: Cloud Database Online`
+          reportText: text,
+          messageText: text,
+          report: text,
+          data: { messageText: text }
         } as any;
       }
 

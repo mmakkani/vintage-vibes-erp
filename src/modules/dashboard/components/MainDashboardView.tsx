@@ -149,7 +149,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
             computedReceivables += bal;
             clientKhatasArr.push({
               name: c.name || c.partyName || 'Client',
-              city: c.city || c.address || 'Dubai, UAE',
+              city: c.city || c.address || '-',
               balance: bal,
               status: c.status || 'Active'
             });
@@ -189,13 +189,13 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
         const safeRates = getSafeFxRates(currRes);
 
         const recentGatePassesArr = Array.isArray(gatePassesRes) && gatePassesRes.length > 0
-          ? gatePassesRes.slice(0, 5).map((gp: any, idx: number) => ({
-              id: gp.id || gp.gatePassNo || `IGP-2026-000${idx+1}`,
-              supplier: gp.supplierName || gp.supplier || 'Global Supplier',
-              date: gp.date || gp.createdAt || '2026-03-01',
-              weight: `${gp.totalBaleWeight || gp.weight || 250} KG`,
-              pcs: `${Array.isArray(gp.pieces) ? gp.pieces.length : (gp.piecesCount || 0)} Verified Pcs`,
-              status: gp.status || 'POSTED'
+          ? gatePassesRes.slice(0, 5).map((gp: any) => ({
+              id: gp.gatePassNo || gp.id || '-',
+              supplier: gp.supplierName || gp.supplier || '-',
+              date: gp.date ? String(gp.date).slice(0, 10) : (gp.createdAt ? String(gp.createdAt).slice(0, 10) : '-'),
+              weight: (gp.totalBaleWeight || gp.weight) ? `${gp.totalBaleWeight || gp.weight} KG` : '-',
+              pcs: `${Array.isArray(gp.pieces) ? gp.pieces.length : (gp.piecesCount || 0)} Pcs`,
+              status: gp.status || 'DRAFT'
             }))
           : (kpiData.recentGatePasses || []);
 
@@ -599,25 +599,33 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
-                  {kpiData.recentGatePasses.map(gp => (
-                    <tr key={gp.id} className="hover:bg-amber-50/30">
-                      <td className="px-3 py-2.5 font-bold text-slate-900">{gp.id}</td>
-                      <td className="px-3 py-2.5 font-sans font-medium text-slate-800">{gp.supplier}</td>
-                      <td className="px-3 py-2.5 text-slate-700">{gp.weight}</td>
-                      <td className="px-3 py-2.5 text-slate-700 font-sans">{gp.pcs}</td>
-                      <td className="px-3 py-2.5 text-right">
-                        <span
-                          className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                            gp.status === 'POSTED'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {gp.status}
-                        </span>
+                  {kpiData.recentGatePasses.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500 font-sans text-xs">
+                        No inward gate passes recorded yet.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    kpiData.recentGatePasses.map(gp => (
+                      <tr key={gp.id} className="hover:bg-amber-50/30">
+                        <td className="px-3 py-2.5 font-bold text-slate-900">{gp.id}</td>
+                        <td className="px-3 py-2.5 font-sans font-medium text-slate-800">{gp.supplier}</td>
+                        <td className="px-3 py-2.5 text-slate-700">{gp.weight}</td>
+                        <td className="px-3 py-2.5 text-slate-700 font-sans">{gp.pcs}</td>
+                        <td className="px-3 py-2.5 text-right">
+                          <span
+                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                              gp.status === 'POSTED'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {gp.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -706,27 +714,33 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
             </div>
 
             <div className="space-y-2.5">
-              {kpiData.clientKhatas.map((ck: any, idx: number) => (
-                <motion.div
-                  key={ck.id || `${ck.name || 'client'}-${idx}`}
-                  whileHover={{ scale: 1.02, x: 2 }}
-                  transition={{ duration: 0.15 }}
-                  className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/60 flex items-center justify-between shadow-2xs"
-                >
-                  <div>
-                    <div className="font-bold text-slate-900 text-xs">{ck.name}</div>
-                    <div className="text-[10px] text-slate-700">{ck.city}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-mono font-bold text-xs text-amber-900">
-                      AED {Number(ck?.balance || 0).toLocaleString()}
+              {kpiData.clientKhatas.length === 0 ? (
+                <div className="p-4 text-center text-xs text-slate-500 font-sans">
+                  No active customer accounts yet.
+                </div>
+              ) : (
+                kpiData.clientKhatas.map((ck: any, idx: number) => (
+                  <motion.div
+                    key={ck.id || `${ck.name || 'client'}-${idx}`}
+                    whileHover={{ scale: 1.02, x: 2 }}
+                    transition={{ duration: 0.15 }}
+                    className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/60 flex items-center justify-between shadow-2xs"
+                  >
+                    <div>
+                      <div className="font-bold text-slate-900 text-xs">{ck.name}</div>
+                      <div className="text-[10px] text-slate-700">{ck.city}</div>
                     </div>
-                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800">
-                      {ck.status}
-                    </span>
-                  </div>
-                </motion.div>
-              ))}
+                    <div className="text-right">
+                      <div className="font-mono font-bold text-xs text-amber-900">
+                        AED {Number(ck?.balance || 0).toLocaleString()}
+                      </div>
+                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800">
+                        {ck.status}
+                      </span>
+                    </div>
+                  </motion.div>
+                ))
+              )}
             </div>
           </div>
 
